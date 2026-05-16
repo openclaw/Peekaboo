@@ -45,7 +45,7 @@ peekaboo config add-provider openrouter \
   --type openai \
   --name "OpenRouter" \
   --base-url https://openrouter.ai/api/v1 \
-  --api-key "{env:OPENROUTER_API_KEY}" --force
+  --api-key "${OPENROUTER_API_KEY}" --force
 peekaboo config test-provider --provider-id openrouter
 
 # Add and validate keys (stores even if validation fails; warns on failure)

@@ -307,7 +307,7 @@ struct EditCustomProviderView: View {
                     HStack {
                         Text("API Key")
                             .frame(width: 100, alignment: .trailing)
-                        TextField("{env:OPENROUTER_API_KEY}", text: self.$apiKey)
+                        TextField("${OPENROUTER_API_KEY}", text: self.$apiKey)
                             .textFieldStyle(.roundedBorder)
                     }
 

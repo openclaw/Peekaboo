@@ -51,7 +51,7 @@ extension ConfigCommand {
               --type openai \\
               --name "OpenRouter" \\
               --base-url "https://openrouter.ai/api/v1" \\
-              --api-key "{env:OPENROUTER_API_KEY}" \\
+              --api-key "${OPENROUTER_API_KEY}" \\
               --description "Access to 300+ models via OpenRouter"
 
             # Add local Ollama with authentication
@@ -66,7 +66,7 @@ extension ConfigCommand {
               --type openai \\
               --name "Groq" \\
               --base-url "https://api.groq.com/openai/v1" \\
-              --api-key "{env:GROQ_API_KEY}"
+              --api-key "${GROQ_API_KEY}"
             """
         )
 
@@ -82,7 +82,7 @@ extension ConfigCommand {
         @Option(name: .long, help: "Base URL for the API endpoint")
         var baseUrl: String
 
-        @Option(name: .long, help: "API key or credential reference (e.g., {env:API_KEY})")
+        @Option(name: .long, help: "API key or credential reference (e.g., ${API_KEY})")
         var apiKey: String
 
         @Option(name: .long, help: "Optional description of the provider")

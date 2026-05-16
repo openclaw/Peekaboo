@@ -320,7 +320,9 @@ public struct Configuration: Codable {
     /// including API endpoint, authentication, and request customization.
     public struct ProviderOptions: Codable {
         public let baseURL: String
-        public let apiKey: String // Environment variable reference like {env:API_KEY}
+        // Literal API key or env-var reference, e.g. "${API_KEY}".
+        // Legacy "{env:API_KEY}" form is honored only by the config CLI (see docs/provider.md).
+        public let apiKey: String
         public let headers: [String: String]?
         public let timeout: TimeInterval?
         public let retryAttempts: Int?

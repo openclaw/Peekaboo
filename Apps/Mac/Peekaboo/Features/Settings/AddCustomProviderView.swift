@@ -455,9 +455,9 @@ private struct ProviderConfigurationStepView: View {
                         SecureFormField(
                             title: "API Key",
                             binding: self.$apiKey,
-                            placeholder: "sk-... or {env:API_KEY}")
+                            placeholder: "sk-... or ${API_KEY}")
                         {
-                            Text("Your API key or environment variable reference")
+                            Text("Your API key or environment variable reference (use ${VAR})")
                                 .foregroundColor(.secondary)
                         }
                     }
