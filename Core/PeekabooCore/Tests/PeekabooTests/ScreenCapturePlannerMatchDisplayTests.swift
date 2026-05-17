@@ -9,12 +9,11 @@ import Testing
 /// reported the same window as on-screen. The previous code used `SCDisplay.frame.intersects(window.frame)`
 /// directly and threw on `nil`, which left no recovery path for degenerate window frames or partial
 /// display enumeration. The new helper degrades gracefully to a desktop-independent capture filter.
-@Suite
 struct ScreenCapturePlannerMatchDisplayTests {
     // MARK: - Single-display happy paths
 
-    @Test("window inside the only display maps to index 0")
-    func windowInsideOnlyDisplay() {
+    @Test
+    func `window inside the only display maps to index 0`() {
         let displays = [CGRect(x: 0, y: 0, width: 1920, height: 1080)]
         let window = CGRect(x: 0, y: 30, width: 1920, height: 960)
 
@@ -25,8 +24,8 @@ struct ScreenCapturePlannerMatchDisplayTests {
         #expect(match == .mapped(displayIndex: 0))
     }
 
-    @Test("window matching the reporter's exact bounds maps to the primary display")
-    func windowMatchingReporterBounds() {
+    @Test
+    func `window matching the reporter's exact bounds maps to the primary display`() {
         // From issue #143: Telegram window reported at (0, 30, 1920, 960) on a Mac Mini.
         // The current `.intersects` test would also succeed for this geometry against the
         // primary display, but we lock the behavior in so any future refactor that drops
@@ -47,8 +46,8 @@ struct ScreenCapturePlannerMatchDisplayTests {
 
     // MARK: - Multi-display geometries
 
-    @Test("window centered on the secondary right-hand display maps to index 1")
-    func windowOnSecondaryRightDisplay() {
+    @Test
+    func `window centered on the secondary right-hand display maps to index 1`() {
         let displays = [
             CGRect(x: 0, y: 0, width: 1920, height: 1080),
             CGRect(x: 1920, y: 0, width: 2560, height: 1440),
@@ -62,8 +61,8 @@ struct ScreenCapturePlannerMatchDisplayTests {
         #expect(match == .mapped(displayIndex: 1))
     }
 
-    @Test("window on a display stacked above the primary (negative Y origin) maps correctly")
-    func windowOnDisplayAbovePrimary() {
+    @Test
+    func `window on a display stacked above the primary (negative Y origin) maps correctly`() {
         let displays = [
             CGRect(x: 0, y: 0, width: 1920, height: 1080),
             CGRect(x: 0, y: -1080, width: 1920, height: 1080),
@@ -77,8 +76,8 @@ struct ScreenCapturePlannerMatchDisplayTests {
         #expect(match == .mapped(displayIndex: 1))
     }
 
-    @Test("window on a display to the left of primary (negative X origin) maps correctly")
-    func windowOnDisplayLeftOfPrimary() {
+    @Test
+    func `window on a display to the left of primary (negative X origin) maps correctly`() {
         let displays = [
             CGRect(x: 0, y: 0, width: 1920, height: 1080),
             CGRect(x: -3008, y: 0, width: 3008, height: 1692),
@@ -92,8 +91,8 @@ struct ScreenCapturePlannerMatchDisplayTests {
         #expect(match == .mapped(displayIndex: 1))
     }
 
-    @Test("three-display L-shape Mac Mini configuration resolves a centered window deterministically")
-    func threeDisplayLShape() {
+    @Test
+    func `three-display L-shape Mac Mini configuration resolves a centered window deterministically`() {
         // Approximates the reporter's Mac Mini: primary + right + above-primary.
         let displays = [
             CGRect(x: 0, y: 0, width: 1920, height: 1080),
@@ -118,8 +117,8 @@ struct ScreenCapturePlannerMatchDisplayTests {
 
     // MARK: - Straddling and ambiguous geometry
 
-    @Test("window straddling two displays maps to whichever contains the center point")
-    func windowStraddlingTwoDisplaysPrefersCenter() {
+    @Test
+    func `window straddling two displays maps to whichever contains the center point`() {
         let displays = [
             CGRect(x: 0, y: 0, width: 1920, height: 1080),
             CGRect(x: 1920, y: 0, width: 1920, height: 1080),
@@ -134,8 +133,8 @@ struct ScreenCapturePlannerMatchDisplayTests {
         #expect(match == .mapped(displayIndex: 1))
     }
 
-    @Test("window with no center hit falls back to the display with the largest overlap area")
-    func windowFallsBackToLargestOverlapWhenCenterMisses() {
+    @Test
+    func `window with no center hit falls back to the display with the largest overlap area`() {
         // Place displays with a gap so that no display contains the center, but one has more overlap.
         let displays = [
             CGRect(x: 0, y: 0, width: 100, height: 100),
@@ -153,20 +152,13 @@ struct ScreenCapturePlannerMatchDisplayTests {
         #expect(match == .mapped(displayIndex: 0))
     }
 
-    @Test("window with no center hit picks the display with strictly larger overlap")
-    func windowPicksLargerOverlapDisplay() {
+    @Test
+    func `window with no center hit picks the display with strictly larger overlap`() {
         let displays = [
             CGRect(x: 0, y: 0, width: 100, height: 100),
             CGRect(x: 200, y: 0, width: 100, height: 100),
         ]
-        // Center (190, 50) is in neither. Overlap with display 0: (140, 0, 60, 100) — wait, that would
-        // actually contain the center. Use a window centered in the gap but skewed toward display 1.
-        // Window: x=110, w=180 → spans 110..290, center 200 is on display 1's left edge (200, 0).
-        // display 1 contains center? `.contains(CGPoint)` is inclusive of origin so yes — adjust.
-        // Use x=110, w=140 → spans 110..250, center=180 in the gap, no center hit.
-        // Overlap with display 0: (110, 0, ...) intersect (0,0,100,100) = (110..100) = empty. Hmm.
-        // Use x=80, w=140 → 80..220, center=150 in gap, overlap0 = (80..100)=20*100=2000, overlap1 = (200..220)=20*100=2000. Tie.
-        // Make it asymmetric: x=70, w=140 → 70..210, center=140 in gap, overlap0=(70..100)=30*100=3000, overlap1=(200..210)=10*100=1000. Display 0 wins.
+        // Center is in the gap. Display 0 has 30 px of overlap; display 1 has 10 px.
         let window = CGRect(x: 70, y: 0, width: 140, height: 100)
 
         let match = ScreenCapturePlanner.matchDisplay(
@@ -176,10 +168,39 @@ struct ScreenCapturePlannerMatchDisplayTests {
         #expect(match == .mapped(displayIndex: 0))
     }
 
+    @Test
+    func `capture pixel size never returns zero dimensions for degenerate window frames`() {
+        #expect(ScreenCapturePlanner.capturePixelSize(for: .zero, scale: 2).width == 1)
+        #expect(ScreenCapturePlanner.capturePixelSize(for: .zero, scale: 2).height == 1)
+        #expect(ScreenCapturePlanner.capturePixelSize(for: .null, scale: 2).width == 1)
+        #expect(ScreenCapturePlanner.capturePixelSize(for: .null, scale: 2).height == 1)
+    }
+
+    @Test
+    func `capture pixel size scales usable window frames`() {
+        let size = ScreenCapturePlanner.capturePixelSize(
+            for: CGRect(x: 0, y: 0, width: 320, height: 180),
+            scale: 2)
+
+        #expect(size.width == 640)
+        #expect(size.height == 360)
+    }
+
+    @Test
+    func `capture pixel size uses fallback frame when primary frame is degenerate`() {
+        let size = ScreenCapturePlanner.capturePixelSize(
+            for: .zero,
+            fallbackFrame: CGRect(x: 10, y: 20, width: 320, height: 180),
+            scale: 2)
+
+        #expect(size.width == 640)
+        #expect(size.height == 360)
+    }
+
     // MARK: - Unmapped fallback paths (the core #143 fix)
 
-    @Test("window entirely outside every display returns .unmapped with a sensible fallback")
-    func windowEntirelyOffscreenReturnsUnmapped() {
+    @Test
+    func `window entirely outside every display returns .unmapped with a sensible fallback`() {
         let displays = [
             CGRect(x: 0, y: 0, width: 1920, height: 1080),
             CGRect(x: 1920, y: 0, width: 1920, height: 1080),
@@ -196,8 +217,8 @@ struct ScreenCapturePlannerMatchDisplayTests {
         #expect(match == .unmapped(fallbackDisplayIndex: 0))
     }
 
-    @Test("degenerate zero-size window returns .unmapped (issue #143's likely failure mode)")
-    func zeroSizeWindowReturnsUnmapped() {
+    @Test
+    func `degenerate zero-size window returns .unmapped (issue #143's likely failure mode)`() {
         let displays = [
             CGRect(x: 0, y: 0, width: 1920, height: 1080),
         ]
@@ -213,8 +234,8 @@ struct ScreenCapturePlannerMatchDisplayTests {
         #expect(match == .unmapped(fallbackDisplayIndex: 0))
     }
 
-    @Test("null window rect returns .unmapped")
-    func nullWindowRectReturnsUnmapped() {
+    @Test
+    func `null window rect returns .unmapped`() {
         let displays = [
             CGRect(x: 0, y: 0, width: 1920, height: 1080),
         ]
@@ -226,8 +247,8 @@ struct ScreenCapturePlannerMatchDisplayTests {
         #expect(match == .unmapped(fallbackDisplayIndex: 0))
     }
 
-    @Test("fallback prefers the display with origin (0, 0) even when listed second")
-    func fallbackPrefersOriginDisplay() {
+    @Test
+    func `fallback prefers the display with origin (0, 0) even when listed second`() {
         // Primary is at (0,0) but listed second — emulates an enumeration order quirk.
         let displays = [
             CGRect(x: 1920, y: 0, width: 1920, height: 1080),
@@ -242,8 +263,8 @@ struct ScreenCapturePlannerMatchDisplayTests {
         #expect(match == .unmapped(fallbackDisplayIndex: 1))
     }
 
-    @Test("fallback uses index 0 when no display sits at origin")
-    func fallbackUsesFirstDisplayWhenNoOriginDisplay() {
+    @Test
+    func `fallback uses index 0 when no display sits at origin`() {
         // Pathological config where no display has origin (0,0) — e.g. only a single secondary display
         // is enumerated. The fallback should still pick a deterministic index so capture can proceed.
         let displays = [
@@ -260,8 +281,8 @@ struct ScreenCapturePlannerMatchDisplayTests {
 
     // MARK: - Empty enumeration
 
-    @Test("no displays returns .noDisplays so callers can throw with a clear error")
-    func noDisplaysReturnsNoDisplays() {
+    @Test
+    func `no displays returns .noDisplays so callers can throw with a clear error`() {
         let match = ScreenCapturePlanner.matchDisplay(
             windowFrame: CGRect(x: 0, y: 0, width: 100, height: 100),
             displayFrames: [])
@@ -269,8 +290,8 @@ struct ScreenCapturePlannerMatchDisplayTests {
         #expect(match == .noDisplays)
     }
 
-    @Test("no displays with degenerate window also returns .noDisplays")
-    func noDisplaysWithDegenerateWindow() {
+    @Test
+    func `no displays with degenerate window also returns .noDisplays`() {
         let match = ScreenCapturePlanner.matchDisplay(
             windowFrame: .zero,
             displayFrames: [])

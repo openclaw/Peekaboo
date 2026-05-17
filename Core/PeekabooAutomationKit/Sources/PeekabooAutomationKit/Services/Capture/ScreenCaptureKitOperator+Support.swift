@@ -66,7 +66,7 @@ extension ScreenCaptureKitOperator {
             windowFrame: window.frame,
             displayFrames: displays.map(\.frame))
         switch match {
-        case .mapped(let index):
+        case let .mapped(index):
             return displays[index]
         case .unmapped, .noDisplays:
             return nil
@@ -86,9 +86,9 @@ extension ScreenCaptureKitOperator {
             windowFrame: window.frame,
             displayFrames: displays.map(\.frame))
         switch match {
-        case .mapped(let index):
+        case let .mapped(index):
             return (displays[index], true)
-        case .unmapped(let fallbackIndex):
+        case let .unmapped(fallbackIndex):
             return (displays[fallbackIndex], false)
         case .noDisplays:
             return nil

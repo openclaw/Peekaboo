@@ -20,6 +20,37 @@ import Foundation
         globalRect.offsetBy(dx: -displayFrame.origin.x, dy: -displayFrame.origin.y)
     }
 
+    public static func capturePixelSize(
+        for frame: CGRect,
+        fallbackFrame: CGRect? = nil,
+        scale: CGFloat) -> (width: Int, height: Int)
+    {
+        let sourceFrame = self.captureSizeSourceFrame(frame, fallbackFrame: fallbackFrame)
+        return (
+            width: self.capturePixelDimension(sourceFrame.width, scale: scale),
+            height: self.capturePixelDimension(sourceFrame.height, scale: scale))
+    }
+
+    private static func captureSizeSourceFrame(_ frame: CGRect, fallbackFrame: CGRect?) -> CGRect {
+        if self.isUsableCaptureSizeFrame(frame) {
+            return frame
+        }
+        if let fallbackFrame, self.isUsableCaptureSizeFrame(fallbackFrame) {
+            return fallbackFrame
+        }
+        return .zero
+    }
+
+    private static func isUsableCaptureSizeFrame(_ frame: CGRect) -> Bool {
+        !frame.isNull && !frame.isEmpty && frame.width.isFinite && frame.height.isFinite
+    }
+
+    private static func capturePixelDimension(_ logicalLength: CGFloat, scale: CGFloat) -> Int {
+        let scaledLength = logicalLength * scale
+        guard scaledLength.isFinite, scaledLength > 0 else { return 1 }
+        return max(Int(scaledLength), 1)
+    }
+
     /// Result of attempting to map a window to an available display.
     public enum WindowDisplayMatch: Equatable, Sendable {
         /// The window cleanly maps to the display at the given index. Capture can use a

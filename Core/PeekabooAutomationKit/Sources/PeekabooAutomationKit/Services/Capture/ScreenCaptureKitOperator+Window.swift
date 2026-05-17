@@ -245,18 +245,16 @@ extension ScreenCaptureKitOperator {
         useDisplayBoundFilter: Bool = true) async throws -> CGImage
     {
         let scaleValue = scale == .native ? targetScale : 1.0
-        let width = Int(window.frame.width * scaleValue)
-        let height = Int(window.frame.height * scaleValue)
 
         let config = SCStreamConfiguration()
-        config.width = width
-        config.height = height
         config.captureResolution = .best
         config.showsCursor = false
 
         let filter: SCContentFilter
+        let pixelSize: (width: Int, height: Int)
         if useDisplayBoundFilter {
             filter = SCContentFilter(display: display, including: [window])
+            pixelSize = ScreenCapturePlanner.capturePixelSize(for: window.frame, scale: scaleValue)
             // `window.frame` is global desktop coordinates; display-bound filters require display-local `sourceRect`.
             config.sourceRect = ScreenCapturePlanner.displayLocalSourceRect(
                 globalRect: window.frame,
@@ -266,7 +264,15 @@ extension ScreenCaptureKitOperator {
             // display, so no `sourceRect` is needed. This rescues capture on multi-display Macs where
             // `SCShareableContent.displays` enumeration misses the display the window actually lives on.
             filter = SCContentFilter(desktopIndependentWindow: window)
+            let filterScale = CGFloat(filter.pointPixelScale)
+            let outputScale = scale == .native && filterScale.isFinite && filterScale > 0 ? filterScale : scaleValue
+            pixelSize = ScreenCapturePlanner.capturePixelSize(
+                for: filter.contentRect,
+                fallbackFrame: window.frame,
+                scale: outputScale)
         }
+        config.width = pixelSize.width
+        config.height = pixelSize.height
 
         return try await ScreenCaptureKitCaptureGate.captureImage(
             contentFilter: filter,

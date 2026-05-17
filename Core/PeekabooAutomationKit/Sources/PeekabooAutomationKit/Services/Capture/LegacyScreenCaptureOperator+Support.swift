@@ -97,10 +97,10 @@ extension LegacyScreenCaptureOperator {
         case .noDisplays:
             throw OperationError.captureFailed(
                 reason: "No displays available for window \(windowID) capture")
-        case .mapped(let index):
+        case let .mapped(index):
             mappedDisplay = content.displays[index]
             scaleSourceDisplay = content.displays[index]
-        case .unmapped(let fallbackIndex):
+        case let .unmapped(fallbackIndex):
             mappedDisplay = nil
             scaleSourceDisplay = content.displays[fallbackIndex]
             self.logger.warning(
@@ -120,8 +120,6 @@ extension LegacyScreenCaptureOperator {
             frameWidth: scaleSourceDisplay.frame.width).nativeScale
 
         let config = self.makeScreenshotConfiguration()
-        config.width = max(Int(scWindow.frame.width * nativeScale), 1)
-        config.height = max(Int(scWindow.frame.height * nativeScale), 1)
         config.captureResolution = .best
         config.ignoreShadowsSingleWindow = true
         if #available(macOS 14.2, *) {
@@ -129,8 +127,10 @@ extension LegacyScreenCaptureOperator {
         }
 
         let filter: SCContentFilter
+        let pixelSize: (width: Int, height: Int)
         if let display = mappedDisplay {
             filter = SCContentFilter(display: display, including: [scWindow])
+            pixelSize = ScreenCapturePlanner.capturePixelSize(for: scWindow.frame, scale: nativeScale)
             // Display-bound filters expect display-local geometry. This mirrors the reliable modern path and keeps
             // single-shot captures crisp without relying on the obsolete CoreGraphics window API.
             config.sourceRect = ScreenCapturePlanner.displayLocalSourceRect(
@@ -145,11 +145,19 @@ extension LegacyScreenCaptureOperator {
                 correlationId: correlationId)
         } else {
             filter = SCContentFilter(desktopIndependentWindow: scWindow)
+            let filterScale = CGFloat(filter.pointPixelScale)
+            let outputScale = filterScale.isFinite && filterScale > 0 ? filterScale : nativeScale
+            pixelSize = ScreenCapturePlanner.capturePixelSize(
+                for: filter.contentRect,
+                fallbackFrame: scWindow.frame,
+                scale: outputScale)
             self.logger.debug(
                 "Capturing window via desktop-independent SCScreenshotManager filter",
                 metadata: ["windowID": windowID],
                 correlationId: correlationId)
         }
+        config.width = pixelSize.width
+        config.height = pixelSize.height
 
         return try await ScreenCaptureKitCaptureGate.captureImage(
             contentFilter: filter,
