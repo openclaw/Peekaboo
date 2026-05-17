@@ -10,7 +10,7 @@ read_when:
 ## Prerequisites
 
 - macOS 15.0+
-- Xcode 16.4+ (includes Swift 6)
+- Swift 6.2+ toolchain (Xcode 26.x or newer recommended)
 - Node.js 22+ (Corepack-enabled) — only needed for pnpm helper scripts; core Swift builds do not require Node.
 - pnpm (`corepack enable pnpm`)
 

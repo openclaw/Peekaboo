@@ -38,7 +38,7 @@ The full menu-bar app (visualizer, permission flows, status item) is on the [Rel
 
 ## Build from source
 
-Requires macOS 15.0+ and Xcode 16.4+ / Swift 6.2. See [platform-support.md](platform-support.md)
+Requires macOS 15.0+ and a Swift 6.2+ toolchain. See [platform-support.md](platform-support.md)
 for the support matrix across the CLI, app, Swift packages, and pnpm helper scripts.
 
 ```bash
