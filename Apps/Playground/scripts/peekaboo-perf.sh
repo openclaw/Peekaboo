@@ -32,7 +32,7 @@ EOF
 }
 
 is_nonnegative_int() {
-  [[ "$1" =~ ^[0-9]+$ ]]
+  [[ "$1" == "0" || "$1" =~ ^[1-9][0-9]*$ ]]
 }
 
 is_positive_int() {
@@ -256,11 +256,22 @@ timestamp = os.environ["PEEKABOO_PERF_TS"]
 allow_failures = os.environ["PEEKABOO_PERF_ALLOW_FAILURES"] == "1"
 command_args = json.loads(os.environ["PEEKABOO_PERF_COMMAND_ARGS_JSON"])
 
+try:
+    checkout_root = subprocess.check_output(
+        ["git", "rev-parse", "--show-toplevel"],
+        text=True,
+        stderr=subprocess.DEVNULL,
+    ).strip()
+except Exception:
+    checkout_root = str(Path.cwd().resolve())
+
 
 def sanitize_text(value):
     result = str(value)
     cwd = str(Path.cwd().resolve())
     home = os.environ.get("HOME")
+    if checkout_root:
+        result = result.replace(checkout_root, ".")
     if cwd:
         result = result.replace(cwd, ".")
     if home:
@@ -341,10 +352,13 @@ def collect(payloads):
     for path, payload in payloads:
         data = payload.get("data", {}) or {}
         exit_code = int(data.get("exit_code", 0))
+        failed = False
         if exit_code != 0:
             failures.append({"path": display_path(path), "exit_code": exit_code, "reason": "exit_code"})
+            failed = True
         elif payload.get("success") is False:
             failures.append({"path": display_path(path), "exit_code": exit_code, "reason": "success_false"})
+            failed = True
 
         exec_time = data.get("execution_time")
         if exec_time is None:
@@ -355,9 +369,9 @@ def collect(payloads):
             exec_time = data.get("executionTimeSeconds")
 
         wall_time = data.get("wall_time")
-        if isinstance(exec_time, (int, float)):
+        if not failed and isinstance(exec_time, (int, float)):
             execution_times.append(float(exec_time))
-        if isinstance(wall_time, (int, float)):
+        if not failed and isinstance(wall_time, (int, float)):
             wall_times.append(float(wall_time))
 
     return execution_times, wall_times, failures

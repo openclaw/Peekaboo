@@ -16,6 +16,11 @@ if [[ "${1:-}" == "fail" ]]; then
   exit 7
 fi
 
+if [[ "${1:-}" == "softfail" ]]; then
+  echo '{"success":false,"data":{"execution_time":0.03}}'
+  exit 0
+fi
+
 echo '{"success":true,"data":{"execution_time":0.01}}'
 EOF
 chmod +x "$FAKE_BIN"
@@ -97,6 +102,22 @@ if [[ "$FAILING_STATUS" -eq 0 ]]; then
   exit 1
 fi
 
+set +e
+"$ROOT/Apps/Playground/scripts/peekaboo-perf.sh" \
+  --name bad-warmup \
+  --runs 1 \
+  --warmups 08 \
+  --log-root "$TMP_DIR/bad-warmup" \
+  --bin "$FAKE_BIN" \
+  -- ok >/tmp/peekaboo-perf-bad-warmup.log 2>&1
+BAD_WARMUP_STATUS="$?"
+set -e
+
+if [[ "$BAD_WARMUP_STATUS" -eq 0 ]]; then
+  echo "Expected leading-zero warmup count to fail validation" >&2
+  exit 1
+fi
+
 "$ROOT/Apps/Playground/scripts/peekaboo-perf.sh" \
   --name allowed \
   --runs 1 \
@@ -114,6 +135,29 @@ summary = json.load(open(sys.argv[1]))
 assert len(summary["failures"]) == 1
 assert summary["failures"][0]["exit_code"] == 7
 assert summary["failures"][0]["reason"] == "exit_code"
+assert summary["execution_time"] is None
+assert summary["wall_time"] is None
+PY
+
+"$ROOT/Apps/Playground/scripts/peekaboo-perf.sh" \
+  --name softfail \
+  --runs 1 \
+  --allow-failures \
+  --log-root "$TMP_DIR/softfail" \
+  --bin "$FAKE_BIN" \
+  -- softfail >/tmp/peekaboo-perf-softfail.log
+
+SOFTFAIL_SUMMARY="$(find "$TMP_DIR/softfail" -name '*-softfail-summary.json' -print -quit)"
+python3 - "$SOFTFAIL_SUMMARY" <<'PY'
+import json
+import sys
+
+summary = json.load(open(sys.argv[1]))
+assert len(summary["failures"]) == 1
+assert summary["failures"][0]["exit_code"] == 0
+assert summary["failures"][0]["reason"] == "success_false"
+assert summary["execution_time"] is None
+assert summary["wall_time"] is None
 PY
 
 echo "test-peekaboo-perf: ok"
