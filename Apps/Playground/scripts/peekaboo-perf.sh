@@ -254,6 +254,19 @@ allow_failures = os.environ["PEEKABOO_PERF_ALLOW_FAILURES"] == "1"
 command_args = json.loads(os.environ["PEEKABOO_PERF_COMMAND_ARGS_JSON"])
 
 
+def display_path(path):
+    raw = Path(path)
+    try:
+        return str(raw.resolve().relative_to(Path.cwd().resolve()))
+    except Exception:
+        return str(raw)
+
+
+def display_pattern(phase):
+    root = display_path(log_root)
+    return f"{root}/{timestamp}-{name}-{phase}-*.json"
+
+
 def percentile(sorted_values, pct):
     if not sorted_values:
         return None
@@ -308,9 +321,9 @@ def collect(payloads):
         data = payload.get("data", {}) or {}
         exit_code = int(data.get("exit_code", 0))
         if exit_code != 0:
-            failures.append({"path": path, "exit_code": exit_code, "reason": "exit_code"})
+            failures.append({"path": display_path(path), "exit_code": exit_code, "reason": "exit_code"})
         elif payload.get("success") is False:
-            failures.append({"path": path, "exit_code": exit_code, "reason": "success_false"})
+            failures.append({"path": display_path(path), "exit_code": exit_code, "reason": "success_false"})
 
         exec_time = data.get("execution_time")
         if exec_time is None:
@@ -340,8 +353,8 @@ summary = {
     "command": command_args,
     "run_count": int(os.environ["PEEKABOO_PERF_RUNS"]),
     "warmup_count": int(os.environ["PEEKABOO_PERF_WARMUPS"]),
-    "measured_pattern": f"{log_root}/{timestamp}-{name}-run-*.json",
-    "warmup_pattern": f"{log_root}/{timestamp}-{name}-warmup-*.json",
+    "measured_pattern": display_pattern("run"),
+    "warmup_pattern": display_pattern("warmup"),
     "execution_time": stats(execution_times),
     "wall_time": stats(wall_times),
     "failures": failures,
