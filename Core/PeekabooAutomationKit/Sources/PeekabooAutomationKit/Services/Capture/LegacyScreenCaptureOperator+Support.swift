@@ -85,24 +85,41 @@ extension LegacyScreenCaptureOperator {
                 reason: "Window \(windowID) is not in ScreenCaptureKit shareable content " +
                     "(it may be minimized, off-screen, or on another Space)")
         }
-        guard let display = content.displays.first(where: { $0.frame.intersects(scWindow.frame) }) else {
+
+        let displayFrames = content.displays.map(\.frame)
+        let match = ScreenCapturePlanner.matchDisplay(
+            windowFrame: scWindow.frame,
+            displayFrames: displayFrames)
+
+        let mappedDisplay: SCDisplay?
+        let scaleSourceDisplay: SCDisplay
+        switch match {
+        case .noDisplays:
             throw OperationError.captureFailed(
-                reason: "Window \(windowID) is not on any available display")
+                reason: "No displays available for window \(windowID) capture")
+        case .mapped(let index):
+            mappedDisplay = content.displays[index]
+            scaleSourceDisplay = content.displays[index]
+        case .unmapped(let fallbackIndex):
+            mappedDisplay = nil
+            scaleSourceDisplay = content.displays[fallbackIndex]
+            self.logger.warning(
+                "Window does not map to any enumerated display; using desktop-independent capture filter",
+                metadata: [
+                    "windowID": windowID,
+                    "windowFrame": "\(scWindow.frame)",
+                    "displayCount": content.displays.count,
+                ],
+                correlationId: correlationId)
         }
 
         let nativeScale = ScreenCaptureScaleResolver.plan(
             preference: .native,
-            displayID: display.displayID,
-            fallbackPixelWidth: display.width,
-            frameWidth: display.frame.width).nativeScale
+            displayID: scaleSourceDisplay.displayID,
+            fallbackPixelWidth: scaleSourceDisplay.width,
+            frameWidth: scaleSourceDisplay.frame.width).nativeScale
 
-        let filter = SCContentFilter(display: display, including: [scWindow])
         let config = self.makeScreenshotConfiguration()
-        // Display-bound filters expect display-local geometry. This mirrors the reliable modern path and keeps
-        // single-shot captures crisp without relying on the obsolete CoreGraphics window API.
-        config.sourceRect = ScreenCapturePlanner.displayLocalSourceRect(
-            globalRect: scWindow.frame,
-            displayFrame: display.frame)
         config.width = max(Int(scWindow.frame.width * nativeScale), 1)
         config.height = max(Int(scWindow.frame.height * nativeScale), 1)
         config.captureResolution = .best
@@ -111,13 +128,28 @@ extension LegacyScreenCaptureOperator {
             config.includeChildWindows = false
         }
 
-        self.logger.debug(
-            "Capturing window via display-bound SCScreenshotManager",
-            metadata: [
-                "windowID": windowID,
-                "displayID": display.displayID,
-            ],
-            correlationId: correlationId)
+        let filter: SCContentFilter
+        if let display = mappedDisplay {
+            filter = SCContentFilter(display: display, including: [scWindow])
+            // Display-bound filters expect display-local geometry. This mirrors the reliable modern path and keeps
+            // single-shot captures crisp without relying on the obsolete CoreGraphics window API.
+            config.sourceRect = ScreenCapturePlanner.displayLocalSourceRect(
+                globalRect: scWindow.frame,
+                displayFrame: display.frame)
+            self.logger.debug(
+                "Capturing window via display-bound SCScreenshotManager",
+                metadata: [
+                    "windowID": windowID,
+                    "displayID": display.displayID,
+                ],
+                correlationId: correlationId)
+        } else {
+            filter = SCContentFilter(desktopIndependentWindow: scWindow)
+            self.logger.debug(
+                "Capturing window via desktop-independent SCScreenshotManager filter",
+                metadata: ["windowID": windowID],
+                correlationId: correlationId)
+        }
 
         return try await ScreenCaptureKitCaptureGate.captureImage(
             contentFilter: filter,

@@ -62,6 +62,36 @@ extension ScreenCaptureKitOperator {
     }
 
     func display(for window: SCWindow, displays: [SCDisplay]) -> SCDisplay? {
-        displays.first(where: { $0.frame.intersects(window.frame) })
+        let match = ScreenCapturePlanner.matchDisplay(
+            windowFrame: window.frame,
+            displayFrames: displays.map(\.frame))
+        switch match {
+        case .mapped(let index):
+            return displays[index]
+        case .unmapped, .noDisplays:
+            return nil
+        }
+    }
+
+    /// Resolve a display for window capture, returning both the chosen display and whether the
+    /// window cleanly maps to that display. When the window does not map to any enumerated
+    /// display (multi-display setups with partial enumeration, dormant displays, degenerate
+    /// window frames), callers should construct a desktop-independent capture filter rather than
+    /// throwing — the returned display is still useful for scale and metadata purposes.
+    func resolveDisplayForWindow(
+        _ window: SCWindow,
+        displays: [SCDisplay]) -> (display: SCDisplay, isMapped: Bool)?
+    {
+        let match = ScreenCapturePlanner.matchDisplay(
+            windowFrame: window.frame,
+            displayFrames: displays.map(\.frame))
+        switch match {
+        case .mapped(let index):
+            return (displays[index], true)
+        case .unmapped(let fallbackIndex):
+            return (displays[fallbackIndex], false)
+        case .noDisplays:
+            return nil
+        }
     }
 }
