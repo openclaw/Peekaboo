@@ -7,7 +7,9 @@ read_when:
 
 # Platform support
 
-This page collects Peekaboo's public platform requirements so install, build, and release docs do not drift.
+This page collects the platform requirements surfaced by Peekaboo's package, project, CI, and install metadata so
+install, build, and release docs do not drift. It is descriptive, not an additional guarantee that every listed
+combination is continuously tested.
 
 | Surface | Minimum | Notes |
 | --- | --- | --- |

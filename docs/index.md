@@ -33,7 +33,7 @@ Peekaboo is a macOS automation toolkit for humans and agents. It captures pixels
 - **[Command reference](cli-command-reference.md)** — every CLI command, grouped.
 - **[Command index](commands/README.md)** — one page per command with flags and examples.
 - **[Architecture](ARCHITECTURE.md)** — Core, CLI, Bridge, Daemon, Visualizer.
-- **[AI providers](providers.md)** — source-of-truth model/provider list and credential reference.
+- **[AI providers](providers.md)** — current model/provider and credential reference.
 - **[Releasing](RELEASING.md)** — versioning, signing, distribution.
 
 ## Surfaces
