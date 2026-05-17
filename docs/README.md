@@ -8,7 +8,7 @@ read_when:
 # Documentation map
 
 - **Commands** — `commands/README.md` plus one page per CLI command.
-- **Providers** — `providers.md` for the source-of-truth provider list; `providers/README.md` for deep links.
+- **Providers** — `providers.md` for the central provider list; `providers/README.md` for deep links.
 - **Architecture & specs** — `ARCHITECTURE.md`, `spec.md`, `module-architecture-refactoring.md`, `service-api-reference.md`.
 - **Testing & QA** — `testing/` plans and manual guides, `reports/` results.
 - **References** — `references/` for external API reference excerpts (e.g., Swift toolchain/testing).

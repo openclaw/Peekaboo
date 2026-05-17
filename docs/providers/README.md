@@ -14,7 +14,7 @@ read_when:
 - **Grok** — `grok.md`: Grok 4 implementation guide and checkpoints.
 - **Ollama** — `ollama.md`: local model configuration; `ollama-models.md` for model catalog notes.
 
-Use [`docs/providers.md`](../providers.md) as the source of truth for the user-facing provider list,
+Use [`docs/providers.md`](../providers.md) as the central reference for the user-facing provider list,
 configuration syntax, and environment variable reference.
 
 ## Capability quick-compare

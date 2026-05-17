@@ -14,7 +14,7 @@ read_when:
 - Node.js 22+ (Corepack-enabled) — only needed for pnpm helper scripts; core Swift builds do not require Node.
 - pnpm (`corepack enable pnpm`)
 
-See [platform-support.md](platform-support.md) for the canonical support matrix across released binaries, apps,
+See [platform-support.md](platform-support.md) for the support matrix across released binaries, apps,
 Swift packages, source builds, and pnpm helper scripts.
 
 ## Common Builds

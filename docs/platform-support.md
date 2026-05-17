@@ -1,5 +1,5 @@
 ---
-summary: 'Canonical support matrix for Peekaboo macOS, Swift, Xcode, and Node requirements.'
+summary: 'Reference matrix for Peekaboo macOS, Swift, Xcode, and Node requirements.'
 read_when:
   - 'checking whether a macOS version or toolchain can run Peekaboo'
   - 'updating install, build, release, or package compatibility docs'
@@ -7,7 +7,7 @@ read_when:
 
 # Platform support
 
-This page is the source of truth for Peekaboo's public platform requirements.
+This page collects Peekaboo's public platform requirements so install, build, and release docs do not drift.
 
 | Surface | Minimum | Notes |
 | --- | --- | --- |
@@ -17,4 +17,4 @@ This page is the source of truth for Peekaboo's public platform requirements.
 | Source builds | macOS 15.0+, Xcode 16.4+ / Swift 6.2 | Newer macOS/Xcode versions are used by maintainers and CI, but they are not the public minimum unless a specific build path says so. |
 | pnpm helper scripts | Node.js 22+ | Required for docs/build/release helper scripts and for the npm MCP wrapper. Core Swift builds do not require Node. |
 
-If a doc mentions platform support, link back here instead of restating a separate compatibility matrix.
+If a doc mentions platform support, prefer linking back here instead of restating a separate compatibility matrix.

@@ -82,7 +82,7 @@ let model = try provider.getModel("gpt-4.1")
 
 #### AIModelFactory
 - **Role**: Factory methods for creating model instances
-- **Supported Providers**: See [providers.md](providers.md) for the current source of truth
+- **Supported Providers**: See [providers.md](providers.md) for the current provider reference
 - **Configuration**: Handles API keys, base URLs, and model-specific parameters
 
 #### AIConfiguration

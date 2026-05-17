@@ -13,7 +13,7 @@ Peekaboo's agent runtime is provider-agnostic — it talks to any chat-completio
 
 ## Supported providers
 
-This table is the source of truth for user-facing provider docs. Link here from architecture, install, and README
+This table is the central reference for user-facing provider docs. Link here from architecture, install, and README
 pages instead of duplicating provider lists in multiple places.
 
 | Provider | Models we test | Credential |

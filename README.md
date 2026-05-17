@@ -122,7 +122,7 @@ For persistent setup and troubleshooting, see
 ## Models and providers
 
 Peekaboo's provider list changes with Tachikoma and the tested model catalog. See
-[docs/providers.md](docs/providers.md) for the current source of truth, including OpenAI, Anthropic, xAI/Grok,
+[docs/providers.md](docs/providers.md) for the current provider reference, including OpenAI, Anthropic, xAI/Grok,
 Google Gemini, MiniMax, Ollama, LM Studio, and compatible custom endpoints.
 
 Set providers via `PEEKABOO_AI_PROVIDERS` or `peekaboo config add`.
