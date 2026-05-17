@@ -15,7 +15,7 @@ public struct ClickTool: MCPTool {
     public var description: String {
         """
         Clicks on UI elements or coordinates.
-        Supports element queries, specific IDs from see command, or raw coordinates.
+        Supports element queries, specific IDs from `see` or `inspect_ui`, or raw coordinates.
         Includes smart waiting for elements to become actionable.
         \(PeekabooMCPVersion.banner) using openai/gpt-5.5, anthropic/claude-opus-4-7
         """
@@ -30,7 +30,7 @@ public struct ClickTool: MCPTool {
                     """),
                 "on": SchemaBuilder.string(
                     description: """
-                    Optional. Element ID to click (e.g., B1, T2) from see command output.
+                    Optional. Element ID to click (e.g., B1, T2) from `see` or `inspect_ui` output.
                     """),
                 "coords": SchemaBuilder.string(
                     description: """
@@ -38,7 +38,7 @@ public struct ClickTool: MCPTool {
                     """),
                 "snapshot": SchemaBuilder.string(
                     description: """
-                    Optional. Snapshot ID from see command. Uses latest snapshot if not specified.
+                    Optional. Snapshot ID from `see` or `inspect_ui`. Uses latest snapshot if not specified.
                     """),
                 "wait_for": SchemaBuilder.number(
                     description: """
@@ -252,7 +252,7 @@ public struct ClickTool: MCPTool {
 
     private func requireSnapshot(id: String?) async throws -> UISnapshot {
         guard let snapshot = await self.getSnapshot(id: id) else {
-            throw ClickToolError("No active snapshot. Run 'see' command first to capture UI state.")
+            throw ClickToolError("No active snapshot. Run 'see' or 'inspect_ui' first to capture UI state.")
         }
         return snapshot
     }
@@ -260,7 +260,7 @@ public struct ClickTool: MCPTool {
     private func requireElement(id: String, snapshot: UISnapshot) async throws -> UIElement {
         guard let element = await snapshot.getElement(byId: id) else {
             throw ClickToolError(
-                "Element '\(id)' not found in current snapshot. Run 'see' command to update UI state.")
+                "Element '\(id)' not found in current snapshot. Run 'see' or 'inspect_ui' to update UI state.")
         }
         return element
     }

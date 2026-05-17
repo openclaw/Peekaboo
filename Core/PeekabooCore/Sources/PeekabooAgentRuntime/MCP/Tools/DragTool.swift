@@ -34,7 +34,8 @@ public struct DragTool: MCPTool {
                 "to_app": SchemaBuilder.string(
                     description: "Optional. Target application name when dragging between apps"),
                 "snapshot": SchemaBuilder.string(
-                    description: "Optional. Snapshot ID from see command. Uses latest snapshot if not specified"),
+                    description: "Optional. Snapshot ID from `see` or `inspect_ui`. " +
+                        "Uses latest snapshot if not specified"),
                 "duration": SchemaBuilder.number(
                     description: "Optional. Duration in milliseconds (default: 500)",
                     default: 500),

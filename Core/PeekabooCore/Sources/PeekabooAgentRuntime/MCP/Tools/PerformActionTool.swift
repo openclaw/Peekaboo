@@ -14,7 +14,7 @@ public struct PerformActionTool: MCPTool {
     public var description: String {
         """
         Invokes a named accessibility action on an element, such as AXPress or AXShowMenu.
-        Use with element IDs from see when a semantic action is available.
+        Use with element IDs from `see` or `inspect_ui` when a semantic action is available.
         \(PeekabooMCPVersion.banner) using openai/gpt-5.5, anthropic/claude-opus-4-7
         """
     }
@@ -23,11 +23,12 @@ public struct PerformActionTool: MCPTool {
         SchemaBuilder.object(
             properties: [
                 "on": SchemaBuilder.string(
-                    description: "Element ID from see output, such as B1, or a query string."),
+                    description: "Element ID from `see` or `inspect_ui` output, such as B1, or a query string."),
                 "action": SchemaBuilder.string(
                     description: "Accessibility action name to invoke, e.g. AXPress, AXShowMenu, AXIncrement."),
                 "snapshot": SchemaBuilder.string(
-                    description: "Optional. Snapshot ID from see command. Uses latest snapshot if not specified."),
+                    description: "Optional. Snapshot ID from `see` or `inspect_ui`. " +
+                        "Uses latest snapshot if not specified."),
             ],
             required: ["on", "action"])
     }
@@ -68,7 +69,8 @@ public struct PerformActionTool: MCPTool {
     private func effectiveSnapshotId(_ requestedSnapshotId: String?) async throws -> String? {
         if let requestedSnapshotId {
             guard let snapshot = await UISnapshotManager.shared.getSnapshot(id: requestedSnapshotId) else {
-                throw PerformActionToolError("Snapshot '\(requestedSnapshotId)' not found. Run 'see' again.")
+                throw PerformActionToolError(
+                    "Snapshot '\(requestedSnapshotId)' not found. Run 'see' or 'inspect_ui' again.")
             }
             return snapshot.id
         }

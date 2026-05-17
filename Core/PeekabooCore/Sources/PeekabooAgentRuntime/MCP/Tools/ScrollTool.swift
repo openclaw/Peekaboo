@@ -31,10 +31,11 @@ public struct ScrollTool: MCPTool {
                     description: "Scroll direction: up (content moves up), down (content moves down), left, or right.",
                     enum: ["up", "down", "left", "right"]),
                 "on": SchemaBuilder.string(
-                    description: "Optional. Element ID to scroll on (from see command). " +
+                    description: "Optional. Element ID to scroll on (from `see` or `inspect_ui`). " +
                         "If not specified, scrolls at current mouse position."),
                 "snapshot": SchemaBuilder.string(
-                    description: "Optional. Snapshot ID from see command. Uses latest snapshot if not specified."),
+                    description: "Optional. Snapshot ID from `see` or `inspect_ui`. " +
+                        "Uses latest snapshot if not specified."),
                 "amount": SchemaBuilder.number(
                     description: "Optional. Number of scroll ticks/lines. Default: 3.",
                     default: 3),
@@ -160,12 +161,12 @@ public struct ScrollTool: MCPTool {
         }
 
         guard let snapshot = await self.getSnapshot(id: request.snapshotId) else {
-            throw ScrollToolValidationError("No active snapshot. Run 'see' command first to capture UI state.")
+            throw ScrollToolValidationError("No active snapshot. Run 'see' or 'inspect_ui' first to capture UI state.")
         }
 
         guard let element = await snapshot.getElement(byId: elementId) else {
             throw ScrollToolValidationError(
-                "Element '\(elementId)' not found in current snapshot. Run 'see' command to update UI state.")
+                "Element '\(elementId)' not found in current snapshot. Run 'see' or 'inspect_ui' to update UI state.")
         }
 
         let label = element.title ?? element.label ?? "untitled"

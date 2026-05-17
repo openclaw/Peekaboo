@@ -13,7 +13,8 @@ extension DragTool {
             return DragPointDescription(point: point, description: "(\(Int(point.x)), \(Int(point.y)))")
         case let .element(query):
             guard let snapshot = await self.getSnapshot(id: snapshotId) else {
-                throw CoordinateParseError(message: "No active snapshot. Run 'see' command first to capture UI state.")
+                throw CoordinateParseError(
+                    message: "No active snapshot. Run 'see' or 'inspect_ui' first to capture UI state.")
             }
             if let element = await snapshot.getElement(byId: query) {
                 return DragPointDescription(

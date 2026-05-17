@@ -28,10 +28,11 @@ public struct TypeTool: MCPTool {
                 "text": SchemaBuilder.string(
                     description: "The text to type. If not specified, can use special key flags instead."),
                 "on": SchemaBuilder.string(
-                    description: "Optional. Element ID to type into (from see command). " +
+                    description: "Optional. Element ID to type into (from `see` or `inspect_ui`). " +
                         "If not specified, types at current focus."),
                 "snapshot": SchemaBuilder.string(
-                    description: "Optional. Snapshot ID from see command. Uses latest snapshot if not specified."),
+                    description: "Optional. Snapshot ID from `see` or `inspect_ui`. " +
+                        "Uses latest snapshot if not specified."),
                 "delay": SchemaBuilder.number(
                     description: "Optional. Delay between keystrokes in milliseconds (linear profile). Default: 5.",
                     default: 5),
@@ -178,12 +179,12 @@ public struct TypeTool: MCPTool {
     private func resolveTargetContext(for request: TypeRequest) async throws -> TargetElementContext? {
         guard let elementId = request.elementId else { return nil }
         guard let snapshot = await self.getSnapshot(id: request.snapshotId) else {
-            throw TypeToolValidationError("No active snapshot. Run 'see' command first to capture UI state.")
+            throw TypeToolValidationError("No active snapshot. Run 'see' or 'inspect_ui' first to capture UI state.")
         }
 
         guard let element = await snapshot.getElement(byId: elementId) else {
             throw TypeToolValidationError(
-                "Element '\(elementId)' not found in current snapshot. Run 'see' command to update UI state.")
+                "Element '\(elementId)' not found in current snapshot. Run 'see' or 'inspect_ui' to update UI state.")
         }
 
         return TargetElementContext(snapshot: snapshot, element: element)

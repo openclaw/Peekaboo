@@ -64,4 +64,35 @@ struct AgentSystemPromptTests {
             prompt.contains(#""item_type": "application_windows", "app": "Safari""#),
             "Prompt should include the required `app` argument when listing application windows.")
     }
+
+    @Test
+    func `generated prompt routes observation by target surface`() {
+        guard #available(macOS 14.0, *) else { return }
+        let prompt = AgentSystemPrompt.generate()
+
+        #expect(prompt.contains("observation tool appropriate to the target surface"))
+        #expect(prompt.contains("Use `browser` for Chrome page content"))
+        #expect(prompt.contains("Use `inspect_ui` for native macOS UI text"))
+        #expect(prompt.contains("Use `see` for desktop/app screenshots"))
+    }
+
+    @Test
+    func `generated prompt no longer forces see as the first observation tool`() {
+        guard #available(macOS 14.0, *) else { return }
+        let prompt = AgentSystemPrompt.generate()
+
+        #expect(!prompt.contains("Screenshots → always use `see`"))
+        #expect(!prompt.contains("Start with the `see` tool"))
+        #expect(!prompt.contains("First call `see`"))
+    }
+
+    @Test
+    func `generated prompt preserves see for visual observations`() {
+        guard #available(macOS 14.0, *) else { return }
+        let prompt = AgentSystemPrompt.generate()
+
+        #expect(prompt.contains("visual layout"))
+        #expect(prompt.contains("pixels"))
+        #expect(prompt.contains("accessibility text is missing or incomplete"))
+    }
 }

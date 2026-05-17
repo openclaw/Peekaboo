@@ -117,6 +117,35 @@ struct AgentToolDescriptionTests {
 
     @Test
     @MainActor
+    func `Agent interaction tool schemas accept snapshots from see or inspect ui`() throws {
+        let service = try PeekabooAgentService(services: PeekabooServices())
+        let tools = service.createAgentTools()
+        let interactionToolNames = Set(["click", "type", "set_value", "perform_action", "scroll", "drag", "move"])
+        let stalePhrases = [
+            "from see command",
+            "from see output",
+            "Run 'see' command",
+            "Run 'see' again",
+        ]
+
+        for tool in tools where interactionToolNames.contains(tool.name) {
+            let parameterDescriptions = tool.parameters.properties.values.map(\.description)
+            let guidance = ([tool.description] + parameterDescriptions).joined(separator: "\n")
+
+            #expect(
+                guidance.contains("inspect_ui"),
+                "Tool '\(tool.name)' should mention that `inspect_ui` snapshots/IDs are valid.")
+
+            for phrase in stalePhrases {
+                #expect(
+                    !guidance.contains(phrase),
+                    "Tool '\(tool.name)' still implies only `see` can provide snapshots/IDs: \(phrase)")
+            }
+        }
+    }
+
+    @Test
+    @MainActor
     func `Shell tool has quoting examples`() {
         guard let shellTool = makeAgentTools().first(where: { $0.name == "shell" }) else {
             Issue.record("Shell tool not found")

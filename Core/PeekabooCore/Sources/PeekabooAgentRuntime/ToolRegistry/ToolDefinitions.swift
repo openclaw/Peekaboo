@@ -62,7 +62,7 @@ public enum UIAutomationToolDefinitions {
         abstract: "Click on UI elements or coordinates",
         discussion: """
         Clicks on UI elements or coordinates. Supports element queries,
-        specific IDs from see command, or raw coordinates.
+        specific IDs from `see` or `inspect_ui`, or raw coordinates.
         """,
         category: .ui,
         parameters: [
@@ -74,7 +74,7 @@ public enum UIAutomationToolDefinitions {
             ParameterDefinition(
                 name: "on",
                 type: .string,
-                description: "Element ID to click (e.g., B1, T2) from see command output",
+                description: "Element ID to click (e.g., B1, T2) from `see` or `inspect_ui` output",
                 required: false),
             ParameterDefinition(
                 name: "coords",
@@ -94,7 +94,7 @@ public enum UIAutomationToolDefinitions {
             ParameterDefinition(
                 name: "session",
                 type: .string,
-                description: "Session ID from see command",
+                description: "Snapshot/session state identifier from a prior UI observation",
                 required: false),
             ParameterDefinition(
                 name: "waitFor",

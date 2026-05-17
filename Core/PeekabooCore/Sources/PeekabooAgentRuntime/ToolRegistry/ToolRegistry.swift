@@ -41,13 +41,13 @@ public enum ToolRegistry {
                 "peekaboo see --app Safari --path ~/Shots/safari.png --annotate",
                 "peekaboo see --mode screen --json",
             ],
-            agentGuidance: "Run `see` whenever you need fresh element IDs; the response " +
-                "contains snapshot ids and absolute coordinates."),
+            agentGuidance: "Run `inspect_ui` for AX-only element IDs, or `see` when a screenshot/visual " +
+                "element map is needed; both responses contain snapshot ids."),
         "click": ToolOverride(
             category: .automation,
             abstract: "High-precision UI clicking with fuzzy matching and snapshot-aware targeting.",
             discussion: """
-            Clicks on UI elements or coordinates. Supports IDs from the `see` command,
+            Clicks on UI elements or coordinates. Supports IDs from `see` or `inspect_ui`,
             fuzzy text queries, or raw coordinates.
 
             ELEMENT MATCHING
@@ -60,8 +60,8 @@ public enum ToolRegistry {
             peekaboo click --on B2 --space-switch
 
             TROUBLESHOOTING
-            If the element isn't found, re-run `peekaboo see` to refresh the snapshot,
-            or provide a more precise query (like an ID or coordinates).
+            If the element isn't found, refresh the snapshot with a fresh observation (`peekaboo see`
+            in CLI, or `see`/`inspect_ui` in MCP), or provide a more precise query.
             """,
             examples: [
                 "peekaboo click \"Submit\"",

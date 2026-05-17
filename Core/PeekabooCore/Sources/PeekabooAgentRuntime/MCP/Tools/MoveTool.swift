@@ -29,9 +29,10 @@ public struct MoveTool: MCPTool {
                 "coordinates": SchemaBuilder.string(
                     description: "Optional. Alias for 'to' - coordinates in format 'x,y' (e.g., '100,200')."),
                 "id": SchemaBuilder.string(
-                    description: "Optional. Element ID to move to (from see command output)."),
+                    description: "Optional. Element ID to move to (from `see` or `inspect_ui` output)."),
                 "snapshot": SchemaBuilder.string(
-                    description: "Optional. Snapshot ID from see command. Uses latest snapshot if not specified."),
+                    description: "Optional. Snapshot ID from `see` or `inspect_ui`. " +
+                        "Uses latest snapshot if not specified."),
                 "center": SchemaBuilder.boolean(
                     description: "Optional. Move to center of screen.",
                     default: false),

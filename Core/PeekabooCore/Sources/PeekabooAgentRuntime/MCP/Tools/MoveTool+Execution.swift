@@ -30,11 +30,13 @@ extension MoveTool {
             return ResolvedMoveTarget(location: location, description: summary)
         case let .element(elementId):
             guard let snapshot = await self.getSnapshot(id: request.snapshotId) else {
-                throw MoveToolValidationError("No active snapshot. Run 'see' command first to capture UI state.")
+                throw MoveToolValidationError(
+                    "No active snapshot. Run 'see' or 'inspect_ui' first to capture UI state.")
             }
             guard let element = await snapshot.getElement(byId: elementId) else {
                 throw MoveToolValidationError(
-                    "Element '\(elementId)' not found in current snapshot. Run 'see' command to update UI state.")
+                    "Element '\(elementId)' not found in current snapshot. " +
+                        "Run 'see' or 'inspect_ui' to update UI state.")
             }
             let location = CGPoint(x: element.frame.midX, y: element.frame.midY)
             let label = element.title ?? element.label ?? "untitled"

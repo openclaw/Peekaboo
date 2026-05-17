@@ -14,7 +14,7 @@ public struct SetValueTool: MCPTool {
     public var description: String {
         """
         Sets an accessibility element value directly without synthesizing keystrokes.
-        Use for forms and controls after see returns an element ID. Requires a settable AX value.
+        Use for forms and controls after `see` or `inspect_ui` returns an element ID. Requires a settable AX value.
         \(PeekabooMCPVersion.banner) using openai/gpt-5.5, anthropic/claude-opus-4-7
         """
     }
@@ -23,7 +23,7 @@ public struct SetValueTool: MCPTool {
         SchemaBuilder.object(
             properties: [
                 "on": SchemaBuilder.string(
-                    description: "Element ID from see output, such as T1, or a query string."),
+                    description: "Element ID from `see` or `inspect_ui` output, such as T1, or a query string."),
                 "value": SchemaBuilder.anyOf(
                     [
                         SchemaBuilder.string(),
@@ -33,7 +33,8 @@ public struct SetValueTool: MCPTool {
                     ],
                     description: "Value to set. Supported types: string, boolean, integer, or number."),
                 "snapshot": SchemaBuilder.string(
-                    description: "Optional. Snapshot ID from see command. Uses latest snapshot if not specified."),
+                    description: "Optional. Snapshot ID from `see` or `inspect_ui`. " +
+                        "Uses latest snapshot if not specified."),
             ],
             required: ["on", "value"])
     }
@@ -74,7 +75,7 @@ public struct SetValueTool: MCPTool {
     private func effectiveSnapshotId(_ requestedSnapshotId: String?) async throws -> String? {
         if let requestedSnapshotId {
             guard let snapshot = await UISnapshotManager.shared.getSnapshot(id: requestedSnapshotId) else {
-                throw SetValueToolError("Snapshot '\(requestedSnapshotId)' not found. Run 'see' again.")
+                throw SetValueToolError("Snapshot '\(requestedSnapshotId)' not found. Run 'see' or 'inspect_ui' again.")
             }
             return snapshot.id
         }
