@@ -144,7 +144,7 @@ public struct ScrollTool: MCPTool {
         var baseMeta: [String: Value] = [:]
         if let invalidatedSnapshotId {
             baseMeta["invalidated_snapshot"] = .string(invalidatedSnapshotId)
-            baseMeta["requires_fresh_see"] = .bool(true)
+            baseMeta["requires_fresh_observation"] = .bool(true)
         }
         let meta = baseMeta.isEmpty ? nil : Value.object(baseMeta)
         return ToolResponse.text(message, meta: ToolEventSummary.merge(summary: summary, into: meta))

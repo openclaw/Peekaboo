@@ -486,6 +486,8 @@ struct MCPToolExecutionTests {
         }
         let invalidated = await UISnapshotManager.shared.getSnapshot(id: snapshotId)
         #expect(invalidated == nil)
+        #expect(MCPResponseMeta.requiresFreshObservation(response))
+        #expect(!MCPResponseMeta.hasRequiresFreshSee(response))
     }
 
     @Test
@@ -518,6 +520,8 @@ struct MCPToolExecutionTests {
         #expect(calls.first?.snapshotId == snapshotId)
         let invalidated = await UISnapshotManager.shared.getSnapshot(id: snapshotId)
         #expect(invalidated == nil)
+        #expect(MCPResponseMeta.requiresFreshObservation(response))
+        #expect(!MCPResponseMeta.hasRequiresFreshSee(response))
     }
 
     @Test
@@ -660,6 +664,8 @@ struct MCPToolExecutionTests {
         let stillLatest = await UISnapshotManager.shared.getSnapshot(id: latestSnapshotId)
         #expect(invalidated == nil)
         #expect(stillLatest != nil)
+        #expect(MCPResponseMeta.requiresFreshObservation(response))
+        #expect(!MCPResponseMeta.hasRequiresFreshSee(response))
     }
 
     @Test
@@ -718,6 +724,8 @@ struct MCPToolExecutionTests {
         #expect(typeSnapshotId == nil)
         let invalidated = await UISnapshotManager.shared.getSnapshot(id: snapshotId)
         #expect(invalidated == nil)
+        #expect(MCPResponseMeta.requiresFreshObservation(response))
+        #expect(!MCPResponseMeta.hasRequiresFreshSee(response))
     }
 
     @Test
@@ -743,6 +751,8 @@ struct MCPToolExecutionTests {
         let stillLatest = await UISnapshotManager.shared.getSnapshot(id: latestSnapshotId)
         #expect(invalidated == nil)
         #expect(stillLatest != nil)
+        #expect(MCPResponseMeta.requiresFreshObservation(response))
+        #expect(!MCPResponseMeta.hasRequiresFreshSee(response))
     }
 
     @Test
@@ -761,6 +771,8 @@ struct MCPToolExecutionTests {
         #expect(requests.first?.snapshotId == nil)
         let invalidated = await UISnapshotManager.shared.getSnapshot(id: snapshotId)
         #expect(invalidated == nil)
+        #expect(MCPResponseMeta.requiresFreshObservation(response))
+        #expect(!MCPResponseMeta.hasRequiresFreshSee(response))
     }
 
     @Test
@@ -786,6 +798,8 @@ struct MCPToolExecutionTests {
         let stillLatest = await UISnapshotManager.shared.getSnapshot(id: latestSnapshotId)
         #expect(invalidated == nil)
         #expect(stillLatest != nil)
+        #expect(MCPResponseMeta.requiresFreshObservation(response))
+        #expect(!MCPResponseMeta.hasRequiresFreshSee(response))
     }
 
     @Test
@@ -898,6 +912,8 @@ struct MCPElementActionToolExecutionTests {
         #expect(call?.snapshotId == snapshotId)
         let invalidated = await UISnapshotManager.shared.getSnapshot(id: snapshotId)
         #expect(invalidated == nil)
+        #expect(MCPResponseMeta.requiresFreshObservation(response))
+        #expect(!MCPResponseMeta.hasRequiresFreshSee(response))
     }
 
     @Test
@@ -918,6 +934,8 @@ struct MCPElementActionToolExecutionTests {
         #expect(call?.snapshotId == snapshotId)
         let invalidated = await UISnapshotManager.shared.getSnapshot(id: snapshotId)
         #expect(invalidated == nil)
+        #expect(MCPResponseMeta.requiresFreshObservation(response))
+        #expect(!MCPResponseMeta.hasRequiresFreshSee(response))
     }
 
     @Test
@@ -944,10 +962,28 @@ struct MCPElementActionToolExecutionTests {
         #expect(call?.snapshotId == snapshotId)
         let invalidated = await UISnapshotManager.shared.getSnapshot(id: snapshotId)
         #expect(invalidated == nil)
+        #expect(MCPResponseMeta.requiresFreshObservation(response))
+        #expect(!MCPResponseMeta.hasRequiresFreshSee(response))
     }
 }
 
 // MARK: - Test Helpers
+
+private enum MCPResponseMeta {
+    static func requiresFreshObservation(_ response: ToolResponse) -> Bool {
+        guard case let .object(meta) = response.meta,
+              case .bool(true)? = meta["requires_fresh_observation"]
+        else {
+            return false
+        }
+        return true
+    }
+
+    static func hasRequiresFreshSee(_ response: ToolResponse) -> Bool {
+        guard case let .object(meta) = response.meta else { return false }
+        return meta["requires_fresh_see"] != nil
+    }
+}
 
 private enum MCPToolTestHelpers {
     static func makeContext(

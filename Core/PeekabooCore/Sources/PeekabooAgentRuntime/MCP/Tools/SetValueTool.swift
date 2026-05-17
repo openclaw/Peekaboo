@@ -115,7 +115,7 @@ public struct SetValueTool: MCPTool {
         }
         if let invalidatedSnapshotId {
             meta["invalidated_snapshot"] = .string(invalidatedSnapshotId)
-            meta["requires_fresh_see"] = .bool(true)
+            meta["requires_fresh_observation"] = .bool(true)
         }
 
         return ToolResponse.text(message, meta: .object(meta))

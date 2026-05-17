@@ -146,7 +146,7 @@ public struct TypeTool: MCPTool {
         ]
         if let invalidatedSnapshotId {
             baseMetaDict["invalidated_snapshot"] = .string(invalidatedSnapshotId)
-            baseMetaDict["requires_fresh_see"] = .bool(true)
+            baseMetaDict["requires_fresh_observation"] = .bool(true)
         }
         let baseMeta: Value = .object(baseMetaDict)
         let summary = self.buildEventSummary(

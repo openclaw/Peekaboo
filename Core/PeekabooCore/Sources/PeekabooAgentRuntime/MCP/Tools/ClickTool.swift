@@ -216,7 +216,7 @@ public struct ClickTool: MCPTool {
         ]
         if let invalidatedSnapshotId {
             metaDict["invalidated_snapshot"] = .string(invalidatedSnapshotId)
-            metaDict["requires_fresh_see"] = .bool(true)
+            metaDict["requires_fresh_observation"] = .bool(true)
         }
         if let processId = effectiveTargetProcessIdentifier.map({ Int32($0) }) {
             metaDict["target_pid"] = .double(Double(processId))
