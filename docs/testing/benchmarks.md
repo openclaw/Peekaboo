@@ -19,12 +19,15 @@ when the numbers materially support a performance change.
 
 ## Quick start
 
-Build a debug CLI once:
+Build a CLI once:
 
 ```bash
 pnpm run build:cli
 BIN="$(swift build --package-path Apps/CLI --show-bin-path)/peekaboo"
 ```
+
+Use the same binary for before/after comparisons. Debug and release builds are not comparable; use
+`pnpm run build:cli:release` and the release `peekaboo` path when you need release-build evidence.
 
 Run a UI-free smoke benchmark:
 
@@ -78,7 +81,8 @@ pnpm run benchmark:tools \
 - `wall_time` measures total process/runtime time from the helper's perspective.
 - `execution_time` uses the command's own JSON timing field when the command exposes one.
 - Summaries include `mean_s`, `stddev_s`, `median_s`, `p95_s`, `min_s`, and `max_s`.
-- `warmup` runs are saved but excluded from the reported statistics.
+- `warmup` runs are saved and printed but excluded from reported statistics and failure counts. Measured runs determine
+  the helper's exit status.
 - The default is 10 measured runs and 0 warmups to preserve the older helper behavior. Use 1-3 warmups when
   collecting PR evidence for a code path that benefits from daemon, filesystem, or process warmup.
 - `failures` lists measured runs with non-zero exit codes.

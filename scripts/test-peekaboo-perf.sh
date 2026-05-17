@@ -47,6 +47,37 @@ assert summary["command"] == ["ok", "./private-fixture.json", "--json-output"]
 assert "git_branch" not in summary["environment"]
 PY
 
+PWNED_SUBSHELL="$TMP_DIR/pwned-subshell"
+PWNED_BACKTICK="$TMP_DIR/pwned-backtick"
+"$ROOT/Apps/Playground/scripts/peekaboo-perf.sh" \
+  --name shell-safe \
+  --runs 1 \
+  --log-root "$TMP_DIR/shell-safe" \
+  --bin "$FAKE_BIN" \
+  -- ok \
+  "arg with spaces" \
+  "semi;colon" \
+  "\$(touch $PWNED_SUBSHELL)" \
+  "\`touch $PWNED_BACKTICK\`" \
+  --json-output >/tmp/peekaboo-perf-shell-safe.log
+
+if [[ -e "$PWNED_SUBSHELL" || -e "$PWNED_BACKTICK" ]]; then
+  echo "Benchmark helper executed shell metacharacters from command arguments" >&2
+  exit 1
+fi
+
+SHELL_SAFE_SUMMARY="$(find "$TMP_DIR/shell-safe" -name '*-shell-safe-summary.json' -print -quit)"
+python3 - "$SHELL_SAFE_SUMMARY" <<'PY'
+import json
+import sys
+
+summary = json.load(open(sys.argv[1]))
+assert summary["command"][0:3] == ["ok", "arg with spaces", "semi;colon"]
+assert summary["command"][-1] == "--json-output"
+assert any("$(touch " in arg for arg in summary["command"])
+assert any("`touch " in arg for arg in summary["command"])
+PY
+
 set +e
 "$ROOT/Apps/Playground/scripts/peekaboo-perf.sh" \
   --name failing \
