@@ -305,7 +305,7 @@ def stats(values):
         variance = sum((value - mean) ** 2 for value in values_sorted) / (len(values_sorted) - 1)
         stddev = math.sqrt(variance)
     else:
-        stddev = 0.0
+        stddev = None
     return {
         "n": len(values_sorted),
         "samples_s": values_sorted,
@@ -364,7 +364,6 @@ def collect(payloads):
 
 
 measured_payloads = load_payloads("run")
-warmup_payloads = load_payloads("warmup")
 execution_times, wall_times, failures = collect(measured_payloads)
 
 summary = {

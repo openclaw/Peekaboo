@@ -80,7 +80,8 @@ pnpm run benchmark:tools \
 
 - `wall_time` measures total process/runtime time from the helper's perspective.
 - `execution_time` uses the command's own JSON timing field when the command exposes one.
-- Summaries include `mean_s`, `stddev_s`, `median_s`, `p95_s`, `min_s`, and `max_s`.
+- Summaries include `mean_s`, `stddev_s`, `median_s`, `p95_s`, `min_s`, and `max_s`; `stddev_s` is `null` for
+  a single measured sample.
 - `warmup` runs are saved and printed but excluded from reported statistics and failure counts. Measured runs determine
   the helper's exit status.
 - The default is 10 measured runs and 0 warmups to preserve the older helper behavior. Use 1-3 warmups when

@@ -76,6 +76,10 @@ assert summary["command"][0:3] == ["ok", "arg with spaces", "semi;colon"]
 assert summary["command"][-1] == "--json-output"
 assert any("$(touch " in arg for arg in summary["command"])
 assert any("`touch " in arg for arg in summary["command"])
+assert summary["execution_time"]["n"] == 1
+assert summary["execution_time"]["stddev_s"] is None
+assert summary["wall_time"]["n"] == 1
+assert summary["wall_time"]["stddev_s"] is None
 PY
 
 set +e
