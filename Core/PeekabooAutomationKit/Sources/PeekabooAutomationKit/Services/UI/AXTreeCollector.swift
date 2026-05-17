@@ -324,10 +324,23 @@ struct AXTreeCollector {
 }
 
 extension AXTraversalBudget {
+    /// Returns a budget with each cap clamped to a non-negative value AND overridden by the
+    /// matching env var if one is set (see `AXTraversalPolicy.intFromEnv`):
+    ///   - `PEEKABOO_MAX_TRAVERSAL_DEPTH`
+    ///   - `PEEKABOO_MAX_ELEMENT_COUNT`
+    ///   - `PEEKABOO_MAX_CHILDREN_PER_NODE`
+    ///
+    /// The env override only applies when the env var is present and parseable as a positive
+    /// integer; otherwise the caller-supplied (or default) value flows through unchanged.
+    /// This lets users raise the caps for apps with flat container layouts (e.g. Qt panels
+    /// hosting > 50 sibling widgets) without recompiling.
     var normalizedForTraversal: AXTraversalBudget {
         AXTraversalBudget(
-            maxDepth: max(0, self.maxDepth),
-            maxElementCount: max(0, self.maxElementCount),
-            maxChildrenPerNode: max(0, self.maxChildrenPerNode))
+            maxDepth: AXTraversalPolicy.intFromEnv(
+                "PEEKABOO_MAX_TRAVERSAL_DEPTH", default: max(0, self.maxDepth)),
+            maxElementCount: AXTraversalPolicy.intFromEnv(
+                "PEEKABOO_MAX_ELEMENT_COUNT", default: max(0, self.maxElementCount)),
+            maxChildrenPerNode: AXTraversalPolicy.intFromEnv(
+                "PEEKABOO_MAX_CHILDREN_PER_NODE", default: max(0, self.maxChildrenPerNode)))
     }
 }
