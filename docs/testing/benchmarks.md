@@ -77,6 +77,8 @@ pnpm run benchmark:tools \
 - `warmup` runs are saved but excluded from the reported statistics.
 - `failures` lists measured runs with non-zero exit codes.
 - The helper exits non-zero when measured runs fail unless you pass `--allow-failures`.
+- The summary includes the command arguments after replacing the current checkout path with `.` and `$HOME` with
+  `~`; avoid benchmarking commands with secrets or sensitive local paths if you plan to share the artifacts.
 
 Use p95 for regressions and PR evidence. Avoid hard thresholds in unit tests; command latency depends on host load,
 permissions, active windows, display count, and whether the daemon/Bridge path is warm.

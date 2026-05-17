@@ -254,12 +254,23 @@ allow_failures = os.environ["PEEKABOO_PERF_ALLOW_FAILURES"] == "1"
 command_args = json.loads(os.environ["PEEKABOO_PERF_COMMAND_ARGS_JSON"])
 
 
+def sanitize_text(value):
+    result = str(value)
+    cwd = str(Path.cwd().resolve())
+    home = os.environ.get("HOME")
+    if cwd:
+        result = result.replace(cwd, ".")
+    if home:
+        result = result.replace(home, "~")
+    return result
+
+
 def display_path(path):
     raw = Path(path)
     try:
         return str(raw.resolve().relative_to(Path.cwd().resolve()))
     except Exception:
-        return str(raw)
+        return sanitize_text(raw)
 
 
 def display_pattern(phase):
@@ -350,7 +361,7 @@ summary = {
     "name": name,
     "timestamp": timestamp,
     "binary": os.environ["PEEKABOO_PERF_BIN_NAME"],
-    "command": command_args,
+    "command": [sanitize_text(arg) for arg in command_args],
     "run_count": int(os.environ["PEEKABOO_PERF_RUNS"]),
     "warmup_count": int(os.environ["PEEKABOO_PERF_WARMUPS"]),
     "measured_pattern": display_pattern("run"),
@@ -362,7 +373,6 @@ summary = {
         "platform": platform.platform(),
         "python": platform.python_version(),
         "git_commit": git_value(["rev-parse", "--short", "HEAD"]),
-        "git_branch": git_value(["branch", "--show-current"]),
     },
 }
 

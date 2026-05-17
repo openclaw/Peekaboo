@@ -26,7 +26,7 @@ chmod +x "$FAKE_BIN"
   --warmups 1 \
   --log-root "$TMP_DIR/smoke" \
   --bin "$FAKE_BIN" \
-  -- ok --json-output >/tmp/peekaboo-perf-smoke.log
+  -- ok "$ROOT/private-fixture.json" --json-output >/tmp/peekaboo-perf-smoke.log
 
 SMOKE_SUMMARY="$(find "$TMP_DIR/smoke" -name '*-smoke-summary.json' -print -quit)"
 python3 - "$SMOKE_SUMMARY" <<'PY'
@@ -41,7 +41,8 @@ assert summary["execution_time"]["n"] == 3
 assert summary["wall_time"]["n"] == 3
 assert summary["failures"] == []
 assert summary["binary"] == "fake-peekaboo"
-assert summary["command"] == ["ok", "--json-output"]
+assert summary["command"] == ["ok", "./private-fixture.json", "--json-output"]
+assert "git_branch" not in summary["environment"]
 PY
 
 set +e

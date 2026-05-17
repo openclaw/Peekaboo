@@ -2,9 +2,6 @@
 
 ## [3.2.1] - Unreleased
 
-### Added
-- Added a local `pnpm run benchmark:tools` helper for repeatable command timing summaries without persistent telemetry. Thanks @vyctorbrzezowski.
-
 ### Fixed
 - `peekaboo-mcp` now shuts down cleanly during restart backoff and repairs executable permissions without shelling out through an install path.
 - `pnpm run peekaboo:dev` no longer depends on a hardcoded local checkout path.
