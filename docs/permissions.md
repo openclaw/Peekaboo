@@ -14,6 +14,8 @@ read_when:
 - **Accessibility (recommended)** – improves window focus, menu interaction, and dialog control.
 - **Event Synthesizing (optional)** – enables background input delivery such as `hotkey --focus-background` and `click --focus-background` to post events to a target process without activating it.
 
+For build and runtime version details, see [platform-support.md](platform-support.md).
+
 ## Granting Permissions
 
 1. **Screen Recording**

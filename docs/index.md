@@ -17,6 +17,7 @@ Peekaboo is a macOS automation toolkit for humans and agents. It captures pixels
 
 - **[Install](install.md)** — Homebrew, npm/MCP, source builds.
 - **[Quickstart](quickstart.md)** — first capture, first click, first agent run in five minutes.
+- **[Platform support](platform-support.md)** — supported macOS, Swift/Xcode, and Node versions by surface.
 - **[Permissions](permissions.md)** — what to grant, why, and how to verify.
 - **[Configuration](configuration.md)** — environment variables, config files, credential storage.
 
@@ -32,6 +33,7 @@ Peekaboo is a macOS automation toolkit for humans and agents. It captures pixels
 - **[Command reference](cli-command-reference.md)** — every CLI command, grouped.
 - **[Command index](commands/README.md)** — one page per command with flags and examples.
 - **[Architecture](ARCHITECTURE.md)** — Core, CLI, Bridge, Daemon, Visualizer.
+- **[AI providers](providers.md)** — source-of-truth model/provider list and credential reference.
 - **[Releasing](RELEASING.md)** — versioning, signing, distribution.
 
 ## Surfaces

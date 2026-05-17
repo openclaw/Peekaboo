@@ -14,7 +14,8 @@ read_when:
 - **Grok** — `grok.md`: Grok 4 implementation guide and checkpoints.
 - **Ollama** — `ollama.md`: local model configuration; `ollama-models.md` for model catalog notes.
 
-Use these with `docs/providers.md` for global provider configuration syntax and env var reference.
+Use [`docs/providers.md`](../providers.md) as the source of truth for the user-facing provider list,
+configuration syntax, and environment variable reference.
 
 ## Capability quick-compare
 
@@ -26,5 +27,6 @@ Use these with `docs/providers.md` for global provider configuration syntax and 
 | MiniMax | Yes | No | Yes | No | API key |
 | Grok | Yes | Limited | Yes | No | API key |
 | Ollama | Yes (via local server) | Model-dependent | Yes | **Yes** (local) | None (local daemon) |
+| LM Studio | Yes (OpenAI-compatible local server) | Model-dependent | Yes | **Yes** (local) | None by default |
 
 See individual pages for model lists, quirks, and test coverage expectations.

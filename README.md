@@ -19,7 +19,7 @@ Peekaboo brings high-fidelity screen capture, AI analysis, and complete GUI auto
 - Action-first UI automation for routine clicks/scrolls, with synthetic input fallback for apps that need it.
 - Direct accessibility tools for settable values and named actions (`set-value`, `perform-action`).
 - Menu and menubar discovery with structured JSON; no clicks required.
-- Multi-provider AI: GPT-5.1 family, Claude 4.x, Grok 4-fast (vision), Gemini 2.5, and local Ollama models.
+- Multi-provider AI through Tachikoma, including hosted, local, and OpenAI-/Anthropic-compatible providers.
 - MCP server for Codex, Claude Code, and Cursor plus a native CLI; the same tools in both.
 - Configurable, testable workflows with reproducible sessions and strict typing.
 - Requires macOS Screen Recording + Accessibility permissions (see [docs/permissions.md](docs/permissions.md)).
@@ -120,16 +120,16 @@ For persistent setup and troubleshooting, see
 | [mcp](docs/commands/mcp.md) | `serve` (default) | Run Peekaboo as an MCP server |
 
 ## Models and providers
-- OpenAI: GPT-5.1 (default) and GPT-4.1/4o vision
-- Anthropic: Claude 4.x
-- xAI: Grok 4-fast reasoning + vision
-- Google: Gemini 2.5 (pro/flash)
-- Local: Ollama (llama3.3, llava, etc.)
+
+Peekaboo's provider list changes with Tachikoma and the tested model catalog. See
+[docs/providers.md](docs/providers.md) for the current source of truth, including OpenAI, Anthropic, xAI/Grok,
+Google Gemini, MiniMax, Ollama, LM Studio, and compatible custom endpoints.
 
 Set providers via `PEEKABOO_AI_PROVIDERS` or `peekaboo config add`.
 
 ## Learn more
 - Command reference: [docs/commands/](docs/commands/)
+- Platform support: [docs/platform-support.md](docs/platform-support.md)
 - Architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - Building from source: [docs/building.md](docs/building.md)
 - Testing guide: [docs/testing/tools.md](docs/testing/tools.md)
@@ -145,7 +145,7 @@ Set providers via `PEEKABOO_AI_PROVIDERS` or `peekaboo config add`.
 - [PeekabooX](https://github.com/nordbyte/PeekabooX) — Linux-first rewrite of the Peekaboo automation loop (Rust + Python) by [@nordbyte](https://github.com/nordbyte)
 
 ## Development basics
-- Requirements: macOS 15+, Xcode 16+/Swift 6.2. Node 22+ only if you run the pnpm docs/build helper scripts (core CLI/app/MCP are Swift-only).
+- Requirements: see [docs/platform-support.md](docs/platform-support.md). Node 22+ is only needed for the npm MCP wrapper and pnpm helper scripts.
 - Install deps: `pnpm install` then `pnpm run build:cli` or `pnpm run test:safe`.
 - Lint/format: `pnpm run lint && pnpm run format`.
 

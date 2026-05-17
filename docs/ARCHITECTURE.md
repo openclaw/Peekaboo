@@ -35,14 +35,15 @@ This document provides a high-level overview of how Tachikoma and PeekabooCore w
 - **PeekabooVisualizer** – standalone visual feedback layer (`VisualizationClient`, event store, presets) used by automation and apps.
 - **PeekabooAgentRuntime** – MCP tools, ToolRegistry/formatters, and the agent service itself. Depends on `PeekabooAutomation` for services/data models and on `PeekabooVisualizer` for status tokens.
 - **PeekabooCore** – thin umbrella (`_exported` imports + `PeekabooServices` convenience container). Apps/CLI keep importing `PeekabooCore`, but large features can now link the more focused products directly. Whoever instantiates `PeekabooServices` is responsible for calling `installAgentRuntimeDefaults()` so MCP tools and the ToolRegistry share that instance.
-- **Tachikoma** – still the AI provider surface (OpenAI/Anthropic/Grok/Ollama) that the runtime modules call through.
+- **Tachikoma** – still the AI provider surface that the runtime modules call through. See
+  [providers.md](providers.md) for the current provider and model catalog.
 
 ### Dependency Flow
 
 **Tachikoma** (AI Model Management)
-- Provides `AIModelProvider` for dependency injection
-- Manages OpenAI, Anthropic, Grok, and Ollama models
-- Handles API configuration and credential management
+- Provides `AIModelProvider` for dependency injection.
+- Manages provider/model registry, model selection, and capability metadata.
+- Handles API configuration and credential management.
 
 **PeekabooAutomation**
 - Depends on Tachikoma for provider metadata and `PeekabooVisualizer` for optional UI feedback.
@@ -81,7 +82,7 @@ let model = try provider.getModel("gpt-4.1")
 
 #### AIModelFactory
 - **Role**: Factory methods for creating model instances
-- **Supported Providers**: OpenAI, Anthropic, Grok (xAI), Ollama
+- **Supported Providers**: See [providers.md](providers.md) for the current source of truth
 - **Configuration**: Handles API keys, base URLs, and model-specific parameters
 
 #### AIConfiguration
