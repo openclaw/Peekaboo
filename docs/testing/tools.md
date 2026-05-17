@@ -47,11 +47,12 @@ read_when:
 
 ## Performance Checks
 - Capture performance summaries whenever a tool feels “slow” (or after fixing perf regressions) so we have a hard baseline.
-- Use `Apps/Playground/scripts/peekaboo-perf.sh` to run a command repeatedly and write a `*-summary.json` alongside the per-run JSON payloads (it reads `data.execution_time` or `data.executionTime` when available):
+- Use `pnpm run benchmark:tools` to run a command repeatedly and write a `*-summary.json` alongside the per-run JSON payloads. The helper reads command timing fields such as `data.execution_time` or `data.executionTime` when available, falls back to wall time, and exits non-zero if a measured run fails:
   ```bash
-  ./Apps/Playground/scripts/peekaboo-perf.sh --name see-click-fixture --runs 10 -- \
+  pnpm run benchmark:tools --name see-click-fixture --runs 10 --warmups 1 -- \
     see --app boo.peekaboo.playground.debug --mode window --window-title "Click Fixture" --json-output
   ```
+- See [benchmarks.md](benchmarks.md) for the full local benchmarking workflow.
 - Current reference baseline (2025-12-17, Click Fixture): `see` p95 ≈ 0.97s, `click` p95 ≈ 0.18s (`.artifacts/playground-tools/20251217-174822-perf-see-click-clickfixture-summary.json`).
 - Additional baselines (2025-12-17):
   - Scroll Fixture (`scroll --on vertical-scroll`, 15 runs): wall p95 ≈ 0.30s, exec p95 ≈ 0.12s (`.artifacts/playground-tools/20251217-224849-scroll-vertical-scroll-fixture-summary.json`).

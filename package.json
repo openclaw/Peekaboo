@@ -40,6 +40,8 @@
     "docs:list": "node scripts/docs-list.mjs",
     "docs:site": "node scripts/build-docs-site.mjs",
     "lint:docs": "node scripts/docs-lint.mjs",
+    "benchmark:tools": "Apps/Playground/scripts/peekaboo-perf.sh",
+    "test:benchmark-tools": "scripts/test-peekaboo-perf.sh",
     "polter": "FORCE_COLOR=1 CLICOLOR_FORCE=1 NODE_PATH=../poltergeist/node_modules script -q /dev/null node ../poltergeist/dist/polter.js",
     "polter:dev": "FORCE_COLOR=1 CLICOLOR_FORCE=1 NODE_PATH=../poltergeist/node_modules pnpm --dir ../poltergeist exec tsx ../poltergeist/src/polter.ts",
     "peekaboo": "FORCE_COLOR=1 CLICOLOR_FORCE=1 NODE_PATH=../poltergeist/node_modules script -q /dev/null ./scripts/poltergeist-wrapper.sh peekaboo",
