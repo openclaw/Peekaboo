@@ -10,6 +10,7 @@
 - `peekaboo agent` and MCP clients now have an `inspect_ui` tool for AX-only UI text/control inspection without capturing screenshots. Thanks @vyctorbrzezowski for #141.
 - Window-mode capture now falls back to desktop-independent ScreenCaptureKit filters when multi-display setups cannot map a window to an enumerated display. Thanks @lonexreb for #147.
 - `peekaboo agent` guidance now routes AX-only observation through `inspect_ui` consistently while keeping screenshot-backed checks on `see`. Thanks @vyctorbrzezowski for #144.
+- Custom provider docs, CLI help, and macOS settings now prefer `${VAR}` API key references and shell examples that preserve them literally. Thanks @scotthuang for #142.
 
 ## [3.2.0] - 2026-05-15
 

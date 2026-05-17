@@ -89,7 +89,7 @@ Custom providers are configured in `~/.peekaboo/config.json`:
 - Peekaboo never copies environment values into files automatically. Env vars are read live and shown as `ready (env)` in `config show/init`.
 - Credentials you add manually are stored in `~/.peekaboo/credentials` with `chmod 600`.
 - OAuth (OpenAI/Codex, Anthropic Max) stores refresh/access tokens + expiry in the credentials file; no API key is written.
-- In `customProviders[*].options.apiKey`, prefer the shell-style `${VAR}` form for env-var references — it is expanded by the runtime that talks to the model. The legacy `{env:VAR}` form is only honored by the `config` CLI.
+- In `customProviders[*].options.apiKey`, prefer the shell-style `${VAR}` form for env-var references — it is expanded by the runtime that talks to the model. When passing this through a shell command, quote it as `'${VAR}'` so the literal reference is saved. The legacy `{env:VAR}` form is only honored by the `config` CLI.
 
 ```bash
 # Set API key (stored after validation)
@@ -307,7 +307,7 @@ peekaboo config validate
 
 - API keys are stored separately in `~/.peekaboo/credentials` (chmod 600)
 - Never commit API keys to configuration files
-- Use environment variable references: `${API_KEY}`
+- Use environment variable references: `${API_KEY}` in JSON, or `'${API_KEY}'` in shell commands
 - Rotate API keys regularly
 - Use least-privilege API keys when available
 
