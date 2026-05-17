@@ -321,7 +321,7 @@ public struct Configuration: Codable {
     public struct ProviderOptions: Codable {
         public let baseURL: String
         // Literal API key or env-var reference, e.g. "${API_KEY}".
-        // Legacy "{env:API_KEY}" form is honored only by the config CLI (see docs/provider.md).
+        // Legacy "{env:API_KEY}" references remain supported for compatibility.
         public let apiKey: String
         public let headers: [String: String]?
         public let timeout: TimeInterval?

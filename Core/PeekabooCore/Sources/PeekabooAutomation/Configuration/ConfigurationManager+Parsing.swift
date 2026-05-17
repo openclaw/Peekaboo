@@ -15,7 +15,7 @@ extension ConfigurationManager {
             let data = try Data(contentsOf: URL(fileURLWithPath: configPath))
             let jsonString = String(data: data, encoding: .utf8) ?? ""
             let cleanedJSON = self.stripJSONComments(from: jsonString)
-            expandedJSON = self.expandEnvironmentVariables(in: cleanedJSON)
+            expandedJSON = self.expandEnvironmentVariables(in: cleanedJSON, preservingKeys: ["apiKey"])
 
             if let expandedData = expandedJSON.data(using: .utf8) {
                 let config = try JSONCoding.decoder.decode(Configuration.self, from: expandedData)
@@ -39,6 +39,11 @@ extension ConfigurationManager {
 
     /// Expand environment variables in the format `${VAR_NAME}`.
     public func expandEnvironmentVariables(in text: String) -> String {
+        self.expandEnvironmentVariables(in: text, preservingKeys: [])
+    }
+
+    /// Expand environment variables in the format `${VAR_NAME}` except in selected JSON string properties.
+    func expandEnvironmentVariables(in text: String, preservingKeys: Set<String>) -> String {
         let pattern = #"\$\{([A-Za-z_][A-Za-z0-9_]*)\}"#
 
         do {
@@ -48,6 +53,12 @@ extension ConfigurationManager {
 
             // Reverse replacement keeps each regex match range valid against the original string.
             for match in regex.matches(in: text, options: [], range: range).reversed() {
+                if let propertyName = self.jsonStringPropertyName(containing: match, in: text),
+                   preservingKeys.contains(propertyName)
+                {
+                    continue
+                }
+
                 let varNameRange = match.range(at: 1)
                 if let swiftRange = Range(varNameRange, in: text) {
                     let varName = String(text[swiftRange])
@@ -63,6 +74,25 @@ extension ConfigurationManager {
         } catch {
             return text
         }
+    }
+
+    private func jsonStringPropertyName(containing match: NSTextCheckingResult, in text: String) -> String? {
+        guard let matchRange = Range(match.range, in: text) else { return nil }
+        let prefix = String(text[..<matchRange.lowerBound])
+        let pattern = #""((?:[^"\\]|\\.)*)"\s*:\s*"((?:[^"\\]|\\.)*)$"#
+
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.dotMatchesLineSeparators]) else {
+            return nil
+        }
+
+        let range = NSRange(location: 0, length: prefix.utf16.count)
+        guard let match = regex.matches(in: prefix, options: [], range: range).last,
+              let keyRange = Range(match.range(at: 1), in: prefix)
+        else {
+            return nil
+        }
+
+        return String(prefix[keyRange])
     }
 
     func environmentValue(for key: String) -> String? {

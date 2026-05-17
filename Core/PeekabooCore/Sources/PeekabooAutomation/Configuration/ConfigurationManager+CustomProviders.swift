@@ -36,7 +36,7 @@ extension ConfigurationManager {
             return (false, "Provider '\(id)' not found")
         }
 
-        guard let apiKey = resolveCredential(provider.options.apiKey) else {
+        guard let apiKey = self.resolveCredentialReference(provider.options.apiKey) else {
             return (false, "API key not found or invalid: \(provider.options.apiKey)")
         }
 
@@ -57,7 +57,7 @@ extension ConfigurationManager {
             return ([], "Provider '\(id)' not found")
         }
 
-        guard let apiKey = resolveCredential(provider.options.apiKey) else {
+        guard let apiKey = self.resolveCredentialReference(provider.options.apiKey) else {
             return ([], "API key not found: \(provider.options.apiKey)")
         }
 
@@ -74,18 +74,29 @@ extension ConfigurationManager {
         }
     }
 
-    private func resolveCredential(_ reference: String) -> String? {
-        guard reference.hasPrefix("{env:"), reference.hasSuffix("}") else {
+    public func resolveCredentialReference(_ reference: String) -> String? {
+        guard let varName = Self.credentialReferenceName(reference) else {
             return reference
         }
 
-        let varName = String(reference.dropFirst(5).dropLast(1))
         if let envValue = self.environmentValue(for: varName) {
             return envValue
         }
-        if let credValue = credentials[varName] {
+        if let credValue = self.credentialValue(for: varName) {
             return credValue
         }
+        return nil
+    }
+
+    static func credentialReferenceName(_ reference: String) -> String? {
+        if reference.hasPrefix("{env:"), reference.hasSuffix("}") {
+            return String(reference.dropFirst(5).dropLast(1))
+        }
+
+        if reference.hasPrefix("${"), reference.hasSuffix("}") {
+            return String(reference.dropFirst(2).dropLast(1))
+        }
+
         return nil
     }
 

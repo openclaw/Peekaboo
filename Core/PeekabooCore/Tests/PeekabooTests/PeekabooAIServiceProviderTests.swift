@@ -53,6 +53,114 @@ struct PeekabooAIServiceProviderTests {
 
     @Test
     @MainActor
+    func `Custom provider generation uses resolved Peekaboo provider credentials`() throws {
+        try self.withIsolatedEnvironment(
+            ["PEEKABOO_CUSTOM_PROVIDER_KEY": "resolved-secret"],
+            configurationJSON: """
+            {
+              "aiProviders": { "providers": "local-proxy/mini" },
+              "customProviders": {
+                "local-proxy": {
+                  "name": "Local Proxy",
+                  "type": "openai",
+                  "enabled": true,
+                  "options": {
+                    "baseURL": "http://localhost:8317/v1",
+                    "apiKey": "${PEEKABOO_CUSTOM_PROVIDER_KEY}"
+                  },
+                  "models": {
+                    "mini": {
+                      "name": "gpt-5.4-mini",
+                      "supportsVision": true
+                    }
+                  }
+                }
+              }
+            }
+            """) {
+                let tempHome = FileManager.default.temporaryDirectory
+                    .appendingPathComponent("peekaboo-home-\(UUID().uuidString)", isDirectory: true)
+                let profileDir = tempHome.appendingPathComponent(".peekaboo", isDirectory: true)
+                try FileManager.default.createDirectory(at: profileDir, withIntermediateDirectories: true)
+                try """
+                {
+                  "customProviders": {
+                    "local-proxy": {
+                      "type": "openai",
+                      "options": {
+                        "baseURL": "http://localhost:8317/v1",
+                        "apiKey": "${PEEKABOO_CUSTOM_PROVIDER_KEY}"
+                      }
+                    }
+                  }
+                }
+                """.write(to: profileDir.appendingPathComponent("config.json"), atomically: true, encoding: .utf8)
+
+                let previousHome = getenv("HOME").map { String(cString: $0) }
+                setenv("HOME", tempHome.path, 1)
+                CustomProviderRegistry.shared.loadFromProfile()
+                defer {
+                    try? "{}".write(
+                        to: profileDir.appendingPathComponent("config.json"),
+                        atomically: true,
+                        encoding: .utf8)
+                    CustomProviderRegistry.shared.loadFromProfile()
+                    if let previousHome {
+                        setenv("HOME", previousHome, 1)
+                    } else {
+                        unsetenv("HOME")
+                    }
+                    try? FileManager.default.removeItem(at: tempHome)
+                }
+
+                let service = PeekabooAIService()
+                let model = try #require(service.availableModels().first)
+                let provider = try service.tachikomaConfiguration(for: model).makeProvider(for: model)
+
+                #expect(String(describing: type(of: provider)).contains("PeekabooCustomProviderModel"))
+                #expect(Mirror(reflecting: provider).descendant("apiKey") as? String == "resolved-secret")
+            }
+    }
+
+    @Test
+    @MainActor
+    func `Custom provider unresolved references do not fall back to generic compatible keys`() async throws {
+        try await self.withIsolatedEnvironment(
+            ["API_KEY": "wrong-generic-key"],
+            configurationJSON: """
+            {
+              "aiProviders": { "providers": "local-proxy/mini" },
+              "customProviders": {
+                "local-proxy": {
+                  "name": "Local Proxy",
+                  "type": "openai",
+                  "enabled": true,
+                  "options": {
+                    "baseURL": "http://127.0.0.1:9/v1",
+                    "apiKey": "${PEEKABOO_MISSING_PROVIDER_KEY}"
+                  },
+                  "models": {
+                    "mini": {
+                      "name": "gpt-5.4-mini",
+                      "supportsVision": true
+                    }
+                  }
+                }
+              }
+            }
+            """) {
+                let service = PeekabooAIService()
+                let model = try #require(service.availableModels().first)
+                let provider = try service.tachikomaConfiguration(for: model).makeProvider(for: model)
+
+                await #expect(throws: TachikomaError.self) {
+                    _ = try await provider.generateText(request: ProviderRequest(messages: [.user("hello")]))
+                }
+            }
+    }
+
+    @Test
+    @MainActor
     func `Falls back to Gemini when only Gemini key is present`() throws {
         try self.withIsolatedEnvironment(["GEMINI_API_KEY": "key"]) {
             let service = PeekabooAIService()
@@ -279,6 +387,9 @@ struct PeekabooAIServiceProviderTests {
             "GEMINI_API_KEY",
             "GOOGLE_API_KEY",
             "MINIMAX_API_KEY",
+            "API_KEY",
+            "PEEKABOO_CUSTOM_PROVIDER_KEY",
+            "PEEKABOO_MISSING_PROVIDER_KEY",
             "PEEKABOO_OLLAMA_BASE_URL",
             "OLLAMA_BASE_URL",
         ]
@@ -338,6 +449,9 @@ struct PeekabooAIServiceProviderTests {
             "GEMINI_API_KEY",
             "GOOGLE_API_KEY",
             "MINIMAX_API_KEY",
+            "API_KEY",
+            "PEEKABOO_CUSTOM_PROVIDER_KEY",
+            "PEEKABOO_MISSING_PROVIDER_KEY",
             "PEEKABOO_OLLAMA_BASE_URL",
             "OLLAMA_BASE_URL",
         ]

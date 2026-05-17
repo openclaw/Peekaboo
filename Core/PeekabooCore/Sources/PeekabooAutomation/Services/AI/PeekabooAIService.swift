@@ -72,7 +72,12 @@ private final class PeekabooCustomProviderModel: ModelProvider, @unchecked Senda
     }
 
     private func openAICompatibleProvider() throws -> OpenAICompatibleProvider {
-        try OpenAICompatibleProvider(
+        guard let apiKey, !apiKey.isEmpty else {
+            throw TachikomaError.authenticationFailed(
+                "API key reference for custom provider '\(self.providerID)' could not be resolved")
+        }
+
+        return try OpenAICompatibleProvider(
             modelId: self.resolvedModelID,
             baseURL: self.baseURL ?? "",
             configuration: self.compatibleConfiguration(),
@@ -80,7 +85,12 @@ private final class PeekabooCustomProviderModel: ModelProvider, @unchecked Senda
     }
 
     private func anthropicCompatibleProvider() throws -> AnthropicCompatibleProvider {
-        try AnthropicCompatibleProvider(
+        guard let apiKey, !apiKey.isEmpty else {
+            throw TachikomaError.authenticationFailed(
+                "API key reference for custom provider '\(self.providerID)' could not be resolved")
+        }
+
+        return try AnthropicCompatibleProvider(
             modelId: self.resolvedModelID,
             baseURL: self.baseURL ?? "",
             configuration: self.compatibleConfiguration(),
@@ -416,7 +426,7 @@ public final class PeekabooAIService {
         }
     }
 
-    private func tachikomaConfiguration(for model: LanguageModel) -> TachikomaConfiguration {
+    func tachikomaConfiguration(for model: LanguageModel) -> TachikomaConfiguration {
         guard case let .custom(provider) = model,
               let peekabooProvider = provider as? PeekabooCustomProviderModel
         else {
@@ -424,6 +434,14 @@ public final class PeekabooAIService {
         }
 
         let configuration = TachikomaConfiguration(loadFromEnvironment: true)
+        configuration.setProviderFactoryOverride { selectedModel, baseConfiguration in
+            if case let .custom(selectedProvider) = selectedModel,
+               selectedProvider.modelId == peekabooProvider.modelId
+            {
+                return peekabooProvider
+            }
+            return try ProviderFactory.createProvider(for: selectedModel, configuration: baseConfiguration)
+        }
         guard let apiKey = peekabooProvider.apiKey, !apiKey.isEmpty else {
             return configuration
         }
@@ -455,28 +473,14 @@ public final class PeekabooAIService {
         case .anthropic: .anthropic
         }
 
-        CustomProviderRegistry.shared.loadFromProfile()
-
         return PeekabooCustomProviderModel(
             providerID: providerID,
             resolvedModelID: resolvedModelID,
             kind: kind,
             baseURL: provider.options.baseURL,
-            apiKey: self.resolveCredential(provider.options.apiKey, configuration: configuration),
+            apiKey: configuration.resolveCredentialReference(provider.options.apiKey),
             additionalHeaders: provider.options.headers ?? [:],
             supportsVision: model?.supportsVision ?? true)
-    }
-
-    private static func resolveCredential(_ reference: String, configuration: ConfigurationManager) -> String? {
-        guard reference.hasPrefix("{env:"), reference.hasSuffix("}") else {
-            return reference
-        }
-
-        let variableName = String(reference.dropFirst(5).dropLast(1))
-        if let environmentValue = ProcessInfo.processInfo.environment[variableName] {
-            return environmentValue
-        }
-        return configuration.credentialValue(for: variableName)
     }
 
     nonisolated static func normalizeCoordinateTextIfNeeded(

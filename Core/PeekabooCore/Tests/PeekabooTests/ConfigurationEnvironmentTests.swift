@@ -6,6 +6,7 @@ import Testing
 @testable import PeekabooCore
 @testable import PeekabooVisualizer
 
+@Suite(.serialized)
 struct ConfigurationManagerEnvironmentTests {
     private let manager = ConfigurationManager.shared
 
@@ -104,6 +105,60 @@ struct ConfigurationManagerEnvironmentTests {
             #expect(self.manager.getSelectedProvider() == "google")
         }
     }
+
+    @Test
+    func `custom provider apiKey env references stay literal when config is saved`() throws {
+        let key = "PEEKABOO_CUSTOM_PROVIDER_KEY"
+        setenv(key, "secret-that-must-not-be-written", 1)
+        defer { unsetenv(key) }
+
+        try withIsolatedConfigurationEnvironment { configDir in
+            let configPath = configDir.appendingPathComponent("config.json")
+            let configJSON = """
+            {
+              "customProviders": {
+                "openrouter": {
+                  "name": "OpenRouter",
+                  "type": "openai",
+                  "options": {
+                    "baseURL": "https://openrouter.ai/api/v1",
+                    "apiKey": "${\(key)}"
+                  },
+                  "enabled": true
+                }
+              }
+            }
+            """
+            try configJSON.write(to: configPath, atomically: true, encoding: .utf8)
+
+            self.manager.resetForTesting()
+            let config = self.manager.loadConfiguration()
+            #expect(config?.customProviders?["openrouter"]?.options.apiKey == "${\(key)}")
+
+            let provider = Configuration.CustomProvider(
+                name: "Other",
+                type: .openai,
+                options: .init(baseURL: "https://api.example.com/v1", apiKey: "literal-key"))
+            try self.manager.addCustomProvider(provider, id: "other")
+
+            let saved = try String(contentsOf: configPath, encoding: .utf8)
+            #expect(saved.contains("${\(key)}"))
+            #expect(!saved.contains("secret-that-must-not-be-written"))
+        }
+    }
+
+    @Test
+    func `credential references resolve shell style and legacy env forms`() throws {
+        try withIsolatedConfigurationEnvironment { _ in
+            unsetenv("PEEKABOO_STORED_PROVIDER_KEY")
+            self.manager.resetForTesting()
+            try self.manager.saveCredentials(["PEEKABOO_STORED_PROVIDER_KEY": "stored-secret"])
+
+            #expect(self.manager.resolveCredentialReference("${PEEKABOO_STORED_PROVIDER_KEY}") == "stored-secret")
+            #expect(self.manager.resolveCredentialReference("{env:PEEKABOO_STORED_PROVIDER_KEY}") == "stored-secret")
+            #expect(self.manager.resolveCredentialReference("literal-secret") == "literal-secret")
+        }
+    }
 }
 
 private func withIsolatedConfigurationEnvironment(_ body: (URL) throws -> Void) throws {
@@ -113,7 +168,9 @@ private func withIsolatedConfigurationEnvironment(_ body: (URL) throws -> Void) 
     try fileManager.createDirectory(at: configDir, withIntermediateDirectories: true)
 
     let previousConfigDir = getenv("PEEKABOO_CONFIG_DIR").map { String(cString: $0) }
+    let previousDisableMigration = getenv("PEEKABOO_CONFIG_DISABLE_MIGRATION").map { String(cString: $0) }
     setenv("PEEKABOO_CONFIG_DIR", configDir.path, 1)
+    setenv("PEEKABOO_CONFIG_DISABLE_MIGRATION", "1", 1)
     ConfigurationManager.shared.resetForTesting()
 
     defer {
@@ -121,6 +178,11 @@ private func withIsolatedConfigurationEnvironment(_ body: (URL) throws -> Void) 
             setenv("PEEKABOO_CONFIG_DIR", previousConfigDir, 1)
         } else {
             unsetenv("PEEKABOO_CONFIG_DIR")
+        }
+        if let previousDisableMigration {
+            setenv("PEEKABOO_CONFIG_DISABLE_MIGRATION", previousDisableMigration, 1)
+        } else {
+            unsetenv("PEEKABOO_CONFIG_DISABLE_MIGRATION")
         }
         ConfigurationManager.shared.resetForTesting()
         try? fileManager.removeItem(at: configDir)
