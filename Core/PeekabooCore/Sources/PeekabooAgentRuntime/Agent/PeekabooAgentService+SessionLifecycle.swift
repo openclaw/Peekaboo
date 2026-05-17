@@ -85,7 +85,8 @@ extension PeekabooAgentService {
             return try await self.executeWithoutStreaming(
                 context: sessionContext,
                 model: selectedModel,
-                maxSteps: maxSteps)
+                maxSteps: maxSteps,
+                enhancementOptions: enhancementOptions)
         }
     }
 

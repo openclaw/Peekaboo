@@ -45,6 +45,7 @@ public final class PeekabooAgentService: AgentServiceProtocol {
     let sessionManager: AgentSessionManager
     let defaultLanguageModel: LanguageModel
     var currentModel: LanguageModel?
+    var cachedSmartCaptureService: SmartCaptureService?
     let logger = os.Logger(subsystem: "boo.peekaboo", category: "agent")
     var isVerbose: Bool = false
 
@@ -299,7 +300,8 @@ public final class PeekabooAgentService: AgentServiceProtocol {
             return try await self.executeWithoutStreaming(
                 context: sessionContext,
                 model: selectedModel,
-                maxSteps: maxSteps)
+                maxSteps: maxSteps,
+                enhancementOptions: enhancementOptions)
         }
     }
 

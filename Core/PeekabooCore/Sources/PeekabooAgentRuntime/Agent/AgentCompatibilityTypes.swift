@@ -12,6 +12,8 @@ public enum AgentEvent: Sendable {
     case toolCallStarted(name: String, arguments: String)
     case toolCallUpdated(name: String, arguments: String)
     case toolCallCompleted(name: String, result: String)
+    case verificationCompleted(toolName: String, result: VerificationResult)
+    case desktopContextRefreshed(summary: String)
     case error(message: String)
     case completed(summary: String, usage: Usage?)
     case queueDrained

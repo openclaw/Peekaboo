@@ -179,7 +179,8 @@ extension PeekabooAgentService {
     func executeWithoutStreaming(
         context: SessionContext,
         model: LanguageModel,
-        maxSteps: Int = 20) async throws -> AgentExecutionResult
+        maxSteps: Int = 20,
+        enhancementOptions: AgentEnhancementOptions? = nil) async throws -> AgentExecutionResult
     {
         let tools = await self.buildToolset(for: model)
         self.logModelUsage(model, prefix: "")
@@ -189,7 +190,7 @@ extension PeekabooAgentService {
             tools: tools,
             sessionId: context.id,
             eventHandler: nil,
-            enhancementOptions: nil)
+            enhancementOptions: enhancementOptions)
 
         let outcome = try await self.runGenerationLoop(
             configuration: configuration,
@@ -230,7 +231,8 @@ extension PeekabooAgentService {
             model: configuration.model,
             tools: configuration.tools,
             eventHandler: configuration.eventHandler,
-            sessionId: configuration.sessionId)
+            sessionId: configuration.sessionId,
+            enhancementOptions: configuration.enhancementOptions)
 
         let resolvedConfiguration = TachikomaConfiguration.resolve(.current)
         let provider = try resolvedConfiguration.makeProvider(for: configuration.model)
@@ -242,6 +244,15 @@ extension PeekabooAgentService {
 
         for stepIndex in 0..<maxSteps {
             self.logStreamingStepStart(stepIndex, tools: configuration.tools)
+
+            if let options = configuration.enhancementOptions {
+                _ = await self.refreshDesktopContextIfNeeded(
+                    into: &state.messages,
+                    options: options,
+                    tools: configuration.tools,
+                    state: &state.desktopContextState,
+                    eventHandler: configuration.eventHandler)
+            }
 
             let request = ProviderRequest(
                 messages: state.messages,

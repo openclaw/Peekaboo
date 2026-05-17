@@ -81,4 +81,39 @@ struct AgentTurnBoundaryTranscriptTests {
         #expect(step.toolResults[1].isError)
         #expect(messages.count(where: { $0.role == .tool }) == toolCalls.count)
     }
+
+    @Test
+    func `tool execution cancellation escapes tool handling`() async throws {
+        let service = try PeekabooAgentService(services: PeekabooServices())
+        var messages: [ModelMessage] = []
+        let toolCalls = [
+            AgentToolCall(id: "click-call", name: "click", arguments: [:]),
+        ]
+        let tools = [
+            AgentTool(
+                name: "click",
+                description: "click",
+                parameters: AgentToolParameters(properties: [:], required: []),
+                execute: { _ in throw CancellationError() }),
+        ]
+        let context = PeekabooAgentService.ToolHandlingContext(
+            model: .anthropic(.sonnet45),
+            tools: tools,
+            eventHandler: nil,
+            sessionId: "test-session")
+
+        var cancelled = false
+        do {
+            _ = try await service.handleToolCalls(
+                stepText: "",
+                toolCalls: toolCalls,
+                context: context,
+                currentMessages: &messages,
+                stepIndex: 0)
+        } catch is CancellationError {
+            cancelled = true
+        }
+
+        #expect(cancelled)
+    }
 }

@@ -25,6 +25,8 @@ final class AgentChatEventDelegate: AgentEventDelegate {
             self.handleToolCompleted(name: name, result: result, ui: ui)
         case let .toolCallUpdated(name, arguments):
             self.handleToolUpdated(name: name, arguments: arguments, ui: ui)
+        case .verificationCompleted, .desktopContextRefreshed:
+            break
         case let .error(message):
             ui.showError(message)
         case .completed:

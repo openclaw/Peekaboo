@@ -95,20 +95,68 @@ public struct AgentEnhancementOptions: Sendable {
 
 /// Action types that can be verified with screenshots.
 public enum VerifiableActionType: String, Sendable, Hashable, CaseIterable {
+    case app
+    case browser
     case click
-    case type
-    case scroll
-    case hotkey
+    case dialog
+    case dock
     case drag
+    case hotkey
     case launchApp = "launch_app"
     case menu
-    case dialog
+    case paste
+    case performAction = "perform_action"
+    case scroll
+    case setValue = "set_value"
+    case space
+    case swipe
+    case type
+    case window
 
-    /// Whether this action type modifies state and should be verified by default.
+    private static let appReadOnlyActions: Set<String> = ["list"]
+    private static let browserReadOnlyActions: Set<String> = [
+        "status",
+        "connect",
+        "disconnect",
+        "list_pages",
+        "snapshot",
+        "console",
+        "network",
+        "screenshot",
+        "performance_trace",
+        "wait_for",
+    ]
+    private static let dialogReadOnlyActions: Set<String> = ["list"]
+    private static let dockReadOnlyActions: Set<String> = ["list"]
+    private static let menuReadOnlyActions: Set<String> = ["list", "list-all", "list_all"]
+    private static let spaceReadOnlyActions: Set<String> = ["list"]
+
+    /// Whether this tool can modify state and should be verified by default when action details are unavailable.
     public var isMutating: Bool {
+        true
+    }
+
+    /// Whether this invocation modifies state and should be verified by default.
+    public func isMutating(arguments: [String: String]) -> Bool {
         switch self {
-        case .click, .type, .scroll, .hotkey, .drag, .launchApp, .menu, .dialog:
+        case .app:
+            !Self.appReadOnlyActions.contains(Self.actionName(in: arguments))
+        case .browser:
+            !Self.browserReadOnlyActions.contains(Self.actionName(in: arguments))
+        case .dialog:
+            !Self.dialogReadOnlyActions.contains(Self.actionName(in: arguments))
+        case .dock:
+            !Self.dockReadOnlyActions.contains(Self.actionName(in: arguments))
+        case .menu:
+            !Self.menuReadOnlyActions.contains(Self.actionName(in: arguments))
+        case .space:
+            !Self.spaceReadOnlyActions.contains(Self.actionName(in: arguments))
+        default:
             true
         }
+    }
+
+    private static func actionName(in arguments: [String: String]) -> String {
+        arguments["action"]?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
     }
 }

@@ -66,6 +66,9 @@ extension AgentOutputDelegate {
         case let .thinkingMessage(content):
             self.handleThinkingMessage(content)
 
+        case .verificationCompleted, .desktopContextRefreshed:
+            break
+
         case let .error(message):
             self.handleError(message)
 

@@ -38,12 +38,17 @@ public final class ActionVerifier {
     /// Verify that an action completed successfully.
     public func verify(
         action: ActionDescriptor,
-        expectedOutcome: String? = nil) async throws -> VerificationResult
+        expectedOutcome: String? = nil,
+        captureResult providedCaptureResult: SmartCaptureResult? = nil) async throws -> VerificationResult
     {
         // Capture post-action state
-        let captureResult = try await smartCapture.captureAfterAction(
-            toolName: action.toolName,
-            targetPoint: action.targetPoint)
+        let captureResult: SmartCaptureResult = if let providedCaptureResult {
+            providedCaptureResult
+        } else {
+            try await self.smartCapture.captureAfterAction(
+                toolName: action.toolName,
+                targetPoint: action.targetPoint)
+        }
 
         guard let screenshot = captureResult.image else {
             // Screen unchanged - might be okay or might be a problem
@@ -79,18 +84,44 @@ public final class ActionVerifier {
         toolName: String,
         options: AgentEnhancementOptions) -> Bool
     {
+        Self.shouldVerify(toolName: toolName, options: options)
+    }
+
+    /// Check if a concrete tool invocation should be verified based on options.
+    public func shouldVerify(
+        toolName: String,
+        arguments: [String: String],
+        options: AgentEnhancementOptions) -> Bool
+    {
+        Self.shouldVerify(toolName: toolName, arguments: arguments, options: options)
+    }
+
+    /// Check if a tool should be verified based on options without requiring capture dependencies.
+    public nonisolated static func shouldVerify(
+        toolName: String,
+        options: AgentEnhancementOptions) -> Bool
+    {
+        self.shouldVerify(toolName: toolName, arguments: [:], options: options)
+    }
+
+    /// Check if a concrete tool invocation should be verified without requiring capture dependencies.
+    public nonisolated static func shouldVerify(
+        toolName: String,
+        arguments: [String: String],
+        options: AgentEnhancementOptions) -> Bool
+    {
         guard options.verifyActions else { return false }
+        guard let actionType = VerifiableActionType(rawValue: toolName) else {
+            return false
+        }
 
         // If specific action types are set, check against them
         if !options.verifyActionTypes.isEmpty {
-            guard let actionType = VerifiableActionType(rawValue: toolName) else {
-                return false
-            }
             return options.verifyActionTypes.contains(actionType)
         }
 
-        // Otherwise, verify all mutating actions
-        return !self.isReadOnlyTool(toolName)
+        // Otherwise, verify the known mutating agent tools only.
+        return actionType.isMutating(arguments: arguments)
     }
 
     // MARK: - Private Helpers
@@ -117,9 +148,14 @@ public final class ActionVerifier {
             let keys = action.arguments["keys"] ?? "keys"
             return "The hotkey '\(keys)' should have triggered an action - look for any visible change"
 
-        case "launch_app", "app":
+        case "launch_app":
             let app = action.arguments["app"] ?? action.arguments["name"] ?? "application"
             return "The \(app) application should now be visible, focused, and in the foreground"
+
+        case "app":
+            let actionName = action.arguments["action"] ?? "requested app action"
+            let app = action.arguments["app"] ?? action.arguments["name"] ?? action.arguments["to"] ?? "application"
+            return "The app action '\(actionName)' should have produced the expected visible state for \(app)"
 
         case "menu":
             let menuPath = action.arguments["path"] ?? "menu item"
@@ -131,6 +167,39 @@ public final class ActionVerifier {
 
         case "drag":
             return "The dragged element should now be in a new position"
+
+        case "move":
+            return "The mouse pointer should now be at the requested screen location or element"
+
+        case "swipe":
+            return "The swipe gesture should have moved or changed the visible content"
+
+        case "paste":
+            return "The pasted content should now be visible in the focused target"
+
+        case "set_value":
+            let value = action.arguments["value"] ?? "the requested value"
+            return "The target element should now have the value '\(value)'"
+
+        case "perform_action":
+            let actionName = action.arguments["action"] ?? "requested accessibility action"
+            return "The accessibility action '\(actionName)' should have completed with the expected UI change"
+
+        case "window":
+            let actionName = action.arguments["action"] ?? "requested window action"
+            return "The window action '\(actionName)' should have visibly changed the target window"
+
+        case "dock":
+            let actionName = action.arguments["action"] ?? "requested Dock action"
+            return "The Dock action '\(actionName)' should have produced the expected visible UI change"
+
+        case "space":
+            let actionName = action.arguments["action"] ?? "requested Spaces action"
+            return "The Spaces action '\(actionName)' should have visibly changed the active Space or window placement"
+
+        case "browser":
+            let actionName = action.arguments["action"] ?? "requested browser action"
+            return "The browser action '\(actionName)' should have produced the expected page or browser state change"
 
         default:
             return "The action should have completed successfully with some visible change"
@@ -247,16 +316,6 @@ public final class ActionVerifier {
             confidence: 0.6,
             observation: response,
             suggestion: failed ? "The action may have failed. Consider retrying or trying a different approach." : nil)
-    }
-
-    private func isReadOnlyTool(_ toolName: String) -> Bool {
-        let readOnlyTools: Set = [
-            "see", "screenshot", "capture", "analyze", "image",
-            "list", "list_apps", "list_windows", "list_menus", "list_dock",
-            "focused", "find_element", "list_elements",
-            "permissions", "clipboard", // Clipboard read is fine
-        ]
-        return readOnlyTools.contains(toolName)
     }
 }
 
