@@ -14,6 +14,9 @@ This is not telemetry. It does not install a background collector, write a globa
 over the network. It runs a command N times and writes JSON artifacts under `.artifacts/` so you can inspect or
 share the specific run when needed.
 
+Do not use this helper as a CI pass/fail gate. Use it for local before/after evidence and attach the summary only
+when the numbers materially support a performance change.
+
 ## Quick start
 
 Build a debug CLI once:
@@ -74,11 +77,18 @@ pnpm run benchmark:tools \
 
 - `wall_time` measures total process/runtime time from the helper's perspective.
 - `execution_time` uses the command's own JSON timing field when the command exposes one.
+- Summaries include `mean_s`, `stddev_s`, `median_s`, `p95_s`, `min_s`, and `max_s`.
 - `warmup` runs are saved but excluded from the reported statistics.
+- The default is 10 measured runs and 0 warmups to preserve the older helper behavior. Use 1-3 warmups when
+  collecting PR evidence for a code path that benefits from daemon, filesystem, or process warmup.
 - `failures` lists measured runs with non-zero exit codes.
 - The helper exits non-zero when measured runs fail unless you pass `--allow-failures`.
 - The summary includes the command arguments after replacing the current checkout path with `.` and `$HOME` with
-  `~`; avoid benchmarking commands with secrets or sensitive local paths if you plan to share the artifacts.
+  `~`; per-run payloads still contain the raw command output, so avoid benchmarking commands with secrets or
+  sensitive local paths if you plan to share the artifacts.
 
 Use p95 for regressions and PR evidence. Avoid hard thresholds in unit tests; command latency depends on host load,
 permissions, active windows, display count, and whether the daemon/Bridge path is warm.
+
+For cleaner macOS measurements, keep the machine awake (`caffeinate` is useful for longer runs), close heavy apps,
+avoid Low Power Mode, and treat thermal throttling or Spotlight/indexing activity as reasons to rerun the sample.

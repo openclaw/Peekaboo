@@ -2,6 +2,9 @@
 
 set -euo pipefail
 
+# Local benchmarking harness for source checkouts. This is not telemetry and is not intended
+# for CI pass/fail gates; treat the numbers as local evidence for before/after comparisons.
+
 NAME=""
 RUNS=10
 WARMUPS=0
@@ -13,8 +16,8 @@ usage() {
   cat <<'EOF'
 Usage: peekaboo-perf.sh --name <slug> [--runs N] [--warmups N] [--log-root DIR] [--bin PATH] [--allow-failures] -- <peekaboo args...>
 
-Runs a Peekaboo CLI command repeatedly, captures per-run JSON output, and writes a summary JSON
-with mean/median/p95/min/max based on command execution time when present and wall time otherwise.
+Runs a Peekaboo CLI command repeatedly, captures per-run JSON output, and writes a summary JSON with
+mean/stddev/median/p95/min/max based on command execution time when present and wall time otherwise.
 
 The helper is local-only: it writes under .artifacts by default, sends nothing anywhere, and is not a
 telemetry subsystem. Failed measured runs make the helper exit non-zero unless --allow-failures is set.
@@ -297,10 +300,17 @@ def stats(values):
     values_sorted = sorted(values)
     if not values_sorted:
         return None
+    mean = sum(values_sorted) / len(values_sorted)
+    if len(values_sorted) > 1:
+        variance = sum((value - mean) ** 2 for value in values_sorted) / (len(values_sorted) - 1)
+        stddev = math.sqrt(variance)
+    else:
+        stddev = 0.0
     return {
         "n": len(values_sorted),
         "samples_s": values_sorted,
-        "mean_s": sum(values_sorted) / len(values_sorted),
+        "mean_s": mean,
+        "stddev_s": stddev,
         "median_s": percentile(values_sorted, 0.50),
         "p95_s": percentile(values_sorted, 0.95),
         "min_s": values_sorted[0],

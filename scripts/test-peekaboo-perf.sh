@@ -39,6 +39,8 @@ assert summary["run_count"] == 3
 assert summary["warmup_count"] == 1
 assert summary["execution_time"]["n"] == 3
 assert summary["wall_time"]["n"] == 3
+assert "stddev_s" in summary["execution_time"]
+assert "stddev_s" in summary["wall_time"]
 assert summary["failures"] == []
 assert summary["binary"] == "fake-peekaboo"
 assert summary["command"] == ["ok", "./private-fixture.json", "--json-output"]
