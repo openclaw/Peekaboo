@@ -13,7 +13,11 @@ public extension GameBridgeDetectionService {
 
     /// Try game-bridge detection for a window context.
     /// Returns nil if the app is not a known game-bridge app or has no manifest.
-    static func tryDetect(windowContext: WindowContext?) -> ElementDetectionResult? {
+    /// - Parameters:
+    ///   - windowContext: Resolved window context with app name and bounds.
+    ///   - snapshotId: Caller-provided snapshot ID to preserve in the result.
+    static func tryDetect(windowContext: WindowContext?,
+                          snapshotId: String? = nil) -> ElementDetectionResult? {
         guard let appName = windowContext?.applicationName,
               isGameBridgeApp(appName: appName) else {
             return nil
@@ -76,7 +80,7 @@ public extension GameBridgeDetectionService {
         )
 
         return ElementDetectionResult(
-            snapshotId: UUID().uuidString,
+            snapshotId: snapshotId ?? UUID().uuidString,
             screenshotPath: "",
             elements: elements,
             metadata: DetectionMetadata(

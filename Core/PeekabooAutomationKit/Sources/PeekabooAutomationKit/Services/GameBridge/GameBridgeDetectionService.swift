@@ -42,11 +42,53 @@ public final class GameBridgeDetectionService: Sendable {
             public let enabled: Bool
             public let value: String?
 
+            private enum CodingKeys: String, CodingKey {
+                case id
+                case type
+                case label
+                case bounds
+                case enabled
+                case value
+            }
+
+            public init(
+                id: String,
+                type: String,
+                label: String?,
+                bounds: Bounds,
+                enabled: Bool = true,
+                value: String? = nil)
+            {
+                self.id = id
+                self.type = type
+                self.label = label
+                self.bounds = bounds
+                self.enabled = enabled
+                self.value = value
+            }
+
+            public init(from decoder: any Decoder) throws {
+                let container = try decoder.container(keyedBy: CodingKeys.self)
+                self.id = try container.decode(String.self, forKey: .id)
+                self.type = try container.decode(String.self, forKey: .type)
+                self.label = try container.decodeIfPresent(String.self, forKey: .label)
+                self.bounds = try container.decode(Bounds.self, forKey: .bounds)
+                self.enabled = try container.decodeIfPresent(Bool.self, forKey: .enabled) ?? true
+                self.value = try container.decodeIfPresent(String.self, forKey: .value)
+            }
+
             public struct Bounds: Codable, Sendable {
                 public let x: Int
                 public let y: Int
                 public let w: Int
                 public let h: Int
+
+                public init(x: Int, y: Int, w: Int, h: Int) {
+                    self.x = x
+                    self.y = y
+                    self.w = w
+                    self.h = h
+                }
 
                 public var cgRect: CGRect {
                     CGRect(x: x, y: y, width: w, height: h)
