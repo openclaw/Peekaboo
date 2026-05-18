@@ -11,7 +11,7 @@ struct MenuBarElementCollector {
         elementIdMap: inout [String: DetectedElement],
         budget: AXTraversalBudget? = nil) -> DetectionTruncationInfo?
     {
-        let resolvedBudget = (budget ?? AXTraversalBudget()).normalizedForTraversal
+        let resolvedBudget = AXTraversalBudget.normalizedForTraversal(budget)
         var truncationInfo: DetectionTruncationInfo?
         guard let menus = menuBar.children() else { return nil }
         if menus.count > resolvedBudget.maxChildrenPerNode {

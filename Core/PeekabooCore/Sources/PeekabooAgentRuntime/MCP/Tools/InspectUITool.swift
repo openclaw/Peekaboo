@@ -39,6 +39,15 @@ public struct InspectUITool: MCPTool {
                     description: """
                     Optional. Snapshot ID for UI automation tracking. A new snapshot is created when absent.
                     """),
+                "max_depth": SchemaBuilder.number(
+                    description: "Optional. Maximum AX traversal depth. Env fallback: PEEKABOO_AX_MAX_DEPTH."),
+                "max_elements": SchemaBuilder.number(
+                    description: "Optional. Maximum AX elements to collect. Env fallback: PEEKABOO_AX_MAX_ELEMENTS."),
+                "max_children": SchemaBuilder.number(
+                    description: """
+                    Optional. Maximum AX children per node. Env fallback: PEEKABOO_AX_MAX_CHILDREN.
+                    Increase this for flat Qt/Electron panels with many sibling controls.
+                    """),
             ],
             required: [])
     }
@@ -54,7 +63,7 @@ public struct InspectUITool: MCPTool {
         do {
             let snapshot = try await self.getOrCreateSnapshot(snapshotId: request.snapshotId)
             let target = try self.parseTarget(request.appTarget)
-            let windowContext = try self.makeWindowContext(for: target)
+            let windowContext = try self.makeWindowContext(for: target, traversalBudget: request.traversalBudget)
 
             let result = try await self.context.automation.inspectAccessibilityTree(
                 windowContext: windowContext)
@@ -77,6 +86,7 @@ public struct InspectUITool: MCPTool {
                 "element_count": .double(Double(snapshotResult.elements.all.count)),
                 "actionable_count": .double(Double(snapshotResult.elements.all.count(where: \.isEnabled))),
                 "used_cache": .bool(snapshotResult.metadata.method.contains("cached")),
+                "truncated": .bool(snapshotResult.metadata.truncationInfo?.isTruncated == true),
             ])
 
             var summary = ToolEventSummary(
@@ -127,24 +137,29 @@ public struct InspectUITool: MCPTool {
         }
     }
 
-    private func makeWindowContext(for target: ObservationTargetArgument) throws -> WindowContext {
+    private func makeWindowContext(
+        for target: ObservationTargetArgument,
+        traversalBudget: AXTraversalBudget) throws -> WindowContext
+    {
         switch target {
         case .frontmost:
-            return WindowContext(shouldFocusWebContent: true)
+            return WindowContext(shouldFocusWebContent: true, traversalBudget: traversalBudget)
         case let .application(identifier, window):
             let selection = try self.windowSelectionFields(window)
             return WindowContext(
                 applicationName: identifier,
                 windowTitle: selection.title,
                 windowID: selection.id,
-                shouldFocusWebContent: true)
+                shouldFocusWebContent: true,
+                traversalBudget: traversalBudget)
         case let .pid(pid, window):
             let selection = try self.windowSelectionFields(window)
             return WindowContext(
                 applicationProcessId: pid,
                 windowTitle: selection.title,
                 windowID: selection.id,
-                shouldFocusWebContent: true)
+                shouldFocusWebContent: true,
+                traversalBudget: traversalBudget)
         case .screen, .menubar:
             throw PeekabooError.invalidInput("inspect_ui cannot inspect screen or menu bar targets. Use `see` instead.")
         }

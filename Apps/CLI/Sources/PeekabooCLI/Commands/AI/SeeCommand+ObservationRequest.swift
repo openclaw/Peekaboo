@@ -1,6 +1,7 @@
 import Commander
 import CoreGraphics
 import Foundation
+import PeekabooAutomationKit
 import PeekabooCore
 
 @available(macOS 14.0, *)
@@ -138,14 +139,33 @@ extension SeeCommand {
             DesktopDetectionOptions(
                 mode: .none,
                 allowWebFocusFallback: false,
-                preferOCR: true
+                preferOCR: true,
+                traversalBudget: self.axTraversalBudget()
             )
         default:
             DesktopDetectionOptions(
                 mode: .accessibility,
-                allowWebFocusFallback: !self.noWebFocus
+                allowWebFocusFallback: !self.noWebFocus,
+                traversalBudget: self.axTraversalBudget()
             )
         }
+    }
+
+    func axTraversalBudget() -> AXTraversalBudget {
+        AXTraversalBudget.resolved(
+            maxDepth: self.validatedTraversalLimit(self.maxDepth, option: "--max-depth"),
+            maxElementCount: self.validatedTraversalLimit(self.maxElements, option: "--max-elements"),
+            maxChildrenPerNode: self.validatedTraversalLimit(self.maxChildren, option: "--max-children")
+        )
+    }
+
+    private func validatedTraversalLimit(_ value: Int?, option: String) -> Int? {
+        guard let value else { return nil }
+        guard value > 0 else {
+            self.logger.warn("\(option) must be positive; using default AX traversal budget")
+            return nil
+        }
+        return value
     }
 
     private var observationCaptureEnginePreference: CaptureEnginePreference {

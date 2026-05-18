@@ -23,7 +23,8 @@ extension SeeCommand {
             windowTitle: captureResult.metadata.windowInfo?.title,
             windowID: captureContext.windowIdOverride ?? captureResult.metadata.windowInfo?.windowID,
             windowBounds: captureContext.captureBounds ?? captureResult.metadata.windowInfo?.bounds,
-            shouldFocusWebContent: self.noWebFocus ? false : true
+            shouldFocusWebContent: self.noWebFocus ? false : true,
+            traversalBudget: self.axTraversalBudget()
         )
 
         let detectionResult = try await self.detectElements(for: captureContext, windowContext: windowContext)

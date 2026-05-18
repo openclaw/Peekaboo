@@ -66,6 +66,16 @@ struct SeeCommand: ApplicationResolvable, ErrorHandlingCommand, RuntimeOptionsCo
 
     @Flag(help: "Skip web-content focus fallback when no text fields are detected")
     var noWebFocus = false
+
+    @Option(name: .long, help: "Maximum AX traversal depth (env: PEEKABOO_AX_MAX_DEPTH)")
+    var maxDepth: Int?
+
+    @Option(name: .long, help: "Maximum AX elements to collect (env: PEEKABOO_AX_MAX_ELEMENTS)")
+    var maxElements: Int?
+
+    @Option(name: .long, help: "Maximum AX children per node (env: PEEKABOO_AX_MAX_CHILDREN)")
+    var maxChildren: Int?
+
     @RuntimeStorage private var runtime: CommandRuntime?
     var runtimeOptions = CommandRuntimeOptions()
 

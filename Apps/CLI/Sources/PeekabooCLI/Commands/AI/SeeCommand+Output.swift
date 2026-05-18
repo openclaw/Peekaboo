@@ -103,6 +103,7 @@ extension SeeCommand {
             execution_time: context.executionTime,
             ui_elements: uiElements,
             menu_bar: menuSummary,
+            truncation: SeeTruncationSummary(metadata: context.metadata),
             observation: context.observation
         )
 
@@ -153,6 +154,9 @@ extension SeeCommand {
         print("🧊 Detection method: \(context.metadata.method)")
         print("📊 UI elements detected: \(context.metadata.elementCount)")
         print("⚙️  Interactable elements: \(context.elements.all.count { $0.isEnabled })")
+        if let truncationInfo = context.metadata.truncationInfo, truncationInfo.isTruncated {
+            print("⚠️  \(truncationInfo.remediationMessage(budget: context.metadata.windowContext?.traversalBudget))")
+        }
         let formattedDuration = String(format: "%.2f", context.executionTime)
         print("⏱️  Execution time: \(formattedDuration)s")
 

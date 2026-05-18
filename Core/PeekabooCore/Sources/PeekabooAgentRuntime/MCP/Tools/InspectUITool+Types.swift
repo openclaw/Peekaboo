@@ -4,10 +4,22 @@ import TachikomaMCP
 struct InspectUIRequest {
     let appTarget: String?
     let snapshotId: String?
+    let traversalBudget: AXTraversalBudget
 
     init(arguments: ToolArguments) {
         self.appTarget = arguments.getString("app_target")
         self.snapshotId = arguments.getString("snapshot")
+        self.traversalBudget = AXTraversalBudget.resolved(
+            maxDepth: Self.positiveInt("max_depth", in: arguments),
+            maxElementCount: Self.positiveInt("max_elements", in: arguments),
+            maxChildrenPerNode: Self.positiveInt("max_children", in: arguments))
+    }
+
+    private static func positiveInt(_ key: String, in arguments: ToolArguments) -> Int? {
+        guard let value = arguments.getInt(key), value > 0 else {
+            return nil
+        }
+        return value
     }
 }
 
@@ -27,6 +39,7 @@ struct InspectUISummaryBuilder {
         if self.result.metadata.method.contains("cached") {
             lines.append("(Result from cached accessibility tree)")
         }
+        lines.append(contentsOf: self.truncationWarningLines())
         lines.append("")
         lines.append(contentsOf: self.elementSection())
         lines.append("")
@@ -75,6 +88,13 @@ struct InspectUISummaryBuilder {
                     "Use `see` or a narrower app_target if you need more context.")
         }
         return lines
+    }
+
+    private func truncationWarningLines() -> [String] {
+        guard let truncationInfo = self.result.metadata.truncationInfo, truncationInfo.isTruncated else {
+            return []
+        }
+        return [truncationInfo.remediationMessage(budget: self.result.metadata.windowContext?.traversalBudget)]
     }
 
     private func roleHeader(role: String, elements: [DetectedElement]) -> String {

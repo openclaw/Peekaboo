@@ -6,6 +6,13 @@ import XCTest
 
 @MainActor
 final class AXTreeCollectorBudgetTests: XCTestCase {
+    override func tearDown() {
+        unsetenv(AXTraversalBudget.maxDepthEnvironmentKey)
+        unsetenv(AXTraversalBudget.maxElementCountEnvironmentKey)
+        unsetenv(AXTraversalBudget.maxChildrenPerNodeEnvironmentKey)
+        super.tearDown()
+    }
+
     private func frontmostWindowElement() -> Element? {
         guard let appAX = AXUIElement.frontmostApplication() else {
             return nil
@@ -129,6 +136,28 @@ final class AXTreeCollectorBudgetTests: XCTestCase {
 
         XCTAssertEqual(decoded.traversalBudget, AXTraversalBudget())
         XCTAssertEqual(decoded.allowWebFocusFallback, false)
+    }
+
+    func testMissingBudgetNormalizationAppliesEnvironmentOverrides() {
+        setenv(AXTraversalBudget.maxDepthEnvironmentKey, "15", 1)
+        setenv(AXTraversalBudget.maxElementCountEnvironmentKey, "1600", 1)
+        setenv(AXTraversalBudget.maxChildrenPerNodeEnvironmentKey, "550", 1)
+
+        let budget = AXTraversalBudget.normalizedForTraversal(nil)
+
+        XCTAssertEqual(budget.maxDepth, 15)
+        XCTAssertEqual(budget.maxElementCount, 1600)
+        XCTAssertEqual(budget.maxChildrenPerNode, 550)
+    }
+
+    func testExplicitDefaultBudgetNormalizationIgnoresEnvironmentOverrides() {
+        setenv(AXTraversalBudget.maxDepthEnvironmentKey, "15", 1)
+        setenv(AXTraversalBudget.maxElementCountEnvironmentKey, "1600", 1)
+        setenv(AXTraversalBudget.maxChildrenPerNodeEnvironmentKey, "550", 1)
+
+        let budget = AXTraversalBudget.normalizedForTraversal(AXTraversalBudget())
+
+        XCTAssertEqual(budget, AXTraversalBudget())
     }
 
     func testOCRMergePreservesTruncationMetadata() {

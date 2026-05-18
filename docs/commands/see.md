@@ -35,6 +35,9 @@ peekaboo see --app "Google Chrome" --window-title "Login"
 | `--menubar` | Capture menu bar popovers via window list + OCR (useful for status-item settings panels). When `--app` is set, the app name is used as an OCR hint for popover selection. |
 | `--timeout-seconds <seconds>` | Increase overall timeout for large/complex windows (defaults to 20s, or 60s with `--analyze`). |
 | `--no-web-focus` | Skip the automatic web-content focus retry (useful if the page reacts badly to synthetic clicks). |
+| `--max-depth <n>` | Override AX traversal depth (`PEEKABOO_AX_MAX_DEPTH` fallback, default 12). |
+| `--max-elements <n>` | Override maximum collected AX elements (`PEEKABOO_AX_MAX_ELEMENTS` fallback, default 1000). |
+| `--max-children <n>` | Override maximum AX children visited per node (`PEEKABOO_AX_MAX_CHILDREN` fallback, default 250). |
 
 Note: `--app menubar` captures only the menu bar strip; `--menubar` attempts to find the active popover and OCR its text.
 
@@ -73,6 +76,7 @@ peekaboo see --app "Google Chrome" --json \
 ## Troubleshooting tips
 
 - If the CLI reports **blind typing**, re-run `see` with `--app <Name>` so we can autofocus the app before typing.
+- If JSON/text output reports `AX tree truncated`, rerun with larger `--max-depth`, `--max-elements`, or `--max-children` values. For repeated captures, export the matching `PEEKABOO_AX_MAX_*` environment variable before launching Peekaboo.
 - Missing text fields after the fallback usually means the page is shielding its inputs from AX entirely. For Chrome targets, use the `browser` tool (`status` → `connect` → `snapshot`/`fill`/`click`) after enabling Chrome remote debugging; otherwise rely on image-based hit tests.
 - For repeatable local tests, run `RUN_LOCAL_TESTS=true swift test --filter SeeCommandPlaygroundTests` to exercise the Playground fixtures mentioned in `docs/research/interaction-debugging.md`.
 - Rapid repeated `see` calls for the same window reuse a short-lived AX cache (~1.5s); wait a beat if you need a fully fresh traversal.

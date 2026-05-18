@@ -54,6 +54,15 @@ public struct SeeTool: MCPTool {
                     Optional. Generate an annotated screenshot with interaction markers and IDs.
                     """,
                     default: false),
+                "max_depth": SchemaBuilder.number(
+                    description: "Optional. Maximum AX traversal depth. Env fallback: PEEKABOO_AX_MAX_DEPTH."),
+                "max_elements": SchemaBuilder.number(
+                    description: "Optional. Maximum AX elements to collect. Env fallback: PEEKABOO_AX_MAX_ELEMENTS."),
+                "max_children": SchemaBuilder.number(
+                    description: """
+                    Optional. Maximum AX children per node. Env fallback: PEEKABOO_AX_MAX_CHILDREN.
+                    Increase this for flat Qt/Electron panels with many sibling controls.
+                    """),
             ],
             required: [])
     }
@@ -73,6 +82,7 @@ public struct SeeTool: MCPTool {
                 target: target,
                 path: request.path,
                 annotate: request.annotate,
+                traversalBudget: request.traversalBudget,
                 snapshot: snapshot)
             let screenshotPath = try await self.registerObservationScreenshot(
                 observation,
@@ -120,11 +130,12 @@ public struct SeeTool: MCPTool {
         target: ObservationTargetArgument,
         path: String?,
         annotate: Bool,
+        traversalBudget: AXTraversalBudget,
         snapshot: UISnapshot) async throws -> DesktopObservationResult
     {
         try await self.context.desktopObservation.observe(DesktopObservationRequest(
             target: target.observationTarget,
-            detection: DesktopDetectionOptions(mode: .accessibility),
+            detection: DesktopDetectionOptions(mode: .accessibility, traversalBudget: traversalBudget),
             output: DesktopObservationOutputOptions(
                 path: path,
                 saveRawScreenshot: true,
@@ -193,7 +204,8 @@ public struct SeeTool: MCPTool {
             snapshot: snapshot,
             elements: elements,
             screenshotPath: finalScreenshot,
-            target: target)
+            truncationInfo: observation.elements?.metadata.truncationInfo,
+            traversalBudget: observation.elements?.metadata.windowContext?.traversalBudget)
 
         var content: [MCP.Tool.Content] = [.text(text: summaryText, annotations: nil, _meta: nil)]
         if output.annotate, let annotatedPath = output.annotatedPath {
@@ -271,12 +283,15 @@ public struct SeeTool: MCPTool {
         snapshot: UISnapshot,
         elements: [UIElement],
         screenshotPath: String,
-        target _: ObservationTargetArgument) async -> String
+        truncationInfo: DetectionTruncationInfo?,
+        traversalBudget: AXTraversalBudget?) async -> String
     {
         await SeeSummaryBuilder(
             snapshot: snapshot,
             elements: elements,
-            screenshotPath: screenshotPath)
+            screenshotPath: screenshotPath,
+            truncationInfo: truncationInfo,
+            traversalBudget: traversalBudget)
             .build()
     }
 }

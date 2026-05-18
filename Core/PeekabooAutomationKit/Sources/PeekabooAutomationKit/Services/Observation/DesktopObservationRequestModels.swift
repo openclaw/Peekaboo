@@ -29,14 +29,75 @@ public enum DetectionMode: Sendable, Codable, Equatable {
 }
 
 public struct AXTraversalBudget: Sendable, Codable, Equatable {
+    public static let defaultMaxDepth = 12
+    public static let defaultMaxElementCount = 1000
+    public static let defaultMaxChildrenPerNode = 250
+
+    public static let maxDepthEnvironmentKey = "PEEKABOO_AX_MAX_DEPTH"
+    public static let maxElementCountEnvironmentKey = "PEEKABOO_AX_MAX_ELEMENTS"
+    public static let maxChildrenPerNodeEnvironmentKey = "PEEKABOO_AX_MAX_CHILDREN"
+
     public var maxDepth: Int
     public var maxElementCount: Int
     public var maxChildrenPerNode: Int
 
-    public init(maxDepth: Int = 12, maxElementCount: Int = 400, maxChildrenPerNode: Int = 50) {
+    public init(
+        maxDepth: Int = Self.defaultMaxDepth,
+        maxElementCount: Int = Self.defaultMaxElementCount,
+        maxChildrenPerNode: Int = Self.defaultMaxChildrenPerNode)
+    {
         self.maxDepth = maxDepth
         self.maxElementCount = maxElementCount
         self.maxChildrenPerNode = maxChildrenPerNode
+    }
+
+    public static func resolved(
+        maxDepth: Int? = nil,
+        maxElementCount: Int? = nil,
+        maxChildrenPerNode: Int? = nil,
+        environment: [String: String] = ProcessInfo.processInfo.environment) -> AXTraversalBudget
+    {
+        AXTraversalBudget(
+            maxDepth: self.resolvedLimit(
+                explicit: maxDepth,
+                environmentKey: self.maxDepthEnvironmentKey,
+                defaultValue: self.defaultMaxDepth,
+                environment: environment),
+            maxElementCount: self.resolvedLimit(
+                explicit: maxElementCount,
+                environmentKey: self.maxElementCountEnvironmentKey,
+                defaultValue: self.defaultMaxElementCount,
+                environment: environment),
+            maxChildrenPerNode: self.resolvedLimit(
+                explicit: maxChildrenPerNode,
+                environmentKey: self.maxChildrenPerNodeEnvironmentKey,
+                defaultValue: self.defaultMaxChildrenPerNode,
+                environment: environment))
+    }
+
+    @_spi(Testing) public static func intFromEnv(
+        _ key: String,
+        default defaultValue: Int,
+        environment: [String: String] = ProcessInfo.processInfo.environment) -> Int
+    {
+        guard
+            let raw = environment[key],
+            let parsed = Int(raw.trimmingCharacters(in: .whitespacesAndNewlines)),
+            parsed > 0
+        else { return defaultValue }
+        return parsed
+    }
+
+    private static func resolvedLimit(
+        explicit: Int?,
+        environmentKey: String,
+        defaultValue: Int,
+        environment: [String: String]) -> Int
+    {
+        if let explicit {
+            return max(0, explicit)
+        }
+        return self.intFromEnv(environmentKey, default: defaultValue, environment: environment)
     }
 }
 
@@ -57,6 +118,30 @@ public struct DetectionTruncationInfo: Sendable, Codable, Equatable {
 }
 
 extension DetectionTruncationInfo {
+    public var isTruncated: Bool {
+        self.maxDepthReached || self.maxElementCountReached || self.maxChildrenPerNodeReached
+    }
+
+    public func remediationMessage(budget: AXTraversalBudget?) -> String {
+        let budget = budget ?? AXTraversalBudget()
+        var limits: [String] = []
+        if self.maxDepthReached {
+            limits.append("depth \(budget.maxDepth)")
+        }
+        if self.maxElementCountReached {
+            limits.append("element count \(budget.maxElementCount)")
+        }
+        if self.maxChildrenPerNodeReached {
+            limits.append("children per node \(budget.maxChildrenPerNode)")
+        }
+
+        let limitSummary = limits.isEmpty ? "the AX traversal budget" : limits.joined(separator: ", ")
+        return "Warning: AX tree truncated at \(limitSummary). Retry with larger --max-depth, --max-elements, " +
+            "or --max-children values, or set \(AXTraversalBudget.maxDepthEnvironmentKey), " +
+            "\(AXTraversalBudget.maxElementCountEnvironmentKey), or " +
+            "\(AXTraversalBudget.maxChildrenPerNodeEnvironmentKey)."
+    }
+
     static func merge(
         _ lhs: DetectionTruncationInfo?,
         _ rhs: DetectionTruncationInfo?) -> DetectionTruncationInfo?
@@ -81,7 +166,7 @@ public struct DesktopDetectionOptions: Sendable, Codable, Equatable {
         allowWebFocusFallback: Bool = true,
         includeMenuBarElements: Bool = true,
         preferOCR: Bool = false,
-        traversalBudget: AXTraversalBudget = AXTraversalBudget())
+        traversalBudget: AXTraversalBudget = AXTraversalBudget.resolved())
     {
         self.mode = mode
         self.allowWebFocusFallback = allowWebFocusFallback
@@ -105,7 +190,7 @@ public struct DesktopDetectionOptions: Sendable, Codable, Equatable {
         self.includeMenuBarElements = try container.decode(Bool.self, forKey: .includeMenuBarElements)
         self.preferOCR = try container.decode(Bool.self, forKey: .preferOCR)
         self.traversalBudget = try container.decodeIfPresent(AXTraversalBudget.self, forKey: .traversalBudget)
-            ?? AXTraversalBudget()
+            ?? AXTraversalBudget.resolved()
     }
 }
 

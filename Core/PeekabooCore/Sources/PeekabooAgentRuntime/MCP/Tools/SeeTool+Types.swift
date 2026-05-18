@@ -6,12 +6,24 @@ struct SeeRequest {
     let path: String?
     let snapshotId: String?
     let annotate: Bool
+    let traversalBudget: AXTraversalBudget
 
     init(arguments: ToolArguments) {
         self.appTarget = arguments.getString("app_target")
         self.path = arguments.getString("path")
         self.snapshotId = arguments.getString("snapshot")
         self.annotate = arguments.getBool("annotate") ?? false
+        self.traversalBudget = AXTraversalBudget.resolved(
+            maxDepth: Self.positiveInt("max_depth", in: arguments),
+            maxElementCount: Self.positiveInt("max_elements", in: arguments),
+            maxChildrenPerNode: Self.positiveInt("max_children", in: arguments))
+    }
+
+    private static func positiveInt(_ key: String, in arguments: ToolArguments) -> Int? {
+        guard let value = arguments.getInt(key), value > 0 else {
+            return nil
+        }
+        return value
     }
 }
 
@@ -26,12 +38,15 @@ struct SeeSummaryBuilder {
     let snapshot: UISnapshot
     let elements: [UIElement]
     let screenshotPath: String
+    let truncationInfo: DetectionTruncationInfo?
+    let traversalBudget: AXTraversalBudget?
 
     func build() async -> String {
         var lines = self.headerLines()
         await lines.append(contentsOf: self.metadataLines())
         lines.append("Screenshot: \(self.screenshotPath)")
         lines.append("Elements found: \(self.elements.count)")
+        lines.append(contentsOf: self.truncationWarningLines())
         lines.append("")
         lines.append(contentsOf: self.elementSection())
         lines.append("")
@@ -72,6 +87,11 @@ struct SeeSummaryBuilder {
     private func roleHeader(role: String, elements: [UIElement]) -> String {
         let actionableCount = elements.count(where: { $0.isActionable })
         return "\(role) (\(elements.count) found, \(actionableCount) actionable):"
+    }
+
+    private func truncationWarningLines() -> [String] {
+        guard let truncationInfo, truncationInfo.isTruncated else { return [] }
+        return ["", truncationInfo.remediationMessage(budget: self.traversalBudget)]
     }
 
     private func describeElement(_ element: UIElement) -> String {

@@ -146,6 +146,23 @@ struct SeeDesktopStateSnapshotSummary: Codable {
     }
 }
 
+struct SeeTruncationSummary: Codable {
+    let max_depth_reached: Bool
+    let max_element_count_reached: Bool
+    let max_children_per_node_reached: Bool
+    let warning: String
+
+    init?(metadata: DetectionMetadata) {
+        guard let truncationInfo = metadata.truncationInfo, truncationInfo.isTruncated else {
+            return nil
+        }
+        self.max_depth_reached = truncationInfo.maxDepthReached
+        self.max_element_count_reached = truncationInfo.maxElementCountReached
+        self.max_children_per_node_reached = truncationInfo.maxChildrenPerNodeReached
+        self.warning = truncationInfo.remediationMessage(budget: metadata.windowContext?.traversalBudget)
+    }
+}
+
 struct SeeResult: Codable {
     let snapshot_id: String
     let screenshot_raw: String
@@ -160,6 +177,7 @@ struct SeeResult: Codable {
     let analysis: SeeAnalysisData?
     let execution_time: TimeInterval
     let ui_elements: [UIElementSummary]
+    let truncation: SeeTruncationSummary?
     let menu_bar: MenuBarSummary?
     let observation: SeeObservationDiagnostics?
     var success: Bool = true
@@ -179,6 +197,7 @@ struct SeeResult: Codable {
         execution_time: TimeInterval,
         ui_elements: [UIElementSummary],
         menu_bar: MenuBarSummary?,
+        truncation: SeeTruncationSummary? = nil,
         observation: SeeObservationDiagnostics? = nil,
         success: Bool = true
     ) {
@@ -195,6 +214,7 @@ struct SeeResult: Codable {
         self.analysis = analysis
         self.execution_time = execution_time
         self.ui_elements = ui_elements
+        self.truncation = truncation
         self.menu_bar = menu_bar
         self.observation = observation
         self.success = success

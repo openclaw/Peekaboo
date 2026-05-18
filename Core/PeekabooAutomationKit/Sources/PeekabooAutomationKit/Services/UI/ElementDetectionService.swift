@@ -81,6 +81,10 @@ public final class ElementDetectionService {
         let resolvedWindowID = self.windowIdentityService.getWindowID(from: windowResolution.window).map { Int($0) } ??
             windowContext?.windowID
 
+        var elementIdMap: [String: DetectedElement] = [:]
+        let allowWebFocus = windowContext?.shouldFocusWebContent ?? true
+        let budget = AXTraversalBudget.normalizedForTraversal(windowContext?.traversalBudget)
+        let usesDefaultBudget = budget == AXTraversalBudget()
         let resolvedWindowContext = WindowContext(
             applicationName: windowContext?.applicationName ?? targetApp.localizedName,
             applicationBundleId: windowContext?.applicationBundleId ?? targetApp.bundleIdentifier,
@@ -89,12 +93,7 @@ public final class ElementDetectionService {
             windowID: resolvedWindowID,
             windowBounds: windowContext?.windowBounds,
             shouldFocusWebContent: windowContext?.shouldFocusWebContent,
-            traversalBudget: windowContext?.traversalBudget)
-
-        var elementIdMap: [String: DetectedElement] = [:]
-        let allowWebFocus = windowContext?.shouldFocusWebContent ?? true
-        let budget = windowContext?.traversalBudget
-        let usesDefaultBudget = (budget ?? AXTraversalBudget()) == AXTraversalBudget()
+            traversalBudget: budget)
         let detectedElements: [DetectedElement]
         let usedCache: Bool
         let truncationInfo: DetectionTruncationInfo?
