@@ -25,6 +25,7 @@ extension ClickCommand: CommanderBindableCommand {
         self.id = values.singleOption("id")
         self.target = try values.makeInteractionTargetOptions()
         self.coords = values.singleOption("coords")
+        self.globalCoords = values.flag("globalCoords")
         if let wait: Int = try values.decodeOption("waitFor", as: Int.self) {
             self.waitFor = wait
         }
@@ -62,7 +63,7 @@ extension ClickCommand: CommanderSignatureProviding {
                 ),
                 .commandOption(
                     "coords",
-                    help: "Click at coordinates (x,y)",
+                    help: "Click at x,y. Target-relative when --app/--pid/--window-* is supplied; global otherwise.",
                     long: "coords"
                 ),
                 .commandOption(
@@ -81,6 +82,11 @@ extension ClickCommand: CommanderSignatureProviding {
                     "right",
                     help: "Right-click (secondary click)",
                     long: "right"
+                ),
+                .commandFlag(
+                    "globalCoords",
+                    help: "Treat --coords as global screen coordinates even with target options",
+                    long: "global-coords"
                 ),
             ],
             optionGroups: [

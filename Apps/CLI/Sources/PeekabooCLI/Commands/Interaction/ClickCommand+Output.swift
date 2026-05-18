@@ -8,6 +8,11 @@ struct ClickResult: Codable {
     let waitTime: Double
     let executionTime: TimeInterval
     let targetApp: String
+    let targetWindowId: Int?
+    let targetWindowTitle: String?
+    let coordinateSpace: String?
+    let inputCoordinates: [String: Double]?
+    let screenCoordinates: [String: Double]?
     let targetPoint: InteractionTargetPointDiagnostics?
 
     init(
@@ -17,6 +22,11 @@ struct ClickResult: Codable {
         waitTime: Double,
         executionTime: TimeInterval,
         targetApp: String,
+        targetWindowId: Int? = nil,
+        targetWindowTitle: String? = nil,
+        coordinateSpace: String? = nil,
+        inputCoordinates: CGPoint? = nil,
+        screenCoordinates: CGPoint? = nil,
         targetPoint: InteractionTargetPointDiagnostics? = nil
     ) {
         self.success = success
@@ -25,6 +35,11 @@ struct ClickResult: Codable {
         self.waitTime = waitTime
         self.executionTime = executionTime
         self.targetApp = targetApp
+        self.targetWindowId = targetWindowId
+        self.targetWindowTitle = targetWindowTitle
+        self.coordinateSpace = coordinateSpace
+        self.inputCoordinates = inputCoordinates.map { ["x": $0.x, "y": $0.y] }
+        self.screenCoordinates = screenCoordinates.map { ["x": $0.x, "y": $0.y] }
         self.targetPoint = targetPoint
     }
 }

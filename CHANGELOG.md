@@ -3,6 +3,7 @@
 ## [3.2.1] - Unreleased
 
 ### Fixed
+- `peekaboo click --coords` now treats coordinates as target-window-relative when app/window target flags are supplied, reports resolved target metadata, and requires `--global-coords` for targeted global clicks.
 - `peekaboo-mcp` now shuts down cleanly during restart backoff and repairs executable permissions without shelling out through an install path.
 - `pnpm run peekaboo:dev` no longer depends on a hardcoded local checkout path.
 - `peekaboo agent` now tells models to use the current tool schema instead of stale tool names and arguments. Thanks @vyctorbrzezowski for #139.

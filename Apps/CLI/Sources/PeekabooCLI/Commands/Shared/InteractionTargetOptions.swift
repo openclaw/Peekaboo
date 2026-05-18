@@ -95,4 +95,25 @@ struct InteractionTargetOptions: CommanderParsable, ApplicationResolvable {
         let windows = try await services.windows.listWindows(target: .index(app: appIdentifier, index: windowIndex))
         return windows.first?.title
     }
+
+    func toWindowTarget() throws -> WindowTarget? {
+        if let windowId {
+            return .windowId(windowId)
+        }
+
+        guard let appIdentifier = try self.resolveApplicationIdentifierOptional() else {
+            return nil
+        }
+
+        if let windowTitle = self.windowTitle?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !windowTitle.isEmpty {
+            return .applicationAndTitle(app: appIdentifier, title: windowTitle)
+        }
+
+        if let windowIndex {
+            return .index(app: appIdentifier, index: windowIndex)
+        }
+
+        return .application(appIdentifier)
+    }
 }

@@ -209,6 +209,25 @@ struct InteractionTargetPointDiagnostics: Codable, Equatable {
     let original: InteractionPoint
     let resolved: InteractionPoint
     let windowAdjustment: InteractionWindowAdjustmentDiagnostics?
+    let coordinate: InteractionCoordinateDiagnostics?
+
+    init(
+        source: String,
+        elementId: String?,
+        snapshotId: String?,
+        original: InteractionPoint,
+        resolved: InteractionPoint,
+        windowAdjustment: InteractionWindowAdjustmentDiagnostics?,
+        coordinate: InteractionCoordinateDiagnostics? = nil
+    ) {
+        self.source = source
+        self.elementId = elementId
+        self.snapshotId = snapshotId
+        self.original = original
+        self.resolved = resolved
+        self.windowAdjustment = windowAdjustment
+        self.coordinate = coordinate
+    }
 }
 
 struct InteractionWindowAdjustmentDiagnostics: Codable, Equatable {

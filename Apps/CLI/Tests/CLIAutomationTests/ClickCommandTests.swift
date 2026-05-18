@@ -46,7 +46,7 @@ struct ClickCommandTests {
     func `Click command supports background coordinate clicks`() async throws {
         let context = await self.makeContext()
         let result = try await InProcessCommandRunner.run(
-            ["click", "--coords", "100,200", "--pid", "12345", "--focus-background", "--json"],
+            ["click", "--coords", "100,200", "--pid", "12345", "--focus-background", "--global-coords", "--json"],
             services: context.services
         )
 

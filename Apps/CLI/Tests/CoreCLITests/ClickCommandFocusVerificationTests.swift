@@ -96,4 +96,48 @@ struct ClickCommandFocusVerificationTests {
         #expect(message?.contains("com.google.Chrome") == true)
         #expect(message?.contains("PID 512") == true)
     }
+
+    @Test
+    func `Resolved focused window match passes`() {
+        let frontmost = FrontmostApplicationIdentity(
+            name: "OpenClaw Settings",
+            bundleIdentifier: "com.openclaw.settings",
+            processIdentifier: 99
+        )
+        let focusedWindow = FocusedWindowIdentity(windowID: 59620, title: "Settings")
+
+        let message = CoordinateClickFocusVerifier.mismatchMessage(
+            targetApp: "OpenClaw Settings",
+            targetPID: 99,
+            frontmost: frontmost,
+            targetWindowID: 59620,
+            targetWindowTitle: "Settings",
+            focusedWindow: focusedWindow
+        )
+
+        #expect(message == nil)
+    }
+
+    @Test
+    func `Resolved focused window mismatch fails`() {
+        let frontmost = FrontmostApplicationIdentity(
+            name: "Discord",
+            bundleIdentifier: "com.hnc.Discord",
+            processIdentifier: 512
+        )
+        let focusedWindow = FocusedWindowIdentity(windowID: 123, title: "Discord")
+
+        let message = CoordinateClickFocusVerifier.mismatchMessage(
+            targetApp: "OpenClaw Settings",
+            targetPID: 99,
+            frontmost: frontmost,
+            targetWindowID: 59620,
+            targetWindowTitle: "Settings",
+            focusedWindow: focusedWindow
+        )
+
+        #expect(message?.contains("Target window 59620 'Settings'") == true)
+        #expect(message?.contains("'Discord' window 123") == true)
+        #expect(message?.contains("com.hnc.Discord") == true)
+    }
 }

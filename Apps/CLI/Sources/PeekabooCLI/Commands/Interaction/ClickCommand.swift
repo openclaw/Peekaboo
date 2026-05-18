@@ -25,6 +25,9 @@ struct ClickCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
     @Option(help: "Click at coordinates (x,y)")
     var coords: String?
 
+    @Flag(help: "Treat --coords as global screen coordinates even when target options are supplied")
+    var globalCoords = false
+
     @Option(help: "Maximum milliseconds to wait for element")
     var waitFor: Int = 5000
 
@@ -76,6 +79,7 @@ struct ClickCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
             let waitResult: WaitForElementResult
             var activeSnapshotId: String
             var observationForInvalidation: InteractionObservationContext?
+            var coordinateResolution: InteractionCoordinateResolution?
 
             // Check if we're clicking by coordinates (doesn't need snapshot)
             if let coordString = coords {
@@ -83,17 +87,27 @@ struct ClickCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
                 guard let point = Self.parseCoordinates(coordString) else {
                     throw ValidationError("Invalid coordinates format. Use: x,y")
                 }
-                clickTarget = .coordinates(point)
+                let resolvedCoordinates = try await InteractionCoordinateResolver.resolveClickCoordinates(
+                    point,
+                    target: self.target,
+                    services: self.services,
+                    forceGlobal: self.globalCoords
+                )
+                coordinateResolution = resolvedCoordinates
+                clickTarget = .coordinates(resolvedCoordinates.screenPoint)
                 waitResult = WaitForElementResult(found: true, element: nil, waitTime: 0)
                 activeSnapshotId = "" // Not needed for coordinate clicks
-                try await self.focusApplicationIfNeeded(snapshotId: nil)
+                try await self.focusApplicationIfNeeded(
+                    snapshotId: nil,
+                    coordinateResolution: resolvedCoordinates
+                )
 
-                // Verify target app is actually frontmost after focus attempt.
+                // Verify the resolved target is actually frontmost after focus attempt.
                 // InputDriver.click() sends a CGEvent at screen-absolute coordinates,
                 // so if the target window is not frontmost, the click will land on
                 // whatever window is at that position (see #90).
                 if !self.focusOptions.focusBackground {
-                    try await self.verifyFocusForCoordinateClick()
+                    try await self.verifyFocusForCoordinateClick(coordinateResolution: resolvedCoordinates)
                 }
 
             } else {
@@ -185,12 +199,16 @@ struct ClickCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
             // Brief delay to ensure click is processed
             try await Task.sleep(nanoseconds: 20_000_000) // 0.02 seconds
 
-            let appName = await self.resultApplicationName(snapshotId: activeSnapshotId)
+            let appName = await self.resultApplicationName(
+                snapshotId: activeSnapshotId,
+                coordinateResolution: coordinateResolution
+            )
 
             let details = try await self.clickOutputDetails(
                 clickTarget: clickTarget,
                 waitResult: waitResult,
-                snapshotId: activeSnapshotId
+                snapshotId: activeSnapshotId,
+                coordinateResolution: coordinateResolution
             )
 
             // Output results
@@ -201,6 +219,11 @@ struct ClickCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
                 waitTime: waitResult.waitTime,
                 executionTime: Date().timeIntervalSince(startTime),
                 targetApp: appName,
+                targetWindowId: coordinateResolution?.targetWindowID,
+                targetWindowTitle: coordinateResolution?.targetWindowTitle,
+                coordinateSpace: coordinateResolution?.coordinateSpace.rawValue,
+                inputCoordinates: coordinateResolution?.inputPoint,
+                screenCoordinates: coordinateResolution?.screenPoint,
                 targetPoint: details.targetPointDiagnostics
             )
 
@@ -224,7 +247,8 @@ struct ClickCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
     private func clickOutputDetails(
         clickTarget: ClickTarget,
         waitResult: WaitForElementResult,
-        snapshotId: String
+        snapshotId: String,
+        coordinateResolution: InteractionCoordinateResolution?
     ) async throws
     -> (location: CGPoint, clickedElement: String?, targetPointDiagnostics: InteractionTargetPointDiagnostics?) {
         switch clickTarget {
@@ -241,7 +265,19 @@ struct ClickCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
             return (resolution.point, self.formatElementInfo(element), resolution.diagnostics)
 
         case let .coordinates(point):
-            let diagnostics = InteractionTargetPointResolver.coordinate(point, source: .coordinates).diagnostics
+            let diagnostics = if let coordinateResolution {
+                InteractionTargetPointDiagnostics(
+                    source: InteractionTargetPointSource.coordinates.rawValue,
+                    elementId: nil,
+                    snapshotId: nil,
+                    original: InteractionPoint(coordinateResolution.inputPoint),
+                    resolved: InteractionPoint(coordinateResolution.screenPoint),
+                    windowAdjustment: nil,
+                    coordinate: coordinateResolution.diagnostics
+                )
+            } else {
+                InteractionTargetPointResolver.coordinate(point, source: .coordinates).diagnostics
+            }
             return (point, nil, diagnostics)
 
         case let .query(query):
@@ -262,7 +298,20 @@ struct ClickCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
         await (try? self.services.applications.getFrontmostApplication().name) ?? "Unknown"
     }
 
-    private func resultApplicationName(snapshotId: String) async -> String {
+    private func resultApplicationName(
+        snapshotId: String,
+        coordinateResolution: InteractionCoordinateResolution? = nil
+    ) async -> String {
+        if let targetApplicationName = coordinateResolution?.targetApplicationName {
+            return targetApplicationName
+        }
+        if let processIdentifier = coordinateResolution?.targetProcessIdentifier {
+            return await self.applicationName(processIdentifier: processIdentifier) ?? "PID \(processIdentifier)"
+        }
+        if let windowID = coordinateResolution?.targetWindowID {
+            return "window \(windowID)"
+        }
+
         guard self.focusOptions.focusBackground else {
             return await self.frontmostApplicationName()
         }
@@ -307,6 +356,16 @@ struct ClickCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
             print("🎯 App: \(result.targetApp)")
             if self.focusOptions.focusBackground {
                 print("🎯 Mode: background")
+            }
+            if let coordinateSpace = result.coordinateSpace {
+                print("🎯 Coordinate space: \(coordinateSpace)")
+            }
+            if let windowID = result.targetWindowId {
+                if let title = result.targetWindowTitle, !title.isEmpty {
+                    print("🪟 Window: \(windowID) (\(title))")
+                } else {
+                    print("🪟 Window: \(windowID)")
+                }
             }
             if let info = result.clickedElement {
                 print("📱 Clicked: \(info)")
@@ -423,7 +482,10 @@ struct ClickCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
         }
     }
 
-    private func focusApplicationIfNeeded(snapshotId: String?) async throws {
+    private func focusApplicationIfNeeded(
+        snapshotId: String?,
+        coordinateResolution: InteractionCoordinateResolution? = nil
+    ) async throws {
         if self.focusOptions.focusBackground {
             try self.validateBackgroundClickOptions()
             return
@@ -434,6 +496,18 @@ struct ClickCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
         }
 
         if snapshotId == nil, !self.target.hasAnyTarget {
+            return
+        }
+
+        if let targetWindowID = coordinateResolution?.targetWindowID {
+            try await ensureFocused(
+                windowID: CGWindowID(targetWindowID),
+                applicationName: coordinateResolution?.targetApplicationIdentifier,
+                windowTitle: coordinateResolution?.targetWindowTitle,
+                options: self.focusOptions,
+                services: self.services
+            )
+            try await Task.sleep(nanoseconds: 100_000_000)
             return
         }
 

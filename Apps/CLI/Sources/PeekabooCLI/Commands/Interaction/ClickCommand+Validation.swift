@@ -21,6 +21,10 @@ extension ClickCommand {
         if let coordString = self.coords, Self.parseCoordinates(coordString) == nil {
             throw ValidationError("Invalid coordinates format. Use: x,y")
         }
+
+        if self.globalCoords && self.coords == nil {
+            throw ValidationError("--global-coords requires --coords")
+        }
     }
 
     func formatElementInfo(_ element: DetectedElement) -> String {

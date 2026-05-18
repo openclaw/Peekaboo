@@ -62,7 +62,8 @@ public enum UIAutomationToolDefinitions {
         abstract: "Click on UI elements or coordinates",
         discussion: """
         Clicks on UI elements or coordinates. Supports element queries,
-        specific IDs from `see` or `inspect_ui`, or raw coordinates.
+        specific IDs from `see` or `inspect_ui`, or coordinates. CLI coordinate
+        clicks are target-window-relative when app/window target flags are supplied.
         """,
         category: .ui,
         parameters: [
@@ -79,7 +80,7 @@ public enum UIAutomationToolDefinitions {
             ParameterDefinition(
                 name: "coords",
                 type: .string,
-                description: "Click at specific coordinates in format 'x,y'",
+                description: "Click at coordinates in format 'x,y'",
                 required: false),
             ParameterDefinition(
                 name: "double",
