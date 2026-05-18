@@ -17,10 +17,9 @@ extension PeekabooServices {
 
         let providers = self.configuration.getAIProviders()
 
-        // Check for available providers
-        let hasOpenAI = self.configuration.getOpenAIAPIKey() != nil && !self.configuration.getOpenAIAPIKey()!.isEmpty
-        let hasAnthropic = self.configuration.getAnthropicAPIKey() != nil && !self.configuration.getAnthropicAPIKey()!
-            .isEmpty
+        // Check for available providers (API key or OAuth access token)
+        let hasOpenAI = self.configuration.hasOpenAIAuth()
+        let hasAnthropic = self.configuration.hasAnthropicAuth()
         let hasGemini = self.configuration.getGeminiAPIKey() != nil && !self.configuration.getGeminiAPIKey()!.isEmpty
         let hasMiniMax = self.configuration.getMiniMaxAPIKey() != nil && !self.configuration.getMiniMaxAPIKey()!.isEmpty
         let hasOllama = Self.providerList(providers, containsToolCapableLocalProvider: "ollama")

@@ -37,14 +37,17 @@ extension ConfigurationManager {
             defaultValue: "openai/gpt-5.5,anthropic/claude-opus-4-7")
     }
 
-    /// Get OpenAI API key with proper precedence
+    /// Get OpenAI API key with proper precedence.
+    ///
+    /// Returns only true API keys. OAuth access tokens (e.g. `OPENAI_ACCESS_TOKEN`
+    /// from `peekaboo config login openai`) intentionally flow through
+    /// `TKAuthManager.resolveAuth(for:)` instead so they can be sent as
+    /// `Authorization: Bearer …`. Routing them through `applyAIProviderKeys()` →
+    /// `TachikomaConfiguration.setAPIKey(for: .openai)` would force the OpenAI
+    /// provider to send them as an API key, breaking OAuth-based logins.
     public func getOpenAIAPIKey() -> String? {
         if let envValue = self.environmentValue(for: "OPENAI_API_KEY") {
             return envValue
-        }
-
-        if let token = self.validOAuthAccessToken(prefix: "OPENAI") {
-            return token
         }
 
         if let credValue = credentials["OPENAI_API_KEY"] {
@@ -58,14 +61,19 @@ extension ConfigurationManager {
         return nil
     }
 
-    /// Get Anthropic API key with proper precedence
+    /// Get Anthropic API key with proper precedence.
+    ///
+    /// Returns only true API keys. OAuth access tokens (e.g. `ANTHROPIC_ACCESS_TOKEN`
+    /// from `peekaboo config login anthropic`) intentionally flow through
+    /// `TKAuthManager.resolveAuth(for:)` instead so they can be sent as
+    /// `Authorization: Bearer …` with the Claude Max beta headers attached.
+    /// Returning them here would route them through `applyAIProviderKeys()` →
+    /// `TachikomaConfiguration.setAPIKey(for: .anthropic)`, which the Anthropic
+    /// provider sends as `x-api-key` — Anthropic rejects that with
+    /// `401 invalid x-api-key`.
     public func getAnthropicAPIKey() -> String? {
         if let envValue = self.environmentValue(for: "ANTHROPIC_API_KEY") {
             return envValue
-        }
-
-        if let token = self.validOAuthAccessToken(prefix: "ANTHROPIC") {
-            return token
         }
 
         if let credValue = credentials["ANTHROPIC_API_KEY"] {
@@ -77,6 +85,26 @@ extension ConfigurationManager {
         }
 
         return nil
+    }
+
+    /// Whether any OpenAI authentication material is available — either an API
+    /// key (via `getOpenAIAPIKey()`) or a non-expired OAuth access token (via
+    /// `peekaboo config login openai`). Use this for agent-availability gates;
+    /// `getOpenAIAPIKey()` alone deliberately ignores OAuth tokens so they are
+    /// not misclassified as `x-api-key` material.
+    public func hasOpenAIAuth() -> Bool {
+        if self.getOpenAIAPIKey()?.isEmpty == false { return true }
+        return self.validOAuthAccessToken(prefix: "OPENAI") != nil
+    }
+
+    /// Whether any Anthropic authentication material is available — either an
+    /// API key (via `getAnthropicAPIKey()`) or a non-expired OAuth access token
+    /// (via `peekaboo config login anthropic`). Use this for agent-availability
+    /// gates; `getAnthropicAPIKey()` alone deliberately ignores OAuth tokens so
+    /// they are not misclassified as `x-api-key` material.
+    public func hasAnthropicAuth() -> Bool {
+        if self.getAnthropicAPIKey()?.isEmpty == false { return true }
+        return self.validOAuthAccessToken(prefix: "ANTHROPIC") != nil
     }
 
     /// Get Gemini API key with proper precedence

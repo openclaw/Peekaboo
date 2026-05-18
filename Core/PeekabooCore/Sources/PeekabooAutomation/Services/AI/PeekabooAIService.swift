@@ -300,8 +300,8 @@ public final class PeekabooAIService {
             }
         }
 
-        // Fallback: prefer Anthropic if a key is present, else OpenAI
-        if let key = configuration.getAnthropicAPIKey(), !key.isEmpty {
+        // Fallback: prefer Anthropic if any auth (API key or OAuth) is present
+        if configuration.hasAnthropicAuth() {
             return self.appendingGeneratedVisionFallbacks(from: parsed, to: [.anthropic(.opus47)])
         }
         if let key = configuration.getGeminiAPIKey(), !key.isEmpty {
@@ -377,9 +377,9 @@ public final class PeekabooAIService {
     {
         switch model {
         case .openai:
-            configuration.getOpenAIAPIKey()?.isEmpty == false
+            configuration.hasOpenAIAuth()
         case .anthropic:
-            configuration.getAnthropicAPIKey()?.isEmpty == false
+            configuration.hasAnthropicAuth()
         case .google:
             configuration.getGeminiAPIKey()?.isEmpty == false
         case .minimax:

@@ -333,8 +333,8 @@ extension AgentCommand {
     }
 
     private func hasConfiguredAIProvider(configuration: PeekabooCore.ConfigurationManager) -> Bool {
-        let hasOpenAI = configuration.getOpenAIAPIKey()?.isEmpty == false
-        let hasAnthropic = configuration.getAnthropicAPIKey()?.isEmpty == false
+        let hasOpenAI = configuration.hasOpenAIAuth()
+        let hasAnthropic = configuration.hasAnthropicAuth()
         let hasGemini = configuration.getGeminiAPIKey()?.isEmpty == false
         let hasMiniMax = configuration.getMiniMaxAPIKey()?.isEmpty == false
         let hasLocalProvider = configuration.getAIProviders()

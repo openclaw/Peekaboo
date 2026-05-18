@@ -100,9 +100,9 @@ extension AgentCommand {
         case .ollama, .lmstudio:
             return true
         case .openai:
-            return configuration.getOpenAIAPIKey()?.isEmpty == false
+            return configuration.hasOpenAIAuth()
         case .anthropic:
-            return configuration.getAnthropicAPIKey()?.isEmpty == false
+            return configuration.hasAnthropicAuth()
         case .google:
             return configuration.getGeminiAPIKey()?.isEmpty == false
         case .minimax:
