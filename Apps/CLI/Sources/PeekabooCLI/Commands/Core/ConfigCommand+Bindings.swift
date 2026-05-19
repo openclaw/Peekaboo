@@ -25,6 +25,17 @@ extension ConfigCommand.ShowCommand: CommanderBindableCommand {
 }
 
 @available(macOS 14.0, *)
+extension ConfigCommand.StatusCommand: AsyncRuntimeCommand {}
+@MainActor
+extension ConfigCommand.StatusCommand: CommanderBindableCommand {
+    mutating func applyCommanderValues(_ values: CommanderBindableValues) throws {
+        if let timeout = values.singleOption("timeout"), let seconds = Double(timeout) {
+            self.timeoutSeconds = seconds
+        }
+    }
+}
+
+@available(macOS 14.0, *)
 extension ConfigCommand.EditCommand: AsyncRuntimeCommand {}
 @MainActor
 extension ConfigCommand.EditCommand: CommanderBindableCommand {

@@ -12,7 +12,7 @@ struct ProviderStatusReporter {
 
     func printSummary() async {
         print("Providers:")
-        for pid in [TKProviderId.openai, .anthropic, .grok, .gemini] {
+        for pid in [TKProviderId.openai, .anthropic, .grok, .gemini, .openrouter] {
             let status = await self.status(for: pid)
             print("  \(pid.displayName): \(status)")
         }
@@ -63,6 +63,8 @@ struct ProviderStatusReporter {
             }
         case .gemini:
             if let v = env["GEMINI_API_KEY"], !v.isEmpty { return .env("GEMINI_API_KEY", v) }
+        case .openrouter:
+            if let v = env["OPENROUTER_API_KEY"], !v.isEmpty { return .env("OPENROUTER_API_KEY", v) }
         }
 
         let creds = TKAuthManager.shared
@@ -83,6 +85,10 @@ struct ProviderStatusReporter {
             }
         case .gemini:
             if let v = creds.credentialValue(for: "GEMINI_API_KEY") { return .credentials("GEMINI_API_KEY", v) }
+        case .openrouter:
+            if let v = creds.credentialValue(for: "OPENROUTER_API_KEY") {
+                return .credentials("OPENROUTER_API_KEY", v)
+            }
         }
 
         return .missing("missing")

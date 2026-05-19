@@ -32,6 +32,8 @@ extension AgentCommand {
             }
         case .ollama, .lmstudio:
             return parsed.supportsTools ? parsed : nil
+        case .openRouter:
+            return parsed.supportsTools ? parsed : nil
         default:
             break
         }
@@ -88,7 +90,11 @@ extension AgentCommand {
         let anthropicModels = Self.supportedAnthropicInputs.map(\.modelId)
         let googleModels = Self.supportedGoogleInputs.map(\.userFacingModelId)
         let miniMaxModels = Self.supportedMiniMaxInputs.map(\.modelId)
-        return (openAIModels + anthropicModels + googleModels + miniMaxModels + ["ollama/<model>", "lmstudio/<model>"])
+        return (openAIModels + anthropicModels + googleModels + miniMaxModels + [
+            "ollama/<model>",
+            "lmstudio/<model>",
+            "openrouter-provider/model",
+        ])
             .sorted()
             .joined(separator: ", ")
     }
@@ -107,6 +113,8 @@ extension AgentCommand {
             return configuration.getGeminiAPIKey()?.isEmpty == false
         case .minimax:
             return configuration.getMiniMaxAPIKey()?.isEmpty == false
+        case .openRouter:
+            return configuration.getOpenRouterAPIKey()?.isEmpty == false
         default:
             return false
         }
@@ -126,6 +134,8 @@ extension AgentCommand {
             "Ollama"
         case .lmstudio:
             "LM Studio"
+        case .openRouter:
+            "OpenRouter"
         default:
             "the selected provider"
         }
@@ -145,6 +155,8 @@ extension AgentCommand {
             "OLLAMA_BASE_URL or PEEKABOO_OLLAMA_BASE_URL"
         case .lmstudio:
             "LM Studio local server URL"
+        case .openRouter:
+            "OPENROUTER_API_KEY"
         default:
             "provider API key"
         }

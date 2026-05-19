@@ -205,6 +205,24 @@ extension ConfigCommand {
         }
     }
 
+    /// Display configured provider credential status.
+    struct StatusCommand: ConfigRuntimeCommand {
+        static let commandDescription = CommandDescription(
+            commandName: "status",
+            abstract: "Display provider credential status"
+        )
+
+        @Option(name: .long, help: "Validation timeout in seconds (default 30)")
+        var timeoutSeconds: Double = 30
+        @RuntimeStorage var runtime: CommandRuntime?
+
+        mutating func run(using runtime: CommandRuntime) async throws {
+            self.prepare(using: runtime)
+            let reporter = ProviderStatusReporter(timeoutSeconds: self.timeoutSeconds)
+            await reporter.printSummary()
+        }
+    }
+
     /// Open configuration in an editor.
     struct EditCommand: ConfigRuntimeCommand {
         static let commandDescription = CommandDescription(

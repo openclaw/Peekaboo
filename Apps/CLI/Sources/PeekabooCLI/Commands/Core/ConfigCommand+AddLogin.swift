@@ -11,7 +11,7 @@ extension ConfigCommand {
             abstract: "Add and validate a provider credential (API key)"
         )
 
-        @Argument(help: "Provider id (openai|anthropic|grok|xai|gemini)")
+        @Argument(help: "Provider id (openai|anthropic|grok|xai|gemini|openrouter)")
         var provider: String
 
         @Argument(help: "Secret value (API key)")
@@ -25,7 +25,10 @@ extension ConfigCommand {
         mutating func run(using runtime: CommandRuntime) async throws {
             self.prepare(using: runtime)
             guard let pid = TKProviderId.normalize(self.provider) else {
-                self.output.error(code: "INVALID_PROVIDER", message: "Supported: openai, anthropic, grok, xai, gemini")
+                self.output.error(
+                    code: "INVALID_PROVIDER",
+                    message: "Supported: openai, anthropic, grok, xai, gemini, openrouter"
+                )
                 throw ExitCode.failure
             }
 
