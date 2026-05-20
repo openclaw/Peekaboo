@@ -136,22 +136,34 @@ private func withIsolatedConfigurationEnvironment(_ body: (URL) throws -> Void) 
         .appendingPathComponent("peekaboo-config-tests-\(UUID().uuidString)", isDirectory: true)
     try fileManager.createDirectory(at: configDir, withIntermediateDirectories: true)
 
-    let previousConfigDir = getenv("PEEKABOO_CONFIG_DIR").map { String(cString: $0) }
-    let previousDisableMigration = getenv("PEEKABOO_CONFIG_DISABLE_MIGRATION").map { String(cString: $0) }
+    let environmentKeys = [
+        "PEEKABOO_CONFIG_DIR",
+        "PEEKABOO_CONFIG_DISABLE_MIGRATION",
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_ACCESS_TOKEN",
+        "ANTHROPIC_REFRESH_TOKEN",
+        "ANTHROPIC_ACCESS_EXPIRES",
+        "ANTHROPIC_BETA_HEADER",
+        "OPENAI_API_KEY",
+        "OPENAI_ACCESS_TOKEN",
+        "OPENAI_REFRESH_TOKEN",
+        "OPENAI_ACCESS_EXPIRES",
+    ]
+    let previousEnvironment = Dictionary(uniqueKeysWithValues: environmentKeys.map { key in
+        (key, getenv(key).map { String(cString: $0) })
+    })
+
     setenv("PEEKABOO_CONFIG_DIR", configDir.path, 1)
     setenv("PEEKABOO_CONFIG_DISABLE_MIGRATION", "1", 1)
     ConfigurationManager.shared.resetForTesting()
 
     defer {
-        if let previousConfigDir {
-            setenv("PEEKABOO_CONFIG_DIR", previousConfigDir, 1)
-        } else {
-            unsetenv("PEEKABOO_CONFIG_DIR")
-        }
-        if let previousDisableMigration {
-            setenv("PEEKABOO_CONFIG_DISABLE_MIGRATION", previousDisableMigration, 1)
-        } else {
-            unsetenv("PEEKABOO_CONFIG_DISABLE_MIGRATION")
+        for key in environmentKeys {
+            if case let value?? = previousEnvironment[key] {
+                setenv(key, value, 1)
+            } else {
+                unsetenv(key)
+            }
         }
         ConfigurationManager.shared.resetForTesting()
         try? fileManager.removeItem(at: configDir)
