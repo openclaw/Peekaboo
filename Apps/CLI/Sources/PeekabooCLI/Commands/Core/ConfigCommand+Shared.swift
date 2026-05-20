@@ -7,7 +7,6 @@ import Commander
 import Foundation
 import PeekabooCore
 import PeekabooFoundation
-import Tachikoma
 
 @MainActor
 protocol ConfigRuntimeCommand {
@@ -37,7 +36,7 @@ extension ConfigRuntimeCommand {
         self.runtime = runtime
         self.logger.setJsonOutputMode(self.jsonOutput)
         // Align Tachikoma profile dir with Peekaboo storage
-        TachikomaConfiguration.profileDirectoryName = ".peekaboo"
+        PeekabooCore.ConfigurationManager.configureTachikomaProfileDirectory()
     }
 
     var output: ConfigCommandOutput {

@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Custom provider docs, CLI help, and macOS settings now prefer `${VAR}` API key references and shell examples that preserve them literally. Thanks @scotthuang for #142.
 - `peekaboo agent` now refreshes desktop context before each model turn and wires opt-in action verification through the configured capture strategy. Thanks @lonexreb for #148.
 - AX traversal budgets now have wider defaults plus CLI, MCP, and environment overrides for complex app trees. Thanks @widdowson for #150 and #151.
+- `peekaboo agent` now keeps OAuth access tokens on Bearer auth paths instead of misclassifying them as API keys, including config-dir overrides and audio transcription. Thanks @Crux0453 for #154.
 
 ## [3.2.0] - 2026-05-15
 

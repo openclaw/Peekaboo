@@ -118,7 +118,7 @@ public final class PeekabooAIService {
 
     public init(configuration: ConfigurationManager = .shared) {
         self.configuration = configuration
-        TachikomaConfiguration.profileDirectoryName = ".peekaboo"
+        ConfigurationManager.configureTachikomaProfileDirectory()
         _ = configuration.loadConfiguration()
         configuration.applyAIProviderKeys()
         self.resolvedModels = Self.resolveAvailableModels(configuration: configuration)

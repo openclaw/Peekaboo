@@ -50,6 +50,10 @@ public final class ConfigurationManager: @unchecked Sendable {
         "\(baseDir)/credentials"
     }
 
+    public static func configureTachikomaProfileDirectory() {
+        TachikomaConfiguration.profileDirectoryName = self.baseDir
+    }
+
     /// Loaded configuration
     var configuration: Configuration?
 
@@ -58,6 +62,7 @@ public final class ConfigurationManager: @unchecked Sendable {
 
     private init() {
         // Load configuration on init, but don't crash if it fails
+        Self.configureTachikomaProfileDirectory()
         _ = self.loadConfiguration()
     }
 
@@ -106,6 +111,7 @@ public final class ConfigurationManager: @unchecked Sendable {
 
     /// Load configuration from file
     public func loadConfiguration() -> Configuration? {
+        Self.configureTachikomaProfileDirectory()
         try? self.migrateIfNeeded()
         self.loadCredentials()
         self.configuration = self.loadConfigurationFromPath(Self.configPath)

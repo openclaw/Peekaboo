@@ -50,7 +50,7 @@ struct CommandRuntimeInjectionTests {
             services: services
         )
 
-        #expect(TachikomaConfiguration.profileDirectoryName == ".peekaboo")
+        #expect(TachikomaConfiguration.profileDirectoryPath == PeekabooCore.ConfigurationManager.baseDir)
     }
 
     @Test

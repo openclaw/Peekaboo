@@ -108,6 +108,29 @@ struct ConfigurationAccessorsOAuthTests {
     }
 
     @Test
+    func `OAuth availability uses same overridden config root as Tachikoma auth`() throws {
+        try withIsolatedConfigurationEnvironment { configDir in
+            self.unsetAllAnthropicEnv()
+            self.manager.resetForTesting()
+            try self.manager.saveCredentials([
+                "ANTHROPIC_ACCESS_TOKEN": "placeholder-anthropic-oauth-access",
+                "ANTHROPIC_BETA_HEADER": "oauth-2025-04-20",
+                "ANTHROPIC_ACCESS_EXPIRES": String(Int(Date().addingTimeInterval(3600).timeIntervalSince1970)),
+            ])
+            _ = self.manager.loadConfiguration()
+
+            #expect(TachikomaConfiguration.profileDirectoryPath == configDir.path)
+            #expect(self.manager.hasAnthropicAuth())
+            if case let .bearer(token, betaHeader)? = TKAuthManager.shared.resolveAuth(for: .anthropic) {
+                #expect(token == "placeholder-anthropic-oauth-access")
+                #expect(betaHeader == "oauth-2025-04-20")
+            } else {
+                Issue.record("Expected Anthropic OAuth bearer auth from isolated config root")
+            }
+        }
+    }
+
+    @Test
     func `applyAIProviderKeys leaves anthropic slot empty when only OAuth token is stored`() throws {
         try withIsolatedConfigurationEnvironment { _ in
             self.unsetAllAnthropicEnv()
@@ -165,6 +188,7 @@ private func withIsolatedConfigurationEnvironment(_ body: (URL) throws -> Void) 
         .appendingPathComponent("peekaboo-config-tests-\(UUID().uuidString)", isDirectory: true)
     try fileManager.createDirectory(at: configDir, withIntermediateDirectories: true)
 
+    let previousProfileDirectoryName = TachikomaConfiguration.profileDirectoryName
     let environmentKeys = [
         "PEEKABOO_CONFIG_DIR",
         "PEEKABOO_CONFIG_DISABLE_MIGRATION",
@@ -194,6 +218,7 @@ private func withIsolatedConfigurationEnvironment(_ body: (URL) throws -> Void) 
                 unsetenv(key)
             }
         }
+        TachikomaConfiguration.profileDirectoryName = previousProfileDirectoryName
         ConfigurationManager.shared.resetForTesting()
         try? fileManager.removeItem(at: configDir)
     }
