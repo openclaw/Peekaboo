@@ -10,15 +10,29 @@ struct ProviderStatusReporter {
         self.timeoutSeconds = timeoutSeconds > 0 ? timeoutSeconds : 30
     }
 
+    func summary() async -> ProviderStatusSummary {
+        let statuses = await self.providerStatuses()
+        return ProviderStatusSummary(providers: statuses)
+    }
+
     func printSummary() async {
+        let summary = await self.summary()
         print("Providers:")
-        for pid in [TKProviderId.openai, .anthropic, .grok, .gemini, .openrouter] {
-            let status = await self.status(for: pid)
-            print("  \(pid.displayName): \(status)")
+        for provider in summary.providers {
+            print("  \(provider.name): \(provider.message)")
         }
     }
 
-    private func status(for pid: TKProviderId) async -> String {
+    private func providerStatuses() async -> [ProviderCredentialStatus] {
+        var statuses: [ProviderCredentialStatus] = []
+        for pid in [TKProviderId.openai, .anthropic, .grok, .gemini, .openrouter] {
+            let status = await self.status(for: pid)
+            statuses.append(status)
+        }
+        return statuses
+    }
+
+    private func status(for pid: TKProviderId) async -> ProviderCredentialStatus {
         switch self.source(for: pid) {
         case let .env(key, value):
             let validation = await TKAuthManager.shared.validate(
@@ -26,27 +40,59 @@ struct ProviderStatusReporter {
                 secret: value,
                 timeout: self.timeoutSeconds
             )
-            return self.describe(source: "env \(key)", validation: validation)
+            return self.makeStatus(for: pid, source: .init(type: "env", key: key), validation: validation)
         case let .credentials(key, value):
             let validation = await TKAuthManager.shared.validate(
                 provider: pid,
                 secret: value,
                 timeout: self.timeoutSeconds
             )
-            return self.describe(source: "credentials \(key)", validation: validation)
+            return self.makeStatus(for: pid, source: .init(type: "credentials", key: key), validation: validation)
         case let .missing(reason):
-            return reason
+            return ProviderCredentialStatus(
+                id: pid.rawValue,
+                name: pid.displayName,
+                state: .missing,
+                source: nil,
+                validation: nil,
+                message: reason
+            )
         }
     }
 
-    private func describe(source: String, validation: TKValidationResult) -> String {
+    private func makeStatus(
+        for pid: TKProviderId,
+        source: ProviderCredentialSource,
+        validation: TKValidationResult
+    ) -> ProviderCredentialStatus {
         switch validation {
         case .success:
-            "ready (\(source), validated)"
+            ProviderCredentialStatus(
+                id: pid.rawValue,
+                name: pid.displayName,
+                state: .ready,
+                source: source,
+                validation: .validated,
+                message: "ready (\(source.description), validated)"
+            )
         case let .failure(reason):
-            "stored (\(source), validation failed: \(reason))"
+            ProviderCredentialStatus(
+                id: pid.rawValue,
+                name: pid.displayName,
+                state: .stored,
+                source: source,
+                validation: .failed,
+                message: "stored (\(source.description), validation failed: \(reason))"
+            )
         case let .timeout(seconds):
-            "stored (\(source), validation timed out after \(Int(seconds))s)"
+            ProviderCredentialStatus(
+                id: pid.rawValue,
+                name: pid.displayName,
+                state: .stored,
+                source: source,
+                validation: .timedOut,
+                message: "stored (\(source.description), validation timed out after \(Int(seconds))s)"
+            )
         }
     }
 
@@ -113,4 +159,38 @@ private enum ProviderSource {
     case env(String, String)
     case credentials(String, String)
     case missing(String)
+}
+
+struct ProviderStatusSummary: Codable {
+    let providers: [ProviderCredentialStatus]
+}
+
+struct ProviderCredentialStatus: Codable {
+    let id: String
+    let name: String
+    let state: ProviderCredentialState
+    let source: ProviderCredentialSource?
+    let validation: ProviderCredentialValidation?
+    let message: String
+}
+
+enum ProviderCredentialState: String, Codable {
+    case missing
+    case ready
+    case stored
+}
+
+struct ProviderCredentialSource: Codable {
+    let type: String
+    let key: String
+
+    var description: String {
+        "\(self.type) \(self.key)"
+    }
+}
+
+enum ProviderCredentialValidation: String, Codable {
+    case validated
+    case failed
+    case timedOut = "timed_out"
 }

@@ -219,7 +219,17 @@ extension ConfigCommand {
         mutating func run(using runtime: CommandRuntime) async throws {
             self.prepare(using: runtime)
             let reporter = ProviderStatusReporter(timeoutSeconds: self.timeoutSeconds)
-            await reporter.printSummary()
+            if self.jsonOutput {
+                let summary = await reporter.summary()
+                let response = ProviderStatusResponse(
+                    success: true,
+                    data: summary,
+                    debugLogs: self.logger.getDebugLogs()
+                )
+                outputJSON(response, logger: self.logger)
+            } else {
+                await reporter.printSummary()
+            }
         }
     }
 
@@ -318,5 +328,16 @@ extension ConfigCommand {
                 throw ExitCode.failure
             }
         }
+    }
+}
+
+private struct ProviderStatusResponse: Encodable {
+    let success: Bool
+    let data: ProviderStatusSummary
+    let debugLogs: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case success, data
+        case debugLogs = "debug_logs"
     }
 }

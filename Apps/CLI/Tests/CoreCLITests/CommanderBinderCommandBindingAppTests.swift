@@ -1,4 +1,5 @@
 import Commander
+import Foundation
 import Testing
 @testable import PeekabooCLI
 
@@ -210,6 +211,32 @@ struct CommanderBinderAppConfigTests {
             parsedValues: parsed
         )
         #expect(command.timeoutSeconds == 5)
+    }
+
+    @Test
+    func `Config status JSON payload is structured`() throws {
+        let summary = ProviderStatusSummary(providers: [
+            ProviderCredentialStatus(
+                id: "openrouter",
+                name: "OpenRouter",
+                state: .stored,
+                source: ProviderCredentialSource(type: "env", key: "OPENROUTER_API_KEY"),
+                validation: .failed,
+                message: "stored (env OPENROUTER_API_KEY, validation failed: status 401)"
+            )
+        ])
+
+        let data = try JSONEncoder().encode(summary)
+        let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let providers = try #require(json["providers"] as? [[String: Any]])
+        let openRouter = try #require(providers.first)
+        let source = try #require(openRouter["source"] as? [String: Any])
+
+        #expect(openRouter["id"] as? String == "openrouter")
+        #expect(openRouter["state"] as? String == "stored")
+        #expect(openRouter["validation"] as? String == "failed")
+        #expect(source["type"] as? String == "env")
+        #expect(source["key"] as? String == "OPENROUTER_API_KEY")
     }
 
     @Test
