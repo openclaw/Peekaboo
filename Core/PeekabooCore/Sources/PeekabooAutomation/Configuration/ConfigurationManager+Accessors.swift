@@ -97,6 +97,15 @@ extension ConfigurationManager {
         return self.validOAuthAccessToken(prefix: "OPENAI") != nil
     }
 
+    /// OpenAI credential for APIs that accept Bearer tokens but still require
+    /// an explicit Tachikoma API-key slot, such as TachikomaAudio transcription.
+    public func getOpenAITranscriptionCredential() -> String? {
+        if let apiKey = self.getOpenAIAPIKey(), !apiKey.isEmpty {
+            return apiKey
+        }
+        return self.validOAuthAccessToken(prefix: "OPENAI")
+    }
+
     /// Whether any Anthropic authentication material is available — either an
     /// API key (via `getAnthropicAPIKey()`) or a non-expired OAuth access token
     /// (via `peekaboo config login anthropic`). Use this for agent-availability

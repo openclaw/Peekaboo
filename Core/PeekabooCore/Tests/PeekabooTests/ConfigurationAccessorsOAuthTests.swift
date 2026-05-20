@@ -79,6 +79,35 @@ struct ConfigurationAccessorsOAuthTests {
     }
 
     @Test
+    func `getOpenAITranscriptionCredential returns OAuth access token when no API key is stored`() throws {
+        try withIsolatedConfigurationEnvironment { _ in
+            self.unsetAllOpenAIEnv()
+            self.manager.resetForTesting()
+            try self.manager.saveCredentials([
+                "OPENAI_ACCESS_TOKEN": "openai-oauth-access-token",
+                "OPENAI_ACCESS_EXPIRES": String(Int(Date().addingTimeInterval(3600).timeIntervalSince1970)),
+            ])
+
+            #expect(self.manager.getOpenAITranscriptionCredential() == "openai-oauth-access-token")
+        }
+    }
+
+    @Test
+    func `getOpenAITranscriptionCredential prefers API key over OAuth access token`() throws {
+        try withIsolatedConfigurationEnvironment { _ in
+            self.unsetAllOpenAIEnv()
+            self.manager.resetForTesting()
+            try self.manager.saveCredentials([
+                "OPENAI_API_KEY": "placeholder-openai-api-key",
+                "OPENAI_ACCESS_TOKEN": "openai-oauth-access-token",
+                "OPENAI_ACCESS_EXPIRES": String(Int(Date().addingTimeInterval(3600).timeIntervalSince1970)),
+            ])
+
+            #expect(self.manager.getOpenAITranscriptionCredential() == "placeholder-openai-api-key")
+        }
+    }
+
+    @Test
     func `applyAIProviderKeys leaves anthropic slot empty when only OAuth token is stored`() throws {
         try withIsolatedConfigurationEnvironment { _ in
             self.unsetAllAnthropicEnv()

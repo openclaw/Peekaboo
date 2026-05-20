@@ -167,7 +167,8 @@ public final class AudioInputService {
             self.logger.info("Stopped audio recording")
 
             // Transcribe the recorded audio using TachikomaAudio
-            return try await transcribe(audioData)
+            let credential = try self.transcriptionCredential()
+            return try await self.aiService.transcribeAudio(audioData, openAICredential: credential)
         } catch let error as AudioRecordingError {
             // Convert AudioRecordingError to AudioInputError
             switch error {
@@ -225,11 +226,11 @@ public final class AudioInputService {
             }
         }
 
-        try self.requireTranscriptionCredentials()
+        let credential = try self.transcriptionCredential()
 
         // Use AI service to transcribe
         do {
-            let transcription = try await aiService.transcribeAudio(at: url)
+            let transcription = try await aiService.transcribeAudio(at: url, openAICredential: credential)
             self.logger.info("Successfully transcribed audio file")
             return transcription
         } catch let audioError as AudioInputError {
@@ -240,12 +241,13 @@ public final class AudioInputService {
         }
     }
 
-    private func requireTranscriptionCredentials() throws {
+    private func transcriptionCredential() throws -> String {
         guard let key = self.credentialProvider.currentOpenAIKey(),
               !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         else {
             throw AudioInputError.apiKeyMissing
         }
+        return key
     }
 }
 
@@ -257,18 +259,24 @@ protocol AudioTranscriptionCredentialProviding: Sendable {
 
 struct ConfigurationCredentialProvider: AudioTranscriptionCredentialProviding {
     func currentOpenAIKey() -> String? {
-        ConfigurationManager.shared.getOpenAIAPIKey()
+        ConfigurationManager.shared.getOpenAITranscriptionCredential()
     }
 }
 
 // MARK: - PeekabooAIService Extension
 
 extension PeekabooAIService {
+    public func transcribeAudio(_ audioData: AudioData, openAICredential: String? = nil) async throws -> String {
+        let configuration = self.audioConfiguration(openAICredential: openAICredential)
+        return try await transcribe(audioData, configuration: configuration)
+    }
+
     /// Transcribe audio using TachikomaAudio's transcription API
-    public func transcribeAudio(at url: URL) async throws -> String {
+    public func transcribeAudio(at url: URL, openAICredential: String? = nil) async throws -> String {
+        let configuration = self.audioConfiguration(openAICredential: openAICredential)
         // Use TachikomaAudio's convenient transcribe function
         do {
-            return try await transcribe(contentsOf: url)
+            return try await transcribe(contentsOf: url, configuration: configuration)
         } catch {
             // Convert errors to AudioInputError for compatibility
             if let tachikomaError = error as? TachikomaError {
@@ -285,5 +293,13 @@ extension PeekabooAIService {
             }
             throw AudioInputError.transcriptionFailed(error.localizedDescription)
         }
+    }
+
+    private func audioConfiguration(openAICredential: String?) -> TachikomaConfiguration {
+        let configuration = TachikomaConfiguration(loadFromEnvironment: true)
+        if let openAICredential, !openAICredential.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            configuration.setAPIKey(openAICredential, for: .openai)
+        }
+        return configuration
     }
 }
