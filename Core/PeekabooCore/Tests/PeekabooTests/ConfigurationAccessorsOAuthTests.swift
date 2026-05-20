@@ -164,6 +164,23 @@ struct ConfigurationAccessorsOAuthTests {
         }
     }
 
+    @Test
+    func `applyAIProviderKeys propagates OpenRouter API key as custom provider key`() throws {
+        try withIsolatedConfigurationEnvironment { _ in
+            self.unsetAllOpenRouterEnv()
+            self.manager.resetForTesting()
+            try self.manager.saveCredentials([
+                "OPENROUTER_API_KEY": "placeholder-openrouter-key",
+            ])
+
+            let configuration = TachikomaConfiguration(loadFromEnvironment: false)
+            self.manager.applyAIProviderKeys(to: configuration)
+
+            #expect(self.manager.getOpenRouterAPIKey() == "placeholder-openrouter-key")
+            #expect(configuration.getAPIKey(for: "openrouter") == "placeholder-openrouter-key")
+        }
+    }
+
     // MARK: - Helpers
 
     private func unsetAllAnthropicEnv() {
@@ -179,6 +196,10 @@ struct ConfigurationAccessorsOAuthTests {
         unsetenv("OPENAI_ACCESS_TOKEN")
         unsetenv("OPENAI_REFRESH_TOKEN")
         unsetenv("OPENAI_ACCESS_EXPIRES")
+    }
+
+    private func unsetAllOpenRouterEnv() {
+        unsetenv("OPENROUTER_API_KEY")
     }
 }
 

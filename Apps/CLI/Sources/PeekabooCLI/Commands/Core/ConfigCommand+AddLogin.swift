@@ -11,13 +11,13 @@ extension ConfigCommand {
             abstract: "Add and validate a provider credential (API key)"
         )
 
-        @Argument(help: "Provider id (openai|anthropic|grok|xai|gemini)")
+        @Argument(help: "Provider id (openai|anthropic|grok|xai|gemini|openrouter)")
         var provider: String
 
         @Argument(help: "Secret value (API key)")
         var secret: String
 
-        @Option(name: .long, help: "Validation timeout in seconds (default 30)")
+        @Option(name: .customLong("timeout"), help: "Validation timeout in seconds (default 30)")
         var timeoutSeconds: Double = 30
 
         @RuntimeStorage var runtime: CommandRuntime?
@@ -25,7 +25,10 @@ extension ConfigCommand {
         mutating func run(using runtime: CommandRuntime) async throws {
             self.prepare(using: runtime)
             guard let pid = TKProviderId.normalize(self.provider) else {
-                self.output.error(code: "INVALID_PROVIDER", message: "Supported: openai, anthropic, grok, xai, gemini")
+                self.output.error(
+                    code: "INVALID_PROVIDER",
+                    message: "Supported: openai, anthropic, grok, xai, gemini, openrouter"
+                )
                 throw ExitCode.failure
             }
 
@@ -67,7 +70,7 @@ extension ConfigCommand {
         @Argument(help: "Provider id (openai|anthropic)")
         var provider: String
 
-        @Option(name: .long, help: "Timeout in seconds for token exchange (default 30)")
+        @Option(name: .customLong("timeout"), help: "Timeout in seconds for token exchange (default 30)")
         var timeoutSeconds: Double = 30
 
         @Flag(name: .customLong("no-browser"), help: "Do not auto-open the browser")

@@ -223,6 +223,36 @@ struct PeekabooAIServiceProviderTests {
 
     @Test
     @MainActor
+    func `Falls back to OpenRouter when only OpenRouter key is present`() throws {
+        try self.withIsolatedEnvironment(["OPENROUTER_API_KEY": "key"]) {
+            let service = PeekabooAIService()
+            #expect(service.resolvedDefaultModel == .openRouter(modelId: "openai/gpt-oss-120b"))
+            #expect(service.resolvedDefaultVisionModel == nil)
+            #expect(service.availableModels() == [.openRouter(modelId: "openai/gpt-oss-120b")])
+            #expect(TachikomaConfiguration.current.getAPIKey(for: "openrouter") == "key")
+        }
+    }
+
+    @Test
+    @MainActor
+    func `Explicit OpenRouter provider list resolves configured model`() throws {
+        try self.withIsolatedEnvironment(
+            ["OPENROUTER_API_KEY": "key"],
+            configurationJSON: """
+            {
+              "aiProviders": {
+                "providers": "openrouter/xiaomi/mimo-v2.5-pro"
+              }
+            }
+            """) {
+                let service = PeekabooAIService()
+                #expect(service.resolvedDefaultModel == .openRouter(modelId: "xiaomi/mimo-v2.5-pro"))
+                #expect(service.availableModels() == [.openRouter(modelId: "xiaomi/mimo-v2.5-pro")])
+            }
+    }
+
+    @Test
+    @MainActor
     func `Generated default provider list still falls back to MiniMax credentials`() throws {
         try self.withIsolatedEnvironment(
             ["MINIMAX_API_KEY": "key"],
@@ -387,6 +417,7 @@ struct PeekabooAIServiceProviderTests {
             "GEMINI_API_KEY",
             "GOOGLE_API_KEY",
             "MINIMAX_API_KEY",
+            "OPENROUTER_API_KEY",
             "API_KEY",
             "PEEKABOO_CUSTOM_PROVIDER_KEY",
             "PEEKABOO_MISSING_PROVIDER_KEY",
@@ -449,6 +480,7 @@ struct PeekabooAIServiceProviderTests {
             "GEMINI_API_KEY",
             "GOOGLE_API_KEY",
             "MINIMAX_API_KEY",
+            "OPENROUTER_API_KEY",
             "API_KEY",
             "PEEKABOO_CUSTOM_PROVIDER_KEY",
             "PEEKABOO_MISSING_PROVIDER_KEY",
@@ -492,6 +524,7 @@ struct PeekabooAIServiceProviderTests {
         TachikomaConfiguration.current.removeAPIKey(for: .anthropic)
         TachikomaConfiguration.current.removeAPIKey(for: .google)
         TachikomaConfiguration.current.removeAPIKey(for: .minimax)
+        TachikomaConfiguration.current.removeAPIKey(for: .custom("openrouter"))
         TachikomaConfiguration.current.removeBaseURL(for: .ollama)
     }
 }

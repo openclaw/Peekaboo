@@ -16,7 +16,8 @@ read_when:
 | `show` | Print either the raw file or the fully merged “effective” view (config + env + credentials); human `--effective` also live-validates providers. | `--effective` switches to the merged view; `--timeout` (sec) bounds validation; JSON mode emits a standard `{ success, data }` object with no appended text. |
 | `edit` | Opens the config in `$EDITOR` (or the `--editor` you pass) and validates the result after you quit. | `--editor` overrides the detected editor. |
 | `validate` | Parses the config without writing anything and surfaces syntax/errors. | None. |
-| `add` | Store a provider credential and validate it immediately. | `add openai|anthropic|grok|gemini <secret>`; `--timeout` (sec, default 30). |
+| `add` | Store a provider credential and validate it immediately. | `add openai|anthropic|grok|gemini|openrouter <secret>`; `--timeout` (sec, default 30). |
+| `status` | Display provider credential readiness. | `--timeout` (sec, default 30). |
 | `login` | Run an OAuth flow (no API key stored) for supported providers. | `login openai` (ChatGPT/Codex), `login anthropic` (Claude Pro/Max). |
 | `set-credential` | Legacy alias for `add <key> <value>`. | Positional `<key> <value>` pair. |
 | `add-provider` | Append or replace a custom AI provider entry. | `--type openai|anthropic`, `--name`, `--base-url`, `--api-key`, `--headers key:value,…`, `--description`, `--force`. |
@@ -29,7 +30,7 @@ read_when:
 - The underlying auth/config plumbing lives in the shared Tachikoma library and the `tachikoma config` CLI; Peekaboo sets `TachikomaConfiguration.profileDirectoryName = ".peekaboo"` so both tools read/write the same `~/.peekaboo/credentials` without copying environment variables.
 - Configuration files are JSON-with-comments: the loader strips `//` / `/* */` comments and interpolates `${VAR}` placeholders before merging with credentials and environment variables (same logic the CLI uses on startup).
 - `add`/`login`/`set-credential` write through `ConfigurationManager.shared`, so they use macOS file permissions + atomic temp-file renames; partial writes won’t corrupt the store even if the process crashes.
-- Provider readiness in human `init`/`show --effective` output is live-validated with per-provider pings (OpenAI/Codex, Anthropic, Grok/xai, Gemini). Timeouts default to 30s and are caller overridable. JSON mode skips appended readiness text so stdout remains parseable.
+- Provider readiness in human `init`/`show --effective` output is live-validated with per-provider pings (OpenAI/Codex, Anthropic, Grok/xai, Gemini, OpenRouter). Timeouts default to 30s and are caller overridable. JSON mode skips appended readiness text so stdout remains parseable.
 - Provider management commands share the same validation helpers: IDs must match `^[A-Za-z0-9-_]+$`, and provider types are limited to `.openai` or `.anthropic`. Headers passed via `--headers KEY:VALUE,…` are parsed into a `[String:String]` dictionary before being serialized back to disk.
 - `test-provider` and `models` invoke the actual HTTP client stack (respecting proxy, TLS, and custom headers) rather than mocking responses, which is why they run on the main actor and surface real latencies.
 - All subcommands are `RuntimeOptionsConfigurable`, so global `--json` or `--verbose` flags work uniformly (handy when you script config changes).
@@ -40,19 +41,16 @@ read_when:
 peekaboo config init --force
 peekaboo config show --effective
 
-# Register OpenRouter as a provider and immediately test it
-peekaboo config add-provider openrouter \
-  --type openai \
-  --name "OpenRouter" \
-  --base-url https://openrouter.ai/api/v1 \
-  --api-key '${OPENROUTER_API_KEY}' --force
-peekaboo config test-provider --provider-id openrouter
+# Add and validate an OpenRouter key
+peekaboo config add openrouter sk-or-v1-...
+peekaboo agent --model openrouter/xiaomi/mimo-v2.5-pro "summarize this window"
 
 # Add and validate keys (stores even if validation fails; warns on failure)
 peekaboo config add openai sk-live-...
 peekaboo config add anthropic sk-ant-...
 peekaboo config add grok xai-...
 peekaboo config add gemini ya29...
+peekaboo config add openrouter sk-or-v1-...
 
 # OAuth logins (no API key stored)
 peekaboo config login openai

@@ -16,7 +16,7 @@ read_when:
 | `--chat` | Force the interactive chat loop even when stdin/stdout are not TTYs. |
 | `--dry-run` | Emit the planned steps without actually invoking tools. |
 | `--max-steps <n>` | Cap how many tool invocations the agent may issue before aborting (default: 100). |
-| `--model gpt-5.5|claude-opus-4.7|gemini-3-flash|minimax|ollama/<model>|lmstudio/<model>` | Override the default model (`gpt-5.5`). Input is validated against supported hosted providers and local model providers. |
+| `--model gpt-5.5|claude-opus-4.7|gemini-3-flash|minimax|openrouter/<provider>/<model>|ollama/<model>|lmstudio/<model>` | Override the default model (`gpt-5.5`). Input is validated against supported hosted providers and local model providers. |
 | `--resume` / `--resume-session <id>` | Continue the most recent session or a specific session ID. |
 | `--list-sessions` | Print cached sessions (id, task, timestamps, message count) instead of running anything. |
 | `--no-cache` | Always create a fresh session even if one is already active. |
@@ -50,6 +50,9 @@ peekaboo agent "Check Slack mentions" --model gpt-5.5 --verbose
 
 # Keep the agent loop local through Ollama
 peekaboo agent "Check the current window" --model ollama/llama3.3
+
+# Use an OpenRouter-hosted model
+peekaboo agent "Check the current window" --model openrouter/xiaomi/mimo-v2.5-pro
 
 # Dry-run the same task without executing any tools
 peekaboo agent "Install the nightly build" --dry-run

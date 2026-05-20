@@ -150,6 +150,19 @@ extension ConfigurationManager {
         return nil
     }
 
+    /// Get OpenRouter API key with proper precedence.
+    public func getOpenRouterAPIKey() -> String? {
+        if let envValue = self.environmentValue(for: "OPENROUTER_API_KEY") {
+            return envValue
+        }
+
+        if let credValue = credentials["OPENROUTER_API_KEY"] {
+            return credValue
+        }
+
+        return nil
+    }
+
     /// Apply Peekaboo-managed provider keys to Tachikoma.
     public func applyAIProviderKeys(to configuration: TachikomaConfiguration = .current) {
         if let key = self.getOpenAIAPIKey(), !key.isEmpty {
@@ -163,6 +176,9 @@ extension ConfigurationManager {
         }
         if let key = self.getMiniMaxAPIKey(), !key.isEmpty {
             configuration.setAPIKey(key, for: .minimax)
+        }
+        if let key = self.getOpenRouterAPIKey(), !key.isEmpty {
+            configuration.setAPIKey(key, for: "openrouter")
         }
         let ollamaBaseURL = self.getOllamaBaseURL()
         if !ollamaBaseURL.isEmpty {

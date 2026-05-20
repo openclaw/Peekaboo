@@ -251,6 +251,8 @@ public final class PeekabooAIService {
             case "minimax":
                 if case .minimax = loose { return loose }
                 return nil
+            case "openrouter":
+                return .openRouter(modelId: modelString)
             case "mistral":
                 if case .mistral = loose { return loose }
                 return nil
@@ -309,6 +311,11 @@ public final class PeekabooAIService {
         }
         if let key = configuration.getMiniMaxAPIKey(), !key.isEmpty {
             return self.appendingGeneratedVisionFallbacks(from: parsed, to: [.minimax(.m27)])
+        }
+        if let key = configuration.getOpenRouterAPIKey(), !key.isEmpty {
+            return self.appendingGeneratedVisionFallbacks(
+                from: parsed,
+                to: [.openRouter(modelId: "openai/gpt-oss-120b")])
         }
         return [.openai(.gpt55), .anthropic(.opus47)]
     }
@@ -386,6 +393,8 @@ public final class PeekabooAIService {
             configuration.getMiniMaxAPIKey()?.isEmpty == false
         case .grok:
             self.hasAnyCredential(["X_AI_API_KEY", "XAI_API_KEY", "GROK_API_KEY"], configuration: configuration)
+        case .openRouter:
+            configuration.getOpenRouterAPIKey()?.isEmpty == false
         case .ollama, .lmstudio:
             model.supportsTools
         default:

@@ -78,6 +78,15 @@ struct AgentCommandTests {
     }
 
     @Test
+    func `OpenRouter provider model IDs are accepted`() throws {
+        let command = try AgentCommand.parse([])
+
+        #expect(command
+            .parseModelString("openrouter/xiaomi/mimo-v2.5-pro") == .openRouter(modelId: "xiaomi/mimo-v2.5-pro"))
+        #expect(command.parseModelString("xiaomi/mimo-v2.5-pro") == .openRouter(modelId: "xiaomi/mimo-v2.5-pro"))
+    }
+
+    @Test
     func `Model string normalization trims whitespace`() throws {
         let command = try AgentCommand.parse([])
 
@@ -124,6 +133,7 @@ struct ModelSelectionIntegrationTests {
             ("gemini-3.1-pro-preview", .google(.gemini31ProPreview)),
             ("MiniMax-M2.7", .minimax(.m27)),
             ("ollama/llama3.3", .ollama(.llama33)),
+            ("openrouter/xiaomi/mimo-v2.5-pro", .openRouter(modelId: "xiaomi/mimo-v2.5-pro")),
         ]
 
         for (input, expected) in testCases {

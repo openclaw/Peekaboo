@@ -16,7 +16,7 @@ extension ConfigCommand {
 
         @Flag(name: .long, help: "Force overwrite existing configuration")
         var force = false
-        @Option(name: .long, help: "Validation timeout in seconds (default 30)")
+        @Option(name: .customLong("timeout"), help: "Validation timeout in seconds (default 30)")
         var timeoutSeconds: Double = 30
         @RuntimeStorage var runtime: CommandRuntime?
 
@@ -78,7 +78,7 @@ extension ConfigCommand {
 
         @Flag(name: .long, help: "Show effective configuration (merged with environment)")
         var effective = false
-        @Option(name: .long, help: "Validation timeout in seconds (default 30)")
+        @Option(name: .customLong("timeout"), help: "Validation timeout in seconds (default 30)")
         var timeoutSeconds: Double = 30
         @RuntimeStorage var runtime: CommandRuntime?
 
@@ -202,6 +202,24 @@ extension ConfigCommand {
                 print("  Config File: \(configFilePath)")
                 print("  Credentials: \(credentialsFilePath)")
             }
+        }
+    }
+
+    /// Display configured provider credential status.
+    struct StatusCommand: ConfigRuntimeCommand {
+        static let commandDescription = CommandDescription(
+            commandName: "status",
+            abstract: "Display provider credential status"
+        )
+
+        @Option(name: .customLong("timeout"), help: "Validation timeout in seconds (default 30)")
+        var timeoutSeconds: Double = 30
+        @RuntimeStorage var runtime: CommandRuntime?
+
+        mutating func run(using runtime: CommandRuntime) async throws {
+            self.prepare(using: runtime)
+            let reporter = ProviderStatusReporter(timeoutSeconds: self.timeoutSeconds)
+            await reporter.printSummary()
         }
     }
 

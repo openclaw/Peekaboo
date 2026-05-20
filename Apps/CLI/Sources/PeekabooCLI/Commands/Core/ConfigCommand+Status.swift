@@ -12,7 +12,7 @@ struct ProviderStatusReporter {
 
     func printSummary() async {
         print("Providers:")
-        for pid in [TKProviderId.openai, .anthropic, .grok, .gemini] {
+        for pid in [TKProviderId.openai, .anthropic, .grok, .gemini, .openrouter] {
             let status = await self.status(for: pid)
             print("  \(pid.displayName): \(status)")
         }
@@ -51,6 +51,18 @@ struct ProviderStatusReporter {
     }
 
     private func source(for pid: TKProviderId) -> ProviderSource {
+        if let source = self.envSource(for: pid) {
+            return source
+        }
+
+        if let source = self.credentialSource(for: pid) {
+            return source
+        }
+
+        return .missing("missing")
+    }
+
+    private func envSource(for pid: TKProviderId) -> ProviderSource? {
         let env = ProcessInfo.processInfo.environment
         switch pid {
         case .openai:
@@ -63,8 +75,13 @@ struct ProviderStatusReporter {
             }
         case .gemini:
             if let v = env["GEMINI_API_KEY"], !v.isEmpty { return .env("GEMINI_API_KEY", v) }
+        case .openrouter:
+            if let v = env["OPENROUTER_API_KEY"], !v.isEmpty { return .env("OPENROUTER_API_KEY", v) }
         }
+        return nil
+    }
 
+    private func credentialSource(for pid: TKProviderId) -> ProviderSource? {
         let creds = TKAuthManager.shared
         switch pid {
         case .openai:
@@ -83,9 +100,12 @@ struct ProviderStatusReporter {
             }
         case .gemini:
             if let v = creds.credentialValue(for: "GEMINI_API_KEY") { return .credentials("GEMINI_API_KEY", v) }
+        case .openrouter:
+            if let v = creds.credentialValue(for: "OPENROUTER_API_KEY") {
+                return .credentials("OPENROUTER_API_KEY", v)
+            }
         }
-
-        return .missing("missing")
+        return nil
     }
 }
 

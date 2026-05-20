@@ -35,6 +35,7 @@ struct ConfigCommand: ParsableCommand {
         subcommands: [
             InitCommand.self,
             ShowCommand.self,
+            StatusCommand.self,
             EditCommand.self,
             ValidateCommand.self,
             AddCommand.self,

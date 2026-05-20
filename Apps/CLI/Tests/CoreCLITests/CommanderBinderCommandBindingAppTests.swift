@@ -203,6 +203,16 @@ struct CommanderBinderAppConfigTests {
     }
 
     @Test
+    func `Config status binding`() throws {
+        let parsed = ParsedValues(positional: [], options: ["timeout": ["5"]], flags: [])
+        let command = try CommanderCLIBinder.instantiateCommand(
+            ofType: ConfigCommand.StatusCommand.self,
+            parsedValues: parsed
+        )
+        #expect(command.timeoutSeconds == 5)
+    }
+
+    @Test
     func `Config set credential binding`() throws {
         let parsed = ParsedValues(positional: ["OPENAI_API_KEY", "sk-123"], options: [:], flags: [])
         let command = try CommanderCLIBinder.instantiateCommand(

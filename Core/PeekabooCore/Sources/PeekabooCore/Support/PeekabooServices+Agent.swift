@@ -22,11 +22,12 @@ extension PeekabooServices {
         let hasAnthropic = self.configuration.hasAnthropicAuth()
         let hasGemini = self.configuration.getGeminiAPIKey() != nil && !self.configuration.getGeminiAPIKey()!.isEmpty
         let hasMiniMax = self.configuration.getMiniMaxAPIKey() != nil && !self.configuration.getMiniMaxAPIKey()!.isEmpty
+        let hasOpenRouter = self.configuration.getOpenRouterAPIKey()?.isEmpty == false
         let hasOllama = Self.providerList(providers, containsToolCapableLocalProvider: "ollama")
         let hasLMStudio = Self.providerList(providers, containsToolCapableLocalProvider: "lmstudio") ||
             Self.providerList(providers, containsToolCapableLocalProvider: "lm-studio")
 
-        if hasOpenAI || hasAnthropic || hasGemini || hasMiniMax || hasOllama || hasLMStudio {
+        if hasOpenAI || hasAnthropic || hasGemini || hasMiniMax || hasOpenRouter || hasOllama || hasLMStudio {
             let agentConfig = self.configuration.getConfiguration()
             let environmentProviders = EnvironmentVariables.value(for: "PEEKABOO_AI_PROVIDERS")?
                 .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -38,6 +39,7 @@ extension PeekabooServices {
                 hasAnthropic: hasAnthropic,
                 hasGemini: hasGemini,
                 hasMiniMax: hasMiniMax,
+                hasOpenRouter: hasOpenRouter,
                 hasOllama: hasOllama,
                 hasLMStudio: hasLMStudio,
                 configuredDefault: agentConfig?.agent?.defaultModel,
@@ -131,6 +133,8 @@ extension PeekabooServices {
             "gemini-3-flash"
         } else if sources.hasMiniMax {
             "minimax/MiniMax-M2.7"
+        } else if sources.hasOpenRouter {
+            "openrouter/openai/gpt-oss-120b"
         } else if sources.hasOllama {
             "ollama/llama3.3"
         } else if sources.hasLMStudio {
@@ -179,6 +183,8 @@ extension PeekabooServices {
                     return model
                 case "minimax" where sources.hasMiniMax:
                     return "minimax/\(model)"
+                case "openrouter" where sources.hasOpenRouter:
+                    return "openrouter/\(model)"
                 case "ollama" where sources.hasOllama:
                     return Self.toolCapableLocalModel("ollama/\(model)")
                 case "lmstudio" where sources.hasLMStudio,
@@ -240,6 +246,8 @@ extension PeekabooServices {
             return sources.hasGemini
         case .minimax:
             return sources.hasMiniMax
+        case .openRouter:
+            return sources.hasOpenRouter
         case .ollama:
             return sources.hasOllama && model.supportsTools
         case .lmstudio:
@@ -306,6 +314,7 @@ private struct ModelSources {
     let hasAnthropic: Bool
     let hasGemini: Bool
     let hasMiniMax: Bool
+    let hasOpenRouter: Bool
     let hasOllama: Bool
     let hasLMStudio: Bool
     let configuredDefault: String?
