@@ -1,7 +1,7 @@
 import Darwin
 import Foundation
-import Testing
 import Tachikoma
+import Testing
 @testable import PeekabooAutomation
 @testable import PeekabooCore
 
@@ -116,10 +116,17 @@ struct ConfigurationAccessorsOAuthTests {
 
     private func unsetAllAnthropicEnv() {
         unsetenv("ANTHROPIC_API_KEY")
+        unsetenv("ANTHROPIC_ACCESS_TOKEN")
+        unsetenv("ANTHROPIC_REFRESH_TOKEN")
+        unsetenv("ANTHROPIC_ACCESS_EXPIRES")
+        unsetenv("ANTHROPIC_BETA_HEADER")
     }
 
     private func unsetAllOpenAIEnv() {
         unsetenv("OPENAI_API_KEY")
+        unsetenv("OPENAI_ACCESS_TOKEN")
+        unsetenv("OPENAI_REFRESH_TOKEN")
+        unsetenv("OPENAI_ACCESS_EXPIRES")
     }
 }
 
