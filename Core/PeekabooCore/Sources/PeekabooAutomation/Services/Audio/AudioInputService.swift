@@ -179,6 +179,8 @@ public final class AudioInputService {
             default:
                 throw AudioInputError.audioSessionError(error.localizedDescription)
             }
+        } catch let error as AudioInputError {
+            throw error
         } catch let error as TachikomaError {
             // Convert TachikomaError to AudioInputError
             switch error {

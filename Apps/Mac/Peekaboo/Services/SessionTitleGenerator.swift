@@ -15,8 +15,8 @@ final class SessionTitleGenerator {
             .getAIProviders()
             .split(separator: ",")
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
-        let hasOpenAI = self.configuration.getOpenAIAPIKey() != nil
-        let hasAnthropic = self.configuration.getAnthropicAPIKey() != nil
+        let hasOpenAI = self.configuration.hasOpenAIAuth()
+        let hasAnthropic = self.configuration.hasAnthropicAuth()
 
         return await withTaskGroup(of: String.self) { group in
             group.addTask { await Self.timeoutTitle() }
@@ -85,13 +85,13 @@ final class SessionTitleGenerator {
         hasOpenAI: Bool,
         hasAnthropic: Bool) -> LanguageModel
     {
-        if providers.contains("anthropic"), hasAnthropic {
+        if providers.contains(where: { $0 == "anthropic" || $0.hasPrefix("anthropic/") }), hasAnthropic {
             return .anthropic(.opus47)
         }
-        if providers.contains("openai"), hasOpenAI {
+        if providers.contains(where: { $0 == "openai" || $0.hasPrefix("openai/") }), hasOpenAI {
             return .openai(.gpt55)
         }
-        if providers.contains("ollama") {
+        if providers.contains(where: { $0 == "ollama" || $0.hasPrefix("ollama/") }) {
             return .ollama(.llama33)
         }
         return .anthropic(.opus47)
