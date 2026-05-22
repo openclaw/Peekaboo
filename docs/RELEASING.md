@@ -48,7 +48,7 @@ The main release script runs this step automatically. Use this section only to d
 - [ ] Ensure `Apps/Mac/Peekaboo/Info.plist` has `SUFeedURL`, `SUPublicEDKey`, and `SUEnableAutomaticChecks` set (defaults are already wired to the repo appcast).
 - [ ] Ensure release credentials are available:
   - Developer ID Application certificate in the login keychain.
-  - Sparkle EdDSA private key at `~/Library/CloudStorage/Dropbox/Backup/Sparkle/sparkle-private-key-KEEP-SECURE.txt` or `SPARKLE_PRIVATE_KEY_FILE`.
+  - Sparkle EdDSA private key from `.mac-release.env` or `SPARKLE_PRIVATE_KEY_FILE`.
   - Notarization credentials via `NOTARYTOOL_PROFILE` or `APP_STORE_CONNECT_KEY_ID`, `APP_STORE_CONNECT_ISSUER_ID`, and `APP_STORE_CONNECT_API_KEY_P8`.
 - [ ] Optional local dry run before touching Apple/GitHub/appcast:
   - `pnpm run release:mac-app -- --dry-run`

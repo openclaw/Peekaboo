@@ -4,21 +4,103 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="${ROOT:-$ROOT_DIR}"
+MAC_RELEASE_MANIFEST="${MAC_RELEASE_MANIFEST:-$ROOT_DIR/.mac-release.env}"
+MAC_RELEASE_MANIFEST_LOADED=false
+if [[ -f "$MAC_RELEASE_MANIFEST" ]]; then
+  pushd "$ROOT_DIR" >/dev/null
+  # shellcheck source=/Users/steipete/Projects/Peekaboo/.mac-release.env
+  source "$MAC_RELEASE_MANIFEST"
+  popd >/dev/null
+  MAC_RELEASE_MANIFEST_LOADED=true
+fi
+MAC_RELEASE_HELPER_LOADED=false
+for candidate in \
+  "${MAC_RELEASE_LIB:-}" \
+  "$ROOT_DIR/../agent-scripts/skills/mac-app-release/scripts/lib/mac_release.sh" \
+  "$HOME/Projects/agent-scripts/skills/mac-app-release/scripts/lib/mac_release.sh"; do
+  if [[ -n "$candidate" && -f "$candidate" ]]; then
+    # shellcheck source=/Users/steipete/Projects/agent-scripts/skills/mac-app-release/scripts/lib/mac_release.sh
+    source "$candidate"
+    MAC_RELEASE_HELPER_LOADED=true
+    break
+  fi
+done
+if [[ "$MAC_RELEASE_HELPER_LOADED" == true && "$MAC_RELEASE_MANIFEST_LOADED" == true ]]; then
+  mac_release_load
+else
+  MAC_RELEASE_HELPER_LOADED=false
+fi
+
+version_to_build_number() {
+  if declare -F mac_release_build_number >/dev/null; then
+    mac_release_build_number "$1"
+    return
+  fi
+
+  local version=${1:?"version required"} core prerelease major minor patch suffix prerelease_label prerelease_number
+  core=${version%%-*}
+  prerelease=
+  if [[ "$version" == *-* ]]; then
+    prerelease=${version#*-}
+  fi
+  IFS=. read -r major minor patch <<<"$core"
+  if [[ ! "$major" =~ ^[0-9]+$ || ! "$minor" =~ ^[0-9]+$ || ! "$patch" =~ ^[0-9]+$ ]]; then
+    echo "ERROR: Version must be numeric semver: $version" >&2
+    exit 1
+  fi
+  if ((10#$minor > 99 || 10#$patch > 99)); then
+    echo "ERROR: Minor and patch versions must be <= 99 for generated build numbers: $version" >&2
+    exit 1
+  fi
+
+  suffix=99
+  if [[ -n "$prerelease" ]]; then
+    prerelease_label=${prerelease%%.*}
+    prerelease_label=${prerelease_label%%-*}
+    prerelease_label=${prerelease_label%%[0-9]*}
+    prerelease_label=${prerelease_label,,}
+    if [[ "$prerelease" =~ ([0-9]+)$ ]]; then
+      prerelease_number=${BASH_REMATCH[1]}
+    else
+      prerelease_number=1
+    fi
+    if ((10#$prerelease_number < 1 || 10#$prerelease_number > 29)); then
+      echo "ERROR: Prerelease number must be 1..29 for generated build numbers: $version" >&2
+      exit 1
+    fi
+    case "$prerelease_label" in
+      alpha | a) suffix=$((10#$prerelease_number)) ;;
+      beta | b) suffix=$((30 + 10#$prerelease_number)) ;;
+      rc) suffix=$((60 + 10#$prerelease_number)) ;;
+      *)
+        echo "ERROR: Prerelease label must be alpha, beta, or rc for generated build numbers: $version" >&2
+        exit 1
+        ;;
+    esac
+  fi
+
+  printf '%d\n' $((((10#$major * 100 + 10#$minor) * 100 + 10#$patch) * 100 + 10#$suffix))
+}
+
+MARKETING_VERSION="${MARKETING_VERSION:-$(node -p "require('$ROOT_DIR/package.json').version")}"
+BUILD_NUMBER="${BUILD_NUMBER:-$(version_to_build_number "$MARKETING_VERSION")}"
+
 WORKSPACE="${WORKSPACE:-$ROOT_DIR/Apps/Peekaboo.xcworkspace}"
 SCHEME="${SCHEME:-Peekaboo}"
 CONFIGURATION="${CONFIGURATION:-Release}"
 DESTINATION="${DESTINATION:-platform=macOS,arch=arm64}"
 DERIVED_DATA_PATH="${DERIVED_DATA_PATH:-/tmp/peekaboo-macos-app-release}"
 RELEASE_DIR="${RELEASE_DIR:-$ROOT_DIR/release}"
-APP_NAME="${APP_NAME:-Peekaboo}"
+APP_NAME="${APP_NAME:-${MAC_RELEASE_APP_NAME:-Peekaboo}}"
 SIGN_IDENTITY="${SIGN_IDENTITY:-Developer ID Application: Peter Steinberger (Y5PE65HELJ)}"
-SPARKLE_PRIVATE_KEY_FILE="${SPARKLE_PRIVATE_KEY_FILE:-$HOME/Library/CloudStorage/Dropbox/Backup/Sparkle/sparkle-private-key-KEEP-SECURE.txt}"
-APPCAST_PATH="${APPCAST_PATH:-$ROOT_DIR/appcast.xml}"
+APPCAST="${APPCAST:-${MAC_RELEASE_APPCAST:-appcast.xml}}"
+APPCAST_PATH="${APPCAST_PATH:-$ROOT_DIR/$APPCAST}"
 MINIMUM_SYSTEM_VERSION="${MINIMUM_SYSTEM_VERSION:-15.0}"
-REPOSITORY_SLUG="${REPOSITORY_SLUG:-openclaw/Peekaboo}"
+REPOSITORY_SLUG="${REPOSITORY_SLUG:-${MAC_RELEASE_REPO:-openclaw/Peekaboo}}"
 ENTITLEMENTS_PATH="${ENTITLEMENTS_PATH:-$ROOT_DIR/Apps/Mac/Peekaboo/Peekaboo.entitlements}"
 
-VERSION="$(node -p "require('$ROOT_DIR/package.json').version")"
+VERSION="${VERSION:-$MARKETING_VERSION}"
 TAG="v${VERSION}"
 UPDATE_APPCAST=true
 UPLOAD=false
@@ -62,6 +144,7 @@ while [[ $# -gt 0 ]]; do
     --version)
       VERSION="$2"
       TAG="v${VERSION}"
+      BUILD_NUMBER="$(version_to_build_number "$VERSION")"
       shift 2
       ;;
     --tag)
@@ -153,6 +236,7 @@ VERIFY_DIR="$(mktemp -d /tmp/peekaboo-zip-verify.XXXXXX)"
 
 cleanup() {
   rm -rf "$NOTARY_DIR" "$VERIFY_DIR"
+  [[ -z "${SPARKLE_KEY_FILE:-}" ]] || rm -f "$SPARKLE_KEY_FILE"
   if [[ "$DRY_RUN" == true ]]; then
     rm -rf "$RELEASE_DIR"
   fi
@@ -241,8 +325,24 @@ verify_developer_id_signature() {
 
 if [[ -z "$VERIFY_ONLY_ZIP" ]]; then
   [[ -d "$WORKSPACE" ]] || fail "Workspace not found: $WORKSPACE"
-  [[ -f "$SPARKLE_PRIVATE_KEY_FILE" ]] || fail "Sparkle private key not found: $SPARKLE_PRIVATE_KEY_FILE"
   mkdir -p "$RELEASE_DIR"
+  SPARKLE_KEY_ARGS=()
+  SPARKLE_KEY_FILE=""
+  if [[ "$MAC_RELEASE_HELPER_LOADED" == true ]]; then
+    SAVED_VERSION="$VERSION"
+    SAVED_TAG="$TAG"
+    SAVED_BUILD_NUMBER="$BUILD_NUMBER"
+    mac_release_key_args_and_validate SPARKLE_KEY_ARGS SPARKLE_KEY_FILE
+    VERSION="$SAVED_VERSION"
+    TAG="$SAVED_TAG"
+    BUILD_NUMBER="$SAVED_BUILD_NUMBER"
+  else
+    if [[ -z "${SPARKLE_PRIVATE_KEY_FILE:-}" && -n "${MAC_RELEASE_SIGNING_KEY_FILE:-}" ]]; then
+      SPARKLE_PRIVATE_KEY_FILE="$(eval "printf '%s' \"$MAC_RELEASE_SIGNING_KEY_FILE\"")"
+    fi
+    [[ -f "${SPARKLE_PRIVATE_KEY_FILE:-}" ]] || fail "Sparkle private key not found; set SPARKLE_PRIVATE_KEY_FILE or install agent-scripts helper."
+    SPARKLE_KEY_ARGS=(--ed-key-file "$SPARKLE_PRIVATE_KEY_FILE")
+  fi
 fi
 
 verify_zip() {
@@ -282,6 +382,8 @@ else
     -destination "$DESTINATION" \
     -derivedDataPath "$DERIVED_DATA_PATH" \
     -quiet \
+    MARKETING_VERSION="$VERSION" \
+    CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
     build
 fi
 
@@ -347,7 +449,7 @@ ZIP_LENGTH="$(stat -f%z "$ZIP_PATH")"
 ZIP_SHA256="$(shasum -a 256 "$ZIP_PATH" | awk '{print $1}')"
 
 log "Signing Sparkle update"
-SIGN_OUTPUT="$(sign_update --ed-key-file "$SPARKLE_PRIVATE_KEY_FILE" "$ZIP_PATH" 2>&1)"
+SIGN_OUTPUT="$(sign_update "${SPARKLE_KEY_ARGS[@]}" "$ZIP_PATH" 2>&1)"
 printf '%s\n' "$SIGN_OUTPUT"
 ED_SIGNATURE="$(printf '%s\n' "$SIGN_OUTPUT" | sed -n 's/.*sparkle:edSignature="\([^"]*\)".*/\1/p' | tail -1)"
 [[ -n "$ED_SIGNATURE" ]] || fail "Could not parse sparkle:edSignature from sign_update output"
@@ -369,6 +471,7 @@ if [[ "$UPDATE_APPCAST" == true ]]; then
   VERSION="$VERSION" \
   RELEASE_URL="$RELEASE_URL" \
   ASSET_URL="$ASSET_URL" \
+  BUILD_NUMBER="$BUILD_NUMBER" \
   ZIP_LENGTH="$ZIP_LENGTH" \
   ED_SIGNATURE="$ED_SIGNATURE" \
   MINIMUM_SYSTEM_VERSION="$MINIMUM_SYSTEM_VERSION" \
@@ -385,7 +488,7 @@ const item = `    <item>
       <pubDate>${new Date().toUTCString().replace("GMT", "+0000")}</pubDate>
       <enclosure
         url="${process.env.ASSET_URL}"
-        sparkle:version="1"
+        sparkle:version="${process.env.BUILD_NUMBER}"
         sparkle:shortVersionString="${version}"
         sparkle:minimumSystemVersion="${process.env.MINIMUM_SYSTEM_VERSION}"
         length="${process.env.ZIP_LENGTH}"
