@@ -64,7 +64,7 @@ extension GameBridgeDetectionService {
             case "button":
                 buttons.append(element)
             case "staticText":
-                textFields.append(element)
+                other.append(element)
             case "image":
                 images.append(element)
             case "group":

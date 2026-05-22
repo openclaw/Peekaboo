@@ -195,6 +195,39 @@ struct GameBridgeDetectionTests {
 
     @available(macOS 14.0, *)
     @Test
+    func `Static text is not grouped as text field`() throws {
+        let json = """
+        {"version":1,"app":"firestaff","gameState":"test",
+         "framebuffer":{"width":320,"height":200},
+         "elements":[{"id":"LABEL","type":"text","label":"Status",
+         "bounds":{"x":10,"y":20,"w":40,"h":10}}]}
+        """
+        let manifestRootURL = try self.writeFirestaffManifest(json)
+        defer { try? FileManager.default.removeItem(at: manifestRootURL) }
+
+        let context = WindowContext(
+            applicationName: "firestaff",
+            applicationBundleId: nil,
+            applicationProcessId: nil,
+            windowTitle: nil,
+            windowID: nil,
+            windowBounds: nil,
+            shouldFocusWebContent: false,
+            traversalBudget: nil
+        )
+        let result = try #require(GameBridgeDetectionService.tryDetect(
+            windowContext: context,
+            snapshotId: "static-text-snapshot",
+            manifestRootURL: manifestRootURL
+        ))
+
+        #expect(result.elements.textFields.isEmpty)
+        #expect(result.elements.other.count == 1)
+        #expect(result.elements.other[0].type == .staticText)
+    }
+
+    @available(macOS 14.0, *)
+    @Test
     func `Stale manifest is ignored`() throws {
         let json = """
         {"version":1,"app":"firestaff","gameState":"stale",
