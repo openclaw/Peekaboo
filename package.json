@@ -53,7 +53,13 @@
     "poltergeist:status": "./scripts/poltergeist-wrapper.sh status",
     "poltergeist:logs": "./scripts/poltergeist-wrapper.sh logs",
     "oracle": "pnpm -C ../oracle oracle",
-    "postinstall": "chmod +x peekaboo peekaboo-mcp.js 2>/dev/null || true"
+    "postinstall": "chmod +x peekaboo peekaboo-mcp.js 2>/dev/null || true",
+    "check:changed": "pnpm run test:safe",
+    "test:changed": "pnpm run test:safe",
+    "crabbox:hydrate": "crabbox actions hydrate",
+    "crabbox:run": "crabbox run",
+    "crabbox:stop": "crabbox stop",
+    "crabbox:warmup": "crabbox warmup"
   },
   "repository": {
     "type": "git",
