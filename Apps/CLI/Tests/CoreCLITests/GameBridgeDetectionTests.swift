@@ -4,25 +4,24 @@ import Testing
 
 @Suite("GameBridge Detection Tests")
 struct GameBridgeDetectionTests {
-
     @available(macOS 14.0, *)
-    @Test("Known app is recognized")
-    func knownAppRecognized() {
+    @Test
+    func `Known app is recognized`() {
         #expect(GameBridgeDetectionService.isGameBridgeApp(appName: "firestaff"))
         #expect(GameBridgeDetectionService.isGameBridgeApp(appName: "Firestaff"))
     }
 
     @available(macOS 14.0, *)
-    @Test("Unknown app is not recognized")
-    func unknownAppNotRecognized() {
+    @Test
+    func `Unknown app is not recognized`() {
         #expect(!GameBridgeDetectionService.isGameBridgeApp(appName: "Safari"))
         #expect(!GameBridgeDetectionService.isGameBridgeApp(appName: nil))
         #expect(!GameBridgeDetectionService.isGameBridgeApp(appName: ""))
     }
 
     @available(macOS 14.0, *)
-    @Test("Manifest parsing from temp file")
-    func manifestParsing() throws {
+    @Test
+    func `Manifest parsing from temp file`() throws {
         let json = """
         {
           "version": 1,
@@ -49,10 +48,11 @@ struct GameBridgeDetectionTests {
           ]
         }
         """
-        let data = json.data(using: .utf8)!
+        let data = try #require(json.data(using: .utf8))
         let manifest = try JSONDecoder().decode(
             GameBridgeDetectionService.GameManifest.self,
-            from: data)
+            from: data
+        )
 
         #expect(manifest.version == 1)
         #expect(manifest.app == "firestaff")
@@ -67,8 +67,8 @@ struct GameBridgeDetectionTests {
     }
 
     @available(macOS 14.0, *)
-    @Test("Manifest elements default omitted optional Firestaff fields")
-    func manifestElementDefaults() throws {
+    @Test
+    func `Manifest elements default omitted optional Firestaff fields`() throws {
         let json = """
         {
           "version": 1,
@@ -85,10 +85,11 @@ struct GameBridgeDetectionTests {
           ]
         }
         """
-        let data = json.data(using: .utf8)!
+        let data = try #require(json.data(using: .utf8))
         let manifest = try JSONDecoder().decode(
             GameBridgeDetectionService.GameManifest.self,
-            from: data)
+            from: data
+        )
 
         #expect(manifest.elements.count == 1)
         #expect(manifest.elements[0].enabled)
@@ -96,8 +97,8 @@ struct GameBridgeDetectionTests {
     }
 
     @available(macOS 14.0, *)
-    @Test("Element scaling with window bounds")
-    func elementScaling() throws {
+    @Test
+    func `Element scaling with window bounds`() throws {
         let json = """
         {
           "version": 1,
@@ -116,16 +117,18 @@ struct GameBridgeDetectionTests {
           ]
         }
         """
-        let data = json.data(using: .utf8)!
+        let data = try #require(json.data(using: .utf8))
         let manifest = try JSONDecoder().decode(
             GameBridgeDetectionService.GameManifest.self,
-            from: data)
+            from: data
+        )
 
         // Window is 2x the framebuffer at offset (50, 50)
         let windowBounds = CGRect(x: 50, y: 50, width: 640, height: 400)
         let elements = GameBridgeDetectionService.detectElements(
             from: manifest,
-            windowBounds: windowBounds)
+            windowBounds: windowBounds
+        )
 
         #expect(elements.count == 1)
         let e = elements[0]
@@ -140,8 +143,8 @@ struct GameBridgeDetectionTests {
     }
 
     @available(macOS 14.0, *)
-    @Test("tryDetect returns nil for unknown app")
-    func tryDetectUnknownApp() {
+    @Test
+    func `tryDetect returns nil for unknown app`() {
         let context = WindowContext(
             applicationName: "Safari",
             applicationBundleId: "com.apple.Safari",
@@ -150,22 +153,24 @@ struct GameBridgeDetectionTests {
             windowID: 1,
             windowBounds: CGRect(x: 0, y: 0, width: 800, height: 600),
             shouldFocusWebContent: false,
-            traversalBudget: nil)
+            traversalBudget: nil
+        )
         let result = GameBridgeDetectionService.tryDetect(
             windowContext: context,
-            snapshotId: "test-snap")
+            snapshotId: "test-snap"
+        )
         #expect(result == nil)
     }
 
     @available(macOS 14.0, *)
-    @Test("Snapshot ID is preserved")
-    func snapshotIdPreserved() throws {
+    @Test
+    func `Snapshot ID is preserved`() throws {
         let json = """
         {"version":1,"app":"firestaff","gameState":"test",
          "framebuffer":{"width":320,"height":200},"elements":[]}
         """
-        let restoreManifest = try writeFirestaffManifest(json)
-        defer { restoreManifest() }
+        let manifestRootURL = try self.writeFirestaffManifest(json)
+        defer { try? FileManager.default.removeItem(at: manifestRootURL) }
 
         let context = WindowContext(
             applicationName: "firestaff",
@@ -175,31 +180,61 @@ struct GameBridgeDetectionTests {
             windowID: nil,
             windowBounds: nil,
             shouldFocusWebContent: false,
-            traversalBudget: nil)
+            traversalBudget: nil
+        )
         let result = GameBridgeDetectionService.tryDetect(
             windowContext: context,
-            snapshotId: "my-custom-snapshot-id")
+            snapshotId: "my-custom-snapshot-id",
+            manifestRootURL: manifestRootURL
+        )
 
         #expect(result != nil)
         #expect(result?.snapshotId == "my-custom-snapshot-id")
         #expect(result?.metadata.method == "gameBridge")
     }
 
-    private func writeFirestaffManifest(_ json: String) throws -> () -> Void {
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        let dir = home.appendingPathComponent(".firestaff")
+    @available(macOS 14.0, *)
+    @Test
+    func `Stale manifest is ignored`() throws {
+        let json = """
+        {"version":1,"app":"firestaff","gameState":"stale",
+         "framebuffer":{"width":320,"height":200},"elements":[]}
+        """
+        let manifestRootURL = try self.writeFirestaffManifest(json)
+        defer { try? FileManager.default.removeItem(at: manifestRootURL) }
+
+        let manifestPath = manifestRootURL
+            .appendingPathComponent(".firestaff")
+            .appendingPathComponent("accessibility.json")
+        let staleDate = Date(timeIntervalSinceNow: -60)
+        try FileManager.default.setAttributes([.modificationDate: staleDate], ofItemAtPath: manifestPath.path)
+
+        let context = WindowContext(
+            applicationName: "firestaff",
+            applicationBundleId: nil,
+            applicationProcessId: nil,
+            windowTitle: nil,
+            windowID: nil,
+            windowBounds: nil,
+            shouldFocusWebContent: false,
+            traversalBudget: nil
+        )
+        let result = GameBridgeDetectionService.tryDetect(
+            windowContext: context,
+            snapshotId: "stale-snapshot",
+            manifestRootURL: manifestRootURL
+        )
+
+        #expect(result == nil)
+    }
+
+    private func writeFirestaffManifest(_ json: String) throws -> URL {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekaboo-gamebridge-tests-\(UUID().uuidString)")
+        let dir = root.appendingPathComponent(".firestaff")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let manifestPath = dir.appendingPathComponent("accessibility.json")
-        let previousData = try? Data(contentsOf: manifestPath)
-
         try json.write(to: manifestPath, atomically: true, encoding: .utf8)
-
-        return {
-            if let previousData {
-                try? previousData.write(to: manifestPath, options: .atomic)
-            } else {
-                try? FileManager.default.removeItem(at: manifestPath)
-            }
-        }
+        return root
     }
 }

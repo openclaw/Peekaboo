@@ -13,7 +13,6 @@ import Foundation
 /// and other automation commands to work with game windows.
 @available(macOS 14.0, *)
 public final class GameBridgeDetectionService: Sendable {
-
     /// Known game-bridge apps and their manifest paths.
     /// The path is relative to the user's home directory.
     private static let knownApps: [String: String] = [
@@ -91,7 +90,7 @@ public final class GameBridgeDetectionService: Sendable {
                 }
 
                 public var cgRect: CGRect {
-                    CGRect(x: x, y: y, width: w, height: h)
+                    CGRect(x: self.x, y: self.y, width: self.w, height: self.h)
                 }
             }
         }
@@ -100,24 +99,40 @@ public final class GameBridgeDetectionService: Sendable {
     /// Check if a window belongs to a game-bridge app
     public static func isGameBridgeApp(appName: String?) -> Bool {
         guard let name = appName else { return false }
-        return knownApps[name] != nil
+        return self.knownApps[name] != nil
     }
 
-    /// Read the accessibility manifest for a game-bridge app
-    public static func readManifest(appName: String) -> GameManifest? {
+    /// Read the accessibility manifest for a game-bridge app.
+    public static func readManifest(
+        appName: String,
+        manifestRootURL: URL = FileManager.default.homeDirectoryForCurrentUser,
+        now: Date = Date(),
+        maxManifestAge: TimeInterval = 5) -> GameManifest?
+    {
         guard let relativePath = knownApps[appName] else { return nil }
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        let manifestURL = home.appendingPathComponent(relativePath)
+        let manifestURL = manifestRootURL.appendingPathComponent(relativePath)
 
+        guard self.isFreshManifest(at: manifestURL, now: now, maxAge: maxManifestAge) else { return nil }
         guard let data = try? Data(contentsOf: manifestURL) else { return nil }
         return try? JSONDecoder().decode(GameManifest.self, from: data)
+    }
+
+    private static func isFreshManifest(at url: URL, now: Date, maxAge: TimeInterval) -> Bool {
+        guard
+            let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
+            let modificationDate = attributes[.modificationDate] as? Date
+        else {
+            return false
+        }
+
+        return now.timeIntervalSince(modificationDate) <= maxAge
     }
 
     /// Convert game manifest elements to Peekaboo DetectedElements
     public static func detectElements(
         from manifest: GameManifest,
-        windowBounds: CGRect?
-    ) -> [GameBridgeDetectedElement] {
+        windowBounds: CGRect?) -> [GameBridgeDetectedElement]
+    {
         let scaleX: CGFloat
         let scaleY: CGFloat
         let offsetX: CGFloat
@@ -136,24 +151,22 @@ public final class GameBridgeDetectionService: Sendable {
             offsetY = 0
         }
 
-        return manifest.elements.enumerated().map { index, element in
+        return manifest.elements.map { element in
             let scaledBounds = CGRect(
                 x: CGFloat(element.bounds.x) * scaleX + offsetX,
                 y: CGFloat(element.bounds.y) * scaleY + offsetY,
                 width: CGFloat(element.bounds.w) * scaleX,
-                height: CGFloat(element.bounds.h) * scaleY
-            )
+                height: CGFloat(element.bounds.h) * scaleY)
 
             return GameBridgeDetectedElement(
                 id: element.id,
-                type: mapElementType(element.type),
+                type: self.mapElementType(element.type),
                 label: element.label,
                 value: element.value,
                 bounds: scaledBounds,
                 enabled: element.enabled,
                 framebufferBounds: element.bounds.cgRect,
-                gameState: manifest.gameState
-            )
+                gameState: manifest.gameState)
         }
     }
 
@@ -161,15 +174,15 @@ public final class GameBridgeDetectionService: Sendable {
     private static func mapElementType(_ gameType: String) -> String {
         switch gameType {
         case "button", "movement", "dialogChoice":
-            return "button"
+            "button"
         case "slot", "portrait", "championMirror":
-            return "image"
+            "image"
         case "text":
-            return "staticText"
+            "staticText"
         case "region":
-            return "group"
+            "group"
         default:
-            return "other"
+            "other"
         }
     }
 }
@@ -180,8 +193,8 @@ public struct GameBridgeDetectedElement: Sendable {
     public let type: String
     public let label: String?
     public let value: String?
-    public let bounds: CGRect        // Screen coordinates
+    public let bounds: CGRect // Screen coordinates
     public let enabled: Bool
-    public let framebufferBounds: CGRect  // Original game framebuffer coords
+    public let framebufferBounds: CGRect // Original game framebuffer coords
     public let gameState: String
 }

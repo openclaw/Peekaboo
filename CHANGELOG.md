@@ -2,6 +2,9 @@
 
 ## [3.2.2] - Unreleased
 
+### Added
+- GameBridge manifests now let `peekaboo see` expose Firestaff/SDL game UI zones from GPU-rendered windows. Thanks @yeager for #152.
+
 ### Fixed
 - `peekaboo agent` now accepts OpenRouter model IDs and can use `OPENROUTER_API_KEY` from env or credentials. Thanks @delort for #155.
 
