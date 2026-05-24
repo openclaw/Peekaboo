@@ -7,7 +7,7 @@ public enum WindowFiltering {
         public let minHeight: CGFloat
         public let minAlpha: CGFloat
 
-        public static let `default` = Thresholds(minWidth: 120, minHeight: 90, minAlpha: 0.01)
+        public static let `default` = Thresholds(minWidth: 80, minHeight: 40, minAlpha: 0.01)
     }
 
     public enum Mode {

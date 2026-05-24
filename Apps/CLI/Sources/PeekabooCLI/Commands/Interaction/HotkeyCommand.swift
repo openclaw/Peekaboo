@@ -18,7 +18,7 @@ struct HotkeyCommand: ErrorHandlingCommand, OutputFormattable {
     @Option(help: "Delay between key press and release in milliseconds")
     var holdDuration: Int = 50
 
-    @Option(help: "Snapshot ID (uses latest if not specified)")
+    @Option(help: "Snapshot ID, or 'latest' (uses latest if not specified)")
     var snapshot: String?
 
     @Flag(name: .customLong("focus-background"), help: "Send the hotkey to the target process without focusing it")

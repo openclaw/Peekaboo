@@ -18,7 +18,7 @@ struct ScrollCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsCon
     @Option(help: "Element ID to scroll on (from 'see' command)")
     var on: String?
 
-    @Option(help: "Snapshot ID (uses latest if not specified)")
+    @Option(help: "Snapshot ID, or 'latest' (uses latest if not specified)")
     var snapshot: String?
 
     @Option(help: "Delay between scroll ticks in milliseconds")

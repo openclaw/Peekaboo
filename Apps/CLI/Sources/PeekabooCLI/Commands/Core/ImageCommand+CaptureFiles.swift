@@ -17,7 +17,9 @@ extension ImageCommand {
             ),
             observation: ImageObservationDiagnostics(
                 timings: observation.timings,
-                diagnostics: observation.diagnostics
+                diagnostics: observation.diagnostics,
+                capture: observation.capture,
+                rawImagePath: observation.files.rawScreenshotPath
             )
         )
     }

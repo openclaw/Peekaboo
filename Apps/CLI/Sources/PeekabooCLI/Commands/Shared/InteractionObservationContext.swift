@@ -52,7 +52,7 @@ struct InteractionObservationContext {
         fallbackToLatest: Bool,
         snapshots: any SnapshotManagerProtocol
     ) async -> InteractionObservationContext {
-        if let explicitSnapshotId = normalizedSnapshotId(rawSnapshot) {
+        if let explicitSnapshotId = normalizedSnapshotId(rawSnapshot), !isLatestAlias(explicitSnapshotId) {
             return InteractionObservationContext(
                 explicitSnapshotId: explicitSnapshotId,
                 snapshotId: explicitSnapshotId,
@@ -78,6 +78,15 @@ struct InteractionObservationContext {
     private static func normalizedSnapshotId(_ snapshotId: String?) -> String? {
         let trimmed = snapshotId?.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed?.isEmpty == false ? trimmed : nil
+    }
+
+    private static func isLatestAlias(_ snapshotId: String) -> Bool {
+        switch snapshotId.lowercased() {
+        case "latest", "most-recent", "most_recent":
+            true
+        default:
+            false
+        }
     }
 }
 

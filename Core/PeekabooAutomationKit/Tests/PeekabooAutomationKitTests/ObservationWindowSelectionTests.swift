@@ -47,6 +47,27 @@ final class ObservationWindowSelectionTests: XCTestCase {
         XCTAssertEqual(filtered.map(\.title), ["Editor"])
     }
 
+    func testCaptureCandidateSummaryIncludesRejectedReasons() {
+        let windows = [
+            Self.window(
+                id: 1,
+                title: "",
+                bounds: CGRect(x: 0, y: 0, width: 60, height: 30)),
+            Self.window(
+                id: 2,
+                title: "Overlay",
+                bounds: CGRect(x: 0, y: 0, width: 400, height: 400),
+                sharingState: .none),
+        ]
+
+        let summary = ObservationTargetResolver.captureCandidateSummary(from: windows)
+
+        XCTAssertTrue(summary.contains("#0 id=1 '<untitled>' 60x30"))
+        XCTAssertTrue(summary.contains("window too small"))
+        XCTAssertTrue(summary.contains("#0 id=2 'Overlay' 400x400"))
+        XCTAssertTrue(summary.contains("window marked non-shareable"))
+    }
+
     func testListFilteringKeepsMinimizedWindows() {
         let windows = [
             Self.window(

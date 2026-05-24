@@ -12,7 +12,7 @@ enum SnapshotValidation {
             throw PeekabooError.snapshotNotFound(
                 """
                 Snapshot '\(snapshotId)' was not found (or has no UI map). \
-                Run 'peekaboo see' again or omit --snapshot to use the most recent snapshot.
+                Run 'peekaboo see' again, omit --snapshot, or pass --snapshot latest.
                 """
             )
         }

@@ -21,7 +21,7 @@ struct PressCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
     @Option(help: "Hold duration for each key in milliseconds")
     var hold: Int = 50
 
-    @Option(help: "Snapshot ID (uses latest if not specified)")
+    @Option(help: "Snapshot ID, or 'latest' (uses latest if not specified)")
     var snapshot: String?
 
     @OptionGroup var focusOptions: FocusCommandOptions

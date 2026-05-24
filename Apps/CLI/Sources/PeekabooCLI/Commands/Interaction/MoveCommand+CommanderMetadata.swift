@@ -109,7 +109,7 @@ extension MoveCommand: CommanderSignatureProviding {
                 ),
                 .commandOption(
                     "snapshot",
-                    help: "Snapshot ID for element resolution",
+                    help: "Snapshot ID for element resolution, or 'latest'",
                     long: "snapshot"
                 ),
             ],

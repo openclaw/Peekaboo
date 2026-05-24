@@ -11,7 +11,7 @@ struct ClickCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
     @Argument(help: "Element text or query to click")
     var query: String?
 
-    @Option(help: "Snapshot ID (uses latest if not specified)")
+    @Option(help: "Snapshot ID, or 'latest' (uses latest if not specified)")
     var snapshot: String?
 
     @Option(help: "Element ID to click (e.g., B1, T2)")

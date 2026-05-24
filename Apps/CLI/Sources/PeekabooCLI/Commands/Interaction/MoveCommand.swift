@@ -41,7 +41,7 @@ struct MoveCommand: ErrorHandlingCommand, OutputFormattable {
     @Option(help: "Movement profile: linear (default) or human.")
     var profile: String?
 
-    @Option(help: "Snapshot ID for element resolution")
+    @Option(help: "Snapshot ID for element resolution, or 'latest'")
     var snapshot: String?
     @RuntimeStorage private var runtime: CommandRuntime?
 

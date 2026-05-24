@@ -26,7 +26,7 @@ extension SwipeCommand: CommanderSignatureProviding {
                 ),
                 .commandOption(
                     "snapshot",
-                    help: "Snapshot ID (uses latest if not specified)",
+                    help: "Snapshot ID, or 'latest' (uses latest if not specified)",
                     long: "snapshot"
                 ),
                 .commandOption(

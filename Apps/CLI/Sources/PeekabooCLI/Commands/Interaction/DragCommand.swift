@@ -25,7 +25,7 @@ struct DragCommand: ErrorHandlingCommand, OutputFormattable {
     @Option(help: "Target application (e.g., 'Trash', 'Finder')")
     var toApp: String?
 
-    @Option(help: "Snapshot ID for element resolution")
+    @Option(help: "Snapshot ID for element resolution, or 'latest'")
     var snapshot: String?
 
     @Option(help: "Duration of drag in milliseconds (default: 500)")

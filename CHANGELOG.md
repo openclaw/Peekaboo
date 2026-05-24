@@ -2,6 +2,12 @@
 
 ## [3.2.3] - Unreleased
 
+### Added
+- `peekaboo image --json` now reports capture coordinate diagnostics and warns when window captures look blank or solid.
+
+### Fixed
+- Interaction commands now accept `--snapshot latest` explicitly and window/app capture failures list rejected capture candidates.
+
 ## [3.2.2] - 2026-05-22
 
 ### Added

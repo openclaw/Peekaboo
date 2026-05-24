@@ -12,7 +12,7 @@ struct SetValueCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsC
     @Option(help: "Element ID or query to set")
     var on: String?
 
-    @Option(help: "Snapshot ID (uses latest if not specified)")
+    @Option(help: "Snapshot ID, or 'latest' (uses latest if not specified)")
     var snapshot: String?
 
     @RuntimeStorage private var runtime: CommandRuntime?
@@ -147,7 +147,11 @@ extension SetValueCommand: CommanderSignatureProviding {
             options: [
                 .commandOption("value", help: "Value to set (alternative to positional argument)", long: "value"),
                 .commandOption("on", help: "Element ID or query to set", long: "on"),
-                .commandOption("snapshot", help: "Snapshot ID (uses latest if not specified)", long: "snapshot"),
+                .commandOption(
+                    "snapshot",
+                    help: "Snapshot ID, or 'latest' (uses latest if not specified)",
+                    long: "snapshot"
+                ),
             ]
         )
     }

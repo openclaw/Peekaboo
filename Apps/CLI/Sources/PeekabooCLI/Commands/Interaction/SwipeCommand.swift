@@ -20,7 +20,7 @@ struct SwipeCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
     @Option(help: "Destination coordinates (x,y)")
     var toCoords: String?
 
-    @Option(help: "Snapshot ID (uses latest if not specified)")
+    @Option(help: "Snapshot ID, or 'latest' (uses latest if not specified)")
     var snapshot: String?
 
     @Option(help: "Duration of the swipe in milliseconds")

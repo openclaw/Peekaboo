@@ -47,6 +47,38 @@ struct InteractionObservationContextTests {
     }
 
     @Test
+    func `Explicit latest alias resolves to most recent snapshot`() async throws {
+        let snapshots = CoreSnapshotManagerStub()
+        let latest = try await snapshots.createSnapshot(id: "fresh-snapshot")
+
+        let context = await InteractionObservationContext.resolve(
+            explicitSnapshot: " latest ",
+            fallbackToLatest: true,
+            snapshots: snapshots
+        )
+
+        #expect(context.explicitSnapshotId == nil)
+        #expect(context.snapshotId == latest)
+        #expect(context.source == .latest)
+    }
+
+    @Test
+    func `Explicit latest alias does not force fallback when disabled`() async throws {
+        let snapshots = CoreSnapshotManagerStub()
+        _ = try await snapshots.createSnapshot(id: "fresh-snapshot")
+
+        let context = await InteractionObservationContext.resolve(
+            explicitSnapshot: "most-recent",
+            fallbackToLatest: false,
+            snapshots: snapshots
+        )
+
+        #expect(context.explicitSnapshotId == nil)
+        #expect(context.snapshotId == nil)
+        #expect(context.source == .none)
+    }
+
+    @Test
     func `Focus snapshot is skipped for latest snapshot with explicit target`() async throws {
         let snapshots = CoreSnapshotManagerStub()
         let latest = try await snapshots.createSnapshot()

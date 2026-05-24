@@ -12,7 +12,7 @@ struct PerformActionCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOpt
     @Option(help: "Accessibility action name, e.g. AXPress, AXShowMenu, AXIncrement")
     var action: String?
 
-    @Option(help: "Snapshot ID (uses latest if not specified)")
+    @Option(help: "Snapshot ID, or 'latest' (uses latest if not specified)")
     var snapshot: String?
 
     @RuntimeStorage private var runtime: CommandRuntime?
@@ -145,7 +145,11 @@ extension PerformActionCommand: CommanderSignatureProviding {
                     help: "Accessibility action name, e.g. AXPress, AXShowMenu, AXIncrement",
                     long: "action"
                 ),
-                .commandOption("snapshot", help: "Snapshot ID (uses latest if not specified)", long: "snapshot"),
+                .commandOption(
+                    "snapshot",
+                    help: "Snapshot ID, or 'latest' (uses latest if not specified)",
+                    long: "snapshot"
+                ),
             ]
         )
     }

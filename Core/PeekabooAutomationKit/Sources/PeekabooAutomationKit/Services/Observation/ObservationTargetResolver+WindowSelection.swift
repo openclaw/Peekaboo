@@ -60,6 +60,24 @@ extension ObservationTargetResolver {
         self.filteredWindows(from: windows, mode: .capture)
     }
 
+    public nonisolated static func captureCandidateSummary(
+        from windows: [ServiceWindowInfo],
+        limit: Int = 5) -> String
+    {
+        guard !windows.isEmpty else {
+            return "no windows returned"
+        }
+
+        return windows.prefix(limit).map { window in
+            let title = window.title.trimmingCharacters(in: .whitespacesAndNewlines)
+            let label = title.isEmpty ? "<untitled>" : title
+            let reason = WindowFiltering.disqualificationReason(for: window, mode: .capture) ?? "capture candidate"
+            let size = "\(Int(window.bounds.width))x\(Int(window.bounds.height))"
+            return "#\(window.index) id=\(window.windowID) '\(label)' \(size) " +
+                "alpha=\(Self.format(window.alpha)) reason=\(reason)"
+        }.joined(separator: "; ")
+    }
+
     public nonisolated static func filteredWindows(
         from windows: [ServiceWindowInfo],
         mode: WindowFiltering.Mode) -> [ServiceWindowInfo]
@@ -97,6 +115,10 @@ extension ObservationTargetResolver {
         score += max(0, 600 - Double(window.index) * 40)
 
         return score
+    }
+
+    private nonisolated static func format(_ value: CGFloat) -> String {
+        String(format: "%.2f", Double(value))
     }
 
     private nonisolated static func deduplicate(_ windows: [ServiceWindowInfo]) -> [ServiceWindowInfo] {
