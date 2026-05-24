@@ -52,18 +52,30 @@ struct InteractionObservationContext {
         fallbackToLatest: Bool,
         snapshots: any SnapshotManagerProtocol
     ) async -> InteractionObservationContext {
-        if let explicitSnapshotId = normalizedSnapshotId(rawSnapshot), !isLatestAlias(explicitSnapshotId) {
-            return InteractionObservationContext(
-                explicitSnapshotId: explicitSnapshotId,
-                snapshotId: explicitSnapshotId,
-                source: .explicit
-            )
+        if let explicitSnapshotId = normalizedSnapshotId(rawSnapshot) {
+            guard self.isLatestAlias(explicitSnapshotId) else {
+                return InteractionObservationContext(
+                    explicitSnapshotId: explicitSnapshotId,
+                    snapshotId: explicitSnapshotId,
+                    source: .explicit
+                )
+            }
+            return await self.latestSnapshotContext(from: snapshots)
         }
 
         guard fallbackToLatest else {
-            return InteractionObservationContext(explicitSnapshotId: nil, snapshotId: nil, source: .none)
+            return InteractionObservationContext(
+                explicitSnapshotId: nil,
+                snapshotId: nil,
+                source: .none
+            )
         }
 
+        return await self.latestSnapshotContext(from: snapshots)
+    }
+
+    private static func latestSnapshotContext(from snapshots: any SnapshotManagerProtocol) async
+    -> InteractionObservationContext {
         if let latestSnapshotId = await snapshots.getMostRecentSnapshot() {
             return InteractionObservationContext(
                 explicitSnapshotId: nil,

@@ -63,9 +63,9 @@ struct InteractionObservationContextTests {
     }
 
     @Test
-    func `Explicit latest alias does not force fallback when disabled`() async throws {
+    func `Explicit latest alias resolves even when omitted fallback is disabled`() async throws {
         let snapshots = CoreSnapshotManagerStub()
-        _ = try await snapshots.createSnapshot(id: "fresh-snapshot")
+        let latest = try await snapshots.createSnapshot(id: "fresh-snapshot")
 
         let context = await InteractionObservationContext.resolve(
             explicitSnapshot: "most-recent",
@@ -74,8 +74,8 @@ struct InteractionObservationContextTests {
         )
 
         #expect(context.explicitSnapshotId == nil)
-        #expect(context.snapshotId == nil)
-        #expect(context.source == .none)
+        #expect(context.snapshotId == latest)
+        #expect(context.source == .latest)
     }
 
     @Test
