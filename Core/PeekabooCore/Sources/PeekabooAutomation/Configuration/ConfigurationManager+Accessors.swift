@@ -150,6 +150,23 @@ extension ConfigurationManager {
         return nil
     }
 
+    /// Get MiniMax China API key with proper precedence.
+    public func getMiniMaxChinaAPIKey(fallbackToSharedKey: Bool = true) -> String? {
+        if let envValue = self.environmentValue(for: "MINIMAX_CN_API_KEY") {
+            return envValue
+        }
+
+        if let credValue = credentials["MINIMAX_CN_API_KEY"] {
+            return credValue
+        }
+
+        if let configValue = configuration?.aiProviders?.minimaxChinaApiKey {
+            return configValue
+        }
+
+        return fallbackToSharedKey ? self.getMiniMaxAPIKey() : nil
+    }
+
     /// Get OpenRouter API key with proper precedence.
     public func getOpenRouterAPIKey() -> String? {
         if let envValue = self.environmentValue(for: "OPENROUTER_API_KEY") {
@@ -176,6 +193,9 @@ extension ConfigurationManager {
         }
         if let key = self.getMiniMaxAPIKey(), !key.isEmpty {
             configuration.setAPIKey(key, for: .minimax)
+        }
+        if let key = self.getMiniMaxChinaAPIKey(fallbackToSharedKey: false), !key.isEmpty {
+            configuration.setAPIKey(key, for: .minimaxCN)
         }
         if let key = self.getOpenRouterAPIKey(), !key.isEmpty {
             configuration.setAPIKey(key, for: "openrouter")

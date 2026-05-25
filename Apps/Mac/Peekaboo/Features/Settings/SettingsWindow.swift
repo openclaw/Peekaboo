@@ -258,6 +258,10 @@ struct AISettingsView: View {
                 ("MiniMax-M2.7", "MiniMax M2.7"),
                 ("MiniMax-M2.7-highspeed", "MiniMax M2.7 Highspeed"),
             ]),
+            ("minimax-cn", [
+                ("MiniMax-M2.7", "MiniMax China M2.7"),
+                ("MiniMax-M2.7-highspeed", "MiniMax China M2.7 Highspeed"),
+            ]),
             ("ollama", self.ollamaModelOptions),
             ("lmstudio", [
                 ("openai/gpt-oss-120b", "GPT-OSS 120B"),
@@ -304,6 +308,9 @@ struct AISettingsView: View {
             "gemini-3-flash": "Google Gemini Flash tuned for fast, lower-latency multimodal agent runs.",
             "MiniMax-M2.7": "MiniMax M2.7 using the Anthropic-compatible API.",
             "MiniMax-M2.7-highspeed": "MiniMax M2.7 Highspeed using the Anthropic-compatible API.",
+            "minimax-cn/MiniMax-M2.7": "MiniMax China M2.7 using the Anthropic-compatible API.",
+            "minimax-cn/MiniMax-M2.7-highspeed": "MiniMax China M2.7 Highspeed using the " +
+                "Anthropic-compatible API.",
             "openai/gpt-oss-120b": "Local GPT-OSS 120B through LM Studio.",
             "openai/gpt-oss-20b": "Local GPT-OSS 20B through LM Studio.",
             // Ollama models
@@ -323,6 +330,24 @@ struct AISettingsView: View {
         return nil
     }
 
+    private func modelTag(provider: String, modelId: String) -> String {
+        "\(provider)/\(modelId)"
+    }
+
+    private func providerAndModel(from tag: String) -> (provider: String, model: String)? {
+        let parts = tag.split(separator: "/", maxSplits: 1).map(String.init)
+        guard parts.count == 2 else { return nil }
+        return (provider: parts[0], model: parts[1])
+    }
+
+    private func selectedModelTag() -> String {
+        self.modelTag(provider: self.settings.selectedProvider, modelId: self.settings.selectedModel)
+    }
+
+    private func modelDescription(provider: String, modelId: String) -> String? {
+        self.modelDescriptions[self.modelTag(provider: provider, modelId: modelId)] ?? self.modelDescriptions[modelId]
+    }
+
     var body: some View {
         Form {
             // Model Selection
@@ -333,18 +358,23 @@ struct AISettingsView: View {
                             .frame(width: 80, alignment: .trailing)
 
                         Picker("", selection: Binding(
-                            get: { self.settings.selectedModel },
-                            set: { newModel in
-                                self.settings.selectedModel = newModel
-                                // Update provider based on model selection
-                                if let provider = self.provider(for: newModel) {
-                                    self.settings.selectedProvider = provider
+                            get: { self.selectedModelTag() },
+                            set: { newTag in
+                                if let selection = self.providerAndModel(from: newTag) {
+                                    self.settings.selectedModel = selection.model
+                                    self.settings.selectedProvider = selection.provider
+                                } else {
+                                    self.settings.selectedModel = newTag
+                                    // Update provider based on model selection
+                                    if let provider = self.provider(for: newTag) {
+                                        self.settings.selectedProvider = provider
+                                    }
                                 }
                             })) {
                                 ForEach(self.allModels, id: \.provider) { provider, models in
                                     Section(header: Text(provider.capitalized)) {
                                         ForEach(models, id: \.id) { model in
-                                            Text(model.name).tag(model.id)
+                                            Text(model.name).tag(self.modelTag(provider: provider, modelId: model.id))
                                         }
                                     }
                                 }
@@ -354,7 +384,10 @@ struct AISettingsView: View {
                     }
 
                     // Model description
-                    if let description = modelDescriptions[settings.selectedModel] {
+                    if let description = modelDescription(
+                        provider: settings.selectedProvider,
+                        modelId: settings.selectedModel)
+                    {
                         HStack {
                             Spacer()
                                 .frame(width: 88)
@@ -408,6 +441,14 @@ struct AISettingsView: View {
                     apiKey: Binding(
                         get: { self.settings.miniMaxAPIKey },
                         set: { self.settings.miniMaxAPIKey = $0 }))
+            }
+
+            Section("MiniMax China Configuration") {
+                APIKeyField(
+                    provider: .minimaxChina,
+                    apiKey: Binding(
+                        get: { self.settings.miniMaxChinaAPIKey },
+                        set: { self.settings.miniMaxChinaAPIKey = $0 }))
             }
 
             Section("Ollama Configuration") {

@@ -90,7 +90,7 @@ struct AgentCommand: RuntimeOptionsConfigurable {
         name: .long,
         help: """
         AI model to use (for example: gpt-5.5, claude-opus-4-7, \
-        gemini-3-flash, minimax-m2.7, ollama/<model>, or lmstudio/<model>)
+        gemini-3-flash, minimax-m2.7, minimax-cn/m2.7, ollama/<model>, or lmstudio/<model>)
         """
     )
     var model: String?
@@ -337,6 +337,7 @@ extension AgentCommand {
         let hasAnthropic = configuration.hasAnthropicAuth()
         let hasGemini = configuration.getGeminiAPIKey()?.isEmpty == false
         let hasMiniMax = configuration.getMiniMaxAPIKey()?.isEmpty == false
+        let hasMiniMaxChina = configuration.getMiniMaxChinaAPIKey()?.isEmpty == false
         let hasOpenRouter = configuration.getOpenRouterAPIKey()?.isEmpty == false
         let hasLocalProvider = configuration.getAIProviders()
             .split(separator: ",")
@@ -348,13 +349,15 @@ extension AgentCommand {
                     .lowercased()
                 return provider == "ollama" || provider == "lmstudio" || provider == "lm-studio"
             }
-        return hasOpenAI || hasAnthropic || hasGemini || hasMiniMax || hasOpenRouter || hasLocalProvider
+        return hasOpenAI || hasAnthropic || hasGemini || hasMiniMax || hasMiniMaxChina || hasOpenRouter ||
+            hasLocalProvider
     }
 
     func emitAgentUnavailableMessage() {
         if self.jsonOutput {
             let message = "Agent service not available. Please set OPENAI_API_KEY, ANTHROPIC_API_KEY, " +
-                "GEMINI_API_KEY, MINIMAX_API_KEY, OPENROUTER_API_KEY, or configure ollama/<model> or lmstudio/<model>."
+                "GEMINI_API_KEY, MINIMAX_API_KEY, MINIMAX_CN_API_KEY, OPENROUTER_API_KEY, " +
+                "or configure ollama/<model> or lmstudio/<model>."
             let error = [
                 "success": false,
                 "error": message
@@ -368,7 +371,8 @@ extension AgentCommand {
         } else {
             let errorPrefix = [
                 "\(TerminalColor.red)Error: Agent service not available.",
-                " Please set OPENAI_API_KEY, ANTHROPIC_API_KEY, GEMINI_API_KEY, MINIMAX_API_KEY, OPENROUTER_API_KEY,",
+                " Please set OPENAI_API_KEY, ANTHROPIC_API_KEY, GEMINI_API_KEY, MINIMAX_API_KEY,",
+                " MINIMAX_CN_API_KEY, OPENROUTER_API_KEY,",
                 " or configure ollama/<model> or lmstudio/<model>."
             ].joined()
             let errorMessageLine = [errorPrefix, "\(TerminalColor.reset)"].joined()

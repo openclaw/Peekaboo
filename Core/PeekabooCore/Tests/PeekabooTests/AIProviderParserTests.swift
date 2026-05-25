@@ -19,6 +19,9 @@ struct AIProviderParserTests {
         #expect(AIProviderParser.parse("minimax/MiniMax-M2.7") == AIProviderParser.ProviderConfig(
             provider: "minimax",
             model: "MiniMax-M2.7"))
+        #expect(AIProviderParser.parse("minimax-cn/MiniMax-M2.7") == AIProviderParser.ProviderConfig(
+            provider: "minimax-cn",
+            model: "MiniMax-M2.7"))
     }
 
     @Test
@@ -100,6 +103,28 @@ struct AIProviderParserTests {
             hasMiniMax: true,
             hasOllama: false)
         #expect(model3 == "MiniMax-M2.7")
+
+        let model4 = AIProviderParser.determineDefaultModel(
+            from: "openai/gpt-5.5,minimax-cn/MiniMax-M2.7",
+            hasOpenAI: false,
+            hasMiniMaxChina: true,
+            hasOllama: false)
+        #expect(model4 == "minimax-cn/MiniMax-M2.7")
+    }
+
+    @Test
+    func `Determine default model keeps MiniMax China availability separate`() {
+        let model1 = AIProviderParser.determineDefaultModel(
+            from: "minimax-cn/MiniMax-M2.7",
+            hasMiniMax: false,
+            hasMiniMaxChina: true)
+        #expect(model1 == "minimax-cn/MiniMax-M2.7")
+
+        let model2 = AIProviderParser.determineDefaultModel(
+            from: "minimax-cn/MiniMax-M2.7",
+            hasMiniMax: true,
+            hasMiniMaxChina: false)
+        #expect(model2 == "MiniMax-M2.7")
     }
 
     @Test

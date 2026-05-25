@@ -46,6 +46,9 @@ struct PeekabooApp: App {
         if !self.settings.miniMaxAPIKey.isEmpty { TachikomaConfiguration.current.setAPIKey(
             self.settings.miniMaxAPIKey,
             for: .minimax) }
+        if !self.settings.miniMaxChinaAPIKey.isEmpty { TachikomaConfiguration.current.setAPIKey(
+            self.settings.miniMaxChinaAPIKey,
+            for: .minimaxCN) }
         if self.settings.ollamaBaseURL != "http://localhost:11434" { TachikomaConfiguration.current.setBaseURL(
             self.settings.ollamaBaseURL,
             for: .ollama) }

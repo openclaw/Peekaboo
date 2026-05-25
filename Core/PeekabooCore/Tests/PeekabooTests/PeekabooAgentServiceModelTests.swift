@@ -59,6 +59,36 @@ struct PeekabooAgentServiceTests {
 
     @Test
     @MainActor
+    func `MiniMax China only credentials initialize MiniMax China default agent`() throws {
+        try self.withIsolatedAgentEnvironment(["MINIMAX_CN_API_KEY": "test-minimax-cn-key"]) {
+            let services = self.makeServices()
+            let agentService = try #require(services.agent as? PeekabooAgentService)
+
+            #expect(agentService.defaultModel == LanguageModel.minimaxCN(.m27).description)
+        }
+    }
+
+    @Test
+    @MainActor
+    func `MiniMax China configured default can reuse shared MiniMax key`() throws {
+        try self.withIsolatedAgentEnvironment(
+            ["MINIMAX_API_KEY": "test-minimax-key"],
+            configurationJSON: """
+            {
+              "agent": {
+                "defaultModel": "minimax-cn/MiniMax-M2.7"
+              }
+            }
+            """) {
+                let services = self.makeServices()
+                let agentService = try #require(services.agent as? PeekabooAgentService)
+
+                #expect(agentService.defaultModel == LanguageModel.minimaxCN(.m27).description)
+            }
+    }
+
+    @Test
+    @MainActor
     func `Generated default model does not block Gemini default agent`() throws {
         try self.withIsolatedAgentEnvironment(
             ["GEMINI_API_KEY": "test-gemini-key"],
@@ -259,6 +289,7 @@ struct PeekabooAgentServiceTests {
             "GEMINI_API_KEY",
             "GOOGLE_API_KEY",
             "MINIMAX_API_KEY",
+            "MINIMAX_CN_API_KEY",
             "PEEKABOO_OLLAMA_BASE_URL",
             "OLLAMA_BASE_URL",
         ]
@@ -295,6 +326,7 @@ struct PeekabooAgentServiceTests {
         unsetenv("GEMINI_API_KEY")
         unsetenv("GOOGLE_API_KEY")
         unsetenv("MINIMAX_API_KEY")
+        unsetenv("MINIMAX_CN_API_KEY")
         unsetenv("PEEKABOO_OLLAMA_BASE_URL")
         unsetenv("OLLAMA_BASE_URL")
         for (key, value) in overrides {

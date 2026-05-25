@@ -2,6 +2,9 @@
 
 ## [3.2.4] - Unreleased
 
+### Added
+- `peekaboo agent` now supports MiniMax China via `minimax-cn/...` models and `MINIMAX_CN_API_KEY`, while preserving the existing international MiniMax endpoint. Thanks @LLuke for #161.
+
 ## [3.2.3] - 2026-05-24
 
 ### Added

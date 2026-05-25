@@ -52,6 +52,13 @@ struct ProviderInfo {
         requiresAPIKey: true,
         environmentValueLabel: "API key")
 
+    static let minimaxChina = ProviderInfo(
+        name: "minimax-cn",
+        displayName: "MiniMax China",
+        environmentVariables: ["MINIMAX_CN_API_KEY", "MINIMAX_API_KEY"],
+        requiresAPIKey: true,
+        environmentValueLabel: "API key")
+
     static let ollama = ProviderInfo(
         name: "ollama",
         displayName: "Ollama",

@@ -11,6 +11,7 @@ read_when:
 - **Anthropic** — `anthropic.md`: plan/status, streaming/tool notes, and Claude CLI examples.
 - **Google** — configured with `GEMINI_API_KEY`; supports Gemini 3.1 Pro Preview and Gemini 3 Flash.
 - **MiniMax** — configured with `MINIMAX_API_KEY`; supports MiniMax M2.7 through the Anthropic-compatible API.
+- **MiniMax China** — use `minimax-cn/...` with `MINIMAX_CN_API_KEY` or the shared `MINIMAX_API_KEY`; routes to `api.minimaxi.com`.
 - **Grok** — `grok.md`: Grok 4 implementation guide and checkpoints.
 - **Ollama** — `ollama.md`: local model configuration; `ollama-models.md` for model catalog notes.
 
@@ -25,6 +26,7 @@ configuration syntax, and environment variable reference.
 | Anthropic | Yes | Yes (Sonnet/Opus vision) | Yes (SSE) | No | API key or OAuth (Claude Pro/Max) |
 | Google | Yes | Yes | Yes | No | API key |
 | MiniMax | Yes | No | Yes | No | API key |
+| MiniMax China | Yes | No | Yes | No | API key |
 | Grok | Yes | Limited | Yes | No | API key |
 | Ollama | Yes (via local server) | Model-dependent | Yes | **Yes** (local) | None (local daemon) |
 | LM Studio | Yes (OpenAI-compatible local server) | Model-dependent | Yes | **Yes** (local) | None by default |

@@ -75,6 +75,8 @@ public final class PeekabooAgentService: AgentServiceProtocol {
                 config.getAPIKey(for: .google)
             case .minimax:
                 config.getAPIKey(for: .minimax)
+            case .minimaxCN:
+                config.getAPIKey(for: .minimaxCN)
             case .mistral:
                 config.getAPIKey(for: .mistral)
             case .groq:

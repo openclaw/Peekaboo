@@ -86,6 +86,7 @@ public enum AIProviderParser {
         hasAnthropic: Bool = false,
         hasGemini: Bool = false,
         hasMiniMax: Bool = false,
+        hasMiniMaxChina: Bool = false,
         hasOllama: Bool = false,
         configuredDefault: String? = nil) -> String
     {
@@ -106,6 +107,8 @@ public enum AIProviderParser {
                 if hasGemini { return "gemini-3-flash" }
             case "minimax":
                 if hasMiniMax { return config.model }
+            case "minimax-cn", "minimax_cn", "minimaxi":
+                if hasMiniMaxChina { return "minimax-cn/\(config.model)" }
             case "ollama":
                 if hasOllama { return config.model }
             default:
@@ -120,6 +123,8 @@ public enum AIProviderParser {
             return "gpt-5.5"
         } else if hasGemini {
             return "gemini-3-flash"
+        } else if hasMiniMaxChina {
+            return "minimax-cn/MiniMax-M2.7"
         } else if hasMiniMax {
             return "MiniMax-M2.7"
         } else {

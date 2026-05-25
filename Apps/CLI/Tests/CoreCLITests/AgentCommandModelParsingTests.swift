@@ -75,6 +75,9 @@ struct AgentCommandTests {
         #expect(command.parseModelString("MiniMax-M2.7") == .minimax(.m27))
         #expect(command.parseModelString("minimax-m2.7-highspeed") == .minimax(.m27Highspeed))
         #expect(command.parseModelString("minimax") == .minimax(.m27))
+        #expect(command.parseModelString("minimax-cn/m2.7") == .minimaxCN(.m27))
+        #expect(command.parseModelString("minimaxi/m2.7-highspeed") == .minimaxCN(.m27Highspeed))
+        #expect(command.parseModelString("minimax-cn/not-a-supported-model") == nil)
     }
 
     @Test
@@ -95,6 +98,7 @@ struct AgentCommandTests {
         #expect(command.parseModelString(" claude-sonnet-4.5 ") == .anthropic(.opus47))
         #expect(command.parseModelString(" gemini-3-flash ") == .google(.gemini3Flash))
         #expect(command.parseModelString(" minimax-m2.7 ") == .minimax(.m27))
+        #expect(command.parseModelString(" minimax-cn/m2.7 ") == .minimaxCN(.m27))
         #expect(command.parseModelString(" ollama/llama3.3 ") == .ollama(.llama33))
     }
 }

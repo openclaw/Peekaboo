@@ -238,50 +238,95 @@ public final class PeekabooAIService {
 
             let loose = LanguageModel.parse(from: modelString)
 
-            switch provider {
-            case "openai":
-                if case .openai = loose { return loose }
-                return .openai(.custom(modelString))
-            case "anthropic":
-                if case .anthropic = loose { return loose }
-                return .anthropic(.custom(modelString))
-            case "google", "gemini":
-                if case .google = loose { return loose }
-                return nil
-            case "minimax":
-                if case .minimax = loose { return loose }
-                return nil
-            case "openrouter":
-                return .openRouter(modelId: modelString)
-            case "mistral":
-                if case .mistral = loose { return loose }
-                return nil
-            case "groq":
-                if case .groq = loose { return loose }
-                return nil
-            case "grok", "xai":
-                if case .grok = loose { return loose }
-                return .grok(.custom(modelString))
-            case "ollama":
-                // For Ollama, prefer preserving the exact model id string.
-                // Heuristics for custom model capabilities live in Tachikoma (LanguageModel.Ollama).
-                return .ollama(.custom(modelString))
-            case "lmstudio", "lm-studio":
-                return .lmstudio(.custom(modelString))
-            default:
-                if let customModel = self.customProviderModel(
-                    providerID: provider,
-                    modelString: modelString,
-                    configuration: configuration)
-                {
-                    return .custom(provider: customModel)
-                }
-                return nil
+            if self.isHostedProviderIdentifier(provider) {
+                return self.parseHostedProviderEntry(provider: provider, modelString: modelString, loose: loose)
             }
+            if self.isLocalProviderIdentifier(provider) {
+                return self.parseLocalProviderEntry(provider: provider, modelString: modelString)
+            }
+            if let customModel = self.customProviderModel(
+                providerID: provider,
+                modelString: modelString,
+                configuration: configuration)
+            {
+                return .custom(provider: customModel)
+            }
+            return nil
         }
 
         // Back-compat: allow loose model strings without "provider/model"
         return LanguageModel.parse(from: entry)
+    }
+
+    private static func isHostedProviderIdentifier(_ provider: String) -> Bool {
+        switch provider {
+        case "openai", "anthropic", "google", "gemini", "minimax", "minimax-cn", "minimax_cn", "minimaxi",
+             "openrouter", "mistral", "groq", "grok", "xai":
+            true
+        default:
+            false
+        }
+    }
+
+    private static func isLocalProviderIdentifier(_ provider: String) -> Bool {
+        switch provider {
+        case "ollama", "lmstudio", "lm-studio":
+            true
+        default:
+            false
+        }
+    }
+
+    private static func parseHostedProviderEntry(
+        provider: String,
+        modelString: String,
+        loose: LanguageModel?) -> LanguageModel?
+    {
+        switch provider {
+        case "openai":
+            if case .openai = loose { return loose }
+            return .openai(.custom(modelString))
+        case "anthropic":
+            if case .anthropic = loose { return loose }
+            return .anthropic(.custom(modelString))
+        case "google", "gemini":
+            if case .google = loose { return loose }
+            return nil
+        case "minimax":
+            if case .minimax = loose { return loose }
+            return nil
+        case "minimax-cn", "minimax_cn", "minimaxi":
+            if case .minimaxCN = loose { return loose }
+            let parsed = LanguageModel.parse(from: "minimax-cn/\(modelString)")
+            if case .minimaxCN = parsed { return parsed }
+            return nil
+        case "openrouter":
+            return .openRouter(modelId: modelString)
+        case "mistral":
+            if case .mistral = loose { return loose }
+            return nil
+        case "groq":
+            if case .groq = loose { return loose }
+            return nil
+        case "grok", "xai":
+            if case .grok = loose { return loose }
+            return .grok(.custom(modelString))
+        default:
+            return nil
+        }
+    }
+
+    private static func parseLocalProviderEntry(provider: String, modelString: String) -> LanguageModel? {
+        switch provider {
+        case "ollama":
+            // For Ollama, prefer preserving the exact model id string.
+            // Heuristics for custom model capabilities live in Tachikoma (LanguageModel.Ollama).
+            .ollama(.custom(modelString))
+        case "lmstudio", "lm-studio":
+            .lmstudio(.custom(modelString))
+        default:
+            nil
+        }
     }
 
     private static func resolveAvailableModels(configuration: ConfigurationManager) -> [LanguageModel] {
@@ -308,6 +353,9 @@ public final class PeekabooAIService {
         }
         if let key = configuration.getGeminiAPIKey(), !key.isEmpty {
             return self.appendingGeneratedVisionFallbacks(from: parsed, to: [.google(.gemini3Flash)])
+        }
+        if let key = configuration.getMiniMaxChinaAPIKey(fallbackToSharedKey: false), !key.isEmpty {
+            return self.appendingGeneratedVisionFallbacks(from: parsed, to: [.minimaxCN(.m27)])
         }
         if let key = configuration.getMiniMaxAPIKey(), !key.isEmpty {
             return self.appendingGeneratedVisionFallbacks(from: parsed, to: [.minimax(.m27)])
@@ -391,6 +439,8 @@ public final class PeekabooAIService {
             configuration.getGeminiAPIKey()?.isEmpty == false
         case .minimax:
             configuration.getMiniMaxAPIKey()?.isEmpty == false
+        case .minimaxCN:
+            configuration.getMiniMaxChinaAPIKey()?.isEmpty == false
         case .grok:
             self.hasAnyCredential(["X_AI_API_KEY", "XAI_API_KEY", "GROK_API_KEY"], configuration: configuration)
         case .openRouter:
@@ -420,6 +470,7 @@ public final class PeekabooAIService {
         case let .ollama(m): ("ollama", m.modelId)
         case let .lmstudio(m): ("lmstudio", m.modelId)
         case let .minimax(m): ("minimax", m.modelId)
+        case let .minimaxCN(m): ("minimax-cn", m.modelId)
         case let .azureOpenAI(deployment, _, _, _): ("azure-openai", deployment)
         case let .openRouter(modelId): ("openrouter", modelId)
         case let .together(modelId): ("together", modelId)

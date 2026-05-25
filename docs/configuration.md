@@ -27,6 +27,8 @@ Peekaboo resolves settings in this order (highest → lowest):
 | Anthropic OAuth | credentials file | `ANTHROPIC_REFRESH_TOKEN`, `ANTHROPIC_ACCESS_TOKEN`, `ANTHROPIC_ACCESS_EXPIRES` | Created by `config login anthropic`; no API key stored. |
 | Grok API Key | credentials file | `GROK_API_KEY` / `X_AI_API_KEY` / `XAI_API_KEY` | Required for Grok (xAI). Env alias resolves to Grok. |
 | Gemini API Key | credentials file | `GEMINI_API_KEY` | Required for Gemini. |
+| MiniMax API Key | credentials file | `MINIMAX_API_KEY` | Required for MiniMax international; also works as fallback for MiniMax China. |
+| MiniMax China API Key | credentials file | `MINIMAX_CN_API_KEY` | Optional China-specific key for `minimax-cn/...` models. |
 | Ollama URL | `aiProviders.ollamaBaseUrl` | `PEEKABOO_OLLAMA_BASE_URL` | Base URL for local/remote Ollama (default `http://localhost:11434`). |
 | Default Save Path | `defaults.savePath` | `PEEKABOO_DEFAULT_SAVE_PATH` | Directory for screenshots (supports `~`). |
 | Log Level | `logging.level` | `PEEKABOO_LOG_LEVEL` | `trace`, `debug`, `info`, `warn`, `error`, `fatal` (default `info`). |

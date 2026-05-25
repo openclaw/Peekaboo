@@ -23,6 +23,7 @@ pages instead of duplicating provider lists in multiple places.
 | **xAI** | grok-4 | `XAI_API_KEY` |
 | **Google** | gemini-3.1-pro-preview, gemini-3-flash | `GEMINI_API_KEY` |
 | **MiniMax** | MiniMax-M2.7, MiniMax-M2.7-highspeed | `MINIMAX_API_KEY` |
+| **MiniMax China** | MiniMax-M2.7, MiniMax-M2.7-highspeed | `MINIMAX_CN_API_KEY` or `MINIMAX_API_KEY` |
 | **OpenRouter** | any tool-calling OpenRouter model ID | `OPENROUTER_API_KEY` |
 | **Ollama** | any local model with tool-calling | runs at `http://localhost:11434` |
 | **LM Studio** | any local OpenAI-compatible model with tool-calling | runs at `http://localhost:1234/v1` |
@@ -38,6 +39,7 @@ peekaboo config set-credential OPENAI_API_KEY <key>
 peekaboo config set-credential ANTHROPIC_API_KEY <key>
 peekaboo config set-credential GEMINI_API_KEY <key>
 peekaboo config set-credential MINIMAX_API_KEY <key>
+peekaboo config set-credential MINIMAX_CN_API_KEY <key>
 peekaboo config set-credential OPENROUTER_API_KEY <key>
 ```
 
@@ -55,6 +57,7 @@ See [configuration.md](configuration.md) for the full precedence table.
 peekaboo agent --model claude-opus-4-7 "summarize this window"
 peekaboo agent --model gemini-3-flash "summarize this window"
 peekaboo agent --model minimax "summarize this window"
+peekaboo agent --model minimax-cn/MiniMax-M2.7 "summarize this window"
 peekaboo agent --model openrouter/xiaomi/mimo-v2.5-pro "summarize this window"
 peekaboo agent --model gpt-5-mini "click Continue and wait for the dialog"
 peekaboo agent --model ollama/llama3.1:8b "describe this screenshot"

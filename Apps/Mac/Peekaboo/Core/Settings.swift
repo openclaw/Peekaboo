@@ -71,6 +71,13 @@ final class PeekabooSettings {
         }
     }
 
+    var miniMaxChinaAPIKey: String = "" {
+        didSet {
+            self.save()
+            self.saveAPIKeyToCredentials("MINIMAX_CN_API_KEY", self.miniMaxChinaAPIKey)
+        }
+    }
+
     var ollamaBaseURL: String = "http://localhost:11434" {
         didSet { self.save() }
     }
@@ -382,6 +389,11 @@ final class PeekabooSettings {
             return !self.miniMaxAPIKey.isEmpty || self.isUsingMiniMaxEnvironment ||
                 self.hasCredentialValue(forAny: ["MINIMAX_API_KEY"]) ||
                 self.configManager.getMiniMaxAPIKey()?.isEmpty == false
+        case "minimax-cn", "minimax_cn", "minimaxi":
+            return !self.miniMaxChinaAPIKey.isEmpty || !self.miniMaxAPIKey.isEmpty ||
+                self.isUsingMiniMaxChinaEnvironment || self.isUsingMiniMaxEnvironment ||
+                self.hasCredentialValue(forAny: ["MINIMAX_CN_API_KEY", "MINIMAX_API_KEY"]) ||
+                self.configManager.getMiniMaxChinaAPIKey()?.isEmpty == false
         case "ollama", "lmstudio", "lm-studio":
             return true // Local providers don't require API keys.
         default:
@@ -416,8 +428,13 @@ final class PeekabooSettings {
         self.miniMaxAPIKey.isEmpty && self.detectedEnvironmentVariable(for: ["MINIMAX_API_KEY"]) != nil
     }
 
+    var isUsingMiniMaxChinaEnvironment: Bool {
+        self.miniMaxChinaAPIKey.isEmpty && self
+            .detectedEnvironmentVariable(for: ["MINIMAX_CN_API_KEY", "MINIMAX_API_KEY"]) != nil
+    }
+
     var allAvailableProviders: [String] {
-        let builtIn = ["openai", "anthropic", "grok", "google", "minimax", "ollama", "lmstudio"]
+        let builtIn = ["openai", "anthropic", "grok", "google", "minimax", "minimax-cn", "ollama", "lmstudio"]
         let custom = Array(customProviders.keys)
         return builtIn + custom.sorted()
     }
@@ -453,6 +470,7 @@ extension PeekabooSettings {
         self.grokAPIKey = self.userDefaults.string(forKey: self.namespaced("grokAPIKey")) ?? ""
         self.googleAPIKey = self.userDefaults.string(forKey: self.namespaced("googleAPIKey")) ?? ""
         self.miniMaxAPIKey = self.userDefaults.string(forKey: self.namespaced("miniMaxAPIKey")) ?? ""
+        self.miniMaxChinaAPIKey = self.userDefaults.string(forKey: self.namespaced("miniMaxChinaAPIKey")) ?? ""
         self.ollamaBaseURL = self.userDefaults.string(forKey: self.namespaced(
             "ollamaBaseURL")) ?? "http://localhost:11434"
 
@@ -540,6 +558,7 @@ extension PeekabooSettings {
         self.userDefaults.set(self.grokAPIKey, forKey: "\(self.keyPrefix)grokAPIKey")
         self.userDefaults.set(self.googleAPIKey, forKey: "\(self.keyPrefix)googleAPIKey")
         self.userDefaults.set(self.miniMaxAPIKey, forKey: "\(self.keyPrefix)miniMaxAPIKey")
+        self.userDefaults.set(self.miniMaxChinaAPIKey, forKey: "\(self.keyPrefix)miniMaxChinaAPIKey")
         self.userDefaults.set(self.ollamaBaseURL, forKey: "\(self.keyPrefix)ollamaBaseURL")
         self.userDefaults.set(self.selectedModel, forKey: "\(self.keyPrefix)selectedModel")
         self.userDefaults.set(self.useCustomVisionModel, forKey: "\(self.keyPrefix)useCustomVisionModel")
@@ -615,7 +634,11 @@ extension PeekabooSettings {
 
         // Load agent settings from config
         if let model = configManager.getAgentModel() {
-            self.selectedModel = model
+            let selection = Self.providerQualifiedModelSelection(from: model)
+            if let provider = selection.provider {
+                self.selectedProvider = provider
+            }
+            self.selectedModel = selection.model
         }
 
         let configTemp = self.configManager.getAgentTemperature()
@@ -654,7 +677,7 @@ extension PeekabooSettings {
                 }
 
                 // Migrate agent settings
-                config.agent?.defaultModel = self.selectedModel
+                config.agent?.defaultModel = self.agentDefaultModel()
                 config.agent?.temperature = self.temperature
                 config.agent?.maxTokens = self.maxTokens
 
@@ -675,6 +698,8 @@ extension PeekabooSettings {
                     "google/\(self.selectedModel)"
                 case "minimax":
                     "minimax/\(self.selectedModel)"
+                case "minimax-cn", "minimax_cn", "minimaxi":
+                    "minimax-cn/\(self.selectedModel)"
                 case "ollama":
                     "ollama/\(self.selectedModel)"
                 case "lmstudio", "lm-studio":
@@ -712,7 +737,7 @@ extension PeekabooSettings {
                 }
 
                 // Update agent settings
-                config.agent?.defaultModel = self.selectedModel
+                config.agent?.defaultModel = self.agentDefaultModel()
                 config.agent?.temperature = self.temperature
                 config.agent?.maxTokens = self.maxTokens
 
@@ -733,6 +758,8 @@ extension PeekabooSettings {
                     "google/\(self.selectedModel)"
                 case "minimax":
                     "minimax/\(self.selectedModel)"
+                case "minimax-cn", "minimax_cn", "minimaxi":
+                    "minimax-cn/\(self.selectedModel)"
                 case "ollama":
                     "ollama/\(self.selectedModel)"
                 case "lmstudio", "lm-studio":
@@ -908,10 +935,21 @@ extension PeekabooSettings {
             "gemini-3-flash"
         case "minimax":
             "MiniMax-M2.7"
+        case "minimax-cn", "minimax_cn", "minimaxi":
+            "MiniMax-M2.7"
         case "lmstudio", "lm-studio":
             "openai/gpt-oss-120b"
         default:
             "llava:latest"
+        }
+    }
+
+    private func agentDefaultModel() -> String {
+        switch self.selectedProvider {
+        case "minimax-cn", "minimax_cn", "minimaxi":
+            "minimax-cn/\(self.selectedModel)"
+        default:
+            self.selectedModel
         }
     }
 
@@ -927,6 +965,8 @@ extension PeekabooSettings {
             .google
         case "MINIMAX_API_KEY":
             .minimax
+        case "MINIMAX_CN_API_KEY":
+            .minimaxCN
         default:
             nil
         }
@@ -944,6 +984,8 @@ extension PeekabooSettings {
             ["GEMINI_API_KEY", "GOOGLE_API_KEY"]
         case .minimax:
             ["MINIMAX_API_KEY"]
+        case .minimaxCN:
+            ["MINIMAX_CN_API_KEY"]
         default:
             []
         }
@@ -953,11 +995,23 @@ extension PeekabooSettings {
         switch provider.lowercased() {
         case "gemini", "google":
             "google"
+        case "minimax-cn", "minimax_cn", "minimaxi":
+            "minimax-cn"
         case "lm-studio", "lmstudio":
             "lmstudio"
         default:
             provider
         }
+    }
+
+    private static func providerQualifiedModelSelection(from rawModel: String) -> (provider: String?, model: String) {
+        let parts = rawModel.split(separator: "/", maxSplits: 1).map(String.init)
+        guard parts.count == 2,
+              ["minimax-cn", "minimax_cn", "minimaxi"].contains(parts[0].lowercased())
+        else {
+            return (nil, rawModel)
+        }
+        return (Self.canonicalProviderIdentifier(parts[0]), parts[1])
     }
 
     private static let animationKeys: [String] = [

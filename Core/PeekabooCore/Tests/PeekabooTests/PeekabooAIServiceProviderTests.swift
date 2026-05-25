@@ -223,6 +223,53 @@ struct PeekabooAIServiceProviderTests {
 
     @Test
     @MainActor
+    func `Falls back to MiniMax China when only MiniMax China key is present`() throws {
+        try self.withIsolatedEnvironment(["MINIMAX_CN_API_KEY": "key"]) {
+            let service = PeekabooAIService()
+            #expect(service.resolvedDefaultModel == .minimaxCN(.m27))
+            #expect(service.resolvedDefaultVisionModel == nil)
+            #expect(service.availableModels() == [.minimaxCN(.m27)])
+        }
+    }
+
+    @Test
+    @MainActor
+    func `Explicit MiniMax China provider can reuse shared MiniMax key`() throws {
+        try self.withIsolatedEnvironment(
+            ["MINIMAX_API_KEY": "key"],
+            configurationJSON: """
+            {
+              "aiProviders": {
+                "providers": "minimax-cn/MiniMax-M2.7"
+              }
+            }
+            """) {
+                let service = PeekabooAIService()
+                #expect(service.resolvedDefaultModel == .minimaxCN(.m27))
+                #expect(service.availableModels() == [.minimaxCN(.m27)])
+            }
+    }
+
+    @Test
+    @MainActor
+    func `Invalid MiniMax China provider entry does not become OpenRouter`() throws {
+        try self.withIsolatedEnvironment(
+            ["MINIMAX_API_KEY": "key"],
+            configurationJSON: """
+            {
+              "aiProviders": {
+                "providers": "minimax-cn/not-a-supported-model"
+              }
+            }
+            """) {
+                let service = PeekabooAIService()
+                #expect(service.resolvedDefaultModel == .minimax(.m27))
+                #expect(service.availableModels() == [.minimax(.m27)])
+            }
+    }
+
+    @Test
+    @MainActor
     func `Falls back to OpenRouter when only OpenRouter key is present`() throws {
         try self.withIsolatedEnvironment(["OPENROUTER_API_KEY": "key"]) {
             let service = PeekabooAIService()
@@ -417,6 +464,7 @@ struct PeekabooAIServiceProviderTests {
             "GEMINI_API_KEY",
             "GOOGLE_API_KEY",
             "MINIMAX_API_KEY",
+            "MINIMAX_CN_API_KEY",
             "OPENROUTER_API_KEY",
             "API_KEY",
             "PEEKABOO_CUSTOM_PROVIDER_KEY",
@@ -480,6 +528,7 @@ struct PeekabooAIServiceProviderTests {
             "GEMINI_API_KEY",
             "GOOGLE_API_KEY",
             "MINIMAX_API_KEY",
+            "MINIMAX_CN_API_KEY",
             "OPENROUTER_API_KEY",
             "API_KEY",
             "PEEKABOO_CUSTOM_PROVIDER_KEY",
@@ -524,6 +573,7 @@ struct PeekabooAIServiceProviderTests {
         TachikomaConfiguration.current.removeAPIKey(for: .anthropic)
         TachikomaConfiguration.current.removeAPIKey(for: .google)
         TachikomaConfiguration.current.removeAPIKey(for: .minimax)
+        TachikomaConfiguration.current.removeAPIKey(for: .minimaxCN)
         TachikomaConfiguration.current.removeAPIKey(for: .custom("openrouter"))
         TachikomaConfiguration.current.removeBaseURL(for: .ollama)
     }
