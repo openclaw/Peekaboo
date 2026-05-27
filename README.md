@@ -151,3 +151,40 @@ Set providers via `PEEKABOO_AI_PROVIDERS` or `peekaboo config add`.
 
 ## License
 MIT
+
+## FAQ
+
+### What is Peekaboo?
+
+Peekaboo brings high-fidelity screen capture, AI analysis, and complete GUI automation to macOS. Natural-language agent chains tools (see, click, type, scroll, hotkey, menu, window, app, dock, space) for GUI automation.
+
+### Key Features
+
+| Feature | Description |
+|---------|-------------|
+| Pixel-accurate Captures | Windows, screens, menu bar with Retina scaling |
+| Natural-language Agent | Chains tools for automations |
+| Action-first UI Automation | Routine clicks/scrolls with synthetic input fallback |
+| Direct Accessibility | set-value, perform-action |
+| Menu Discovery | Structured JSON |
+| Multi-provider AI | Tachikoma integration |
+| MCP Server | Codex, Claude Code, Cursor |
+| Native CLI | Same tools |
+
+### Installation
+
+```bash
+brew install steipete/tap/peekaboo
+```
+
+### Requirements
+
+macOS 15.0+ (Sequoia), Node.js 22+, Screen Recording + Accessibility permissions
+
+### License
+
+MIT License
+
+### Help
+
+[Docs](docs/) | [DeepWiki](https://deepwiki.com/steipete/peekaboo)
