@@ -28,7 +28,7 @@ extension FocusCommandOptions {
         if includeBackgroundDelivery {
             flags.append(.commandFlag(
                 "focusBackground",
-                help: "Send input to the target process without focusing it",
+                help: "Send input to the target process without focusing it (default for click)",
                 long: "focus-background"
             ))
         }

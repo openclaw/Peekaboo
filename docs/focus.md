@@ -48,7 +48,7 @@ When you use the `see` command, Peekaboo stores the window's CGWindowID in the s
 
 ### Focus Flow
 
-When you execute an interaction command (click, type, etc.), Peekaboo:
+When you execute a foreground interaction command (`type`, `click --foreground`, etc.), Peekaboo:
 
 1. **Retrieves window info** from the current snapshot
 2. **Checks if window still exists** (handles closed windows gracefully)
@@ -60,11 +60,11 @@ When you execute an interaction command (click, type, etc.), Peekaboo:
 
 ## Automatic Focus Management
 
-All interaction commands automatically handle focus:
+Foreground interaction commands automatically handle focus:
 
 ```bash
 # These commands all include automatic focus management:
-peekaboo click "Submit"
+peekaboo click "Submit" --foreground
 peekaboo type "Hello world"
 peekaboo scroll --direction down
 peekaboo menu click --app Safari --item "New Tab"
@@ -83,13 +83,13 @@ By default, Peekaboo will:
 
 ## Focus Options
 
-All interaction commands support these focus-related options:
+Interaction commands that use foreground delivery support these focus-related options. `click` defaults to background delivery; pass `--foreground` when you want focus behavior.
 
 ### `--no-auto-focus`
 Disables automatic focus management (not recommended).
 
 ```bash
-peekaboo click "Submit" --no-auto-focus
+peekaboo click "Submit" --foreground --no-auto-focus
 ```
 
 Use cases:
@@ -98,11 +98,11 @@ Use cases:
 - Testing or debugging focus issues
 
 ### `--focus-background`
-Uses command-supported background delivery instead of activating the target app.
+Uses command-supported background delivery instead of activating the target app. For `click`, this is now the default and the flag is only a legacy alias.
 
 ```bash
 peekaboo hotkey "cmd,l" --app Safari --focus-background
-peekaboo click --coords 420,180 --app Safari --focus-background
+peekaboo click --coords 420,180 --app Safari
 ```
 
 Use cases:
@@ -110,7 +110,7 @@ Use cases:
 - Clicking app-local coordinates without activating the target app
 - Keeping a long-running foreground workflow uninterrupted
 
-Currently, `hotkey` and `click` expose this mode. `hotkey` requires exactly one process target: `--app` or `--pid`. `click` requires `--app`, `--pid`, or snapshot process metadata.
+Currently, `hotkey` exposes this mode via `--focus-background`; `click` uses it by default. `hotkey` requires exactly one process target: `--app` or `--pid`. `click` requires `--app`, `--pid`, `--window-id`, or snapshot process metadata. Use `click --foreground` for focused foreground clicks.
 
 `--focus-background` is a delivery mode, not a focus mode. It cannot be combined with foreground focus timeout, retry, or Space-switching flags. `hotkey` also rejects `--snapshot` and `--no-auto-focus`; `click` can use snapshot metadata to resolve the target process. It requires Event Synthesizing access for the process that sends the event; `peekaboo permissions request-event-synthesizing` requests it for the selected bridge host by default, or for the local CLI when used with `--no-remote`. macOS does not acknowledge whether the target app handled a process-targeted event; Peekaboo reports that the event was sent to a live process after event-posting permission preflight.
 
@@ -130,7 +130,7 @@ Use cases:
 Sets how many times to retry focus operations (default: 3).
 
 ```bash
-peekaboo click "Save" --focus-retry-count 5
+peekaboo click "Save" --foreground --focus-retry-count 5
 ```
 
 Use cases:
@@ -142,7 +142,7 @@ Use cases:
 Forces Space switching even if window appears to be on current Space.
 
 ```bash
-peekaboo click "Login" --space-switch
+peekaboo click "Login" --foreground --space-switch
 ```
 
 Use cases:
@@ -256,11 +256,11 @@ Always start with `see` to establish a snapshot:
 ```bash
 # Good: Establishes snapshot with window tracking
 peekaboo see --app Safari
-peekaboo click "Login"
+peekaboo click "Login" --foreground
 peekaboo type "username"
 
 # Less reliable: No window tracking
-peekaboo click "Login" --coords 100,200
+peekaboo click "Login" --coords 100,200 --foreground
 ```
 
 ### 2. Let Peekaboo Handle Focus
@@ -273,7 +273,7 @@ peekaboo window focus --app Safari
 peekaboo click "Submit"
 
 # Do this instead (automatic focus):
-peekaboo click "Submit"
+peekaboo click "Submit" --foreground
 ```
 
 ### 3. Handle Space Switches Gracefully
@@ -282,7 +282,7 @@ Be aware that Space switching takes time:
 
 ```bash
 # For critical operations, increase timeout
-peekaboo click "Save" --focus-timeout-seconds 10
+peekaboo click "Save" --foreground --focus-timeout-seconds 10
 
 # Or move windows to avoid switching
 peekaboo type "Important data" --bring-to-current-space
@@ -296,7 +296,7 @@ Test your automation across different Space configurations:
 # Test with window on different Space
 peekaboo space move-window --app YourApp --to 2
 peekaboo see --app YourApp  # Should auto-switch
-peekaboo click "Test Button"
+peekaboo click "Test Button" --foreground
 ```
 
 ## Troubleshooting
@@ -307,14 +307,14 @@ This occurs when Space switching is disabled:
 
 ```bash
 # Solution 1: Allow Space switching (default)
-peekaboo click "Button"  # Will auto-switch
+peekaboo click "Button" --foreground  # Will auto-switch
 
 # Solution 2: Move window to current Space
-peekaboo click "Button" --bring-to-current-space
+peekaboo click "Button" --foreground --bring-to-current-space
 
 # Solution 3: Manually switch first
 peekaboo space switch --to 2
-peekaboo click "Button"
+peekaboo click "Button" --foreground
 ```
 
 ### "Window not found" Error
@@ -327,7 +327,7 @@ peekaboo list windows --app YourApp
 
 # For minimized windows, restore first
 peekaboo window restore --app YourApp
-peekaboo click "Button"
+peekaboo click "Button" --foreground
 ```
 
 ### "Focus timeout" Error
@@ -336,10 +336,10 @@ The window is taking too long to focus:
 
 ```bash
 # Increase timeout
-peekaboo click "Button" --focus-timeout-seconds 10
+peekaboo click "Button" --foreground --focus-timeout-seconds 10
 
 # Or increase retry count
-peekaboo click "Button" --focus-retry-count 5
+peekaboo click "Button" --foreground --focus-retry-count 5
 ```
 
 ### Focus Not Working
@@ -354,7 +354,7 @@ peekaboo window focus --app YourApp --verbose
 peekaboo list permissions
 
 # Try without focus (for testing)
-peekaboo click "Button" --no-auto-focus
+peekaboo click "Button" --foreground --no-auto-focus
 ```
 
 ## Implementation notes (internal)

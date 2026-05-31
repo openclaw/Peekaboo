@@ -126,7 +126,7 @@ struct LearnCommand {
         5. Recover from errors by trying alternative interactions (menus, hotkeys).
         6. Common workflows:
            - Screenshot: `image` with `--app` or `--mode screen`.
-           - Typing: `click` the field, then `type` the text.
+           - Typing: `click --foreground` the field, then `type` the text.
            - Menus: `menu click --path ...`.
            - Keyboard shortcuts: `hotkey`.
         """, to: &output)

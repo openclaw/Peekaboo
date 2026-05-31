@@ -21,6 +21,7 @@ struct ClickCommandFocusTests {
         let result = try await self.runPeekabooCommand(["click", "--help"])
         let output = result.combinedOutput
 
+        #expect(output.contains("--foreground"))
         #expect(output.contains("--no-auto-focus"))
         #expect(output.contains("--focus-timeout-seconds"))
         #expect(output.contains("--focus-retry-count"))

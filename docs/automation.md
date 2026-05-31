@@ -80,6 +80,7 @@ Three primitives, four lines. The agent does the same thing under the hood — i
 - Always run [`peekaboo see`](commands/see.md) when an element is unreachable. The AX tree refreshes after focus changes; capture again if a click fails.
 - Use [focus](focus.md) and [application-resolving](application-resolving.md) for tricky cases (multiple windows, helper apps, processes that hide on activation).
 - Wrap risky sequences with `peekaboo sleep 0.2` — humans don't fire ten clicks in a single frame, and neither should you.
+- `peekaboo click` defaults to background delivery; add `--foreground` before click-then-type flows that need keyboard focus.
 - Prefer [`hotkey --focus-background`](commands/hotkey.md) when you need to drive an app without stealing focus from the user.
 
 ## Going further

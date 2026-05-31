@@ -20,7 +20,7 @@ read_when:
 | `--clear` | Issue Cmd+A, Delete before typing any new text. |
 | `--return`, `--tab <count>`, `--escape`, `--delete` | Append those keypresses after (or without) the text payload. |
 | Target flags | `--app <name>`, `--pid <pid>`, `--window-id <id>`, `--window-title <title>`, `--window-index <n>` — focus a specific app/window before typing. (`--window-title`/`--window-index` require `--app` or `--pid`; `--window-id` does not.) |
-| Focus flags | Same as `click` (`--no-auto-focus`, `--space-switch`, etc.). |
+| Focus flags | Foreground focus controls (`--no-auto-focus`, `--space-switch`, etc.). |
 
 ## Implementation notes
 - You can omit the text entirely and rely on the key flags (e.g., just `--tab 2 --return`). Validation only requires *some* action to be specified.

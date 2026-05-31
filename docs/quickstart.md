@@ -54,11 +54,11 @@ Each element has `id`, `role`, `label`, `frame`, and `actions`. Pass an `id` to 
 ## 4. Click and type
 
 ```bash
-peekaboo click "Address and search bar" --app Safari
+peekaboo click "Address and search bar" --app Safari --foreground
 peekaboo type "github.com/openclaw/Peekaboo" --return
 ```
 
-Coordinates also work: `peekaboo click --coords 480,120`. With app/window target flags, click coordinates are target-window-relative; add `--global-coords` for screen coordinates. See [automation.md](automation.md) for the full input vocabulary.
+Coordinates also work: `peekaboo click --coords 480,120 --foreground`. With app/window target flags, click coordinates are target-window-relative; add `--global-coords` for screen coordinates. See [automation.md](automation.md) for the full input vocabulary.
 
 ## 5. Run an agent
 

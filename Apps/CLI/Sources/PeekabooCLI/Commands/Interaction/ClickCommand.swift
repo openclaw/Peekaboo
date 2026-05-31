@@ -37,6 +37,9 @@ struct ClickCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
     @Flag(help: "Right-click (secondary click)")
     var right = false
 
+    @Flag(help: "Focus target and send a foreground mouse click")
+    var foreground = false
+
     @OptionGroup var focusOptions: FocusCommandOptions
 
     @RuntimeStorage private var runtime: CommandRuntime?
@@ -63,6 +66,20 @@ struct ClickCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
 
     var jsonOutput: Bool {
         self.runtime?.configuration.jsonOutput ?? self.runtimeOptions.jsonOutput
+    }
+
+    private var deliveryMode: ClickDeliveryMode {
+        if self.focusOptions.backgroundDeliveryExplicitlyRequested {
+            return .background
+        }
+        if self.foreground || self.focusOptions.hasForegroundFocusOverrides {
+            return .foreground
+        }
+        return .background
+    }
+
+    private var usesBackgroundDelivery: Bool {
+        self.deliveryMode == .background
     }
 
     @MainActor
@@ -106,7 +123,7 @@ struct ClickCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
                 // InputDriver.click() sends a CGEvent at screen-absolute coordinates,
                 // so if the target window is not frontmost, the click will land on
                 // whatever window is at that position (see #90).
-                if !self.focusOptions.focusBackground {
+                if !self.usesBackgroundDelivery {
                     try await self.verifyFocusForCoordinateClick(coordinateResolution: resolvedCoordinates)
                 }
 
@@ -126,7 +143,7 @@ struct ClickCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
                 let elementId = self.on ?? self.id
 
                 if let elementId {
-                    if !self.focusOptions.focusBackground {
+                    if !self.usesBackgroundDelivery {
                         observation = try await InteractionObservationRefresher.refreshForMissingElementsIfNeeded(
                             observation,
                             elementIds: [elementId],
@@ -139,7 +156,7 @@ struct ClickCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
                     activeSnapshotId = observation.snapshotId ?? ""
 
                     clickTarget = .elementId(elementId)
-                    if self.focusOptions.focusBackground {
+                    if self.usesBackgroundDelivery {
                         let element = try await self.cachedElementById(elementId, observation: observation)
                         waitResult = WaitForElementResult(found: true, element: element, waitTime: 0)
                     } else {
@@ -157,13 +174,13 @@ struct ClickCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
                     }
 
                 } else if let searchQuery = query {
-                    if !self.focusOptions.focusBackground {
+                    if !self.usesBackgroundDelivery {
                         observation = try await self.refreshObservationIfQueryMissing(observation, query: searchQuery)
                     }
                     observationForInvalidation = observation
                     activeSnapshotId = observation.snapshotId ?? ""
 
-                    if self.focusOptions.focusBackground {
+                    if self.usesBackgroundDelivery {
                         let element = try await self.cachedElementMatching(searchQuery, observation: observation)
                         clickTarget = .elementId(element.id)
                         waitResult = WaitForElementResult(found: true, element: element, waitTime: 0)
@@ -194,7 +211,12 @@ struct ClickCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
 
             // Determine click type
             let clickType: ClickType = self.right ? .right : (self.double ? .double : .single)
-            try await self.performClick(clickTarget, clickType: clickType, snapshotId: activeSnapshotId)
+            try await self.performClick(
+                clickTarget,
+                clickType: clickType,
+                snapshotId: activeSnapshotId,
+                coordinateResolution: coordinateResolution
+            )
 
             // Brief delay to ensure click is processed
             try await Task.sleep(nanoseconds: 20_000_000) // 0.02 seconds
@@ -224,7 +246,8 @@ struct ClickCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
                 coordinateSpace: coordinateResolution?.coordinateSpace.rawValue,
                 inputCoordinates: coordinateResolution?.inputPoint,
                 screenCoordinates: coordinateResolution?.screenPoint,
-                targetPoint: details.targetPointDiagnostics
+                targetPoint: details.targetPointDiagnostics,
+                deliveryMode: self.deliveryMode.rawValue
             )
 
             if let observationForInvalidation {
@@ -312,7 +335,7 @@ struct ClickCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
             return "window \(windowID)"
         }
 
-        guard self.focusOptions.focusBackground else {
+        guard self.usesBackgroundDelivery else {
             return await self.frontmostApplicationName()
         }
 
@@ -329,6 +352,14 @@ struct ClickCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
         guard !snapshotId.isEmpty,
               let snapshot = try? await self.services.snapshots.getUIAutomationSnapshot(snapshotId: snapshotId)
         else {
+            if let detectionResult = try? await self.services.snapshots.getDetectionResult(snapshotId: snapshotId) {
+                if let applicationName = detectionResult.metadata.windowContext?.applicationName {
+                    return applicationName
+                }
+                if let processId = detectionResult.metadata.windowContext?.applicationProcessId {
+                    return await self.applicationName(processIdentifier: processId) ?? "PID \(processId)"
+                }
+            }
             return await self.frontmostApplicationName()
         }
 
@@ -354,8 +385,8 @@ struct ClickCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
         output(result) {
             print("✅ Click successful")
             print("🎯 App: \(result.targetApp)")
-            if self.focusOptions.focusBackground {
-                print("🎯 Mode: background")
+            if let deliveryMode = result.deliveryMode {
+                print("🎯 Mode: \(deliveryMode)")
             }
             if let coordinateSpace = result.coordinateSpace {
                 print("🎯 Coordinate space: \(coordinateSpace)")
@@ -456,15 +487,23 @@ struct ClickCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
         return score
     }
 
-    private func performClick(_ target: ClickTarget, clickType: ClickType, snapshotId: String) async throws {
+    private func performClick(
+        _ target: ClickTarget,
+        clickType: ClickType,
+        snapshotId: String,
+        coordinateResolution: InteractionCoordinateResolution?
+    ) async throws {
         let effectiveSnapshotId: String? = if case .coordinates = target {
             nil
         } else {
             snapshotId.isEmpty ? nil : snapshotId
         }
 
-        if self.focusOptions.focusBackground {
-            let pid = try await self.resolveBackgroundClickProcessIdentifier(snapshotId: effectiveSnapshotId)
+        if self.usesBackgroundDelivery {
+            let pid = try await self.resolveBackgroundClickProcessIdentifier(
+                snapshotId: effectiveSnapshotId,
+                coordinateResolution: coordinateResolution
+            )
             try await AutomationServiceBridge.click(
                 automation: self.services.automation,
                 target: target,
@@ -486,7 +525,7 @@ struct ClickCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
         snapshotId: String?,
         coordinateResolution: InteractionCoordinateResolution? = nil
     ) async throws {
-        if self.focusOptions.focusBackground {
+        if self.usesBackgroundDelivery {
             try self.validateBackgroundClickOptions()
             return
         }
@@ -523,17 +562,22 @@ struct ClickCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
     }
 
     private func validateBackgroundClickOptions() throws {
-        if self.focusOptions.focusTimeoutSeconds != nil ||
-            self.focusOptions.focusRetryCount != nil ||
-            self.focusOptions.spaceSwitch ||
-            self.focusOptions.bringToCurrentSpace {
+        if self.foreground, self.focusOptions.backgroundDeliveryExplicitlyRequested {
+            throw ValidationError("--foreground cannot be combined with --focus-background")
+        }
+
+        if self.focusOptions.backgroundDeliveryExplicitlyRequested &&
+            self.focusOptions.hasForegroundFocusOverrides {
             throw ValidationError("--focus-background cannot be combined with focus options")
         }
     }
 
-    private func resolveBackgroundClickProcessIdentifier(snapshotId: String?) async throws -> pid_t {
+    private func resolveBackgroundClickProcessIdentifier(
+        snapshotId: String?,
+        coordinateResolution: InteractionCoordinateResolution?
+    ) async throws -> pid_t {
         if self.target.pid != nil, self.target.app != nil {
-            throw ValidationError("--focus-background accepts one process target: use --app or --pid")
+            throw ValidationError("Background click accepts one process target: use --app or --pid")
         }
 
         if let pid = self.target.pid {
@@ -549,14 +593,32 @@ struct ClickCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
             return pid_t(app.processIdentifier)
         }
 
+        if let processId = coordinateResolution?.targetProcessIdentifier {
+            return pid_t(processId)
+        }
+
         if let snapshotId,
            let snapshot = try? await self.services.snapshots.getUIAutomationSnapshot(snapshotId: snapshotId),
            let processId = snapshot.applicationProcessId {
             return pid_t(processId)
         }
 
-        throw ValidationError("--focus-background requires --app, --pid, or a snapshot with process metadata")
+        if let snapshotId,
+           let detectionResult = try? await self.services.snapshots.getDetectionResult(snapshotId: snapshotId),
+           let processId = detectionResult.metadata.windowContext?.applicationProcessId {
+            return pid_t(processId)
+        }
+
+        throw ValidationError(
+            "Background click requires --app, --pid, --window-id, or a snapshot with process metadata; " +
+                "use --foreground for foreground screen clicks"
+        )
     }
 
     // Error handling is provided by ErrorHandlingCommand protocol
+}
+
+private enum ClickDeliveryMode: String {
+    case background
+    case foreground
 }

@@ -279,7 +279,9 @@ extension CommanderBindableValues {
         options.noAutoFocus = self.flag("noAutoFocus")
         options.spaceSwitch = self.flag("spaceSwitch")
         options.bringToCurrentSpace = self.flag("bringToCurrentSpace")
-        options.focusBackground = includeBackgroundDelivery && self.flag("focusBackground")
+        if includeBackgroundDelivery && self.flag("focusBackground") {
+            options.focusBackground = true
+        }
         if let timeout: TimeInterval = try decodeOption("focusTimeoutSeconds", as: TimeInterval.self) {
             options.focusTimeoutSeconds = timeout
         }

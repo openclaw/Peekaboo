@@ -36,6 +36,12 @@ struct ClickCommandAdvancedTests {
     }
 
     @Test
+    func `Parse foreground option`() throws {
+        let command = try ClickCommand.parse(["--on", "B1", "--foreground"])
+        #expect(command.foreground == true)
+    }
+
+    @Test
     func `Parse wait-for option`() throws {
         let command = try ClickCommand.parse(["--on", "B1", "--wait-for", "3000"])
         #expect(command.waitFor == 3000)

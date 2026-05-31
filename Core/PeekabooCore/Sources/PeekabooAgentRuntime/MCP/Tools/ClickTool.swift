@@ -16,7 +16,7 @@ public struct ClickTool: MCPTool {
         """
         Clicks on UI elements or coordinates.
         Supports element queries, specific IDs from `see` or `inspect_ui`, or raw coordinates.
-        Includes smart waiting for elements to become actionable.
+        Background delivery is the default. Set `foreground` to true when the next step needs keyboard focus.
         \(PeekabooMCPVersion.banner) using openai/gpt-5.5, anthropic/claude-opus-4-7
         """
     }
@@ -51,9 +51,12 @@ public struct ClickTool: MCPTool {
                 "right": SchemaBuilder.boolean(
                     description: "Optional. Right-click (secondary click) instead of left-click.",
                     default: false),
-                "background": SchemaBuilder.boolean(
-                    description: "Optional. Deliver the click to the target process without focusing it.",
+                "foreground": SchemaBuilder.boolean(
+                    description: "Optional. Use foreground/global click delivery. Background delivery is the default.",
                     default: false),
+                "background": SchemaBuilder.boolean(
+                    description: "Optional legacy alias. Defaults to true; set foreground=true for foreground clicks.",
+                    default: true),
                 "pid": SchemaBuilder.number(
                     description: "Optional. Target process ID for background coordinate clicks."),
             ],
@@ -84,7 +87,7 @@ public struct ClickTool: MCPTool {
                 target: resolution.automationTarget,
                 snapshotId: resolution.snapshotId,
                 intent: request.intent,
-                background: request.background,
+                deliveryMode: request.deliveryMode,
                 targetProcessIdentifier: effectiveTargetProcessIdentifier)
 
             let invalidatedSnapshotId = await UISnapshotManager.shared
@@ -154,10 +157,10 @@ public struct ClickTool: MCPTool {
         target: ClickTarget,
         snapshotId: String?,
         intent: ClickIntent,
-        background: Bool,
+        deliveryMode: ClickToolDeliveryMode,
         targetProcessIdentifier: pid_t?) async throws
     {
-        if background {
+        if deliveryMode == .background {
             guard let targetProcessIdentifier else {
                 throw ClickToolError("Background click requires a snapshot target process or explicit pid.")
             }
@@ -181,7 +184,7 @@ public struct ClickTool: MCPTool {
         request: ClickRequest,
         resolution: ClickResolution) throws -> pid_t?
     {
-        guard request.background else { return nil }
+        guard request.deliveryMode == .background else { return nil }
         if let pid = request.pid {
             guard pid > 0 else {
                 throw ClickToolError("pid must be greater than 0.")
@@ -213,6 +216,7 @@ public struct ClickTool: MCPTool {
             ]),
             "execution_time": .double(executionTime),
             "clicked_element": resolution.elementDescription.map(Value.string) ?? .null,
+            "delivery_mode": .string(effectiveTargetProcessIdentifier == nil ? "foreground" : "background"),
         ]
         if let invalidatedSnapshotId {
             metaDict["invalidated_snapshot"] = .string(invalidatedSnapshotId)
@@ -288,7 +292,7 @@ private struct ClickRequest {
     let target: ClickRequestTarget
     let snapshotId: String?
     let intent: ClickIntent
-    let background: Bool
+    let deliveryMode: ClickToolDeliveryMode
     let pid: Int32?
 
     init(arguments: ToolArguments) throws {
@@ -306,7 +310,12 @@ private struct ClickRequest {
         let isDouble = arguments.getBool("double") ?? false
         let isRight = arguments.getBool("right") ?? false
         self.intent = ClickIntent(double: isDouble, right: isRight)
-        self.background = arguments.getBool("background") ?? false
+        let foreground = arguments.getBool("foreground") ?? false
+        self.deliveryMode = if foreground || arguments.getBool("background") == false {
+            .foreground
+        } else {
+            .background
+        }
         if let rawPID = arguments.getNumber("pid") {
             guard let pid = Int32(exactly: rawPID) else {
                 throw ClickToolError("pid is outside the supported Int32 range.")
@@ -322,6 +331,11 @@ private enum ClickRequestTarget {
     case coordinates(String)
     case elementId(String)
     case query(String)
+}
+
+private enum ClickToolDeliveryMode {
+    case background
+    case foreground
 }
 
 private struct ClickResolution {

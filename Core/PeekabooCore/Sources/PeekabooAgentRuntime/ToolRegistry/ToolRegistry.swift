@@ -48,7 +48,8 @@ public enum ToolRegistry {
             abstract: "High-precision UI clicking with fuzzy matching and snapshot-aware targeting.",
             discussion: """
             Clicks on UI elements or coordinates. Supports IDs from `see` or `inspect_ui`,
-            fuzzy text queries, or raw coordinates.
+            fuzzy text queries, or raw coordinates. Clicks use background delivery by default;
+            pass `--foreground` only when the target must receive a foreground mouse event.
 
             ELEMENT MATCHING
             - Fuzzy matching on element titles and labels
@@ -56,8 +57,8 @@ public enum ToolRegistry {
             - Snapshot-aware IDs avoid ambiguity when multiple matches exist
 
             EXAMPLE
-            peekaboo click --wait-for 1500 --double \"Submit\"
-            peekaboo click --on B2 --space-switch
+            peekaboo click --foreground --wait-for 1500 --double \"Submit\"
+            peekaboo click --on B2 --foreground --space-switch
 
             TROUBLESHOOTING
             If the element isn't found, refresh the snapshot with a fresh observation (`peekaboo see`
@@ -65,10 +66,10 @@ public enum ToolRegistry {
             """,
             examples: [
                 "peekaboo click \"Submit\"",
-                "peekaboo click --wait-for 2000 --double \"Save\"",
+                "peekaboo click --foreground --wait-for 2000 --double \"Save\"",
             ],
-            agentGuidance: "Prefer ID-based clicks when possible. If fuzzy text fails, capture " +
-                "again and reference the new element id."),
+            agentGuidance: "Prefer ID-based clicks when possible. Use `--foreground` before typing into a field. " +
+                "If fuzzy text fails, capture again and reference the new element id."),
         "type": ToolOverride(
             category: .automation,
             abstract: "Types text or key sequences, including escape characters and modifiers.",

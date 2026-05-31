@@ -25,6 +25,15 @@ extension ClickCommand {
         if self.globalCoords && self.coords == nil {
             throw ValidationError("--global-coords requires --coords")
         }
+
+        if self.foreground && self.focusOptions.backgroundDeliveryExplicitlyRequested {
+            throw ValidationError("--foreground cannot be combined with --focus-background")
+        }
+
+        if self.focusOptions.backgroundDeliveryExplicitlyRequested &&
+            self.focusOptions.hasForegroundFocusOverrides {
+            throw ValidationError("--focus-background cannot be combined with focus options")
+        }
     }
 
     func formatElementInfo(_ element: DetectedElement) -> String {

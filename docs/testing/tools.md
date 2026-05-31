@@ -254,7 +254,7 @@ The following subsections spell out the concrete steps, required Playground surf
 - **Test cases**:
   1. Query-based click: `polter peekaboo -- click "Single Click"` (expect `Click` log + counter increment).
   2. ID-based click: `polter peekaboo -- click --on B1 --snapshot <id>` targeting `single-click-button`.
-  3. Coordinate click: `polter peekaboo -- click --coords 400,400` hitting the nested area.
+  3. Coordinate click: `polter peekaboo -- click --coords 400,400 --foreground` hitting the nested area.
   4. Coordinate validation: `polter peekaboo -- click --coords , --json-output` should fail with `VALIDATION_ERROR` (no crash).
   5. Error path: attempt to click disabled button and confirm descriptive `elementNotFound` guidance.
 - **Verification**: Playground counter increments, log file shows `[Click] Single click...` entries.

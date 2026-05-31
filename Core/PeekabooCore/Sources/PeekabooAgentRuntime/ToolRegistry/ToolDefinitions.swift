@@ -64,6 +64,7 @@ public enum UIAutomationToolDefinitions {
         Clicks on UI elements or coordinates. Supports element queries,
         specific IDs from `see` or `inspect_ui`, or coordinates. CLI coordinate
         clicks are target-window-relative when app/window target flags are supplied.
+        Background delivery is the default; pass `--foreground` for focused foreground clicks.
         """,
         category: .ui,
         parameters: [
@@ -113,9 +114,9 @@ public enum UIAutomationToolDefinitions {
                 description: "Bring window to current Space instead of switching",
                 required: false),
             ParameterDefinition(
-                name: "autoFocus",
+                name: "foreground",
                 type: .boolean,
-                description: "Automatically focus application before clicking",
+                description: "Focus target and send a foreground click",
                 required: false),
             ParameterDefinition(
                 name: "jsonOutput",

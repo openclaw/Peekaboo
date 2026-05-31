@@ -20,7 +20,7 @@ This reduces drift by collapsing multiple CLI steps into one command.
 | `--also-text` | Optional plain-text companion when pasting binary. |
 | `--restore-delay-ms` | Delay before restoring the previous clipboard (default 150ms). |
 | Target flags | `--app <name>`, `--pid <pid>`, `--window-id <id>`, `--window-title <title>`, `--window-index <n>` — focus a specific app/window before pasting. |
-| Focus flags | Same as `click`/`type` (`--space-switch`, `--no-auto-focus`, etc.). |
+| Focus flags | Foreground focus controls (`--space-switch`, `--no-auto-focus`, etc.). |
 
 ## Examples
 ```bash

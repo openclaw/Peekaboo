@@ -31,6 +31,7 @@ extension ClickCommand: CommanderBindableCommand {
         }
         self.double = values.flag("double")
         self.right = values.flag("right")
+        self.foreground = values.flag("foreground")
         self.focusOptions = try values.makeFocusOptions(includeBackgroundDelivery: true)
     }
 }
@@ -82,6 +83,11 @@ extension ClickCommand: CommanderSignatureProviding {
                     "right",
                     help: "Right-click (secondary click)",
                     long: "right"
+                ),
+                .commandFlag(
+                    "foreground",
+                    help: "Focus target and send a foreground mouse click",
+                    long: "foreground"
                 ),
                 .commandFlag(
                     "globalCoords",

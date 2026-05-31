@@ -12,7 +12,7 @@ read_when:
 - **macOS 15.0+ (Sequoia)** – core automation APIs depend on Sequoia.
 - **Screen Recording (required)** – enables CGWindow capture and multi-app automation.
 - **Accessibility (recommended)** – improves window focus, menu interaction, and dialog control.
-- **Event Synthesizing (optional)** – enables background input delivery such as `hotkey --focus-background` and `click --focus-background` to post events to a target process without activating it.
+- **Event Synthesizing (optional)** – enables background input delivery such as `hotkey --focus-background` and default `click` delivery to post events to a target process without activating it.
 
 For build and runtime version details, see [platform-support.md](platform-support.md).
 

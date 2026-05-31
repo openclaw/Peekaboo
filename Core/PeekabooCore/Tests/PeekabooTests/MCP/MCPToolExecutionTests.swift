@@ -10,6 +10,7 @@ import Testing
 @testable import PeekabooCore
 @testable import PeekabooVisualizer
 
+@Suite(.serialized)
 struct MCPToolExecutionTests {
     // MARK: - Sleep Tool Tests
 
@@ -453,6 +454,15 @@ struct MCPToolExecutionTests {
         let context = await MCPToolTestHelpers.makeContext(automation: automation)
         let snapshot = await UISnapshotManager.shared.createSnapshot()
         let snapshotId = await snapshot.id
+        await snapshot.setScreenshot(
+            path: "/tmp/screenshot.png",
+            metadata: CaptureMetadata(
+                size: CGSize(width: 200, height: 100),
+                mode: .window,
+                applicationInfo: ServiceApplicationInfo(
+                    processIdentifier: 111,
+                    bundleIdentifier: "com.example.snapshot",
+                    name: "SnapshotApp")))
         await snapshot.setUIElements([
             UIElement(
                 id: "B1",
@@ -476,9 +486,10 @@ struct MCPToolExecutionTests {
         ]))
 
         #expect(response.isError == false)
-        let calls = await MainActor.run { automation.clickCalls }
+        let calls = await MainActor.run { automation.targetedClickCalls }
         #expect(calls.count == 1)
         #expect(calls.first?.snapshotId == snapshotId)
+        #expect(calls.first?.targetProcessIdentifier == 111)
         if case let .elementId(id) = calls.first?.target {
             #expect(id == "B1")
         } else {
@@ -496,6 +507,15 @@ struct MCPToolExecutionTests {
         let context = await MCPToolTestHelpers.makeContext(automation: automation)
         let snapshot = await UISnapshotManager.shared.createSnapshot()
         let snapshotId = await snapshot.id
+        await snapshot.setScreenshot(
+            path: "/tmp/screenshot.png",
+            metadata: CaptureMetadata(
+                size: CGSize(width: 200, height: 100),
+                mode: .window,
+                applicationInfo: ServiceApplicationInfo(
+                    processIdentifier: 111,
+                    bundleIdentifier: "com.example.snapshot",
+                    name: "SnapshotApp")))
         await snapshot.setUIElements([
             UIElement(
                 id: "B1",
@@ -516,8 +536,9 @@ struct MCPToolExecutionTests {
         let response = try await tool.execute(arguments: ToolArguments(raw: ["on": "B1"]))
 
         #expect(response.isError == false)
-        let calls = await MainActor.run { automation.clickCalls }
+        let calls = await MainActor.run { automation.targetedClickCalls }
         #expect(calls.first?.snapshotId == snapshotId)
+        #expect(calls.first?.targetProcessIdentifier == 111)
         let invalidated = await UISnapshotManager.shared.getSnapshot(id: snapshotId)
         #expect(invalidated == nil)
         #expect(MCPResponseMeta.requiresFreshObservation(response))
@@ -530,6 +551,15 @@ struct MCPToolExecutionTests {
         let context = await MCPToolTestHelpers.makeContext(automation: automation)
         let snapshot = await UISnapshotManager.shared.createSnapshot()
         let snapshotId = await snapshot.id
+        await snapshot.setScreenshot(
+            path: "/tmp/screenshot.png",
+            metadata: CaptureMetadata(
+                size: CGSize(width: 200, height: 100),
+                mode: .window,
+                applicationInfo: ServiceApplicationInfo(
+                    processIdentifier: 111,
+                    bundleIdentifier: "com.example.snapshot",
+                    name: "SnapshotApp")))
         await snapshot.setUIElements([
             UIElement(
                 id: "B1",
@@ -566,9 +596,10 @@ struct MCPToolExecutionTests {
         ]))
 
         #expect(response.isError == false)
-        let calls = await MainActor.run { automation.clickCalls }
+        let calls = await MainActor.run { automation.targetedClickCalls }
         #expect(calls.count == 1)
         #expect(calls.first?.snapshotId == snapshotId)
+        #expect(calls.first?.targetProcessIdentifier == 111)
         if case let .elementId(id) = calls.first?.target {
             #expect(id == "B2")
         } else {
@@ -632,7 +663,10 @@ struct MCPToolExecutionTests {
         let snapshotId = await snapshot.id
 
         let tool = ClickTool(context: context)
-        let response = try await tool.execute(arguments: ToolArguments(raw: ["coords": "40,50"]))
+        let response = try await tool.execute(arguments: ToolArguments(raw: [
+            "coords": "40,50",
+            "foreground": true,
+        ]))
 
         #expect(response.isError == false)
         let calls = await MainActor.run { automation.clickCalls }
@@ -655,6 +689,7 @@ struct MCPToolExecutionTests {
         let response = try await tool.execute(arguments: ToolArguments(raw: [
             "coords": "40,50",
             "snapshot": explicitSnapshotId,
+            "foreground": true,
         ]))
 
         #expect(response.isError == false)

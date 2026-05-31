@@ -5,6 +5,9 @@
 ### Added
 - `peekaboo agent` now supports MiniMax China via `minimax-cn/...` models and `MINIMAX_CN_API_KEY`, while preserving the existing international MiniMax endpoint. Thanks @LLuke for #161.
 
+### Changed
+- `peekaboo click` now uses background delivery by default and adds `--foreground` for focused foreground mouse clicks.
+
 ### Fixed
 - Visualizer settings and capture-engine docs now reference `peekaboo capture live` instead of stale top-level `peekaboo watch`/`peekaboo capture` command forms. Thanks @coygeek for #166 and #167.
 

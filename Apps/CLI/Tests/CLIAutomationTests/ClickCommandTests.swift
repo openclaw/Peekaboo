@@ -20,7 +20,7 @@ struct ClickCommandTests {
     func `Click command  parses coordinates correctly`() async throws {
         let context = await self.makeContext()
         let result = try await InProcessCommandRunner.run(
-            ["click", "--coords", "100,200", "--json"],
+            ["click", "--coords", "100,200", "--foreground", "--json"],
             services: context.services
         )
 
@@ -43,10 +43,10 @@ struct ClickCommandTests {
     }
 
     @Test
-    func `Click command supports background coordinate clicks`() async throws {
+    func `Click command defaults to background coordinate clicks when pid is supplied`() async throws {
         let context = await self.makeContext()
         let result = try await InProcessCommandRunner.run(
-            ["click", "--coords", "100,200", "--pid", "12345", "--focus-background", "--global-coords", "--json"],
+            ["click", "--coords", "100,200", "--pid", "12345", "--global-coords", "--json"],
             services: context.services
         )
 
@@ -62,7 +62,7 @@ struct ClickCommandTests {
     }
 
     @Test
-    func `Click command background element click uses cached snapshot without waiting`() async throws {
+    func `Click command default element click uses cached snapshot without waiting`() async throws {
         let context = await self.makeContext()
         let element = DetectedElement(
             id: "B1",
@@ -73,7 +73,7 @@ struct ClickCommandTests {
         let snapshotId = try await self.storeSnapshot(element: element, in: context.snapshots)
 
         let result = try await InProcessCommandRunner.run(
-            ["click", "--on", "B1", "--snapshot", snapshotId, "--pid", "12345", "--focus-background", "--json"],
+            ["click", "--on", "B1", "--snapshot", snapshotId, "--json"],
             services: context.services
         )
 
@@ -92,7 +92,7 @@ struct ClickCommandTests {
     }
 
     @Test
-    func `Click command background query click resolves cached snapshot without waiting`() async throws {
+    func `Click command default query click resolves cached snapshot without waiting`() async throws {
         let context = await self.makeContext()
         let element = DetectedElement(
             id: "B1",
@@ -103,7 +103,7 @@ struct ClickCommandTests {
         let snapshotId = try await self.storeSnapshot(element: element, in: context.snapshots)
 
         let result = try await InProcessCommandRunner.run(
-            ["click", "Save", "--snapshot", snapshotId, "--pid", "12345", "--focus-background", "--json"],
+            ["click", "Save", "--snapshot", snapshotId, "--json"],
             services: context.services
         )
 
@@ -162,7 +162,16 @@ struct ClickCommandTests {
             snapshotId: snapshotId,
             screenshotPath: "/tmp/screenshot.png",
             elements: DetectedElements(buttons: [element]),
-            metadata: DetectionMetadata(detectionTime: 0, elementCount: 1, method: "stub")
+            metadata: DetectionMetadata(
+                detectionTime: 0,
+                elementCount: 1,
+                method: "stub",
+                windowContext: WindowContext(
+                    applicationName: "TestApp",
+                    applicationBundleId: "com.example.test",
+                    applicationProcessId: 12345
+                )
+            )
         )
         try await snapshots.storeDetectionResult(snapshotId: snapshotId, result: detection)
         return snapshotId

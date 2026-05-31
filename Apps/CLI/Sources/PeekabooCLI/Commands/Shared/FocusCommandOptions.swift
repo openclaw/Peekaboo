@@ -26,6 +26,18 @@ struct FocusCommandOptions: CommanderParsable, FocusOptionsProtocol {
         set { self.focusBackgroundStorage = newValue }
     }
 
+    var backgroundDeliveryExplicitlyRequested: Bool {
+        self.focusBackgroundStorage == true
+    }
+
+    var hasForegroundFocusOverrides: Bool {
+        self.noAutoFocus ||
+            self.focusTimeoutSeconds != nil ||
+            self.focusRetryCount != nil ||
+            self.spaceSwitch ||
+            self.bringToCurrentSpace
+    }
+
     init() {}
 
     // MARK: FocusOptionsProtocol
