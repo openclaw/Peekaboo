@@ -10,7 +10,7 @@ struct ToolsCommandTests {
         let config = ToolsCommand.commandDescription
 
         #expect(config.commandName == "tools")
-        #expect(config.abstract == "List available tools with filtering and display options")
+        #expect(config.abstract == "List the MCP/agent tool catalog (not CLI commands)")
         #expect(config.discussion != nil)
         let discussion = config.discussion ?? ""
         #expect(discussion.contains("Examples:"))
@@ -55,7 +55,7 @@ struct ToolsCommandTests {
     @Test
     func `ToolsCommand description property`() throws {
         let command = try ToolsCommand.parse([])
-        #expect(command.description == "Tools command for listing and filtering available tools")
+        #expect(command.description == "Tools command for listing the MCP/agent tool catalog")
     }
 }
 
