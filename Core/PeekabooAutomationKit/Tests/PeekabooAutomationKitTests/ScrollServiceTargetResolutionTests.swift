@@ -105,6 +105,29 @@ struct ScrollServiceTargetResolutionTests {
         #expect(ScrollService.actionScrollPages(amount: -3, strategy: .actionOnly) == 3)
         #expect(ScrollService.actionScrollPages(amount: 0, strategy: .actionOnly) == 1)
     }
+
+    @Test
+    @MainActor
+    func `action-only scroll without target reports unsupported action`() async {
+        let service = ScrollService(
+            snapshotManager: InMemorySnapshotManager(),
+            inputPolicy: UIInputPolicy(defaultStrategy: .actionOnly))
+
+        do {
+            try await service.scroll(ScrollRequest(
+                direction: .down,
+                amount: 1,
+                target: "   ",
+                smooth: false,
+                delay: 0,
+                snapshotId: nil))
+            Issue.record("Expected unsupported action error for targetless action-only scroll.")
+        } catch let error as ActionInputError {
+            #expect(error == .unsupported(.actionUnsupported))
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+    }
 }
 
 @MainActor

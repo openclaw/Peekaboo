@@ -109,7 +109,7 @@ public final class ScrollService {
         guard let target = request.target?.trimmingCharacters(in: .whitespacesAndNewlines),
               !target.isEmpty
         else {
-            throw ActionInputError.unsupported(.missingElement)
+            throw ActionInputError.unsupported(.actionUnsupported)
         }
         let pages = Self.actionScrollPages(amount: request.amount, strategy: strategy)
 
