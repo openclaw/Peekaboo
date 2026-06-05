@@ -1,4 +1,5 @@
 @preconcurrency import AXorcist
+import CoreGraphics
 import Foundation
 import os.log
 import PeekabooFoundation
@@ -7,6 +8,12 @@ import PeekabooFoundation
 @MainActor
 public final class GestureService {
     private let logger = Logger(subsystem: "boo.peekaboo.core", category: "GestureService")
+
+    struct HeldModifierKey: Equatable {
+        let name: String
+        let keyCode: CGKeyCode
+        let flag: CGEventFlags
+    }
 
     public init() {}
 
@@ -64,6 +71,13 @@ public final class GestureService {
             duration: request.duration,
             steps: request.steps,
             profile: request.profile)
+        let modifierKeys = Self.heldModifierKeys(for: request.modifiers)
+        let modifierEvents = try self.makeModifierEvents(for: modifierKeys)
+        modifierEvents.down.forEach { $0.post(tap: .cghidEventTap) }
+        defer {
+            modifierEvents.up.forEach { $0.post(tap: .cghidEventTap) }
+        }
+
         try await self.performDrag(path: path, start: request.from)
 
         self.logger.debug("Drag completed")
@@ -152,6 +166,65 @@ public final class GestureService {
         let steps = max(path.points.count, 2)
         let delay = Double(path.duration) / 1000.0 / Double(steps)
         try InputDriver.drag(from: start, to: endPoint, button: .left, steps: steps, interStepDelay: delay)
+    }
+
+    private func makeModifierEvents(for keys: [HeldModifierKey]) throws -> (down: [CGEvent], up: [CGEvent]) {
+        guard !keys.isEmpty else { return ([], []) }
+
+        let source = CGEventSource(stateID: .hidSystemState)
+        var activeFlags: CGEventFlags = []
+        let downEvents: [CGEvent] = try keys.map { key in
+            activeFlags.insert(key.flag)
+            return try Self.makeModifierEvent(source: source, key: key, keyDown: true, flags: activeFlags)
+        }
+
+        let upEvents: [CGEvent] = try keys.reversed().map { key in
+            activeFlags.remove(key.flag)
+            return try Self.makeModifierEvent(source: source, key: key, keyDown: false, flags: activeFlags)
+        }
+
+        return (downEvents, upEvents)
+    }
+
+    private static func makeModifierEvent(
+        source: CGEventSource?,
+        key: HeldModifierKey,
+        keyDown: Bool,
+        flags: CGEventFlags) throws -> CGEvent
+    {
+        guard let event = CGEvent(keyboardEventSource: source, virtualKey: key.keyCode, keyDown: keyDown) else {
+            throw PeekabooError.invalidInput("Could not create \(key.name) modifier event")
+        }
+        event.flags = flags
+        return event
+    }
+
+    static func heldModifierKeys(for modifiers: String?) -> [HeldModifierKey] {
+        guard let modifiers else { return [] }
+
+        var seen = Set<String>()
+        return modifiers
+            .split(separator: ",")
+            .compactMap { rawModifier -> HeldModifierKey? in
+                let rawName = rawModifier.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                let key: HeldModifierKey? = switch rawName {
+                case "command", "cmd":
+                    HeldModifierKey(name: "command", keyCode: 0x37, flag: .maskCommand)
+                case "shift":
+                    HeldModifierKey(name: "shift", keyCode: 0x38, flag: .maskShift)
+                case "option", "alt":
+                    HeldModifierKey(name: "option", keyCode: 0x3A, flag: .maskAlternate)
+                case "control", "ctrl":
+                    HeldModifierKey(name: "control", keyCode: 0x3B, flag: .maskControl)
+                case "function", "fn":
+                    HeldModifierKey(name: "function", keyCode: 0x3F, flag: .maskSecondaryFn)
+                default:
+                    nil
+                }
+                guard let key, !seen.contains(key.name) else { return nil }
+                seen.insert(key.name)
+                return key
+            }
     }
 
     private func playPath(_ points: [CGPoint], duration: Int) async throws {

@@ -81,8 +81,8 @@ extension ProcessService {
             text: text,
             app: dict["app"],
             field: dict["field"],
-            clearFirst: dict["clear-first"].flatMap { Bool($0) },
-            pressEnter: dict["press-enter"].flatMap { Bool($0) }))
+            clearFirst: self.boolValue(from: dict, keys: ["clear-first", "clearFirst", "clear_first"]),
+            pressEnter: self.boolValue(from: dict, keys: ["press-enter", "pressEnter", "press_enter"])))
     }
 
     private func typedScrollParameters(from dict: [String: String]) -> ProcessCommandParameters.ScrollParameters {
@@ -101,6 +101,9 @@ extension ProcessService {
         if dict["control"] == "true" || dict["ctrl"] == "true" { modifiers.append("control") }
         if dict["option"] == "true" || dict["alt"] == "true" { modifiers.append("option") }
         if dict["fn"] == "true" || dict["function"] == "true" { modifiers.append("function") }
+        if let modifierList = dict["modifiers"] {
+            modifiers.append(contentsOf: self.parseModifierList(modifierList))
+        }
 
         return .hotkey(ProcessCommandParameters.HotkeyParameters(
             key: key,
@@ -109,8 +112,16 @@ extension ProcessService {
     }
 
     private func typedMenuParameters(from dict: [String: String]) -> ProcessCommandParameters? {
-        guard let path = dict["path"] ?? dict["menu"] else { return nil }
-        let menuItems = path.split(separator: ">").map { $0.trimmingCharacters(in: .whitespaces) }
+        let menuItems: [String]
+        if let path = dict["path"] {
+            menuItems = path.split(separator: ">").map { $0.trimmingCharacters(in: .whitespaces) }
+        } else if let menu = dict["menu"], let item = dict["item"] {
+            menuItems = [menu, dict["submenu"], item].compactMap(\.self)
+        } else if let menu = dict["menu"] {
+            menuItems = [menu]
+        } else {
+            return nil
+        }
         return .menuClick(ProcessCommandParameters.MenuClickParameters(
             menuPath: menuItems,
             app: dict["app"]))
@@ -157,6 +168,9 @@ extension ProcessService {
         if dict["control"] == "true" || dict["ctrl"] == "true" { modifiers.append("control") }
         if dict["option"] == "true" || dict["alt"] == "true" { modifiers.append("option") }
         if dict["fn"] == "true" || dict["function"] == "true" { modifiers.append("function") }
+        if let modifierList = dict["modifiers"] {
+            modifiers.append(contentsOf: self.parseModifierList(modifierList))
+        }
 
         return .drag(ProcessCommandParameters.DragParameters(
             fromX: fromX,
@@ -170,6 +184,21 @@ extension ProcessService {
     private func typedSleepParameters(from dict: [String: String]) -> ProcessCommandParameters.SleepParameters {
         let duration = dict["duration"].flatMap { Double($0) } ?? 1.0
         return ProcessCommandParameters.SleepParameters(duration: duration)
+    }
+
+    private func parseModifierList(_ value: String) -> [String] {
+        value.split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+    }
+
+    private func boolValue(from dict: [String: String], keys: [String]) -> Bool? {
+        for key in keys {
+            if let value = dict[key].flatMap(Bool.init) {
+                return value
+            }
+        }
+        return nil
     }
 
     private func typedDockParameters(from dict: [String: String]) -> ProcessCommandParameters.DockParameters {

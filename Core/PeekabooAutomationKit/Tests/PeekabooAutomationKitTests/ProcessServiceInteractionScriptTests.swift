@@ -8,8 +8,86 @@ import XCTest
 @available(macOS 14.0, *)
 @MainActor
 final class ProcessServiceInteractionScriptTests: XCTestCase {
+    func testMenuGenericParametersCombineMenuAndItemPath() async throws {
+        let menuService = RecordingMenuService()
+        let processService = ProcessService(
+            applicationService: UnusedApplicationService(),
+            screenCaptureService: UnusedScreenCaptureService(),
+            snapshotManager: UnusedSnapshotManager(),
+            uiAutomationService: UnusedUIAutomationService(),
+            windowManagementService: UnusedWindowManagementService(),
+            menuService: menuService,
+            dockService: UnusedDockService(),
+            clipboardService: UnusedClipboardService())
+
+        _ = try await processService.executeStep(
+            ScriptStep(stepId: "menu", comment: nil, command: "menu", params: .generic([
+                "app": "Finder",
+                "menu": "File",
+                "item": "New Finder Window",
+            ])),
+            snapshotId: nil)
+
+        XCTAssertEqual(menuService.clicks, [
+            RecordingMenuService.Click(app: "Finder", itemPath: "File > New Finder Window"),
+        ])
+    }
+
+    func testHotkeyGenericParametersParseModifiersList() async throws {
+        let automation = RecordingInteractionUIAutomationService()
+        let processService = ProcessService(
+            applicationService: UnusedApplicationService(),
+            screenCaptureService: UnusedScreenCaptureService(),
+            snapshotManager: UnusedSnapshotManager(),
+            uiAutomationService: automation,
+            windowManagementService: UnusedWindowManagementService(),
+            menuService: UnusedMenuService(),
+            dockService: UnusedDockService(),
+            clipboardService: UnusedClipboardService())
+
+        _ = try await processService.executeStep(
+            ScriptStep(stepId: "hotkey", comment: nil, command: "hotkey", params: .generic([
+                "key": "p",
+                "modifiers": "command,shift",
+            ])),
+            snapshotId: nil)
+
+        XCTAssertEqual(automation.hotkeys, ["cmd,shift,p"])
+    }
+
+    func testTypeGenericParametersParseCamelCaseControlFlags() async throws {
+        let automation = RecordingInteractionUIAutomationService()
+        let processService = ProcessService(
+            applicationService: UnusedApplicationService(),
+            screenCaptureService: UnusedScreenCaptureService(),
+            snapshotManager: UnusedSnapshotManager(),
+            uiAutomationService: automation,
+            windowManagementService: UnusedWindowManagementService(),
+            menuService: UnusedMenuService(),
+            dockService: UnusedDockService(),
+            clipboardService: UnusedClipboardService())
+
+        _ = try await processService.executeStep(
+            ScriptStep(stepId: "type", comment: nil, command: "type", params: .generic([
+                "text": "hello",
+                "field": "Search",
+                "clearFirst": "true",
+                "pressEnter": "true",
+            ])),
+            snapshotId: "snapshot-1")
+
+        XCTAssertEqual(automation.typedText, [
+            RecordingInteractionUIAutomationService.TypeCall(
+                text: "hello",
+                target: "Search",
+                clearExisting: true,
+                snapshotId: "snapshot-1"),
+        ])
+        XCTAssertEqual(automation.typeActionCounts, [1])
+    }
+
     func testSwipeWithoutExplicitStartUsesPrimaryScreenServiceCenter() async throws {
-        let automation = RecordingSwipeUIAutomationService()
+        let automation = RecordingInteractionUIAutomationService()
         let processService = ProcessService(
             applicationService: UnusedApplicationService(),
             screenCaptureService: UnusedScreenCaptureService(),
@@ -33,6 +111,91 @@ final class ProcessServiceInteractionScriptTests: XCTestCase {
         XCTAssertEqual(automation.swipes[0].from, CGPoint(x: 400, y: 250))
         XCTAssertEqual(automation.swipes[0].to, CGPoint(x: 360, y: 250))
         XCTAssertEqual(automation.swipes[0].duration, 250)
+    }
+
+    func testDragGenericParametersParseModifiersList() async throws {
+        let automation = RecordingInteractionUIAutomationService()
+        let processService = ProcessService(
+            applicationService: UnusedApplicationService(),
+            screenCaptureService: UnusedScreenCaptureService(),
+            snapshotManager: UnusedSnapshotManager(),
+            uiAutomationService: automation,
+            windowManagementService: UnusedWindowManagementService(),
+            menuService: UnusedMenuService(),
+            dockService: UnusedDockService(),
+            clipboardService: UnusedClipboardService())
+
+        _ = try await processService.executeStep(
+            ScriptStep(stepId: "drag", comment: nil, command: "drag", params: .generic([
+                "from-x": "10",
+                "from-y": "20",
+                "to-x": "30",
+                "to-y": "40",
+                "modifiers": "command,shift",
+            ])),
+            snapshotId: nil)
+
+        XCTAssertEqual(automation.drags, [
+            RecordingInteractionUIAutomationService.DragCall(
+                from: CGPoint(x: 10, y: 20),
+                to: CGPoint(x: 30, y: 40),
+                modifiers: "cmd,shift"),
+        ])
+    }
+}
+
+@available(macOS 14.0, *)
+@MainActor
+private final class RecordingMenuService: MenuServiceProtocol {
+    struct Click: Equatable {
+        let app: String
+        let itemPath: String
+    }
+
+    var clicks: [Click] = []
+
+    func clickMenuItem(app: String, itemPath: String) async throws {
+        self.clicks.append(Click(app: app, itemPath: itemPath))
+    }
+
+    func listMenus(for _: String) async throws -> MenuStructure {
+        fatalError("unused")
+    }
+
+    func listFrontmostMenus() async throws -> MenuStructure {
+        fatalError("unused")
+    }
+
+    func clickMenuItemByName(app _: String, itemName _: String) async throws {
+        fatalError("unused")
+    }
+
+    func clickMenuExtra(title _: String) async throws {
+        fatalError("unused")
+    }
+
+    func isMenuExtraMenuOpen(title _: String, ownerPID _: pid_t?) async throws -> Bool {
+        fatalError("unused")
+    }
+
+    func menuExtraOpenMenuFrame(title _: String, ownerPID _: pid_t?) async throws -> CGRect? {
+        fatalError("unused")
+    }
+
+    func listMenuExtras() async throws -> [MenuExtraInfo] {
+        fatalError("unused")
+    }
+
+    func listMenuBarItems(includeRaw _: Bool) async throws -> [MenuBarItemInfo] {
+        fatalError("unused")
+    }
+
+    func clickMenuBarItem(named _: String) async throws -> ClickResult {
+        fatalError("unused")
+    }
+
+    func clickMenuBarItem(at _: Int) async throws -> ClickResult {
+        fatalError("unused")
     }
 }
 
@@ -95,7 +258,7 @@ private final class StaticScreenService: ScreenServiceProtocol {
 
 @available(macOS 14.0, *)
 @MainActor
-private final class RecordingSwipeUIAutomationService: UIAutomationServiceProtocol {
+private final class RecordingInteractionUIAutomationService: UIAutomationServiceProtocol {
     struct SwipeCall {
         let from: CGPoint
         let to: CGPoint
@@ -103,6 +266,46 @@ private final class RecordingSwipeUIAutomationService: UIAutomationServiceProtoc
     }
 
     var swipes: [SwipeCall] = []
+    var hotkeys: [String] = []
+    var typedText: [TypeCall] = []
+    var typeActionCounts: [Int] = []
+    var drags: [DragCall] = []
+
+    struct TypeCall: Equatable {
+        let text: String
+        let target: String?
+        let clearExisting: Bool
+        let snapshotId: String?
+    }
+
+    struct DragCall: Equatable {
+        let from: CGPoint
+        let to: CGPoint
+        let modifiers: String?
+    }
+
+    func hotkey(keys: String, holdDuration _: Int) async throws {
+        self.hotkeys.append(keys)
+    }
+
+    func type(text: String, target: String?, clearExisting: Bool, typingDelay _: Int, snapshotId: String?)
+        async throws
+    {
+        self.typedText.append(TypeCall(
+            text: text,
+            target: target,
+            clearExisting: clearExisting,
+            snapshotId: snapshotId))
+    }
+
+    func typeActions(
+        _ actions: [TypeAction],
+        cadence _: TypingCadence,
+        snapshotId _: String?) async throws -> TypeResult
+    {
+        self.typeActionCounts.append(actions.count)
+        return TypeResult(totalCharacters: 0, keyPresses: actions.count)
+    }
 
     func swipe(from: CGPoint, to: CGPoint, duration: Int, steps _: Int, profile _: MouseMovementProfile) async throws {
         self.swipes.append(SwipeCall(from: from, to: to, duration: duration))
@@ -118,21 +321,7 @@ private final class RecordingSwipeUIAutomationService: UIAutomationServiceProtoc
         fatalError("unused")
     }
 
-    func type(text _: String, target _: String?, clearExisting _: Bool, typingDelay _: Int, snapshotId _: String?)
-        async throws
-    {
-        fatalError("unused")
-    }
-
-    func typeActions(_: [TypeAction], cadence _: TypingCadence, snapshotId _: String?) async throws -> TypeResult {
-        fatalError("unused")
-    }
-
     func scroll(_: ScrollRequest) async throws {
-        fatalError("unused")
-    }
-
-    func hotkey(keys _: String, holdDuration _: Int) async throws {
         fatalError("unused")
     }
 
@@ -146,8 +335,11 @@ private final class RecordingSwipeUIAutomationService: UIAutomationServiceProtoc
         fatalError("unused")
     }
 
-    func drag(_: DragOperationRequest) async throws {
-        fatalError("unused")
+    func drag(_ request: DragOperationRequest) async throws {
+        self.drags.append(DragCall(
+            from: request.from,
+            to: request.to,
+            modifiers: request.modifiers))
     }
 
     func moveMouse(to _: CGPoint, duration _: Int, steps _: Int, profile _: MouseMovementProfile) async throws {
