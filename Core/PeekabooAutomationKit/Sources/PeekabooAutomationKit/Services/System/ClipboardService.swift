@@ -155,15 +155,14 @@ public final class ClipboardService: ClipboardServiceProtocol {
             throw ClipboardServiceError.writeFailed("No representations provided.")
         }
 
-        let totalSize = request.representations.reduce(0) { $0 + $1.data.count }
+        let totalSize = request.representations.reduce(0) { $0 + $1.data.count } +
+            (request.alsoText?.utf8.count ?? 0)
         if !request.allowLarge, totalSize > self.sizeLimit {
             throw ClipboardServiceError.sizeExceeded(current: totalSize, limit: self.sizeLimit)
         }
 
         var types = request.representations.map { NSPasteboard.PasteboardType($0.utiIdentifier) }
-        let includesTextType = request.representations.contains(where: {
-            $0.utiIdentifier == UTType.plainText.identifier || $0.utiIdentifier == UTType.utf8PlainText.identifier
-        })
+        let includesTextType = request.representations.contains(where: Self.isPlainTextRepresentation)
         if request.alsoText != nil || includesTextType {
             if !types.contains(.string) {
                 types.append(.string)
@@ -180,10 +179,8 @@ public final class ClipboardService: ClipboardServiceProtocol {
 
         if let alsoText = request.alsoText {
             self.pasteboard.setString(alsoText, forType: .string)
-        } else if let representation = request.representations.first(where: {
-            $0.utiIdentifier == UTType.plainText.identifier || $0.utiIdentifier == UTType.utf8PlainText.identifier
-        }),
-            let fallbackText = String(data: representation.data, encoding: .utf8)
+        } else if let representation = request.representations.first(where: Self.isPlainTextRepresentation),
+                  let fallbackText = String(data: representation.data, encoding: .utf8)
         {
             self.pasteboard.setString(fallbackText, forType: .string)
         }
@@ -191,7 +188,7 @@ public final class ClipboardService: ClipboardServiceProtocol {
         let primary = request.representations.first!
         let preview: String? = if let text = request.alsoText {
             Self.makePreview(text)
-        } else if primary.utiIdentifier == UTType.plainText.identifier,
+        } else if Self.isPlainTextRepresentation(primary),
                   let string = String(data: primary.data, encoding: .utf8)
         {
             Self.makePreview(string)
@@ -289,6 +286,11 @@ public final class ClipboardService: ClipboardServiceProtocol {
         }
 
         return reps
+    }
+
+    private static func isPlainTextRepresentation(_ representation: ClipboardRepresentation) -> Bool {
+        representation.utiIdentifier == UTType.plainText.identifier ||
+            representation.utiIdentifier == UTType.utf8PlainText.identifier
     }
 
     private static func makePreview(_ text: String) -> String {
