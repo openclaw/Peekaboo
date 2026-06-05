@@ -33,6 +33,30 @@ final class ProcessServiceInteractionScriptTests: XCTestCase {
         ])
     }
 
+    func testMenuGenericParametersPreserveMenuPathWithoutItem() async throws {
+        let menuService = RecordingMenuService()
+        let processService = ProcessService(
+            applicationService: UnusedApplicationService(),
+            screenCaptureService: UnusedScreenCaptureService(),
+            snapshotManager: UnusedSnapshotManager(),
+            uiAutomationService: UnusedUIAutomationService(),
+            windowManagementService: UnusedWindowManagementService(),
+            menuService: menuService,
+            dockService: UnusedDockService(),
+            clipboardService: UnusedClipboardService())
+
+        _ = try await processService.executeStep(
+            ScriptStep(stepId: "menu", comment: nil, command: "menu", params: .generic([
+                "app": "Finder",
+                "menu": "File > New Finder Window",
+            ])),
+            snapshotId: nil)
+
+        XCTAssertEqual(menuService.clicks, [
+            RecordingMenuService.Click(app: "Finder", itemPath: "File > New Finder Window"),
+        ])
+    }
+
     func testHotkeyGenericParametersParseModifiersList() async throws {
         let automation = RecordingInteractionUIAutomationService()
         let processService = ProcessService(

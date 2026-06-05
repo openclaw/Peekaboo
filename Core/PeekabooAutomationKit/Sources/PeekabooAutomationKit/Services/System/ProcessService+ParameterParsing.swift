@@ -118,7 +118,7 @@ extension ProcessService {
         } else if let menu = dict["menu"], let item = dict["item"] {
             menuItems = [menu, dict["submenu"], item].compactMap(\.self)
         } else if let menu = dict["menu"] {
-            menuItems = [menu]
+            menuItems = menu.split(separator: ">").map { $0.trimmingCharacters(in: .whitespaces) }
         } else {
             return nil
         }
