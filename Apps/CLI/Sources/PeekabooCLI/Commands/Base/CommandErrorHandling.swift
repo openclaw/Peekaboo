@@ -22,7 +22,11 @@ extension ErrorHandlingCommand {
             } else {
                 Logger.shared
             }
-            outputError(message: error.localizedDescription, code: errorCode, logger: logger)
+            outputError(
+                message: errorMessage(for: error),
+                code: errorCode,
+                details: errorDetails(for: error),
+                logger: logger)
         } else {
             let errorMessage: String = if let peekabooError = error as? PeekabooError {
                 peekabooError.errorDescription ?? String(describing: error)
@@ -220,6 +224,27 @@ extension ErrorHandlingCommand {
     }
 }
 
+func errorMessage(for error: any Error) -> String {
+    if let bridgeError = error as? PeekabooBridgeErrorEnvelope {
+        return bridgeError.message
+    }
+    return error.localizedDescription
+}
+
+func errorDetails(for error: any Error) -> String? {
+    guard let bridgeError = error as? PeekabooBridgeErrorEnvelope else {
+        return nil
+    }
+    var details: [String] = []
+    if let bridgeDetails = bridgeError.details, !bridgeDetails.isEmpty {
+        details.append(bridgeDetails)
+    }
+    if let permission = bridgeError.permission {
+        details.append("permission: \(permission.rawValue)")
+    }
+    return details.isEmpty ? nil : details.joined(separator: "\n")
+}
+
 func errorCode(for focusError: FocusError) -> ErrorCode {
     switch focusError {
     case .applicationNotRunning:
@@ -233,10 +258,29 @@ func errorCode(for focusError: FocusError) -> ErrorCode {
 
 func errorCode(for bridgeError: PeekabooBridgeErrorEnvelope) -> ErrorCode {
     switch bridgeError.code {
+    case .permissionDenied:
+        switch bridgeError.permission {
+        case .screenRecording:
+            .PERMISSION_ERROR_SCREEN_RECORDING
+        case .accessibility:
+            .PERMISSION_ERROR_ACCESSIBILITY
+        case .postEvent:
+            .PERMISSION_ERROR_EVENT_SYNTHESIZING
+        case .appleScript:
+            .PERMISSION_ERROR_APPLESCRIPT
+        case .none:
+            .PERMISSION_DENIED
+        }
     case .timeout:
         .TIMEOUT
-    default:
-        .INTERNAL_SWIFT_ERROR
+    case .invalidRequest:
+        .INVALID_ARGUMENT
+    case .operationNotSupported:
+        .VALIDATION_ERROR
+    case .notFound:
+        .UNKNOWN_ERROR
+    case .versionMismatch, .unauthorizedClient, .decodingFailed, .internalError, .serverBusy:
+        .UNKNOWN_ERROR
     }
 }
 
