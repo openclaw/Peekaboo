@@ -4,7 +4,6 @@
 
 ### Changed
 - Documented background vs. foreground input delivery across the README, automation guide, quickstart, permissions, and interaction command docs.
-- Clarified that `peekaboo tools` lists the MCP/agent tool catalog (which is not the same as the CLI command set) in the command help, CLI reference, and tools docs page.
 
 ## [3.3.0] - 2026-06-01
 
