@@ -55,7 +55,7 @@ peekaboo clipboard restore --slot original
 - File paths for `--file-path`, `--image-path`, and `--output` accept `~/...`.
 - Slot saves are stored in a dedicated named pasteboard so they work across separate `peekaboo clipboard` invocations.
 - `restore` removes the saved slot after applying it to avoid leaving clipboard snapshots around indefinitely.
-- Size guard: writes larger than 10 MB require `--allow-large`.
+- Size guard: writes larger than 10 MB require `--allow-large`; the guard counts all representations plus any `--also-text` companion text.
 - `--text` writes both `public.plain-text` and `.string` (`public.utf8-plain-text`) for compatibility.
 - `--verify` reads back each representation written and compares payloads (text is normalized for line endings).
 

@@ -16,7 +16,7 @@ Goal: add a single `clipboard` tool (CLI + MCP) that handles text, images, files
 - Files: accept a file path; write as `public.file-url`.
 - Raw: accept `--data-base64` plus `--uti` to write arbitrary pasteboard types.
 - Slots: `save`/`restore` snapshot the current pasteboard (default slot `0`; allow named slots).
-- Size guard: warn and block writes over 10 MB unless `--allow-large` is set.
+- Size guard: warn and block writes over 10 MB unless `--allow-large` is set; count every representation plus any `--also-text` companion text.
 - Safety: never set Trimmy’s marker type; only requested UTIs.
 
 ## CLI syntax (`peekaboo clipboard …`)
