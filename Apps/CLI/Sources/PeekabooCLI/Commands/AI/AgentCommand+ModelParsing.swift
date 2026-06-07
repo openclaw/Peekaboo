@@ -6,9 +6,12 @@ import Tachikoma
 @available(macOS 14.0, *)
 extension AgentCommand {
     func parseModelString(_ modelString: String) -> LanguageModel? {
+        self.parseModelString(modelString, configuration: .shared)
+    }
+
+    func parseModelString(_ modelString: String, configuration: PeekabooCore.ConfigurationManager) -> LanguageModel? {
         let trimmed = modelString.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
-
         let explicitProvider = trimmed
             .split(separator: "/", maxSplits: 1)
             .first
@@ -45,6 +48,16 @@ extension AgentCommand {
             if let explicitProvider, Self.reservedProviderInputs.contains(explicitProvider) {
                 return nil
             }
+            // Check if this is a custom provider and resolve it
+            if let explicitProvider, configuration.listCustomProviders()[explicitProvider] != nil {
+                let aiService = PeekabooAIService(configuration: configuration)
+                return aiService.availableModels().first { model in
+                    if case .custom(let p) = model {
+                        return p.modelId.hasPrefix("\(explicitProvider)/")
+                    }
+                    return false
+                }
+            }
             return parsed.supportsTools ? parsed : nil
         default:
             break
@@ -53,9 +66,9 @@ extension AgentCommand {
         return nil
     }
 
-    func validatedModelSelection() throws -> LanguageModel? {
+    func validatedModelSelection(configuration: PeekabooCore.ConfigurationManager) throws -> LanguageModel? {
         guard let modelString = self.model else { return nil }
-        guard let parsed = self.parseModelString(modelString) else {
+        guard let parsed = self.parseModelString(modelString, configuration: configuration) else {
             throw PeekabooError.invalidInput(
                 "Unsupported model '\(modelString)'. Allowed values: \(Self.allowedModelList)"
             )
@@ -121,6 +134,7 @@ extension AgentCommand {
             "ollama/<model>",
             "lmstudio/<model>",
             "openrouter/<provider>/<model>",
+            "<custom-provider>/<model>",
         ])
         .sorted()
         .joined(separator: ", ")
@@ -144,6 +158,8 @@ extension AgentCommand {
             return configuration.getMiniMaxChinaAPIKey()?.isEmpty == false
         case .openRouter:
             return configuration.getOpenRouterAPIKey()?.isEmpty == false
+        case .custom(let customModel):
+            return customModel.apiKey?.isEmpty == false
         default:
             return false
         }
@@ -167,8 +183,10 @@ extension AgentCommand {
             "LM Studio"
         case .openRouter:
             "OpenRouter"
-        default:
-            "the selected provider"
+        case .custom(let customModel):
+            String(customModel.modelId.split(separator: "/").first ?? "custom")
+          default:
+              "the selected provider"
         }
     }
 
@@ -190,8 +208,10 @@ extension AgentCommand {
             "LM Studio local server URL"
         case .openRouter:
             "OPENROUTER_API_KEY"
-        default:
-            "provider API key"
+        case .custom(let customModel):
+            String(customModel.modelId.split(separator: "/").first ?? "custom").uppercased() + "_API_KEY"
+         default:
+             "provider API key"
         }
     }
 

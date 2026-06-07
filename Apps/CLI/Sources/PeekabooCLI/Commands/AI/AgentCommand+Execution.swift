@@ -27,9 +27,13 @@ extension AgentCommand {
 
         let hasCredential = await peekabooAgent.maskedApiKey != nil
         if !hasCredential {
-            self.emitAgentUnavailableMessage()
+            if !self.hasConfiguredAIProvider(configuration: self.services.configuration) {
+                self.emitAgentUnavailableMessage()
+            }
+            // If custom providers are configured, we have credentials — proceed
+            return self.hasConfiguredAIProvider(configuration: self.services.configuration)
         }
-        return hasCredential
+        return true
     }
 
     /// Render the agent execution result using either JSON output or a rich CLI transcript.

@@ -212,7 +212,7 @@ extension AgentCommand {
 
         let requestedModel: LanguageModel?
         do {
-            requestedModel = try self.validatedModelSelection()
+            requestedModel = try self.validatedModelSelection(configuration: services.configuration)
         } catch {
             self.printAgentExecutionError(error.localizedDescription)
             throw ExitCode.failure
@@ -223,9 +223,10 @@ extension AgentCommand {
             agentService = existing
         } else if let requestedModel {
             agentService = try PeekabooAgentService(services: services, defaultModel: requestedModel)
+        } else if let defaultModel = self.resolvedDefaultModel(from: services.configuration) {
+            agentService = try PeekabooAgentService(services: services, defaultModel: defaultModel)
         } else {
-            self.emitAgentUnavailableMessage()
-            return
+            agentService = try PeekabooAgentService(services: services)
         }
 
         let terminalCapabilities = TerminalDetector.detectCapabilities()
@@ -332,7 +333,7 @@ extension AgentCommand {
         }
     }
 
-    private func hasConfiguredAIProvider(configuration: PeekabooCore.ConfigurationManager) -> Bool {
+    func hasConfiguredAIProvider(configuration: PeekabooCore.ConfigurationManager) -> Bool {
         let hasOpenAI = configuration.hasOpenAIAuth()
         let hasAnthropic = configuration.hasAnthropicAuth()
         let hasGemini = configuration.getGeminiAPIKey()?.isEmpty == false
@@ -349,15 +350,22 @@ extension AgentCommand {
                     .lowercased()
                 return provider == "ollama" || provider == "lmstudio" || provider == "lm-studio"
             }
+        let customProviders = configuration.listCustomProviders()
+        let hasCustomProvider = !customProviders.isEmpty && customProviders.contains { $0.value.enabled }
         return hasOpenAI || hasAnthropic || hasGemini || hasMiniMax || hasMiniMaxChina || hasOpenRouter ||
-            hasLocalProvider
+            hasLocalProvider || hasCustomProvider
+    }
+
+    func resolvedDefaultModel(from configuration: PeekabooCore.ConfigurationManager) -> LanguageModel? {
+        let aiService = PeekabooAIService(configuration: configuration)
+        return aiService.availableModels().first
     }
 
     func emitAgentUnavailableMessage() {
         if self.jsonOutput {
             let message = "Agent service not available. Please set OPENAI_API_KEY, ANTHROPIC_API_KEY, " +
                 "GEMINI_API_KEY, MINIMAX_API_KEY, MINIMAX_CN_API_KEY, OPENROUTER_API_KEY, " +
-                "or configure ollama/<model> or lmstudio/<model>."
+                "configure ollama/<model>, lmstudio/<model>, or add a custom provider via 'peekaboo config add-provider'."
             let error = [
                 "success": false,
                 "error": message
@@ -373,7 +381,8 @@ extension AgentCommand {
                 "\(TerminalColor.red)Error: Agent service not available.",
                 " Please set OPENAI_API_KEY, ANTHROPIC_API_KEY, GEMINI_API_KEY, MINIMAX_API_KEY,",
                 " MINIMAX_CN_API_KEY, OPENROUTER_API_KEY,",
-                " or configure ollama/<model> or lmstudio/<model>."
+                " configure ollama/<model>, lmstudio/<model>,",
+                " or add a custom provider via 'peekaboo config add-provider'."
             ].joined()
             let errorMessageLine = [errorPrefix, "\(TerminalColor.reset)"].joined()
             print(errorMessageLine)

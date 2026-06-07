@@ -1,4 +1,5 @@
 import PeekabooFoundation
+import PeekabooCore
 import Tachikoma
 import Testing
 @testable import PeekabooCLI
@@ -150,10 +151,10 @@ struct ModelSelectionIntegrationTests {
     @Test
     func `Validated model selection handles optional input`() throws {
         var command = try AgentCommand.parse([])
-        #expect(try command.validatedModelSelection() == nil)
+        #expect(try command.validatedModelSelection(configuration: .shared) == nil)
 
         command.model = "gpt-5.5"
-        let parsed = try command.validatedModelSelection()
+        let parsed = try command.validatedModelSelection(configuration: .shared)
         #expect(parsed == .openai(.gpt55))
     }
 
@@ -163,7 +164,7 @@ struct ModelSelectionIntegrationTests {
         command.model = "gpt-4o"
 
         let error = #expect(throws: PeekabooError.self) {
-            try command.validatedModelSelection()
+            try command.validatedModelSelection(configuration: .shared)
         }
 
         if case let .invalidInput(message) = error {
