@@ -41,11 +41,12 @@ extension LegacyScreenCaptureOperator {
                 screen: targetScreen,
                 correlationId: correlationId)
         } catch {
-            self.logger.warning(
-                "System screencapture screen capture failed, falling back to CGDisplayCreateImage",
+            self.logger.error(
+                "System screencapture screen capture failed; refusing CGDisplayCreateImage fallback",
                 metadata: ["error": String(describing: error)],
                 correlationId: correlationId)
-            image = try self.captureDisplayWithCGDisplay(screen: targetScreen)
+            throw OperationError.captureFailed(
+                reason: "System screencapture failed; refusing unsafe CoreGraphics full-screen fallback")
         }
 
         let scaledImage = ScreenCaptureImageScaler.maybeDownscale(
