@@ -68,9 +68,12 @@ extension ScreenCaptureService {
             // Permission probing may call ScreenCaptureKit on CLI builds where
             // CGPreflightScreenCaptureAccess is unreliable; keep that probe in
             // the same cross-process transaction as the capture itself.
-            let captureAPIs = self.fallbackRunner.apis(for: Self.captureEnginePreference)
-            let shouldProbePermission = requiresPermission && captureAPIs.first != .legacy
-            if shouldProbePermission {
+            //
+            // Do this even for the legacy CGWindowList/CGDisplay path. When
+            // Screen Recording is missing, CoreGraphics can still return a
+            // redacted desktop/wallpaper image, which looks like a successful
+            // capture unless we fail before attempting it.
+            if requiresPermission {
                 try await self.permissionGate.requirePermission(logger: self.logger, correlationId: correlationId)
             }
             return try await body(correlationId)

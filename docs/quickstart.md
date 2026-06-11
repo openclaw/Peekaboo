@@ -16,6 +16,7 @@ This page assumes you've already followed [install.md](install.md). If `peekaboo
 ```bash
 peekaboo permissions status
 peekaboo permissions grant
+peekaboo permissions request-screen-recording
 ```
 
 `grant` opens System Settings to the right pane. You need **Screen Recording** (required) and **Accessibility** (recommended). Re-run `permissions status` until both are green. Background input for `click`, `type`, `hotkey`, `press`, and `paste` also needs **Event Synthesizing** — see [permissions.md](permissions.md).
@@ -34,6 +35,10 @@ peekaboo image --app Safari --path safari.png
 ```
 
 The output is a regular PNG. Add `--format jpeg --quality 85` for smaller files. See [commands/image.md](commands/image.md) for every flag.
+
+If you are running from SSH, a LaunchAgent, Codex, or another background launchd session, use a Peekaboo Bridge
+host with Screen Recording permission. Local capture-engine overrides are for debugging and can produce
+wallpaper-only screenshots in background sessions.
 
 ## 3. Inspect the UI
 

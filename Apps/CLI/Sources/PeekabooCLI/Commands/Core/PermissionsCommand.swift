@@ -11,6 +11,7 @@ struct PermissionsCommand: ParsableCommand {
         subcommands: [
             StatusSubcommand.self,
             GrantSubcommand.self,
+            RequestScreenRecordingSubcommand.self,
             RequestEventSynthesizingSubcommand.self,
         ],
         defaultSubcommand: StatusSubcommand.self
@@ -135,6 +136,52 @@ extension PermissionsCommand {
     }
 
     @MainActor
+    struct RequestScreenRecordingSubcommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConfigurable {
+        struct Result: Codable {
+            let action: String
+            let granted: Bool
+        }
+
+        @RuntimeStorage private var runtime: CommandRuntime?
+        var runtimeOptions = CommandRuntimeOptions()
+
+        private var resolvedRuntime: CommandRuntime {
+            guard let runtime else {
+                preconditionFailure("CommandRuntime must be configured before accessing runtime resources")
+            }
+            return runtime
+        }
+
+        var outputLogger: Logger {
+            self.resolvedRuntime.logger
+        }
+
+        var jsonOutput: Bool {
+            self.runtime?.configuration.jsonOutput ?? self.runtimeOptions.jsonOutput
+        }
+
+        @MainActor
+        mutating func run(using runtime: CommandRuntime) async throws {
+            self.runtime = runtime
+            let granted = runtime.services.permissions.requestScreenRecordingPermission(interactive: true)
+            let result = Result(action: "request-screen-recording", granted: granted)
+
+            if self.jsonOutput {
+                outputSuccessCodable(data: result, logger: self.outputLogger)
+                return
+            }
+
+            if granted {
+                print("Screen Recording permission is granted.")
+            } else {
+                print("Screen Recording permission was not granted.")
+                print("If no prompt appeared, open System Settings > Privacy & Security > Screen & System Audio Recording.")
+                print("Add or enable the current Peekaboo binary, then restart Peekaboo.")
+            }
+        }
+    }
+
+    @MainActor
     struct RequestEventSynthesizingSubcommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConfigurable {
         @RuntimeStorage private var runtime: CommandRuntime?
         var runtimeOptions = CommandRuntimeOptions()
@@ -228,6 +275,27 @@ extension PermissionsCommand.GrantSubcommand: AsyncRuntimeCommand {}
 
 @MainActor
 extension PermissionsCommand.GrantSubcommand: CommanderBindableCommand {
+    mutating func applyCommanderValues(_ values: CommanderBindableValues) throws {
+        _ = values
+    }
+}
+
+@MainActor
+extension PermissionsCommand.RequestScreenRecordingSubcommand: ParsableCommand {
+    nonisolated(unsafe) static var commandDescription: CommandDescription {
+        MainActorCommandDescription.describe {
+            CommandDescription(
+                commandName: "request-screen-recording",
+                abstract: "Request Screen Recording permission for the local Peekaboo process"
+            )
+        }
+    }
+}
+
+extension PermissionsCommand.RequestScreenRecordingSubcommand: AsyncRuntimeCommand {}
+
+@MainActor
+extension PermissionsCommand.RequestScreenRecordingSubcommand: CommanderBindableCommand {
     mutating func applyCommanderValues(_ values: CommanderBindableValues) throws {
         _ = values
     }

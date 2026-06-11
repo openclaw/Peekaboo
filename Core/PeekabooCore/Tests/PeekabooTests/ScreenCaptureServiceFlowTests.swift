@@ -261,7 +261,7 @@ struct ScreenCaptureServiceFlowTests {
     }
 
     @Test
-    func `captureScreen skips ScreenCaptureKit permission probe when legacy is first`() async throws {
+    func `captureScreen checks permission when legacy is first`() async throws {
         let fixtures = self.makeFixtures()
         let permission = CountingPermissionEvaluator()
 
@@ -279,7 +279,7 @@ struct ScreenCaptureServiceFlowTests {
         _ = try await service.captureScreen(displayIndex: nil)
 
         let recordedCalls = await permission.callCount
-        #expect(recordedCalls == 0)
+        #expect(recordedCalls == 1)
     }
 
     @Test

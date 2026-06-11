@@ -129,7 +129,7 @@ peekaboo type "github.com/openclaw/Peekaboo" --app Safari --return --foreground
 | [tools](docs/commands/tools.md) | `--verbose`, `--json`, `--no-sort` | Inspect native Peekaboo tools |
 | [completions](docs/commands/completions.md) | `[shell]` | Generate zsh/bash/fish completion scripts from Commander metadata |
 | [config](docs/commands/config.md) | `init`, `show`, `add`, `login`, `models` | Manage credentials/providers/settings |
-| [permissions](docs/commands/permissions.md) | `status`, `grant`, `request-event-synthesizing` | Check/grant required macOS permissions |
+| [permissions](docs/commands/permissions.md) | `status`, `grant`, `request-screen-recording`, `request-event-synthesizing` | Check/grant required macOS permissions |
 | [run](docs/commands/run.md) | `.peekaboo.json`, `--output`, `--no-fail-fast` | Execute `.peekaboo.json` automation scripts |
 | [sleep](docs/commands/sleep.md) | `--duration` (ms) | Millisecond delays between steps |
 | [clean](docs/commands/clean.md) | `--all-snapshots`, `--older-than`, `--snapshot` | Prune snapshots and caches |
