@@ -9,10 +9,14 @@ extension LegacyScreenCaptureOperator {
         screen: NSScreen,
         correlationId: String) throws -> CGImage
     {
-        try self.captureImageWithSystemScreencapture(
+        let desktopBounds = Self.desktopBounds(for: NSScreen.screens.map(\.frame))
+        let region = ScreenCapturePlanner.systemScreencaptureRegionRect(
+            appKitRect: screen.frame,
+            desktopBounds: desktopBounds)
+        return try self.captureImageWithSystemScreencapture(
             arguments: [
                 "-x",
-                Self.regionArgument(for: screen.frame),
+                Self.regionArgument(for: region),
             ],
             outputPrefix: "peekaboo-screen",
             logMessage: "Captured screen via system screencapture",
@@ -95,5 +99,11 @@ extension LegacyScreenCaptureOperator {
         "-R\(Int(rect.minX.rounded(.down))),\(Int(rect.minY.rounded(.down)))," +
             "\(Int(rect.width.rounded(.toNearestOrAwayFromZero)))," +
             "\(Int(rect.height.rounded(.toNearestOrAwayFromZero)))"
+    }
+
+    private nonisolated static func desktopBounds(for frames: [CGRect]) -> CGRect {
+        frames.reduce(CGRect.null) { partial, frame in
+            partial.union(frame)
+        }
     }
 }

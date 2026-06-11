@@ -20,6 +20,20 @@ import Foundation
         globalRect.offsetBy(dx: -displayFrame.origin.x, dy: -displayFrame.origin.y)
     }
 
+    /// Convert an AppKit/global display-space rectangle to the top-left desktop coordinate space
+    /// expected by `/usr/sbin/screencapture -R`.
+    ///
+    /// `NSScreen.frame` uses AppKit's lower-left coordinate system. `screencapture -R` expects
+    /// a top-left rectangle in the virtual desktop bounds, so horizontal coordinates are offset
+    /// and vertical coordinates are flipped.
+    public static func systemScreencaptureRegionRect(appKitRect: CGRect, desktopBounds: CGRect) -> CGRect {
+        CGRect(
+            x: appKitRect.minX - desktopBounds.minX,
+            y: desktopBounds.maxY - appKitRect.maxY,
+            width: appKitRect.width,
+            height: appKitRect.height)
+    }
+
     public static func capturePixelSize(
         for frame: CGRect,
         fallbackFrame: CGRect? = nil,
