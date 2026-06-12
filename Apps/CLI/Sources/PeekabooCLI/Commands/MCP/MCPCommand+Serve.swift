@@ -36,6 +36,7 @@ extension MCPCommand {
 
         @MainActor
         mutating func run(using runtime: CommandRuntime) async throws {
+            var localDaemon: PeekabooDaemon?
             do {
                 guard let transportType = Self.transportType(named: self.transport) else {
                     runtime.logger.setJsonOutputMode(runtime.configuration.jsonOutput)
@@ -51,18 +52,27 @@ extension MCPCommand {
                 if runtime.services is RemotePeekabooServices {
                     runtime.logger.debug("MCP: using remote Bridge host; skipping local daemon startup")
                 } else {
-                    let daemon = PeekabooDaemon(configuration: .mcp())
-                    await daemon.start()
+                    let daemon = PeekabooDaemon(configuration: .embeddedMCP())
+                    localDaemon = daemon
+                    try await daemon.startChecked()
                 }
 
                 let server = try await PeekabooMCPServer()
                 try await server.serve(transport: transportType, port: self.port)
+                await Self.stopLocalDaemon(localDaemon)
             } catch let exitCode as ExitCode {
+                await Self.stopLocalDaemon(localDaemon)
                 throw exitCode
             } catch {
+                await Self.stopLocalDaemon(localDaemon)
                 runtime.logger.error("Failed to start MCP server: \(error)")
                 throw ExitCode.failure
             }
+        }
+
+        private static func stopLocalDaemon(_ daemon: PeekabooDaemon?) async {
+            guard let daemon, await daemon.requestStop() else { return }
+            await daemon.waitUntilStopped()
         }
 
         static func transportType(named name: String) -> PeekabooCore.TransportType? {

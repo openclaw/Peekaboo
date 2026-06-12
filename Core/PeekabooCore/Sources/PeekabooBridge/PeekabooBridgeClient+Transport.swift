@@ -83,6 +83,8 @@ extension PeekabooBridgeClient {
         defer { close(fd) }
 
         Self.disableSigPipe(fd: fd)
+        try PeekabooBridgeSocketIO.configureConnectedSocket(fd)
+        let deadline = Date().addingTimeInterval(timeoutSec)
 
         var addr = sockaddr_un()
         addr.sun_family = sa_family_t(AF_UNIX)
@@ -97,66 +99,16 @@ extension PeekabooBridgeClient {
         let connectResult = withUnsafePointer(to: &addr) { ptr in
             connect(fd, UnsafePointer<sockaddr>(OpaquePointer(ptr)), len)
         }
-        guard connectResult == 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .ECONNREFUSED) }
+        if connectResult != 0 {
+            guard errno == EINPROGRESS || errno == EAGAIN || errno == EALREADY else {
+                throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .ECONNREFUSED)
+            }
+            try PeekabooBridgeSocketIO.finishConnect(fd: fd, deadline: deadline)
+        }
 
-        try Self.writeAll(fd: fd, data: requestData)
+        try PeekabooBridgeSocketIO.writeAll(fd: fd, data: requestData, deadline: deadline)
         _ = shutdown(fd, SHUT_WR)
 
-        return try Self.readAll(fd: fd, maxBytes: maxResponseBytes, timeoutSec: timeoutSec)
-    }
-
-    private nonisolated static func writeAll(fd: Int32, data: Data) throws {
-        try data.withUnsafeBytes { buf in
-            guard let base = buf.baseAddress else { return }
-            var written = 0
-            while written < data.count {
-                let n = write(fd, base.advanced(by: written), data.count - written)
-                if n > 0 {
-                    written += n
-                    continue
-                }
-                if n == -1, errno == EINTR { continue }
-                throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
-            }
-        }
-    }
-
-    private nonisolated static func readAll(fd: Int32, maxBytes: Int, timeoutSec: TimeInterval) throws -> Data {
-        let deadline = Date().addingTimeInterval(timeoutSec)
-        var data = Data()
-        var buffer = [UInt8](repeating: 0, count: 16 * 1024)
-
-        while true {
-            let remaining = deadline.timeIntervalSinceNow
-            if remaining <= 0 {
-                throw POSIXError(.ETIMEDOUT)
-            }
-
-            var pfd = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
-            let sliceMs = max(1.0, min(remaining, 0.25) * 1000.0)
-            let polled = poll(&pfd, 1, Int32(sliceMs))
-            if polled == 0 { continue }
-            if polled < 0 {
-                if errno == EINTR { continue }
-                throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
-            }
-
-            let n = buffer.withUnsafeMutableBytes { read(fd, $0.baseAddress!, $0.count) }
-            if n > 0 {
-                data.append(buffer, count: n)
-                if data.count > maxBytes {
-                    throw POSIXError(.EMSGSIZE)
-                }
-                continue
-            }
-
-            if n == 0 {
-                return data
-            }
-
-            if errno == EINTR { continue }
-            if errno == EAGAIN { continue }
-            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
-        }
+        return try PeekabooBridgeSocketIO.readAll(fd: fd, maxBytes: maxResponseBytes, deadline: deadline)
     }
 }

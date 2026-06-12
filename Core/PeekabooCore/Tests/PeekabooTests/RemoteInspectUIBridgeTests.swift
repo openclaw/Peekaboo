@@ -46,7 +46,7 @@ struct RemoteInspectUIBridgeTests {
             allowedTeamIDs: [],
             requestTimeoutSec: 2)
 
-        await host.start()
+        try await host.startChecked()
         do {
             let client = PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 2)
             let remote = await MainActor.run {

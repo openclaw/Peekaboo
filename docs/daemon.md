@@ -75,6 +75,14 @@ MCP (stdio)  ───┘                             │
 
 ### Auto daemon routing
 - Automation-oriented CLI commands prefer the default Peekaboo daemon socket.
+- The reusable daemon owns `~/Library/Application Support/Peekaboo/daemon.sock`; it never shares
+  Peekaboo.app's `bridge.sock`.
+- On upgrade, daemon control detects a still-running legacy auto or manual daemon on `bridge.sock`. Daemons that
+  advertise conditional stop migrate to the dedicated listener while preserving lifecycle mode, poll interval, and
+  auto idle timeout.
+- Migration defers while the daemon has active requests. Older daemons without conditional stop remain on the legacy
+  socket until they exit or are explicitly stopped, avoiding a status-to-stop race. Daemon stop drains accepted
+  connections before shutting down operational services.
 - If no default daemon is reachable, command runtime starts `peekaboo daemon run --mode auto` and reconnects.
 - Auto daemons track Bridge request activity and shut down after an idle timeout (default 300 seconds).
 - `peekaboo list apps`, `peekaboo app list`, `--no-remote`, `PEEKABOO_NO_REMOTE`, explicit input strategy overrides, and explicit capture engine overrides keep commands local.

@@ -18,8 +18,8 @@ extension DaemonCommand {
         @Option(name: .long, help: "Override bridge socket path")
         var bridgeSocket: String?
 
-        @Option(name: .long, help: "Seconds to wait for daemon shutdown (default 3)")
-        var waitSeconds: Int = 3
+        @Option(name: .long, help: "Seconds to wait for daemon shutdown (default 12)")
+        var waitSeconds: Int = DaemonControlClient.defaultShutdownWaitSeconds
 
         @RuntimeStorage private var runtime: CommandRuntime?
         var runtimeOptions = CommandRuntimeOptions()
@@ -45,10 +45,9 @@ extension DaemonCommand {
 
         mutating func run(using runtime: CommandRuntime) async throws {
             self.runtime = runtime
-            let socketPath = self.bridgeSocket ?? PeekabooBridgeConstants.peekabooSocketPath
-            let client = DaemonControlClient(socketPath: socketPath)
+            let targets = await DaemonControlResolver.targets(explicitSocket: self.bridgeSocket)
 
-            guard let status = await client.fetchStatus() else {
+            guard !targets.isEmpty else {
                 let stopped = PeekabooDaemonStatus(running: false)
                 self.output(stopped) {
                     DaemonStatusPrinter.render(status: stopped)
@@ -56,28 +55,25 @@ extension DaemonCommand {
                 return
             }
 
-            if status.mode == nil {
+            if targets.contains(where: { $0.status.mode == nil }) {
                 throw PeekabooError.operationError(message: "Connected host does not support daemon stop")
             }
 
-            let stopped = try await client.stopDaemon()
-            guard stopped else {
-                throw PeekabooError.operationError(message: "Daemon refused stop request")
-            }
-
-            let deadline = Date().addingTimeInterval(TimeInterval(self.waitSeconds))
-            while Date() < deadline {
-                if await client.fetchStatus() == nil {
-                    let stopped = PeekabooDaemonStatus(running: false)
-                    self.output(stopped) {
-                        DaemonStatusPrinter.render(status: stopped)
-                    }
-                    return
+            for target in targets {
+                guard try await target.client.stopAndWait(
+                    waitSeconds: self.waitSeconds,
+                    expectedPID: target.status.pid,
+                    requireIdentityMatch: DaemonControlClient.supportsSafeMigration(target.status)
+                )
+                else {
+                    throw PeekabooError.operationError(message: "Daemon refused stop request")
                 }
-                try await Task.sleep(nanoseconds: 200_000_000)
             }
 
-            throw PeekabooError.operationError(message: "Daemon did not stop within \(self.waitSeconds)s")
+            let stopped = PeekabooDaemonStatus(running: false)
+            self.output(stopped) {
+                DaemonStatusPrinter.render(status: stopped)
+            }
         }
     }
 }

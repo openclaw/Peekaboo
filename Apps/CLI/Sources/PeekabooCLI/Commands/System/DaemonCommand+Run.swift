@@ -15,7 +15,7 @@ extension DaemonCommand {
             }
         }
 
-        @Option(name: .long, help: "Daemon mode (manual, mcp)")
+        @Option(name: .long, help: "Daemon mode (manual, auto)")
         var mode: String = "manual"
 
         @Option(name: .long, help: "Override bridge socket path")
@@ -33,23 +33,41 @@ extension DaemonCommand {
         mutating func run(using runtime: CommandRuntime) async throws {
             self.runtime = runtime
             let pollInterval = TimeInterval(Double(self.pollIntervalMs ?? 1000) / 1000.0)
-            let socketPath = self.bridgeSocket ?? PeekabooBridgeConstants.peekabooSocketPath
-
-            let normalizedMode = self.mode.lowercased()
-            let config: PeekabooDaemon.Configuration = if normalizedMode == "auto" {
-                .auto(
-                    bridgeSocketPath: socketPath,
-                    windowPollInterval: pollInterval,
-                    idleTimeout: self.idleTimeoutSeconds ?? CommandRuntime.defaultDaemonIdleTimeoutSeconds
-                )
-            } else if normalizedMode == "mcp" {
-                .mcp(bridgeSocketPath: socketPath, windowPollInterval: pollInterval)
-            } else {
-                .manual(bridgeSocketPath: socketPath, windowPollInterval: pollInterval)
-            }
+            let config = try Self.configuration(
+                mode: self.mode,
+                bridgeSocket: self.bridgeSocket,
+                pollInterval: pollInterval,
+                idleTimeoutSeconds: self.idleTimeoutSeconds
+            )
 
             let daemon = PeekabooDaemon(configuration: config)
-            await daemon.runUntilStop()
+            try await daemon.runUntilStopChecked()
+        }
+
+        static func configuration(
+            mode: String,
+            bridgeSocket: String?,
+            pollInterval: TimeInterval,
+            idleTimeoutSeconds: Double?
+        ) throws -> PeekabooDaemon.Configuration {
+            let normalizedMode = mode.lowercased()
+            if normalizedMode == "mcp" {
+                throw ValidationError(
+                    "Standalone MCP daemon mode is unavailable; use `peekaboo mcp` so the MCP transport owns its lifecycle."
+                )
+            }
+            return if normalizedMode == "auto" {
+                .auto(
+                    bridgeSocketPath: bridgeSocket ?? PeekabooBridgeConstants.daemonSocketPath,
+                    windowPollInterval: pollInterval,
+                    idleTimeout: idleTimeoutSeconds ?? CommandRuntime.defaultDaemonIdleTimeoutSeconds
+                )
+            } else {
+                .manual(
+                    bridgeSocketPath: bridgeSocket ?? PeekabooBridgeConstants.daemonSocketPath,
+                    windowPollInterval: pollInterval
+                )
+            }
         }
 
         mutating func applyCommanderValues(_ values: CommanderBindableValues) throws {

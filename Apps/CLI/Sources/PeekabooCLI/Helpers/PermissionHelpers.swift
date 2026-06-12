@@ -44,19 +44,24 @@ enum PermissionHelpers {
 
     /// Try to fetch permissions from a remote Peekaboo Bridge host; falls back to local services on failure.
     @MainActor
-    private static func remotePermissionsStatus(socketPath override: String? = nil) async -> PermissionsStatus? {
-        let envSocket = ProcessInfo.processInfo.environment["PEEKABOO_BRIDGE_SOCKET"]
+    private static func remotePermissionsStatus(
+        services: any PeekabooServiceProviding,
+        socketPath override: String? = nil
+    ) async -> PermissionsStatus? {
+        let environment = ProcessInfo.processInfo.environment
+        let envSocket = environment["PEEKABOO_BRIDGE_SOCKET"]
         let resolvedOverride = override ?? envSocket
 
-        let candidates: [String] = if let explicit = resolvedOverride, !explicit.isEmpty {
-            [explicit]
-        } else {
-            [
-                PeekabooBridgeConstants.peekabooSocketPath,
-                PeekabooBridgeConstants.claudeSocketPath,
-                PeekabooBridgeConstants.clawdbotSocketPath,
-            ]
+        if resolvedOverride == nil,
+           let remoteServices = services as? RemotePeekabooServices,
+           let status = try? await remoteServices.permissionsStatus() {
+            return status
         }
+
+        let candidates = self.remotePermissionSocketPaths(
+            explicitSocket: resolvedOverride,
+            environment: environment
+        )
 
         let identity = PeekabooBridgeClientIdentity(
             bundleIdentifier: Bundle.main.bundleIdentifier,
@@ -68,6 +73,10 @@ enum PermissionHelpers {
         for socketPath in candidates {
             let client = PeekabooBridgeClient(socketPath: socketPath)
             do {
+                if resolvedOverride == nil,
+                   await DaemonControlClient(socketPath: socketPath).fetchReusableDaemonStatus() == nil {
+                    continue
+                }
                 let handshake = try await client.handshake(client: identity, requestedHost: nil)
                 guard handshake.supportedOperations.contains(.permissionsStatus) else { continue }
                 return try await client.permissionsStatus()
@@ -76,6 +85,20 @@ enum PermissionHelpers {
             }
         }
         return nil
+    }
+
+    static func remotePermissionSocketPaths(
+        explicitSocket: String?,
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> [String] {
+        if let explicitSocket, !explicitSocket.isEmpty {
+            return [explicitSocket]
+        }
+        let daemonPath = DaemonLaunchPolicy.daemonSocketPath(environment: environment)
+        guard DaemonLaunchPolicy.shouldMigrateLegacyDaemon(targetSocketPath: daemonPath) else {
+            return [daemonPath]
+        }
+        return [daemonPath, PeekabooBridgeConstants.peekabooSocketPath]
     }
 
     /// Get current permission status for all Peekaboo permissions
@@ -100,7 +123,7 @@ enum PermissionHelpers {
     ) async -> PermissionStatusResponse {
         // Prefer remote host when available so sandboxes can reuse existing TCC grants.
         let remoteStatus = allowRemote
-            ? await self.remotePermissionsStatus(socketPath: socketPath)
+            ? await self.remotePermissionsStatus(services: services, socketPath: socketPath)
             : nil
 
         let status: PermissionsStatus
@@ -121,7 +144,7 @@ enum PermissionHelpers {
         socketPath: String? = nil
     ) async -> PermissionSourcesResponse {
         let remoteStatus = allowRemote
-            ? await self.remotePermissionsStatus(socketPath: socketPath)
+            ? await self.remotePermissionsStatus(services: services, socketPath: socketPath)
             : nil
         let localStatus = await self.localPermissionsStatus(services: services)
         let selectedSource = remoteStatus != nil ? "bridge" : "local"
@@ -148,9 +171,12 @@ enum PermissionHelpers {
 
     private static func localPermissionsStatus(services: any PeekabooServiceProviding) async -> PermissionsStatus {
         await Task { @MainActor in
-            let screenRecording = await services.screenCapture.hasScreenRecordingPermission()
-            let accessibility = await services.automation.hasAccessibilityPermission()
-            let postEvent = services.permissions.checkPostEventPermission()
+            let localServices: any PeekabooServiceProviding = services is RemotePeekabooServices
+                ? PeekabooServices()
+                : services
+            let screenRecording = await localServices.screenCapture.hasScreenRecordingPermission()
+            let accessibility = await localServices.automation.hasAccessibilityPermission()
+            let postEvent = localServices.permissions.checkPostEventPermission()
             return PermissionsStatus(
                 screenRecording: screenRecording,
                 accessibility: accessibility,

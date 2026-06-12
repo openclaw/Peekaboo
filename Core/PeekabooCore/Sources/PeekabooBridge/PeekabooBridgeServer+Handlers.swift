@@ -89,6 +89,14 @@ extension PeekabooBridgeServer {
             }
             let stopped = await daemonControl.requestStop()
             return .bool(stopped)
+        case let .daemonStopIf(payload):
+            guard let daemonControl = self.daemonControl as? any PeekabooConditionalDaemonControlProviding else {
+                throw PeekabooBridgeErrorEnvelope(
+                    code: .operationNotSupported,
+                    message: "Conditional daemon stop is not supported by this host")
+            }
+            let stopped = await daemonControl.requestStop(expectedPID: payload.expectedPID)
+            return .bool(stopped)
         case let .handshake(payload):
             return try self.handleHandshake(payload, peer: peer)
         default:

@@ -25,7 +25,7 @@ struct PeekabooBridgeHostUnauthorizedResponseTests {
             requestTimeoutSec: 2
         )
 
-        await host.start()
+        try await host.startChecked()
         defer { Task { await host.stop() } }
 
         let requestData = try JSONEncoder.peekabooBridgeEncoder().encode(PeekabooBridgeRequest.permissionsStatus)

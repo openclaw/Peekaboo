@@ -41,6 +41,15 @@ extension PeekabooBridgeClient {
 
     public func daemonStop() async throws -> Bool {
         let response = try await self.send(.daemonStop)
+        return try Self.decodeDaemonStopResponse(response)
+    }
+
+    public func daemonStop(expectedPID: pid_t) async throws -> Bool {
+        let response = try await self.send(.daemonStopIf(.init(expectedPID: expectedPID)))
+        return try Self.decodeDaemonStopResponse(response)
+    }
+
+    private static func decodeDaemonStopResponse(_ response: PeekabooBridgeResponse) throws -> Bool {
         switch response {
         case let .bool(stopped):
             return stopped

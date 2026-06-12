@@ -8,6 +8,14 @@ public enum PeekabooDaemonMode: String, Codable, Sendable {
     case mcp
 }
 
+public struct PeekabooBridgeDaemonStopRequest: Codable, Sendable {
+    public let expectedPID: pid_t
+
+    public init(expectedPID: pid_t) {
+        self.expectedPID = expectedPID
+    }
+}
+
 public struct PeekabooDaemonActivityStatus: Codable, Sendable {
     public let activeRequests: Int
     public let lastActivityAt: Date?
@@ -95,6 +103,7 @@ public struct PeekabooDaemonStatus: Codable, Sendable {
     public let windowTracker: PeekabooDaemonWindowTrackerStatus?
     public let browser: PeekabooBridgeBrowserStatus?
     public let activity: PeekabooDaemonActivityStatus?
+    public let supportsConditionalStop: Bool?
 
     public init(
         running: Bool,
@@ -106,7 +115,8 @@ public struct PeekabooDaemonStatus: Codable, Sendable {
         snapshots: PeekabooDaemonSnapshotStatus? = nil,
         windowTracker: PeekabooDaemonWindowTrackerStatus? = nil,
         browser: PeekabooBridgeBrowserStatus? = nil,
-        activity: PeekabooDaemonActivityStatus? = nil)
+        activity: PeekabooDaemonActivityStatus? = nil,
+        supportsConditionalStop: Bool? = nil)
     {
         self.running = running
         self.pid = pid
@@ -118,6 +128,7 @@ public struct PeekabooDaemonStatus: Codable, Sendable {
         self.windowTracker = windowTracker
         self.browser = browser
         self.activity = activity
+        self.supportsConditionalStop = supportsConditionalStop
     }
 }
 
@@ -133,4 +144,10 @@ public protocol PeekabooDaemonControlProviding: AnyObject, Sendable {
 extension PeekabooDaemonControlProviding {
     public func recordActivityStart(operation _: PeekabooBridgeOperation) async {}
     public func recordActivityEnd(operation _: PeekabooBridgeOperation) async {}
+}
+
+@MainActor
+public protocol PeekabooConditionalDaemonControlProviding: PeekabooDaemonControlProviding {
+    func requestStop(expectedPID: pid_t) async -> Bool
+    func admitActivity(operation: PeekabooBridgeOperation) async -> Bool
 }

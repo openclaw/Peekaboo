@@ -5,17 +5,22 @@ public enum PeekabooBridgeConstants {
 
     /// Socket hosted by Peekaboo.app (primary host).
     public static var peekabooSocketPath: String {
-        self.applicationSupportSocketPath(appDirectoryName: "Peekaboo")
+        self.applicationSupportSocketPath(appDirectoryName: "Peekaboo", socketName: self.socketName)
+    }
+
+    /// Socket hosted by the reusable on-demand or manually started daemon.
+    public static var daemonSocketPath: String {
+        self.applicationSupportSocketPath(appDirectoryName: "Peekaboo", socketName: "daemon.sock")
     }
 
     /// Socket hosted by Claude.app (fallback host; piggyback on Claude Desktop TCC grants).
     public static var claudeSocketPath: String {
-        self.applicationSupportSocketPath(appDirectoryName: "Claude")
+        self.applicationSupportSocketPath(appDirectoryName: "Claude", socketName: self.socketName)
     }
 
     /// Socket hosted by Clawdbot.app (fallback host).
     public static var clawdbotSocketPath: String {
-        self.applicationSupportSocketPath(appDirectoryName: "clawdbot")
+        self.applicationSupportSocketPath(appDirectoryName: "clawdbot", socketName: self.socketName)
     }
 
     /// Current protocol version supported by this build.
@@ -27,6 +32,9 @@ public enum PeekabooBridgeConstants {
     /// Compatible protocol range for negotiation. Update when introducing breaking changes.
     public static let supportedProtocolRange: ClosedRange<PeekabooBridgeProtocolVersion> =
         minimumProtocolVersion...protocolVersion
+
+    /// Default deadline for one Bridge request or response.
+    public static let defaultRequestTimeoutSeconds: TimeInterval = 10
 
     /// Build identifier advertised during handshake (falls back to "dev").
     public static var buildIdentifier: String {
@@ -43,12 +51,12 @@ public enum PeekabooBridgeConstants {
         }
     }
 
-    private static func applicationSupportSocketPath(appDirectoryName: String) -> String {
+    private static func applicationSupportSocketPath(appDirectoryName: String, socketName: String) -> String {
         let fileManager = FileManager.default
         let baseDirectory = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? fileManager.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support")
         let directory = baseDirectory.appendingPathComponent(appDirectoryName, isDirectory: true)
-        return directory.appendingPathComponent(self.socketName, isDirectory: false).path
+        return directory.appendingPathComponent(socketName, isDirectory: false).path
     }
 }
 

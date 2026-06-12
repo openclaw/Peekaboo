@@ -17,17 +17,25 @@ This replaces the previous XPC-based helper approach.
 Normal CLI automation commands prefer the on-demand Peekaboo daemon socket and will auto-start that daemon when it
 is missing. This keeps bursty command sequences warm without probing unrelated host apps.
 
-Explicit bridge diagnostics can still inspect host sockets in this order:
+Bridge diagnostics inspect sockets in this order:
 
-1. **Peekaboo.app** (primary host)
+1. **Peekaboo daemon** (normal automation runtime)
+   - Socket: `~/Library/Application Support/Peekaboo/daemon.sock`
+2. **Peekaboo.app** (permission broker)
    - Socket: `~/Library/Application Support/Peekaboo/bridge.sock`
-2. **Claude.app** (fallback host; piggyback on Claude Desktop TCC grants)
+3. **Claude.app** (fallback host; piggyback on Claude Desktop TCC grants)
    - Socket: `~/Library/Application Support/Claude/bridge.sock`
-3. **Clawdbot.app** (fallback host)
+4. **Clawdbot.app** (fallback host)
    - Socket: `~/Library/Application Support/clawdbot/bridge.sock`
-4. **Local in-process** (no host available; requires the caller process to have TCC grants)
+5. **Local in-process** (no host available; requires the caller process to have TCC grants)
+
+Only the explicit Bridge override or daemon socket participates in normal runtime selection. The app-host sockets remain
+visible in diagnostics and can be selected with `--bridge-socket` or `PEEKABOO_BRIDGE_SOCKET`.
 
 There is **no auto-launch** of Peekaboo.app.
+
+`peekaboo mcp` never hosts a Bridge listener. When it must run services locally, its in-process daemon is limited to
+the window tracker and other process-local support.
 
 ## Transport
 
@@ -37,6 +45,15 @@ There is **no auto-launch** of Peekaboo.app.
 - Payloads are `Codable` JSON with a small handshake for:
   - protocol version negotiation
   - capability/operation advertisement
+- Each listener holds an exclusive lease beside its socket for its full lifetime.
+- A host removes an existing socket only after acquiring the lease and matching the path to the exact device/inode
+  recorded by the previous lease owner. Pre-lease sockets are recovered only after proving no same-user process has the
+  exact UNIX path open; a failed connect alone never marks a socket stale.
+- New listeners bind and secure a private temporary socket, then publish it atomically without replacing an existing
+  path.
+- Shutdown removes the socket only when its filesystem identity still matches the listener that created it.
+- Connect, request read, and response write paths are nonblocking and deadline-bound so abandoned clients release their
+  connection tasks instead of exhausting the host.
 
 Protocol `1.3` adds element action operations:
 

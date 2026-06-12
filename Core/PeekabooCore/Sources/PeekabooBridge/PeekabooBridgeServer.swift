@@ -120,8 +120,19 @@ public final class PeekabooBridgeServer {
 
         do {
             try self.validateOperationAccess(for: request, permissions: permissions, effectiveOps: effectiveOps)
-            if let daemonControl = self.daemonControl, op != .daemonStatus {
-                await daemonControl.recordActivityStart(operation: op)
+            if let daemonControl = self.daemonControl,
+               op != .daemonStatus,
+               op != .daemonStop
+            {
+                if let conditionalControl = daemonControl as? any PeekabooConditionalDaemonControlProviding {
+                    guard await conditionalControl.admitActivity(operation: op) else {
+                        throw PeekabooBridgeErrorEnvelope(
+                            code: .serverBusy,
+                            message: "Daemon is shutting down")
+                    }
+                } else {
+                    await daemonControl.recordActivityStart(operation: op)
+                }
                 do {
                     let response = try await self.handleAuthorized(request, peer: peer)
                     await daemonControl.recordActivityEnd(operation: op)

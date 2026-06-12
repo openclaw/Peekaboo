@@ -29,7 +29,7 @@ struct RemoteApplicationServiceTests {
             allowedTeamIDs: [],
             requestTimeoutSec: 2)
 
-        await host.start()
+        try await host.startChecked()
         defer { Task { await host.stop() } }
 
         let directClient = PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 2)

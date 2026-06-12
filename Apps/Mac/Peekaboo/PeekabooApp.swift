@@ -190,6 +190,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let updaterController: any UpdaterProviding = makeUpdaterController()
     var windowOpener: ((String) -> Void)?
     private var bridgeHost: PeekabooBridgeHost?
+    private var bridgeStartTask: Task<Void, Never>?
     private var didSchedulePermissionsOnboarding = false
 
     // State connections
@@ -261,7 +262,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.didSetupNotificationObservers = true
         }
 
-        if self.bridgeHost == nil {
+        if self.bridgeHost == nil, self.bridgeStartTask == nil {
             self.startBridgeHost(services: context.services)
         }
 
@@ -309,6 +310,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_: Notification) {
         self.statusBarController?.removeStatusItem()
         self.statusBarController = nil
+        self.bridgeStartTask?.cancel()
+        self.bridgeStartTask = nil
 
         if let bridgeHost = self.bridgeHost {
             Task { await bridgeHost.stop() }
@@ -441,13 +444,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let allowlistedTeams: Set = ["Y5PE65HELJ"]
 
         self.logger.info("Starting Peekaboo Bridge at \(PeekabooBridgeConstants.peekabooSocketPath, privacy: .public)")
-        self.bridgeHost = PeekabooBridgeBootstrap.startHost(
-            services: services,
-            hostKind: .gui,
-            socketPath: PeekabooBridgeConstants.peekabooSocketPath,
-            allowlistedTeams: allowlistedTeams,
-            allowlistedBundles: allowlistedBundles,
-            allowedOperations: PeekabooBridgeOperation.remoteDefaultAllowlist)
+        self.bridgeStartTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { self.bridgeStartTask = nil }
+            var retryDelayNanoseconds: UInt64 = 250_000_000
+            while !Task.isCancelled {
+                do {
+                    self.bridgeHost = try await PeekabooBridgeBootstrap.startHostChecked(
+                        services: services,
+                        hostKind: .gui,
+                        socketPath: PeekabooBridgeConstants.peekabooSocketPath,
+                        allowlistedTeams: allowlistedTeams,
+                        allowlistedBundles: allowlistedBundles,
+                        allowedOperations: PeekabooBridgeOperation.remoteDefaultAllowlist)
+                    return
+                } catch PeekabooBridgeHostError.socketAlreadyOwned {
+                    self.logger.info(
+                        "Peekaboo Bridge socket is busy; retrying after legacy host migration")
+                    do {
+                        try await Task.sleep(nanoseconds: retryDelayNanoseconds)
+                    } catch {
+                        return
+                    }
+                    retryDelayNanoseconds = min(retryDelayNanoseconds * 2, 5_000_000_000)
+                } catch {
+                    self.logger
+                        .error("Failed to start Peekaboo Bridge: \(error.localizedDescription, privacy: .public)")
+                    return
+                }
+            }
+        }
     }
 
     // MARK: - Public Access

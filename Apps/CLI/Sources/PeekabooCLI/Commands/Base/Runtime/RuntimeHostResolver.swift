@@ -27,12 +27,6 @@ enum RuntimeHostResolver {
         let explicitSocket = BridgeSocketResolver.explicitBridgeSocket(options: options, environment: environment)
 
         let daemonSocketPath = DaemonLaunchPolicy.daemonSocketPath(environment: environment)
-        let candidates: [String] = if let explicitSocket, !explicitSocket.isEmpty {
-            [explicitSocket]
-        } else {
-            [daemonSocketPath]
-        }
-
         let identity = PeekabooBridgeClientIdentity(
             bundleIdentifier: Bundle.main.bundleIdentifier,
             teamIdentifier: nil,
@@ -40,21 +34,35 @@ enum RuntimeHostResolver {
             hostname: Host.current().name
         )
 
-        if let resolved = await self.resolveRemoteServices(
-            candidates: candidates,
+        if let explicitSocket, !explicitSocket.isEmpty {
+            if let resolved = await self.resolveRemoteServices(
+                candidates: [explicitSocket],
+                identity: identity,
+                options: options,
+                requireReusableDaemon: false
+            ) {
+                return resolved
+            }
+        } else if let resolved = await self.resolveRemoteServices(
+            candidates: [daemonSocketPath],
             identity: identity,
-            options: options
+            options: options,
+            requireReusableDaemon: true
         ) {
             return resolved
         }
 
         if options.autoStartDaemon,
            DaemonLaunchPolicy.shouldAutoStartDaemon(options: options, environment: environment),
-           await DaemonLaunchPolicy.startOnDemandDaemon(socketPath: daemonSocketPath, environment: environment),
+           let resolvedDaemonSocket = await DaemonLaunchPolicy.startOnDemandDaemon(
+               socketPath: daemonSocketPath,
+               environment: environment
+           ),
            let resolved = await self.resolveRemoteServices(
-               candidates: [daemonSocketPath],
+               candidates: [resolvedDaemonSocket],
                identity: identity,
-               options: options
+               options: options,
+               requireReusableDaemon: true
            ) {
             return resolved
         }
@@ -68,7 +76,8 @@ enum RuntimeHostResolver {
     private static func resolveRemoteServices(
         candidates: [String],
         identity: PeekabooBridgeClientIdentity,
-        options: CommandRuntimeOptions
+        options: CommandRuntimeOptions,
+        requireReusableDaemon: Bool
     )
     async -> (services: any PeekabooServiceProviding, hostDescription: String)? {
         for socketPath in candidates {
@@ -76,6 +85,10 @@ enum RuntimeHostResolver {
             do {
                 let handshake = try await client.handshake(client: identity, requestedHost: nil)
                 guard BridgeCapabilityPolicy.supportsRemoteRequirements(for: handshake, options: options) else {
+                    continue
+                }
+                if requireReusableDaemon,
+                   await DaemonControlClient(socketPath: socketPath).fetchReusableDaemonStatus() == nil {
                     continue
                 }
 

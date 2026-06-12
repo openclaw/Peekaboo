@@ -1,4 +1,5 @@
 import Commander
+import Darwin
 import Foundation
 import PeekabooBridge
 
@@ -23,6 +24,9 @@ struct DaemonCommand: ParsableCommand {
 }
 
 struct DaemonControlClient {
+    static let defaultShutdownWaitSeconds =
+        Int(ceil(PeekabooBridgeConstants.defaultRequestTimeoutSeconds)) + 2
+
     let socketPath: String
 
     func fetchStatus() async -> PeekabooDaemonStatus? {
@@ -39,9 +43,94 @@ struct DaemonControlClient {
         }
     }
 
-    func stopDaemon() async throws -> Bool {
+    func stopDaemon(expectedPID: pid_t? = nil) async throws -> Bool {
         let client = PeekabooBridgeClient(socketPath: self.socketPath)
+        if let expectedPID {
+            return try await client.daemonStop(expectedPID: expectedPID)
+        }
         return try await client.daemonStop()
+    }
+
+    func fetchControllableDaemonStatus() async -> PeekabooDaemonStatus? {
+        guard let status = await self.fetchStatus(),
+              Self.isControllableDaemonStatus(status)
+        else {
+            return nil
+        }
+        return status
+    }
+
+    func fetchReusableDaemonStatus() async -> PeekabooDaemonStatus? {
+        guard let status = await self.fetchStatus(),
+              Self.isReusableDaemonStatus(status)
+        else {
+            return nil
+        }
+        return status
+    }
+
+    static func isControllableDaemonStatus(_ status: PeekabooDaemonStatus) -> Bool {
+        status.mode != nil
+    }
+
+    static func isReusableDaemonStatus(_ status: PeekabooDaemonStatus) -> Bool {
+        status.mode == .auto || status.mode == .manual
+    }
+
+    static func migrationMode(for status: PeekabooDaemonStatus) -> PeekabooDaemonMode? {
+        self.isReusableDaemonStatus(status) ? status.mode : nil
+    }
+
+    static func isIdleForMigration(_ status: PeekabooDaemonStatus) -> Bool {
+        status.activity?.activeRequests ?? 0 == 0
+    }
+
+    static func supportsSafeMigration(_ status: PeekabooDaemonStatus) -> Bool {
+        status.supportsConditionalStop == true
+    }
+
+    func stopAndWait(
+        waitSeconds: Int,
+        expectedPID: pid_t?,
+        requireIdentityMatch: Bool = false
+    ) async throws -> Bool {
+        var requestError: (any Error)?
+        var accepted = false
+        do {
+            accepted = try await self.stopDaemon(
+                expectedPID: requireIdentityMatch ? expectedPID : nil
+            )
+        } catch {
+            requestError = error
+        }
+
+        if !accepted, requestError == nil {
+            return false
+        }
+
+        let deadline = Date().addingTimeInterval(TimeInterval(waitSeconds))
+        while Date() < deadline {
+            if await self.fetchControllableDaemonStatus() == nil {
+                if let expectedPID {
+                    if !Self.isProcessAlive(expectedPID) {
+                        return true
+                    }
+                } else if requestError == nil {
+                    return true
+                }
+            }
+            try await Task.sleep(nanoseconds: 200_000_000)
+        }
+
+        if let requestError {
+            throw requestError
+        }
+        return false
+    }
+
+    private static func isProcessAlive(_ pid: pid_t) -> Bool {
+        if kill(pid, 0) == 0 { return true }
+        return errno != ESRCH
     }
 
     private func fallbackHandshake(client: PeekabooBridgeClient) async -> PeekabooDaemonStatus? {
@@ -71,6 +160,42 @@ struct DaemonControlClient {
         } catch {
             return nil
         }
+    }
+}
+
+struct DaemonControlTarget {
+    let client: DaemonControlClient
+    let status: PeekabooDaemonStatus
+    let isLegacyDefault: Bool
+}
+
+enum DaemonControlResolver {
+    static func targets(explicitSocket: String?) async -> [DaemonControlTarget] {
+        if let explicitSocket {
+            let client = DaemonControlClient(socketPath: explicitSocket)
+            guard let status = await client.fetchStatus() else { return [] }
+            return [DaemonControlTarget(client: client, status: status, isLegacyDefault: false)]
+        }
+
+        var targets: [DaemonControlTarget] = []
+        let dedicatedClient = DaemonControlClient(socketPath: PeekabooBridgeConstants.daemonSocketPath)
+        if let status = await dedicatedClient.fetchControllableDaemonStatus() {
+            targets.append(DaemonControlTarget(
+                client: dedicatedClient,
+                status: status,
+                isLegacyDefault: false
+            ))
+        }
+
+        let legacyClient = DaemonControlClient(socketPath: PeekabooBridgeConstants.peekabooSocketPath)
+        if let status = await legacyClient.fetchControllableDaemonStatus() {
+            targets.append(DaemonControlTarget(
+                client: legacyClient,
+                status: status,
+                isLegacyDefault: true
+            ))
+        }
+        return targets
     }
 }
 

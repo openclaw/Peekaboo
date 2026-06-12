@@ -40,10 +40,9 @@ extension DaemonCommand {
 
         mutating func run(using runtime: CommandRuntime) async throws {
             self.runtime = runtime
-            let socketPath = self.bridgeSocket ?? PeekabooBridgeConstants.peekabooSocketPath
-            let client = DaemonControlClient(socketPath: socketPath)
+            let targets = await DaemonControlResolver.targets(explicitSocket: self.bridgeSocket)
 
-            if let status = await client.fetchStatus() {
+            if let status = targets.first?.status {
                 self.output(status) {
                     DaemonStatusPrinter.render(status: status)
                 }

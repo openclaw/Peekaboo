@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import PeekabooAgentRuntime
 import PeekabooAutomationKit
@@ -349,6 +350,59 @@ struct CommandRuntimeInjectionTests {
     }
 
     @Test
+    func `daemon defaults to its dedicated socket`() {
+        #expect(CommandRuntime.daemonSocketPath(environment: [:]) == PeekabooBridgeConstants.daemonSocketPath)
+        #expect(CommandRuntime.daemonSocketPath(environment: [:]) != PeekabooBridgeConstants.peekabooSocketPath)
+        #expect(DaemonLaunchPolicy.shouldMigrateLegacyDaemon(
+            targetSocketPath: PeekabooBridgeConstants.daemonSocketPath
+        ))
+        #expect(!DaemonLaunchPolicy.shouldMigrateLegacyDaemon(targetSocketPath: "/tmp/custom-daemon.sock"))
+    }
+
+    @Test
+    func `bridge diagnostics select only runtime-routed sockets`() {
+        let options = CommandRuntimeOptions()
+        let environment = ["PEEKABOO_DAEMON_SOCKET": "/tmp/custom-daemon.sock"]
+
+        #expect(BridgeDiagnostics.runtimeCandidateSocketPaths(
+            runtimeOptions: options,
+            environment: environment
+        ) == ["/tmp/custom-daemon.sock"])
+
+        let diagnosticPaths = BridgeDiagnostics.diagnosticSocketPaths(
+            runtimeOptions: options,
+            environment: environment
+        )
+        #expect(diagnosticPaths.first == "/tmp/custom-daemon.sock")
+        #expect(diagnosticPaths.contains(PeekabooBridgeConstants.peekabooSocketPath))
+        #expect(diagnosticPaths.contains(PeekabooBridgeConstants.claudeSocketPath))
+    }
+
+    @Test
+    func `default bridge diagnostics include the legacy runtime fallback`() {
+        let runtimePaths = BridgeDiagnostics.runtimeCandidateSocketPaths(
+            runtimeOptions: CommandRuntimeOptions(),
+            environment: [:]
+        )
+
+        #expect(runtimePaths == [
+            PeekabooBridgeConstants.daemonSocketPath,
+            PeekabooBridgeConstants.peekabooSocketPath,
+        ])
+    }
+
+    @Test
+    func `explicit bridge diagnostics probe only the explicit runtime socket`() {
+        var options = CommandRuntimeOptions()
+        options.bridgeSocketPath = "/tmp/explicit.sock"
+
+        #expect(BridgeDiagnostics.diagnosticSocketPaths(
+            runtimeOptions: options,
+            environment: ["PEEKABOO_DAEMON_SOCKET": "/tmp/ignored.sock"]
+        ) == ["/tmp/explicit.sock"])
+    }
+
+    @Test
     func `on demand daemon arguments use auto mode and idle timeout`() {
         let args = CommandRuntime.onDemandDaemonArguments(socketPath: "/tmp/daemon.sock", idleTimeoutSeconds: 12.5)
 
@@ -356,6 +410,117 @@ struct CommandRuntimeInjectionTests {
         #expect(args.contains("/tmp/daemon.sock"))
         #expect(args.contains("--idle-timeout-seconds"))
         #expect(args.contains("12.500"))
+    }
+
+    @Test
+    func `manual daemon migration preserves mode without idle timeout`() {
+        let args = DaemonLaunchPolicy.daemonArguments(
+            socketPath: "/tmp/daemon.sock",
+            mode: .manual,
+            pollIntervalMs: 375,
+            idleTimeoutSeconds: 12.5
+        )
+
+        #expect(args.contains("manual"))
+        #expect(args.contains("--poll-interval-ms"))
+        #expect(args.contains("375"))
+        #expect(!args.contains("--idle-timeout-seconds"))
+    }
+
+    @Test
+    func `automatic daemon migration preserves live settings`() {
+        let status = PeekabooDaemonStatus(
+            running: true,
+            mode: .auto,
+            windowTracker: PeekabooDaemonWindowTrackerStatus(
+                trackedWindows: 1,
+                lastEventAt: nil,
+                lastPollAt: nil,
+                axObserverCount: 1,
+                cgPollIntervalMs: 425
+            ),
+            activity: PeekabooDaemonActivityStatus(
+                activeRequests: 0,
+                lastActivityAt: nil,
+                idleTimeoutSeconds: 47.5,
+                idleExitAt: nil
+            ),
+            supportsConditionalStop: true
+        )
+
+        let args = DaemonLaunchPolicy.migratedDaemonArguments(
+            socketPath: "/tmp/daemon.sock",
+            status: status,
+            fallbackIdleTimeoutSeconds: 300
+        )
+
+        #expect(args?.contains("auto") == true)
+        #expect(args?.contains("425") == true)
+        #expect(args?.contains("47.500") == true)
+    }
+
+    @Test
+    func `daemon startup waits for a draining lease`() async throws {
+        let socketPath = "/tmp/peekaboo-daemon-wait-\(UUID().uuidString).sock"
+        let leasePath = "\(socketPath).lock"
+        let leaseFD = open(
+            leasePath,
+            O_CREAT | O_EXCL | O_RDWR | O_CLOEXEC | O_NOFOLLOW,
+            S_IRUSR | S_IWUSR
+        )
+        #expect(leaseFD >= 0)
+        defer {
+            if leaseFD >= 0 {
+                flock(leaseFD, LOCK_UN)
+                close(leaseFD)
+            }
+            unlink(leasePath)
+        }
+        #expect(flock(leaseFD, LOCK_EX | LOCK_NB) == 0)
+
+        let waitTask = Task {
+            await DaemonLaunchPolicy.waitForDaemonSocketAvailability(
+                socketPath: socketPath,
+                client: DaemonControlClient(socketPath: socketPath),
+                timeout: 1
+            )
+        }
+        try await Task.sleep(nanoseconds: 200_000_000)
+        #expect(flock(leaseFD, LOCK_UN) == 0)
+
+        #expect(await waitTask.value == .available)
+    }
+
+    @Test
+    @MainActor
+    func `replacement rollback retries after active work drains`() async throws {
+        let socketPath = "/tmp/peekaboo-daemon-rollback-\(UUID().uuidString).sock"
+        defer {
+            unlink(socketPath)
+            unlink("\(socketPath).lock")
+        }
+        let daemon = PeekabooDaemon(configuration: .init(
+            mode: .manual,
+            bridgeSocketPath: socketPath,
+            allowlistedTeams: [],
+            windowTrackingEnabled: false,
+            hostKind: .onDemand
+        ))
+        try await daemon.startChecked()
+        #expect(await daemon.admitActivity(operation: .captureScreen))
+
+        let status = await daemon.daemonStatus()
+        let rollbackTask = Task {
+            await DaemonLaunchPolicy.stopReplacement(
+                client: DaemonControlClient(socketPath: socketPath),
+                replacement: .init(status: status, processID: getpid())
+            )
+        }
+        try await Task.sleep(nanoseconds: 300_000_000)
+        await daemon.recordActivityEnd(operation: .captureScreen)
+
+        #expect(await rollbackTask.value)
+        await daemon.waitUntilStopped()
     }
 
     @Test

@@ -5,10 +5,11 @@ import PeekabooBridge
 import PeekabooFoundation
 
 @MainActor
-public final class PeekabooDaemon: PeekabooDaemonControlProviding {
+public final class PeekabooDaemon: PeekabooConditionalDaemonControlProviding {
     public struct Configuration: Sendable {
         public let mode: PeekabooDaemonMode
         public let bridgeSocketPath: String
+        public let bridgeHostingEnabled: Bool
         public let allowlistedTeams: Set<String>
         public let allowlistedBundles: Set<String>
         public let allowedOperations: Set<PeekabooBridgeOperation>
@@ -20,7 +21,7 @@ public final class PeekabooDaemon: PeekabooDaemonControlProviding {
 
         public init(
             mode: PeekabooDaemonMode,
-            bridgeSocketPath: String = PeekabooBridgeConstants.peekabooSocketPath,
+            bridgeSocketPath: String = PeekabooBridgeConstants.daemonSocketPath,
             allowlistedTeams: Set<String> = ["Y5PE65HELJ"],
             allowlistedBundles: Set<String> = [],
             allowedOperations: Set<PeekabooBridgeOperation> = PeekabooBridgeOperation.remoteDefaultAllowlist,
@@ -28,10 +29,12 @@ public final class PeekabooDaemon: PeekabooDaemonControlProviding {
             windowPollInterval: TimeInterval = 1.0,
             hostKind: PeekabooBridgeHostKind,
             exitOnStop: Bool = false,
-            idleTimeout: TimeInterval? = nil)
+            idleTimeout: TimeInterval? = nil,
+            bridgeHostingEnabled: Bool = true)
         {
             self.mode = mode
             self.bridgeSocketPath = bridgeSocketPath
+            self.bridgeHostingEnabled = bridgeHostingEnabled
             self.allowlistedTeams = allowlistedTeams
             self.allowlistedBundles = allowlistedBundles
             self.allowedOperations = allowedOperations
@@ -43,7 +46,7 @@ public final class PeekabooDaemon: PeekabooDaemonControlProviding {
         }
 
         public static func auto(
-            bridgeSocketPath: String = PeekabooBridgeConstants.peekabooSocketPath,
+            bridgeSocketPath: String = PeekabooBridgeConstants.daemonSocketPath,
             windowPollInterval: TimeInterval = 1.0,
             idleTimeout: TimeInterval = 300) -> Configuration
         {
@@ -58,7 +61,7 @@ public final class PeekabooDaemon: PeekabooDaemonControlProviding {
         }
 
         public static func manual(
-            bridgeSocketPath: String = PeekabooBridgeConstants.peekabooSocketPath,
+            bridgeSocketPath: String = PeekabooBridgeConstants.daemonSocketPath,
             windowPollInterval: TimeInterval = 1.0) -> Configuration
         {
             Configuration(
@@ -83,6 +86,20 @@ public final class PeekabooDaemon: PeekabooDaemonControlProviding {
                 hostKind: .inProcess,
                 exitOnStop: true)
         }
+
+        public static func embeddedMCP(
+            windowPollInterval: TimeInterval = 1.0) -> Configuration
+        {
+            Configuration(
+                mode: .mcp,
+                bridgeSocketPath: PeekabooBridgeConstants.daemonSocketPath,
+                allowlistedTeams: [],
+                windowTrackingEnabled: true,
+                windowPollInterval: windowPollInterval,
+                hostKind: .inProcess,
+                exitOnStop: false,
+                bridgeHostingEnabled: false)
+        }
     }
 
     private let logger = Logger(subsystem: "boo.peekaboo.core", category: "Daemon")
@@ -96,6 +113,7 @@ public final class PeekabooDaemon: PeekabooDaemonControlProviding {
     private var activeRequestCount = 0
     private var lastActivityAt: Date?
     private var idleShutdownTask: Task<Void, Never>?
+    private var shutdownTask: Task<Void, Never>?
 
     public init(configuration: Configuration) {
         self.configuration = configuration
@@ -104,6 +122,14 @@ public final class PeekabooDaemon: PeekabooDaemonControlProviding {
     }
 
     public func start() async {
+        do {
+            try await self.startChecked()
+        } catch {
+            self.logger.error("Failed to start Peekaboo daemon: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    public func startChecked() async throws {
         self.services.installAgentRuntimeDefaults()
         self.services.ensureVisualizerConnection()
 
@@ -115,15 +141,30 @@ public final class PeekabooDaemon: PeekabooDaemonControlProviding {
             self.windowTracker = tracker
         }
 
-        if self.bridgeHost == nil {
-            self.bridgeHost = PeekabooBridgeBootstrap.startHost(
-                services: self.services,
-                hostKind: self.configuration.hostKind,
-                socketPath: self.configuration.bridgeSocketPath,
-                allowlistedTeams: self.configuration.allowlistedTeams,
-                allowlistedBundles: self.configuration.allowlistedBundles,
-                daemonControl: self,
-                allowedOperations: self.configuration.allowedOperations)
+        if self.bridgeHost == nil, self.configuration.bridgeHostingEnabled {
+            do {
+                let bridgeHost = try await PeekabooBridgeBootstrap.startHostChecked(
+                    services: self.services,
+                    hostKind: self.configuration.hostKind,
+                    socketPath: self.configuration.bridgeSocketPath,
+                    allowlistedTeams: self.configuration.allowlistedTeams,
+                    allowlistedBundles: self.configuration.allowlistedBundles,
+                    daemonControl: self,
+                    allowedOperations: self.configuration.allowedOperations)
+                if self.isStopping {
+                    await bridgeHost.stop()
+                    self.windowTracker?.stop()
+                    self.windowTracker = nil
+                    WindowMovementTracking.provider = nil
+                    return
+                }
+                self.bridgeHost = bridgeHost
+            } catch {
+                self.windowTracker?.stop()
+                self.windowTracker = nil
+                WindowMovementTracking.provider = nil
+                throw error
+            }
         }
 
         self.logger.info("Peekaboo daemon started mode=\(self.configuration.mode.rawValue)")
@@ -132,11 +173,24 @@ public final class PeekabooDaemon: PeekabooDaemonControlProviding {
     }
 
     public func runUntilStop() async {
-        await self.start()
-        await withCheckedContinuation { continuation in
-            self.stopContinuation = continuation
+        do {
+            try await self.runUntilStopChecked()
+        } catch {
+            self.logger.error("Failed to run Peekaboo daemon: \(error.localizedDescription, privacy: .public)")
         }
-        await self.shutdown()
+    }
+
+    public func runUntilStopChecked() async throws {
+        try await self.startChecked()
+        guard !self.isStopping else { return }
+        await withCheckedContinuation { continuation in
+            if self.isStopping {
+                continuation.resume()
+            } else {
+                self.stopContinuation = continuation
+            }
+        }
+        await self.shutdownTask?.value
     }
 
     public func daemonStatus() async -> PeekabooDaemonStatus {
@@ -144,10 +198,12 @@ public final class PeekabooDaemon: PeekabooDaemonControlProviding {
         let snapshots = await self.snapshotStatus()
         let trackerStatus = self.windowTracker?.status()
 
-        let bridgeStatus = PeekabooDaemonBridgeStatus(
-            socketPath: self.configuration.bridgeSocketPath,
-            hostKind: self.configuration.hostKind,
-            allowedOperations: Array(self.configuration.allowedOperations).sorted { $0.rawValue < $1.rawValue })
+        let bridgeStatus = self.configuration.bridgeHostingEnabled
+            ? PeekabooDaemonBridgeStatus(
+                socketPath: self.configuration.bridgeSocketPath,
+                hostKind: self.configuration.hostKind,
+                allowedOperations: Array(self.configuration.allowedOperations).sorted { $0.rawValue < $1.rawValue })
+            : nil
 
         let windowStatus = trackerStatus.map { status in
             PeekabooDaemonWindowTrackerStatus(
@@ -168,12 +224,33 @@ public final class PeekabooDaemon: PeekabooDaemonControlProviding {
             snapshots: snapshots,
             windowTracker: windowStatus,
             browser: try? self.services.browserStatus(channel: nil),
-            activity: self.activityStatus(now: Date()))
+            activity: self.activityStatus(now: Date()),
+            supportsConditionalStop: true)
     }
 
     public func requestStop() async -> Bool {
-        guard !self.isStopping else { return false }
+        await self.requestStopIfIdle()
+    }
+
+    public func requestStop(expectedPID: pid_t) async -> Bool {
+        guard expectedPID == getpid() else { return false }
+        return await self.requestStopIfIdle()
+    }
+
+    private func requestStopIfIdle() async -> Bool {
+        guard !self.isStopping, self.activeRequestCount == 0 else { return false }
         self.isStopping = true
+        self.shutdownTask = Task { [self] in
+            await self.finishStop()
+        }
+        return true
+    }
+
+    public func waitUntilStopped() async {
+        await self.shutdownTask?.value
+    }
+
+    private func finishStop() async {
         await self.shutdown()
         self.stopContinuation?.resume()
         self.stopContinuation = nil
@@ -181,17 +258,20 @@ public final class PeekabooDaemon: PeekabooDaemonControlProviding {
         if self.configuration.exitOnStop {
             exit(0)
         }
-
-        return true
     }
 
     public func recordActivityStart(operation: PeekabooBridgeOperation) async {
-        guard !self.isStopping else { return }
+        _ = await self.admitActivity(operation: operation)
+    }
+
+    public func admitActivity(operation: PeekabooBridgeOperation) async -> Bool {
+        guard !self.isStopping else { return false }
         self.activeRequestCount += 1
         self.lastActivityAt = Date()
         self.idleShutdownTask?.cancel()
         self.idleShutdownTask = nil
         self.logger.debug("daemon activity started op=\(operation.rawValue)")
+        return true
     }
 
     public func recordActivityEnd(operation: PeekabooBridgeOperation) async {
@@ -205,16 +285,17 @@ public final class PeekabooDaemon: PeekabooDaemonControlProviding {
     private func shutdown() async {
         self.idleShutdownTask?.cancel()
         self.idleShutdownTask = nil
-        await self.services.browser.disconnect()
-
-        self.windowTracker?.stop()
-        self.windowTracker = nil
-        WindowMovementTracking.provider = nil
 
         if let host = self.bridgeHost {
             await host.stop()
             self.bridgeHost = nil
         }
+
+        await self.services.browser.disconnect()
+
+        self.windowTracker?.stop()
+        self.windowTracker = nil
+        WindowMovementTracking.provider = nil
     }
 
     private func snapshotStatus() async -> PeekabooDaemonSnapshotStatus {

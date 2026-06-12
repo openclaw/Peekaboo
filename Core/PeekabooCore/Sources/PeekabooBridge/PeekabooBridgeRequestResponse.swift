@@ -8,6 +8,7 @@ public enum PeekabooBridgeRequest: Codable, Sendable {
     case requestPostEventPermission
     case daemonStatus
     case daemonStop
+    case daemonStopIf(PeekabooBridgeDaemonStopRequest)
     case browserStatus(PeekabooBridgeBrowserChannelRequest)
     case browserConnect(PeekabooBridgeBrowserChannelRequest)
     case browserDisconnect
@@ -97,6 +98,7 @@ extension PeekabooBridgeRequest {
         case .requestPostEventPermission: .requestPostEventPermission
         case .daemonStatus: .daemonStatus
         case .daemonStop: .daemonStop
+        case .daemonStopIf: .daemonStop
         case .browserStatus: .browserStatus
         case .browserConnect: .browserConnect
         case .browserDisconnect: .browserDisconnect

@@ -108,7 +108,7 @@ struct PeekabooBridgeTests {
             allowedTeamIDs: [],
             requestTimeoutSec: 2)
 
-        await host.start()
+        try await host.startChecked()
         defer { Task { await host.stop() } }
 
         let identity = PeekabooBridgeClientIdentity(
@@ -141,7 +141,7 @@ struct PeekabooBridgeTests {
             allowedTeamIDs: [],
             requestTimeoutSec: 2)
 
-        await host.start()
+        try await host.startChecked()
         defer { Task { await host.stop() } }
 
         let identity = PeekabooBridgeClientIdentity(
@@ -906,7 +906,7 @@ extension PeekabooBridgeTests {
             allowedTeamIDs: [],
             requestTimeoutSec: 2)
 
-        await host.start()
+        try await host.startChecked()
         defer { Task { await host.stop() } }
 
         let identity = PeekabooBridgeClientIdentity(
@@ -953,7 +953,7 @@ extension PeekabooBridgeTests {
             allowedTeamIDs: [],
             requestTimeoutSec: 2)
 
-        await host.start()
+        try await host.startChecked()
         defer { Task { await host.stop() } }
 
         let remote = await MainActor.run {
@@ -992,7 +992,7 @@ extension PeekabooBridgeTests {
             allowedTeamIDs: [],
             requestTimeoutSec: 2)
 
-        await host.start()
+        try await host.startChecked()
         defer { Task { await host.stop() } }
 
         let remote = await MainActor.run {
@@ -1026,7 +1026,7 @@ extension PeekabooBridgeTests {
             allowedTeamIDs: [],
             requestTimeoutSec: 2)
 
-        await host.start()
+        try await host.startChecked()
         defer { Task { await host.stop() } }
 
         let remote = await MainActor.run {
@@ -1074,7 +1074,7 @@ extension PeekabooBridgeTests {
             allowedTeamIDs: [],
             requestTimeoutSec: 2)
 
-        await host.start()
+        try await host.startChecked()
         defer { Task { await host.stop() } }
 
         let remote = await MainActor.run {
@@ -1107,7 +1107,7 @@ extension PeekabooBridgeTests {
             allowedTeamIDs: [],
             requestTimeoutSec: 2)
 
-        await host.start()
+        try await host.startChecked()
         defer { Task { await host.stop() } }
 
         let remote = await MainActor.run {
@@ -1709,8 +1709,6 @@ private final class UnimplementedDialogService: DialogServiceProtocol {
 
 @MainActor
 private final class StubDaemonControl: PeekabooDaemonControlProviding {
-    private var activeRequests = 0
-
     func daemonStatus() async -> PeekabooDaemonStatus {
         PeekabooDaemonStatus(
             running: true,
@@ -1722,18 +1720,14 @@ private final class StubDaemonControl: PeekabooDaemonControlProviding {
                 hostKind: .onDemand,
                 allowedOperations: [.daemonStatus]),
             activity: PeekabooDaemonActivityStatus(
-                activeRequests: self.activeRequests,
+                activeRequests: 0,
                 lastActivityAt: Date(),
                 idleTimeoutSeconds: 10,
-                idleExitAt: self.activeRequests == 0 ? Date().addingTimeInterval(10) : nil))
+                idleExitAt: Date().addingTimeInterval(10)))
     }
 
     func requestStop() async -> Bool {
         true
-    }
-
-    func recordActivityStart(operation: PeekabooBridgeOperation) async {
-        self.activeRequests += 1
     }
 }
 

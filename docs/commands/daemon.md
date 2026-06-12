@@ -9,6 +9,19 @@ read_when:
 
 Manage the on-demand headless daemon that keeps Peekaboo state warm, tracks windows live, and serves bridge requests.
 
+The default listener is `~/Library/Application Support/Peekaboo/daemon.sock`, separate from Peekaboo.app's
+`bridge.sock`.
+
+After upgrading from a version that used `bridge.sock` for the daemon, default `status`, `start`, and `stop`
+commands detect that legacy daemon by its daemon status. Peekaboo.app is never treated as a daemon.
+
+Normal automation commands migrate legacy auto or manual daemons that advertise atomic conditional stop. The daemon
+keeps its prior lifecycle mode, poll interval, and auto idle timeout, so a manually started daemon remains manual after
+migration. MCP sessions remain process-owned and are never migrated.
+Automatic migration defers while operational requests are active and keeps using the legacy daemon for that invocation.
+Older daemons without conditional stop remain on `bridge.sock` until they exit or are explicitly stopped. Explicit
+`daemon start` asks the user to stop those older daemons first, and asks for a retry when supported daemons are busy.
+
 ## Commands
 
 ### Start
@@ -16,7 +29,7 @@ Manage the on-demand headless daemon that keeps Peekaboo state warm, tracks wind
 peekaboo daemon start
 ```
 Options:
-- `--bridge-socket <path>` override the default bridge socket path.
+- `--bridge-socket <path>` override the default daemon socket path.
 - `--poll-interval-ms <ms>` window tracker poll interval (default 1000ms).
 - `--wait-seconds <sec>` how long to wait for startup (default 3s).
 
@@ -38,8 +51,8 @@ Shows:
 peekaboo daemon stop
 ```
 Options:
-- `--bridge-socket <path>` override the default bridge socket path.
-- `--wait-seconds <sec>` how long to wait for shutdown (default 3s).
+- `--bridge-socket <path>` override the default daemon socket path.
+- `--wait-seconds <sec>` how long to wait for shutdown (default 12s, above the Bridge request deadline).
 
 ## Notes
 - Normal automation commands auto-start the daemon in `auto` mode when the default daemon socket is unavailable.

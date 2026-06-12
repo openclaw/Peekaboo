@@ -46,14 +46,15 @@ For build and runtime version details, see [platform-support.md](platform-suppor
 ## Bridge and subprocess runners
 
 `peekaboo permissions status` prints a `Source:` line. If it says `Peekaboo Bridge`, capture and automation
-permissions are being checked on the selected host app. Grant Screen Recording and Accessibility to that host,
+permissions are being checked through the explicit Bridge socket or selected reusable daemon. Grant Screen
+Recording and Accessibility to that host process,
 or bypass Bridge for local capture only when the caller is known to run in the active Aqua GUI session:
 
 ```bash
 peekaboo see --mode screen --screen-index 0 --no-remote --capture-engine cg --json
 ```
 
-This is useful for app-launched subprocess runners where the parent process has TCC grants but the Bridge host
+This is useful for app-launched subprocess runners where the parent process has TCC grants but the selected host
 does not. For SSH, LaunchAgent, Codex, and other background launchd sessions, prefer the Bridge path even when
 TCC appears granted; CoreGraphics can otherwise report success while returning only the desktop wallpaper or a
 redacted image. Passing `--capture-engine` is a local-debug override and disables Bridge selection for that
