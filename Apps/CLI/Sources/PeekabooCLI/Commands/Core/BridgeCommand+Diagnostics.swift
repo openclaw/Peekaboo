@@ -60,20 +60,34 @@ struct BridgeDiagnostics {
                 results.append(.init(socketPath: socketPath, result: .success(report)))
 
                 let enabledOps = handshake.enabledOperations ?? handshake.supportedOperations
-                let isImplicitDaemonCandidate =
+                let isImplicitRuntimeCandidate =
                     BridgeSocketResolver.explicitBridgeSocket(
                         options: runtimeOptions,
                         environment: environment
                     ) == nil &&
                     selectablePaths.contains(socketPath)
-                let isSelectableDaemon: Bool = if isImplicitDaemonCandidate {
-                    await DaemonControlClient(socketPath: socketPath).fetchReusableDaemonStatus() != nil
+                let isSelectableRuntime: Bool
+                if isImplicitRuntimeCandidate,
+                   let role = DaemonLaunchPolicy.implicitRuntimeCandidateRole(
+                       socketPath: socketPath,
+                       daemonSocketPath: DaemonLaunchPolicy.daemonSocketPath(
+                           environment: environment
+                       )
+                   ) {
+                    let daemonStatus = handshake.hostKind == .gui
+                        ? nil
+                        : await DaemonControlClient(socketPath: socketPath).fetchStatus()
+                    isSelectableRuntime = DaemonLaunchPolicy.isSelectableImplicitRuntimeCandidate(
+                        role: role,
+                        handshake: handshake,
+                        daemonStatus: daemonStatus
+                    )
                 } else {
-                    true
+                    isSelectableRuntime = true
                 }
                 if selected == nil,
                    selectablePaths.contains(socketPath),
-                   isSelectableDaemon,
+                   isSelectableRuntime,
                    enabledOps.contains(.captureScreen) {
                     selected = .remote(socketPath: socketPath, handshake: report)
                 }

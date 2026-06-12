@@ -77,6 +77,8 @@ MCP (stdio)  ───┘                             │
 - Automation-oriented CLI commands prefer the default Peekaboo daemon socket.
 - The reusable daemon owns `~/Library/Application Support/Peekaboo/daemon.sock`; it never shares
   Peekaboo.app's `bridge.sock`.
+- If no reusable daemon is running, normal commands use a healthy Peekaboo.app GUI host before auto-starting a daemon,
+  preserving existing app-held TCC grants.
 - On upgrade, daemon control detects a still-running legacy auto or manual daemon on `bridge.sock`. Daemons that
   advertise conditional stop migrate to the dedicated listener while preserving lifecycle mode, poll interval, and
   auto idle timeout.

@@ -43,13 +43,25 @@ enum RuntimeHostResolver {
             ) {
                 return resolved
             }
-        } else if let resolved = await self.resolveRemoteServices(
-            candidates: [daemonSocketPath],
-            identity: identity,
-            options: options,
-            requireReusableDaemon: true
-        ) {
-            return resolved
+        } else {
+            if let resolved = await self.resolveRemoteServices(
+                candidates: [daemonSocketPath],
+                identity: identity,
+                options: options,
+                requireReusableDaemon: true
+            ) {
+                return resolved
+            }
+            if DaemonLaunchPolicy.shouldMigrateLegacyDaemon(targetSocketPath: daemonSocketPath),
+               let resolved = await self.resolveRemoteServices(
+                   candidates: [PeekabooBridgeConstants.peekabooSocketPath],
+                   identity: identity,
+                   options: options,
+                   requireReusableDaemon: false,
+                   requiredHostKind: .gui
+               ) {
+                return resolved
+            }
         }
 
         if options.autoStartDaemon,
@@ -77,13 +89,17 @@ enum RuntimeHostResolver {
         candidates: [String],
         identity: PeekabooBridgeClientIdentity,
         options: CommandRuntimeOptions,
-        requireReusableDaemon: Bool
+        requireReusableDaemon: Bool,
+        requiredHostKind: PeekabooBridgeHostKind? = nil
     )
     async -> (services: any PeekabooServiceProviding, hostDescription: String)? {
         for socketPath in candidates {
             let client = PeekabooBridgeClient(socketPath: socketPath)
             do {
                 let handshake = try await client.handshake(client: identity, requestedHost: nil)
+                guard requiredHostKind == nil || handshake.hostKind == requiredHostKind else {
+                    continue
+                }
                 guard BridgeCapabilityPolicy.supportsRemoteRequirements(for: handshake, options: options) else {
                     continue
                 }

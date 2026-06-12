@@ -29,8 +29,9 @@ Bridge diagnostics inspect sockets in this order:
    - Socket: `~/Library/Application Support/clawdbot/bridge.sock`
 5. **Local in-process** (no host available; requires the caller process to have TCC grants)
 
-Only the explicit Bridge override or daemon socket participates in normal runtime selection. The app-host sockets remain
-visible in diagnostics and can be selected with `--bridge-socket` or `PEEKABOO_BRIDGE_SOCKET`.
+Normal runtime selection prefers the reusable daemon, then a healthy Peekaboo.app GUI host before starting a daemon.
+This preserves existing app-held TCC grants while keeping socket ownership separate. Other app-host sockets remain
+diagnostic-only unless selected with `--bridge-socket` or `PEEKABOO_BRIDGE_SOCKET`.
 
 There is **no auto-launch** of Peekaboo.app.
 

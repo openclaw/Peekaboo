@@ -360,6 +360,66 @@ struct CommandRuntimeInjectionTests {
     }
 
     @Test
+    func `implicit runtime candidates preserve the default app fallback only`() {
+        #expect(DaemonLaunchPolicy.implicitRuntimeCandidateRole(
+            socketPath: PeekabooBridgeConstants.daemonSocketPath,
+            daemonSocketPath: PeekabooBridgeConstants.daemonSocketPath
+        ) == .reusableDaemon)
+        #expect(DaemonLaunchPolicy.implicitRuntimeCandidateRole(
+            socketPath: PeekabooBridgeConstants.peekabooSocketPath,
+            daemonSocketPath: PeekabooBridgeConstants.daemonSocketPath
+        ) == .defaultAppFallback)
+        #expect(DaemonLaunchPolicy.implicitRuntimeCandidateRole(
+            socketPath: PeekabooBridgeConstants.peekabooSocketPath,
+            daemonSocketPath: "/tmp/custom-daemon.sock"
+        ) == nil)
+    }
+
+    @Test
+    func `default app fallback accepts GUI hosts and legacy daemons`() {
+        let guiHandshake = PeekabooBridgeHandshakeResponse(
+            negotiatedVersion: PeekabooBridgeConstants.protocolVersion,
+            hostKind: .gui,
+            build: nil,
+            supportedOperations: [.captureScreen]
+        )
+        let daemonHandshake = PeekabooBridgeHandshakeResponse(
+            negotiatedVersion: PeekabooBridgeConstants.protocolVersion,
+            hostKind: .onDemand,
+            build: nil,
+            supportedOperations: [.captureScreen]
+        )
+        let embeddedHandshake = PeekabooBridgeHandshakeResponse(
+            negotiatedVersion: PeekabooBridgeConstants.protocolVersion,
+            hostKind: .inProcess,
+            build: nil,
+            supportedOperations: [.captureScreen]
+        )
+        let daemonStatus = PeekabooDaemonStatus(running: true, mode: .auto)
+
+        #expect(DaemonLaunchPolicy.isSelectableImplicitRuntimeCandidate(
+            role: .defaultAppFallback,
+            handshake: guiHandshake,
+            daemonStatus: nil
+        ))
+        #expect(DaemonLaunchPolicy.isSelectableImplicitRuntimeCandidate(
+            role: .defaultAppFallback,
+            handshake: daemonHandshake,
+            daemonStatus: daemonStatus
+        ))
+        #expect(!DaemonLaunchPolicy.isSelectableImplicitRuntimeCandidate(
+            role: .defaultAppFallback,
+            handshake: embeddedHandshake,
+            daemonStatus: nil
+        ))
+        #expect(!DaemonLaunchPolicy.isSelectableImplicitRuntimeCandidate(
+            role: .reusableDaemon,
+            handshake: guiHandshake,
+            daemonStatus: nil
+        ))
+    }
+
+    @Test
     func `bridge diagnostics select only runtime-routed sockets`() {
         let options = CommandRuntimeOptions()
         let environment = ["PEEKABOO_DAEMON_SOCKET": "/tmp/custom-daemon.sock"]

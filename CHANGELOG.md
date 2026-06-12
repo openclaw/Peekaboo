@@ -3,7 +3,7 @@
 ## Unreleased
 
 ### Fixed
-- Bridge hosts now use atomic lease-backed socket ownership and bounded nonblocking transport, keep Peekaboo.app and the reusable daemon on distinct paths, preserve lifecycle settings while migrating legacy daemons, prevent MCP from hosting a bridge listener, safely recover stale sockets, and release abandoned client connections instead of wedging. Thanks @Artifact-LV for #184.
+- Bridge hosts now use atomic lease-backed socket ownership and bounded nonblocking transport, keep Peekaboo.app and the reusable daemon on distinct paths while preserving the healthy app's TCC-backed fallback, preserve lifecycle settings while migrating legacy daemons, prevent MCP from hosting a bridge listener, safely recover stale sockets, and release abandoned client connections instead of wedging. Thanks @Artifact-LV for #184.
 
 ## [3.4.2] - 2026-06-12
 

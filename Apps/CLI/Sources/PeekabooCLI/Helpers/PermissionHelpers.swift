@@ -73,11 +73,25 @@ enum PermissionHelpers {
         for socketPath in candidates {
             let client = PeekabooBridgeClient(socketPath: socketPath)
             do {
-                if resolvedOverride == nil,
-                   await DaemonControlClient(socketPath: socketPath).fetchReusableDaemonStatus() == nil {
-                    continue
-                }
                 let handshake = try await client.handshake(client: identity, requestedHost: nil)
+                if resolvedOverride == nil {
+                    guard let role = DaemonLaunchPolicy.implicitRuntimeCandidateRole(
+                        socketPath: socketPath,
+                        daemonSocketPath: DaemonLaunchPolicy.daemonSocketPath(environment: environment)
+                    ) else {
+                        continue
+                    }
+                    let daemonStatus = handshake.hostKind == .gui
+                        ? nil
+                        : await DaemonControlClient(socketPath: socketPath).fetchStatus()
+                    guard DaemonLaunchPolicy.isSelectableImplicitRuntimeCandidate(
+                        role: role,
+                        handshake: handshake,
+                        daemonStatus: daemonStatus
+                    ) else {
+                        continue
+                    }
+                }
                 guard handshake.supportedOperations.contains(.permissionsStatus) else { continue }
                 return try await client.permissionsStatus()
             } catch {

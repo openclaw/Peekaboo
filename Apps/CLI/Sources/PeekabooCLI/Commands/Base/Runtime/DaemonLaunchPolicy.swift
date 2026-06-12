@@ -3,6 +3,11 @@ import Foundation
 import PeekabooBridge
 
 enum DaemonLaunchPolicy {
+    enum ImplicitRuntimeCandidateRole: Equatable {
+        case reusableDaemon
+        case defaultAppFallback
+    }
+
     struct LaunchResult {
         let status: PeekabooDaemonStatus
         let processID: pid_t
@@ -45,9 +50,37 @@ enum DaemonLaunchPolicy {
     }
 
     static func shouldMigrateLegacyDaemon(targetSocketPath: String) -> Bool {
-        let target = (targetSocketPath as NSString).expandingTildeInPath
-        let standard = (PeekabooBridgeConstants.daemonSocketPath as NSString).expandingTildeInPath
-        return (target as NSString).standardizingPath == (standard as NSString).standardizingPath
+        self.standardizedSocketPath(targetSocketPath) ==
+            self.standardizedSocketPath(PeekabooBridgeConstants.daemonSocketPath)
+    }
+
+    static func implicitRuntimeCandidateRole(
+        socketPath: String,
+        daemonSocketPath: String
+    ) -> ImplicitRuntimeCandidateRole? {
+        let candidate = self.standardizedSocketPath(socketPath)
+        if candidate == self.standardizedSocketPath(daemonSocketPath) {
+            return .reusableDaemon
+        }
+        if self.shouldMigrateLegacyDaemon(targetSocketPath: daemonSocketPath),
+           candidate == self.standardizedSocketPath(PeekabooBridgeConstants.peekabooSocketPath) {
+            return .defaultAppFallback
+        }
+        return nil
+    }
+
+    static func isSelectableImplicitRuntimeCandidate(
+        role: ImplicitRuntimeCandidateRole,
+        handshake: PeekabooBridgeHandshakeResponse,
+        daemonStatus: PeekabooDaemonStatus?
+    ) -> Bool {
+        switch role {
+        case .reusableDaemon:
+            daemonStatus.map(DaemonControlClient.isReusableDaemonStatus) == true
+        case .defaultAppFallback:
+            handshake.hostKind == .gui ||
+                daemonStatus.map(DaemonControlClient.isReusableDaemonStatus) == true
+        }
     }
 
     static func onDemandDaemonArguments(socketPath: String, idleTimeoutSeconds: TimeInterval) -> [String] {
@@ -293,5 +326,10 @@ enum DaemonLaunchPolicy {
         }
 
         return await client.fetchControllableDaemonStatus()?.pid != expectedPID
+    }
+
+    private static func standardizedSocketPath(_ path: String) -> String {
+        let expanded = (path as NSString).expandingTildeInPath
+        return (expanded as NSString).standardizingPath
     }
 }
