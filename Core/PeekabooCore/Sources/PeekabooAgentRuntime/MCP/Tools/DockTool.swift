@@ -18,7 +18,7 @@ public struct DockTool: MCPTool {
         Actions: launch, right-click (with menu selection), hide, show, list
         Can list all dock items including persistent and running applications.
         \(PeekabooMCPVersion.banner) using openai/gpt-5.5
-        and anthropic/claude-opus-4-7
+        and anthropic/claude-opus-4-8
         """
     }
 

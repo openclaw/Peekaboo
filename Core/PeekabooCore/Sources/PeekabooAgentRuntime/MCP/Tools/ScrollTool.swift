@@ -20,7 +20,7 @@ public struct ScrollTool: MCPTool {
         Can target specific elements or scroll at current mouse position.
         Supports smooth scrolling and configurable speed.
         \(PeekabooMCPVersion.banner) using openai/gpt-5.5
-        and anthropic/claude-opus-4-7
+        and anthropic/claude-opus-4-8
         """
     }
 

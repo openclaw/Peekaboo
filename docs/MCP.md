@@ -70,7 +70,7 @@ If your client supports environment variables, add provider and logging settings
       "command": "npx",
       "args": ["-y", "@steipete/peekaboo", "mcp"],
       "env": {
-        "PEEKABOO_AI_PROVIDERS": "openai/gpt-5.5,anthropic/claude-opus-4-7",
+        "PEEKABOO_AI_PROVIDERS": "openai/gpt-5.5,anthropic/claude-opus-4-8",
         "PEEKABOO_LOG_LEVEL": "info"
       }
     }

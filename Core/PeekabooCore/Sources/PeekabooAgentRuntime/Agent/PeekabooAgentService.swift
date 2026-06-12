@@ -263,11 +263,11 @@ public final class PeekabooAgentService: AgentServiceProtocol {
                     endTime: Date()))
         }
 
-        // If we have an event delegate, use streaming
-        if eventDelegate != nil {
+        // If we have an event delegate, emit events even for non-streaming models.
+        if let eventDelegate {
             // SAFETY: We ensure that the delegate is only accessed on MainActor
             // This is a legacy API pattern that predates Swift's strict concurrency
-            let unsafeDelegate = UnsafeTransfer<any AgentEventDelegate>(eventDelegate!)
+            let unsafeDelegate = UnsafeTransfer<any AgentEventDelegate>(eventDelegate)
 
             // Create event stream infrastructure
             let (eventStream, eventContinuation) = AsyncStream<AgentEvent>.makeStream()
@@ -289,35 +289,46 @@ public final class PeekabooAgentService: AgentServiceProtocol {
                 eventContinuation.yield(event)
             }
 
-            defer {
-                eventContinuation.finish()
-                eventTask.cancel()
-            }
-
             // Create event delegate wrapper for streaming
             let streamingDelegate = StreamingEventDelegate { chunk in
                 await eventHandler.send(.assistantMessage(content: chunk))
             }
 
-            let sessionContext = try await self.prepareSession(
-                task: task,
-                model: selectedModel,
-                label: "streaming",
-                logBehavior: .always)
+            do {
+                let sessionContext = try await self.prepareSession(
+                    task: task,
+                    model: selectedModel,
+                    label: "streaming",
+                    logBehavior: .always)
 
-            let result = try await self.executeWithStreaming(
-                context: sessionContext,
-                model: selectedModel,
-                maxSteps: maxSteps,
-                streamingDelegate: streamingDelegate,
-                queueMode: queueMode,
-                eventHandler: eventHandler,
-                enhancementOptions: enhancementOptions)
+                let result = if selectedModel.supportsStreaming {
+                    try await self.executeWithStreaming(
+                        context: sessionContext,
+                        model: selectedModel,
+                        maxSteps: maxSteps,
+                        streamingDelegate: streamingDelegate,
+                        queueMode: queueMode,
+                        eventHandler: eventHandler,
+                        enhancementOptions: enhancementOptions)
+                } else {
+                    try await self.executeWithoutStreaming(
+                        context: sessionContext,
+                        model: selectedModel,
+                        maxSteps: maxSteps,
+                        eventHandler: eventHandler,
+                        enhancementOptions: enhancementOptions)
+                }
 
-            // Send completion event with usage information
-            await eventHandler.send(.completed(summary: result.content, usage: result.usage))
-
-            return result
+                // Send completion event with usage information
+                await eventHandler.send(.completed(summary: result.content, usage: result.usage))
+                eventContinuation.finish()
+                await eventTask.value
+                return result
+            } catch {
+                eventContinuation.finish()
+                eventTask.cancel()
+                throw error
+            }
         } else {
             // Non-streaming execution
             let sessionContext = try await self.prepareSession(
@@ -342,6 +353,20 @@ public final class PeekabooAgentService: AgentServiceProtocol {
     {
         // Execute a task with streaming output
         let selectedModel = self.resolveModel(model)
+        if !selectedModel.supportsStreaming {
+            let sessionContext = try await self.prepareSession(
+                task: task,
+                model: selectedModel,
+                label: "(non-streaming)",
+                logBehavior: .verboseOnly)
+            let result = try await self.executeWithoutStreaming(
+                context: sessionContext,
+                model: selectedModel,
+                maxSteps: 20)
+            await streamHandler(result.content)
+            return result
+        }
+
         // For streaming without event handler, create a dummy delegate that discards chunks
         let dummyDelegate = StreamingEventDelegate { _ in /* discard */ }
         let sessionContext = try await self.prepareSession(

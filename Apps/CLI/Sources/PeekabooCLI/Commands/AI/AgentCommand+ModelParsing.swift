@@ -18,17 +18,21 @@ extension AgentCommand {
             .first
             .map { String($0).lowercased() }
 
-        if let configuration {
-            if let configuredModel = PeekabooAIService(configuration: configuration).resolveConfiguredModel(trimmed),
-               case .custom = configuredModel {
-                return configuredModel.supportsTools ? configuredModel : nil
-            }
+        if trimmed.caseInsensitiveCompare("claude") == .orderedSame ||
+            trimmed.caseInsensitiveCompare("anthropic") == .orderedSame {
+            return .anthropic(.opus48)
+        }
 
-            if let explicitProvider,
-               configuration.listCustomProviders().contains(where: { providerID, provider in
-                   provider.enabled && providerID.caseInsensitiveCompare(explicitProvider) == .orderedSame
-               }) {
-                return nil
+        if let configuration {
+            switch self.parseConfiguredCustomModel(
+                trimmed,
+                explicitProvider: explicitProvider,
+                configuration: configuration
+            ) {
+            case let .resolved(model):
+                return model
+            case .unresolved:
+                break
             }
         }
 
@@ -36,6 +40,11 @@ extension AgentCommand {
             return nil
         }
 
+        return self.supportedParsedModel(parsed, explicitProvider: explicitProvider)
+    }
+
+    @MainActor
+    private func supportedParsedModel(_ parsed: LanguageModel, explicitProvider: String?) -> LanguageModel? {
         switch parsed {
         case let .openai(model):
             if Self.supportedOpenAIInputs.contains(model) {
@@ -43,7 +52,7 @@ extension AgentCommand {
             }
         case let .anthropic(model):
             if Self.supportedAnthropicInputs.contains(model) {
-                return .anthropic(.opus48)
+                return .anthropic(model)
             }
         case let .google(model):
             if Self.supportedGoogleInputs.contains(model) {
@@ -74,6 +83,32 @@ extension AgentCommand {
     }
 
     @MainActor
+    private func parseConfiguredCustomModel(
+        _ modelString: String,
+        explicitProvider: String?,
+        configuration: PeekabooCore.ConfigurationManager
+    ) -> ConfiguredModelResolution {
+        if let configuredModel = PeekabooAIService(configuration: configuration).resolveConfiguredModel(modelString),
+           case .custom = configuredModel {
+            return .resolved(configuredModel.supportsTools ? configuredModel : nil)
+        }
+
+        if let explicitProvider,
+           configuration.listCustomProviders().contains(where: { providerID, provider in
+               provider.enabled && providerID.caseInsensitiveCompare(explicitProvider) == .orderedSame
+           }) {
+            return .resolved(nil)
+        }
+
+        return .unresolved
+    }
+
+    private enum ConfiguredModelResolution {
+        case resolved(LanguageModel?)
+        case unresolved
+    }
+
+    @MainActor
     func validatedModelSelection(configuration: PeekabooCore.ConfigurationManager? = nil) throws -> LanguageModel? {
         guard let modelString = self.model else { return nil }
         guard let parsed = self.parseModelString(modelString, configuration: configuration) else {
@@ -96,6 +131,7 @@ extension AgentCommand {
     ]
 
     private static let supportedAnthropicInputs: Set<LanguageModel.Anthropic> = [
+        .fable5,
         .opus48,
         .opus47,
         .opus45,

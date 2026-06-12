@@ -17,7 +17,7 @@ public struct ClickTool: MCPTool {
         Clicks on UI elements or coordinates.
         Supports element queries, specific IDs from `see` or `inspect_ui`, or raw coordinates.
         Background delivery is the default. Set `foreground` to true when the next step needs keyboard focus.
-        \(PeekabooMCPVersion.banner) using openai/gpt-5.5, anthropic/claude-opus-4-7
+        \(PeekabooMCPVersion.banner) using openai/gpt-5.5, anthropic/claude-opus-4-8
         """
     }
 

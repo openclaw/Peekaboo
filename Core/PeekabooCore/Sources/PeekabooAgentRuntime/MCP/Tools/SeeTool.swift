@@ -24,7 +24,7 @@ public struct SeeTool: MCPTool {
         Returns Peekaboo element IDs (B1 for buttons, T1 for text fields, etc.) that can be
         used with interaction commands and creates/updates a snapshot that tracks UI state.
         \(PeekabooMCPVersion.banner) using openai/gpt-5.5
-        and anthropic/claude-opus-4-7.
+        and anthropic/claude-opus-4-8.
         """
     }
 

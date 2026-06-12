@@ -19,7 +19,7 @@ public struct TypeTool: MCPTool {
         Can target specific elements or type at current keyboard focus. Uses background delivery by default when a
         target process is known; set `foreground` when the app must be focused first.
         \(PeekabooMCPVersion.banner) using openai/gpt-5.5
-        and anthropic/claude-opus-4-7
+        and anthropic/claude-opus-4-8
         """
     }
 

@@ -19,7 +19,7 @@ pages instead of duplicating provider lists in multiple places.
 | Provider | Models we test | Credential |
 | --- | --- | --- |
 | **OpenAI** | gpt-5, gpt-5-mini, gpt-4.1 | `OPENAI_API_KEY` |
-| **Anthropic** | claude-opus-4-7, claude-sonnet-4-6, claude-haiku-4-5 | `ANTHROPIC_API_KEY` |
+| **Anthropic** | claude-fable-5, claude-opus-4-8, claude-sonnet-4-6, claude-haiku-4-5 | `ANTHROPIC_API_KEY` |
 | **xAI** | grok-4 | `XAI_API_KEY` |
 | **Google** | gemini-3.1-pro-preview, gemini-3-flash | `GEMINI_API_KEY` |
 | **MiniMax** | MiniMax-M2.7, MiniMax-M2.7-highspeed | `MINIMAX_API_KEY` |
@@ -54,7 +54,8 @@ See [configuration.md](configuration.md) for the full precedence table.
 ## Picking a model
 
 ```bash
-peekaboo agent --model claude-opus-4-7 "summarize this window"
+peekaboo agent --model claude-fable-5 "summarize this window"
+peekaboo agent --model claude-opus-4-8 "summarize this window"
 peekaboo agent --model gemini-3-flash "summarize this window"
 peekaboo agent --model minimax "summarize this window"
 peekaboo agent --model minimax-cn/MiniMax-M2.7 "summarize this window"
@@ -64,7 +65,7 @@ peekaboo agent --model ollama/llama3.1:8b "describe this screenshot"
 peekaboo agent --model lmstudio/openai/gpt-oss-120b "summarize this window"
 ```
 
-Defaults come from `agent.defaultModel` in `~/.peekaboo/config.json`. Set a per-project default with `PEEKABOO_AGENT_MODEL`.
+Defaults come from `agent.defaultModel` in `~/.peekaboo/config.json`. Anthropic defaults stay on Opus 4.8 for zero-retention compatibility; select Fable explicitly when your Anthropic organization allows it. Set a per-project default with `PEEKABOO_AGENT_MODEL`.
 
 ## Tool calling
 

@@ -15,7 +15,7 @@ public struct SetValueTool: MCPTool {
         """
         Sets an accessibility element value directly without synthesizing keystrokes.
         Use for forms and controls after `see` or `inspect_ui` returns an element ID. Requires a settable AX value.
-        \(PeekabooMCPVersion.banner) using openai/gpt-5.5, anthropic/claude-opus-4-7
+        \(PeekabooMCPVersion.banner) using openai/gpt-5.5, anthropic/claude-opus-4-8
         """
     }
 

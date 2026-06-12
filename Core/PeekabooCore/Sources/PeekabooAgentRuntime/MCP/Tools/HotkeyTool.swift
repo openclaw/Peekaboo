@@ -16,7 +16,7 @@ public struct HotkeyTool: MCPTool {
         Presses keyboard shortcuts.
         Simulates one primary key plus optional modifiers, like Cmd+C or Ctrl+Shift+T.
         If app/pid/window targeting is supplied, sends the hotkey to that process in the background by default.
-        \(PeekabooMCPVersion.banner) using openai/gpt-5.5, anthropic/claude-opus-4-7
+        \(PeekabooMCPVersion.banner) using openai/gpt-5.5, anthropic/claude-opus-4-8
         """
     }
 

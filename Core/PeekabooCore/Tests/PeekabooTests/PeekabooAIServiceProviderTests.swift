@@ -3,6 +3,7 @@ import Tachikoma
 import Testing
 @testable import PeekabooAutomation
 
+@Suite(.serialized)
 struct PeekabooAIServiceProviderTests {
     @Test
     @MainActor
@@ -120,6 +121,119 @@ struct PeekabooAIServiceProviderTests {
                 #expect(String(describing: type(of: provider)).contains("PeekabooCustomProviderModel"))
                 #expect(Mirror(reflecting: provider).descendant("resolvedModelID") as? String == "mini")
                 #expect(Mirror(reflecting: provider).descendant("apiKey") as? String == "resolved-secret")
+            }
+    }
+
+    @Test
+    @MainActor
+    func `Custom provider advertises configured model max tokens`() throws {
+        try self.withIsolatedEnvironment(
+            ["PEEKABOO_CUSTOM_PROVIDER_KEY": "resolved-secret"],
+            configurationJSON: """
+            {
+              "aiProviders": { "providers": "local-proxy/large" },
+              "customProviders": {
+                "local-proxy": {
+                  "name": "Local Proxy",
+                  "type": "openai",
+                  "enabled": true,
+                  "options": {
+                    "baseURL": "http://localhost:8317/v1",
+                    "apiKey": "${PEEKABOO_CUSTOM_PROVIDER_KEY}"
+                  },
+                  "models": {
+                    "large": {
+                      "name": "Large Local Model",
+                      "supportsVision": true,
+                      "supportsTools": true,
+                      "maxTokens": 8192
+                    }
+                  }
+                }
+              }
+            }
+            """) {
+                let service = PeekabooAIService()
+                let model = try #require(service.availableModels().first)
+                let provider = try service.tachikomaConfiguration(for: model).makeProvider(for: model)
+
+                #expect(provider.capabilities.maxOutputTokens == 8192)
+            }
+    }
+
+    @Test
+    @MainActor
+    func `Custom Opus 4 8 provider advertises nonstreaming capability`() throws {
+        try self.withIsolatedEnvironment(
+            ["PEEKABOO_CUSTOM_PROVIDER_KEY": "resolved-secret"],
+            configurationJSON: """
+            {
+              "aiProviders": { "providers": "local-anthropic/claude-opus-4-8" },
+              "customProviders": {
+                "local-anthropic": {
+                  "name": "Local Anthropic",
+                  "type": "anthropic",
+                  "enabled": true,
+                  "options": {
+                    "baseURL": "http://localhost:8317",
+                    "apiKey": "${PEEKABOO_CUSTOM_PROVIDER_KEY}"
+                  },
+                  "models": {
+                    "claude-opus-4-8": {
+                      "name": "Claude Opus 4.8",
+                      "supportsTools": true
+                    }
+                  }
+                }
+              }
+            }
+            """) {
+                let service = PeekabooAIService()
+                let model = try #require(service.availableModels().first)
+                let provider = try service.tachikomaConfiguration(for: model).makeProvider(for: model)
+
+                #expect(model.modelId == "local-anthropic/claude-opus-4-8")
+                #expect(!provider.capabilities.supportsStreaming)
+                #expect(provider.capabilities.contextLength == 1_000_000)
+                #expect(provider.capabilities.maxOutputTokens == 128_000)
+            }
+    }
+
+    @Test
+    @MainActor
+    func `Custom Opus 4 7 provider advertises inferred current Claude capabilities`() throws {
+        try self.withIsolatedEnvironment(
+            ["PEEKABOO_CUSTOM_PROVIDER_KEY": "resolved-secret"],
+            configurationJSON: """
+            {
+              "aiProviders": { "providers": "local-anthropic/claude-opus-4-7" },
+              "customProviders": {
+                "local-anthropic": {
+                  "name": "Local Anthropic",
+                  "type": "anthropic",
+                  "enabled": true,
+                  "options": {
+                    "baseURL": "http://localhost:8317",
+                    "apiKey": "${PEEKABOO_CUSTOM_PROVIDER_KEY}"
+                  },
+                  "models": {
+                    "claude-opus-4-7": {
+                      "name": "Claude Opus 4.7",
+                      "supportsTools": true
+                    }
+                  }
+                }
+              }
+            }
+            """) {
+                let service = PeekabooAIService()
+                let model = try #require(service.availableModels().first)
+                let provider = try service.tachikomaConfiguration(for: model).makeProvider(for: model)
+
+                #expect(model.modelId == "local-anthropic/claude-opus-4-7")
+                #expect(provider.capabilities.supportsStreaming)
+                #expect(provider.capabilities.contextLength == 1_000_000)
+                #expect(provider.capabilities.maxOutputTokens == 128_000)
             }
     }
 
@@ -604,6 +718,24 @@ struct PeekabooAIServiceProviderTests {
                 let service = PeekabooAIService()
                 #expect(service.resolvedDefaultModel == .openai(.gpt55))
                 #expect(service.availableModels() == [.openai(.gpt55)])
+            }
+    }
+
+    @Test
+    @MainActor
+    func `Explicit Fable provider list does not fall back to unrelated credentials`() throws {
+        try self.withIsolatedEnvironment(
+            ["GEMINI_API_KEY": "key"],
+            configurationJSON: """
+            {
+              "aiProviders": {
+                "providers": "openai/gpt-5.5,anthropic/claude-fable-5"
+              }
+            }
+            """) {
+                let service = PeekabooAIService()
+                #expect(service.resolvedDefaultModel == .openai(.gpt55))
+                #expect(service.availableModels() == [.openai(.gpt55), .anthropic(.fable5)])
             }
     }
 

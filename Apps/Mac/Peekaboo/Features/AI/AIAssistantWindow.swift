@@ -40,7 +40,7 @@ public struct AIAssistantWindow: View {
 
                     Picker("Model", selection: self.$selectedModel) {
                         Text("GPT-5.5").tag(Model.openai(.gpt55))
-                        Text("Claude Opus 4.7").tag(Model.anthropic(.opus47))
+                        Text("Claude Opus 4.8").tag(Model.anthropic(.opus48))
                     }
                     .pickerStyle(.menu)
                 }
@@ -104,6 +104,7 @@ public struct AIAssistantWindow: View {
                 system: self.systemPrompt.isEmpty ? nil : self.systemPrompt,
                 settings: .default,
                 tools: nil)
+                .id(self.selectedModel.description)
         }
         .navigationTitle("AI Assistant")
         .toolbar {
@@ -139,7 +140,7 @@ public struct CompactAIAssistant: View {
 
                 Picker("Model", selection: self.$model) {
                     Text("GPT-5.5").tag(Model.openai(.gpt55))
-                    Text("Claude Opus 4.7").tag(Model.anthropic(.opus47))
+                    Text("Claude Opus 4.8").tag(Model.anthropic(.opus48))
                 }
                 .pickerStyle(.menu)
                 .controlSize(.small)
@@ -154,6 +155,7 @@ public struct CompactAIAssistant: View {
                 system: self.systemPrompt.isEmpty ? nil : self.systemPrompt,
                 settings: .default,
                 tools: nil)
+                .id(self.model.description)
         }
     }
 }

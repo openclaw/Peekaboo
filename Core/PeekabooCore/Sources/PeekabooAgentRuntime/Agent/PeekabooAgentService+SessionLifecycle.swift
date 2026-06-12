@@ -61,26 +61,38 @@ extension PeekabooAgentService {
                 eventContinuation.yield(event)
             }
 
-            defer {
-                eventContinuation.finish()
-                eventTask.cancel()
-            }
-
             let streamingDelegate = StreamingEventDelegate { chunk in
                 await eventHandler.send(.assistantMessage(content: chunk))
             }
 
-            let result = try await self.executeWithStreaming(
-                context: sessionContext,
-                model: selectedModel,
-                maxSteps: maxSteps,
-                streamingDelegate: streamingDelegate,
-                queueMode: queueMode,
-                eventHandler: eventHandler,
-                enhancementOptions: enhancementOptions)
+            do {
+                let result = if selectedModel.supportsStreaming {
+                    try await self.executeWithStreaming(
+                        context: sessionContext,
+                        model: selectedModel,
+                        maxSteps: maxSteps,
+                        streamingDelegate: streamingDelegate,
+                        queueMode: queueMode,
+                        eventHandler: eventHandler,
+                        enhancementOptions: enhancementOptions)
+                } else {
+                    try await self.executeWithoutStreaming(
+                        context: sessionContext,
+                        model: selectedModel,
+                        maxSteps: maxSteps,
+                        eventHandler: eventHandler,
+                        enhancementOptions: enhancementOptions)
+                }
 
-            await eventHandler.send(.completed(summary: result.content, usage: result.usage))
-            return result
+                await eventHandler.send(.completed(summary: result.content, usage: result.usage))
+                eventContinuation.finish()
+                await eventTask.value
+                return result
+            } catch {
+                eventContinuation.finish()
+                eventTask.cancel()
+                throw error
+            }
         } else {
             return try await self.executeWithoutStreaming(
                 context: sessionContext,
@@ -95,7 +107,8 @@ extension PeekabooAgentService {
         sessionId: String,
         model: LanguageModel? = nil,
         maxSteps: Int = 20,
-        eventDelegate: (any AgentEventDelegate)? = nil) async throws -> AgentExecutionResult
+        eventDelegate: (any AgentEventDelegate)? = nil,
+        enhancementOptions: AgentEnhancementOptions? = .default) async throws -> AgentExecutionResult
     {
         let continuationPrompt = "Continue from where we left off."
         return try await self.continueSession(
@@ -105,7 +118,8 @@ extension PeekabooAgentService {
             maxSteps: maxSteps,
             dryRun: false,
             eventDelegate: eventDelegate,
-            verbose: self.isVerbose)
+            verbose: self.isVerbose,
+            enhancementOptions: enhancementOptions)
     }
 
     // MARK: - Session Management
