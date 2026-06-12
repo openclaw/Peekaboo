@@ -2,7 +2,7 @@
 
 ![Peekaboo Banner](assets/peekaboo.png)
 
-[![npm package](https://img.shields.io/badge/npm_package-3.4.1-brightgreen?logo=npm&logoColor=white&style=flat-square)](https://www.npmjs.com/package/@steipete/peekaboo)
+[![npm package](https://img.shields.io/badge/npm_package-3.4.2-brightgreen?logo=npm&logoColor=white&style=flat-square)](https://www.npmjs.com/package/@steipete/peekaboo)
 [![License: MIT](https://img.shields.io/badge/License-MIT-ffd60a?style=flat-square)](https://opensource.org/licenses/MIT)
 [![macOS 15.0+ (Sequoia)](https://img.shields.io/badge/macOS-15.0%2B_(Sequoia)-0078d7?logo=apple&logoColor=white&style=flat-square)](https://www.apple.com/macos/)
 [![Swift 6.2](https://img.shields.io/badge/Swift-6.2-F05138?logo=swift&logoColor=white&style=flat-square)](https://swift.org/)
@@ -62,7 +62,7 @@ npx -y @steipete/peekaboo
 #       "command": "npx",
 #       "args": ["-y", "@steipete/peekaboo"],
 #       "env": {
-#         "PEEKABOO_AI_PROVIDERS": "openai/gpt-5.5,anthropic/claude-opus-4-7"
+#         "PEEKABOO_AI_PROVIDERS": "openai/gpt-5.5,anthropic/claude-opus-4-8"
 #       }
 #     }
 #   }

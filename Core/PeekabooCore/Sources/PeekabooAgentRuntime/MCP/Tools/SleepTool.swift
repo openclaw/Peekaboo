@@ -9,7 +9,7 @@ public struct SleepTool: MCPTool {
     public let description = """
     Pauses execution for a specified duration.
     Useful for waiting between UI actions or allowing animations to complete.
-    \(PeekabooMCPVersion.banner) using openai/gpt-5.5, anthropic/claude-opus-4-7
+    \(PeekabooMCPVersion.banner) using openai/gpt-5.5, anthropic/claude-opus-4-8
     """
 
     public var inputSchema: Value {

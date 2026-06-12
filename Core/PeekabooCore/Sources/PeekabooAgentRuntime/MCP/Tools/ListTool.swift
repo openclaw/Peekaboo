@@ -21,7 +21,7 @@ public struct ListTool: MCPTool {
     - { "item_type": "running_applications" }
     - { "item_type": "application_windows", "app": "Notes", "include_window_details": ["ids", "bounds"] }
     - { "item_type": "server_status" }
-    \(PeekabooMCPVersion.banner) using openai/gpt-5.5, anthropic/claude-opus-4-7
+    \(PeekabooMCPVersion.banner) using openai/gpt-5.5, anthropic/claude-opus-4-8
     """
 
     public var inputSchema: Value {

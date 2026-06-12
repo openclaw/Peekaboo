@@ -28,16 +28,19 @@ struct AgentCommandTests {
     }
 
     @Test
-    func `Supported Anthropic aliases map to Claude Opus 4.8`() throws {
+    func `Supported Anthropic aliases parse current models`() throws {
         let command = try AgentCommand.parse([])
 
+        #expect(command.parseModelString("claude-fable-5") == .anthropic(.fable5))
+        #expect(command.parseModelString("fable") == .anthropic(.fable5))
         #expect(command.parseModelString("claude-opus-4.8") == .anthropic(.opus48))
-        #expect(command.parseModelString("claude-opus-4.7") == .anthropic(.opus48))
-        #expect(command.parseModelString("claude-sonnet-4.6") == .anthropic(.opus48))
-        #expect(command.parseModelString("claude-sonnet-4.5") == .anthropic(.opus48))
-        #expect(command.parseModelString("Claude-Sonnet-4.5") == .anthropic(.opus48))
+        #expect(command.parseModelString("claude-opus-4.7") == .anthropic(.opus47))
+        #expect(command.parseModelString("claude-sonnet-4.6") == .anthropic(.sonnet46))
+        #expect(command.parseModelString("claude-sonnet-4.5") == .anthropic(.sonnet45))
+        #expect(command.parseModelString("Claude-Sonnet-4.5") == .anthropic(.sonnet45))
         #expect(command.parseModelString("claude") == .anthropic(.opus48))
-        #expect(command.parseModelString("claude-opus-4") == .anthropic(.opus48))
+        #expect(command.parseModelString("anthropic") == .anthropic(.opus48))
+        #expect(command.parseModelString("claude-opus-4") == .anthropic(.opus4))
         #expect(command.parseModelString("claude-3-sonnet") == nil)
     }
 
@@ -104,7 +107,7 @@ struct AgentCommandTests {
 
         #expect(command.parseModelString("  gpt-5  ") == .openai(.gpt55))
         #expect(command.parseModelString("\tgpt-5\n") == .openai(.gpt55))
-        #expect(command.parseModelString(" claude-sonnet-4.5 ") == .anthropic(.opus48))
+        #expect(command.parseModelString(" claude-sonnet-4.5 ") == .anthropic(.sonnet45))
         #expect(command.parseModelString(" gemini-3-flash ") == .google(.gemini3Flash))
         #expect(command.parseModelString(" minimax-m2.7 ") == .minimax(.m27))
         #expect(command.parseModelString(" minimax-cn/m2.7 ") == .minimaxCN(.m27))
@@ -198,7 +201,7 @@ struct AgentCommandTests {
             """
             {
               "aiProviders": {
-                "providers": "openai/gpt-5.5,anthropic/claude-opus-4-8"
+                "providers": "openai/gpt-5.5,anthropic/claude-fable-5"
               }
             }
             """,
@@ -207,7 +210,7 @@ struct AgentCommandTests {
             let command = try AgentCommand.parse([])
             let service = PeekabooAIService(configuration: PeekabooCore.ConfigurationManager.shared)
 
-            #expect(command.firstAvailableToolModel(from: service) == .anthropic(.opus48))
+            #expect(command.firstAvailableToolModel(from: service) == .anthropic(.fable5))
         }
     }
 
@@ -352,7 +355,7 @@ struct ModelSelectionIntegrationTests {
 
         command.model = "claude-opus-4.7"
         let parsedClaude = command.model.flatMap { command.parseModelString($0) }
-        #expect(parsedClaude == .anthropic(.opus48))
+        #expect(parsedClaude == .anthropic(.opus47))
 
         command.model = "gpt-4o"
         let remapped = command.model.flatMap { command.parseModelString($0) }
@@ -369,6 +372,7 @@ struct ModelSelectionIntegrationTests {
 
         let testCases: [(String, LanguageModel)] = [
             ("gpt-5.5", .openai(.gpt55)),
+            ("claude-fable-5", .anthropic(.fable5)),
             ("claude-opus-4.8", .anthropic(.opus48)),
             ("gemini-3.5-flash", .google(.gemini35Flash)),
             ("MiniMax-M2.7", .minimax(.m27)),

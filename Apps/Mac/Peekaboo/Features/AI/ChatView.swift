@@ -239,7 +239,7 @@ public struct MessageBubble: View {
 
 #Preview {
     PeekabooChatView(
-        model: LanguageModel.anthropic(.opus47),
+        model: LanguageModel.anthropic(.opus48),
         system: "You are a helpful assistant specialized in macOS automation and development.")
         .frame(width: 400, height: 600)
 }

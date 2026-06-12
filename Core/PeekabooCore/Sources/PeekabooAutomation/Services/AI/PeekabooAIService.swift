@@ -3,6 +3,47 @@ import Foundation
 import ImageIO
 import Tachikoma
 
+public struct InferredAnthropicModelCapabilities: Sendable {
+    public let contextLength: Int
+    public let maxOutputTokens: Int
+    public let supportsStreaming: Bool
+}
+
+public enum AnthropicModelCapabilityInference {
+    public static func capabilities(for modelId: String) -> InferredAnthropicModelCapabilities? {
+        guard let model = self.anthropicModel(for: modelId) else { return nil }
+        return InferredAnthropicModelCapabilities(
+            contextLength: model.contextLength,
+            maxOutputTokens: model.maxOutputTokens,
+            supportsStreaming: model.supportsStreaming)
+    }
+
+    public static func hasStreamingRefusalRisk(modelId: String) -> Bool {
+        if let capabilities = self.capabilities(for: modelId) {
+            return !capabilities.supportsStreaming
+        }
+        return LanguageModel.Anthropic.hasStreamingRefusalRisk(modelId: modelId)
+    }
+
+    private static func anthropicModel(for modelId: String) -> LanguageModel.Anthropic? {
+        let trimmed = modelId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        let parsedModel = ProviderParser.parse(trimmed)?.model
+        let candidates = [trimmed, parsedModel].compactMap(\.self)
+        for candidate in candidates {
+            guard case let .anthropic(model) = LanguageModel.parse(from: "anthropic/\(candidate)") else {
+                continue
+            }
+            if case .custom = model {
+                continue
+            }
+            return model
+        }
+        return nil
+    }
+}
+
 private final class PeekabooCustomProviderModel: ModelProvider, @unchecked Sendable {
     enum Kind {
         case openai
@@ -26,7 +67,8 @@ private final class PeekabooCustomProviderModel: ModelProvider, @unchecked Senda
         apiKey: String?,
         additionalHeaders: [String: String],
         supportsVision: Bool,
-        supportsTools: Bool)
+        supportsTools: Bool,
+        maxOutputTokens: Int?)
     {
         self.providerID = providerID
         self.resolvedModelID = resolvedModelID
@@ -35,10 +77,18 @@ private final class PeekabooCustomProviderModel: ModelProvider, @unchecked Senda
         self.baseURL = baseURL
         self.apiKey = apiKey
         self.additionalHeaders = additionalHeaders
+        let inferredAnthropicCapabilities = kind == .anthropic
+            ? AnthropicModelCapabilityInference.capabilities(for: resolvedModelID)
+            : nil
+        let inferredMaxOutputTokens = inferredAnthropicCapabilities?.maxOutputTokens ?? 4096
+        let hasStreamingRefusalRisk = inferredAnthropicCapabilities.map { !$0.supportsStreaming } ??
+            LanguageModel.Anthropic.hasStreamingRefusalRisk(modelId: resolvedModelID)
         self.capabilities = ModelCapabilities(
             supportsVision: supportsVision,
             supportsTools: supportsTools,
-            supportsStreaming: true)
+            supportsStreaming: !hasStreamingRefusalRisk,
+            contextLength: inferredAnthropicCapabilities?.contextLength ?? 128_000,
+            maxOutputTokens: maxOutputTokens ?? inferredMaxOutputTokens)
     }
 
     func generateText(request: ProviderRequest) async throws -> ProviderResponse {
@@ -95,7 +145,10 @@ private final class PeekabooCustomProviderModel: ModelProvider, @unchecked Senda
             modelId: self.resolvedModelID,
             baseURL: self.baseURL ?? "",
             configuration: self.compatibleConfiguration(),
-            additionalHeaders: self.additionalHeaders)
+            additionalHeaders: self.additionalHeaders,
+            reasoningProvider: "custom-anthropic",
+            reasoningModelId: self.modelId,
+            reasoningBaseURL: self.baseURL)
     }
 }
 
@@ -595,7 +648,8 @@ public final class PeekabooAIService {
             apiKey: configuration.resolveCredentialReference(provider.options.apiKey),
             additionalHeaders: provider.options.headers ?? [:],
             supportsVision: model?.supportsVision ?? true,
-            supportsTools: model?.supportsTools ?? true)
+            supportsTools: model?.supportsTools ?? true,
+            maxOutputTokens: model?.maxTokens)
     }
 
     private static func customProviderID(matching providerID: String, configuration: ConfigurationManager) -> String? {

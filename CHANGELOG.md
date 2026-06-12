@@ -1,6 +1,9 @@
 # Changelog
 
-## [3.4.2] - Unreleased
+## [3.4.2] - 2026-06-12
+
+### Added
+- `peekaboo agent` now supports explicit Claude Fable 5 (`claude-fable-5`) selection with 1M context and 128K max output while keeping Anthropic defaults on Opus 4.8 for zero-retention compatibility.
 
 ## [3.4.1] - 2026-06-10
 

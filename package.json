@@ -1,6 +1,6 @@
 {
   "name": "@steipete/peekaboo",
-  "version": "3.4.1",
+  "version": "3.4.2",
   "description": "macOS automation MCP server with screen capture, UI interaction, and AI analysis",
   "private": false,
   "type": "module",

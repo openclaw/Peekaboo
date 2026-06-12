@@ -49,7 +49,7 @@ final class SessionTitleGenerator {
 
     private static func timeoutTitle() async -> String {
         do {
-            try await Task.sleep(nanoseconds: 3_000_000_000)
+            try await Task.sleep(nanoseconds: 8_000_000_000)
         } catch {
             return self.fallbackTitle
         }
@@ -63,7 +63,7 @@ final class SessionTitleGenerator {
         hasAnthropic: Bool) async -> String
     {
         do {
-            let model = self.selectModel(
+            let model = Self.selectModel(
                 providers: providers,
                 hasOpenAI: hasOpenAI,
                 hasAnthropic: hasAnthropic)
@@ -72,7 +72,7 @@ final class SessionTitleGenerator {
             let result = try await generateText(
                 model: model,
                 messages: [.user(prompt)],
-                settings: GenerationSettings(maxTokens: 20, temperature: 0.3))
+                settings: self.generationSettings(for: model))
 
             return self.validatedTitle(result.text)
         } catch {
@@ -80,13 +80,16 @@ final class SessionTitleGenerator {
         }
     }
 
-    private func selectModel(
+    static func selectModel(
         providers: [String],
         hasOpenAI: Bool,
         hasAnthropic: Bool) -> LanguageModel
     {
+        if providers.contains("anthropic/claude-fable-5"), hasAnthropic {
+            return .anthropic(.fable5)
+        }
         if providers.contains(where: { $0 == "anthropic" || $0.hasPrefix("anthropic/") }), hasAnthropic {
-            return .anthropic(.opus47)
+            return .anthropic(.opus48)
         }
         if providers.contains(where: { $0 == "openai" || $0.hasPrefix("openai/") }), hasOpenAI {
             return .openai(.gpt55)
@@ -94,7 +97,16 @@ final class SessionTitleGenerator {
         if providers.contains(where: { $0 == "ollama" || $0.hasPrefix("ollama/") }) {
             return .ollama(.llama33)
         }
-        return .anthropic(.opus47)
+        return .anthropic(.opus48)
+    }
+
+    private func generationSettings(for model: LanguageModel) -> GenerationSettings {
+        switch model {
+        case .anthropic(.fable5):
+            GenerationSettings(maxTokens: 256, reasoningEffort: .low)
+        default:
+            GenerationSettings(maxTokens: 20, temperature: 0.3)
+        }
     }
 
     private func buildPrompt(for task: String) -> String {

@@ -33,7 +33,7 @@ public struct WindowTool: MCPTool {
         - { "action": "move", "app": "TextEdit", "x": 100, "y": 100 }
         - { "action": "set-bounds", "app": "Terminal", "x": 0, "y": 0, "width": 1280, "height": 720 }
         - { "action": "close", "app": "Safari", "title": "Grindr Web" }
-        \(PeekabooMCPVersion.banner) using openai/gpt-5.5, anthropic/claude-opus-4-7
+        \(PeekabooMCPVersion.banner) using openai/gpt-5.5, anthropic/claude-opus-4-8
         """
     }
 

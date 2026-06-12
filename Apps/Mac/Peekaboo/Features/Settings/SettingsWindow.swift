@@ -242,6 +242,7 @@ struct AISettingsView: View {
                 ("gpt-5-mini", "GPT-5 mini"),
             ]),
             ("anthropic", [
+                ("claude-fable-5", "Claude Fable 5"),
                 ("claude-opus-4-8", "Claude Opus 4.8"),
                 ("claude-opus-4-7", "Claude Opus 4.7"),
                 ("claude-sonnet-4-6", "Claude Sonnet 4.6"),
@@ -335,6 +336,8 @@ struct AISettingsView: View {
             "gpt-5-mini": "Cost-optimized GPT-5 Mini with the same tools + 400K context " +
                 "at a friendlier price.",
             // Anthropic models
+            "claude-fable-5": "Claude Fable 5 with 1M context for demanding " +
+                "reasoning and long-horizon agent tasks.",
             "claude-opus-4-8": "Claude Opus 4.8 with 1M context for long-running " +
                 "automation and computer-use tasks.",
             "claude-sonnet-4-6": "Claude Sonnet 4.6 with new tools + computer use, " +

@@ -32,12 +32,14 @@ struct AnthropicModelTests {
 
     @Test
     func `Anthropic default model selection`() {
-        // Test that Claude Opus is the default
+        // Tachikoma keeps the library-level Claude shortcut stable; Peekaboo chooses Fable separately.
         let defaultModel = Model.default
         let claudeModel = Model.claude
 
         #expect(defaultModel.providerName == "Anthropic")
         #expect(claudeModel.providerName == "Anthropic")
+        #expect(defaultModel.modelId == "claude-opus-4-8")
+        #expect(claudeModel.modelId == "claude-opus-4-8")
 
         // Test model shortcuts
         let anthropicModels = [
@@ -80,6 +82,7 @@ struct AnthropicModelTests {
     @Test
     func `Anthropic vision model capabilities`() {
         let visionCapableModels = [
+            Model.anthropic(.fable5),
             Model.anthropic(.opus45),
             Model.anthropic(.sonnet46),
             Model.anthropic(.haiku45),
@@ -107,6 +110,7 @@ struct AnthropicModelTests {
         #expect(opus45.modelId != haiku45.modelId)
 
         // Current Anthropic context windows are model-specific, not a simple family hierarchy.
+        #expect(Model.anthropic(.fable5).contextLength == 1_000_000)
         #expect(Model.anthropic(.opus48).contextLength == 1_000_000)
         #expect(sonnet46.contextLength == 1_000_000)
         #expect(opus45.contextLength == 500_000)
@@ -116,15 +120,20 @@ struct AnthropicModelTests {
 
     @Test
     func `Anthropic current models support tools`() {
+        let fable5 = Model.anthropic(.fable5)
         let opus48 = Model.anthropic(.opus48)
         let sonnet46 = Model.anthropic(.sonnet46)
 
+        #expect(fable5.providerName == "Anthropic")
         #expect(opus48.providerName == "Anthropic")
         #expect(sonnet46.providerName == "Anthropic")
 
+        #expect(!fable5.modelId.contains("thinking"))
         #expect(!opus48.modelId.contains("thinking"))
         #expect(!sonnet46.modelId.contains("thinking"))
 
+        #expect(fable5.supportsTools == true)
+        #expect(fable5.supportsStreaming == false)
         #expect(opus48.supportsTools == true)
         #expect(sonnet46.supportsTools == true)
     }

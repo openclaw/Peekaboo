@@ -27,7 +27,7 @@ public struct MenuTool: MCPTool {
         - Save document: { "action": "click", "app": "TextEdit", "path": "File > Save" }
         - Copy selection: { "action": "click", "app": "Safari", "path": "Edit > Copy" }
         \(PeekabooMCPVersion.banner) using openai/gpt-5.5
-        and anthropic/claude-opus-4-7
+        and anthropic/claude-opus-4-8
         """
     }
 

@@ -12,7 +12,7 @@ public struct PermissionsTool: MCPTool {
     Check macOS system permissions required for automation.
     Verifies both Screen Recording and Accessibility permissions.
     Returns the current permission status for each required permission.
-    \(PeekabooMCPVersion.banner) using openai/gpt-5.5, anthropic/claude-opus-4-7
+    \(PeekabooMCPVersion.banner) using openai/gpt-5.5, anthropic/claude-opus-4-8
     """
 
     public var inputSchema: Value {
