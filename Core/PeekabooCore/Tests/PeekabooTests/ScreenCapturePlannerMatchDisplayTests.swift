@@ -197,78 +197,53 @@ struct ScreenCapturePlannerMatchDisplayTests {
         #expect(size.height == 360)
     }
 
-    // MARK: - System screencapture regions
+    // MARK: - System screencapture display selection
 
     @Test
-    func `system screencapture region keeps primary display at top-left desktop origin`() {
-        let desktop = CGRect(x: 0, y: 0, width: 1920, height: 1080)
-        let display = CGRect(x: 0, y: 0, width: 1920, height: 1080)
+    func `system screencapture maps the first active display to one`() {
+        let displayNumber = ScreenCapturePlanner.systemScreencaptureDisplayNumber(
+            displayID: 42,
+            activeDisplayIDs: [42, 99])
 
-        let region = ScreenCapturePlanner.systemScreencaptureRegionRect(
-            appKitRect: display,
-            desktopBounds: desktop)
-
-        #expect(region == CGRect(x: 0, y: 0, width: 1920, height: 1080))
+        #expect(displayNumber == 1)
     }
 
     @Test
-    func `system screencapture region maps right-hand display without vertical offset`() {
-        let desktop = CGRect(x: 0, y: 0, width: 4480, height: 1440)
-        let display = CGRect(x: 1920, y: 0, width: 2560, height: 1440)
+    func `system screencapture maps a secondary active display to its one-based position`() {
+        let displayNumber = ScreenCapturePlanner.systemScreencaptureDisplayNumber(
+            displayID: 99,
+            activeDisplayIDs: [42, 99, 123])
 
-        let region = ScreenCapturePlanner.systemScreencaptureRegionRect(
-            appKitRect: display,
-            desktopBounds: desktop)
-
-        #expect(region == CGRect(x: 1920, y: 0, width: 2560, height: 1440))
+        #expect(displayNumber == 2)
     }
 
     @Test
-    func `system screencapture region maps display above primary to top of desktop`() {
-        let desktop = CGRect(x: 0, y: 0, width: 1920, height: 2160)
-        let abovePrimary = CGRect(x: 0, y: 1080, width: 1920, height: 1080)
+    func `system screencapture rejects a display missing from the active list`() {
+        let displayNumber = ScreenCapturePlanner.systemScreencaptureDisplayNumber(
+            displayID: 7,
+            activeDisplayIDs: [42, 99])
 
-        let region = ScreenCapturePlanner.systemScreencaptureRegionRect(
-            appKitRect: abovePrimary,
-            desktopBounds: desktop)
-
-        #expect(region == CGRect(x: 0, y: 0, width: 1920, height: 1080))
+        #expect(displayNumber == nil)
     }
 
     @Test
-    func `system screencapture region maps display below primary below the primary region`() {
-        let desktop = CGRect(x: 0, y: -1080, width: 1920, height: 2160)
-        let belowPrimary = CGRect(x: 0, y: -1080, width: 1920, height: 1080)
+    func `system screencapture omits subordinate mirrors when numbering extended displays`() {
+        let displayNumber = ScreenCapturePlanner.systemScreencaptureDisplayNumber(
+            displayID: 99,
+            activeDisplayIDs: [42, 43, 99],
+            mirroredDisplayOwners: [43: 42])
 
-        let region = ScreenCapturePlanner.systemScreencaptureRegionRect(
-            appKitRect: belowPrimary,
-            desktopBounds: desktop)
-
-        #expect(region == CGRect(x: 0, y: 1080, width: 1920, height: 1080))
+        #expect(displayNumber == 2)
     }
 
     @Test
-    func `system screencapture region maps left-hand display to left edge of desktop`() {
-        let desktop = CGRect(x: -3008, y: 0, width: 4928, height: 1692)
-        let leftDisplay = CGRect(x: -3008, y: 0, width: 3008, height: 1692)
+    func `system screencapture maps a subordinate mirror to its owner`() {
+        let displayNumber = ScreenCapturePlanner.systemScreencaptureDisplayNumber(
+            displayID: 43,
+            activeDisplayIDs: [42, 43, 99],
+            mirroredDisplayOwners: [43: 42])
 
-        let region = ScreenCapturePlanner.systemScreencaptureRegionRect(
-            appKitRect: leftDisplay,
-            desktopBounds: desktop)
-
-        #expect(region == CGRect(x: 0, y: 0, width: 3008, height: 1692))
-    }
-
-    @Test
-    func `system screencapture region maps mixed left and above display to desktop top-left`() {
-        let desktop = CGRect(x: -3008, y: 0, width: 4928, height: 2772)
-        let leftAboveDisplay = CGRect(x: -3008, y: 1080, width: 3008, height: 1692)
-
-        let region = ScreenCapturePlanner.systemScreencaptureRegionRect(
-            appKitRect: leftAboveDisplay,
-            desktopBounds: desktop)
-
-        #expect(region == CGRect(x: 0, y: 0, width: 3008, height: 1692))
+        #expect(displayNumber == 1)
     }
 
     // MARK: - Unmapped fallback paths (the core #143 fix)

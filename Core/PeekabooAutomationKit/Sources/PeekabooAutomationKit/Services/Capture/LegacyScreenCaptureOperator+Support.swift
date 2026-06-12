@@ -35,14 +35,6 @@ extension LegacyScreenCaptureOperator {
             configuration: self.makeScreenshotConfiguration())
     }
 
-    func captureDisplayWithCGDisplay(screen: NSScreen) throws -> CGImage {
-        let resolvedID = self.displayID(for: screen) ?? CGMainDisplayID()
-        guard let image = CGDisplayCreateImage(resolvedID) else {
-            throw OperationError.captureFailed(reason: "CGDisplayCreateImage returned nil")
-        }
-        return image
-    }
-
     func resolveDisplay(
         for screen: NSScreen,
         displayIndex: Int,

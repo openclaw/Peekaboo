@@ -45,8 +45,7 @@ extension LegacyScreenCaptureOperator {
                 "System screencapture screen capture failed; refusing CGDisplayCreateImage fallback",
                 metadata: ["error": String(describing: error)],
                 correlationId: correlationId)
-            throw OperationError.captureFailed(
-                reason: "System screencapture failed; refusing unsafe CoreGraphics full-screen fallback")
+            throw error
         }
 
         let scaledImage = ScreenCaptureImageScaler.maybeDownscale(
@@ -104,14 +103,9 @@ extension LegacyScreenCaptureOperator {
             displayID: display.id,
             fallbackPixelWidth: CGDisplayPixelsWide(display.id),
             frameWidth: display.bounds.width)
-        let image = if let systemImage = try? self.captureAreaWithSystemScreencapture(
+        let image = try self.captureAreaWithSystemScreencapture(
             rect,
             correlationId: correlationId)
-        {
-            systemImage
-        } else {
-            try self.captureAreaWithCoreGraphics(display: display, rect: rect)
-        }
         let scaledImage = ScreenCaptureImageScaler.maybeDownscale(
             image,
             scale: scale,
@@ -132,24 +126,7 @@ extension LegacyScreenCaptureOperator {
         return CaptureResult(imageData: imageData, metadata: metadata)
     }
 
-    private func captureAreaWithCoreGraphics(
-        display: (index: Int, id: CGDirectDisplayID, bounds: CGRect),
-        rect: CGRect) throws -> CGImage
-    {
-        guard let displayImage = CGDisplayCreateImage(display.id) else {
-            throw OperationError.captureFailed(reason: "CGDisplayCreateImage returned nil for display")
-        }
-        let cropRect = Self.pixelCropRect(
-            globalRect: rect,
-            displayBounds: display.bounds,
-            scale: Self.nativeScale(for: display))
-        guard let image = displayImage.cropping(to: cropRect) else {
-            throw OperationError.captureFailed(reason: "Failed to crop CoreGraphics display image for capture area")
-        }
-        return image
-    }
-
-    private nonisolated static func activeDisplays() -> [(index: Int, id: CGDirectDisplayID, bounds: CGRect)] {
+    nonisolated static func activeDisplays() -> [(index: Int, id: CGDirectDisplayID, bounds: CGRect)] {
         var count: UInt32 = 0
         guard CGGetActiveDisplayList(0, nil, &count) == .success, count > 0 else {
             return []
@@ -161,24 +138,5 @@ extension LegacyScreenCaptureOperator {
         return ids.prefix(Int(count)).enumerated().map { index, id in
             (index: index, id: id, bounds: CGDisplayBounds(id))
         }
-    }
-
-    private nonisolated static func pixelCropRect(
-        globalRect: CGRect,
-        displayBounds: CGRect,
-        scale: CGFloat) -> CGRect
-    {
-        CGRect(
-            x: ((globalRect.minX - displayBounds.minX) * scale).rounded(.down),
-            y: ((globalRect.minY - displayBounds.minY) * scale).rounded(.down),
-            width: max((globalRect.width * scale).rounded(.toNearestOrAwayFromZero), 1),
-            height: max((globalRect.height * scale).rounded(.toNearestOrAwayFromZero), 1))
-    }
-
-    private nonisolated static func nativeScale(for display: (index: Int, id: CGDirectDisplayID, bounds: CGRect))
-        -> CGFloat
-    {
-        let width = max(display.bounds.width, 1)
-        return max(CGFloat(CGDisplayPixelsWide(display.id)) / width, 1)
     }
 }

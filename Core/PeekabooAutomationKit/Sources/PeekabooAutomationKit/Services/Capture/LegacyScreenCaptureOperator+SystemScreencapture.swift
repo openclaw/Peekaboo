@@ -9,18 +9,36 @@ extension LegacyScreenCaptureOperator {
         screen: NSScreen,
         correlationId: String) throws -> CGImage
     {
-        let desktopBounds = Self.desktopBounds(for: NSScreen.screens.map(\.frame))
-        let region = ScreenCapturePlanner.systemScreencaptureRegionRect(
-            appKitRect: screen.frame,
-            desktopBounds: desktopBounds)
+        guard let displayID = self.displayID(for: screen) else {
+            throw OperationError.captureFailed(reason: "Could not resolve the selected NSScreen display ID")
+        }
+        let activeDisplayIDs = Self.activeDisplays().map(\.id)
+        let mirroredDisplayOwners = Dictionary(
+            uniqueKeysWithValues: activeDisplayIDs.compactMap { activeDisplayID in
+                let owner = CGDisplayMirrorsDisplay(activeDisplayID)
+                return owner == kCGNullDirectDisplay ? nil : (activeDisplayID, owner)
+            })
+        guard let displayNumber = ScreenCapturePlanner.systemScreencaptureDisplayNumber(
+            displayID: displayID,
+            activeDisplayIDs: activeDisplayIDs,
+            mirroredDisplayOwners: mirroredDisplayOwners)
+        else {
+            throw OperationError.captureFailed(
+                reason: "Selected display \(displayID) is not in the active display list")
+        }
+
         return try self.captureImageWithSystemScreencapture(
             arguments: [
                 "-x",
-                Self.regionArgument(for: region),
+                "-D",
+                String(displayNumber),
             ],
             outputPrefix: "peekaboo-screen",
             logMessage: "Captured screen via system screencapture",
-            metadata: [:],
+            metadata: [
+                "displayID": String(displayID),
+                "displayNumber": String(displayNumber),
+            ],
             correlationId: correlationId)
     }
 
@@ -72,10 +90,17 @@ extension LegacyScreenCaptureOperator {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
         process.arguments = arguments + [url.path]
+        let standardError = Pipe()
+        process.standardError = standardError
         try process.run()
         process.waitUntilExit()
+        let errorData = standardError.fileHandleForReading.readDataToEndOfFile()
         guard process.terminationStatus == 0 else {
-            throw OperationError.captureFailed(reason: "screencapture exited with \(process.terminationStatus)")
+            let errorText = (String(bytes: errorData, encoding: .utf8) ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let detail = errorText.isEmpty ? "" : ": \(errorText)"
+            throw OperationError.captureFailed(
+                reason: "screencapture exited with \(process.terminationStatus)\(detail)")
         }
 
         let data = try Data(contentsOf: url)
@@ -99,11 +124,5 @@ extension LegacyScreenCaptureOperator {
         "-R\(Int(rect.minX.rounded(.down))),\(Int(rect.minY.rounded(.down)))," +
             "\(Int(rect.width.rounded(.toNearestOrAwayFromZero)))," +
             "\(Int(rect.height.rounded(.toNearestOrAwayFromZero)))"
-    }
-
-    private nonisolated static func desktopBounds(for frames: [CGRect]) -> CGRect {
-        frames.reduce(CGRect.null) { partial, frame in
-            partial.union(frame)
-        }
     }
 }

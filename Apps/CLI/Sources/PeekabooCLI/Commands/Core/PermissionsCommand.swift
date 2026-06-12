@@ -175,7 +175,10 @@ extension PermissionsCommand {
                 print("Screen Recording permission is granted.")
             } else {
                 print("Screen Recording permission was not granted.")
-                print("If no prompt appeared, open System Settings > Privacy & Security > Screen & System Audio Recording.")
+                print(
+                    "If no prompt appeared, open System Settings > Privacy & Security > " +
+                        "Screen & System Audio Recording."
+                )
                 print("Add or enable the current Peekaboo binary, then restart Peekaboo.")
             }
         }

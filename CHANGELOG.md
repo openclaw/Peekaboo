@@ -5,6 +5,9 @@
 ### Added
 - `peekaboo agent` now supports explicit Claude Fable 5 (`claude-fable-5`) selection with 1M context and 128K max output while keeping Anthropic defaults on Opus 4.8 for zero-retention compatibility.
 
+### Fixed
+- Legacy screen and area capture now fails with a permission or native capture error instead of returning wallpaper-only/redacted pixels from background sessions. Thanks @VishalJ99 for #185.
+
 ## [3.4.1] - 2026-06-10
 
 ### Fixed
