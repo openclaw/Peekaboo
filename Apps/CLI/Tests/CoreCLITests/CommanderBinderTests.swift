@@ -308,6 +308,16 @@ struct CommanderBinderTests {
     }
 
     @Test
+    func `Screen recording permission request uses local host mode`() throws {
+        let parsed = ParsedValues(positional: [], options: [:], flags: [])
+        let options = try CommanderCLIBinder.makeRuntimeOptions(
+            from: parsed,
+            commandType: PermissionsCommand.RequestScreenRecordingSubcommand.self
+        )
+        #expect(options.preferRemote == false)
+    }
+
+    @Test
     func `Image runtime honors explicit bridge socket`() throws {
         let parsed = ParsedValues(
             positional: [],

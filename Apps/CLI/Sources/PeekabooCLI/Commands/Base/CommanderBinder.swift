@@ -119,7 +119,8 @@ enum CommanderCLIBinder {
             commandType == ConfigCommand.ModelsProviderCommand.self ||
             commandType == AppCommand.ListSubcommand.self ||
             commandType == ListCommand.AppsSubcommand.self ||
-            commandType == ListCommand.ScreensSubcommand.self
+            commandType == ListCommand.ScreensSubcommand.self ||
+            commandType == PermissionsCommand.RequestScreenRecordingSubcommand.self
     }
 
     private static func isDaemonCommand(_ commandType: (any ParsableCommand.Type)?) -> Bool {
