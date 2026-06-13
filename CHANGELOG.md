@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Fixed
+- Menu-extra clicks now reject items parked outside active displays by menu bar managers instead of moving the pointer to offscreen coordinates and reporting false success.
+
 ## [3.5.2] - 2026-06-13
 
 ### Changed
