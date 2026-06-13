@@ -45,6 +45,23 @@ extension AppCommand {
             self.resolvedRuntime.configuration.jsonOutput
         }
 
+        static func filteredApplications(
+            _ applications: [ServiceApplicationInfo],
+            includeHidden: Bool,
+            includeBackground: Bool
+        ) -> [ServiceApplicationInfo] {
+            applications.filter { app in
+                if !includeHidden, app.isHidden {
+                    return false
+                }
+                if !includeBackground,
+                   app.activationPolicy == .accessory || app.activationPolicy == .prohibited {
+                    return false
+                }
+                return true
+            }
+        }
+
         /// Enumerate running applications, apply filtering flags, and emit the chosen output representation.
         @MainActor
         mutating func run(using runtime: CommandRuntime) async throws {
@@ -53,12 +70,11 @@ extension AppCommand {
             do {
                 let appsOutput = try await self.services.applications.listApplications()
 
-                // Filter based on flags
-                let filtered = appsOutput.data.applications.filter { app in
-                    if !self.includeHidden && app.isHidden { return false }
-                    if !self.includeBackground && app.name.isEmpty { return false }
-                    return true
-                }
+                let filtered = Self.filteredApplications(
+                    appsOutput.data.applications,
+                    includeHidden: self.includeHidden,
+                    includeBackground: self.includeBackground
+                )
 
                 struct AppInfo: Codable {
                     let name: String
