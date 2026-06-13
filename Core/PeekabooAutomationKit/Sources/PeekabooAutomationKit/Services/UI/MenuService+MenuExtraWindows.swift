@@ -11,9 +11,10 @@ import Foundation
 extension MenuService {
     func getMenuBarItemsViaWindows() -> [MenuExtraInfo] {
         var items: [MenuExtraInfo] = []
+        let displayBounds = self.activeDisplayBounds()
 
         // Preferred: call LSUIElement helper (AppKit context) to get WindowServer view like Ice.
-        if let helperItems = self.getMenuBarItemsViaHelper(), !helperItems.isEmpty {
+        if let helperItems = self.getMenuBarItemsViaHelper(displayBounds: displayBounds), !helperItems.isEmpty {
             self.logger.debug("MenuService helper returned \(helperItems.count) items")
             return helperItems
         }
@@ -31,7 +32,7 @@ extension MenuService {
         if !combinedIDs.isEmpty {
             // Use CGWindow metadata per window ID to resolve owner/bundle.
             for id in combinedIDs {
-                if let item = self.makeMenuExtra(from: id) {
+                if let item = self.makeMenuExtra(from: id, displayBounds: displayBounds) {
                     items.append(item)
                     seenIDs.insert(id)
                 } else {
@@ -50,7 +51,7 @@ extension MenuService {
         for windowInfo in windowList {
             guard let windowID = windowInfo[kCGWindowNumber as String] as? CGWindowID else { continue }
             guard !seenIDs.contains(windowID) else { continue }
-            if let item = self.makeMenuExtra(from: windowID, info: windowInfo) {
+            if let item = self.makeMenuExtra(from: windowID, info: windowInfo, displayBounds: displayBounds) {
                 items.append(item)
                 seenIDs.insert(windowID)
             }
@@ -73,6 +74,66 @@ extension MenuService {
         return nil
     }
 
+    func isMenuExtraPointVisible(_ point: CGPoint) -> Bool {
+        Self.isMenuExtraPointVisible(point, displayBounds: self.activeDisplayBounds())
+    }
+
+    func isMenuExtraAXPositionVisible(_ position: CGPoint) -> Bool {
+        position != .zero && self.isMenuExtraPointVisible(position)
+    }
+
+    static func isMenuExtraPointVisible(_ point: CGPoint, displayBounds: [CGRect]) -> Bool {
+        displayBounds.contains { $0.contains(point) }
+    }
+
+    static func isMenuExtraFrameVisible(_ frame: CGRect, displayBounds: [CGRect]) -> Bool {
+        guard frame.width > 0, frame.height > 0 else { return false }
+        return self.isMenuExtraPointVisible(
+            CGPoint(x: frame.midX, y: frame.midY),
+            displayBounds: displayBounds)
+    }
+
+    static func isIndividuallyHiddenMenuExtra(
+        position: CGPoint,
+        allPositions: [CGPoint],
+        displayBounds: [CGRect]) -> Bool
+    {
+        guard position != .zero,
+              !self.isMenuExtraPointVisible(position, displayBounds: displayBounds)
+        else {
+            return false
+        }
+
+        return allPositions.contains { candidate in
+            candidate != .zero && self.isMenuExtraPointVisible(candidate, displayBounds: displayBounds)
+        }
+    }
+
+    func activeDisplayBounds() -> [CGRect] {
+        let appKitBounds: () -> [CGRect] = {
+            NSScreen.screens.compactMap { screen in
+                guard let displayID = screen.deviceDescription[
+                    NSDeviceDescriptionKey("NSScreenNumber"),
+                ] as? CGDirectDisplayID
+                else {
+                    return nil
+                }
+                return CGDisplayBounds(displayID)
+            }
+        }
+
+        var displayCount: UInt32 = 0
+        guard CGGetActiveDisplayList(0, nil, &displayCount) == .success, displayCount > 0 else {
+            return appKitBounds()
+        }
+
+        var displayIDs = [CGDirectDisplayID](repeating: 0, count: Int(displayCount))
+        guard CGGetActiveDisplayList(displayCount, &displayIDs, &displayCount) == .success else {
+            return appKitBounds()
+        }
+        return displayIDs.prefix(Int(displayCount)).map { CGDisplayBounds($0) }
+    }
+
     func windowBounds(for windowID: CGWindowID) -> CGRect? {
         guard let info = CGWindowListCopyWindowInfo([.optionIncludingWindow], windowID) as? [[String: Any]],
               let first = info.first,
@@ -89,6 +150,9 @@ extension MenuService {
     }
 
     func tryWindowTargetedClick(extra: MenuExtraInfo, point: CGPoint) -> Bool {
+        guard self.isMenuExtraPointVisible(point) else {
+            return false
+        }
         guard let windowID = extra.windowID else {
             return false
         }
@@ -140,19 +204,20 @@ extension MenuService {
 
     func menuBarAXMaxY(for position: CGPoint) -> CGFloat {
         let fallbackHeight: CGFloat = 24
-        guard let screen = NSScreen.screens.first(where: { screen in
+        let matchingScreens = NSScreen.screens.filter { screen in
             position.x >= screen.frame.minX && position.x <= screen.frame.maxX
-        }) else {
-            return fallbackHeight + 12
         }
-
-        let height = max(0, screen.frame.maxY - screen.visibleFrame.maxY)
-        let menuBarHeight = height > 0 ? height : fallbackHeight
-        return menuBarHeight + 12
+        let candidateScreens = matchingScreens.isEmpty ? NSScreen.screens : matchingScreens
+        return candidateScreens
+            .map { screen in
+                let height = max(0, screen.frame.maxY - screen.visibleFrame.maxY)
+                return (height > 0 ? height : fallbackHeight) + 12
+            }
+            .max() ?? fallbackHeight + 12
     }
 
     /// Invoke the LSUIElement helper (if built) to enumerate menu bar windows from a GUI context.
-    func getMenuBarItemsViaHelper() -> [MenuExtraInfo]? {
+    func getMenuBarItemsViaHelper(displayBounds: [CGRect]) -> [MenuExtraInfo]? {
         let helperPath = [
             FileManager.default.currentDirectoryPath,
             "Helpers",
@@ -188,14 +253,18 @@ extension MenuService {
         // Enrich each window ID locally via CGWindowList so we can keep coordinates/owner.
         var items: [MenuExtraInfo] = []
         for id in ids {
-            if let item = self.makeMenuExtra(from: CGWindowID(id)) {
+            if let item = self.makeMenuExtra(from: CGWindowID(id), displayBounds: displayBounds) {
                 items.append(item)
             }
         }
         return items
     }
 
-    func makeMenuExtra(from windowID: CGWindowID, info: [String: Any]? = nil) -> MenuExtraInfo? {
+    func makeMenuExtra(
+        from windowID: CGWindowID,
+        info: [String: Any]? = nil,
+        displayBounds: [CGRect]) -> MenuExtraInfo?
+    {
         let windowInfo: [String: Any]
         if let info {
             windowInfo = info
@@ -222,6 +291,8 @@ extension MenuService {
         guard let ownerPID = windowInfo[kCGWindowOwnerPID as String] as? pid_t else { return nil }
         let ownerName = windowInfo[kCGWindowOwnerName as String] as? String ?? "Unknown"
         let windowTitle = windowInfo[kCGWindowName as String] as? String ?? ""
+        let frame = CGRect(x: x, y: y, width: width, height: height)
+        let isVisible = Self.isMenuExtraFrameVisible(frame, displayBounds: displayBounds)
 
         if ownerName == "Window Server", windowTitle == "Menubar" {
             return nil
@@ -241,7 +312,7 @@ extension MenuService {
                     bundleIdentifier: bundleID,
                     ownerName: appName,
                     position: CGPoint(x: x + width / 2, y: y + height / 2),
-                    isVisible: true,
+                    isVisible: isVisible,
                     identifier: bundleID ?? windowTitle,
                     windowID: windowID,
                     windowLayer: windowLayer,
@@ -264,7 +335,7 @@ extension MenuService {
             bundleIdentifier: bundleID,
             ownerName: ownerName,
             position: CGPoint(x: x + width / 2, y: y + height / 2),
-            isVisible: true,
+            isVisible: isVisible,
             identifier: bundleID ?? windowTitle,
             windowID: windowID,
             windowLayer: windowLayer,

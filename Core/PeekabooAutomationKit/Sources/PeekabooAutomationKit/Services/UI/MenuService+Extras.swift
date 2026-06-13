@@ -74,6 +74,16 @@ extension MenuService {
                 context: context.build())
         }
 
+        if let position = menuExtra.position(),
+           Self.isIndividuallyHiddenMenuExtra(
+               position: position,
+               allPositions: extras.compactMap { $0.position() },
+               displayBounds: self.activeDisplayBounds())
+        {
+            throw PeekabooError.operationError(
+                message: self.hiddenMenuExtraMessage(title: title))
+        }
+
         if !menuExtra.showMenu(), !menuExtra.press() {
             throw OperationError.interactionFailed(
                 action: "click menu extra",
@@ -226,8 +236,16 @@ extension MenuService {
         }
 
         let extra = extras[index]
+        guard extra.isVisible else {
+            throw PeekabooError.operationError(
+                message: self.hiddenMenuExtraMessage(title: extra.title))
+        }
         guard let clickPoint = self.resolveMenuExtraClickPoint(for: extra) else {
             throw PeekabooError.operationError(message: "Menu bar item has no clickable position")
+        }
+        guard self.isMenuExtraPointVisible(clickPoint) else {
+            throw PeekabooError.operationError(
+                message: self.hiddenMenuExtraMessage(title: extra.title))
         }
 
         try? InputDriver.move(to: clickPoint)
@@ -243,6 +261,10 @@ extension MenuService {
         return ClickResult(
             elementDescription: "Menu bar item [\(index)]: \(extra.title)",
             location: clickPoint)
+    }
+
+    private func hiddenMenuExtraMessage(title: String) -> String {
+        "Menu bar item '\(title)' is outside the active displays. It may be hidden by a menu bar manager."
     }
 
     @_spi(Testing) public func resolvedMenuBarTitle(for extra: MenuExtraInfo, index: Int) -> String {

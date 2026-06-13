@@ -80,7 +80,7 @@ extension MenuService {
                     bundleIdentifier: host.bundleIdentifier,
                     ownerName: host.localizedName,
                     position: position,
-                    isVisible: true,
+                    isVisible: self.isMenuExtraAXPositionVisible(position),
                     identifier: identifier,
                     source: "ax-control-center")
                 items.append(info)
@@ -149,7 +149,7 @@ extension MenuService {
                 bundleIdentifier: bundleIdentifier,
                 ownerName: ownerName,
                 position: position,
-                isVisible: true,
+                isVisible: self.isMenuExtraAXPositionVisible(position),
                 identifier: identifier,
                 ownerPID: ownerPID,
                 source: "ax-menubar")
@@ -308,7 +308,7 @@ extension MenuService {
                     bundleIdentifier: app.bundleIdentifier,
                     ownerName: app.localizedName,
                     position: position,
-                    isVisible: true,
+                    isVisible: self.isMenuExtraAXPositionVisible(position),
                     identifier: identifier,
                     ownerPID: app.processIdentifier,
                     source: "ax-app")

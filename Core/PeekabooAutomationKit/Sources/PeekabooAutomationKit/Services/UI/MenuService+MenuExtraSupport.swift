@@ -233,12 +233,22 @@ extension MenuExtraInfo {
             bundleIdentifier: self.bundleIdentifier ?? candidate.bundleIdentifier,
             ownerName: self.ownerName ?? candidate.ownerName,
             position: self.preferredPosition(comparedTo: candidate),
-            isVisible: self.isVisible || candidate.isVisible,
+            isVisible: self.preferredVisibility(comparedTo: candidate),
             identifier: self.identifier ?? candidate.identifier,
             windowID: self.windowID ?? candidate.windowID,
             windowLayer: self.windowLayer ?? candidate.windowLayer,
             ownerPID: self.ownerPID ?? candidate.ownerPID,
             source: self.source ?? candidate.source)
+    }
+
+    private func preferredVisibility(comparedTo candidate: MenuExtraInfo) -> Bool {
+        if self.windowID != nil {
+            return self.isVisible
+        }
+        if candidate.windowID != nil {
+            return candidate.isVisible
+        }
+        return self.isVisible || candidate.isVisible
     }
 
     private static func preferredTitle(primary: MenuExtraInfo, secondary: MenuExtraInfo) -> String? {
