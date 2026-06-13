@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Changed
+- Refreshed the project banner and social preview with a more restrained ghost design.
+
 ### Fixed
 - `peekaboo app list` now excludes accessory/background processes by default, while `--include-background` restores them as documented.
 - Menu-extra clicks now reject items parked outside active displays by menu bar managers instead of moving the pointer to offscreen coordinates and reporting false success.
