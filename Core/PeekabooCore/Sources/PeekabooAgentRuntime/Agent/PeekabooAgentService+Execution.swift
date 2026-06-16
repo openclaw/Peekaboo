@@ -143,6 +143,8 @@ extension PeekabooAgentService {
             8192
         case .minimax, .minimaxCN:
             8192
+        case .kimi:
+            32_768
         case .mistral, .groq, .grok, .ollama, .lmstudio, .azureOpenAI, .replicate:
             4096
         case let .openRouter(modelId), let .together(modelId), let .openaiCompatible(modelId, _):

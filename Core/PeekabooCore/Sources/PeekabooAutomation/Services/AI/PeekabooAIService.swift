@@ -342,6 +342,7 @@ public final class PeekabooAIService {
     private static func isHostedProviderIdentifier(_ provider: String) -> Bool {
         switch provider {
         case "openai", "anthropic", "google", "gemini", "minimax", "minimax-cn", "minimax_cn", "minimaxi",
+             "kimi", "moonshot",
              "openrouter", "mistral", "groq", "grok", "xai":
             true
         default:
@@ -380,6 +381,9 @@ public final class PeekabooAIService {
             if case .minimaxCN = loose { return loose }
             let parsed = LanguageModel.parse(from: "minimax-cn/\(modelString)")
             if case .minimaxCN = parsed { return parsed }
+            return nil
+        case "kimi", "moonshot":
+            if case .kimi = loose { return loose }
             return nil
         case "openrouter":
             return .openRouter(modelId: modelString)
@@ -462,6 +466,9 @@ public final class PeekabooAIService {
         }
         if let key = configuration.getMiniMaxAPIKey(), !key.isEmpty {
             return self.appendingGeneratedVisionFallbacks(from: parsed, to: [.minimax(.m27)])
+        }
+        if let key = configuration.getKimiAPIKey(), !key.isEmpty {
+            return self.appendingGeneratedVisionFallbacks(from: parsed, to: [.kimi(.k26)])
         }
         if let key = configuration.getOpenRouterAPIKey(), !key.isEmpty {
             return self.appendingGeneratedVisionFallbacks(
@@ -550,6 +557,8 @@ public final class PeekabooAIService {
             configuration.getMiniMaxAPIKey()?.isEmpty == false
         case .minimaxCN:
             configuration.getMiniMaxChinaAPIKey()?.isEmpty == false
+        case .kimi:
+            configuration.getKimiAPIKey()?.isEmpty == false
         case .grok:
             configuration.getGrokAPIKey()?.isEmpty == false
         case .openRouter:
@@ -575,6 +584,7 @@ public final class PeekabooAIService {
         case let .lmstudio(m): ("lmstudio", m.modelId)
         case let .minimax(m): ("minimax", m.modelId)
         case let .minimaxCN(m): ("minimax-cn", m.modelId)
+        case let .kimi(m): ("kimi", m.modelId)
         case let .azureOpenAI(deployment, _, _, _): ("azure-openai", deployment)
         case let .openRouter(modelId): ("openrouter", modelId)
         case let .together(modelId): ("together", modelId)

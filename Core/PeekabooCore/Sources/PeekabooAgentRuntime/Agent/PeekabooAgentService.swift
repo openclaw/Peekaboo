@@ -69,6 +69,7 @@ public final class PeekabooAgentService: AgentServiceProtocol {
         case let .lmstudio(model): "lmstudio/\(model.modelId)"
         case let .minimax(model): "minimax/\(model.modelId)"
         case let .minimaxCN(model): "minimax-cn/\(model.modelId)"
+        case let .kimi(model): "kimi/\(model.modelId)"
         case let .openRouter(modelID): "openrouter/\(modelID)"
         case let .together(modelID): "together/\(modelID)"
         case let .replicate(modelID): "replicate/\(modelID)"
@@ -105,6 +106,8 @@ public final class PeekabooAgentService: AgentServiceProtocol {
                 config.getAPIKey(for: .minimax)
             case .minimaxCN:
                 config.getAPIKey(for: .minimaxCN)
+            case .kimi:
+                config.getAPIKey(for: .kimi)
             case .mistral:
                 config.getAPIKey(for: .mistral)
             case .groq:

@@ -68,6 +68,10 @@ extension AgentCommand {
             if Self.supportedMiniMaxInputs.contains(model) {
                 return .minimaxCN(model)
             }
+        case let .kimi(model):
+            if Self.supportedKimiInputs.contains(model) {
+                return .kimi(model)
+            }
         case .ollama, .lmstudio:
             return parsed.supportsTools ? parsed : nil
         case .openRouter:
@@ -156,6 +160,11 @@ extension AgentCommand {
         .m27Highspeed,
     ]
 
+    private static let supportedKimiInputs: Set<LanguageModel.Kimi> = [
+        .k26,
+        .k27,
+    ]
+
     private static let reservedProviderInputs: Set<String> = [
         "openai",
         "anthropic",
@@ -167,6 +176,8 @@ extension AgentCommand {
         "minimax-cn",
         "minimax_cn",
         "minimaxi",
+        "kimi",
+        "moonshot",
         "ollama",
         "lmstudio",
         "lm-studio",
@@ -177,10 +188,12 @@ extension AgentCommand {
         let anthropicModels = Self.supportedAnthropicInputs.map(\.modelId)
         let googleModels = Self.supportedGoogleInputs.map(\.userFacingModelId)
         let miniMaxModels = Self.supportedMiniMaxInputs.map(\.modelId)
-        return (openAIModels + anthropicModels + googleModels + miniMaxModels + [
+        let kimiModels = Self.supportedKimiInputs.map(\.modelId)
+        return (openAIModels + anthropicModels + googleModels + miniMaxModels + kimiModels + [
             "grok/<model>",
             "xai/<model>",
             "minimax-cn/<model>",
+            "kimi/<model>",
             "ollama/<model>",
             "lmstudio/<model>",
             "openrouter/<provider>/<model>",
@@ -246,6 +259,8 @@ extension AgentCommand {
             return configuration.getMiniMaxAPIKey()?.isEmpty == false
         case .minimaxCN:
             return configuration.getMiniMaxChinaAPIKey()?.isEmpty == false
+        case .kimi:
+            return configuration.getKimiAPIKey()?.isEmpty == false
         case .grok:
             return configuration.getGrokAPIKey()?.isEmpty == false
         case .openRouter:
@@ -269,6 +284,8 @@ extension AgentCommand {
             "MiniMax"
         case .minimaxCN:
             "MiniMax China"
+        case .kimi:
+            "Kimi"
         case .ollama:
             "Ollama"
         case .lmstudio:
@@ -296,6 +313,8 @@ extension AgentCommand {
             "MINIMAX_API_KEY"
         case .minimaxCN:
             "MINIMAX_CN_API_KEY or MINIMAX_API_KEY"
+        case .kimi:
+            "MOONSHOT_API_KEY or KIMI_API_KEY"
         case .ollama:
             "OLLAMA_BASE_URL or PEEKABOO_OLLAMA_BASE_URL"
         case .lmstudio:

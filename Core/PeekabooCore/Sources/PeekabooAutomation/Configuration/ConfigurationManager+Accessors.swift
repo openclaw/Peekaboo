@@ -214,6 +214,19 @@ extension ConfigurationManager {
         return fallbackToSharedKey ? self.getMiniMaxAPIKey() : nil
     }
 
+    /// Get Kimi (Moonshot) API key with proper precedence.
+    public func getKimiAPIKey() -> String? {
+        if let envValue = self.environmentValue(for: "MOONSHOT_API_KEY") {
+            return envValue
+        }
+
+        if let credValue = credentials["MOONSHOT_API_KEY"] ?? credentials["KIMI_API_KEY"] {
+            return credValue
+        }
+
+        return self.environmentValue(for: "KIMI_API_KEY")
+    }
+
     /// Get OpenRouter API key with proper precedence.
     public func getOpenRouterAPIKey() -> String? {
         if let envValue = self.environmentValue(for: "OPENROUTER_API_KEY") {
@@ -260,6 +273,9 @@ extension ConfigurationManager {
         }
         if let key = self.getMiniMaxChinaAPIKey(fallbackToSharedKey: false), !key.isEmpty {
             configuration.setAPIKey(key, for: .minimaxCN)
+        }
+        if let key = self.getKimiAPIKey(), !key.isEmpty {
+            configuration.setAPIKey(key, for: .kimi)
         }
         if let key = self.getOpenRouterAPIKey(), !key.isEmpty {
             configuration.setAPIKey(key, for: "openrouter")
