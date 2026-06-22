@@ -7,7 +7,7 @@ read_when:
 
 # Agent Skill for Peekaboo
 
-The `peekaboo` skill teaches agents when and how to use Peekaboo for macOS automation, screenshots, native accessibility inspection, browser chrome, and repo validation. It intentionally stays thin: agents should use live CLI help, `peekaboo learn`, `peekaboo tools`, and canonical docs instead of a copied command reference that can drift.
+The `peekaboo` skill teaches agents when and how to use Peekaboo for macOS automation, screenshots, native accessibility inspection, native app and browser chrome, browser-page tooling, and repo validation. It intentionally stays thin: agents should use live CLI help, `peekaboo learn`, `peekaboo tools`, and canonical docs instead of a copied command reference that can drift.
 
 ## Install
 

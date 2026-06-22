@@ -7,19 +7,19 @@ read_when:
 
 # `peekaboo see`
 
-`peekaboo see` captures the current macOS UI, extracts accessibility metadata, and (optionally) saves annotated screenshots. CLI and agent flows rely on these UI maps to find element IDs such as `B1` and `T2`, bounds, labels, and snapshot IDs.
+`peekaboo see` captures the current macOS UI, extracts accessibility metadata, and (optionally) saves annotated screenshots. CLI and agent flows rely on these UI maps to find fresh element IDs, bounds, labels, and snapshot IDs.
 
 ```bash
 # Capture frontmost window, print JSON, and save an annotated PNG
 peekaboo see --json --annotate --path /tmp/see.png
 
 # Target a specific app or window title
-peekaboo see --app "Google Chrome" --window-title "Login"
+peekaboo see --app "Google Chrome" --window-title "Login" --json --path /tmp/chrome-login.png
 ```
 
 ## When to use
 
-- Before issuing `click`/`type` commands so you have stable element IDs.
+- Before issuing `click`/`type` commands so you have fresh element IDs.
 - When debugging automation failures—`--json` includes raw bounds, labels, and snapshot IDs.
 - To snapshot UI regressions (pass `--annotate` + `--path`).
 
@@ -40,6 +40,8 @@ peekaboo see --app "Google Chrome" --window-title "Login"
 | `--max-children <n>` | Override maximum AX children visited per node (`PEEKABOO_AX_MAX_CHILDREN` fallback, default 250). |
 
 Note: `--app menubar` captures only the menu bar strip; `--menubar` attempts to find the active popover and OCR its text.
+
+For agent and automation runs, pass `--path` to a known temporary file when using `see` so capture artifacts land where expected. Use `peekaboo inspect-ui --json` when you need AX metadata and no screenshot artifact.
 
 ## Automatic web focus fallback (Nov 2025)
 
@@ -65,11 +67,11 @@ When `--json` is supplied, the CLI prints:
 Use `jq` or any JSON parser to find elements:
 
 ```bash
-peekaboo see --app "Safari" --json \
+peekaboo see --app "Safari" --json --path /tmp/safari-see.png \
   | jq '.data.ui_elements[] | select(.label | test("Sign in"; "i"))'
 
 # Toolbar buttons that only expose AXDescription:
-peekaboo see --app "Google Chrome" --json \
+peekaboo see --app "Google Chrome" --json --path /tmp/chrome-see.png \
   | jq '.data.ui_elements[] | select((.description // "") | test("Wingman"; "i"))'
 ```
 
