@@ -15,7 +15,7 @@ Peekaboo's automation surface is small but covers the whole macOS UI graph. Each
 
 Every input command accepts one of three target shapes:
 
-- **Element ID** — `--id E12` (from `peekaboo see`); the most reliable.
+- **Element ID** — `--on B1` or `--id T2` (from `peekaboo see` or `peekaboo inspect-ui`); the most reliable.
 - **Label / role / app** — positional query text such as `peekaboo click "Send" --app Mail`; resolved via the AX tree.
 - **Coordinates** — `--coords 480,120`; target-relative when paired with `--app`, `--pid`, or `--window-*`, global otherwise. Add `--global-coords` to force screen coordinates with a target.
 

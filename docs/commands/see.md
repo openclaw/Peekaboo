@@ -7,7 +7,7 @@ read_when:
 
 # `peekaboo see`
 
-`peekaboo see` captures the current macOS UI, extracts accessibility metadata, and (optionally) saves annotated screenshots. CLI and agent flows rely on these UI maps to find element IDs (`elem_123`), bounds, labels, and snapshot IDs.
+`peekaboo see` captures the current macOS UI, extracts accessibility metadata, and (optionally) saves annotated screenshots. CLI and agent flows rely on these UI maps to find element IDs such as `B1` and `T2`, bounds, labels, and snapshot IDs.
 
 ```bash
 # Capture frontmost window, print JSON, and save an annotated PNG
