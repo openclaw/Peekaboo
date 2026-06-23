@@ -43,6 +43,8 @@ Note: `--app menubar` captures only the menu bar strip; `--menubar` attempts to 
 
 For agent and automation runs, pass `--path` to a known temporary file when using `see` so capture artifacts land where expected. Use `peekaboo inspect-ui --json` when you need AX metadata and no screenshot artifact.
 
+When `--json` is used without `--path`, Peekaboo retains the raw image only in managed snapshot storage and returns empty `screenshot_raw` and `screenshot_annotated` fields. Pass `--path` when the caller needs a directly accessible image file.
+
 ## Automatic web focus fallback (Nov 2025)
 
 Modern browsers sometimes keep keyboard focus in the omnibox, which means embedded login forms (Instagram, Facebook, etc.) never expose their `AXTextField` nodes to accessibility clients. Starting November 2025:

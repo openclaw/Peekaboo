@@ -24,6 +24,8 @@ extension InMemorySnapshotManager {
         }
         if self.options.deleteArtifactsOnCleanup {
             self.deleteArtifacts(for: entry.snapshotData)
+        } else {
+            self.deleteManagedTemporaryArtifacts(for: entry.snapshotData)
         }
     }
 
@@ -42,5 +44,26 @@ extension InMemorySnapshotManager {
         if let annotatedPath = snapshotData.annotatedPath, annotatedPath != snapshotData.screenshotPath {
             try? fm.removeItem(atPath: annotatedPath)
         }
+    }
+
+    func deleteManagedTemporaryArtifacts(for snapshotData: UIAutomationSnapshot) {
+        let paths = [snapshotData.screenshotPath, snapshotData.annotatedPath]
+            .compactMap(\.self)
+            .filter(Self.isManagedTemporaryArtifact)
+        let directories = Set(paths.map { URL(fileURLWithPath: $0).deletingLastPathComponent() })
+
+        for path in paths {
+            try? FileManager.default.removeItem(atPath: path)
+        }
+        for directory in directories {
+            try? FileManager.default.removeItem(at: directory)
+        }
+    }
+
+    private static func isManagedTemporaryArtifact(_ path: String) -> Bool {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekaboo-see", isDirectory: true)
+            .standardizedFileURL.path + "/"
+        return URL(fileURLWithPath: path).standardizedFileURL.path.hasPrefix(root)
     }
 }

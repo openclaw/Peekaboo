@@ -151,6 +151,11 @@ struct SeeCommand: ApplicationResolvable, ErrorHandlingCommand, RuntimeOptionsCo
                 ) {
                     try await snapshotManager.createSnapshot(pendingAt: observationStartedAt)
                 }
+                defer {
+                    if snapshotManager.copiesScreenshotArtifactsIntoStorage {
+                        commandCopy.cleanupTemporaryScreenshotOutput(snapshotID: snapshotID)
+                    }
+                }
                 var observationCompleted = false
                 do {
                     let preparationTimeout = try Self.remainingObservationTimeout(

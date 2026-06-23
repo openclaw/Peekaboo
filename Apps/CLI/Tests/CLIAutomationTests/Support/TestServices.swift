@@ -590,6 +590,7 @@ final class StubApplicationService: ApplicationServiceProtocol {
 
 final class StubSnapshotManager: SnapshotManagerProtocol, @unchecked Sendable {
     let supportsImplicitLatestSnapshotInvalidation = true
+    var copiesScreenshotArtifactsIntoStorage = false
     var effectiveImplicitLatestInvalidationWatermark: Date?
     private(set) var detectionResults: [String: ElementDetectionResult] = [:]
     private(set) var snapshotInfos: [String: SnapshotInfo] = [:]

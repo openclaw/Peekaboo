@@ -35,6 +35,9 @@ public protocol SnapshotManagerProtocol: Sendable {
     /// Whether this manager applies cutoff-aware, non-destructive implicit-latest invalidation.
     var supportsImplicitLatestSnapshotInvalidation: Bool { get }
 
+    /// Whether `storeScreenshot` copies source artifacts into independently managed storage.
+    var copiesScreenshotArtifactsIntoStorage: Bool { get }
+
     /// Effective desktop-wide cutoff applied to implicit latest-snapshot lookup.
     /// Managers without a shared watermark can rely on the default `nil` implementation.
     var effectiveImplicitLatestInvalidationWatermark: Date? { get }
@@ -135,6 +138,10 @@ public protocol SnapshotManagerProtocol: Sendable {
 }
 
 extension SnapshotManagerProtocol {
+    public var copiesScreenshotArtifactsIntoStorage: Bool {
+        false
+    }
+
     public var supportsImplicitLatestSnapshotInvalidation: Bool {
         false
     }

@@ -15,7 +15,7 @@ extension SeeCommand {
         let captureResult = captureContext.captureResult
 
         self.logger.startTimer("file_write")
-        let outputPath = try saveScreenshot(captureResult.imageData)
+        let outputPath = try saveScreenshot(captureResult.imageData, snapshotID: snapshotID)
         self.logger.stopTimer("file_write")
 
         let windowContext = WindowContext(

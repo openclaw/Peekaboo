@@ -3,6 +3,7 @@
 ## [3.5.3] - 2026-06-13
 
 ### Fixed
+- JSON-only `peekaboo see` runs without `--path` now keep required screenshots in snapshot storage instead of leaving files on Desktop or exposing their temporary paths. Thanks @coygeek for #196.
 - Watch captures now honor stop requests during transient ScreenCaptureKit retry backoff instead of waiting out the full delay. Thanks @SebTardif for #193.
 - Peekaboo agent skill install and usage guidance now uses the current `skills/peekaboo` path, treats observed element IDs as opaque, and keeps screenshot artifacts in explicit temporary paths. Thanks @coygeek for #197.
 - `peekaboo app list` now excludes accessory/background processes by default, while `--include-background` restores them as documented.
