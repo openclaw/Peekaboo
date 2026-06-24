@@ -151,6 +151,11 @@ struct SeeCommand: ApplicationResolvable, ErrorHandlingCommand, RuntimeOptionsCo
                 ) {
                     try await snapshotManager.createSnapshot(pendingAt: observationStartedAt)
                 }
+                defer {
+                    if snapshotManager.copiesScreenshotArtifactsIntoStorage {
+                        commandCopy.cleanupTemporaryScreenshotOutput(snapshotID: snapshotID)
+                    }
+                }
                 var observationCompleted = false
                 do {
                     let preparationTimeout = try Self.remainingObservationTimeout(
@@ -376,8 +381,8 @@ extension SeeCommand: ParsableCommand {
                         description: "Capture the frontmost window, print structured output, and save annotations."
                     ),
                     CommandUsageExample(
-                        command: "peekaboo see --app Safari --window-title \"Login\" --json",
-                        description: "Target a specific Safari window to collect stable element IDs."
+                        command: "peekaboo see --app Safari --window-title \"Login\" --json --path /tmp/safari-login.png",
+                        description: "Target a specific Safari window to collect fresh element IDs and keep the capture artifact in /tmp."
                     ),
                     CommandUsageExample(
                         command: "peekaboo see --mode screen --screen-index 0 --analyze 'Summarize the dashboard'",

@@ -15,7 +15,7 @@ Peekaboo's automation surface is small but covers the whole macOS UI graph. Each
 
 Every input command accepts one of three target shapes:
 
-- **Element ID** — `--id E12` (from `peekaboo see`); the most reliable.
+- **Element ID** — `--on <id>` or `--id <id>` from a fresh `peekaboo see` or `peekaboo inspect-ui` capture; preferred when available. Treat IDs as opaque strings and copy the exact value returned by the capture.
 - **Label / role / app** — positional query text such as `peekaboo click "Send" --app Mail`; resolved via the AX tree.
 - **Coordinates** — `--coords 480,120`; target-relative when paired with `--app`, `--pid`, or `--window-*`, global otherwise. Add `--global-coords` to force screen coordinates with a target.
 
@@ -28,7 +28,7 @@ Peekaboo has two input delivery modes:
 - **Background** (default when a target process is known) posts process-targeted input without activating the app. `click`, `type`, `press`, `hotkey`, and `paste` use this mode when you pass `--app`, `--pid`, `--window-id`, or a snapshot with process metadata.
 - **Foreground** focuses the target first, then sends normal/global input to the active key window or mouse focus. Add `--foreground` when an app ignores background input, when a text field only accepts key-window input, or when you want focus/Space switching to be part of the action.
 
-Focus flags such as `--space-switch`, `--bring-to-current-space`, and `--no-auto-focus` belong to foreground delivery; using them implies `--foreground`. Background element/query clicks can complete through Accessibility alone. Keyboard input, coordinate clicks, and synthetic click fallback require Event Synthesizing for the sender shown by `peekaboo permissions status`; request it with `peekaboo permissions request-event-synthesizing`.
+Focus flags such as `--space-switch` and `--bring-to-current-space` imply foreground delivery. `--no-auto-focus` is different: it disables Peekaboo's focus attempt, so use it only when the target state is already correct and you want to avoid changing focus. Background element/query clicks can complete through Accessibility alone. Keyboard input, coordinate clicks, and synthetic click fallback require Event Synthesizing for the sender shown by `peekaboo permissions status`; request it with `peekaboo permissions request-event-synthesizing`.
 
 Examples:
 
@@ -79,7 +79,7 @@ For UX parity with humans (jitter, easing, dwell), see [human-typing.md](human-t
 
 ```bash
 # 1. Inspect first to find a stable label.
-peekaboo see --app Safari --annotate --path safari.png
+peekaboo see --app Safari --annotate --path /tmp/safari.png
 
 # 2. Click it.
 peekaboo click "Reload" --app Safari

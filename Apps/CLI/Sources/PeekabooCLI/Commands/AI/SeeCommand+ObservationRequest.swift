@@ -89,7 +89,7 @@ extension SeeCommand {
             ),
             detection: self.observationDetectionOptions(for: target),
             output: DesktopObservationOutputOptions(
-                path: self.screenshotOutputPath(),
+                path: self.screenshotOutputPath(snapshotID: snapshotID),
                 saveRawScreenshot: true,
                 saveAnnotatedScreenshot: self.annotate && self.allowsAnnotation(for: target),
                 saveSnapshot: true,

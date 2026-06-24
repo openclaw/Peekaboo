@@ -345,6 +345,42 @@ struct InMemorySnapshotManagerTests {
     }
 
     @Test
+    func `snapshot cleanup removes managed temporary artifacts`() async throws {
+        let snapshotId = "managed-temp"
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekaboo-see/\(snapshotId)", isDirectory: true)
+        let raw = directory.appendingPathComponent("raw.png")
+        let annotated = directory.appendingPathComponent("raw_annotated.png")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try Data("raw".utf8).write(to: raw)
+        try Data("annotated".utf8).write(to: annotated)
+
+        let manager = InMemorySnapshotManager()
+        _ = try await manager.createSnapshot()
+        try await manager.storeScreenshot(Self.screenshotRequest(snapshotId: snapshotId, path: raw.path))
+        try await manager.storeAnnotatedScreenshot(snapshotId: snapshotId, annotatedScreenshotPath: annotated.path)
+
+        try await manager.cleanSnapshot(snapshotId: snapshotId)
+
+        #expect(!FileManager.default.fileExists(atPath: raw.path))
+        #expect(!FileManager.default.fileExists(atPath: annotated.path))
+        #expect(!FileManager.default.fileExists(atPath: directory.path))
+    }
+
+    @Test
+    func `snapshot cleanup preserves borrowed screenshot artifacts`() async throws {
+        let artifact = try Self.createTemporaryArtifact(named: "borrowed-screenshot.png")
+        defer { try? FileManager.default.removeItem(at: artifact) }
+        let manager = InMemorySnapshotManager()
+        let snapshotId = try await manager.createSnapshot()
+        try await manager.storeScreenshot(Self.screenshotRequest(snapshotId: snapshotId, path: artifact.path))
+
+        try await manager.cleanSnapshot(snapshotId: snapshotId)
+
+        #expect(FileManager.default.fileExists(atPath: artifact.path))
+    }
+
+    @Test
     func `getDetectionResult preserves window context for action re-resolution`() async throws {
         let manager = InMemorySnapshotManager()
         let snapshotId = try await manager.createSnapshot()

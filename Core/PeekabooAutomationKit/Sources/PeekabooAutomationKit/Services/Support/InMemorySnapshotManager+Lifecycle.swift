@@ -219,6 +219,10 @@ extension InMemorySnapshotManager {
             for entry in self.entries.values {
                 self.deleteArtifacts(for: entry.snapshotData)
             }
+        } else {
+            for entry in self.entries.values {
+                self.deleteManagedTemporaryArtifacts(for: entry.snapshotData)
+            }
         }
         self.entries.removeAll()
         self.implicitLatestInvalidatedAt = nil
