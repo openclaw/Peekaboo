@@ -3,6 +3,7 @@
 ## [3.5.3] - 2026-06-13
 
 ### Fixed
+- Sparkle no longer advertises the unpublished 3.5.3 release whose public app download returns 404; the entry will return through the normal release flow when the release is published. Thanks @bcharleson for #199.
 - JSON-only `peekaboo see` runs without `--path` now keep required screenshots in snapshot storage instead of leaving files on Desktop or exposing their temporary paths. Thanks @coygeek for #196.
 - Watch captures now honor stop requests during transient ScreenCaptureKit retry backoff instead of waiting out the full delay. Thanks @SebTardif for #193.
 - Peekaboo agent skill install and usage guidance now uses the current `skills/peekaboo` path, treats observed element IDs as opaque, and keeps screenshot artifacts in explicit temporary paths. Thanks @coygeek for #197.
