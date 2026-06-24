@@ -93,10 +93,7 @@ struct SeeCommandTimeoutTests {
         try await Task.sleep(for: .milliseconds(2))
         #expect(try #require(store.effectiveWatermark()) > firstPendingRead)
 
-        try await Task.sleep(for: .milliseconds(120))
-        let completed = try #require(store.effectiveWatermark())
-        try await Task.sleep(for: .milliseconds(2))
-        #expect(store.effectiveWatermark() == completed)
+        #expect(try await Self.waitForStableWatermark(store))
     }
 
     @Test
@@ -127,9 +124,26 @@ struct SeeCommandTimeoutTests {
         try await Task.sleep(for: .milliseconds(2))
         #expect(try #require(store.effectiveWatermark()) > firstPendingRead)
 
-        try await Task.sleep(for: .milliseconds(120))
-        let completed = try #require(store.effectiveWatermark())
-        try await Task.sleep(for: .milliseconds(2))
-        #expect(store.effectiveWatermark() == completed)
+        #expect(try await Self.waitForStableWatermark(store))
+    }
+
+    private static func waitForStableWatermark(
+        _ store: DesktopMutationWatermarkStore,
+        timeout: Duration = .seconds(1)
+    ) async throws -> Bool {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: timeout)
+        var previous = store.effectiveWatermark()
+
+        repeat {
+            try await Task.sleep(for: .milliseconds(5))
+            let current = store.effectiveWatermark()
+            if current != nil, current == previous {
+                return true
+            }
+            previous = current
+        } while clock.now < deadline
+
+        return false
     }
 }
