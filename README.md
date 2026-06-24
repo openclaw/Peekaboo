@@ -41,15 +41,20 @@ Peekaboo brings high-fidelity screen capture, AI analysis, and complete GUI auto
 # Capture full screen at Retina scale and save to Desktop
 peekaboo image --mode screen --retina --path ~/Desktop/screen.png
 
-# Click a button by label (captures, resolves, and clicks in one go)
-peekaboo see --app Safari --json | jq -r '.data.snapshot_id' | read SNAPSHOT
+# Capture current UI state, then copy its snapshot and opaque element IDs exactly
+peekaboo see --app Safari --json
+SNAPSHOT="<snapshot-id>"
+TEXT_FIELD_ID="<text-field-id>"
+BUTTON_ID="<button-id>"
+
+# Click a button by label
 peekaboo click --on "Reload this page" --snapshot "$SNAPSHOT"
 
 # Directly set a text field value when the accessibility value is settable
-peekaboo set-value --on T1 --value "hello" --snapshot "$SNAPSHOT"
+peekaboo set-value --on "$TEXT_FIELD_ID" --value "hello" --snapshot "$SNAPSHOT"
 
 # Invoke a named accessibility action on an element
-peekaboo perform-action --on B1 --action AXPress --snapshot "$SNAPSHOT"
+peekaboo perform-action --on "$BUTTON_ID" --action AXPress --snapshot "$SNAPSHOT"
 
 # Run a natural-language automation
 peekaboo agent "Open Notes and create a TODO list with three items"

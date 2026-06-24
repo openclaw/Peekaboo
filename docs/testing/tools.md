@@ -253,7 +253,7 @@ The following subsections spell out the concrete steps, required Playground surf
 - **Log capture**: `./Apps/Playground/scripts/playground-log.sh -c Click --last 10m --all -o "$LOG_ROOT/click-$(date +%s).log"`.
 - **Test cases**:
   1. Query-based click: `polter peekaboo -- click "Single Click"` (expect `Click` log + counter increment).
-  2. ID-based click: `polter peekaboo -- click --on B1 --snapshot <id>` targeting `single-click-button`.
+  2. ID-based click: copy the opaque ID from current `see` output, then run `polter peekaboo -- click --on "$ELEMENT_ID" --snapshot <id>` targeting `single-click-button`.
   3. Coordinate click: `polter peekaboo -- click --coords 400,400 --foreground` hitting the nested area.
   4. Coordinate validation: `polter peekaboo -- click --coords , --json-output` should fail with `VALIDATION_ERROR` (no crash).
   5. Error path: attempt to click disabled button and confirm descriptive `elementNotFound` guidance.
@@ -264,7 +264,7 @@ The following subsections spell out the concrete steps, required Playground surf
   - `polter peekaboo -- click "Single Click" --snapshot <legacy snapshot>` succeeded but targeted Ghostty (click hit terminal input); highlighting importance of focusing Playground first.
   - `polter peekaboo -- app switch --to Playground` followed by `polter peekaboo -- click --on elem_6 --snapshot 263F8CD6-...` successfully hit the “View Logs” button (Playground log recorded the click).
   - Coordinate click `--coords 600,500` succeeded (see log); attempting `--on elem_disabled` produced expected `elementNotFound` error.
-  - IDs like `B1` are not stable in this build; rely on `elem_*` IDs from the `see` output.
+  - Element IDs are opaque and unstable; always copy the exact ID from current `see` output.
 - **2025-12-17 Controls Fixture add-on**:
   - Open “Controls Fixture” via `⌘⌃3`, then drive checkboxes + segmented control by clicking snapshot IDs (`--on elem_…`) captured from `see`.
   - **Important**: ControlsView is scrollable; after any `scroll`, re-run `see` before clicking elements further down (otherwise snapshot coordinates can be stale).

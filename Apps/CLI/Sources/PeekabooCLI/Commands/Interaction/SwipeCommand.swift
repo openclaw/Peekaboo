@@ -249,20 +249,20 @@ extension SwipeCommand: ParsableCommand {
 
                 EXAMPLES:
                   # Swipe between UI elements
-                  peekaboo swipe --from B1 --to B5 --snapshot 12345
+                  peekaboo swipe --from "$SOURCE_ID" --to "$TARGET_ID" --snapshot "$SNAPSHOT_ID"
 
                   # Swipe with coordinates
                   peekaboo swipe --from-coords 100,200 --to-coords 300,400
 
                   # Mixed mode: element to coordinates
-                  peekaboo swipe --from T1 --to-coords 500,300 --duration 1000
+                  peekaboo swipe --from "$SOURCE_ID" --to-coords 500,300 --duration 1000
 
                   # Slow swipe for precise gesture
                   peekaboo swipe --from-coords 50,50 --to-coords 400,400 --duration 2000
 
                 USAGE:
                   You can specify source and destination using either:
-                  - Element IDs from a previous 'see' command
+                  - Opaque element IDs copied from current 'see' or 'inspect-ui' output
                   - Direct coordinates
                   - A mix of both
 

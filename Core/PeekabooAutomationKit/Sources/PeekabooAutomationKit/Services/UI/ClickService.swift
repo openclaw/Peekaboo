@@ -24,7 +24,7 @@ import PeekabooFoundation
  *
  * // Click by element ID
  * try await clickService.click(
- *     target: .elementId("B1"),
+ *     target: .elementId(detectedElement.id),
  *     clickType: .single,
  *     snapshotId: "snapshot_123"
  * )

@@ -116,7 +116,7 @@ extension PerformActionCommand: ParsableCommand {
                 Invokes an accessibility action without synthesizing a mouse or keyboard event.
 
                 EXAMPLES:
-                  peekaboo perform-action --on B1 --action AXPress
+                  peekaboo perform-action --on "$ELEMENT_ID" --action AXPress
                   peekaboo perform-action --on Stepper --action AXIncrement
             """,
             showHelpOnEmptyInvocation: true

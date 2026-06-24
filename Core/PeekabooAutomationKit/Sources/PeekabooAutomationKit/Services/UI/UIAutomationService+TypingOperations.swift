@@ -47,7 +47,7 @@ extension UIAutomationService {
      * // Type into specific element with clearing
      * try await automation.type(
      *     text: "Hello World!",
-     *     target: "T1",
+     *     target: detectedElement.id,
      *     clearExisting: true,
      *     typingDelay: 50,
      *     snapshotId: "snapshot_123"

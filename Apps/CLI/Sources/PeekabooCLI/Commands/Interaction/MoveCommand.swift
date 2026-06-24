@@ -17,7 +17,7 @@ struct MoveCommand: ErrorHandlingCommand, OutputFormattable {
     @Option(help: "Move to element by text/label")
     var to: String?
 
-    @Option(help: "Element ID to move to (e.g., B1, T2)")
+    @Option(help: "Opaque element ID copied from current see or inspect-ui output")
     var on: String?
 
     @Option(name: .customLong("id"), help: "Element ID to move to (alias for --on)")

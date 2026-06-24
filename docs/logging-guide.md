@@ -29,7 +29,7 @@ Use the `--verbose` or `-v` flag with any command:
 
 ```bash
 peekaboo see --app Safari --verbose
-peekaboo click --on B1 --verbose
+peekaboo click --on "$ELEMENT_ID" --verbose
 ```
 
 ### Environment Variable
@@ -106,12 +106,12 @@ $ peekaboo see --app Safari --verbose
 ### Debugging Element Not Found
 
 ```bash
-$ peekaboo click --on B99 --verbose
+$ peekaboo click --on "$ELEMENT_ID" --verbose
 [2025-01-06T08:05:24.123Z] VERBOSE [Snapshot]: Resolving snapshot {explicitId=null}
 [2025-01-06T08:05:24.124Z] VERBOSE [Snapshot]: Found valid snapshots {count=1, latest=12345}
-[2025-01-06T08:05:24.125Z] VERBOSE [ElementSearch]: Looking for element {id=B99, snapshotId=12345}
+[2025-01-06T08:05:24.125Z] VERBOSE [ElementSearch]: Looking for element {id=<element-id>, snapshotId=12345}
 [2025-01-06T08:05:24.126Z] VERBOSE [ElementSearch]: Loading snapshot map from cache
-[2025-01-06T08:05:24.127Z] ERROR [ElementSearch]: Element not found in snapshot {id=B99, availableIds=[B1,B2,B3,T1,T2]}
+[2025-01-06T08:05:24.127Z] ERROR [ElementSearch]: Element not found in snapshot {id=<element-id>}
 ```
 
 ### Performance Analysis

@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [3.5.3] - 2026-06-13
 
 ### Fixed
+- Public CLI, agent, MCP, and API guidance now treats runtime element IDs as opaque strings to copy exactly instead of implying role-specific ID shapes. Thanks @coygeek for #194.
 - JSON-only `peekaboo see` runs without `--path` now keep required screenshots in snapshot storage instead of leaving files on Desktop or exposing their temporary paths. Thanks @coygeek for #196.
 - Background element/query/coordinate clicks now pin actions to the requested process and exact window, reject mismatched window/PID selectors and unverifiable snapshots, invalidate implicit latest snapshots without deleting history, and no longer require Event Synthesizing when Accessibility completes the click.
 - App launch, open, and inventory commands now use the selected runtime host, fixing sandboxed LaunchServices failures; launch/open preserve `--no-focus` and caller-relative app paths, relaunch preflights and keeps quit/wait/launch in one daemon-held transaction, build-scoped fallback daemons remain reusable and controllable across native/Rosetta execution and executable upgrades, incompatible legacy hosts no longer force sandboxed local fallback, and inventory ignores unrelated input overrides.

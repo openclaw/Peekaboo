@@ -54,7 +54,7 @@ extension ClickCommand: CommanderSignatureProviding {
                 ),
                 .commandOption(
                     "on",
-                    help: "Element ID to click (e.g., B1, T2)",
+                    help: "Opaque element ID copied from current see or inspect-ui output",
                     long: "on"
                 ),
                 .commandOption(

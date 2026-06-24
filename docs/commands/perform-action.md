@@ -27,7 +27,7 @@ read_when:
 
 ```bash
 peekaboo see --app Calculator
-peekaboo perform-action --on B7 --action AXPress --snapshot <snapshot-id>
+peekaboo perform-action --on "$ELEMENT_ID" --action AXPress --snapshot <snapshot-id>
 
 peekaboo perform-action --on Stepper --action AXIncrement
 ```

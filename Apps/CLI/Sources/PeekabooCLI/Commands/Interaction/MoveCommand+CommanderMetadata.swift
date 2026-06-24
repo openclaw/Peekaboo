@@ -16,7 +16,7 @@ extension MoveCommand: ParsableCommand {
                     EXAMPLES:
                       peekaboo move 100,200                 # Move to coordinates
                       peekaboo move --to "Submit Button"    # Move to element by text
-                      peekaboo move --on B3                 # Move to element by ID
+                      peekaboo move --on "$ELEMENT_ID"      # ID copied from current output
                       peekaboo move 500,300 --smooth        # Smooth movement
                       peekaboo move --center                # Move to screen center
 
@@ -84,7 +84,7 @@ extension MoveCommand: CommanderSignatureProviding {
                 ),
                 .commandOption(
                     "on",
-                    help: "Element ID to move to (e.g., B1, T2)",
+                    help: "Opaque element ID copied from current see or inspect-ui output",
                     long: "on"
                 ),
                 .commandOption(

@@ -76,7 +76,7 @@ public enum UIAutomationToolDefinitions {
             ParameterDefinition(
                 name: "on",
                 type: .string,
-                description: "Element ID to click (e.g., B1, T2) from `see` or `inspect_ui` output",
+                description: "Opaque element ID copied exactly from current `see` or `inspect_ui` output",
                 required: false),
             ParameterDefinition(
                 name: "coords",

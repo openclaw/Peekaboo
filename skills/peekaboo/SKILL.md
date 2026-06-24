@@ -151,7 +151,7 @@ ruby -e 'h=File.read("skills/peekaboo/SKILL.md").split(/^---\s*$/,3)[1]; keys=h.
 ! rg -n '^allowed-tools:' skills/peekaboo/SKILL.md
 pnpm run build:cli
 BIN="$(swift build --package-path Apps/CLI --show-bin-path)/peekaboo"; "$BIN" --version
-"$BIN" click --help | rg -- '--foreground|--focus-background|--input-strategy|B1, T2'
+"$BIN" click --help | rg -- '--foreground|--focus-background|--input-strategy|Opaque element ID'
 "$BIN" see --help | rg -- '--json|--annotate|--app|--no-web-focus'
 "$BIN" inspect-ui --help | rg 'inspect_ui|--app-target|--snapshot|--json'
 git diff --check -- skills/peekaboo/SKILL.md docs/agent-skill.md docs/commands/see.md docs/automation.md scripts/docs-lint.mjs

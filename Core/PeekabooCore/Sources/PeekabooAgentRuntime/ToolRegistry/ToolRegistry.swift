@@ -58,7 +58,7 @@ public enum ToolRegistry {
 
             EXAMPLE
             peekaboo click --foreground --wait-for 1500 --double \"Submit\"
-            peekaboo click --on B2 --foreground --space-switch
+            peekaboo click --on "$ELEMENT_ID" --foreground --space-switch
 
             TROUBLESHOOTING
             If the element isn't found, refresh the snapshot with a fresh observation (`peekaboo see`
