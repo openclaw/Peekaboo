@@ -32,6 +32,7 @@ extension PeekabooServices {
         let hasMiniMaxChina = self.configuration.getMiniMaxChinaAPIKey()?.isEmpty == false
         let hasMiniMaxChinaSpecific = self.configuration.getMiniMaxChinaAPIKey(fallbackToSharedKey: false)?
             .isEmpty == false
+        let hasKimi = self.configuration.getKimiAPIKey()?.isEmpty == false
         let hasOpenRouter = self.configuration.getOpenRouterAPIKey()?.isEmpty == false
         let hasGrok = self.configuration.getGrokAPIKey()?.isEmpty == false
         let hasOllama = Self.providerList(providers, containsToolCapableLocalProvider: "ollama")
@@ -48,8 +49,8 @@ extension PeekabooServices {
             .first
         let hasCustomProvider = customDefaultModel != nil
 
-        if hasOpenAI || hasAnthropic || hasGemini || hasMiniMax || hasMiniMaxChina || hasOpenRouter || hasGrok ||
-            hasOllama || hasLMStudio || hasCustomProvider
+        if hasOpenAI || hasAnthropic || hasGemini || hasMiniMax || hasMiniMaxChina || hasKimi || hasOpenRouter ||
+            hasGrok || hasOllama || hasLMStudio || hasCustomProvider
         {
             let environmentProviders = EnvironmentVariables.value(for: "PEEKABOO_AI_PROVIDERS")?
                 .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -63,6 +64,7 @@ extension PeekabooServices {
                 hasMiniMax: hasMiniMax,
                 hasMiniMaxChina: hasMiniMaxChina,
                 hasMiniMaxChinaSpecific: hasMiniMaxChinaSpecific,
+                hasKimi: hasKimi,
                 hasOpenRouter: hasOpenRouter,
                 hasGrok: hasGrok,
                 hasOllama: hasOllama,
@@ -224,6 +226,9 @@ extension PeekabooServices {
         } else if sources.hasMiniMax {
             model = "minimax/MiniMax-M2.7"
             resolvedModel = nil
+        } else if sources.hasKimi {
+            model = "kimi/kimi-k2.6"
+            resolvedModel = nil
         } else if sources.hasOpenRouter {
             model = "openrouter/openai/gpt-oss-120b"
             resolvedModel = nil
@@ -299,6 +304,9 @@ extension PeekabooServices {
                      "minimax_cn" where sources.hasMiniMaxChina,
                      "minimaxi" where sources.hasMiniMaxChina:
                     return "minimax-cn/\(model)"
+                case "kimi" where sources.hasKimi,
+                     "moonshot" where sources.hasKimi:
+                    return "kimi/\(model)"
                 case "openrouter" where sources.hasOpenRouter:
                     return "openrouter/\(model)"
                 case "ollama" where sources.hasOllama:
@@ -397,6 +405,8 @@ extension PeekabooServices {
             return sources.hasMiniMax
         case .minimaxCN:
             return sources.hasMiniMaxChina
+        case .kimi:
+            return sources.hasKimi
         case .openRouter:
             return sources.hasOpenRouter
         case .grok:
@@ -450,6 +460,7 @@ private struct ModelSources {
     let hasMiniMax: Bool
     let hasMiniMaxChina: Bool
     let hasMiniMaxChinaSpecific: Bool
+    let hasKimi: Bool
     let hasOpenRouter: Bool
     let hasGrok: Bool
     let hasOllama: Bool

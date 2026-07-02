@@ -88,6 +88,33 @@ struct ConfigurationManagerEnvironmentTests {
     }
 
     @Test
+    func `getKimiAPIKey prefers either environment alias over stored credentials`() throws {
+        let keys = ["MOONSHOT_API_KEY", "KIMI_API_KEY"]
+        let previous = keys.reduce(into: [String: String]()) { values, key in
+            if let value = getenv(key) {
+                values[key] = String(cString: value)
+            }
+        }
+        keys.forEach { unsetenv($0) }
+        defer {
+            for key in keys {
+                if let value = previous[key] {
+                    setenv(key, value, 1)
+                } else {
+                    unsetenv(key)
+                }
+            }
+        }
+
+        try withIsolatedConfigurationEnvironment { _ in
+            try self.manager.saveCredentials(["MOONSHOT_API_KEY": "stored-primary-key"])
+            setenv("KIMI_API_KEY", "environment-alias-key", 1)
+
+            #expect(self.manager.getKimiAPIKey() == "environment-alias-key")
+        }
+    }
+
+    @Test
     func `getSelectedProvider canonicalizes Google aliases from config`() throws {
         try withIsolatedConfigurationEnvironment { configDir in
             let configPath = configDir.appendingPathComponent("config.json")

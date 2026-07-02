@@ -1052,6 +1052,17 @@ extension PeekabooAgentServiceTests {
 
     @Test
     @MainActor
+    func `Kimi only credentials initialize Kimi default agent`() throws {
+        try self.withIsolatedAgentEnvironment(["MOONSHOT_API_KEY": "test-kimi-key"]) {
+            let services = self.makeServices()
+            let agentService = try #require(services.agent as? PeekabooAgentService)
+
+            #expect(agentService.defaultModel == LanguageModel.kimi(.k26).description)
+        }
+    }
+
+    @Test
+    @MainActor
     func `xAI only credentials initialize Grok default agent`() throws {
         try self.withIsolatedAgentEnvironment(["X_AI_API_KEY": "test-xai-key"]) {
             let services = self.makeServices()

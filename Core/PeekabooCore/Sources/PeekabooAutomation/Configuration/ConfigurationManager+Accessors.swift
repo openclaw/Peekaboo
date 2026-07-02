@@ -216,15 +216,19 @@ extension ConfigurationManager {
 
     /// Get Kimi (Moonshot) API key with proper precedence.
     public func getKimiAPIKey() -> String? {
-        if let envValue = self.environmentValue(for: "MOONSHOT_API_KEY") {
-            return envValue
+        for key in ["MOONSHOT_API_KEY", "KIMI_API_KEY"] {
+            if let envValue = self.environmentValue(for: key), !envValue.isEmpty {
+                return envValue
+            }
         }
 
-        if let credValue = credentials["MOONSHOT_API_KEY"] ?? credentials["KIMI_API_KEY"] {
-            return credValue
+        for key in ["MOONSHOT_API_KEY", "KIMI_API_KEY"] {
+            if let credValue = self.credentials[key], !credValue.isEmpty {
+                return credValue
+            }
         }
 
-        return self.environmentValue(for: "KIMI_API_KEY")
+        return nil
     }
 
     /// Get OpenRouter API key with proper precedence.

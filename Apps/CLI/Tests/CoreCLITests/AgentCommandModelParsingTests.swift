@@ -96,10 +96,9 @@ struct AgentCommandTests {
     func `Kimi (Moonshot) models are accepted`() throws {
         let command = try AgentCommand.parse([])
 
-        #expect(command.parseModelString("kimi/k2p6") == .kimi(.k26))
-        #expect(command.parseModelString("kimi/k2p7") == .kimi(.k27))
-        #expect(command.parseModelString("kimi/kimi-k2.7-code") == .kimi(.k27))
-        #expect(command.parseModelString("moonshot/k2p7") == .kimi(.k27))
+        #expect(command.parseModelString("kimi/kimi-k2.6") == .kimi(.k26))
+        #expect(command.parseModelString("kimi/kimi-k2.7-code") == .kimi(.k27Code))
+        #expect(command.parseModelString("moonshot/kimi-k2.7-code-highspeed") == .kimi(.k27CodeHighspeed))
         #expect(command.parseModelString("kimi-k2.6") == .kimi(.k26))
         #expect(command.parseModelString("kimi/unknown-model") == nil)
     }
@@ -388,8 +387,8 @@ struct ModelSelectionIntegrationTests {
             ("claude-opus-4.8", .anthropic(.opus48)),
             ("gemini-3.5-flash", .google(.gemini35Flash)),
             ("MiniMax-M2.7", .minimax(.m27)),
-            ("kimi/k2p6", .kimi(.k26)),
-            ("kimi/k2p7", .kimi(.k27)),
+            ("kimi/kimi-k2.6", .kimi(.k26)),
+            ("kimi/kimi-k2.7-code", .kimi(.k27Code)),
             ("ollama/llama3.3", .ollama(.llama33)),
             ("openrouter/xiaomi/mimo-v2.5-pro", .openRouter(modelId: "xiaomi/mimo-v2.5-pro")),
         ]

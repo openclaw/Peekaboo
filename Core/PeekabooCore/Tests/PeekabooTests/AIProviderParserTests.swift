@@ -22,9 +22,9 @@ struct AIProviderParserTests {
         #expect(AIProviderParser.parse("minimax-cn/MiniMax-M2.7") == AIProviderParser.ProviderConfig(
             provider: "minimax-cn",
             model: "MiniMax-M2.7"))
-        #expect(AIProviderParser.parse("kimi/k2p7") == AIProviderParser.ProviderConfig(
+        #expect(AIProviderParser.parse("kimi/kimi-k2.7-code") == AIProviderParser.ProviderConfig(
             provider: "kimi",
-            model: "k2p7"))
+            model: "kimi-k2.7-code"))
     }
 
     @Test

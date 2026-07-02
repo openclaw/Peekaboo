@@ -162,7 +162,8 @@ extension AgentCommand {
 
     private static let supportedKimiInputs: Set<LanguageModel.Kimi> = [
         .k26,
-        .k27,
+        .k27Code,
+        .k27CodeHighspeed,
     ]
 
     private static let reservedProviderInputs: Set<String> = [

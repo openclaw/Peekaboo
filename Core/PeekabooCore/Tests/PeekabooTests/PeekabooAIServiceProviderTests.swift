@@ -596,6 +596,17 @@ struct PeekabooAIServiceProviderTests {
 
     @Test
     @MainActor
+    func `Falls back to Kimi when only Kimi key is present`() throws {
+        try self.withIsolatedEnvironment(["MOONSHOT_API_KEY": "key"]) {
+            let service = PeekabooAIService()
+            #expect(service.resolvedDefaultModel == .kimi(.k26))
+            #expect(service.resolvedDefaultVisionModel == .kimi(.k26))
+            #expect(service.availableModels() == [.kimi(.k26)])
+        }
+    }
+
+    @Test
+    @MainActor
     func `Explicit MiniMax China provider can reuse shared MiniMax key`() throws {
         try self.withIsolatedEnvironment(
             ["MINIMAX_API_KEY": "key"],

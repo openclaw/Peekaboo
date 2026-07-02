@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [3.5.3] - 2026-06-13
 
+### Added
+- `peekaboo see --analyze` and `peekaboo agent` now accept Kimi K2.6 and K2.7 Code models through Moonshot's API. Thanks @Tugser for #192.
+
 ### Fixed
 - Public CLI, agent, MCP, and API guidance now treats runtime element IDs as opaque strings to copy exactly instead of implying role-specific ID shapes. Thanks @coygeek for #194.
 - JSON-only `peekaboo see` runs without `--path` now keep required screenshots in snapshot storage instead of leaving files on Desktop or exposing their temporary paths. Thanks @coygeek for #196.
