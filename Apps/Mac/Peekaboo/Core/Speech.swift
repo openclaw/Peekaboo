@@ -72,6 +72,18 @@ public enum RecognitionMode: String, CaseIterable {
     }
 }
 
+@MainActor
+protocol SpeechAudioRecording: AnyObject {
+    var isRecording: Bool { get }
+    var transcript: String { get }
+    var error: (any Error)? { get }
+
+    func startRecording() throws
+    func stopRecording()
+}
+
+extension AudioRecorder: SpeechAudioRecording {}
+
 @Observable
 @MainActor
 final class SpeechRecognizer: NSObject, SFSpeechRecognizerDelegate {
@@ -90,7 +102,7 @@ final class SpeechRecognizer: NSObject, SFSpeechRecognizerDelegate {
     private let audioEngine = AVAudioEngine()
 
     // Optional Whisper-based recorder for enhanced accuracy
-    private var audioRecorder: AudioRecorder?
+    private var audioRecorder: (any SpeechAudioRecording)?
     private let settings: PeekabooSettings
 
     // For direct audio recording
@@ -103,6 +115,12 @@ final class SpeechRecognizer: NSObject, SFSpeechRecognizerDelegate {
     private var tachikomaAudioRecorder: AVAudioRecorder?
     private var tachikomaAudioURL: URL?
     private var tachikomaAbortSignal: AbortSignal?
+
+    // Whisper recorder observer task, owned by this recognizer.
+    private var recorderObserverTask: Task<Void, Never>?
+    var hasRecorderObserverTask: Bool {
+        self.recorderObserverTask != nil
+    }
 
     init(settings: PeekabooSettings) {
         self.settings = settings
@@ -117,6 +135,16 @@ final class SpeechRecognizer: NSObject, SFSpeechRecognizerDelegate {
             self.audioRecorder = AudioRecorder(settings: settings)
         }
 
+        self.checkAuthorization()
+    }
+
+    init(settings: PeekabooSettings, audioRecorder: any SpeechAudioRecording) {
+        self.settings = settings
+        self.audioRecorder = audioRecorder
+        super.init()
+
+        self.speechRecognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
+        self.speechRecognizer?.delegate = self
         self.checkAuthorization()
     }
 
@@ -157,7 +185,7 @@ final class SpeechRecognizer: NSObject, SFSpeechRecognizerDelegate {
         case .native:
             try self.startNativeRecognition()
         case .whisper:
-            if !self.settings.openAIAPIKey.isEmpty {
+            if self.audioRecorder != nil {
                 try self.startWhisperRecognition()
             } else {
                 // Fall back to native if no OpenAI key
@@ -180,6 +208,11 @@ final class SpeechRecognizer: NSObject, SFSpeechRecognizerDelegate {
     }
 
     func stopListening() {
+        self.recorderObserverTask?.cancel()
+        self.recorderObserverTask = nil
+        if self.recognitionMode == .whisper {
+            self.audioRecorder?.stopRecording()
+        }
         guard self.isListening else { return }
 
         switch self.recognitionMode {
@@ -193,8 +226,7 @@ final class SpeechRecognizer: NSObject, SFSpeechRecognizerDelegate {
             self.recognitionTask = nil
 
         case .whisper:
-            // Stop Whisper recording
-            self.audioRecorder?.stopRecording()
+            break
 
         case .tachikoma:
             // Stop Tachikoma recording
@@ -275,8 +307,9 @@ final class SpeechRecognizer: NSObject, SFSpeechRecognizerDelegate {
         // Start Whisper recording
         try recorder.startRecording()
 
-        // Monitor recorder state
-        Task {
+        // Monitor recorder state.
+        self.recorderObserverTask?.cancel()
+        self.recorderObserverTask = Task {
             await self.observeRecorderState()
         }
     }
@@ -297,7 +330,11 @@ final class SpeechRecognizer: NSObject, SFSpeechRecognizerDelegate {
             }
 
             // Small delay to avoid tight loop
-            try? await Task.sleep(nanoseconds: 100_000_000) // 0.1 seconds
+            do {
+                try await Task.sleep(nanoseconds: 100_000_000) // 0.1 seconds
+            } catch {
+                break
+            }
         }
     }
 

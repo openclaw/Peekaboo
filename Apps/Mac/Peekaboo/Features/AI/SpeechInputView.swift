@@ -230,7 +230,9 @@ struct SpeechInputView: View {
 
         let transcript = self.speechRecognizer.transcript
 
-        // Close the speech input view
+        // Stop recording and cancel the observer task before dismissing,
+        // otherwise the poll loop keeps running after the view is gone.
+        self.stopRecording()
         self.dismiss()
 
         // Send to agent based on recognition mode
