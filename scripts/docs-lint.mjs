@@ -19,6 +19,8 @@ const staleCliPatterns = [
   [/--label\b/, 'use positional query text or `--on`'],
   [/--at\b/, 'use `--coords`'],
   [/--ticks\b/, 'use `--amount`'],
+  [/--(?:on|from|to)\s+[`"']?[BTMS]\d+\b/, 'use an opaque element ID copied from current output'],
+  [/element IDs?[^\n]*[`"']?[BTMS]\d+\b/i, 'describe element IDs as opaque'],
 ];
 const staleDocsPatterns = [
   [/mcp-capture-meta/i, 'remove stale native MCP capture metadata references'],

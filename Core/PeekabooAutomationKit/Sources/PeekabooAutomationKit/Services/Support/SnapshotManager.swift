@@ -8,6 +8,7 @@ import PeekabooFoundation
 @MainActor
 public final class SnapshotManager: SnapshotManagerProtocol {
     public let supportsImplicitLatestSnapshotInvalidation = true
+    public let copiesScreenshotArtifactsIntoStorage = true
 
     public var effectiveImplicitLatestInvalidationWatermark: Date? {
         let shared = self.desktopMutationWatermarkStore?.effectiveWatermark()

@@ -23,7 +23,8 @@ public struct PerformActionTool: MCPTool {
         SchemaBuilder.object(
             properties: [
                 "on": SchemaBuilder.string(
-                    description: "Element ID from `see` or `inspect_ui` output, such as B1, or a query string."),
+                    description: "Opaque element ID copied exactly from current `see` or `inspect_ui` output, " +
+                        "or a query string."),
                 "action": SchemaBuilder.string(
                     description: "Accessibility action name to invoke, e.g. AXPress, AXShowMenu, AXIncrement."),
                 "snapshot": SchemaBuilder.string(

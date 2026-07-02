@@ -28,7 +28,7 @@ read_when:
 
 ```bash
 peekaboo see --app TextEdit
-peekaboo set-value "hello" --on T1 --snapshot <snapshot-id>
+peekaboo set-value "hello" --on "$ELEMENT_ID" --snapshot <snapshot-id>
 
 peekaboo set-value "42" --on "Search"
 ```

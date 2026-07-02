@@ -4,7 +4,7 @@ import PeekabooFoundation
 
 /// Target for click operations
 public enum ClickTarget: Sendable, Codable {
-    /// Click on element by ID (e.g., "B1")
+    /// Click an element by its opaque detected ID.
     case elementId(String)
 
     /// Click at specific coordinates

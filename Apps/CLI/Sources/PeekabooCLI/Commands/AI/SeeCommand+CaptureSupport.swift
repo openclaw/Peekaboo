@@ -5,7 +5,17 @@ import PeekabooFoundation
 
 @MainActor
 extension SeeCommand {
-    func screenshotOutputPath() -> String {
+    var usesTemporaryScreenshotOutput: Bool {
+        self.jsonOutput && self.path == nil
+    }
+
+    func screenshotOutputPath(snapshotID: String? = nil) -> String {
+        if self.usesTemporaryScreenshotOutput {
+            return self.temporaryScreenshotDirectory(snapshotID: snapshotID)
+                .appendingPathComponent("raw.png")
+                .path
+        }
+
         let timestamp = Date().timeIntervalSince1970
         let filename = "peekaboo_see_\(Int(timestamp)).png"
         return ObservationCommandSupport.outputPath(
@@ -16,8 +26,8 @@ extension SeeCommand {
         )
     }
 
-    func saveScreenshot(_ imageData: Data) throws -> String {
-        let outputPath = self.screenshotOutputPath()
+    func saveScreenshot(_ imageData: Data, snapshotID: String) throws -> String {
+        let outputPath = self.screenshotOutputPath(snapshotID: snapshotID)
 
         let directory = (outputPath as NSString).deletingLastPathComponent
         try FileManager.default.createDirectory(
@@ -29,6 +39,17 @@ extension SeeCommand {
         self.logger.verbose("Saved screenshot to: \(outputPath)")
 
         return outputPath
+    }
+
+    func cleanupTemporaryScreenshotOutput(snapshotID: String) {
+        guard self.usesTemporaryScreenshotOutput else { return }
+        try? FileManager.default.removeItem(at: self.temporaryScreenshotDirectory(snapshotID: snapshotID))
+    }
+
+    private func temporaryScreenshotDirectory(snapshotID: String?) -> URL {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekaboo-see", isDirectory: true)
+            .appendingPathComponent(snapshotID ?? UUID().uuidString, isDirectory: true)
     }
 
     func resolveSeeWindowIndex(appIdentifier: String, titleFragment: String?) async throws -> Int? {

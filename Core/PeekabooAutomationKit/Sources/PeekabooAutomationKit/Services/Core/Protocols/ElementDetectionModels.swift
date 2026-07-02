@@ -78,7 +78,7 @@ public struct DetectedElements: Sendable, Codable {
 
 /// A detected UI element
 public struct DetectedElement: Sendable, Codable {
-    /// Unique identifier (e.g., "B1", "T2")
+    /// Opaque identifier returned by element detection.
     public let id: String
 
     /// Element type

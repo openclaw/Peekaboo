@@ -13,7 +13,7 @@ read_when:
 | Flag | Description |
 | --- | --- |
 | `[query]` | Optional positional text query (case-insensitive substring match). |
-| `--on <id>` / `--id <id>` | Target a specific Peekaboo element ID (e.g., `B1`, `T2`). |
+| `--on <id>` / `--id <id>` | Target an opaque Peekaboo element ID copied exactly from current `see` or `inspect-ui` output. |
 | `--coords x,y` | Click coordinates. With target flags, coordinates are relative to the resolved target window; without target flags, they are global screen coordinates. |
 | `--global-coords` | Treat `--coords` as global screen coordinates even when target flags are supplied. |
 | `--snapshot <id>` | Reuse a prior snapshot; defaults to `services.snapshots.getMostRecentSnapshot()` when omitted. |
@@ -40,8 +40,8 @@ read_when:
 
 ## Examples
 ```bash
-# Click the "Send" button (ID from a previous `see` run)
-peekaboo click --on B12
+# Click the "Send" button using an ID copied from current `see` output
+peekaboo click --on "$ELEMENT_ID"
 
 # Fuzzy search + extra wait for a slow dialog using foreground delivery
 peekaboo click "Allow" --foreground --wait-for 8000 --space-switch

@@ -14,7 +14,7 @@ struct ClickCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
     @Option(help: "Snapshot ID, or 'latest' (uses latest if not specified)")
     var snapshot: String?
 
-    @Option(help: "Element ID to click (e.g., B1, T2)")
+    @Option(help: "Opaque element ID copied from current see or inspect-ui output")
     var on: String?
 
     @Option(name: .customLong("id"), help: "Element ID to click (alias for --on)")

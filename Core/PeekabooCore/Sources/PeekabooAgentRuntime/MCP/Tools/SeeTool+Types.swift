@@ -50,7 +50,7 @@ struct SeeSummaryBuilder {
         lines.append("")
         lines.append(contentsOf: self.elementSection())
         lines.append("")
-        lines.append("Use element IDs (B1, T1, etc.) with click, type, and other interaction commands.")
+        lines.append("Copy opaque element IDs exactly into click, type, and other interaction commands.")
         return lines.joined(separator: "\n")
     }
 

@@ -30,7 +30,7 @@ public struct ClickTool: MCPTool {
                     """),
                 "on": SchemaBuilder.string(
                     description: """
-                    Optional. Element ID to click (e.g., B1, T2) from `see` or `inspect_ui` output.
+                    Optional. Opaque element ID copied exactly from current `see` or `inspect_ui` output.
                     """),
                 "coords": SchemaBuilder.string(
                     description: """

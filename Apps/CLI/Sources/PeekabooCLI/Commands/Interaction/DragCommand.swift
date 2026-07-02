@@ -259,11 +259,11 @@ extension DragCommand: ParsableCommand {
                 Execute click-and-drag operations for moving elements, selecting text, or dragging files.
 
                 EXAMPLES:
-                  peekaboo drag --from B1 --to T2
+                  peekaboo drag --from "$SOURCE_ID" --to "$TARGET_ID"
                   peekaboo drag --from-coords "100,200" --to-coords "400,300"
-                  peekaboo drag --from B1 --to-app Trash
-                  peekaboo drag --from S1 --to-coords "500,250" --duration 2000
-                  peekaboo drag --from T1 --to T5 --modifiers shift
+                  peekaboo drag --from "$SOURCE_ID" --to-app Trash
+                  peekaboo drag --from "$SOURCE_ID" --to-coords "500,250" --duration 2000
+                  peekaboo drag --from "$SOURCE_ID" --to "$TARGET_ID" --modifiers shift
                 """,
                 version: "2.0.0",
                 showHelpOnEmptyInvocation: true

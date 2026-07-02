@@ -119,7 +119,7 @@ extension SetValueCommand: ParsableCommand {
                 Sets a settable accessibility value without synthesizing keystrokes.
 
                 EXAMPLES:
-                  peekaboo set-value "hello" --on T1
+                  peekaboo set-value "hello" --on "$ELEMENT_ID"
                   peekaboo set-value "42" --on "Search"
             """,
             showHelpOnEmptyInvocation: true

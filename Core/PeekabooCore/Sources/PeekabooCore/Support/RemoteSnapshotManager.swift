@@ -7,6 +7,7 @@ import PeekabooFoundation
 
 @MainActor
 public final class RemoteSnapshotManager: SnapshotManagerProtocol {
+    public let copiesScreenshotArtifactsIntoStorage = true
     public let supportsImplicitLatestSnapshotInvalidation: Bool
 
     public var effectiveImplicitLatestInvalidationWatermark: Date? {

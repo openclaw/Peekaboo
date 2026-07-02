@@ -45,16 +45,16 @@ the daemon on demand. `peekaboo bridge status --verbose` shows the selected runt
 
 ## 3. Inspect the UI
 
-`see` returns a structured map of clickable elements with stable IDs:
+`see` returns a structured map of clickable elements with fresh IDs:
 
 ```bash
-peekaboo see --app Safari --json | jq '.elements[0:3]'
+peekaboo see --app Safari --json --path /tmp/safari-see.png | jq '.data.ui_elements[0:3]'
 ```
 
 Add `--annotate` to write a labelled PNG you can eyeball:
 
 ```bash
-peekaboo see --app Safari --annotate --path safari.png
+peekaboo see --app Safari --annotate --path /tmp/safari.png
 ```
 
 Each element has `id`, `role`, `label`, `frame`, and `actions`. Pass an `id` to other commands to act on it.

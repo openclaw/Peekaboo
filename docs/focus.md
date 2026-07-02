@@ -69,7 +69,7 @@ peekaboo type "Hello world"
 peekaboo scroll --direction down
 peekaboo menu click --app Safari --item "New Tab"
 peekaboo hotkey --keys "cmd,s"
-peekaboo drag --from B1 --to T2
+peekaboo drag --from "$SOURCE_ID" --to "$TARGET_ID"
 ```
 
 ### Default Behavior
