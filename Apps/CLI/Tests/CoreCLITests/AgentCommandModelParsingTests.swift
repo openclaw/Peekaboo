@@ -90,6 +90,9 @@ struct AgentCommandTests {
         #expect(command.parseModelString("MiniMax-M3") == .minimax(.m3))
         #expect(command.parseModelString("minimax/MiniMax-M3") == .minimax(.m3))
         #expect(command.parseModelString("minimax/minimax-m3") == .minimax(.m3))
+        #expect(command.parseModelString("minimax-cn/m2.7") == .minimaxCN(.m27))
+        #expect(command.parseModelString("minimaxi/m2.7-highspeed") == .minimaxCN(.m27Highspeed))
+        #expect(command.parseModelString("minimax-cn/MiniMax-M3") == .minimaxCN(.m3))
         #expect(command.parseModelString("minimax-cn/not-a-supported-model") == nil)
     }
 

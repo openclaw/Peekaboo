@@ -2,6 +2,9 @@
 
 ## [3.5.3] - 2026-06-13
 
+### Added
+- MiniMax-M3 can now power screenshot analysis and agent runs through the global and China MiniMax routes. Thanks @Tugser for #191.
+
 ### Fixed
 - Daemon launch, socket, and shutdown polling now stop promptly when their parent task is cancelled instead of spinning until the timeout. Thanks @SebTardif for #203.
 - Public CLI, agent, MCP, and API guidance now treats runtime element IDs as opaque strings to copy exactly instead of implying role-specific ID shapes. Thanks @coygeek for #194.
