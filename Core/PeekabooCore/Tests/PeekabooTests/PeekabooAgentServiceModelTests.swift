@@ -1030,6 +1030,41 @@ extension PeekabooAgentServiceTests {
 
     @Test
     @MainActor
+    func `Nonstreaming Kimi reasoning is replayed before tool continuation`() async throws {
+        let provider = KimiReasoningReplayProvider()
+        let configuration = TachikomaConfiguration(loadFromEnvironment: false)
+        configuration.setProviderFactoryOverride { _, _ in provider }
+
+        let previousConfiguration = TachikomaConfiguration.default
+        TachikomaConfiguration.default = configuration
+        defer {
+            TachikomaConfiguration.default = previousConfiguration
+        }
+
+        let agentService = try PeekabooAgentService(
+            services: PeekabooServices(),
+            defaultModel: .kimi(.k26))
+
+        _ = try await agentService.executeTask(
+            "Use a tool, then continue.",
+            maxSteps: 2,
+            model: .kimi(.k26),
+            enhancementOptions: nil)
+
+        let secondRequestMessages = try #require(provider.secondRequestMessages)
+        let reasoningMessage = try #require(secondRequestMessages.first { message in
+            message.channel == .thinking
+        })
+
+        #expect(reasoningMessage.content == [.text("native Kimi thought")])
+        #expect(reasoningMessage.metadata?.customData?["kimi.reasoning_content"] == "native Kimi thought")
+        #expect(reasoningMessage.metadata?.customData?["tachikoma.reasoning.provider"] == "kimi")
+        #expect(reasoningMessage.metadata?.customData?["tachikoma.reasoning.model"] == "kimi-k2.6")
+        #expect(reasoningMessage.metadata?.customData?["tachikoma.reasoning.base_url"] != nil)
+    }
+
+    @Test
+    @MainActor
     func `Gemini only credentials initialize Gemini default agent`() throws {
         try self.withIsolatedAgentEnvironment(["GEMINI_API_KEY": "test-gemini-key"]) {
             let services = self.makeServices()
@@ -2638,6 +2673,61 @@ private final class OpenRouterReasoningReplayProvider: ModelProvider, @unchecked
                         text: "raw openrouter thinking",
                         type: "openrouter_reasoning",
                         rawJSON: #"{"type":"reasoning"}"#),
+                ])
+        }
+
+        return ProviderResponse(text: "done", finishReason: .stop)
+    }
+
+    func streamText(request: ProviderRequest) async throws -> AsyncThrowingStream<TextStreamDelta, any Error> {
+        let response = try await self.generateText(request: request)
+        return AsyncThrowingStream { continuation in
+            if !response.text.isEmpty {
+                continuation.yield(.text(response.text))
+            }
+            continuation.yield(.done(finishReason: response.finishReason))
+            continuation.finish()
+        }
+    }
+}
+
+private final class KimiReasoningReplayProvider: ModelProvider, @unchecked Sendable {
+    let modelId = "kimi-reasoning-replay-provider"
+    let baseURL: String? = nil
+    let apiKey: String? = nil
+    let capabilities = ModelCapabilities()
+
+    private let lock = NSLock()
+    private var requestCount = 0
+    private var capturedSecondRequestMessages: [ModelMessage]?
+
+    var secondRequestMessages: [ModelMessage]? {
+        self.lock.withLock { self.capturedSecondRequestMessages }
+    }
+
+    func generateText(request: ProviderRequest) async throws -> ProviderResponse {
+        let requestNumber = self.lock.withLock {
+            self.requestCount += 1
+            if self.requestCount == 2 {
+                self.capturedSecondRequestMessages = request.messages
+            }
+            return self.requestCount
+        }
+
+        if requestNumber == 1 {
+            return ProviderResponse(
+                text: "",
+                finishReason: .toolCalls,
+                toolCalls: [
+                    AgentToolCall(
+                        id: "missing-tool",
+                        name: "missing_test_tool",
+                        arguments: [:]),
+                ],
+                reasoning: [
+                    ProviderReasoningBlock(
+                        text: "native Kimi thought",
+                        type: "kimi_reasoning_content"),
                 ])
         }
 

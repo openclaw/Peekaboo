@@ -350,6 +350,25 @@ extension PeekabooAgentService {
             return openRouterMetadata
         }
 
+        if block.type == "kimi_reasoning_content",
+           let target = ReasoningReplayTarget(
+               model: model,
+               configuration: configuration,
+               peekabooConfiguration: peekabooConfiguration),
+           target.provider == "kimi"
+        {
+            var metadata = [
+                "kimi.reasoning_content": block.text,
+                "tachikoma.reasoning.type": block.type,
+                "tachikoma.reasoning.provider": target.provider,
+                "tachikoma.reasoning.model": target.modelId,
+            ]
+            if let endpointIdentity = target.endpointIdentity {
+                metadata["tachikoma.reasoning.base_url"] = endpointIdentity
+            }
+            return metadata
+        }
+
         var customData: [String: String] = if let target = ReasoningReplayTarget(
             model: model,
             configuration: configuration,
@@ -895,6 +914,12 @@ private struct ReasoningReplayTarget {
             self.baseURL = configuration.getBaseURL(for: .minimaxCN) ?? Provider.minimaxCN.defaultBaseURL
             self.allowsReasoningBoundaries = true
             self.allowsLegacyUnknown = true
+        case let .kimi(model):
+            self.provider = "kimi"
+            self.modelId = model.modelId
+            self.baseURL = configuration.getBaseURL(for: .kimi) ?? Provider.kimi.defaultBaseURL
+            self.allowsReasoningBoundaries = true
+            self.allowsLegacyUnknown = false
         case let .custom(provider):
             if let anthropicProvider = provider as? AnthropicProvider {
                 self.provider = "anthropic"
