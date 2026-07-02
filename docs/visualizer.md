@@ -190,7 +190,7 @@ Peekaboo.app still respects user-facing toggles via `PeekabooSettings`; the coor
 
 ### Element Detection (See) 👁️
 - **Effect**: All detected elements briefly highlight
-- **Style**: Colored overlays with IDs (B1, T1, etc.)
+- **Style**: Colored overlays labeled with opaque element IDs
 - **Animation**: Fade in with slight scale
 - **Duration**: 2 seconds before fade
 

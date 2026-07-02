@@ -132,7 +132,7 @@ Environment variables:
 CLI override:
 
 ```bash
-peekaboo click --on B1 --input-strategy actionFirst
+peekaboo click --on "$ELEMENT_ID" --input-strategy actionFirst
 ```
 
 ## Logging & Troubleshooting

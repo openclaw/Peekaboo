@@ -234,6 +234,19 @@ struct SeeCommandAnnotationTests {
     }
 
     @Test
+    @MainActor
+    func `JSON output without path uses snapshot-scoped temporary screenshot`() throws {
+        let snapshotID = "snapshot-test"
+        let command = try SeeCommand.parse(["--json"])
+        let output = URL(fileURLWithPath: command.screenshotOutputPath(snapshotID: snapshotID))
+
+        #expect(command.usesTemporaryScreenshotOutput)
+        #expect(output.lastPathComponent == "raw.png")
+        #expect(output.deletingLastPathComponent().lastPathComponent == snapshotID)
+        #expect(output.path.hasPrefix(FileManager.default.temporaryDirectory.path))
+    }
+
+    @Test
     func `Coordinate system conversion for NSGraphicsContext`() {
         // Given a window-relative element bounds with top-left origin
         let elementBounds = CGRect(x: 100, y: 100, width: 80, height: 40)

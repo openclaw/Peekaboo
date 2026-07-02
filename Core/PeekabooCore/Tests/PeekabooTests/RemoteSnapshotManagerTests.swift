@@ -6,6 +6,15 @@ import Testing
 
 struct RemoteSnapshotManagerTests {
     @Test
+    @MainActor
+    func `remote snapshot storage owns copied screenshot artifacts`() {
+        let remote = RemoteSnapshotManager(
+            client: PeekabooBridgeClient(socketPath: "/tmp/unused.sock", requestTimeoutSec: 1))
+
+        #expect(remote.copiesScreenshotArtifactsIntoStorage)
+    }
+
+    @Test
     func `bridge invalidation payload preserves subsecond cutoff`() throws {
         let cutoff = Date(timeIntervalSinceReferenceDate: 123_456_789.123_456)
         let preservedAt = Date(timeIntervalSinceReferenceDate: 123_456_790.654_321)

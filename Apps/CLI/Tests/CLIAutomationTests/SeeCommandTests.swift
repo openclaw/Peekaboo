@@ -264,6 +264,92 @@ struct SeeCommandRuntimeTests {
     }
 
     @Test
+    func `JSON See without path keeps screenshot private to snapshot storage`() async throws {
+        try await self.withTempConfigEnv { _ in
+            let fixture = Self.makeSeeCommandRuntimeFixture()
+            let automation = StubAutomationService()
+            automation.nextDetectionResult = fixture.detectionResult
+
+            let (context, _) = Self.makeSeeCommandRuntimeContext(
+                automation: automation,
+                screenCapture: fixture.screenCapture,
+                applicationInfo: fixture.applicationInfo,
+                windowInfo: fixture.windowInfo
+            )
+            context.snapshots.copiesScreenshotArtifactsIntoStorage = true
+
+            let result = try await InProcessCommandRunner.run(
+                [
+                    "see",
+                    "--mode", "frontmost",
+                    "--no-web-focus",
+                    "--json",
+                ],
+                services: context.services
+            )
+
+            let data = try #require(result.stdout.data(using: .utf8))
+            let response = try JSONDecoder().decode(
+                CodableJSONResponse<SeeResult>.self,
+                from: data
+            )
+            let storedScreenshot = try #require(
+                context.snapshots.storedScreenshots.values.flatMap(\.self).first
+            )
+
+            #expect(result.exitStatus == 0)
+            #expect(response.data.screenshot_raw.isEmpty)
+            #expect(response.data.screenshot_annotated.isEmpty)
+            #expect(storedScreenshot.path.hasPrefix(FileManager.default.temporaryDirectory.path))
+            #expect(!FileManager.default.fileExists(atPath: storedScreenshot.path))
+        }
+    }
+
+    @Test
+    func `JSON See retains temporary screenshot for borrowing snapshot backend`() async throws {
+        try await self.withTempConfigEnv { _ in
+            let fixture = Self.makeSeeCommandRuntimeFixture()
+            let automation = StubAutomationService()
+            automation.nextDetectionResult = fixture.detectionResult
+
+            let (context, _) = Self.makeSeeCommandRuntimeContext(
+                automation: automation,
+                screenCapture: fixture.screenCapture,
+                applicationInfo: fixture.applicationInfo,
+                windowInfo: fixture.windowInfo
+            )
+
+            let result = try await InProcessCommandRunner.run(
+                [
+                    "see",
+                    "--mode", "frontmost",
+                    "--no-web-focus",
+                    "--json",
+                ],
+                services: context.services
+            )
+
+            let data = try #require(result.stdout.data(using: .utf8))
+            let response = try JSONDecoder().decode(
+                CodableJSONResponse<SeeResult>.self,
+                from: data
+            )
+            let storedScreenshot = try #require(
+                context.snapshots.storedScreenshots.values.flatMap(\.self).first
+            )
+            defer {
+                try? FileManager.default.removeItem(
+                    at: URL(fileURLWithPath: storedScreenshot.path).deletingLastPathComponent()
+                )
+            }
+
+            #expect(result.exitStatus == 0)
+            #expect(response.data.screenshot_raw.isEmpty)
+            #expect(FileManager.default.fileExists(atPath: storedScreenshot.path))
+        }
+    }
+
+    @Test
     func `See suppresses success output when snapshot publication fails`() async throws {
         try await self.withTempConfigEnv { _ in
             let fixture = Self.makeSeeCommandRuntimeFixture()

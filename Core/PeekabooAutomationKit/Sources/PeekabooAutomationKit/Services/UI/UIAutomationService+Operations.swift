@@ -103,7 +103,7 @@ extension UIAutomationService {
      *
      * ## Click Targeting
      * Three targeting modes are supported:
-     * - **Element ID**: Click on a specific detected element (e.g., "B1", "T3")
+     * - **Element ID**: Click on a specific element using its opaque detected ID
      * - **Query**: Find element by text content or accessibility label
      * - **Coordinates**: Click at exact screen coordinates
      *
@@ -128,7 +128,7 @@ extension UIAutomationService {
      * ```swift
      * // Click on detected element
      * try await automation.click(
-     *     target: .elementId("B1"),
+     *     target: .elementId(detectedElement.id),
      *     clickType: .single,
      *     snapshotId: "snapshot_123"
      * )

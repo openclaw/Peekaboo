@@ -77,7 +77,8 @@ extension WatchCaptureSession {
                     }
                     // SCK can report a temporary TCC denial while another CLI capture is settling.
                     // Treat that as a dropped live frame; the next sample or fallback frame can recover.
-                    try await Task.sleep(nanoseconds: delay)
+                    let retryStart = Date()
+                    try await self.sleep(ns: delay, since: retryStart)
                     continue
                 }
                 throw error

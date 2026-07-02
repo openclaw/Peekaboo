@@ -106,7 +106,7 @@ Always use `--no-remote --capture-engine cg` for capture commands:
 peekaboo see --app Safari --no-remote --capture-engine cg --json
 
 # Click element (doesn't need workaround, but safe to include)
-peekaboo click --on B1 --no-remote
+peekaboo click --on "$ELEMENT_ID" --no-remote
 
 # Type text (doesn't need workaround, but safe to include)
 peekaboo type --text "Hello" --no-remote

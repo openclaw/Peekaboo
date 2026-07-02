@@ -27,8 +27,10 @@ import PeekabooFoundation
  * )
  *
  * // Perform automation
- * try await automation.click(target: .elementId("B1"), clickType: .single, snapshotId: "snapshot_123")
- * try await automation.type(text: "Hello World", target: "T1", clearExisting: true, snapshotId: "snapshot_123")
+ * try await automation.click(
+ *     target: .elementId(button.id), clickType: .single, snapshotId: "snapshot_123")
+ * try await automation.type(
+ *     text: "Hello World", target: textField.id, clearExisting: true, snapshotId: "snapshot_123")
  * ```
  *
  * - Important: Requires Screen Recording and Accessibility permissions

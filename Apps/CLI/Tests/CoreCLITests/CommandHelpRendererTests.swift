@@ -21,6 +21,14 @@ struct CommandHelpRendererTests {
         #expect(!help.contains("<alsoText>"))
         #expect(!help.contains("<logLevel>"))
     }
+
+    @Test
+    func `interaction help describes element IDs as opaque`() {
+        for help in [ClickCommand.helpMessage(), MoveCommand.helpMessage()] {
+            #expect(help.contains("Opaque element ID"))
+            #expect(help.range(of: #"\b[BTMS]\d+\b"#, options: .regularExpression) == nil)
+        }
+    }
 }
 
 private struct SampleHelpCommand: ParsableCommand {

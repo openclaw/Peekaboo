@@ -146,6 +146,27 @@ struct AgentToolDescriptionTests {
 
     @Test
     @MainActor
+    func `Agent tools treat element IDs as opaque`() throws {
+        let service = try PeekabooAgentService(services: PeekabooServices())
+        let agentTools = service.createAgentTools()
+
+        for tool in agentTools {
+            let parameterDescriptions = tool.parameters.properties.values.map(\.description)
+            let guidance = ([tool.description] + parameterDescriptions).joined(separator: "\n")
+
+            #expect(
+                guidance.range(of: #"\b[BTMS]\d+\b"#, options: .regularExpression) == nil,
+                "Tool '\(tool.name)' must not imply that element ID shape encodes element role.")
+        }
+
+        let clickGuidance = agentTools.first(where: { $0.name == "click" }).map { tool in
+            ([tool.description] + tool.parameters.properties.values.map(\.description)).joined(separator: "\n")
+        }
+        #expect(clickGuidance?.localizedCaseInsensitiveContains("opaque") == true)
+    }
+
+    @Test
+    @MainActor
     func `Shell tool has quoting examples`() {
         guard let shellTool = makeAgentTools().first(where: { $0.name == "shell" }) else {
             Issue.record("Shell tool not found")
