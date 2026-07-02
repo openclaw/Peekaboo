@@ -154,6 +154,7 @@ Agent generation settings live under `agent.temperature` and `agent.maxTokens` i
 macOS Settings UI reads and writes the same values.
 
 ## Learn more
+- Project direction: [VISION.md](VISION.md)
 - Command reference: [docs/commands/](docs/commands/)
 - Platform support: [docs/platform-support.md](docs/platform-support.md)
 - Architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
