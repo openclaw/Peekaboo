@@ -209,16 +209,23 @@ extension DialogService {
         try? await self.ensureFileDialogExpandedIfNeeded(dialog: dialog)
         self.logger.debug("Navigating via Go to Folder (Cmd+Shift+G): \(directoryPath)")
 
-        try? InputDriver.hotkey(keys: ["cmd", "shift", "g"], holdDuration: 0.05)
-        try await Task.sleep(nanoseconds: 250_000_000)
-
-        // Best effort: re-assert focus before typing into the Go-to sheet.
-        await self.ensureDialogFocus(dialog: dialog, appName: appName)
-
-        try? InputDriver.hotkey(keys: ["cmd", "a"], holdDuration: 0.05)
-        try await Task.sleep(nanoseconds: 75_000_000)
-        try self.typeTextValue(directoryPath, delay: 5000)
-        try InputDriver.tapKey(.return)
+        try await self.performGoToFolderKeyboardNavigation(directoryPath: directoryPath) {
+            // Best effort: re-assert focus before typing into the Go-to sheet.
+            await self.ensureDialogFocus(dialog: dialog, appName: appName)
+        }
         try await Task.sleep(nanoseconds: 450_000_000)
+    }
+
+    func performGoToFolderKeyboardNavigation(
+        directoryPath: String,
+        reassertFocus: () async -> Void) async throws
+    {
+        try self.syntheticInputDriver.hotkey(keys: ["cmd", "shift", "g"], holdDuration: 0.05)
+        try await Task.sleep(nanoseconds: 250_000_000)
+        await reassertFocus()
+        try self.syntheticInputDriver.hotkey(keys: ["cmd", "a"], holdDuration: 0.05)
+        try await Task.sleep(nanoseconds: 75_000_000)
+        try self.syntheticInputDriver.type(directoryPath, delayPerCharacter: 0.005)
+        try self.syntheticInputDriver.tapKey(.return, modifiers: [])
     }
 }

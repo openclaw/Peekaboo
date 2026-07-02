@@ -19,6 +19,9 @@ struct AIProviderParserTests {
         #expect(AIProviderParser.parse("minimax/MiniMax-M2.7") == AIProviderParser.ProviderConfig(
             provider: "minimax",
             model: "MiniMax-M2.7"))
+        #expect(AIProviderParser.parse("minimax/MiniMax-M3") == AIProviderParser.ProviderConfig(
+            provider: "minimax",
+            model: "MiniMax-M3"))
         #expect(AIProviderParser.parse("minimax-cn/MiniMax-M2.7") == AIProviderParser.ProviderConfig(
             provider: "minimax-cn",
             model: "MiniMax-M2.7"))

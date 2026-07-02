@@ -158,6 +158,7 @@ extension AgentCommand {
     private static let supportedMiniMaxInputs: Set<LanguageModel.MiniMax> = [
         .m27,
         .m27Highspeed,
+        .m3,
     ]
 
     private static let supportedKimiInputs: Set<LanguageModel.Kimi> = [

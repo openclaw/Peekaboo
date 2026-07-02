@@ -87,8 +87,12 @@ struct AgentCommandTests {
         #expect(command.parseModelString("MiniMax-M2.7") == .minimax(.m27))
         #expect(command.parseModelString("minimax-m2.7-highspeed") == .minimax(.m27Highspeed))
         #expect(command.parseModelString("minimax") == .minimax(.m27))
+        #expect(command.parseModelString("MiniMax-M3") == .minimax(.m3))
+        #expect(command.parseModelString("minimax/MiniMax-M3") == .minimax(.m3))
+        #expect(command.parseModelString("minimax/minimax-m3") == .minimax(.m3))
         #expect(command.parseModelString("minimax-cn/m2.7") == .minimaxCN(.m27))
         #expect(command.parseModelString("minimaxi/m2.7-highspeed") == .minimaxCN(.m27Highspeed))
+        #expect(command.parseModelString("minimax-cn/MiniMax-M3") == .minimaxCN(.m3))
         #expect(command.parseModelString("minimax-cn/not-a-supported-model") == nil)
     }
 
@@ -387,6 +391,8 @@ struct ModelSelectionIntegrationTests {
             ("claude-opus-4.8", .anthropic(.opus48)),
             ("gemini-3.5-flash", .google(.gemini35Flash)),
             ("MiniMax-M2.7", .minimax(.m27)),
+            ("MiniMax-M3", .minimax(.m3)),
+            ("minimax/MiniMax-M3", .minimax(.m3)),
             ("kimi/kimi-k2.6", .kimi(.k26)),
             ("kimi/kimi-k2.7-code", .kimi(.k27Code)),
             ("ollama/llama3.3", .ollama(.llama33)),
