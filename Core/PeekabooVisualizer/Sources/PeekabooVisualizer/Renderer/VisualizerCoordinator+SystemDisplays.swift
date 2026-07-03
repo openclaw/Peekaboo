@@ -39,7 +39,8 @@ extension VisualizerCoordinator {
             at: Self.paddedRect(rect, padding: Self.OverlayPadding.appLifecycle),
             content: launchView,
             duration: launchDuration,
-            fadeOut: true)
+            fadeOut: true,
+            replaceKey: OverlaySlot.appLifecycle)
 
         return true
     }
@@ -75,7 +76,8 @@ extension VisualizerCoordinator {
             at: Self.paddedRect(rect, padding: Self.OverlayPadding.appLifecycle),
             content: quitView,
             duration: quitDuration,
-            fadeOut: true)
+            fadeOut: true,
+            replaceKey: OverlaySlot.appLifecycle)
 
         return true
     }
@@ -138,7 +140,8 @@ extension VisualizerCoordinator {
             at: Self.paddedRect(rect, padding: 0),
             content: menuView,
             duration: menuDuration,
-            fadeOut: true)
+            fadeOut: true,
+            replaceKey: OverlaySlot.menu)
 
         return true
     }
@@ -204,33 +207,58 @@ extension VisualizerCoordinator {
             at: rect,
             content: spaceView,
             duration: spaceDuration,
-            fadeOut: true)
+            fadeOut: true,
+            replaceKey: OverlaySlot.space)
 
         return true
     }
 
-    func displayElementOverlays(elements: [String: CGRect], duration: TimeInterval) async -> Bool {
+    func displayElementOverlays(
+        elements: [String: CGRect],
+        duration: TimeInterval,
+        space: VisualizerEvent.CoordinateSpace?) async -> Bool
+    {
         // Check if enabled
         guard self.settings?.visualizerEnabled ?? true else {
             return false
         }
 
-        // Rects arrive in AppKit screen coordinates (senders convert from
-        // accessibility space). Each highlight is sized to its element so the
-        // outline sits exactly on the control instead of filling the padded
-        // overlay window.
-        let highlightDuration = self.scaledDuration(for: duration, minimum: AnimationBaseline.elementHighlight)
-        for (elementId, rect) in elements {
-            let highlightView = ElementHighlightView(
-                elementID: elementId,
-                size: rect.size,
-                duration: highlightDuration)
+        // Marked payloads carry AppKit rects; legacy senders dispatched raw
+        // accessibility rects, which render vertically mirrored unless the
+        // receiver flips them here.
+        var appKitElements = elements
+        if space == nil, let primary = NSScreen.screens.first {
+            appKitElements = Self.legacyFlippedElementRects(elements, primaryScreenMaxY: primary.frame.maxY)
+        }
 
+        // One overlay window per screen holds every highlight: hundreds of
+        // per-element windows would crush the window server, and a refreshed
+        // detection can crossfade the whole sheet via its replace slot.
+        let highlightDuration = self.scaledDuration(for: duration, minimum: AnimationBaseline.elementHighlight)
+        for (index, screen) in NSScreen.screens.enumerated() {
+            let screenFrame = screen.frame
+            let onScreen = appKitElements.filter { screenFrame.intersects($0.value) }
+            let filtered = Self.filteredElementOverlays(
+                onScreen,
+                screenArea: screenFrame.width * screenFrame.height)
+            guard !filtered.isEmpty else { continue }
+
+            let positioned = filtered
+                .map { id, rect in
+                    ElementOverlaySheetView.PositionedElement(
+                        id: id,
+                        rect: Self.windowLocalRect(rect, in: screenFrame))
+                }
+                .sorted { $0.id < $1.id }
+
+            let sheet = ElementOverlaySheetView(elements: positioned, duration: highlightDuration)
             _ = self.overlayManager.showAnimation(
-                at: Self.paddedRect(rect, padding: Self.OverlayPadding.elementHighlight),
-                content: highlightView,
+                at: screenFrame,
+                content: sheet,
                 duration: highlightDuration,
-                fadeOut: true)
+                fadeOut: true,
+                chromeMargin: 0,
+                replaceKey: OverlaySlot.elementSheet(screenIndex: index))
         }
 
         return true
@@ -270,7 +298,9 @@ extension VisualizerCoordinator {
             at: Self.paddedRect(windowBounds, padding: Self.OverlayPadding.annotatedScreenshot),
             content: annotatedView,
             duration: self.scaledDuration(for: duration, minimum: AnimationBaseline.annotatedScreenshot),
-            fadeOut: true)
+            fadeOut: true,
+            chromeMargin: 0,
+            replaceKey: OverlaySlot.annotatedScreenshot)
 
         return true
     }

@@ -20,8 +20,17 @@ public final class VisualizerAutomationFeedbackClient: AutomationFeedbackClient 
         await self.client.showClickFeedback(at: point, type: type)
     }
 
-    public func showTypingFeedback(keys: [String], duration: TimeInterval, cadence: TypingCadence) async -> Bool {
-        await self.client.showTypingFeedback(keys: keys, duration: duration, cadence: cadence)
+    public func showTypingFeedback(
+        keys: [String],
+        duration: TimeInterval,
+        cadence: TypingCadence,
+        masksTypedText: Bool) async -> Bool
+    {
+        await self.client.showTypingFeedback(
+            keys: keys,
+            duration: duration,
+            cadence: cadence,
+            masksTypedText: masksTypedText)
     }
 
     public func showScrollFeedback(at point: CGPoint, direction: ScrollDirection, amount: Int) async -> Bool {

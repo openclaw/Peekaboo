@@ -159,12 +159,10 @@ private struct VisualizerSmokeSequence {
         })
 
         try await steps.append(self.step("Typing indicator") {
-            // Fixed demo text, safe to reveal in the caption.
             await client.showTypingFeedback(
                 keys: ["H", "i", "!"],
                 duration: 1.5,
-                cadence: .human(wordsPerMinute: 60),
-                revealsTypedText: true
+                cadence: .human(wordsPerMinute: 60)
             )
         })
 

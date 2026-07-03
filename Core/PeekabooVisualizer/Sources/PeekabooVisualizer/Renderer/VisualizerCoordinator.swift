@@ -54,6 +54,34 @@ public final class VisualizerCoordinator {
         static let spaceTransition: TimeInterval = 1.0
     }
 
+    /// Minimum gaps between repeats of the same feedback kind. Agents fire
+    /// actions in rapid bursts; without throttling every capture and scroll
+    /// spawns its own overlay and the screen turns into a slideshow.
+    enum FeedbackThrottle {
+        static let screenshotFlash: TimeInterval = 1.2
+        static let scroll: TimeInterval = 0.3
+        static let mouseTrail: TimeInterval = 0.4
+        static let elementDetection: TimeInterval = 1.0
+        /// Mouse moves shorter than this aren't worth a comet.
+        static let minimumTrailDistance: CGFloat = 80
+    }
+
+    /// Replace-keys for overlays that should exist at most once: a new event
+    /// of the same kind crossfades into the previous one instead of stacking.
+    enum OverlaySlot {
+        static let typing = "typing"
+        static let hotkey = "hotkey"
+        static let menu = "menu"
+        static let space = "space"
+        static let appLifecycle = "appLifecycle"
+        static let watchHUD = "watchHUD"
+        static let annotatedScreenshot = "annotatedScreenshot"
+
+        static func elementSheet(screenIndex: Int) -> String {
+            "elements-screen-\(screenIndex)"
+        }
+    }
+
     enum OverlayPadding {
         static let watchHUD: CGFloat = 16
         static let click: CGFloat = 32
@@ -90,6 +118,50 @@ public final class VisualizerCoordinator {
         CGPoint(
             x: point.x - windowRect.minX,
             y: windowRect.maxY - point.y)
+    }
+
+    /// Converts an AppKit screen rect into a window-local SwiftUI rect
+    /// (top-left origin) for an overlay shown at `windowRect`.
+    static func windowLocalRect(_ rect: CGRect, in windowRect: CGRect) -> CGRect {
+        CGRect(
+            x: rect.minX - windowRect.minX,
+            y: windowRect.maxY - rect.maxY,
+            width: rect.width,
+            height: rect.height)
+    }
+
+    /// Flips legacy element rects (accessibility top-left origin) into AppKit
+    /// coordinates. Old senders predate the payload's coordinate-space marker.
+    static func legacyFlippedElementRects(
+        _ elements: [String: CGRect],
+        primaryScreenMaxY: CGFloat) -> [String: CGRect]
+    {
+        elements.mapValues { rect in
+            CGRect(
+                x: rect.minX,
+                y: primaryScreenMaxY - rect.maxY,
+                width: rect.width,
+                height: rect.height)
+        }
+    }
+
+    /// Keeps element highlights readable: drops degenerate and screen-filling
+    /// rects (window/group containers) and caps the count, preferring the
+    /// smallest rects — those are the actual controls.
+    static func filteredElementOverlays(
+        _ elements: [String: CGRect],
+        screenArea: CGFloat,
+        limit: Int = 120) -> [String: CGRect]
+    {
+        let usable = elements.filter { _, rect in
+            rect.width >= 4 && rect.height >= 4 &&
+                (rect.width * rect.height) <= screenArea * 0.5
+        }
+        guard usable.count > limit else { return usable }
+        let smallest = usable
+            .sorted { ($0.value.width * $0.value.height) < ($1.value.width * $1.value.height) }
+            .prefix(limit)
+        return Dictionary(uniqueKeysWithValues: Array(smallest))
     }
 
     private static func keyWidthForHotkeyOverlay(_ key: String) -> CGFloat {
@@ -142,6 +214,10 @@ public final class VisualizerCoordinator {
 
     var lastWatchHUDDate = Date.distantPast
     var watchHUDSequence = 0
+    var lastScreenshotFlashDate = Date.distantPast
+    var lastScrollDate = Date.distantPast
+    var lastMouseTrailDate = Date.distantPast
+    var lastElementDetectionDate = Date.distantPast
 
     // MARK: - Initialization
 

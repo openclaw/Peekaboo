@@ -1,4 +1,5 @@
 import CoreGraphics
+import Foundation
 import PeekabooFoundation
 import Testing
 @testable import PeekabooVisualizer
@@ -6,14 +7,76 @@ import Testing
 @MainActor
 struct VisualizerOverlaySizingTests {
     @Test
-    func `Typing feedback masks printable keys unless revealed`() {
+    func `Typed text shows verbatim unless masking is requested`() {
         let keys = ["H", "i", " ", "{return}", "{tab}", "4"]
 
-        let masked = VisualizationClient.maskedTypingKeys(keys, reveal: false)
-        #expect(masked == ["•", "•", "•", "{return}", "{tab}", "•"])
+        // Default: the caption shows what is typed.
+        #expect(VisualizationClient.maskedTypingKeys(keys, mask: false) == keys)
 
-        let revealed = VisualizationClient.maskedTypingKeys(keys, reveal: true)
-        #expect(revealed == keys)
+        // Secure fields / env opt-in: printable characters become bullets,
+        // control glyphs stay readable.
+        let masked = VisualizationClient.maskedTypingKeys(keys, mask: true)
+        #expect(masked == ["•", "•", "•", "{return}", "{tab}", "•"])
+    }
+
+    @Test
+    func `Legacy element payloads decode without a coordinate space`() throws {
+        // Payload JSON written by pre-marker senders has no `space` key and
+        // must keep decoding (receiver then flips the rects).
+        let legacyJSON = """
+        {"elementDetection":{"elements":{"B1":[[10,20],[30,40]]},"duration":2}}
+        """
+        let payload = try JSONDecoder().decode(
+            VisualizerEvent.Payload.self,
+            from: Data(legacyJSON.utf8))
+
+        guard case let .elementDetection(elements, duration, space) = payload else {
+            Issue.record("Expected elementDetection payload")
+            return
+        }
+        #expect(elements["B1"] == CGRect(x: 10, y: 20, width: 30, height: 40))
+        #expect(duration == 2)
+        #expect(space == nil)
+    }
+
+    @Test
+    func `Legacy element rects flip against the primary screen`() {
+        let flipped = VisualizerCoordinator.legacyFlippedElementRects(
+            ["B1": CGRect(x: 100, y: 50, width: 200, height: 40)],
+            primaryScreenMaxY: 900)
+
+        #expect(flipped["B1"] == CGRect(x: 100, y: 900 - 50 - 40, width: 200, height: 40))
+    }
+
+    @Test
+    func `Element overlays drop containers and cap the count`() {
+        var elements: [String: CGRect] = [
+            "window": CGRect(x: 0, y: 0, width: 1400, height: 860),
+            "tiny": CGRect(x: 10, y: 10, width: 2, height: 2),
+        ]
+        for index in 0..<150 {
+            elements["e\(index)"] = CGRect(x: Double(index), y: 0, width: 40, height: 20 + Double(index % 7))
+        }
+
+        let filtered = VisualizerCoordinator.filteredElementOverlays(
+            elements,
+            screenArea: 1440 * 900,
+            limit: 120)
+
+        #expect(filtered["window"] == nil)
+        #expect(filtered["tiny"] == nil)
+        #expect(filtered.count == 120)
+    }
+
+    @Test
+    func `Window-local rects flip AppKit coordinates`() {
+        let windowRect = CGRect(x: 100, y: 200, width: 400, height: 300)
+        let local = VisualizerCoordinator.windowLocalRect(
+            CGRect(x: 150, y: 400, width: 60, height: 40),
+            in: windowRect)
+
+        // AppKit rect top (y 440) sits 60pt below the window top (maxY 500).
+        #expect(local == CGRect(x: 50, y: 60, width: 60, height: 40))
     }
 
     @Test

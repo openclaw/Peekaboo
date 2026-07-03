@@ -22,7 +22,14 @@ public protocol AutomationFeedbackClient: Sendable {
     func connect()
 
     func showClickFeedback(at point: CGPoint, type: ClickType) async -> Bool
-    func showTypingFeedback(keys: [String], duration: TimeInterval, cadence: TypingCadence) async -> Bool
+
+    /// `masksTypedText` marks the keys as sensitive (e.g. typed into a secure
+    /// text field) so downstream displays render bullets instead of content.
+    func showTypingFeedback(
+        keys: [String],
+        duration: TimeInterval,
+        cadence: TypingCadence,
+        masksTypedText: Bool) async -> Bool
     func showScrollFeedback(at point: CGPoint, direction: ScrollDirection, amount: Int) async -> Bool
     func showHotkeyDisplay(keys: [String], duration: TimeInterval) async -> Bool
     func showSwipeGesture(from: CGPoint, to: CGPoint, duration: TimeInterval) async -> Bool
@@ -55,7 +62,8 @@ extension AutomationFeedbackClient {
     public func showTypingFeedback(
         keys _: [String],
         duration _: TimeInterval,
-        cadence _: TypingCadence) async -> Bool
+        cadence _: TypingCadence,
+        masksTypedText _: Bool) async -> Bool
     {
         false
     }

@@ -29,12 +29,13 @@ extension VisualizerCoordinator {
             showGhost: showGhost,
             intensity: intensity)
 
-        // Display using overlay manager
+        // The veil must cover exactly the captured rect, so no chrome margin.
         _ = self.overlayManager.showAnimation(
             at: rect,
             content: flashView,
             duration: self.scaledDuration(AnimationBaseline.screenshotFlash, applySlowdown: false),
-            fadeOut: false)
+            fadeOut: false,
+            chromeMargin: 0)
 
         return true
     }
@@ -47,7 +48,8 @@ extension VisualizerCoordinator {
             at: Self.paddedRect(rect, padding: Self.OverlayPadding.watchHUD),
             content: view,
             duration: self.scaledDuration(2.4),
-            fadeOut: true)
+            fadeOut: true,
+            replaceKey: OverlaySlot.watchHUD)
         return true
     }
 
@@ -108,12 +110,14 @@ extension VisualizerCoordinator {
             width: widgetSize.width,
             height: widgetSize.height)
 
-        // Display using overlay manager
+        // Display using overlay manager; consecutive type commands crossfade
+        // through the shared typing slot instead of stacking captions.
         _ = self.overlayManager.showAnimation(
             at: Self.paddedRect(rect, padding: Self.OverlayPadding.typing),
             content: typingView,
             duration: overlayDuration,
-            fadeOut: true)
+            fadeOut: true,
+            replaceKey: OverlaySlot.typing)
 
         return true
     }
@@ -175,12 +179,13 @@ extension VisualizerCoordinator {
             to: Self.windowLocalPoint(to, in: windowRect),
             duration: mouseDuration)
 
-        // Display using overlay manager
+        // Comet coordinates are window-local; the travel padding is the margin.
         _ = self.overlayManager.showAnimation(
             at: windowRect,
             content: mouseView,
             duration: mouseDuration + 0.35,
-            fadeOut: true)
+            fadeOut: true,
+            chromeMargin: 0)
 
         return true
     }
@@ -206,12 +211,13 @@ extension VisualizerCoordinator {
             to: Self.windowLocalPoint(to, in: windowRect),
             duration: swipeDuration)
 
-        // Display using overlay manager
+        // Comet coordinates are window-local; the travel padding is the margin.
         _ = self.overlayManager.showAnimation(
             at: windowRect,
             content: swipeView,
             duration: swipeDuration + 0.35,
-            fadeOut: true)
+            fadeOut: true,
+            chromeMargin: 0)
 
         return true
     }
@@ -240,12 +246,14 @@ extension VisualizerCoordinator {
             width: overlaySize.width,
             height: overlaySize.height)
 
-        // Display using overlay manager
+        // Display using overlay manager; repeated hotkeys crossfade through
+        // the shared slot instead of stacking chips.
         _ = self.overlayManager.showAnimation(
             at: Self.paddedRect(rect, padding: 0),
             content: hotkeyView,
             duration: overlayDuration,
-            fadeOut: true)
+            fadeOut: true,
+            replaceKey: OverlaySlot.hotkey)
 
         return true
     }

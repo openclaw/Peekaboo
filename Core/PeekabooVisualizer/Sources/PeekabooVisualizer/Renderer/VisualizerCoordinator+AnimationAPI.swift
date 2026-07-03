@@ -11,6 +11,14 @@ extension VisualizerCoordinator {
     public func showScreenshotFlash(in rect: CGRect) async -> Bool {
         self.logger.info("📸 Visualizer: Showing screenshot flash for rect: \(String(describing: rect))")
 
+        // Agents capture in bursts (`see` after every action); one flash per
+        // burst is plenty.
+        let now = Date()
+        guard now.timeIntervalSince(self.lastScreenshotFlashDate) >= FeedbackThrottle.screenshotFlash else {
+            return true
+        }
+        self.lastScreenshotFlashDate = now
+
         self.screenshotCount += 1
         let showGhost = self.screenshotCount % 100 == 0
         self.logger.debug("Screenshot count: \(self.screenshotCount), show ghost: \(showGhost)")
@@ -76,6 +84,13 @@ extension VisualizerCoordinator {
         ].joined(separator: ", ")
         self.logger.info("\(message, privacy: .public)")
 
+        // Scroll wheels emit streams of events; one chip per burst reads better.
+        let now = Date()
+        guard now.timeIntervalSince(self.lastScrollDate) >= FeedbackThrottle.scroll else {
+            return true
+        }
+        self.lastScrollDate = now
+
         return await self.animationQueue.enqueue(priority: .normal) {
             await self.displayScrollIndicators(at: point, direction: direction, amount: amount)
         }
@@ -87,6 +102,16 @@ extension VisualizerCoordinator {
             "to \(String(describing: to)), duration: \(duration)s",
         ].joined(separator: " ")
         self.logger.info("\(message, privacy: .public)")
+
+        // Short hops don't need a comet, and rapid successive moves would
+        // paint overlapping trails.
+        let distance = hypot(to.x - from.x, to.y - from.y)
+        guard distance >= FeedbackThrottle.minimumTrailDistance else { return true }
+        let now = Date()
+        guard now.timeIntervalSince(self.lastMouseTrailDate) >= FeedbackThrottle.mouseTrail else {
+            return true
+        }
+        self.lastMouseTrailDate = now
 
         return await self.animationQueue.enqueue(priority: .low) {
             await self.displayMouseTrail(from: from, to: to, duration: duration)
@@ -173,11 +198,23 @@ extension VisualizerCoordinator {
         }
     }
 
-    public func showElementDetection(elements: [String: CGRect], duration: TimeInterval) async -> Bool {
+    public func showElementDetection(
+        elements: [String: CGRect],
+        duration: TimeInterval,
+        space: VisualizerEvent.CoordinateSpace? = .appKit) async -> Bool
+    {
         self.logger.debug("Showing element detection for \(elements.count) elements")
 
+        // `see` runs back to back during agent loops; refreshing the sheet
+        // once a second is plenty (each refresh replaces the previous one).
+        let now = Date()
+        guard now.timeIntervalSince(self.lastElementDetectionDate) >= FeedbackThrottle.elementDetection else {
+            return true
+        }
+        self.lastElementDetectionDate = now
+
         return await self.animationQueue.enqueue {
-            await self.displayElementOverlays(elements: elements, duration: duration)
+            await self.displayElementOverlays(elements: elements, duration: duration, space: space)
         }
     }
 

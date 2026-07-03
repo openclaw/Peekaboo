@@ -46,13 +46,44 @@ struct ElementHighlightView: View {
     }
 }
 
+/// All element highlights for one screen in a single overlay window.
+/// One window per detection pass keeps hundreds of elements cheap and lets a
+/// refreshed detection crossfade the whole sheet at once.
+struct ElementOverlaySheetView: View {
+    struct PositionedElement: Identifiable {
+        let id: String
+        /// Window-local SwiftUI rect (top-left origin).
+        let rect: CGRect
+    }
+
+    let elements: [PositionedElement]
+    let duration: TimeInterval
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            Color.clear
+
+            ForEach(self.elements) { element in
+                ElementHighlightView(
+                    elementID: element.id,
+                    size: element.rect.size,
+                    duration: self.duration)
+                    .position(x: element.rect.midX, y: element.rect.midY)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
 #if DEBUG && !SWIFT_PACKAGE
 #Preview {
-    ElementHighlightView(
-        elementID: "B7",
-        size: CGSize(width: 160, height: 44),
+    ElementOverlaySheetView(
+        elements: [
+            .init(id: "B7", rect: CGRect(x: 40, y: 40, width: 160, height: 44)),
+            .init(id: "T2", rect: CGRect(x: 240, y: 120, width: 120, height: 30)),
+        ],
         duration: 3.0)
-        .frame(width: 260, height: 140)
+        .frame(width: 420, height: 220)
         .background(Color.gray.opacity(0.3))
 }
 #endif
