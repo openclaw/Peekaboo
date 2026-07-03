@@ -69,7 +69,7 @@ MCP Server → peekaboo CLI → VisualizerEventStore → Distributed Notificatio
 
 - `PEEKABOO_VISUAL_FEEDBACK=false` – disable the client entirely (no files, no notifications).
 - `PEEKABOO_VISUAL_SCREENSHOTS=false` – skip screenshot flash events but allow the rest.
-- `PEEKABOO_VISUALIZER_SHOW_TYPED_TEXT=true` – show typed characters verbatim in the typing HUD. By default printable keys are masked as bullets before the event is persisted, so passwords and tokens never reach the shared store or the screen.
+- `PEEKABOO_VISUALIZER_MASK_TYPED_TEXT=true` – always mask typed characters as bullets. By default the typing HUD shows the text verbatim (that's the point of the caption); secure text fields are detected and masked automatically before the event is persisted.
 - `PEEKABOO_VISUALIZER_STDOUT=true|false` – force VisualizationClient logs to stderr regardless of bundle context.
 - `PEEKABOO_VISUALIZER_STORAGE=/path` – override the shared directory.
 - `PEEKABOO_VISUALIZER_APP_GROUP=<group>` – resolve storage inside an App Group container.
@@ -122,10 +122,11 @@ All animations share one design system (`VisualizerDesign.swift`): a single viol
 - **No labels**: The geometry communicates the action; there is no "Click" text
 
 ### Typing Feedback ⌨️
-- **Style**: A caption pill at bottom center streams the keystrokes with a blinking caret
-- **Privacy**: Printable characters are masked as bullets by default (typed text can be a password); set `PEEKABOO_VISUALIZER_SHOW_TYPED_TEXT=true` to stream the actual text, e.g. for demo recordings
+- **Style**: A caption pill at bottom center streams the typed text verbatim with a blinking caret
+- **Privacy**: Typing into a secure text field (`AXSecureTextField`) masks the caption as bullets before the event is persisted or shown. Detection samples the delivery focus before and after typing (scoped to the target app for background typing) — best effort; `PEEKABOO_VISUALIZER_MASK_TYPED_TEXT=true` masks everything for privacy-sensitive setups
 - **Special Keys**: Rendered inline as accent glyphs (⏎, ⇥, ⌫, ⎋)
 - **Cadence**: Reveal speed derives from the incoming `TypingCadence` (human WPM or fixed delay)
+- **Coalescing**: Consecutive type commands crossfade through a single caption slot instead of stacking pills
 
 ### Scrolling 📜
 - **Effect**: A compact circular chip at the scroll point with three chevrons flowing along the scroll direction
@@ -165,9 +166,17 @@ All animations share one design system (`VisualizerDesign.swift`): a single viol
 
 ### Element Detection (See) 👁️
 - **Effect**: Every detected element gets an accent outline sized exactly to the control, with its opaque ID in a small HUD tag above
-- **Coordinates**: Senders convert accessibility bounds (top-left origin) to AppKit screen coordinates via `VisualizerBoundsConverter` before dispatch; unconverted rects render vertically mirrored
-- **Animation**: Pop in with slight scale, fade out at the end
+- **Coordinates**: Senders convert accessibility bounds (top-left origin) to AppKit screen coordinates via `VisualizerBoundsConverter` and mark the payload `space: appKit`; unmarked (legacy) payloads are flipped by the receiver so old binaries still place correctly
+- **Rendering**: One overlay window per screen holds every highlight (`ElementOverlaySheetView`); degenerate and screen-filling container rects are dropped and the count is capped at 120, preferring the smallest rects
+- **Animation**: Pop in with slight scale, fade out at the end; a refreshed detection crossfades the whole sheet through its replace slot
 - **Duration**: 2 seconds (scaled) before fade
+
+### Verbosity: throttles and replace slots
+
+Agents fire actions in bursts, so the coordinator coalesces:
+
+- **Throttles** (`VisualizerCoordinator.FeedbackThrottle`): screenshot flash ≥ 1.2s apart, scroll chips ≥ 0.3s, mouse comets ≥ 0.4s and only for moves ≥ 80pt, element sheets ≥ 1.0s, watch HUD ≥ 1.0s. Throttled events report success without drawing.
+- **Replace slots** (`VisualizerCoordinator.OverlaySlot`): typing caption, hotkey chip, menu breadcrumb, Space indicator, app toast, watch HUD, annotated screenshot, and per-screen element sheets each keep at most one live overlay — a new event fades the previous one out in 0.12s and takes its place.
 
 ## Implementation Details
 
@@ -198,9 +207,11 @@ Located in `Core/PeekabooVisualizer/Sources/PeekabooVisualizer/Views/`:
 - `HotkeyOverlayView.swift` - Keycap chord display
 - ... (one file per animation type)
 
-Two overlay invariants worth knowing when adding animations:
+Overlay invariants worth knowing when adding animations:
 - `AnimationOverlayManager` wraps every animation in a flexible container so fixed-size views center on the overlay window; without it they pin to the top-leading corner and misalign by the window padding.
-- Point-based views (mouse trail, swipe) receive window-local SwiftUI coordinates. `VisualizerCoordinator.windowLocalPoint(_:in:)` converts AppKit screen points (bottom-left origin) into flipped view coordinates.
+- Every overlay window is inflated by a 40pt chrome margin so chip shadows and glows fade out instead of clipping at the window edge. Views that fill the window and use window-local coordinates (comets, capture flash, element sheets) pass `chromeMargin: 0` and provide their own breathing room.
+- Point-based views (mouse trail, swipe) receive window-local SwiftUI coordinates. `VisualizerCoordinator.windowLocalPoint(_:in:)` / `windowLocalRect(_:in:)` convert AppKit screen geometry (bottom-left origin) into flipped view coordinates.
+- Overlays that should never stack pass a `replaceKey`; the manager crossfades the previous window of the same key.
 
 ### Integration Points
 
