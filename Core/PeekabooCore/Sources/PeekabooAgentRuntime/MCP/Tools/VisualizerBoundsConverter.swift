@@ -6,16 +6,25 @@
 import CoreGraphics
 import PeekabooAutomation
 import PeekabooProtocols
+import PeekabooVisualizer
 
 enum VisualizerBoundsConverter {
+    static func convertGlobalAccessibilityRect(_ rect: CGRect, primaryScreenFrame: CGRect?) -> CGRect {
+        VisualizerScreenGeometry.appKitRect(
+            fromGlobalDisplay: rect,
+            primaryScreenFrame: primaryScreenFrame)
+    }
+
     /// Convert automation-detected elements into the bounds format expected by the visualizer overlay.
     @MainActor
     static func makeVisualizerElements(
         from elements: [PeekabooAutomation.DetectedElement],
-        screenBounds: CGRect) -> [PeekabooProtocols.DetectedElement]
+        primaryScreenFrame: CGRect?) -> [PeekabooProtocols.DetectedElement]
     {
         elements.map { element in
-            let convertedBounds = self.convertAccessibilityRect(element.bounds, screenBounds: screenBounds)
+            let convertedBounds = VisualizerScreenGeometry.appKitRect(
+                fromGlobalDisplay: element.bounds,
+                primaryScreenFrame: primaryScreenFrame)
             return PeekabooProtocols.DetectedElement(
                 id: element.id,
                 type: element.type,
@@ -24,60 +33,5 @@ enum VisualizerBoundsConverter {
                 value: element.value,
                 isEnabled: element.isEnabled)
         }
-    }
-
-    /// Convert a global accessibility rect (top-left origin anchored at the primary display)
-    /// into global AppKit coordinates (bottom-left origin). The flip axis is always the
-    /// primary display's height, which stays correct for any multi-display arrangement —
-    /// per-display flipping breaks as soon as a display has a non-zero origin.
-    static func convertGlobalAccessibilityRect(_ rect: CGRect, primaryScreenFrame: CGRect?) -> CGRect {
-        guard let primaryScreenFrame, rect.width > 0, rect.height > 0 else { return rect }
-        return CGRect(
-            x: rect.minX,
-            y: primaryScreenFrame.maxY - rect.maxY,
-            width: rect.width,
-            height: rect.height)
-    }
-
-    /// Accessibility coordinates use a top-left origin. Translate them into the bottom-left coordinate
-    /// system used by CoreGraphics/AppKit so overlays line up with the real window.
-    static func convertAccessibilityRect(_ rect: CGRect, screenBounds: CGRect) -> CGRect {
-        guard rect.width > 0, rect.height > 0 else { return rect }
-
-        let relativeTop = rect.origin.y - screenBounds.origin.y
-        let flippedY = screenBounds.maxY - relativeTop - rect.height
-
-        return CGRect(
-            x: rect.origin.x,
-            y: flippedY,
-            width: rect.width,
-            height: rect.height)
-    }
-
-    /// Resolve the display bounds we should use for coordinate conversion.
-    @MainActor
-    static func resolveScreenBounds(
-        windowBounds: CGRect,
-        displayBounds: CGRect?,
-        screens: [PeekabooAutomation.ScreenInfo]) -> CGRect
-    {
-        if let displayBounds {
-            return displayBounds
-        }
-
-        if let screen = screens.first(where: { $0.frame.intersects(windowBounds) }) {
-            return screen.frame
-        }
-        if let primary = screens.first(where: { $0.isPrimary }) ?? screens.first {
-            return primary.frame
-        }
-
-        // Fall back to a synthetic rectangle anchored at the window origin. This keeps overlays stable
-        // when display metadata is unavailable (unit tests, headless runners, etc.).
-        return CGRect(
-            x: windowBounds.origin.x,
-            y: windowBounds.origin.y,
-            width: max(windowBounds.width, 1440),
-            height: max(windowBounds.height, 900))
     }
 }

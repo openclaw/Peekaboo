@@ -276,7 +276,6 @@ public struct SeeTool: MCPTool {
 
     @MainActor
     private func emitElementDetectionVisualizer(from detected: [AutomationDetectedElement]) async {
-        guard !detected.isEmpty else { return }
         // Element bounds use global accessibility coordinates (top-left origin)
         // but the overlay windows are positioned in global AppKit coordinates
         // (bottom-left origin). Flip against the primary display — without this
@@ -286,8 +285,8 @@ public struct SeeTool: MCPTool {
         let map = Dictionary(uniqueKeysWithValues: detected.map { element in
             (
                 element.id,
-                VisualizerBoundsConverter.convertGlobalAccessibilityRect(
-                    element.bounds,
+                VisualizerScreenGeometry.appKitRect(
+                    fromGlobalDisplay: element.bounds,
                     primaryScreenFrame: primaryFrame))
         })
         _ = await VisualizationClient.shared.showElementDetection(elements: map)
@@ -302,16 +301,17 @@ public struct SeeTool: MCPTool {
         guard !detectedElements.isEmpty else { return }
         guard let data = try? Data(contentsOf: URL(fileURLWithPath: annotatedPath)) else { return }
         let metadata = await snapshot.screenshotMetadata
-        let windowBounds = metadata?.windowInfo?.bounds
+        let globalDisplayWindowBounds = metadata?.windowInfo?.bounds
             ?? metadata?.displayInfo?.bounds
             ?? CGRect(x: 0, y: 0, width: 1440, height: 900)
-        let screenBounds = VisualizerBoundsConverter.resolveScreenBounds(
-            windowBounds: windowBounds,
-            displayBounds: metadata?.displayInfo?.bounds,
-            screens: self.context.screens.listScreens())
+        let screens = self.context.screens.listScreens()
+        let primaryFrame = (screens.first(where: \.isPrimary) ?? screens.first)?.frame
+        let windowBounds = VisualizerScreenGeometry.appKitRect(
+            fromGlobalDisplay: globalDisplayWindowBounds,
+            primaryScreenFrame: primaryFrame)
         let protocolElements = VisualizerBoundsConverter.makeVisualizerElements(
             from: detectedElements,
-            screenBounds: screenBounds)
+            primaryScreenFrame: primaryFrame)
         _ = await VisualizationClient.shared.showAnnotatedScreenshot(
             imageData: data,
             elements: protocolElements,

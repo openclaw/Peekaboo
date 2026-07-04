@@ -6,7 +6,7 @@ public protocol ScreenServiceProtocol: Sendable {
     /// List all available screens
     func listScreens() -> [ScreenInfo]
 
-    /// Find which screen contains a window based on its bounds
+    /// Find which screen contains global CG/Accessibility window bounds.
     func screenContainingWindow(bounds: CGRect) -> ScreenInfo?
 
     /// Get screen by index

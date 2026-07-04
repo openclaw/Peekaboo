@@ -2,6 +2,7 @@ import Algorithms
 import AppKit
 import Foundation
 import os
+import PeekabooFoundation
 
 /// Information about a display screen
 public struct ScreenInfo: Codable, Sendable {
@@ -43,7 +44,6 @@ public final class ScreenService: ScreenServiceProtocol {
     public func listScreens() -> [ScreenInfo] {
         // List all available screens
         let screens = NSScreen.screens
-        let mainScreen = NSScreen.main
 
         return screens.indexed().map { index, screen in
             let displayID = screen.displayID
@@ -54,40 +54,59 @@ public final class ScreenService: ScreenServiceProtocol {
                 name: name,
                 frame: screen.frame,
                 visibleFrame: screen.visibleFrame,
-                isPrimary: screen == mainScreen,
+                // AppKit guarantees screens[0] is the menu-bar display at
+                // (0, 0). NSScreen.main instead follows keyboard focus.
+                isPrimary: index == 0,
                 scaleFactor: screen.backingScaleFactor,
                 displayID: displayID)
         }
     }
 
-    /// Find which screen contains a window based on its bounds
+    /// Find which screen contains global CG/AX window bounds.
     public func screenContainingWindow(bounds: CGRect) -> ScreenInfo? {
-        // Find which screen contains a window based on its bounds
         let screens = self.listScreens()
+        guard let index = Self.screenIndex(
+            containingGlobalDisplayBounds: bounds,
+            appKitScreenFrames: screens.map(\.frame),
+            primaryScreenFrame: screens.first(where: \.isPrimary)?.frame)
+        else {
+            return nil
+        }
+        return screens[index]
+    }
+
+    static func screenIndex(
+        containingGlobalDisplayBounds bounds: CGRect,
+        appKitScreenFrames: [CGRect],
+        primaryScreenFrame: CGRect?) -> Int?
+    {
+        let appKitBounds = GlobalScreenCoordinateGeometry.appKitRect(
+            fromGlobalDisplay: bounds,
+            primaryScreenFrame: primaryScreenFrame)
 
         // Find the screen that contains the center of the window
-        let windowCenter = CGPoint(x: bounds.midX, y: bounds.midY)
+        let windowCenter = CGPoint(x: appKitBounds.midX, y: appKitBounds.midY)
 
         // First, try to find a screen that contains the window center
-        if let screen = screens.first(where: { $0.frame.contains(windowCenter) }) {
-            return screen
+        if let index = appKitScreenFrames.firstIndex(where: { $0.contains(windowCenter) }) {
+            return index
         }
 
         // If center is not on any screen, find the screen with the most overlap
-        var bestScreen: ScreenInfo?
+        var bestIndex: Int?
         var maxOverlap: CGFloat = 0
 
-        for screen in screens {
-            let intersection = screen.frame.intersection(bounds)
+        for (index, frame) in appKitScreenFrames.enumerated() {
+            let intersection = frame.intersection(appKitBounds)
             let overlapArea = intersection.width * intersection.height
 
             if overlapArea > maxOverlap {
                 maxOverlap = overlapArea
-                bestScreen = screen
+                bestIndex = index
             }
         }
 
-        return bestScreen
+        return bestIndex
     }
 
     /// Get screen by index

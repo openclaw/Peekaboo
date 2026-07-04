@@ -223,6 +223,7 @@ extension VisualizerCoordinator {
         // per-element windows would crush the window server, and a refreshed
         // detection can crossfade the whole sheet via its replace slot.
         let highlightDuration = self.scaledDuration(for: duration, minimum: AnimationBaseline.elementHighlight)
+        self.overlayManager.fadeOutAnimations(replaceKeyPrefix: OverlaySlot.elementSheetPrefix)
         for (index, screen) in NSScreen.screens.enumerated() {
             let screenFrame = screen.frame
             let onScreen = elements.filter { screenFrame.intersects($0.value) }
@@ -276,14 +277,15 @@ extension VisualizerCoordinator {
         let enabledElements = elements.filter(\.isEnabled)
 
         // Create annotated screenshot view
+        let overlayBounds = Self.paddedRect(windowBounds, padding: Self.OverlayPadding.annotatedScreenshot)
         let annotatedView = AnnotatedScreenshotView(
             imageData: imageData,
             elements: enabledElements,
-            windowBounds: windowBounds)
+            windowBounds: overlayBounds)
 
         // Display using overlay manager
         _ = self.overlayManager.showAnimation(
-            at: Self.paddedRect(windowBounds, padding: Self.OverlayPadding.annotatedScreenshot),
+            at: overlayBounds,
             content: annotatedView,
             duration: self.scaledDuration(for: duration, minimum: AnimationBaseline.annotatedScreenshot),
             fadeOut: true,

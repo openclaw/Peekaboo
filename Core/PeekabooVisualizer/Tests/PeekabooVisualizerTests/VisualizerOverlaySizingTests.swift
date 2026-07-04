@@ -1,3 +1,4 @@
+import AppKit
 import CoreGraphics
 import Foundation
 import PeekabooFoundation
@@ -6,6 +7,30 @@ import Testing
 
 @MainActor
 struct VisualizerOverlaySizingTests {
+    @Test
+    func `Global display geometry converts to AppKit on every screen arrangement`() {
+        let primary = CGRect(x: 0, y: 0, width: 1440, height: 900)
+
+        #expect(VisualizerScreenGeometry.appKitPoint(
+            fromGlobalDisplay: CGPoint(x: 100, y: 50),
+            primaryScreenFrame: primary) == CGPoint(x: 100, y: 850))
+        #expect(VisualizerScreenGeometry.appKitRect(
+            fromGlobalDisplay: CGRect(x: 100, y: -1100, width: 200, height: 40),
+            primaryScreenFrame: primary) == CGRect(x: 100, y: 1960, width: 200, height: 40))
+        #expect(VisualizerScreenGeometry.appKitRect(
+            fromGlobalDisplay: CGRect(x: -300, y: 1000, width: 200, height: 40),
+            primaryScreenFrame: primary) == CGRect(x: -300, y: -140, width: 200, height: 40))
+    }
+
+    @Test
+    func `Global display conversion preserves logical point sizes`() {
+        let converted = VisualizerScreenGeometry.appKitRect(
+            fromGlobalDisplay: CGRect(x: 10, y: 20, width: 320, height: 44),
+            primaryScreenFrame: CGRect(x: 0, y: 0, width: 3200, height: 1800))
+
+        #expect(converted.size == CGSize(width: 320, height: 44))
+    }
+
     @Test
     func `Typed text shows verbatim unless masking is requested`() {
         let keys = ["H", "i", " ", "{return}", "{tab}", "4"]
@@ -37,6 +62,26 @@ struct VisualizerOverlaySizingTests {
         #expect(filtered["window"] == nil)
         #expect(filtered["tiny"] == nil)
         #expect(filtered.count == 120)
+    }
+
+    @Test
+    func `Empty element refresh retires stale screen sheets`() async throws {
+        let coordinator = VisualizerCoordinator()
+        defer { coordinator.overlayManager.removeAllWindows() }
+        let screen = try #require(NSScreen.screens.first)
+        let element = CGRect(
+            x: screen.frame.midX - 20,
+            y: screen.frame.midY - 10,
+            width: 40,
+            height: 20)
+
+        _ = await coordinator.displayElementOverlays(elements: ["B1": element], duration: 60)
+        #expect(coordinator.overlayManager.activeReplaceKeys.contains(
+            VisualizerCoordinator.OverlaySlot.elementSheet(screenIndex: 0)))
+
+        _ = await coordinator.displayElementOverlays(elements: [:], duration: 60)
+        #expect(coordinator.overlayManager.activeReplaceKeys
+            .allSatisfy { !$0.hasPrefix(VisualizerCoordinator.OverlaySlot.elementSheetPrefix) })
     }
 
     @Test

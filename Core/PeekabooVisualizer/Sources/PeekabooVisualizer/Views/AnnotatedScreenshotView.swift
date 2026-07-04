@@ -30,7 +30,6 @@ struct AnnotatedScreenshotView: View {
     // Use core visualization system
     private let styleProvider = AnnotationVisualizationPreset()
     private let layoutEngine = ElementLayoutEngine()
-    private let coordinateTransformer = CoordinateTransformer()
     private let idGenerator = ElementIDGenerator.shared
 
     // MARK: - Body
@@ -66,10 +65,9 @@ struct AnnotatedScreenshotView: View {
         let style = self.styleProvider.style(for: category, state: elementState)
 
         // Transform coordinates
-        let transformedBounds = self.coordinateTransformer.transform(
+        let transformedBounds = VisualizerScreenGeometry.windowLocalRect(
             element.bounds,
-            from: .window(self.windowBounds),
-            to: .view(viewSize))
+            in: self.windowBounds)
 
         // Convert CGColor to SwiftUI Color
         let primaryColor = Color(cgColor: style.primaryColor)

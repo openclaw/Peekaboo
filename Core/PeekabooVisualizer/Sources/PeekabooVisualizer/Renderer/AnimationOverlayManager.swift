@@ -19,6 +19,10 @@ final class AnimationOverlayManager {
     /// feedback kind crossfade into each other instead of stacking.
     private var replaceableWindows: [String: NSWindow] = [:]
 
+    var activeReplaceKeys: Set<String> {
+        Set(self.replaceableWindows.keys)
+    }
+
     /// Extra breathing room added around every overlay so chip shadows and
     /// glows fade out naturally instead of getting cut off at the window edge.
     static let defaultChromeMargin: CGFloat = 40
@@ -121,6 +125,16 @@ final class AnimationOverlayManager {
             Task { @MainActor in
                 self.removeWindow(window)
             }
+        }
+    }
+
+    /// Retire a family of replaceable overlays before drawing a refreshed set.
+    /// This also clears slots for screens that disappeared or now have no data.
+    func fadeOutAnimations(replaceKeyPrefix prefix: String, duration: TimeInterval = 0.12) {
+        let matching = self.replaceableWindows.filter { $0.key.hasPrefix(prefix) }
+        for (key, window) in matching {
+            self.replaceableWindows.removeValue(forKey: key)
+            self.fadeOutAndRemove(window, duration: duration)
         }
     }
 

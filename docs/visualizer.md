@@ -123,7 +123,7 @@ All animations share one design system (`VisualizerDesign.swift`): a single viol
 
 ### Typing Feedback ⌨️
 - **Style**: A caption pill at bottom center streams the typed text verbatim with a blinking caret
-- **Privacy**: Typing into a secure text field (`AXSecureTextField`) masks the caption as bullets before the event is persisted or shown. Detection samples the delivery focus before and after typing (scoped to the target app for background typing) — best effort; `PEEKABOO_VISUALIZER_MASK_TYPED_TEXT=true` masks everything for privacy-sensitive setups
+- **Privacy**: Typing into a secure text field (`AXSecureTextField`) masks the caption as bullets before the event is persisted or shown. Detection samples the actual delivery focus immediately before every non-empty text segment, so focus-changing sequences such as Tab → password → Return cannot expose the middle segment; background typing scopes the sample to its target process, and `PEEKABOO_VISUALIZER_MASK_TYPED_TEXT=true` masks everything for privacy-sensitive setups
 - **Special Keys**: Rendered inline as accent glyphs (⏎, ⇥, ⌫, ⎋)
 - **Cadence**: Reveal speed derives from the incoming `TypingCadence` (human WPM or fixed delay)
 - **Coalescing**: Consecutive type commands crossfade through a single caption slot instead of stacking pills
@@ -166,9 +166,9 @@ All animations share one design system (`VisualizerDesign.swift`): a single viol
 
 ### Element Detection (See) 👁️
 - **Effect**: Every detected element gets an accent outline sized exactly to the control, with its opaque ID in a small HUD tag above
-- **Coordinates**: Element rects in the payload are AppKit screen coordinates; senders convert accessibility bounds (top-left origin) via `VisualizerBoundsConverter` before dispatch. Mismatched senders render vertically mirrored — keep CLI/MCP binaries and the app in sync
+- **Coordinates**: Element rects in the payload are AppKit screen coordinates. Senders convert global Accessibility bounds through `VisualizerScreenGeometry`, flipping once against `NSScreen.screens[0]` (the primary display); logical point sizes are preserved, so Retina scale is never multiplied into overlay geometry
 - **Rendering**: One overlay window per screen holds every highlight (`ElementOverlaySheetView`); degenerate and screen-filling container rects are dropped and the count is capped at 120, preferring the smallest rects
-- **Animation**: Pop in with slight scale, fade out at the end; a refreshed detection crossfades the whole sheet through its replace slot
+- **Animation**: Pop in with slight scale, fade out at the end; a refreshed detection retires every prior per-screen sheet before drawing the new set, including screens that now have no elements
 - **Duration**: 2 seconds (scaled) before fade
 
 ### Verbosity: throttles and replace slots
@@ -208,6 +208,8 @@ Located in `Core/PeekabooVisualizer/Sources/PeekabooVisualizer/Views/`:
 - ... (one file per animation type)
 
 Overlay invariants worth knowing when adding animations:
+- Automation, Accessibility, Core Graphics, and capture geometry enters the visualizer in global display coordinates with an upper-left primary-display origin. `VisualizerAutomationFeedbackClient` and `SeeTool` convert it exactly once through `VisualizerScreenGeometry`; everything downstream uses global AppKit coordinates with a lower-left origin. Both spaces use logical points.
+- The flip axis is the primary/menu-bar display (`NSScreen.screens[0]`), not `NSScreen.main`, which follows keyboard focus and can change during automation.
 - `AnimationOverlayManager` wraps every animation in a flexible container so fixed-size views center on the overlay window; without it they pin to the top-leading corner and misalign by the window padding.
 - Every overlay window is inflated by a 40pt chrome margin so chip shadows and glows fade out instead of clipping at the window edge. Views that fill the window and use window-local coordinates (comets, capture flash, element sheets) pass `chromeMargin: 0` and provide their own breathing room.
 - Point-based views (mouse trail, swipe) receive window-local SwiftUI coordinates. `VisualizerCoordinator.windowLocalPoint(_:in:)` / `windowLocalRect(_:in:)` convert AppKit screen geometry (bottom-left origin) into flipped view coordinates.

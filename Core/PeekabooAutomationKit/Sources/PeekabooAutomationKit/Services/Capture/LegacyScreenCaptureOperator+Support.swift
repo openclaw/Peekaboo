@@ -270,10 +270,14 @@ extension LegacyScreenCaptureOperator {
     }
 
     func scaleFactor(for bounds: CGRect) -> CGFloat {
-        if let screen = NSScreen.screens.first(where: { $0.frame.contains(bounds) }) {
+        let screens = NSScreen.screens
+        let appKitBounds = GlobalScreenCoordinateGeometry.appKitRect(
+            fromGlobalDisplay: bounds,
+            primaryScreenFrame: screens.first?.frame)
+        if let screen = screens.first(where: { $0.frame.contains(appKitBounds) }) {
             return screen.backingScaleFactor
         }
-        return NSScreen.main?.backingScaleFactor ?? 1.0
+        return screens.first?.backingScaleFactor ?? 1.0
     }
 
     func scalePlan(

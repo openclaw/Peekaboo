@@ -13,9 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Bridge hosts now always return a non-empty decodable error when error encoding fails, instead of surfacing EOF or a secondary decode failure. Thanks @SebTardif for #211.
 - Snapshot listing and cleanup now propagate lock-open failures instead of treating unavailable storage as an empty snapshot list. Thanks @SebTardif for #212.
-- Element-detection highlights from `see` now land exactly on the detected controls instead of rendering vertically mirrored or filling the padded overlay window.
+- Visual feedback now uses one explicit Core Graphics/Accessibility-to-AppKit coordinate boundary, fixing mirrored or offset click, scroll, trail, swipe, window, dialog, capture, annotated-screenshot, and element-detection overlays across primary and vertically arranged displays without applying Retina scale twice; refreshed element detections also retire stale sheets on screens with no new elements.
 - Automation services now route visual feedback to Peekaboo's visualizer instead of silently dropping click, type, scroll, hotkey, swipe, mouse-move, window, menu, dialog, dock, Space-switch, and screenshot-flash animations.
-- Typing feedback masks printable characters before events are persisted or displayed; set `PEEKABOO_VISUALIZER_SHOW_TYPED_TEXT=true` only for demos that intentionally show typed text.
+- The typing caption shows typed text verbatim, while secure fields are masked before persistence or display by sampling the delivery focus immediately before every text segment (including Tab-to-password sequences and background typing); `PEEKABOO_VISUALIZER_MASK_TYPED_TEXT=true` masks everything.
 - Visualizer overlays now center on their targets, and mouse-trail and swipe coordinates are converted into the correct window-local coordinate space.
 
 ### Removed

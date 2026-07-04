@@ -3,6 +3,7 @@ import ApplicationServices
 import AXorcist
 import CoreGraphics
 import Foundation
+import PeekabooFoundation
 
 /// Testable abstraction over a UI accessibility element.
 ///
@@ -120,13 +121,16 @@ struct AutomationElement: AutomationElementRepresenting {
     @MainActor
     var isOffscreen: Bool {
         guard let frame else { return false }
+        let appKitFrame = GlobalScreenCoordinateGeometry.appKitRect(
+            fromGlobalDisplay: frame,
+            primaryScreenFrame: NSScreen.screens.first?.frame)
         let visibleFrame = NSScreen.screens
             .map(\.visibleFrame)
             .reduce(CGRect.null) { partial, screenFrame in
                 partial.isNull ? screenFrame : partial.union(screenFrame)
             }
         guard !visibleFrame.isNull else { return false }
-        return frame.intersection(visibleFrame).isNull
+        return appKitFrame.intersection(visibleFrame).isNull
     }
 
     @MainActor

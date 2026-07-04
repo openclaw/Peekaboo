@@ -13,8 +13,11 @@ struct WatchCaptureRegionValidator {
         }
 
         // Watch capture expects global coordinates; clamp partially visible regions to all-screen bounds.
+        let primaryFrame = screens.first(where: \.isPrimary)?.frame
         let union = screens.reduce(CGRect.null) { partial, screen in
-            partial.union(screen.frame)
+            partial.union(GlobalScreenCoordinateGeometry.globalDisplayRect(
+                fromAppKit: screen.frame,
+                primaryScreenFrame: primaryFrame))
         }
         guard rect.intersects(union) else {
             throw PeekabooError.invalidInput("Region lies outside all screens")

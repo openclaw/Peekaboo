@@ -19,6 +19,9 @@ public enum WindowOperationKind: String, Sendable, Codable {
 
 @MainActor
 public protocol AutomationFeedbackClient: Sendable {
+    /// Spatial arguments use the global Core Graphics / Accessibility display
+    /// coordinate space: upper-left origin on the primary display, in points.
+    /// Concrete visualizer clients convert once at the AppKit window boundary.
     func connect()
 
     func showClickFeedback(at point: CGPoint, type: ClickType) async -> Bool

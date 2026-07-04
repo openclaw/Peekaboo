@@ -8,6 +8,11 @@ import PeekabooFoundation
 /// Service for handling typing and text input operations
 @MainActor
 public final class TypeService {
+    struct TypeActionExecutionSummary {
+        let result: TypeResult
+        let typedIntoSecureField: Bool
+    }
+
     private let logger = Logger(subsystem: "boo.peekaboo.core", category: "TypeService")
     let snapshotManager: any SnapshotManagerProtocol
     private let clickService: ClickService
@@ -16,6 +21,7 @@ public final class TypeService {
     private let actionInputDriver: any ActionInputDriving
     private let syntheticInputDriver: any SyntheticInputDriving
     private let automationElementResolver: any AutomationElementResolving
+    private let focusedElementSecurityProbe: @MainActor (pid_t?) -> Bool
 
     public convenience init(
         snapshotManager: (any SnapshotManagerProtocol)? = nil,
@@ -46,7 +52,8 @@ public final class TypeService {
             actionInputDriver: actionInputDriver,
             syntheticInputDriver: syntheticInputDriver,
             automationElementResolver: automationElementResolver,
-            randomSource: SystemTypingCadenceRandomSource())
+            randomSource: SystemTypingCadenceRandomSource(),
+            focusedElementSecurityProbe: Self.focusedElementIsSecureField)
     }
 
     init(
@@ -56,7 +63,8 @@ public final class TypeService {
         actionInputDriver: any ActionInputDriving = ActionInputDriver(),
         syntheticInputDriver: any SyntheticInputDriving = SyntheticInputDriver(),
         automationElementResolver: any AutomationElementResolving = AutomationElementResolver(),
-        randomSource: any TypingCadenceRandomSource)
+        randomSource: any TypingCadenceRandomSource,
+        focusedElementSecurityProbe: @escaping @MainActor (pid_t?) -> Bool = TypeService.focusedElementIsSecureField)
     {
         let manager = snapshotManager ?? SnapshotManager()
         self.snapshotManager = manager
@@ -71,6 +79,7 @@ public final class TypeService {
         self.syntheticInputDriver = syntheticInputDriver
         self.automationElementResolver = automationElementResolver
         self.cadenceRandom = randomSource
+        self.focusedElementSecurityProbe = focusedElementSecurityProbe
     }
 
     /// Type text with optional target and settings
@@ -198,11 +207,11 @@ public final class TypeService {
         cadence: TypingCadence,
         snapshotId: String?) async throws -> TypeResult
     {
-        try await self.typeActions(
+        try await self.typeActionsTrackingSecureInput(
             actions,
             cadence: cadence,
             snapshotId: snapshotId,
-            targetProcessIdentifier: nil)
+            targetProcessIdentifier: nil).result
     }
 
     public func typeActions(
@@ -211,33 +220,47 @@ public final class TypeService {
         snapshotId: String?,
         targetProcessIdentifier: pid_t?) async throws -> TypeResult
     {
-        var result: TypeResult?
+        try await self.typeActionsTrackingSecureInput(
+            actions,
+            cadence: cadence,
+            snapshotId: snapshotId,
+            targetProcessIdentifier: targetProcessIdentifier).result
+    }
+
+    func typeActionsTrackingSecureInput(
+        _ actions: [TypeAction],
+        cadence: TypingCadence,
+        snapshotId: String?,
+        targetProcessIdentifier: pid_t?) async throws -> TypeActionExecutionSummary
+    {
+        var summary: TypeActionExecutionSummary?
         _ = try await UIInputDispatcher.run(
             verb: .type,
             strategy: targetProcessIdentifier == nil ? self.inputPolicy.strategy(for: .type) : .synthOnly,
             action: nil,
             synth: {
-                result = try await self.performSyntheticTypeActions(
+                summary = try await self.performSyntheticTypeActions(
                     actions,
                     cadence: cadence,
                     snapshotId: snapshotId,
                     targetProcessIdentifier: targetProcessIdentifier)
             })
 
-        guard let result else {
+        guard let summary else {
             throw PeekabooError.operationError(message: "Type action execution did not produce a result")
         }
-        return result
+        return summary
     }
 
     private func performSyntheticTypeActions(
         _ actions: [TypeAction],
         cadence: TypingCadence,
         snapshotId _: String?,
-        targetProcessIdentifier: pid_t?) async throws -> TypeResult
+        targetProcessIdentifier: pid_t?) async throws -> TypeActionExecutionSummary
     {
         var totalChars = 0
         var keyPresses = 0
+        var typedIntoSecureField = false
         var humanContext: HumanTypingContext?
         let fixedDelay = self.fixedDelaySeconds(for: cadence)
 
@@ -246,6 +269,12 @@ public final class TypeService {
         for action in actions {
             switch action {
             case let .text(text):
+                if Self.actionTypesSensitiveText(
+                    action,
+                    focusedElementIsSecure: self.focusedElementSecurityProbe(targetProcessIdentifier))
+                {
+                    typedIntoSecureField = true
+                }
                 for character in text {
                     try await self.typeCharacter(character, targetProcessIdentifier: targetProcessIdentifier)
                     totalChars += 1
@@ -277,9 +306,48 @@ public final class TypeService {
             }
         }
 
-        return TypeResult(
-            totalCharacters: totalChars,
-            keyPresses: keyPresses)
+        return TypeActionExecutionSummary(
+            result: TypeResult(
+                totalCharacters: totalChars,
+                keyPresses: keyPresses),
+            typedIntoSecureField: typedIntoSecureField)
+    }
+
+    /// Sample the actual delivery scope immediately before each text segment.
+    /// This catches focus-changing sequences such as Tab → password → Return,
+    /// where before/after samples both observe a non-secure field.
+    static func focusedElementIsSecureField(processIdentifier: pid_t? = nil) -> Bool {
+        let container: AXUIElement = if let processIdentifier {
+            AXUIElementCreateApplication(processIdentifier)
+        } else {
+            AXUIElementCreateSystemWide()
+        }
+
+        var focused: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(
+            container,
+            kAXFocusedUIElementAttribute as CFString,
+            &focused) == .success,
+            let focused,
+            CFGetTypeID(focused) == AXUIElementGetTypeID()
+        else {
+            return false
+        }
+
+        let element = unsafeDowncast(focused, to: AXUIElement.self)
+        func stringAttribute(_ name: String) -> String? {
+            var value: CFTypeRef?
+            guard AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success else { return nil }
+            return value as? String
+        }
+
+        return stringAttribute(kAXRoleAttribute as String) == "AXSecureTextField"
+            || stringAttribute(kAXSubroleAttribute as String) == "AXSecureTextField"
+    }
+
+    static func actionTypesSensitiveText(_ action: TypeAction, focusedElementIsSecure: Bool) -> Bool {
+        guard focusedElementIsSecure, case let .text(text) = action else { return false }
+        return !text.isEmpty
     }
 
     /// Whether a typing target resolves to a secure (password) field, so the

@@ -9,6 +9,7 @@
 import CoreGraphics
 import Foundation
 import os.log
+import PeekabooFoundation
 
 /// Service that provides intelligent screenshot capture with:
 /// - Diff-aware capture: Skip if screen unchanged
@@ -208,7 +209,13 @@ public final class SmartCaptureService {
     }
 
     private func screenFrame(containing rect: CGRect) -> CGRect? {
-        self.screenService.screenContainingWindow(bounds: rect)?.frame ?? self.screenService.primaryScreen?.frame
+        let primaryFrame = self.screenService.primaryScreen?.frame
+        guard let appKitFrame = self.screenService.screenContainingWindow(bounds: rect)?.frame ?? primaryFrame else {
+            return nil
+        }
+        return GlobalScreenCoordinateGeometry.globalDisplayRect(
+            fromAppKit: appKitFrame,
+            primaryScreenFrame: primaryFrame)
     }
 }
 

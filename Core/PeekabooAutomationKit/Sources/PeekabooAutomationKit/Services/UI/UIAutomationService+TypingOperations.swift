@@ -1,4 +1,3 @@
-import ApplicationServices
 import Foundation
 import PeekabooFoundation
 
@@ -92,7 +91,7 @@ extension UIAutomationService {
         let secureBeforeTyping: Bool = if let target {
             await self.typeService.typingTargetIsSecureField(target: target, snapshotId: snapshotId)
         } else {
-            Self.focusedElementIsSecureField()
+            TypeService.focusedElementIsSecureField()
         }
         _ = try await self.normalizingSnapshotErrors {
             try await self.typeService.type(
@@ -115,12 +114,18 @@ extension UIAutomationService {
         snapshotId: String?) async throws -> TypeResult
     {
         self.logger.debug("Delegating typeActions to TypeService")
-        let secureBeforeTyping = Self.focusedElementIsSecureField()
-        let result = try await self.normalizingSnapshotErrors {
-            try await self.typeService.typeActions(actions, cadence: cadence, snapshotId: snapshotId)
+        let summary = try await self.normalizingSnapshotErrors {
+            try await self.typeService.typeActionsTrackingSecureInput(
+                actions,
+                cadence: cadence,
+                snapshotId: snapshotId,
+                targetProcessIdentifier: nil)
         }
-        await self.visualizeTypeActions(actions, cadence: cadence, typedIntoSecureField: secureBeforeTyping)
-        return result
+        await self.visualizeTypeActions(
+            actions,
+            cadence: cadence,
+            typedIntoSecureField: summary.typedIntoSecureField)
+        return summary.result
     }
 
     public func typeActions(
@@ -130,11 +135,8 @@ extension UIAutomationService {
         targetProcessIdentifier: pid_t) async throws -> TypeResult
     {
         self.logger.debug("Delegating targeted typeActions to TypeService")
-        // Background typing lands in the target app's focused element, not the
-        // global focus, so the secure-field samples are scoped to that PID.
-        let secureBeforeTyping = Self.focusedElementIsSecureField(processIdentifier: targetProcessIdentifier)
-        let result = try await self.normalizingSnapshotErrors {
-            try await self.typeService.typeActions(
+        let summary = try await self.normalizingSnapshotErrors {
+            try await self.typeService.typeActionsTrackingSecureInput(
                 actions,
                 cadence: cadence,
                 snapshotId: snapshotId,
@@ -143,9 +145,9 @@ extension UIAutomationService {
         await self.visualizeTypeActions(
             actions,
             cadence: cadence,
-            typedIntoSecureField: secureBeforeTyping,
+            typedIntoSecureField: summary.typedIntoSecureField,
             targetProcessIdentifier: targetProcessIdentifier)
-        return result
+        return summary.result
     }
 
     // MARK: - Typing Visualization Helpers
@@ -172,52 +174,15 @@ extension UIAutomationService {
     {
         guard !keys.isEmpty else { return }
         // Typed text shows verbatim in the caption; only password fields mask.
-        // The post-typing sample can miss a secure field when the last key
-        // (e.g. {return}) submits and moves focus, so callers also pass the
-        // pre-typing sample and either one masks. Both samples are scoped to
-        // the process that received the keys when one is specified.
+        // Type-action callers sample each text segment at delivery time; the
+        // post-typing sample remains a final safety net for direct text entry.
         let masksTypedText = typedIntoSecureField
-            || Self.focusedElementIsSecureField(processIdentifier: targetProcessIdentifier)
+            || TypeService.focusedElementIsSecureField(processIdentifier: targetProcessIdentifier)
         _ = await self.feedbackClient.showTypingFeedback(
             keys: keys,
             duration: 2.0,
             cadence: cadence,
             masksTypedText: masksTypedText)
-    }
-
-    /// Best-effort check whether keystrokes land in a secure (password)
-    /// field, so the caption masks them. Samples the focused element of the
-    /// delivery scope: the target app for background typing, otherwise the
-    /// system-wide focus that synthetic keystrokes go to. Direct value writes
-    /// never reach secure fields — the action driver refuses them
-    /// (`secureValueNotAllowed`) and falls back to focus-based typing.
-    static func focusedElementIsSecureField(processIdentifier: pid_t? = nil) -> Bool {
-        let container: AXUIElement = if let processIdentifier {
-            AXUIElementCreateApplication(processIdentifier)
-        } else {
-            AXUIElementCreateSystemWide()
-        }
-
-        var focused: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(
-            container,
-            kAXFocusedUIElementAttribute as CFString,
-            &focused) == .success,
-            let focused,
-            CFGetTypeID(focused) == AXUIElementGetTypeID()
-        else {
-            return false
-        }
-
-        let element = unsafeBitCast(focused, to: AXUIElement.self)
-        func stringAttribute(_ name: String) -> String? {
-            var value: CFTypeRef?
-            guard AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success else { return nil }
-            return value as? String
-        }
-
-        return stringAttribute(kAXRoleAttribute as String) == "AXSecureTextField"
-            || stringAttribute(kAXSubroleAttribute as String) == "AXSecureTextField"
     }
 
     private func keySequence(from actions: [TypeAction]) -> [String] {

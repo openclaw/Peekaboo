@@ -1,3 +1,4 @@
+import AppKit
 import CoreGraphics
 import Foundation
 import PeekabooAutomationKit
@@ -17,7 +18,7 @@ public final class VisualizerAutomationFeedbackClient: AutomationFeedbackClient 
     }
 
     public func showClickFeedback(at point: CGPoint, type: ClickType) async -> Bool {
-        await self.client.showClickFeedback(at: point, type: type)
+        await self.client.showClickFeedback(at: self.appKitPoint(point), type: type)
     }
 
     public func showTypingFeedback(
@@ -34,7 +35,7 @@ public final class VisualizerAutomationFeedbackClient: AutomationFeedbackClient 
     }
 
     public func showScrollFeedback(at point: CGPoint, direction: ScrollDirection, amount: Int) async -> Bool {
-        await self.client.showScrollFeedback(at: point, direction: direction, amount: amount)
+        await self.client.showScrollFeedback(at: self.appKitPoint(point), direction: direction, amount: amount)
     }
 
     public func showHotkeyDisplay(keys: [String], duration: TimeInterval) async -> Bool {
@@ -42,11 +43,17 @@ public final class VisualizerAutomationFeedbackClient: AutomationFeedbackClient 
     }
 
     public func showSwipeGesture(from: CGPoint, to: CGPoint, duration: TimeInterval) async -> Bool {
-        await self.client.showSwipeGesture(from: from, to: to, duration: duration)
+        await self.client.showSwipeGesture(
+            from: self.appKitPoint(from),
+            to: self.appKitPoint(to),
+            duration: duration)
     }
 
     public func showMouseMovement(from: CGPoint, to: CGPoint, duration: TimeInterval) async -> Bool {
-        await self.client.showMouseMovement(from: from, to: to, duration: duration)
+        await self.client.showMouseMovement(
+            from: self.appKitPoint(from),
+            to: self.appKitPoint(to),
+            duration: duration)
     }
 
     public func showWindowOperation(
@@ -63,7 +70,10 @@ public final class VisualizerAutomationFeedbackClient: AutomationFeedbackClient 
         case .setBounds: .setBounds
         case .focus: .focus
         }
-        return await self.client.showWindowOperation(op, windowRect: windowRect, duration: duration)
+        return await self.client.showWindowOperation(
+            op,
+            windowRect: self.appKitRect(windowRect),
+            duration: duration)
     }
 
     public func showDialogInteraction(
@@ -71,7 +81,10 @@ public final class VisualizerAutomationFeedbackClient: AutomationFeedbackClient 
         elementRect: CGRect,
         action: DialogActionType) async -> Bool
     {
-        await self.client.showDialogInteraction(element: element, elementRect: elementRect, action: action)
+        await self.client.showDialogInteraction(
+            element: element,
+            elementRect: self.appKitRect(elementRect),
+            action: action)
     }
 
     public func showMenuNavigation(menuPath: [String]) async -> Bool {
@@ -95,10 +108,28 @@ public final class VisualizerAutomationFeedbackClient: AutomationFeedbackClient 
     }
 
     public func showScreenshotFlash(in rect: CGRect) async -> Bool {
-        await self.client.showScreenshotFlash(in: rect)
+        await self.client.showScreenshotFlash(in: self.appKitRect(rect))
     }
 
     public func showWatchCapture(in rect: CGRect) async -> Bool {
-        await self.client.showWatchCapture(in: rect)
+        await self.client.showWatchCapture(in: self.appKitRect(rect))
+    }
+
+    private var primaryScreenFrame: CGRect? {
+        // `NSScreen.main` follows keyboard focus. The first screen is the
+        // primary display whose origin defines the CG/AppKit flip axis.
+        NSScreen.screens.first?.frame
+    }
+
+    private func appKitPoint(_ point: CGPoint) -> CGPoint {
+        VisualizerScreenGeometry.appKitPoint(
+            fromGlobalDisplay: point,
+            primaryScreenFrame: self.primaryScreenFrame)
+    }
+
+    private func appKitRect(_ rect: CGRect) -> CGRect {
+        VisualizerScreenGeometry.appKitRect(
+            fromGlobalDisplay: rect,
+            primaryScreenFrame: self.primaryScreenFrame)
     }
 }

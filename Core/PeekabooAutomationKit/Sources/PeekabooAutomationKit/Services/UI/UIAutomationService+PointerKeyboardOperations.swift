@@ -1,4 +1,3 @@
-import AppKit
 @preconcurrency import AXorcist
 import CoreGraphics
 import Foundation
@@ -25,7 +24,7 @@ extension UIAutomationService {
             try await self.scrollService.scroll(request)
         }
 
-        let feedbackPoint = result.anchorPoint ?? NSEvent.mouseLocation
+        let feedbackPoint = result.anchorPoint ?? InputDriver.currentLocation() ?? .zero
         _ = await self.feedbackClient.showScrollFeedback(
             at: feedbackPoint,
             direction: request.direction,
@@ -114,7 +113,7 @@ extension UIAutomationService {
     {
         self.logger.debug("Delegating moveMouse to GestureService")
 
-        let fromPoint = NSEvent.mouseLocation
+        let fromPoint = InputDriver.currentLocation() ?? to
         try await self.gestureService.moveMouse(to: to, duration: duration, steps: steps, profile: profile)
 
         _ = await self.feedbackClient.showMouseMovement(

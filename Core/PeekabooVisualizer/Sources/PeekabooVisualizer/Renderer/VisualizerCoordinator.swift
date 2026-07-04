@@ -76,9 +76,10 @@ public final class VisualizerCoordinator {
         static let appLifecycle = "appLifecycle"
         static let watchHUD = "watchHUD"
         static let annotatedScreenshot = "annotatedScreenshot"
+        static let elementSheetPrefix = "elements-screen-"
 
         static func elementSheet(screenIndex: Int) -> String {
-            "elements-screen-\(screenIndex)"
+            "\(self.elementSheetPrefix)\(screenIndex)"
         }
     }
 
@@ -123,11 +124,7 @@ public final class VisualizerCoordinator {
     /// Converts an AppKit screen rect into a window-local SwiftUI rect
     /// (top-left origin) for an overlay shown at `windowRect`.
     static func windowLocalRect(_ rect: CGRect, in windowRect: CGRect) -> CGRect {
-        CGRect(
-            x: rect.minX - windowRect.minX,
-            y: windowRect.maxY - rect.maxY,
-            width: rect.width,
-            height: rect.height)
+        VisualizerScreenGeometry.windowLocalRect(rect, in: windowRect)
     }
 
     /// Keeps element highlights readable: drops degenerate and screen-filling
