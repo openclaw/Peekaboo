@@ -282,6 +282,18 @@ public final class TypeService {
             keyPresses: keyPresses)
     }
 
+    /// Whether a typing target resolves to a secure (password) field, so the
+    /// visualizer masks its caption. The resolved destination element is
+    /// authoritative — focus sampling can miss it when the target is focused
+    /// only mid-flow and a trailing submit key moves focus afterwards.
+    /// Resolution failures err on not-secure; delivery fails the same way.
+    func typingTargetIsSecureField(target: String, snapshotId: String?) async -> Bool {
+        guard let element = try? await self.resolveAutomationElement(target: target, snapshotId: snapshotId) else {
+            return false
+        }
+        return element.role == "AXSecureTextField" || element.subrole == "AXSecureTextField"
+    }
+
     private func resolveAutomationElement(target: String, snapshotId: String?) async throws -> AutomationElement? {
         if let snapshotId {
             guard let detectionResult = try? await self.snapshotManager.getDetectionResult(snapshotId: snapshotId)

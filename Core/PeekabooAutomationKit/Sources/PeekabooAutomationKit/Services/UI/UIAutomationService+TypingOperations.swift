@@ -84,9 +84,16 @@ extension UIAutomationService {
         snapshotId: String?) async throws
     {
         self.logger.debug("Delegating type to TypeService")
-        // Sample before typing too: a trailing {return} can submit and move
-        // focus away from the password field before the post-typing check.
-        let secureBeforeTyping = Self.focusedElementIsSecureField()
+        // For targeted typing the resolved destination element is
+        // authoritative; focus sampling can miss it entirely (the target is
+        // focused only mid-flow, and a trailing {return} can move focus away
+        // again). Untargeted typing goes to the current focus, so sample that
+        // before typing for the same trailing-submit reason.
+        let secureBeforeTyping: Bool = if let target {
+            await self.typeService.typingTargetIsSecureField(target: target, snapshotId: snapshotId)
+        } else {
+            Self.focusedElementIsSecureField()
+        }
         _ = try await self.normalizingSnapshotErrors {
             try await self.typeService.type(
                 text: text,
