@@ -126,8 +126,8 @@ public final class VisualizerEventReceiver {
                 action: action)
         case let .spaceSwitch(from, to, direction):
             await self.coordinator.showSpaceSwitch(from: from, to: to, direction: direction)
-        case let .elementDetection(elements, duration, space):
-            await self.coordinator.showElementDetection(elements: elements, duration: duration, space: space)
+        case let .elementDetection(elements, duration):
+            await self.coordinator.showElementDetection(elements: elements, duration: duration)
         case let .annotatedScreenshot(imageData, elements, windowBounds, duration):
             await self.coordinator.showAnnotatedScreenshot(
                 imageData: imageData,

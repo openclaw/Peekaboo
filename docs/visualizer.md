@@ -166,7 +166,7 @@ All animations share one design system (`VisualizerDesign.swift`): a single viol
 
 ### Element Detection (See) 👁️
 - **Effect**: Every detected element gets an accent outline sized exactly to the control, with its opaque ID in a small HUD tag above
-- **Coordinates**: Senders convert accessibility bounds (top-left origin) to AppKit screen coordinates via `VisualizerBoundsConverter` and mark the payload `space: appKit`; unmarked (legacy) payloads are flipped by the receiver so old binaries still place correctly
+- **Coordinates**: Element rects in the payload are AppKit screen coordinates; senders convert accessibility bounds (top-left origin) via `VisualizerBoundsConverter` before dispatch. Mismatched senders render vertically mirrored — keep CLI/MCP binaries and the app in sync
 - **Rendering**: One overlay window per screen holds every highlight (`ElementOverlaySheetView`); degenerate and screen-filling container rects are dropped and the count is capped at 120, preferring the smallest rects
 - **Animation**: Pop in with slight scale, fade out at the end; a refreshed detection crossfades the whole sheet through its replace slot
 - **Duration**: 2 seconds (scaled) before fade

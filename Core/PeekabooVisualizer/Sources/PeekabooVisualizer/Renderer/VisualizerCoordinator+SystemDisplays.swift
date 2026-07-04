@@ -213,22 +213,10 @@ extension VisualizerCoordinator {
         return true
     }
 
-    func displayElementOverlays(
-        elements: [String: CGRect],
-        duration: TimeInterval,
-        space: VisualizerEvent.CoordinateSpace?) async -> Bool
-    {
+    func displayElementOverlays(elements: [String: CGRect], duration: TimeInterval) async -> Bool {
         // Check if enabled
         guard self.settings?.visualizerEnabled ?? true else {
             return false
-        }
-
-        // Marked payloads carry AppKit rects; legacy senders dispatched raw
-        // accessibility rects, which render vertically mirrored unless the
-        // receiver flips them here.
-        var appKitElements = elements
-        if space == nil, let primary = NSScreen.screens.first {
-            appKitElements = Self.legacyFlippedElementRects(elements, primaryScreenMaxY: primary.frame.maxY)
         }
 
         // One overlay window per screen holds every highlight: hundreds of
@@ -237,7 +225,7 @@ extension VisualizerCoordinator {
         let highlightDuration = self.scaledDuration(for: duration, minimum: AnimationBaseline.elementHighlight)
         for (index, screen) in NSScreen.screens.enumerated() {
             let screenFrame = screen.frame
-            let onScreen = appKitElements.filter { screenFrame.intersects($0.value) }
+            let onScreen = elements.filter { screenFrame.intersects($0.value) }
             let filtered = Self.filteredElementOverlays(
                 onScreen,
                 screenArea: screenFrame.width * screenFrame.height)

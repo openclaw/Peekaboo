@@ -198,11 +198,7 @@ extension VisualizerCoordinator {
         }
     }
 
-    public func showElementDetection(
-        elements: [String: CGRect],
-        duration: TimeInterval,
-        space: VisualizerEvent.CoordinateSpace? = .appKit) async -> Bool
-    {
+    public func showElementDetection(elements: [String: CGRect], duration: TimeInterval) async -> Bool {
         self.logger.debug("Showing element detection for \(elements.count) elements")
 
         // `see` runs back to back during agent loops; refreshing the sheet
@@ -214,7 +210,7 @@ extension VisualizerCoordinator {
         self.lastElementDetectionDate = now
 
         return await self.animationQueue.enqueue {
-            await self.displayElementOverlays(elements: elements, duration: duration, space: space)
+            await self.displayElementOverlays(elements: elements, duration: duration)
         }
     }
 

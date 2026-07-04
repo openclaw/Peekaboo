@@ -86,13 +86,6 @@ public struct VisualizerEvent: Codable, Sendable {
         }
     }
 
-    /// Coordinate space of rects carried in a payload. Legacy senders predate
-    /// the marker and dispatched raw accessibility (top-left origin) rects,
-    /// so an absent value means "accessibility, receiver must flip".
-    public enum CoordinateSpace: String, Codable, Sendable {
-        case appKit
-    }
-
     public enum Payload: Codable, Sendable {
         case screenshotFlash(rect: CGRect)
         case watchCapture(rect: CGRect)
@@ -108,10 +101,9 @@ public struct VisualizerEvent: Codable, Sendable {
         case menuNavigation(path: [String])
         case dialogInteraction(elementType: DialogElementType, rect: CGRect, action: DialogActionType)
         case spaceSwitch(from: Int, to: Int, direction: SpaceDirection)
-        case elementDetection(
-            elements: [String: CGRect],
-            duration: TimeInterval,
-            space: CoordinateSpace? = nil)
+        // Rects are AppKit screen coordinates; senders convert from
+        // accessibility space before dispatch.
+        case elementDetection(elements: [String: CGRect], duration: TimeInterval)
         case annotatedScreenshot(
             imageData: Data,
             elements: [DetectedElement],

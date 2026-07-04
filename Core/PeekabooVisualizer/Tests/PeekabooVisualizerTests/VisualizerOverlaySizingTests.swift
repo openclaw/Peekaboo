@@ -20,35 +20,6 @@ struct VisualizerOverlaySizingTests {
     }
 
     @Test
-    func `Legacy element payloads decode without a coordinate space`() throws {
-        // Payload JSON written by pre-marker senders has no `space` key and
-        // must keep decoding (receiver then flips the rects).
-        let legacyJSON = """
-        {"elementDetection":{"elements":{"B1":[[10,20],[30,40]]},"duration":2}}
-        """
-        let payload = try JSONDecoder().decode(
-            VisualizerEvent.Payload.self,
-            from: Data(legacyJSON.utf8))
-
-        guard case let .elementDetection(elements, duration, space) = payload else {
-            Issue.record("Expected elementDetection payload")
-            return
-        }
-        #expect(elements["B1"] == CGRect(x: 10, y: 20, width: 30, height: 40))
-        #expect(duration == 2)
-        #expect(space == nil)
-    }
-
-    @Test
-    func `Legacy element rects flip against the primary screen`() {
-        let flipped = VisualizerCoordinator.legacyFlippedElementRects(
-            ["B1": CGRect(x: 100, y: 50, width: 200, height: 40)],
-            primaryScreenMaxY: 900)
-
-        #expect(flipped["B1"] == CGRect(x: 100, y: 900 - 50 - 40, width: 200, height: 40))
-    }
-
-    @Test
     func `Element overlays drop containers and cap the count`() {
         var elements: [String: CGRect] = [
             "window": CGRect(x: 0, y: 0, width: 1400, height: 860),

@@ -130,21 +130,6 @@ public final class VisualizerCoordinator {
             height: rect.height)
     }
 
-    /// Flips legacy element rects (accessibility top-left origin) into AppKit
-    /// coordinates. Old senders predate the payload's coordinate-space marker.
-    static func legacyFlippedElementRects(
-        _ elements: [String: CGRect],
-        primaryScreenMaxY: CGFloat) -> [String: CGRect]
-    {
-        elements.mapValues { rect in
-            CGRect(
-                x: rect.minX,
-                y: primaryScreenMaxY - rect.maxY,
-                width: rect.width,
-                height: rect.height)
-        }
-    }
-
     /// Keeps element highlights readable: drops degenerate and screen-filling
     /// rects (window/group containers) and caps the count, preferring the
     /// smallest rects — those are the actual controls.

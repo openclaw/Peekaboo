@@ -198,11 +198,9 @@ public final class VisualizationClient: @unchecked Sendable {
         self.dispatch(.spaceSwitch(from: from, to: to, direction: direction))
     }
 
-    /// Rects must be AppKit screen coordinates (bottom-left origin). The
-    /// space marker lets the receiver distinguish converted payloads from
-    /// legacy senders that dispatched raw accessibility rects.
+    /// Rects must be AppKit screen coordinates (bottom-left origin).
     public func showElementDetection(elements: [String: CGRect], duration: TimeInterval = 2.0) async -> Bool {
-        self.dispatch(.elementDetection(elements: elements, duration: duration, space: .appKit))
+        self.dispatch(.elementDetection(elements: elements, duration: duration))
     }
 
     public func showAnnotatedScreenshot(
