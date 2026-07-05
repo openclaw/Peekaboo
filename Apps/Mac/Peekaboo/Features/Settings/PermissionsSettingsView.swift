@@ -4,23 +4,23 @@ struct PermissionsSettingsView: View {
     @Environment(Permissions.self) private var permissions
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Grant required permissions so Peekaboo can capture and automate reliably.")
-                .padding(.top, 4)
-
-            PermissionChecklistView(showOptional: true)
-                .padding(.horizontal, 2)
-                .padding(.vertical, 6)
-
-            Button("Show permissions onboarding") {
-                PermissionsOnboardingController.shared.show(permissions: self.permissions)
+        Form {
+            Section {
+                Text("Grant required permissions so Peekaboo can capture and automate reliably.")
             }
-            .buttonStyle(.bordered)
 
-            Spacer(minLength: 0)
+            Section("Permissions") {
+                PermissionChecklistView(showOptional: true)
+                    .padding(.vertical, 4)
+            }
+
+            Section {
+                Button("Show Permissions Onboarding…") {
+                    PermissionsOnboardingController.shared.show(permissions: self.permissions)
+                }
+            }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 12)
+        .formStyle(.grouped)
     }
 }
 

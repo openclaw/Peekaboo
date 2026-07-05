@@ -47,17 +47,15 @@ struct AboutSettingsView: View {
                     .padding(.horizontal, 18)
             }
 
-            VStack(alignment: .center, spacing: 6) {
-                AboutLinkRow(
+            HStack(spacing: 18) {
+                AboutLink(
                     icon: "chevron.left.slash.chevron.right",
                     title: "GitHub",
                     url: "https://github.com/openclaw/Peekaboo")
-                AboutLinkRow(icon: "globe", title: "Website", url: "https://steipete.me")
-                AboutLinkRow(icon: "envelope", title: "Email", url: "mailto:peter@steipete.me")
+                AboutLink(icon: "globe", title: "Website", url: "https://steipete.me")
+                AboutLink(icon: "envelope", title: "Email", url: "mailto:peter@steipete.me")
             }
             .padding(.top, 8)
-            .frame(maxWidth: .infinity)
-            .multilineTextAlignment(.center)
 
             Divider()
 
@@ -73,7 +71,7 @@ struct AboutSettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
-            Text("© 2025 Peter Steinberger. MIT License.")
+            Text("© 2026 Peter Steinberger. MIT License.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
                 .padding(.top, 4)
@@ -100,27 +98,17 @@ struct AboutSettingsView: View {
 }
 
 @MainActor
-private struct AboutLinkRow: View {
+private struct AboutLink: View {
     let icon: String
     let title: String
     let url: String
 
-    @State private var hovering = false
-
     var body: some View {
-        Button {
-            guard let url = URL(string: self.url) else { return }
-            NSWorkspace.shared.open(url)
-        } label: {
-            HStack(spacing: 6) {
-                Image(systemName: self.icon)
-                Text(self.title)
-                    .underline(self.hovering, color: .accentColor)
+        if let destination = URL(string: self.url) {
+            Link(destination: destination) {
+                Label(self.title, systemImage: self.icon)
             }
-            .foregroundColor(.accentColor)
+            .focusable(false)
         }
-        .buttonStyle(.plain)
-        .focusable(false)
-        .onHover { self.hovering = $0 }
     }
 }

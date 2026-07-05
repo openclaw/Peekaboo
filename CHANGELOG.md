@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Changed
+- The Settings window was modernized around native macOS grouped forms: the AI tab collapses seven redundant provider sections into one clean API Keys list with environment-variable status footnotes, the model pickers now always display the selected model's name (they previously rendered blank or a raw model id when the selection came from `~/.peekaboo/config.json`), the Visualizer tab drops its hand-rolled iOS-style switches for native toggles with inline sliders, Shortcuts is three recorder rows plus a one-line hint instead of a wall of instructions, Permissions gets the standard grouped layout, and About uses native links (and the current year).
+
+### Removed
+- Poltergeist build-watcher integration is gone: the config, wrapper scripts, watchman config, `pnpm run poltergeist:*`/`polter` script aliases, docs page, and leftover rebuild-test comments were removed. Rebuild with `./scripts/build-mac-debug.sh` (Mac app) or `pnpm run build:cli` (CLI) instead.
+
 ## [3.7.0] - 2026-07-05
 
 ### Added

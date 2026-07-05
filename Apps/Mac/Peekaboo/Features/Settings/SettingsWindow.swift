@@ -116,6 +116,7 @@ struct GeneralSettingsView: View {
     @Environment(PeekabooSettings.self) private var settings
 
     var body: some View {
+        @Bindable var settings = self.settings
         Form {
             Section {
                 SettingsIntroRow()
@@ -126,17 +127,17 @@ struct GeneralSettingsView: View {
                     title: "Launch at login",
                     subtitle: "Start Peekaboo automatically when you sign in.",
                     systemImage: "power",
-                    isOn: self.binding(\.launchAtLogin))
+                    isOn: $settings.launchAtLogin)
                 SettingsToggleRow(
                     title: "Show in Dock",
                     subtitle: "Keep a Dock icon and normal app switching behavior.",
                     systemImage: "dock.rectangle",
-                    isOn: self.binding(\.showInDock))
+                    isOn: $settings.showInDock)
                 SettingsToggleRow(
                     title: "Keep window on top",
                     subtitle: "Pin the main session window above other apps.",
                     systemImage: "macwindow.on.rectangle",
-                    isOn: self.binding(\.alwaysOnTop))
+                    isOn: $settings.alwaysOnTop)
             }
 
             Section("Interaction") {
@@ -144,27 +145,20 @@ struct GeneralSettingsView: View {
                     title: "Agent mode",
                     subtitle: "Enable chat sessions and automation from the app.",
                     systemImage: "sparkles",
-                    isOn: self.binding(\.agentModeEnabled))
+                    isOn: $settings.agentModeEnabled)
                 SettingsToggleRow(
                     title: "Haptic feedback",
                     subtitle: "Use subtle feedback for supported controls.",
                     systemImage: "waveform.path",
-                    isOn: self.binding(\.hapticFeedbackEnabled))
+                    isOn: $settings.hapticFeedbackEnabled)
                 SettingsToggleRow(
                     title: "Sound effects",
                     subtitle: "Play quiet confirmations for app actions.",
                     systemImage: "speaker.wave.2",
-                    isOn: self.binding(\.soundEffectsEnabled))
+                    isOn: $settings.soundEffectsEnabled)
             }
         }
         .formStyle(.grouped)
-        .padding()
-    }
-
-    private func binding(_ keyPath: ReferenceWritableKeyPath<PeekabooSettings, Bool>) -> Binding<Bool> {
-        Binding(
-            get: { self.settings[keyPath: keyPath] },
-            set: { self.settings[keyPath: keyPath] = $0 })
     }
 }
 
@@ -194,7 +188,7 @@ private struct SettingsIntroRow: View {
     }
 }
 
-private struct SettingsToggleRow: View {
+struct SettingsToggleRow: View {
     let title: String
     let subtitle: String
     let systemImage: String
@@ -231,48 +225,64 @@ struct AISettingsView: View {
     @State private var detectedOllamaModelOptions: [(id: String, name: String)] = []
     @State private var hasAttemptedOllamaDetection = false
 
+    static let builtinProviderCatalog: [(provider: String, models: [(id: String, name: String)])] = [
+        ("openai", [
+            ("gpt-5.5", "GPT-5.5"),
+            ("gpt-5.4", "GPT-5.4"),
+            ("gpt-5.4-mini", "GPT-5.4 mini"),
+            ("gpt-5.4-nano", "GPT-5.4 nano"),
+            ("gpt-5", "GPT-5"),
+            ("gpt-5-mini", "GPT-5 mini"),
+        ]),
+        ("anthropic", [
+            ("claude-fable-5", "Claude Fable 5"),
+            ("claude-opus-4-8", "Claude Opus 4.8"),
+            ("claude-opus-4-7", "Claude Opus 4.7"),
+            ("claude-sonnet-4-6", "Claude Sonnet 4.6"),
+            ("claude-sonnet-4-5-20250929", "Claude Sonnet 4.5"),
+            ("claude-haiku-4.5", "Claude Haiku 4.5"),
+        ]),
+        ("grok", [
+            ("grok-4.3", "Grok 4.3"),
+            ("grok-4", "Grok 4"),
+        ]),
+        ("google", [
+            ("gemini-3.5-flash", "Gemini 3.5 Flash"),
+            ("gemini-3.1-pro-preview", "Gemini 3.1 Pro Preview"),
+            ("gemini-3.1-flash-lite", "Gemini 3.1 Flash Lite"),
+            ("gemini-3-flash", "Gemini 3 Flash"),
+        ]),
+        ("minimax", [
+            ("MiniMax-M2.7", "MiniMax M2.7"),
+            ("MiniMax-M2.7-highspeed", "MiniMax M2.7 Highspeed"),
+        ]),
+        ("minimax-cn", [
+            ("MiniMax-M2.7", "MiniMax China M2.7"),
+            ("MiniMax-M2.7-highspeed", "MiniMax China M2.7 Highspeed"),
+        ]),
+        ("ollama", AISettingsView.defaultOllamaModels),
+        ("lmstudio", [
+            ("openai/gpt-oss-120b", "GPT-OSS 120B"),
+            ("openai/gpt-oss-20b", "GPT-OSS 20B"),
+        ]),
+    ]
+
+    /// Pretty name for a model id from the builtin catalog, regardless of how the
+    /// provider is currently classified (builtin vs custom-provider passthrough).
+    static func builtinName(forModelId id: String) -> String? {
+        for group in self.builtinProviderCatalog {
+            if let model = group.models.first(where: { $0.id == id }) {
+                return model.name
+            }
+        }
+        return nil
+    }
+
     private var allModels: [(provider: String, models: [(id: String, name: String)])] {
-        var models: [(provider: String, models: [(id: String, name: String)])] = [
-            ("openai", [
-                ("gpt-5.5", "GPT-5.5"),
-                ("gpt-5.4", "GPT-5.4"),
-                ("gpt-5.4-mini", "GPT-5.4 mini"),
-                ("gpt-5.4-nano", "GPT-5.4 nano"),
-                ("gpt-5", "GPT-5"),
-                ("gpt-5-mini", "GPT-5 mini"),
-            ]),
-            ("anthropic", [
-                ("claude-fable-5", "Claude Fable 5"),
-                ("claude-opus-4-8", "Claude Opus 4.8"),
-                ("claude-opus-4-7", "Claude Opus 4.7"),
-                ("claude-sonnet-4-6", "Claude Sonnet 4.6"),
-                ("claude-sonnet-4-5-20250929", "Claude Sonnet 4.5"),
-                ("claude-haiku-4.5", "Claude Haiku 4.5"),
-            ]),
-            ("grok", [
-                ("grok-4.3", "Grok 4.3"),
-                ("grok-4", "Grok 4"),
-            ]),
-            ("google", [
-                ("gemini-3.5-flash", "Gemini 3.5 Flash"),
-                ("gemini-3.1-pro-preview", "Gemini 3.1 Pro Preview"),
-                ("gemini-3.1-flash-lite", "Gemini 3.1 Flash Lite"),
-                ("gemini-3-flash", "Gemini 3 Flash"),
-            ]),
-            ("minimax", [
-                ("MiniMax-M2.7", "MiniMax M2.7"),
-                ("MiniMax-M2.7-highspeed", "MiniMax M2.7 Highspeed"),
-            ]),
-            ("minimax-cn", [
-                ("MiniMax-M2.7", "MiniMax China M2.7"),
-                ("MiniMax-M2.7-highspeed", "MiniMax China M2.7 Highspeed"),
-            ]),
-            ("ollama", self.ollamaModelOptions),
-            ("lmstudio", [
-                ("openai/gpt-oss-120b", "GPT-OSS 120B"),
-                ("openai/gpt-oss-20b", "GPT-OSS 20B"),
-            ]),
-        ]
+        var models = Self.builtinProviderCatalog
+        if let ollamaIndex = models.firstIndex(where: { $0.provider == "ollama" }) {
+            models[ollamaIndex] = ("ollama", self.ollamaModelOptions)
+        }
 
         let enabledCustomProviders = self.settings.customProviders.filter(\.value.enabled)
         let customProviderIDs = Set(enabledCustomProviders.keys.map { $0.lowercased() })
@@ -285,18 +295,44 @@ struct AISettingsView: View {
                self.settings.selectedProvider.caseInsensitiveCompare(id) == .orderedSame,
                !self.settings.selectedModel.isEmpty
             {
-                providerModels = [(id: self.settings.selectedModel, name: self.settings.selectedModel)]
+                let fallbackName = Self.builtinName(forModelId: self.settings.selectedModel)
+                providerModels = [(id: self.settings.selectedModel, name: fallbackName ?? self.settings.selectedModel)]
             }
             if !providerModels.isEmpty {
                 models.append((id, providerModels))
             }
         }
 
-        return Self.appendingSelectedOpenRouterModel(
+        let resolved = Self.appendingSelectedOpenRouterModel(
             to: models,
             selectedProvider: self.settings.selectedProvider,
             selectedModel: self.settings.selectedModel,
             customProviderIDs: customProviderIDs)
+        return Self.appendingCurrentSelectionIfMissing(
+            to: resolved,
+            selectedProvider: self.settings.selectedProvider,
+            selectedModel: self.settings.selectedModel)
+    }
+
+    /// The configured provider/model pair can come from `~/.peekaboo/config.json` and
+    /// may not be in the hardcoded catalog; append it so the picker never renders blank.
+    static func appendingCurrentSelectionIfMissing(
+        to models: [(provider: String, models: [(id: String, name: String)])],
+        selectedProvider: String,
+        selectedModel: String) -> [(provider: String, models: [(id: String, name: String)])]
+    {
+        guard !selectedProvider.isEmpty, !selectedModel.isEmpty,
+              !models.contains(where: { group in
+                  group.provider == selectedProvider && group.models.contains(where: { $0.id == selectedModel })
+              })
+        else {
+            return models
+        }
+
+        var models = models
+        let name = Self.builtinName(forModelId: selectedModel) ?? selectedModel
+        models.append((selectedProvider, [(id: selectedModel, name: name)]))
+        return models
     }
 
     static func appendingSelectedOpenRouterModel(
@@ -316,7 +352,8 @@ struct AISettingsView: View {
         }
 
         var models = models
-        models.append((selectedProvider, [(id: selectedModel, name: selectedModel)]))
+        let name = Self.builtinName(forModelId: selectedModel) ?? selectedModel
+        models.append((selectedProvider, [(id: selectedModel, name: name)]))
         return models
     }
 
@@ -390,218 +427,162 @@ struct AISettingsView: View {
         self.modelDescriptions[self.modelTag(provider: provider, modelId: modelId)] ?? self.modelDescriptions[modelId]
     }
 
-    var body: some View {
-        Form {
-            // Model Selection
-            Section("Model Selection") {
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        Text("Model")
-                            .frame(width: 80, alignment: .trailing)
+    private var modelSelectionBinding: Binding<String> {
+        Binding(
+            get: { self.selectedModelTag() },
+            set: { newTag in
+                if let selection = self.providerAndModel(from: newTag) {
+                    self.settings.selectedModel = selection.model
+                    self.settings.selectedProvider = selection.provider
+                } else {
+                    self.settings.selectedModel = newTag
+                    // Update provider based on model selection
+                    if let provider = self.provider(for: newTag) {
+                        self.settings.selectedProvider = provider
+                    }
+                }
+            })
+    }
 
-                        Picker("", selection: Binding(
-                            get: { self.selectedModelTag() },
-                            set: { newTag in
-                                if let selection = self.providerAndModel(from: newTag) {
-                                    self.settings.selectedModel = selection.model
-                                    self.settings.selectedProvider = selection.provider
-                                } else {
-                                    self.settings.selectedModel = newTag
-                                    // Update provider based on model selection
-                                    if let provider = self.provider(for: newTag) {
-                                        self.settings.selectedProvider = provider
-                                    }
-                                }
-                            })) {
-                                ForEach(self.allModels, id: \.provider) { provider, models in
-                                    Section(header: Text(provider.capitalized)) {
-                                        ForEach(models, id: \.id) { model in
-                                            Text(model.name).tag(self.modelTag(provider: provider, modelId: model.id))
+    private var selectedModelDisplayName: String {
+        for (provider, models) in self.allModels where provider == self.settings.selectedProvider {
+            if let model = models.first(where: { $0.id == self.settings.selectedModel }) {
+                return model.name
+            }
+        }
+        return self.modelDisplayName(forId: self.settings.selectedModel)
+    }
+
+    private func modelDisplayName(forId id: String) -> String {
+        for (_, models) in self.allModels {
+            if let model = models.first(where: { $0.id == id }) {
+                return model.name
+            }
+        }
+        return Self.builtinName(forModelId: id) ?? id
+    }
+
+    var body: some View {
+        @Bindable var settings = self.settings
+        Form {
+            Section("Model") {
+                LabeledContent("Model") {
+                    // Menu of plain buttons: a Menu wrapping a Picker is promoted to a
+                    // pop-up button on macOS, which drops the custom label and renders
+                    // the raw selection tag.
+                    Menu {
+                        ForEach(self.allModels, id: \.provider) { provider, models in
+                            Section(provider.capitalized) {
+                                ForEach(models, id: \.id) { model in
+                                    let tag = self.modelTag(provider: provider, modelId: model.id)
+                                    Button {
+                                        self.modelSelectionBinding.wrappedValue = tag
+                                    } label: {
+                                        if tag == self.selectedModelTag() {
+                                            Label(model.name, systemImage: "checkmark")
+                                        } else {
+                                            Text(model.name)
                                         }
                                     }
                                 }
                             }
-                            .pickerStyle(.menu)
-                                .frame(width: 200)
-                    }
-
-                    // Model description
-                    if let description = modelDescription(
-                        provider: settings.selectedProvider,
-                        modelId: settings.selectedModel)
-                    {
-                        HStack {
-                            Spacer()
-                                .frame(width: 88)
-
-                            Text(description)
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                                .fixedSize(horizontal: false, vertical: true)
-                                .frame(maxWidth: 300, alignment: .leading)
                         }
+                    } label: {
+                        Text(self.selectedModelDisplayName)
                     }
-                }
-            }
-
-            // Provider-specific configuration
-            Section("OpenAI Configuration") {
-                APIKeyField(
-                    provider: .openai,
-                    apiKey: Binding(
-                        get: { self.settings.openAIAPIKey },
-                        set: { self.settings.openAIAPIKey = $0 }))
-            }
-
-            Section("Anthropic Configuration") {
-                APIKeyField(
-                    provider: .anthropic,
-                    apiKey: Binding(
-                        get: { self.settings.anthropicAPIKey },
-                        set: { self.settings.anthropicAPIKey = $0 }))
-            }
-
-            Section("Grok Configuration") {
-                APIKeyField(
-                    provider: .grok,
-                    apiKey: Binding(
-                        get: { self.settings.grokAPIKey },
-                        set: { self.settings.grokAPIKey = $0 }))
-            }
-
-            Section("Gemini Configuration") {
-                APIKeyField(
-                    provider: .google,
-                    apiKey: Binding(
-                        get: { self.settings.googleAPIKey },
-                        set: { self.settings.googleAPIKey = $0 }))
-            }
-
-            Section("MiniMax Configuration") {
-                APIKeyField(
-                    provider: .minimax,
-                    apiKey: Binding(
-                        get: { self.settings.miniMaxAPIKey },
-                        set: { self.settings.miniMaxAPIKey = $0 }))
-            }
-
-            Section("MiniMax China Configuration") {
-                APIKeyField(
-                    provider: .minimaxChina,
-                    apiKey: Binding(
-                        get: { self.settings.miniMaxChinaAPIKey },
-                        set: { self.settings.miniMaxChinaAPIKey = $0 }))
-            }
-
-            Section("Ollama Configuration") {
-                // Base URL
-                HStack {
-                    Text("Base URL")
-                        .frame(width: 80, alignment: .trailing)
-
-                    TextField("http://localhost:11434", text: Binding(
-                        get: { self.settings.ollamaBaseURL },
-                        set: { self.settings.ollamaBaseURL = $0 }))
-                        .textFieldStyle(.roundedBorder)
+                    .menuStyle(.button)
+                    .buttonStyle(.bordered)
+                    .fixedSize()
                 }
 
-                // Connection status
-                HStack {
-                    Spacer()
-                    Text("Ensure Ollama is running locally")
+                if let description = modelDescription(
+                    provider: settings.selectedProvider,
+                    modelId: settings.selectedModel)
+                {
+                    Text(description)
                         .font(.caption)
-                        .foregroundColor(.secondary)
-                    Spacer()
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
 
-            Section("Parameters") {
-                // Temperature
+            Section("API Keys") {
+                APIKeyField(provider: .openai, apiKey: $settings.openAIAPIKey)
+                APIKeyField(provider: .anthropic, apiKey: $settings.anthropicAPIKey)
+                APIKeyField(provider: .grok, apiKey: $settings.grokAPIKey)
+                APIKeyField(provider: .google, apiKey: $settings.googleAPIKey)
+                APIKeyField(provider: .minimax, apiKey: $settings.miniMaxAPIKey)
+                APIKeyField(provider: .minimaxChina, apiKey: $settings.miniMaxChinaAPIKey)
+            }
+
+            Section("Ollama") {
+                TextField("Base URL", text: $settings.ollamaBaseURL, prompt: Text("http://localhost:11434"))
+                    .multilineTextAlignment(.trailing)
+                Text("Models are detected automatically while Ollama is running locally.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Generation") {
                 HStack {
                     Text("Temperature")
-                        .frame(width: 80, alignment: .trailing)
-
-                    Slider(
-                        value: Binding(
-                            get: { self.settings.temperature },
-                            set: { self.settings.temperature = $0 }),
-                        in: 0...1,
-                        step: 0.1)
-
+                    Spacer()
+                    Slider(value: $settings.temperature, in: 0...1, step: 0.1)
+                        .frame(width: 170)
                     Text(String(format: "%.1f", self.settings.temperature))
                         .monospacedDigit()
-                        .frame(width: 30)
+                        .foregroundStyle(.secondary)
+                        .frame(width: 28, alignment: .trailing)
                 }
 
-                // Max tokens
-                HStack {
-                    Text("Max Tokens")
-                        .frame(width: 80, alignment: .trailing)
-
-                    TextField(
-                        "",
-                        value: Binding(
-                            get: { self.settings.maxTokens },
-                            set: { self.settings.maxTokens = $0 }),
-                        format: .number)
-                        .textFieldStyle(.roundedBorder)
-                        .frame(width: 100)
-
-                    Text("(1 - 128,000)")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
+                TextField(
+                    "Max Tokens",
+                    value: $settings.maxTokens,
+                    format: .number.grouping(.never),
+                    prompt: Text("16384"))
+                    .multilineTextAlignment(.trailing)
             }
 
-            // Vision Model Override
-            Section("Vision Model Override") {
-                Toggle(isOn: Binding(
-                    get: { self.settings.useCustomVisionModel },
-                    set: { self.settings.useCustomVisionModel = $0 }))
-                {
-                    Text("Use custom model for vision tasks")
-                }
+            Section("Vision") {
+                Toggle("Use a custom model for vision tasks", isOn: $settings.useCustomVisionModel)
 
                 if self.settings.useCustomVisionModel {
-                    HStack {
-                        Text("Vision Model")
-                            .frame(width: 80, alignment: .trailing)
-
-                        Picker("", selection: Binding(
-                            get: { self.settings.customVisionModel },
-                            set: { self.settings.customVisionModel = $0 }))
-                        {
+                    LabeledContent("Vision Model") {
+                        Menu {
                             ForEach(self.allModels, id: \.provider) { provider, models in
-                                Section(header: Text(provider.capitalized)) {
+                                Section(provider.capitalized) {
                                     ForEach(models, id: \.id) { model in
-                                        Text(model.name).tag(model.id)
+                                        Button {
+                                            self.settings.customVisionModel = model.id
+                                        } label: {
+                                            if model.id == self.settings.customVisionModel {
+                                                Label(model.name, systemImage: "checkmark")
+                                            } else {
+                                                Text(model.name)
+                                            }
+                                        }
                                     }
                                 }
                             }
+                        } label: {
+                            Text(self.modelDisplayName(forId: self.settings.customVisionModel))
                         }
-                        .pickerStyle(.menu)
-                        .frame(width: 200)
+                        .menuStyle(.button)
+                        .buttonStyle(.bordered)
+                        .fixedSize()
                     }
 
-                    Text(
-                        "When enabled, this model will be used for all vision-related tasks " +
-                            "like screenshots and image analysis, regardless of the primary " +
-                            "model selection.")
+                    Text("Used for screenshots and image analysis, regardless of the primary model selection.")
                         .font(.caption)
-                        .foregroundColor(.secondary)
-                        .padding(.leading, 88)
+                        .foregroundStyle(.secondary)
                 }
             }
 
-            // Custom Providers
             Section("Custom Providers") {
                 CustomProviderView()
             }
-
-            // API usage info
         }
         .formStyle(.grouped)
-        .padding()
         .task(id: self.settings.ollamaBaseURL) {
             await self.refreshOllamaModels()
         }

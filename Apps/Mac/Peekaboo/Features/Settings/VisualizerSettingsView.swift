@@ -10,57 +10,45 @@ struct VisualizerSettingsView: View {
 
     var body: some View {
         Form {
-            // Header section with master toggle
             Section {
-                HStack {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Visual Feedback")
-                            .font(.title2)
-                            .fontWeight(.semibold)
-                        Text("Delightful animations for all Peekaboo operations")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    Toggle("", isOn: self.$settings.visualizerEnabled)
-                        .toggleStyle(IOSToggleStyle())
-                }
+                SettingsToggleRow(
+                    title: "Visual Feedback",
+                    subtitle: "Animated on-screen feedback for Peekaboo operations.",
+                    systemImage: "sparkles",
+                    isOn: self.$settings.visualizerEnabled)
             }
 
             // Animation Controls Section
             Section("Animation Settings") {
-                // Animation Speed
                 HStack {
                     Label("Animation Speed", systemImage: "speedometer")
                     Spacer()
+                    Slider(value: self.$settings.visualizerAnimationSpeed, in: 0.1...2.0, step: 0.1)
+                        .frame(width: 150)
+                        .disabled(!self.settings.visualizerEnabled)
                     Text(String(format: "%.1fx", self.settings.visualizerAnimationSpeed))
                         .foregroundStyle(.secondary)
                         .monospacedDigit()
-                        .frame(width: 40, alignment: .trailing)
+                        .frame(width: 36, alignment: .trailing)
                 }
 
-                Slider(value: self.$settings.visualizerAnimationSpeed, in: 0.1...2.0, step: 0.1)
-                    .disabled(!self.settings.visualizerEnabled)
-
-                // Effect Intensity
                 HStack {
                     Label("Effect Intensity", systemImage: "wand.and.rays")
                     Spacer()
+                    Slider(value: self.$settings.visualizerEffectIntensity, in: 0.1...2.0, step: 0.1)
+                        .frame(width: 150)
+                        .disabled(!self.settings.visualizerEnabled)
                     Text(String(format: "%.1fx", self.settings.visualizerEffectIntensity))
                         .foregroundStyle(.secondary)
                         .monospacedDigit()
-                        .frame(width: 40, alignment: .trailing)
+                        .frame(width: 36, alignment: .trailing)
                 }
 
-                Slider(value: self.$settings.visualizerEffectIntensity, in: 0.1...2.0, step: 0.1)
-                    .disabled(!self.settings.visualizerEnabled)
-
-                // Sound Effects
                 HStack {
                     Label("Sound Effects", systemImage: "speaker.wave.2")
                     Spacer()
-                    Toggle("", isOn: self.$settings.visualizerSoundEnabled)
-                        .toggleStyle(IOSToggleStyle())
+                    Toggle("Sound Effects", isOn: self.$settings.visualizerSoundEnabled)
+                        .labelsHidden()
                 }
                 .disabled(!self.settings.visualizerEnabled)
             }
@@ -192,7 +180,6 @@ struct VisualizerSettingsView: View {
             .opacity(self.settings.visualizerEnabled ? 1 : 0.5)
         }
         .formStyle(.grouped)
-        .padding()
     }
 }
 
@@ -243,8 +230,8 @@ struct AnimationToggleRow: View {
             .disabled(!self.canPreview || self.isPreviewRunning)
             .help("Preview \(self.title) animation")
 
-            Toggle("", isOn: self.$isOn)
-                .toggleStyle(IOSToggleStyle())
+            Toggle(self.title, isOn: self.$isOn)
+                .labelsHidden()
                 .disabled(!self.isEnabled)
         }
     }
@@ -441,35 +428,6 @@ struct AnimationToggleRow: View {
             width: 340,
             height: 70)
         _ = await self.visualizerCoordinator.showWatchCapture(in: hudRect)
-    }
-}
-
-// MARK: - iOS-Style Toggle
-
-struct IOSToggleStyle: ToggleStyle {
-    typealias Body = IOSToggleView
-
-    func makeBody(configuration: ToggleStyleConfiguration) -> Body {
-        IOSToggleView(configuration: configuration)
-    }
-}
-
-struct IOSToggleView: View {
-    let configuration: ToggleStyleConfiguration
-
-    var body: some View {
-        RoundedRectangle(cornerRadius: 10)
-            .fill(self.configuration.isOn ? Color.accentColor : Color(NSColor.tertiaryLabelColor))
-            .frame(width: 36, height: 20)
-            .overlay(
-                Circle()
-                    .fill(Color.white)
-                    .padding(2)
-                    .offset(x: self.configuration.isOn ? 8 : -8)
-                    .animation(.spring(response: 0.2, dampingFraction: 0.7), value: self.configuration.isOn))
-            .onTapGesture {
-                self.configuration.isOn.toggle()
-            }
     }
 }
 
