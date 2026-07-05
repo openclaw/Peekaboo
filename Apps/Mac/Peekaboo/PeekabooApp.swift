@@ -1,5 +1,6 @@
 import AppKit
 import KeyboardShortcuts
+import Observation
 import os.log
 import PeekabooAutomationKit
 import PeekabooBridge
@@ -84,6 +85,9 @@ struct PeekabooApp: App {
                     // Set up window opening handler
                     self.appDelegate.windowOpener = { windowId in
                         Task { @MainActor in
+                            guard windowId != AgentSessionUI.mainWindowIdentifier ||
+                                AgentSessionUI.isAvailable(agentModeEnabled: self.settings.agentModeEnabled)
+                            else { return }
                             self.openWindow(id: windowId)
                         }
                     }
@@ -109,31 +113,42 @@ struct PeekabooApp: App {
 
         // Main window - Powerful debugging and development interface
         WindowGroup("Peekaboo Sessions", id: "main") {
-            SessionMainWindow()
-                .environment(self.settings)
-                .environment(self.sessionStore)
-                .environment(self.permissions)
-                .environment(
-                    self.agent ?? PeekabooAgent(
-                        settings: self.settings,
-                        sessionStore: self.sessionStore,
-                        services: self.services))
-                .onReceive(NotificationCenter.default.publisher(for: .openMainWindow)) { _ in
-                    // Window will automatically open when this notification is received
-                    DispatchQueue.main.async {
-                        self.openWindow(id: "main")
+            if AgentSessionUI.isAvailable(agentModeEnabled: self.settings.agentModeEnabled) {
+                SessionMainWindow()
+                    .environment(self.settings)
+                    .environment(self.sessionStore)
+                    .environment(self.permissions)
+                    .environment(
+                        self.agent ?? PeekabooAgent(
+                            settings: self.settings,
+                            sessionStore: self.sessionStore,
+                            services: self.services))
+                    .onReceive(NotificationCenter.default.publisher(for: .openMainWindow)) { _ in
+                        guard AgentSessionUI.isAvailable(agentModeEnabled: self.settings.agentModeEnabled) else {
+                            return
+                        }
+                        DispatchQueue.main.async {
+                            guard AgentSessionUI.isAvailable(agentModeEnabled: self.settings.agentModeEnabled) else {
+                                return
+                            }
+                            self.openWindow(id: AgentSessionUI.mainWindowIdentifier)
+                        }
                     }
-                }
-                .onReceive(NotificationCenter.default.publisher(for: .startNewSession)) { _ in
-                    // Handle new session request
-                    _ = self.sessionStore.createSession(title: "New Session")
-                }
-                .onAppear {
-                    // Make sure window has proper identifier
-                    if let window = NSApp.keyWindow {
-                        window.identifier = NSUserInterfaceItemIdentifier("main")
+                    .onReceive(NotificationCenter.default.publisher(for: .startNewSession)) { _ in
+                        _ = self.sessionStore.createSession(title: "New Session")
                     }
-                }
+                    .onAppear {
+                        if let window = NSApp.keyWindow {
+                            window.identifier = NSUserInterfaceItemIdentifier(AgentSessionUI.mainWindowIdentifier)
+                        }
+                    }
+            } else {
+                Color.clear
+                    .frame(width: 1, height: 1)
+                    .onAppear {
+                        self.appDelegate.dismissAgentSessionUI()
+                    }
+            }
         }
         .windowResizability(.automatic)
         .defaultSize(width: 900, height: 700)
@@ -212,6 +227,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var didConnectVisualizerSettings = false
     private var didSetupKeyboardShortcuts = false
     private var didSetupNotificationObservers = false
+    private var didObserveAgentMode = false
 
     func applicationDidFinishLaunching(_: Notification) {
         self.logger.info("Peekaboo launching...")
@@ -266,6 +282,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.setupNotificationObservers()
             self.didSetupNotificationObservers = true
         }
+
+        if !self.didObserveAgentMode {
+            self.didObserveAgentMode = true
+            self.observeAgentMode()
+        }
+
+        self.updateAgentSessionUIVisibility()
 
         if self.bridgeHost == nil, self.bridgeStartTask == nil {
             self.startBridgeHost(services: context.services)
@@ -337,6 +360,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Window Management
 
     func showMainWindow() {
+        guard let settings = self.settings,
+              AgentSessionUI.isAvailable(agentModeEnabled: settings.agentModeEnabled)
+        else {
+            self.logger.info("Ignoring main window request because agent mode is disabled")
+            self.dismissAgentSessionUI()
+            return
+        }
+
         self.logger.info("showMainWindow called")
 
         // Ensure dock icon is visible
@@ -347,17 +378,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Find or create the main window
         DispatchQueue.main.async {
+            guard AgentSessionUI.isAvailable(agentModeEnabled: settings.agentModeEnabled) else {
+                self.dismissAgentSessionUI()
+                return
+            }
+
             self.logger.info("Looking for existing main window...")
 
             // First try to find an existing main window by identifier
-            if let existingWindow = NSApp.windows.first(where: { $0.identifier?.rawValue == "main" }) {
+            if let existingWindow = NSApp.windows.first(where: {
+                $0.identifier?.rawValue == AgentSessionUI.mainWindowIdentifier
+            }) {
                 self.logger.info("Found existing main window by identifier, bringing to front")
                 existingWindow.makeKeyAndOrderFront(nil)
                 return
             }
 
             // Also check by title as fallback
-            if let existingWindow = NSApp.windows.first(where: { $0.title == "Peekaboo Sessions" }) {
+            if let existingWindow = NSApp.windows.first(where: { $0.title == AgentSessionUI.mainWindowTitle }) {
                 self.logger.info("Found existing main window by title, bringing to front")
                 existingWindow.makeKeyAndOrderFront(nil)
                 return
@@ -368,7 +406,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // Use the window opener if available
             if let opener = self.windowOpener {
                 self.logger.info("Using windowOpener to create main window")
-                opener("main")
+                opener(AgentSessionUI.mainWindowIdentifier)
             } else {
                 self.logger.info("No windowOpener available, posting notification")
                 // Post notification to open window
@@ -392,6 +430,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func openWindow(id: String) {
+        guard id != AgentSessionUI.mainWindowIdentifier ||
+            AgentSessionUI.isAvailable(agentModeEnabled: self.settings?.agentModeEnabled == true)
+        else {
+            self.dismissAgentSessionUI()
+            return
+        }
+
         self.logger.info("openWindow called with id: \(id)")
 
         // Ensure dock icon is visible
@@ -423,6 +468,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Listen for keyboard shortcut changes
         // Keyboard shortcuts are now handled automatically by the KeyboardShortcuts library
+    }
+
+    private func observeAgentMode() {
+        guard let settings = self.settings else { return }
+
+        withObservationTracking {
+            _ = settings.agentModeEnabled
+        } onChange: { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.updateAgentSessionUIVisibility()
+                self.observeAgentMode()
+            }
+        }
+    }
+
+    private func updateAgentSessionUIVisibility() {
+        guard !AgentSessionUI.isAvailable(agentModeEnabled: self.settings?.agentModeEnabled == true) else { return }
+        self.dismissAgentSessionUI()
+    }
+
+    func dismissAgentSessionUI() {
+        self.statusBarController?.dismissAgentUI()
+
+        for window in NSApp.windows where AgentSessionUI.identifiesSessionWindow(
+            identifier: window.identifier?.rawValue,
+            title: window.title)
+        {
+            window.close()
+        }
     }
 
     @objc private func handleShowInspector() {

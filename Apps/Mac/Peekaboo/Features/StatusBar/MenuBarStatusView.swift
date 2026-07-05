@@ -8,6 +8,7 @@ struct MenuBarStatusView: View {
 
     @Environment(PeekabooAgent.self) private var agent
     @Environment(SessionStore.self) private var sessionStore
+    @Environment(PeekabooSettings.self) private var settings
     @Environment(\.openWindow) private var openWindow
 
     @State private var inputText = ""
@@ -116,6 +117,8 @@ struct MenuBarStatusView: View {
     }
 
     private func openMainWindow() {
+        guard AgentSessionUI.isAvailable(agentModeEnabled: self.settings.agentModeEnabled) else { return }
+
         DockIconManager.shared.temporarilyShowDock()
         NSApp.activate(ignoringOtherApps: true)
         self.openWindow(id: "main")
@@ -132,6 +135,8 @@ struct MenuBarStatusView: View {
     }
 
     private func createNewSession() {
+        guard AgentSessionUI.isAvailable(agentModeEnabled: self.settings.agentModeEnabled) else { return }
+
         _ = self.sessionStore.createSession(title: "New Session")
         self.detailsExpanded = true
     }

@@ -3,6 +3,26 @@ import os.log
 import PeekabooCore
 import SwiftUI
 
+enum AgentSessionUI {
+    static let mainWindowIdentifier = "main"
+    static let mainWindowTitle = "Peekaboo Sessions"
+    private static let detailWindowIdentifierPrefix = "agent-session:"
+
+    static func isAvailable(agentModeEnabled: Bool) -> Bool {
+        agentModeEnabled
+    }
+
+    static func detailWindowIdentifier(sessionID: String) -> String {
+        "\(self.detailWindowIdentifierPrefix)\(sessionID)"
+    }
+
+    static func identifiesSessionWindow(identifier: String?, title: String) -> Bool {
+        identifier == self.mainWindowIdentifier ||
+            identifier?.hasPrefix(self.detailWindowIdentifierPrefix) == true ||
+            title == self.mainWindowTitle
+    }
+}
+
 /// Controls the Peekaboo status bar item and popover interface.
 ///
 /// Manages the macOS status bar integration with animated icon states and popover UI.
@@ -112,6 +132,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         let baseView = MenuBarStatusView()
             .environment(self.agent)
             .environment(self.sessionStore)
+            .environment(self.settings)
 
         self.popover.contentViewController = NSHostingController(rootView: baseView)
     }
@@ -134,11 +155,22 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     }
 
     func togglePopover() {
+        guard AgentSessionUI.isAvailable(agentModeEnabled: self.settings.agentModeEnabled) else {
+            self.dismissAgentUI()
+            return
+        }
+
         if self.popover.isShown {
             self.popover.performClose(nil)
         } else {
             guard let button = statusItem.button else { return }
             self.popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        }
+    }
+
+    func dismissAgentUI() {
+        if self.popover.isShown {
+            self.popover.performClose(nil)
         }
     }
 
@@ -261,7 +293,8 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     }
 
     @objc private func openSession(_ sender: NSMenuItem) {
-        guard let sessionId = sender.representedObject as? String,
+        guard AgentSessionUI.isAvailable(agentModeEnabled: self.settings.agentModeEnabled),
+              let sessionId = sender.representedObject as? String,
               let session = sessionStore.sessions.first(where: { $0.id == sessionId }) else { return }
 
         // Open session detail window
@@ -274,6 +307,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
             defer: false)
 
         window.title = session.title
+        window.identifier = NSUserInterfaceItemIdentifier(AgentSessionUI.detailWindowIdentifier(sessionID: session.id))
         window.center()
         let rootView = SessionMainWindow()
             .environment(self.sessionStore)
@@ -285,6 +319,8 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     }
 
     @objc private func openMainWindow() {
+        guard AgentSessionUI.isAvailable(agentModeEnabled: self.settings.agentModeEnabled) else { return }
+
         self.logger.info("openMainWindow action triggered from menu")
 
         // First ensure the app is active

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Fixed
+- The macOS Sessions window and agent popover stay unavailable while Agent mode is disabled, including Dock reopens, global shortcuts, notifications, and windows already open when the setting is turned off.
+
 ## [3.7.1] - 2026-07-05
 
 ### Changed

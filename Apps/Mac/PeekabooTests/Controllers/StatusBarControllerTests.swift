@@ -21,6 +21,22 @@ struct StatusBarControllerTests {
     }
 
     @Test
+    func `Agent session UI follows agent mode`() {
+        #expect(AgentSessionUI.isAvailable(agentModeEnabled: true))
+        #expect(!AgentSessionUI.isAvailable(agentModeEnabled: false))
+    }
+
+    @Test
+    func `Agent session windows have stable identities`() {
+        #expect(AgentSessionUI.identifiesSessionWindow(identifier: "main", title: ""))
+        #expect(AgentSessionUI.identifiesSessionWindow(
+            identifier: AgentSessionUI.detailWindowIdentifier(sessionID: "test-session"),
+            title: "Test Session"))
+        #expect(AgentSessionUI.identifiesSessionWindow(identifier: nil, title: "Peekaboo Sessions"))
+        #expect(!AgentSessionUI.identifiesSessionWindow(identifier: "inspector", title: "Inspector"))
+    }
+
+    @Test
     func `Controller initializes with status item`() {
         _ = self.makeController()
 
