@@ -71,6 +71,37 @@ extension PeekabooAgentServiceTests {
 
     @Test
     @MainActor
+    func `Sonnet 5 and GPT-5_6 generation settings preserve current model capabilities`() throws {
+        try self.withIsolatedAgentEnvironment(
+            [:],
+            configurationJSON: """
+            {
+              "agent": {
+                "maxTokens": 128000,
+                "temperature": 0.2
+              }
+            }
+            """) {
+                let agentService = try PeekabooAgentService(services: self.makeServices())
+                let sonnetSettings = agentService.generationSettings(for: .anthropic(.sonnet5))
+
+                #expect(sonnetSettings.maxTokens == 128_000)
+                #expect(sonnetSettings.temperature == 0.2)
+
+                for model in [
+                    LanguageModel.openai(.gpt56Sol),
+                    .openai(.gpt56Terra),
+                    .openai(.gpt56Luna),
+                ] {
+                    let settings = agentService.generationSettings(for: model)
+                    #expect(settings.maxTokens == 128_000)
+                    #expect(settings.providerOptions.openai?.verbosity == .medium)
+                }
+            }
+    }
+
+    @Test
+    @MainActor
     func `Generation settings clamp max tokens to provider capabilities`() throws {
         try self.withIsolatedAgentEnvironment(
             [:],
@@ -1862,6 +1893,7 @@ extension PeekabooAgentServiceTests {
             "PEEKABOO_MISSING_PROVIDER_KEY",
             "MINIMAX_API_KEY",
             "MINIMAX_CN_API_KEY",
+            "MOONSHOT_API_KEY",
             "PEEKABOO_OLLAMA_BASE_URL",
             "OLLAMA_BASE_URL",
         ]
@@ -1905,6 +1937,7 @@ extension PeekabooAgentServiceTests {
         unsetenv("PEEKABOO_MISSING_PROVIDER_KEY")
         unsetenv("MINIMAX_API_KEY")
         unsetenv("MINIMAX_CN_API_KEY")
+        unsetenv("MOONSHOT_API_KEY")
         unsetenv("PEEKABOO_OLLAMA_BASE_URL")
         unsetenv("OLLAMA_BASE_URL")
         TachikomaConfiguration.current.removeAPIKey(for: .grok)
@@ -1936,6 +1969,7 @@ extension PeekabooAgentServiceTests {
             "PEEKABOO_MISSING_PROVIDER_KEY",
             "MINIMAX_API_KEY",
             "MINIMAX_CN_API_KEY",
+            "MOONSHOT_API_KEY",
             "PEEKABOO_OLLAMA_BASE_URL",
             "OLLAMA_BASE_URL",
         ]
@@ -1979,6 +2013,7 @@ extension PeekabooAgentServiceTests {
         unsetenv("PEEKABOO_MISSING_PROVIDER_KEY")
         unsetenv("MINIMAX_API_KEY")
         unsetenv("MINIMAX_CN_API_KEY")
+        unsetenv("MOONSHOT_API_KEY")
         unsetenv("PEEKABOO_OLLAMA_BASE_URL")
         unsetenv("OLLAMA_BASE_URL")
         for (key, value) in overrides {

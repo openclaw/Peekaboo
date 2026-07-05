@@ -39,7 +39,12 @@ public struct AIAssistantWindow: View {
                         .font(.headline)
 
                     Picker("Model", selection: self.$selectedModel) {
+                        Text("GPT-5.6 Sol").tag(Model.openai(.gpt56Sol))
+                        Text("GPT-5.6 Terra").tag(Model.openai(.gpt56Terra))
+                        Text("GPT-5.6 Luna").tag(Model.openai(.gpt56Luna))
                         Text("GPT-5.5").tag(Model.openai(.gpt55))
+                        Text("Claude Fable 5").tag(Model.anthropic(.fable5))
+                        Text("Claude Sonnet 5").tag(Model.anthropic(.sonnet5))
                         Text("Claude Opus 4.8").tag(Model.anthropic(.opus48))
                     }
                     .pickerStyle(.menu)
@@ -139,7 +144,12 @@ public struct CompactAIAssistant: View {
                 Spacer()
 
                 Picker("Model", selection: self.$model) {
+                    Text("GPT-5.6 Sol").tag(Model.openai(.gpt56Sol))
+                    Text("GPT-5.6 Terra").tag(Model.openai(.gpt56Terra))
+                    Text("GPT-5.6 Luna").tag(Model.openai(.gpt56Luna))
                     Text("GPT-5.5").tag(Model.openai(.gpt55))
+                    Text("Claude Fable 5").tag(Model.anthropic(.fable5))
+                    Text("Claude Sonnet 5").tag(Model.anthropic(.sonnet5))
                     Text("Claude Opus 4.8").tag(Model.anthropic(.opus48))
                 }
                 .pickerStyle(.menu)

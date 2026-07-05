@@ -43,6 +43,7 @@ struct PeekabooAgentStreamingContentFilterTests {
             defaultModel: .anthropic(.opus48))
 
         #expect(agentService.buffersAgentTextStreamUntilDone(for: .anthropic(.fable5)))
+        #expect(agentService.buffersAgentTextStreamUntilDone(for: .anthropic(.sonnet5)))
         #expect(agentService.buffersAgentTextStreamUntilDone(for: .anthropic(.opus48)))
         #expect(!agentService.buffersAgentTextStreamUntilDone(for: .anthropic(.opus47)))
         #expect(!agentService.buffersAgentTextStreamUntilDone(for: .anthropic(.sonnet46)))

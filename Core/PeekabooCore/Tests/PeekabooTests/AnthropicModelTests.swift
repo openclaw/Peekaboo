@@ -83,6 +83,7 @@ struct AnthropicModelTests {
     func `Anthropic vision model capabilities`() {
         let visionCapableModels = [
             Model.anthropic(.fable5),
+            Model.anthropic(.sonnet5),
             Model.anthropic(.opus45),
             Model.anthropic(.sonnet46),
             Model.anthropic(.haiku45),
@@ -111,6 +112,7 @@ struct AnthropicModelTests {
 
         // Current Anthropic context windows are model-specific, not a simple family hierarchy.
         #expect(Model.anthropic(.fable5).contextLength == 1_000_000)
+        #expect(Model.anthropic(.sonnet5).contextLength == 1_000_000)
         #expect(Model.anthropic(.opus48).contextLength == 1_000_000)
         #expect(sonnet46.contextLength == 1_000_000)
         #expect(opus45.contextLength == 500_000)
@@ -121,10 +123,12 @@ struct AnthropicModelTests {
     @Test
     func `Anthropic current models support tools`() {
         let fable5 = Model.anthropic(.fable5)
+        let sonnet5 = Model.anthropic(.sonnet5)
         let opus48 = Model.anthropic(.opus48)
         let sonnet46 = Model.anthropic(.sonnet46)
 
         #expect(fable5.providerName == "Anthropic")
+        #expect(sonnet5.providerName == "Anthropic")
         #expect(opus48.providerName == "Anthropic")
         #expect(sonnet46.providerName == "Anthropic")
 
@@ -134,6 +138,8 @@ struct AnthropicModelTests {
 
         #expect(fable5.supportsTools == true)
         #expect(fable5.supportsStreaming == false)
+        #expect(sonnet5.supportsTools == true)
+        #expect(sonnet5.supportsStreaming == false)
         #expect(opus48.supportsTools == true)
         #expect(sonnet46.supportsTools == true)
     }

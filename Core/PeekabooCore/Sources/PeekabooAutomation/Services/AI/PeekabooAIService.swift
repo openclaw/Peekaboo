@@ -80,14 +80,18 @@ private final class PeekabooCustomProviderModel: ModelProvider, @unchecked Senda
         let inferredAnthropicCapabilities = kind == .anthropic
             ? AnthropicModelCapabilityInference.capabilities(for: resolvedModelID)
             : nil
-        let inferredMaxOutputTokens = inferredAnthropicCapabilities?.maxOutputTokens ?? 4096
+        let inferredGPT56Model = kind == .openai
+            ? LanguageModel.OpenAI.gpt56Model(for: resolvedModelID)
+            : nil
+        let inferredMaxOutputTokens = inferredAnthropicCapabilities?.maxOutputTokens ??
+            (inferredGPT56Model == nil ? 4096 : 128_000)
         let hasStreamingRefusalRisk = inferredAnthropicCapabilities.map { !$0.supportsStreaming } ??
             LanguageModel.Anthropic.hasStreamingRefusalRisk(modelId: resolvedModelID)
         self.capabilities = ModelCapabilities(
             supportsVision: supportsVision,
             supportsTools: supportsTools,
             supportsStreaming: !hasStreamingRefusalRisk,
-            contextLength: inferredAnthropicCapabilities?.contextLength ?? 128_000,
+            contextLength: inferredAnthropicCapabilities?.contextLength ?? inferredGPT56Model?.contextLength ?? 128_000,
             maxOutputTokens: maxOutputTokens ?? inferredMaxOutputTokens)
     }
 

@@ -72,7 +72,7 @@ struct PeekabooAgentGenerationSettingsTests {
         try self.withTemporaryConfig(
             """
             {
-              "agent": { "temperature": 0.7 }
+              "agent": { "temperature": 0.7, "maxTokens": 128000 }
             }
             """) {
                 let agentService = try PeekabooAgentService(services: PeekabooServices())
@@ -81,6 +81,66 @@ struct PeekabooAgentGenerationSettingsTests {
                     baseURL: "https://openai-compatible.example"))
 
                 #expect(settings.temperature == nil)
+            }
+    }
+
+    @Test
+    @MainActor
+    func `OpenAI compatible GPT-5_6 models omit unsupported temperature`() throws {
+        try self.withTemporaryConfig(
+            """
+            {
+              "agent": { "temperature": 0.7, "maxTokens": 128000 }
+            }
+            """) {
+                let agentService = try PeekabooAgentService(services: PeekabooServices())
+
+                for modelId in ["gpt-5.6-sol", "openai/gpt-5.6-terra", "gpt-5.6-luna"] {
+                    let settings = agentService.generationSettings(for: .openaiCompatible(
+                        modelId: modelId,
+                        baseURL: "https://openai-compatible.example"))
+                    #expect(settings.temperature == nil)
+                    #expect(settings.maxTokens == 128_000)
+                }
+            }
+    }
+
+    @Test
+    @MainActor
+    func `Configured custom OpenAI GPT-5_6 model infers large output limit`() throws {
+        try self.withTemporaryConfig(
+            """
+            {
+              "aiProviders": { "providers": "local-openai/gpt-5.6-sol" },
+              "agent": { "maxTokens": 128000 },
+              "customProviders": {
+                "local-openai": {
+                  "name": "Local OpenAI",
+                  "type": "openai",
+                  "enabled": true,
+                  "options": {
+                    "baseURL": "https://openai-compatible.example",
+                    "apiKey": "test-key"
+                  },
+                  "models": {
+                    "gpt-5.6-sol": {
+                      "name": "GPT-5.6 Sol",
+                      "supportsTools": true
+                    }
+                  }
+                }
+              }
+            }
+            """) {
+                let configuration = ConfigurationManager.shared
+                _ = configuration.loadConfiguration()
+                let aiService = PeekabooAIService(configuration: configuration)
+                let model = try #require(aiService.availableModels().first)
+                let agentService = try PeekabooAgentService(services: PeekabooServices())
+
+                #expect(model.modelId == "local-openai/gpt-5.6-sol")
+                #expect(model.contextLength == 372_000)
+                #expect(agentService.generationSettings(for: model).maxTokens == 128_000)
             }
     }
 

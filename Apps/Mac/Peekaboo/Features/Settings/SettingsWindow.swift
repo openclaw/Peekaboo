@@ -227,6 +227,9 @@ struct AISettingsView: View {
 
     static let builtinProviderCatalog: [(provider: String, models: [(id: String, name: String)])] = [
         ("openai", [
+            ("gpt-5.6-sol", "GPT-5.6 Sol"),
+            ("gpt-5.6-terra", "GPT-5.6 Terra"),
+            ("gpt-5.6-luna", "GPT-5.6 Luna"),
             ("gpt-5.5", "GPT-5.5"),
             ("gpt-5.4", "GPT-5.4"),
             ("gpt-5.4-mini", "GPT-5.4 mini"),
@@ -236,6 +239,7 @@ struct AISettingsView: View {
         ]),
         ("anthropic", [
             ("claude-fable-5", "Claude Fable 5"),
+            ("claude-sonnet-5", "Claude Sonnet 5"),
             ("claude-opus-4-8", "Claude Opus 4.8"),
             ("claude-opus-4-7", "Claude Opus 4.7"),
             ("claude-sonnet-4-6", "Claude Sonnet 4.6"),
@@ -360,6 +364,9 @@ struct AISettingsView: View {
     private var modelDescriptions: [String: String] {
         [
             // OpenAI models
+            "gpt-5.6-sol": "GPT-5.6 Sol, the flagship GPT-5.6 model for demanding agent tasks.",
+            "gpt-5.6-terra": "GPT-5.6 Terra, a balanced GPT-5.6 model for everyday agent work.",
+            "gpt-5.6-luna": "GPT-5.6 Luna, the fastest and most cost-efficient GPT-5.6 model.",
             "gpt-5.5": "Flagship GPT-5.5 model with 400K context and upgraded tool " +
                 "usage + reasoning.",
             "gpt-5.4": "GPT-5.4 model with 400K context and upgraded tool " +
@@ -375,6 +382,7 @@ struct AISettingsView: View {
             // Anthropic models
             "claude-fable-5": "Claude Fable 5 with 1M context for demanding " +
                 "reasoning and long-horizon agent tasks.",
+            "claude-sonnet-5": "Claude Sonnet 5 with 1M context for fast, capable agent tasks.",
             "claude-opus-4-8": "Claude Opus 4.8 with 1M context for long-running " +
                 "automation and computer-use tasks.",
             "claude-sonnet-4-6": "Claude Sonnet 4.6 with new tools + computer use, " +

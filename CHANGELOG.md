@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Added
+- The agent, CLI, macOS model pickers, and session UI now support Claude Fable 5, Claude Sonnet 5, and the GPT-5.6 Sol, Terra, and Luna preview models, including their current context, output, effort, pricing, and non-streaming safety behavior.
+
 ### Fixed
 - The macOS Sessions window and agent popover stay unavailable while Agent mode is disabled, including Dock reopens, global shortcuts, notifications, and windows already open when the setting is turned off.
 

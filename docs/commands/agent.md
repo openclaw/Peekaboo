@@ -16,7 +16,7 @@ read_when:
 | `--chat` | Force the interactive chat loop even when stdin/stdout are not TTYs. |
 | `--dry-run` | Emit the planned steps without actually invoking tools. |
 | `--max-steps <n>` | Cap how many tool invocations the agent may issue before aborting (default: 100). |
-| `--model gpt-5.5|claude-fable-5|gemini-3-flash|minimax|minimax-cn/<model>|openrouter/<provider>/<model>|ollama/<model>|lmstudio/<model>` | Override the default model (`gpt-5.5`). Input is validated against supported hosted providers and local model providers. |
+| `--model gpt-5.6|gpt-5.5|claude-fable-5|claude-sonnet-5|gemini-3-flash|minimax|minimax-cn/<model>|openrouter/<provider>/<model>|ollama/<model>|lmstudio/<model>` | Override the default model (`gpt-5.5`). Input is validated against supported hosted providers and local model providers. |
 | `--resume` / `--resume-session <id>` | Continue the most recent session or a specific session ID. |
 | `--list-sessions` | Print cached sessions (id, task, timestamps, message count) instead of running anything. |
 | `--no-cache` | Always create a fresh session even if one is already active. |
@@ -49,6 +49,12 @@ For automation flows that cannot attach to a TTY, pass both `--chat` and standar
 ```bash
 # Let the agent sign into Slack using GPT-5.5 with verbose tracing
 peekaboo agent "Check Slack mentions" --model gpt-5.5 --verbose
+
+# Use GPT-5.6 Sol (the gpt-5.6 shortcut selects Sol)
+peekaboo agent "Check the current window" --model gpt-5.6
+
+# Use Claude Sonnet 5
+peekaboo agent "Check the current window" --model claude-sonnet-5
 
 # Keep the agent loop local through Ollama
 peekaboo agent "Check the current window" --model ollama/llama3.3

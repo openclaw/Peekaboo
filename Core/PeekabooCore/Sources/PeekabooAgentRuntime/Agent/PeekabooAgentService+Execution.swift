@@ -14,7 +14,8 @@ extension PeekabooAgentService {
         let temperature = self.shouldOmitTemperature(for: model) ? nil : self.configuredTemperature(for: model)
 
         return switch model {
-        case .openai(.gpt55), .openai(.gpt54), .openai(.gpt54Mini), .openai(.gpt54Nano), .openai(.gpt5):
+        case .openai(.gpt56Sol), .openai(.gpt56Terra), .openai(.gpt56Luna),
+             .openai(.gpt55), .openai(.gpt54), .openai(.gpt54Mini), .openai(.gpt54Nano), .openai(.gpt5):
             GenerationSettings(
                 maxTokens: maxTokens,
                 temperature: temperature,
@@ -88,6 +89,9 @@ extension PeekabooAgentService {
     private func isOpenAIGPT5TemperatureExcludedModel(_ modelId: String) -> Bool {
         switch self.normalizedOpenAIModelID(modelId) {
         case "chat-latest",
+             "gpt-5.6-sol",
+             "gpt-5.6-terra",
+             "gpt-5.6-luna",
              "gpt-5.5",
              "gpt-5.4",
              "gpt-5.4-mini",
@@ -121,6 +125,9 @@ extension PeekabooAgentService {
         case let .openai(openAIModel):
             switch openAIModel {
             case .chatLatest,
+                 .gpt56Sol,
+                 .gpt56Terra,
+                 .gpt56Luna,
                  .gpt55,
                  .gpt54,
                  .gpt54Mini,
@@ -148,7 +155,11 @@ extension PeekabooAgentService {
         case .mistral, .groq, .grok, .ollama, .lmstudio, .azureOpenAI, .replicate:
             4096
         case let .openRouter(modelId), let .together(modelId), let .openaiCompatible(modelId, _):
-            AnthropicModelCapabilityInference.capabilities(for: modelId)?.maxOutputTokens ?? 4096
+            if let maxOutputTokens = AnthropicModelCapabilityInference.capabilities(for: modelId)?.maxOutputTokens {
+                maxOutputTokens
+            } else {
+                LanguageModel.OpenAI.gpt56Model(for: modelId) == nil ? 4096 : 128_000
+            }
         case let .anthropicCompatible(modelId, _):
             AnthropicModelCapabilityInference.capabilities(for: modelId)?.maxOutputTokens ?? 8192
         }
