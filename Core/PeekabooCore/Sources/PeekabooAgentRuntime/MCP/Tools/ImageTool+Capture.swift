@@ -84,13 +84,20 @@ extension ImageTool {
         downscaledCaptures.reserveCapacity(captureSet.captures.count)
 
         for capture in captureSet.captures {
-            guard !capture.imageData.isEmpty else {
+            let savedPath = capture.savedPath ?? captureSet.observation?.files.rawScreenshotPath
+            let imageData = if capture.imageData.isEmpty, let savedPath {
+                (try? Data(contentsOf: URL(fileURLWithPath: savedPath))) ?? capture.imageData
+            } else {
+                capture.imageData
+            }
+
+            guard !imageData.isEmpty else {
                 downscaledCaptures.append(capture)
                 continue
             }
 
             guard let result = self.downscale(
-                imageData: capture.imageData,
+                imageData: imageData,
                 maxDimension: maxDimension,
                 format: request.format)
             else {
@@ -98,7 +105,7 @@ extension ImageTool {
                     reason: "Failed to downscale image to max_dimension \(maxDimension)")
             }
 
-            if result.resized, let savedPath = capture.savedPath ?? captureSet.observation?.files.rawScreenshotPath {
+            if result.resized, let savedPath {
                 try result.data.write(to: URL(fileURLWithPath: savedPath), options: .atomic)
             }
 

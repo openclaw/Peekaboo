@@ -278,6 +278,35 @@ struct MCPToolExecutionTests {
     }
 
     @Test
+    func `Image tool downscales saved fallback when capture data is empty`() async throws {
+        let highResPNG = Self.makePNGData(width: 3000, height: 2000)
+        let context = await MCPToolTestHelpers.makeContext()
+        let tool = ImageTool(context: context)
+        let outputPath = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekaboo-mcp-downscaled-fallback-\(UUID().uuidString).png")
+            .path
+        defer { try? FileManager.default.removeItem(atPath: outputPath) }
+        try highResPNG.write(to: URL(fileURLWithPath: outputPath))
+        let captureSet = ImageCaptureSet(
+            captures: [CaptureResult(
+                imageData: Data(),
+                savedPath: outputPath,
+                metadata: CaptureMetadata(size: CGSize(width: 3000, height: 2000), mode: .screen))],
+            observation: nil)
+        let request = try ImageRequest(arguments: ToolArguments(raw: [
+            "format": "data",
+            "max_dimension": 600,
+        ]))
+
+        let result = try tool.downscaledCaptureSetIfNeeded(captureSet, request: request)
+
+        let capture = try #require(result.captures.first)
+        #expect(Self.imageDimensions(from: capture.imageData) == CGSize(width: 600, height: 400))
+        let savedData = try Data(contentsOf: URL(fileURLWithPath: outputPath))
+        #expect(Self.imageDimensions(from: savedData) == CGSize(width: 600, height: 400))
+    }
+
+    @Test
     func `Image tool rejects nonpositive max_dimension`() async throws {
         let screenCapture = await MainActor.run { MockScreenCaptureService(screenRecordingGranted: true) }
         let context = await MCPToolTestHelpers.makeContext(screenCapture: screenCapture)
