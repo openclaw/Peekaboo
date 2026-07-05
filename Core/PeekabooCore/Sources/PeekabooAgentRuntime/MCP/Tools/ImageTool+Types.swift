@@ -19,11 +19,13 @@ struct ImageInput: Codable {
     let captureFocus: CaptureFocus?
     let scale: String?
     let retina: Bool?
+    let maxDimension: Int?
 
     enum CodingKeys: String, CodingKey {
         case path, format, question, scale, retina
         case appTarget = "app_target"
         case captureFocus = "capture_focus"
+        case maxDimension = "max_dimension"
     }
 }
 
@@ -34,6 +36,7 @@ struct ImageRequest {
     let question: String?
     let captureFocus: CaptureFocus
     let scale: CaptureScalePreference
+    let maxDimension: Int?
 
     init(arguments: ToolArguments) throws {
         let input = try arguments.decode(ImageInput.self)
@@ -43,6 +46,14 @@ struct ImageRequest {
         self.format = input.format ?? .png
         self.target = try ObservationTargetArgument.parse(input.appTarget)
         self.scale = try Self.captureScale(scale: input.scale, retina: input.retina)
+        if let maxDim = input.maxDimension {
+            guard maxDim > 0 else {
+                throw PeekabooError.invalidInput("max_dimension must be a positive integer.")
+            }
+            self.maxDimension = maxDim
+        } else {
+            self.maxDimension = nil
+        }
     }
 
     private static func captureScale(scale: String?, retina: Bool?) throws -> CaptureScalePreference {
@@ -66,6 +77,10 @@ struct ImageRequest {
 }
 
 extension ImageRequest {
+    var effectiveMaxDimension: Int? {
+        self.maxDimension ?? (self.format == .data ? 1500 : nil)
+    }
+
     var focusIdentifier: String? {
         self.target.focusIdentifier
     }

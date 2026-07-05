@@ -1,9 +1,12 @@
+import CoreGraphics
 import Foundation
+import ImageIO
 import MCP
 import PeekabooAutomation
 import PeekabooAutomationKit
 import PeekabooFoundation
 import TachikomaMCP
+import UniformTypeIdentifiers
 
 struct ImageCaptureSet {
     let captures: [CaptureResult]
@@ -72,6 +75,43 @@ extension ImageTool {
             .path
     }
 
+    func downscaledCaptureSetIfNeeded(_ captureSet: ImageCaptureSet, request: ImageRequest) throws -> ImageCaptureSet {
+        guard let maxDimension = request.effectiveMaxDimension else {
+            return captureSet
+        }
+
+        var downscaledCaptures: [CaptureResult] = []
+        downscaledCaptures.reserveCapacity(captureSet.captures.count)
+
+        for capture in captureSet.captures {
+            guard !capture.imageData.isEmpty else {
+                downscaledCaptures.append(capture)
+                continue
+            }
+
+            guard let result = self.downscale(
+                imageData: capture.imageData,
+                maxDimension: maxDimension,
+                format: request.format)
+            else {
+                throw OperationError.captureFailed(
+                    reason: "Failed to downscale image to max_dimension \(maxDimension)")
+            }
+
+            if result.resized, let savedPath = capture.savedPath ?? captureSet.observation?.files.rawScreenshotPath {
+                try result.data.write(to: URL(fileURLWithPath: savedPath), options: .atomic)
+            }
+
+            downscaledCaptures.append(CaptureResult(
+                imageData: result.data,
+                savedPath: capture.savedPath,
+                metadata: capture.metadata,
+                warning: capture.warning))
+        }
+
+        return ImageCaptureSet(captures: downscaledCaptures, observation: captureSet.observation)
+    }
+
     func performAnalysis(
         question: String,
         savedFiles: [MCPSavedFile],
@@ -136,5 +176,58 @@ extension ImageTool {
         return ToolResponse.text(
             buildImageSummary(savedFiles: savedFiles, captureCount: captureResults.count),
             meta: meta)
+    }
+
+    private func encode(cgImage: CGImage, format: ImageFormatOption) -> Data? {
+        let data = NSMutableData()
+        let uti: CFString = switch format {
+        case .png, .data: UTType.png.identifier as CFString
+        case .jpg: UTType.jpeg.identifier as CFString
+        }
+        guard let destination = CGImageDestinationCreateWithData(
+            data,
+            uti,
+            1,
+            nil)
+        else {
+            return nil
+        }
+        CGImageDestinationAddImage(destination, cgImage, nil)
+        guard CGImageDestinationFinalize(destination) else {
+            return nil
+        }
+        return data as Data
+    }
+
+    func downscale(imageData: Data, maxDimension: Int, format: ImageFormatOption) -> (data: Data, resized: Bool)? {
+        guard let source = CGImageSourceCreateWithData(imageData as CFData, nil) else { return nil }
+
+        guard let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let width = properties[kCGImagePropertyPixelWidth] as? CGFloat,
+              let height = properties[kCGImagePropertyPixelHeight] as? CGFloat
+        else {
+            return nil
+        }
+
+        let longest = max(width, height)
+        guard longest > CGFloat(maxDimension) else {
+            return (imageData, false)
+        }
+
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxDimension,
+        ]
+
+        guard let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else {
+            return nil
+        }
+
+        guard let encodedData = self.encode(cgImage: thumbnail, format: format) else {
+            return nil
+        }
+
+        return (encodedData, true)
     }
 }

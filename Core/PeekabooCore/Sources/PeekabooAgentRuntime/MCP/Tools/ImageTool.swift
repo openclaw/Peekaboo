@@ -45,6 +45,11 @@ public struct ImageTool: MCPTool {
                 "retina": SchemaBuilder.boolean(
                     description: "Optional. Shorthand for scale=native.",
                     default: false),
+                "max_dimension": SchemaBuilder.integer(
+                    description: """
+                    Optional. Downscales the captured image so its longest side does not exceed this value.
+                    Defaults to 1500 when format is "data".
+                    """),
             ],
             required: [])
     }
@@ -60,12 +65,14 @@ public struct ImageTool: MCPTool {
             return self.screenRecordingPermissionError()
         }
 
-        let captureSet: ImageCaptureSet
+        var captureSet: ImageCaptureSet
         do {
             captureSet = try await self.captureImages(for: request)
         } catch PeekabooError.permissionDeniedScreenRecording {
             return self.screenRecordingPermissionError()
         }
+
+        captureSet = try self.downscaledCaptureSetIfNeeded(captureSet, request: request)
         let captureResults = captureSet.captures
         let savedFiles = try self.savedFiles(for: captureSet, request: request)
 

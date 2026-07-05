@@ -1,10 +1,12 @@
 import AppKit
 import Foundation
+import ImageIO
 import MCP
 import PeekabooAutomationKit
 import PeekabooFoundation
 import TachikomaMCP
 import Testing
+import UniformTypeIdentifiers
 @testable import PeekabooAgentRuntime
 @testable import PeekabooAutomation
 @testable import PeekabooCore
@@ -191,6 +193,102 @@ struct MCPToolExecutionTests {
             return
         }
         #expect(output == "Capture produced no image data and no saved file could be read")
+    }
+
+    @Test
+    func `Image tool downscales high-res image when format is data`() async throws {
+        let highResPNG = Self.makePNGData(width: 3000, height: 2000)
+        let screenCapture = await MainActor.run {
+            MockScreenCaptureService(screenRecordingGranted: true, imageData: highResPNG)
+        }
+        let context = await MCPToolTestHelpers.makeContext(screenCapture: screenCapture)
+        let tool = ImageTool(context: context)
+
+        let response = try await tool.execute(arguments: ToolArguments(raw: [
+            "format": "data",
+        ]))
+
+        #expect(response.isError == false)
+        guard case let .image(data: responseBase64, mimeType: mimeType, annotations: _, _meta: _) = response.content
+            .first
+        else {
+            Issue.record("Expected image response")
+            return
+        }
+        guard let responseData = Data(base64Encoded: responseBase64) else {
+            Issue.record("Expected Base64 image data")
+            return
+        }
+
+        #expect(mimeType == "image/png")
+        #expect(Self.imageDimensions(from: responseData) == CGSize(width: 1500, height: 1000))
+    }
+
+    @Test
+    func `Image tool downscales high-res inline image to custom max_dimension`() async throws {
+        let highResPNG = Self.makePNGData(width: 3000, height: 2000)
+        let screenCapture = await MainActor.run {
+            MockScreenCaptureService(screenRecordingGranted: true, imageData: highResPNG)
+        }
+        let context = await MCPToolTestHelpers.makeContext(screenCapture: screenCapture)
+        let tool = ImageTool(context: context)
+
+        let response = try await tool.execute(arguments: ToolArguments(raw: [
+            "format": "data",
+            "max_dimension": 600,
+        ]))
+
+        #expect(response.isError == false)
+        guard case let .image(data: responseBase64, mimeType: _, annotations: _, _meta: _) = response.content.first
+        else {
+            Issue.record("Expected image response")
+            return
+        }
+        guard let responseData = Data(base64Encoded: responseBase64) else {
+            Issue.record("Expected Base64 image data")
+            return
+        }
+
+        #expect(Self.imageDimensions(from: responseData) == CGSize(width: 600, height: 400))
+    }
+
+    @Test
+    func `Image tool downscales saved image when max_dimension is set`() async throws {
+        let highResPNG = Self.makePNGData(width: 3000, height: 2000)
+        let screenCapture = await MainActor.run {
+            MockScreenCaptureService(screenRecordingGranted: true, imageData: highResPNG)
+        }
+        let context = await MCPToolTestHelpers.makeContext(screenCapture: screenCapture)
+        let tool = ImageTool(context: context)
+        let outputPath = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekaboo-mcp-downscaled-\(UUID().uuidString).png")
+            .path
+        defer { try? FileManager.default.removeItem(atPath: outputPath) }
+
+        let response = try await tool.execute(arguments: ToolArguments(raw: [
+            "path": outputPath,
+            "format": "png",
+            "max_dimension": 600,
+        ]))
+
+        #expect(response.isError == false)
+        #expect(FileManager.default.fileExists(atPath: outputPath))
+        let savedData = try Data(contentsOf: URL(fileURLWithPath: outputPath))
+        #expect(Self.imageDimensions(from: savedData) == CGSize(width: 600, height: 400))
+    }
+
+    @Test
+    func `Image tool rejects nonpositive max_dimension`() async throws {
+        let screenCapture = await MainActor.run { MockScreenCaptureService(screenRecordingGranted: true) }
+        let context = await MCPToolTestHelpers.makeContext(screenCapture: screenCapture)
+        let tool = ImageTool(context: context)
+
+        await #expect(throws: PeekabooError.self) {
+            _ = try await tool.execute(arguments: ToolArguments(raw: [
+                "format": "data",
+                "max_dimension": 0,
+            ]))
+        }
     }
 
     // MARK: - List Tool Tests
@@ -986,6 +1084,50 @@ struct MCPToolExecutionTests {
             return nil
         }
         return Int32(pid)
+    }
+
+    private static func makePNGData(width: Int, height: Int) -> Data {
+        let bytesPerRow = width * 4
+        var pixels = [UInt8](repeating: 0, count: bytesPerRow * height)
+        guard let context = CGContext(
+            data: &pixels,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: bytesPerRow,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+        else {
+            fatalError("Failed to generate test image")
+        }
+
+        context.setFillColor(CGColor(red: 1, green: 0, blue: 0, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        guard let image = context.makeImage() else {
+            fatalError("Failed to generate test image")
+        }
+
+        let data = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(
+            data,
+            UTType.png.identifier as CFString,
+            1,
+            nil)
+        else {
+            fatalError("Failed to create test PNG destination")
+        }
+        CGImageDestinationAddImage(destination, image, nil)
+        guard CGImageDestinationFinalize(destination) else {
+            fatalError("Failed to encode test PNG")
+        }
+        return data as Data
+    }
+
+    private static func imageDimensions(from data: Data) -> CGSize? {
+        guard let rep = NSBitmapImageRep(data: data) else {
+            return nil
+        }
+        return CGSize(width: rep.pixelsWide, height: rep.pixelsHigh)
     }
 }
 
