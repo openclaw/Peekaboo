@@ -329,27 +329,53 @@ struct ConnectionErrorBanner: View {
 
 struct EmptySessionView: View {
     @Environment(SessionStore.self) private var sessionStore
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
-        VStack(spacing: 20) {
-            GhostImageView(state: .idle, size: CGSize(width: 80, height: 80))
-                .opacity(0.5)
+        VStack(spacing: 0) {
+            AnimatedGhostView(size: 108)
+                .padding(.bottom, 28)
 
             Text("No Session Selected")
-                .font(.title2)
-                .foregroundColor(.secondary)
+                .font(.title2.weight(.semibold))
 
-            Text("Select a session from the sidebar or create a new one")
-                .font(.body)
-                .foregroundColor(.secondary)
+            Text("Choose a session from the sidebar, or start a new conversation with Peekaboo.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
+                .frame(maxWidth: 320)
+                .padding(.top, 8)
 
-            Button(action: { _ = self.sessionStore.createSession(title: "New Session") }, label: {
-                Label("New Session", systemImage: "plus.circle")
-            })
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
+            self.newSessionButton
+                .padding(.top, 28)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background {
+            // Soft accent glow behind the ghost gives the glass something to refract.
+            RadialGradient(
+                colors: [Color.accentColor.opacity(self.colorScheme == .dark ? 0.16 : 0.10), .clear],
+                center: UnitPoint(x: 0.5, y: 0.35),
+                startRadius: 20,
+                endRadius: 340)
+                .ignoresSafeArea()
+        }
+    }
+
+    @ViewBuilder
+    private var newSessionButton: some View {
+        let button = Button {
+            _ = self.sessionStore.createSession(title: "New Session")
+        } label: {
+            Label("New Session", systemImage: "plus")
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+        }
+        .controlSize(.large)
+
+        if #available(macOS 26.0, *) {
+            button.buttonStyle(.glassProminent)
+        } else {
+            button.buttonStyle(.borderedProminent)
+        }
     }
 }

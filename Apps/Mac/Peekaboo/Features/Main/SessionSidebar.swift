@@ -26,92 +26,66 @@ struct SessionSidebar: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            // Header
-            HStack {
-                Text("Sessions")
-                    .font(.headline)
-
-                Spacer()
-
-                Button(action: self.createNewSession, label: {
-                    Image(systemName: "plus")
-                })
-                .buttonStyle(.plain)
-                .help("New Session")
-            }
-            .padding(.horizontal)
-            .padding(.vertical, 8)
-
-            // Search
-            HStack {
-                Image(systemName: "magnifyingglass")
-                    .foregroundColor(.secondary)
-                TextField("Search sessions...", text: self.$searchText)
-                    .textFieldStyle(.plain)
-                if !self.searchText.isEmpty {
-                    Button(action: { self.searchText = "" }, label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundColor(.secondary)
-                    })
-                    .buttonStyle(.plain)
+        List(self.filteredSessions, selection: self.$selectedSessionId) { session in
+            SessionRow(
+                session: session,
+                isActive: self.agent.currentSession?.id == session.id)
+                .tag(session.id)
+                .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                    Button(role: .destructive) {
+                        self.deleteSession(session)
+                    } label: {
+                        Label("Delete", systemImage: "trash")
+                    }
+                }
+                .contextMenu {
+                    Button("Duplicate") {
+                        self.duplicateSession(session)
+                    }
+                    Button("Export…") {
+                        self.exportSession(session)
+                    }
+                    Divider()
+                    Button("Delete", role: .destructive) {
+                        self.deleteSession(session)
+                    }
+                }
+        }
+        .listStyle(.sidebar)
+        .searchable(text: self.$searchText, prompt: "Search Sessions")
+        .overlay {
+            if self.filteredSessions.isEmpty {
+                if self.searchText.isEmpty {
+                    ContentUnavailableView {
+                        Label {
+                            Text("No Sessions")
+                        } icon: {
+                            GhostImageView(state: .idle, size: CGSize(width: 56, height: 56))
+                        }
+                    } description: {
+                        Text("Conversations with Peekaboo will appear here.")
+                    }
+                } else {
+                    ContentUnavailableView.search(text: self.searchText)
                 }
             }
-            .padding(6)
-            .background(Color(NSColor.controlBackgroundColor))
-            .cornerRadius(6)
-            .padding(.horizontal)
-            .padding(.bottom, 8)
-
-            Divider()
-
-            // Session list
-            List(self.filteredSessions, selection: self.$selectedSessionId) { session in
-                SessionRow(
-                    session: session,
-                    isActive: self.agent.currentSession?.id == session.id,
-                    onDelete: { self.deleteSession(session) })
-                    .tag(session.id)
-                    .transition(.asymmetric(
-                        insertion: .slide.combined(with: .opacity),
-                        removal: .opacity))
-                    .animation(.spring(response: 0.3, dampingFraction: 0.8), value: self.filteredSessions.count)
-                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                        Button(role: .destructive) {
-                            self.deleteSession(session)
-                        } label: {
-                            Label("Delete", systemImage: "trash")
-                        }
-                        .tint(.red)
-                    }
-                    .contextMenu {
-                        Button("Delete") {
-                            self.deleteSession(session)
-                        }
-                        Button("Duplicate") {
-                            self.duplicateSession(session)
-                        }
-                        Divider()
-                        Button("Export...") {
-                            self.exportSession(session)
-                        }
-                    }
-            }
-            .listStyle(.sidebar)
-            .scrollContentBackground(.hidden)
-            .safeAreaInset(edge: .top) {
-                // Add padding at the top of the list content
-                Color.clear
-                    .frame(height: 8)
-            }
-            .onDeleteCommand {
-                // Delete the currently selected session
-                if let selectedId = selectedSessionId,
-                   let session = sessionStore.sessions.first(where: { $0.id == selectedId }),
-                   session.id != agent.currentSession?.id
-                {
-                    self.deleteSession(session)
+        }
+        .toolbar {
+            ToolbarItem {
+                Button(action: self.createNewSession) {
+                    Label("New Session", systemImage: "square.and.pencil")
                 }
+                .keyboardShortcut("n", modifiers: .command)
+                .help("New Session (⌘N)")
+            }
+        }
+        .onDeleteCommand {
+            // Delete the currently selected session
+            if let selectedId = selectedSessionId,
+               let session = sessionStore.sessions.first(where: { $0.id == selectedId }),
+               session.id != agent.currentSession?.id
+            {
+                self.deleteSession(session)
             }
         }
     }
@@ -179,71 +153,56 @@ struct SessionSidebar: View {
 struct SessionRow: View {
     let session: ConversationSession
     let isActive: Bool
-    let onDelete: () -> Void
-    @State private var isHovering = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Text(self.session.title)
-                    .font(.body)
-                    .fontWeight(self.isActive ? .semibold : .regular)
-                    .lineLimit(1)
-
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
                 if self.isActive {
                     Image(systemName: "circle.fill")
-                        .font(.system(size: 8))
-                        .foregroundColor(.green)
+                        .font(.system(size: 7))
+                        .foregroundStyle(.green)
                         .symbolEffect(.pulse, options: .repeating)
                 }
 
-                Spacer()
+                Text(self.session.title)
+                    .fontWeight(self.isActive ? .semibold : .regular)
+                    .lineLimit(1)
 
-                // Delete button on hover
-                if self.isHovering, !self.isActive {
-                    Button(action: self.onDelete) {
-                        Image(systemName: "trash")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                    .buttonStyle(.plain)
-                    .help("Delete session")
-                }
-            }
+                Spacer(minLength: 8)
 
-            HStack {
-                Text(self.session.startTime, style: .relative)
+                Text(
+                    self.session.startTime,
+                    format: .relative(presentation: .named, unitsStyle: .abbreviated))
                     .font(.caption)
-                    .foregroundColor(.secondary)
-
-                if !self.session.messages.isEmpty {
-                    Text("•")
-                        .foregroundColor(.secondary)
-                    Text("\(self.session.messages.count) messages")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-
-                if !self.session.modelName.isEmpty {
-                    Text("•")
-                        .foregroundColor(.secondary)
-                    Text(formatModelName(self.session.modelName))
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
             }
 
             if !self.session.summary.isEmpty {
                 Text(self.session.summary)
                     .font(.caption)
-                    .foregroundColor(.secondary)
+                    .foregroundStyle(.secondary)
                     .lineLimit(2)
-                    .padding(.top, 2)
             }
+
+            HStack(spacing: 6) {
+                if !self.session.messages.isEmpty {
+                    Text("^[\(self.session.messages.count) message](inflect: true)")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+
+                if !self.session.modelName.isEmpty {
+                    Text(formatModelName(self.session.modelName))
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 1.5)
+                        .background(.quaternary.opacity(0.6), in: Capsule())
+                }
+            }
+            .padding(.top, 2)
         }
         .padding(.vertical, 4)
-        .onHover { hovering in
-            self.isHovering = hovering
-        }
     }
 }
