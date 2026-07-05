@@ -30,7 +30,7 @@ read_when:
    ./Apps/Playground/scripts/playground-log.sh -c "$TOOL" --last 10m --all -o "$LOG_FILE"
    ```
    - **Note**: On some macOS 26 setups, unified logging may not retain `info` lines for long. When collecting evidence, prefer smaller windows (e.g. `--last 2m`) immediately after each action.
-5. Keep the Playground UI on the matching view (ClickTestingView, TextInputView, etc.) and run `pnpm run peekaboo -- see --app Playground` anytime you need a fresh snapshot ID for element targeting. Record the snapshot ID in your notes.
+5. Keep the Playground UI on the matching view (ClickTestingView, TextInputView, etc.) and run `peekaboo see --app Playground` anytime you need a fresh snapshot ID for element targeting. Record the snapshot ID in your notes.
 6. After executing the tool, append verification notes (log file path, snapshot ID, observed behavior) to the table below and add detailed findings to `Apps/Playground/PLAYGROUND_TEST.md`.
 
 ## Execution Loop
@@ -486,7 +486,7 @@ The following subsections spell out the concrete steps, required Playground surf
   1. `peekaboo agent --model gpt-5.5 --list-sessions --json-output > .artifacts/playground-tools/20251117-010912-agent-list.json`.
   2. `peekaboo agent "Say hi to the Playground app." --model gpt-5.5 --max-steps 2 --json-output > .artifacts/playground-tools/20251117-010919-agent-hi.json`.
   3. `peekaboo agent "Switch to Playground and press the Single Click button once." --model gpt-5.5 --max-steps 4 --json-output > .artifacts/playground-tools/20251117-010935-agent-single-click.json`.
-  4. For long interactive runs, use tmux: `tmux new-session -- bash -lc 'pnpm run peekaboo -- agent "Click the Single Click button in Playground." --model gpt-5.5 --max-steps 6 --no-cache | tee .artifacts/playground-tools/20251117-011500-agent-single-click.log'`.
+  4. For long interactive runs, use tmux: `tmux new-session -- bash -lc 'peekaboo agent "Click the Single Click button in Playground." --model gpt-5.5 --max-steps 6 --no-cache | tee .artifacts/playground-tools/20251117-011500-agent-single-click.log'`.
   5. Spot-check metadata: `peekaboo agent "Say hi to Playground again." --model gpt-5.5 --max-steps 2 --json-output > .artifacts/playground-tools/20251117-012655-agent-hi.json`.
 - **2025-11-17 run**:
   - GPT-5.5 executes happily; Playground `[Agent]` log is captured in `.artifacts/playground-tools/20251117-011345-agent.log`.
