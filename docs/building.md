@@ -1,8 +1,8 @@
 ---
-summary: 'How to build Peekaboo from source, run release scripts, and use the Poltergeist watcher.'
+summary: 'How to build Peekaboo from source and run release scripts.'
 read_when:
   - 'compiling the CLI locally'
-  - 'prepping release artifacts or tweaking Poltergeist workflows'
+  - 'prepping release artifacts'
 ---
 
 # Building Peekaboo
@@ -52,14 +52,3 @@ pnpm run prepare-release
 ./scripts/release-binaries.sh --create-github-release --publish-npm
 ```
 
-## Poltergeist Watcher
-
-Peekaboo’s repo already includes [poltergeist.md](poltergeist.md) with tuning tips. Typical workflow:
-
-```bash
-pnpm run poltergeist:haunt   # start watcher
-pnpm run poltergeist:status  # health
-pnpm run poltergeist:rest    # stop
-```
-
-Poltergeist rebuilds the CLI whenever Swift files change so `polter peekaboo …` always runs a fresh binary.

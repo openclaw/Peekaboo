@@ -300,7 +300,6 @@ pnpm test:all          # Safe bundle, then automation bundle in one shot
 # Builds & utilities
 pnpm build             # Debug build of Apps/CLI
 pnpm build:cli:release # Release build of Apps/CLI
-pnpm build:polter      # polter peekaboo --version (fresh binary check)
 pnpm lint              # swiftlint over Apps/CLI
 pnpm format            # swiftformat the workspace
 ```

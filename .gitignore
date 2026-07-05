@@ -176,8 +176,6 @@ debug
 docs/debug/*
 !docs/debug/visualizer-issues.md
 !docs/debug/watch.md
-.poltergeist-state/
-.poltergeist*
 *.bak
 *.backup
 *~

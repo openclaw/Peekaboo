@@ -242,14 +242,6 @@ enum InProcessCommandRunner {
 }
 
 enum ExternalCommandRunner {
-    private static let repositoryRoot: URL = {
-        var url = URL(fileURLWithPath: #filePath)
-        for _ in 0..<6 {
-            url.deleteLastPathComponent()
-        }
-        return url
-    }()
-
     enum Error: Swift.Error, LocalizedError {
         case executableNotFound(String)
         case peekabooCLIPathMissing
@@ -265,50 +257,6 @@ enum ExternalCommandRunner {
                 "Expected JSON payload was not found in command output:\n\(output)"
             }
         }
-    }
-
-    @discardableResult
-    static func runPolterPeekaboo(
-        _ arguments: [String],
-        allowedExitCodes: Set<Int32> = [0],
-        environment: [String: String] = ProcessInfo.processInfo.environment
-    ) throws -> CommandRunResult {
-        let wrapperPath = self.repositoryRoot
-            .appendingPathComponent("scripts/poltergeist-wrapper.sh")
-            .path
-        guard FileManager.default.isExecutableFile(atPath: wrapperPath) else {
-            throw Error.executableNotFound(wrapperPath)
-        }
-
-        let process = Process()
-        process.currentDirectoryURL = self.repositoryRoot
-        process.executableURL = URL(fileURLWithPath: wrapperPath)
-        process.arguments = ["peekaboo", "--"] + arguments
-        process.environment = environment
-
-        let stdoutPipe = Pipe()
-        let stderrPipe = Pipe()
-        process.standardOutput = stdoutPipe
-        process.standardError = stderrPipe
-
-        try process.run()
-        process.waitUntilExit()
-
-        let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-        let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
-        let stdout = String(data: stdoutData, encoding: .utf8) ?? ""
-        let stderr = String(data: stderrData, encoding: .utf8) ?? ""
-
-        let result = CommandRunResult(
-            stdout: stdout,
-            stderr: stderr,
-            exitStatus: process.terminationStatus
-        )
-        try result.validateExitStatus(
-            allowedExitCodes: allowedExitCodes,
-            arguments: ["polter", "peekaboo"] + arguments
-        )
-        return result
     }
 
     @discardableResult

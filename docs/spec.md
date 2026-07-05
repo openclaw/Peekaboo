@@ -38,7 +38,7 @@ Not in scope: backwards compatibility with pre-3.0 CLIs, legacy argument parser 
 | Surface | Entry point | Purpose | Notes |
 | --- | --- | --- | --- |
 | CLI | `peekaboo …` | Primary automation surface with Commander-based command tree, JSON outputs, and agent-friendly logging. | Default actor is `@MainActor`. Commands live under `Apps/CLI/Sources/PeekabooCLI/Commands`. |
-| Peekaboo.app | `Apps/Peekaboo` | Menu-bar UI + inspector. Shares `PeekabooServices()` with CLI and registers defaults via `services.installAgentRuntimeDefaults()`. | Running via `polter peekaboo …` during local development starts the UI alongside the CLI binary. |
+| Peekaboo.app | `Apps/Peekaboo` | Menu-bar UI + inspector. Shares `PeekabooServices()` with CLI and registers defaults via `services.installAgentRuntimeDefaults()`. | Launch the app alongside the CLI binary during local development. |
 | Visualizer | `PeekabooVisualizer` target | Animations, overlays, and progress indicators consumed by both CLI and app. | Communicates through the service layer (no direct AppKit glue inside commands). |
 | Agent runtime | `PeekabooAgentRuntime` + Tachikoma | Implements `peekaboo agent`, GPT‑5/Sonnet integrations, dry-run planners, audio input, and MCP tools. | System prompt + tool descriptions live in `PeekabooAgentService.generateSystemPrompt()` and `create*Tool()` helpers. |
 | MCP server | `peekaboo mcp` | Exposes native tools via Model Context Protocol. | Uses `PeekabooMCPServer`. |

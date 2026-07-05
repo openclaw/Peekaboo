@@ -98,8 +98,8 @@ Peekaboo.app still respects user-facing toggles via `PeekabooSettings`; the coor
 
 ## Smoke Test Checklist
 
-1. **Launch the UI** – Ensure Peekaboo.app is running (Poltergeist rebuilds it automatically). Confirm the log line `Visualizer event receiver registered`.
-2. **Trigger an event** – Run a CLI command that emits visuals, e.g. `polter peekaboo see --mode screen --annotate --path /tmp/peekaboo-see.png`.
+1. **Launch the UI** – Ensure Peekaboo.app is running (rebuild with `./scripts/build-mac-debug.sh` after changes). Confirm the log line `Visualizer event receiver registered`.
+2. **Trigger an event** – Run a CLI command that emits visuals, e.g. `peekaboo see --mode screen --annotate --path /tmp/peekaboo-see.png`.
 3. **Watch logs** – In tmux, run `./scripts/visualizer-logs.sh --last 30s --follow` to confirm both the client and receiver log the same event ID.
 4. **Inspect storage** – Check the shared directory; files should appear momentarily and disappear after the mac app consumes them. A lingering file means the receiver failed to delete it (inspect logs for the error).
 5. **Negative test** – Quit Peekaboo.app and rerun the CLI command. With `--verbose` or higher logging, the client should emit a single “Peekaboo.app is not running” debug line and skip event creation until the UI returns.

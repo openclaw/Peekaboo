@@ -18,7 +18,6 @@ If `peekaboo list menubar` (or `peekaboo menubar list`) appears to hang, the mos
 ## Debugging checklist
 
 1. Confirm you are running the **freshly-built CLI binary**:
-   - Preferred: `polter peekaboo ...`
    - Or: `cd Apps/CLI && swift build --show-bin-path` and run the binary from there.
 2. If you suspect AX calls are blocking, capture a stack sample:
    - `sample <pid> 5 -file /tmp/peekaboo.sample.txt`

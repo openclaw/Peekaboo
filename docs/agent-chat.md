@@ -32,7 +32,7 @@ This document captures the initial design for a dependency-free interactive chat
 ## Control Flow
 
 ```text
-polter peekaboo -- agent --chat
+peekaboo agent --chat
 → print header (model, session ID, exit instructions)
 loop {
     prompt with `chat> `

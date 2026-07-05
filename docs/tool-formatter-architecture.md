@@ -292,11 +292,11 @@ func testLaunchAppFormatter() {
 Test with actual tool execution:
 ```bash
 # Test formatter output
-polter peekaboo agent "list all apps" --verbose
+peekaboo agent "list all apps" --verbose
 
 # Check different output modes
-polter peekaboo agent "take a screenshot" --simple  # Minimal mode
-polter peekaboo agent "click on Safari"            # Default detailed mode
+peekaboo agent "take a screenshot" --simple  # Minimal mode
+peekaboo agent "click on Safari"            # Default detailed mode
 ```
 
 ## Migration Guide

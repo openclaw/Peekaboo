@@ -49,7 +49,7 @@ pnpm run build:cli         # debug build
 pnpm run build:swift:all   # universal release
 ```
 
-The output binary lives under `Apps/CLI/.build/...`. See [building.md](building.md) for signing, notarization, and the `pnpm run poltergeist:haunt` rapid-rebuild loop.
+The output binary lives under `Apps/CLI/.build/...`. See [building.md](building.md) for signing and notarization.
 
 ## Verify
 

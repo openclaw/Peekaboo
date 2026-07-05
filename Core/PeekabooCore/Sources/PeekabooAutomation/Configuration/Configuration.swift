@@ -2,7 +2,6 @@ import Foundation
 import PeekabooAutomationKit
 
 /// Root configuration structure for Peekaboo settings.
-/// Test comment for Poltergeist
 ///
 /// This structure represents the complete configuration file format (JSONC) that can be
 /// stored at `~/.peekaboo/config.json`. All properties are optional, allowing

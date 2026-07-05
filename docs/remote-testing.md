@@ -100,7 +100,7 @@ Warnings & learnings:
 ### 7. Known Issues & Follow-up
 
 - **Automation freeze**: investigate why `swift test` stalls during automation runs in VirtualBuddy (possibly accessibility permissions or long-running UI automation).
-- **Tooling gaps**: install tmux, pnpm, and poltergeist services on the VM for parity with the Mac Studio workflow.
+- **Tooling gaps**: install tmux and pnpm on the VM for parity with the Mac Studio workflow.
 - **Logs**: standardize capturing test output under `/tmp/peekaboo-*.log` so multiple operators can review results.
 - **Risky suites**: see the table below—anything marked *High* should only run on a disposable VM snapshot.
 

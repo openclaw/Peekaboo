@@ -9,7 +9,6 @@ import Tachikoma
 
 @main
 struct PeekabooApp: App {
-    // Test comment for Poltergeist Mac build v12 - Testing Mac app rebuild detection again
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @Environment(\.openWindow) private var openWindow
 
@@ -215,10 +214,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var didSetupNotificationObservers = false
 
     func applicationDidFinishLaunching(_: Notification) {
-        self.logger.info("Peekaboo launching... (Poltergeist test)")
+        self.logger.info("Peekaboo launching...")
         NSLog("PeekabooApp: applicationDidFinishLaunching")
 
-        // Initialize dock icon manager (it will set the activation policy based on settings) - Test!
         // Don't set activation policy here - let DockIconManager handle it
 
         // Initialize visualizer components
@@ -498,5 +496,3 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // Returns the visualizer coordinator for preview functionality
 }
-
-// Test comment to trigger build - Wed Jul 30 02:14:41 CEST 2025

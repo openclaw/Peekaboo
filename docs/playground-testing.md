@@ -25,7 +25,7 @@ When testing Peekaboo CLI tools with the Playground app, we follow a systematic 
 ### 1. Pre-Testing Setup
 
 Before starting tests:
-- Ensure Poltergeist is running: `npm run poltergeist:status`
+- Build the CLI (`pnpm run build:cli`) so you test fresh bits
 - Build and launch Playground app
 - Clear any previous test artifacts
 - Open terminal for log monitoring
