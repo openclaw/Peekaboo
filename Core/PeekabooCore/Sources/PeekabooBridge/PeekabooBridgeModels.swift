@@ -388,28 +388,21 @@ extension PeekabooBridgeErrorEnvelope: PendingSnapshotFailureDispositionProvidin
 }
 
 extension PeekabooBridgeErrorEnvelope {
-    /// Whether the failed operation is known to have stopped during validation or lookup, before
-    /// any desktop event (mouse, keyboard, AX action) could be dispatched.
+    /// Whether the remote operation is known to have stopped during target lookup, before any
+    /// desktop event (mouse, keyboard, AX action) could be dispatched.
     ///
-    /// Used by snapshot bookkeeping to avoid invalidating cached UI snapshots after failures that
-    /// cannot have changed the desktop. Timeouts and internal errors stay conservative (`false`)
-    /// because the operation may have partially executed.
+    /// Mirrors `PeekabooError.failedBeforeDispatchingDesktopEvent` and is just as conservative: it
+    /// keys off the explicit failure `kind` and trusts ONLY the two kinds that are pre-dispatch at
+    /// every server throw site. `.snapshotStale` is deliberately excluded because the host raises
+    /// it from action execution (`normalizingSnapshotErrors`), and generic error codes are not
+    /// trusted because they conflate pre- and post-dispatch failures (e.g. `.notFound` also carries
+    /// Dock/menu `menuNotFound`, which is thrown after the menu-opening click).
     public var failedBeforeDispatchingDesktopEvent: Bool {
         guard !self.operationMayHaveCompleted else { return false }
-        // elementNotFound / snapshotNotFound / snapshotStale are lookup-phase failures.
-        if self.kind != nil {
+        switch self.kind {
+        case .elementNotFound, .snapshotNotFound:
             return true
-        }
-        switch self.code {
-        case .permissionDenied,
-             .notFound,
-             .invalidRequest,
-             .operationNotSupported,
-             .serverBusy,
-             .versionMismatch,
-             .unauthorizedClient:
-            return true
-        case .timeout, .decodingFailed, .internalError:
+        case .snapshotStale, .none:
             return false
         }
     }

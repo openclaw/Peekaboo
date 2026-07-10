@@ -63,6 +63,33 @@ struct SnapshotFailureInvalidationTests {
     }
 
     @Test
+    func `Post-dispatch menu lookup failure still invalidates (dock right-click shape)`() async throws {
+        // `dock right-click --select` clicks the item, opens the context menu, then throws
+        // menuNotFound. Even within a single mutation boundary this MUST invalidate, because the
+        // menu is now open on screen -- so `.menuNotFound` is not classified pre-dispatch.
+        let fixture = try Fixture()
+        defer { fixture.cleanUp() }
+        _ = try await fixture.snapshots.createSnapshot(id: "latest")
+        let sequenceAtStart = fixture.tracker.mutationSequence
+        let createdDurableMutation = try fixture.tracker.beginDurableMutation()
+        fixture.tracker.begin()
+
+        let invalidated = await CommanderRuntimeExecutor.invalidateSnapshotsAfterCommandIfNeeded(
+            dependencies: fixture.dependencies,
+            required: true,
+            succeeded: false,
+            failure: PeekabooError.menuNotFound("New Finder Window"),
+            mutationSequenceAtStart: sequenceAtStart,
+            createdDurableMutation: createdDurableMutation
+        )
+
+        #expect(invalidated)
+        #expect(fixture.snapshots.invalidationCutoffs.count == 1)
+        #expect(await fixture.snapshots.getMostRecentSnapshot() == nil)
+        #expect(fixture.store.effectiveWatermark() != nil)
+    }
+
+    @Test
     func `Lookup failure after an earlier mutation boundary still invalidates`() async throws {
         let fixture = try Fixture()
         defer { fixture.cleanUp() }

@@ -247,22 +247,37 @@ struct PeekabooBridgeApplicationLaunchTests {
     }
 
     @Test
-    func `pre-dispatch launch failure cancels the mutation barrier without advancing the watermark`() async throws {
+    func `pre-dispatch failure cancels the mutation barrier without advancing the watermark`() async throws {
         let (store, root) = Self.makeTemporaryWatermarkStore(named: "predispatch-cancel")
         defer { try? FileManager.default.removeItem(at: root) }
 
+        // A snapshot-cache miss is pre-dispatch at every throw site: the operation stopped while
+        // resolving its target and never posted an event, so the barrier is canceled.
         _ = try await self.launchFailureEnvelope(
-            .appNotFound("com.example.Missing"),
+            .snapshotNotFound("stale-cache-id"),
             store: store)
 
-        // The launch failed during app lookup, before any desktop event; cached snapshots on other
-        // hosts must stay resolvable, so the shared watermark must not move.
+        // Cached snapshots on other hosts must stay resolvable, so the shared watermark must not move.
         #expect(store.effectiveWatermark() == nil)
         let pendingDirectory = root.appendingPathComponent("desktop-mutation-pending", isDirectory: true)
         #expect(
             ((try? FileManager.default.contentsOfDirectory(
                 at: pendingDirectory,
                 includingPropertiesForKeys: nil)) ?? []).isEmpty)
+    }
+
+    @Test
+    func `app-not-found failure conservatively advances the watermark`() async throws {
+        // `.appNotFound` is NOT pre-dispatch: app operations (launch/activate/quit) can mutate the
+        // desktop, and the same case is reachable post-dispatch, so it must complete the barrier.
+        let (store, root) = Self.makeTemporaryWatermarkStore(named: "appnotfound-complete")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        _ = try await self.launchFailureEnvelope(
+            .appNotFound("com.example.Missing"),
+            store: store)
+
+        #expect(store.effectiveWatermark() != nil)
     }
 
     @Test
@@ -276,6 +291,21 @@ struct PeekabooBridgeApplicationLaunchTests {
 
         // A timeout leaves the desktop state unknown, so the barrier completes and hides
         // pre-existing snapshots.
+        #expect(store.effectiveWatermark() != nil)
+    }
+
+    @Test
+    func `post-dispatch menu failure completes the barrier instead of cancelling it`() async throws {
+        // Regression for the Dock right-click shape: an operation that dispatches input and then
+        // throws `.menuNotFound` must COMPLETE the mutation barrier (advance the watermark), not
+        // cancel it -- otherwise the open context menu is left hidden behind "valid" snapshots.
+        let (store, root) = Self.makeTemporaryWatermarkStore(named: "menu-complete")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        _ = try await self.launchFailureEnvelope(
+            .menuNotFound("New Finder Window"),
+            store: store)
+
         #expect(store.effectiveWatermark() != nil)
     }
 

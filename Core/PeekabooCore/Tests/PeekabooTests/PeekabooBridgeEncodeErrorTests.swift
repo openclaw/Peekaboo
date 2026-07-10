@@ -82,4 +82,33 @@ struct PeekabooBridgeEncodeErrorTests {
         }
         #expect(envelope.code == .decodingFailed)
     }
+
+    @Test
+    func `only element and snapshot not-found kinds are classified pre-dispatch`() {
+        #expect(Self.envelope(kind: .elementNotFound).failedBeforeDispatchingDesktopEvent)
+        #expect(Self.envelope(kind: .snapshotNotFound).failedBeforeDispatchingDesktopEvent)
+        // Host raises snapshotStale from action execution, so it is not pre-dispatch.
+        #expect(!Self.envelope(kind: .snapshotStale).failedBeforeDispatchingDesktopEvent)
+        // Dock/menu menuNotFound arrives as a generic notFound/internal envelope with no kind and
+        // must NOT be trusted as pre-dispatch.
+        #expect(!Self.envelope(code: .notFound, kind: nil).failedBeforeDispatchingDesktopEvent)
+        #expect(!Self.envelope(code: .internalError, kind: nil).failedBeforeDispatchingDesktopEvent)
+    }
+
+    @Test
+    func `operationMayHaveCompleted overrides an otherwise pre-dispatch kind`() {
+        let envelope = PeekabooBridgeErrorEnvelope(
+            code: .notFound,
+            message: "elem",
+            kind: .elementNotFound,
+            operationMayHaveCompleted: true)
+        #expect(!envelope.failedBeforeDispatchingDesktopEvent)
+    }
+
+    private static func envelope(
+        code: PeekabooBridgeErrorCode = .notFound,
+        kind: PeekabooBridgeErrorKind?) -> PeekabooBridgeErrorEnvelope
+    {
+        PeekabooBridgeErrorEnvelope(code: code, message: "test", kind: kind)
+    }
 }
