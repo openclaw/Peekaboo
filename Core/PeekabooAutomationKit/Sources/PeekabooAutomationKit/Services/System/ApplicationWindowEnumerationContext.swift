@@ -210,7 +210,7 @@ struct WindowEnumerationContext {
         var warnings: [String] = []
         let descriptors = await self.collectAXDescriptors(
             axResult: axResult,
-            cgWindowIDs: Set(snapshot.windows.map(\.windowID)),
+            cgWindows: snapshot.windows,
             warnings: &warnings)
 
         let merged = Self.mergeWindows(cgWindows: snapshot.windows, axDescriptors: descriptors)
@@ -231,10 +231,11 @@ struct WindowEnumerationContext {
     /// so the common enrichment path stays cheap.
     private func collectAXDescriptors(
         axResult: AXWindowResult,
-        cgWindowIDs: Set<Int>,
+        cgWindows: [ServiceWindowInfo],
         warnings: inout [String]) async -> [AXWindowDescriptor]
     {
         let windowIdentityService = WindowIdentityService()
+        let cgWindowIDs = Set(cgWindows.map(\.windowID))
         var descriptors: [AXWindowDescriptor] = []
         descriptors.reserveCapacity(axResult.windows.count)
 
@@ -250,10 +251,20 @@ struct WindowEnumerationContext {
                 CGRect(origin: position, size: axWindow.size() ?? .zero)
             }
 
-            // Materialize a full record only when this AX window has no CG counterpart; those are the
-            // windows CGWindowList missed and that we still need to surface.
+            // Decide whether this AX window already has a CG counterpart. Match by CGWindowID first,
+            // then by bounds; title is never an association key. When there is no counterpart we still
+            // materialize a full record so the window surfaces (mirrors the prior AX-only fallback,
+            // including AX windows whose CGWindowID cannot be resolved via _AXUIElementGetWindow).
+            let matchesCGWindow: Bool = if let resolvedID {
+                cgWindowIDs.contains(resolvedID)
+            } else if let bounds {
+                cgWindows.contains { Self.boundsMatch($0.bounds, bounds) }
+            } else {
+                false
+            }
+
             var standaloneInfo: ServiceWindowInfo?
-            if let resolvedID, !cgWindowIDs.contains(resolvedID) {
+            if !matchesCGWindow, !title.isEmpty {
                 standaloneInfo = await self.service.createWindowInfo(from: axWindow, index: index)
             }
 

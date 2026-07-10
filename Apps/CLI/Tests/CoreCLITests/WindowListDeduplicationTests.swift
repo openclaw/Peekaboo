@@ -107,6 +107,29 @@ struct WindowListDeduplicationTests {
         #expect(merged.map(\.title) == ["Main", "Detached"])
     }
 
+    @Test
+    func `AX-only window without a resolvable CG id still surfaces via its fallback record`() {
+        // Regression: an AX window that CGWindowList never reported and whose CGWindowID cannot be
+        // resolved (nil descriptor id) must not be dropped. The live path materializes it through
+        // createWindowInfo (fallback ID via CGWindowList/bounds/index); mergeWindows keys the append
+        // on that standalone record's id, so it is emitted.
+        let cgWindows = [Self.window(id: 1, title: "Main", index: 0)]
+        let axDescriptors = [
+            Self.descriptor(id: 1, title: "Main"),
+            Self.descriptor(
+                id: nil,
+                title: "Detached",
+                bounds: CGRect(x: 900, y: 900, width: 300, height: 200),
+                standaloneInfo: Self.window(id: 77, title: "Detached", index: 0)
+            ),
+        ]
+
+        let merged = WindowEnumerationContext.mergeWindows(cgWindows: cgWindows, axDescriptors: axDescriptors)
+
+        #expect(merged.map(\.windowID) == [1, 77])
+        #expect(merged.map(\.title) == ["Main", "Detached"])
+    }
+
     @MainActor
     @Test
     func `--window-index resolves to the window printed at that position`() async throws {
