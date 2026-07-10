@@ -132,6 +132,23 @@ struct SnapshotFailureInvalidationTests {
     }
 
     @Test
+    func `Generic error handler records the original error for dispatch classification`() throws {
+        // Dock/dialog commands funnel PeekabooErrors through handleGenericError before rethrowing
+        // ExitCode; the recorder must surface the real error so the executor can classify it.
+        CommandFailureErrorRecorder.reset()
+        handleGenericError(
+            PeekabooError.elementNotFound("B1"),
+            jsonOutput: true,
+            logger: Logger.shared
+        )
+
+        let recorded = try #require(CommandFailureErrorRecorder.consume() as? PeekabooError)
+        #expect(recorded.failedBeforeDispatchingDesktopEvent)
+        // consume() clears the slot so the next command starts clean.
+        #expect(CommandFailureErrorRecorder.consume() == nil)
+    }
+
+    @Test
     func `Never-captured snapshot resolves to an actionable snapshotNotAvailable error`() async throws {
         let snapshots = InvalidationRecordingSnapshotManagerStub()
 
