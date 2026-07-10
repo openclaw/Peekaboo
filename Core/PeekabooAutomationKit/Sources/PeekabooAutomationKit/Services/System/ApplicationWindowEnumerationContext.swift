@@ -323,6 +323,12 @@ struct WindowEnumerationContext {
                 guard !consumedDescriptors.contains(index), let bounds = axDescriptors[index].bounds else {
                     return false
                 }
+                // If createWindowInfo already resolved this AX record to a concrete CGWindowID (via
+                // its title/bounds CGWindowList fallback), only enrich that exact window — never let a
+                // loose bounds match steal a different window's title.
+                if let resolvedID = axDescriptors[index].standaloneInfo?.windowID, resolvedID != cgWindow.windowID {
+                    return false
+                }
                 return Self.boundsMatch(bounds, cgWindow.bounds)
             }) {
                 consumedDescriptors.insert(descriptorIndex)

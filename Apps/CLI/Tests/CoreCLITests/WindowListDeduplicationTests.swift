@@ -174,6 +174,28 @@ struct WindowListDeduplicationTests {
     }
 
     @Test
+    func `Bounds fallback does not hijack a different windows title when the AX record resolved its own id`() {
+        // The AX descriptor has no _AXUIElementGetWindow id, but createWindowInfo resolved it to a
+        // concrete CGWindowID (200) via CGWindowList. It shares a frame with an unrelated untitled CG
+        // window (100). It must NOT title window 100; it surfaces as its own window (200) instead.
+        let frame = CGRect(x: 10, y: 10, width: 500, height: 400)
+        let cgWindows = [Self.window(id: 100, title: "", index: 0, bounds: frame)]
+        let axDescriptors = [
+            Self.descriptor(
+                id: nil,
+                title: "Other",
+                bounds: frame,
+                standaloneInfo: Self.window(id: 200, title: "Other", index: 0, bounds: frame)
+            ),
+        ]
+
+        let merged = WindowEnumerationContext.mergeWindows(cgWindows: cgWindows, axDescriptors: axDescriptors)
+
+        #expect(merged.map(\.windowID) == [100, 200])
+        #expect(merged.map(\.title) == ["", "Other"])
+    }
+
+    @Test
     func `Extra bounds-fallback AX window is appended when no untitled CG window is left to title`() {
         // Regression for the loose-bounds suppression bug: an AX window whose frame matches an
         // already-titled CG window has no untitled window to enrich, so it must surface as a
