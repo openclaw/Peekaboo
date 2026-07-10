@@ -200,7 +200,12 @@ public final class VisualizationClient: @unchecked Sendable {
 
     /// Rects must be AppKit screen coordinates (bottom-left origin).
     public func showElementDetection(elements: [String: CGRect], duration: TimeInterval = 2.0) async -> Bool {
-        self.dispatch(.elementDetection(elements: elements, duration: duration))
+        guard ProcessInfo.processInfo.environment["PEEKABOO_VISUAL_ELEMENT_BOXES"] != "false" else {
+            self.log(.info, "Element detection visuals disabled via PEEKABOO_VISUAL_ELEMENT_BOXES")
+            return false
+        }
+
+        return self.dispatch(.elementDetection(elements: elements, duration: duration))
     }
 
     public func showAnnotatedScreenshot(

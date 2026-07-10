@@ -165,6 +165,7 @@ All animations share one design system (`VisualizerDesign.swift`): a single viol
 - **Effect**: A macOS-style Spaces indicator chip: one dot per desktop, the active dot hops to the destination, and a "Desktop N" label updates with a direction arrow
 
 ### Element Detection (See) 👁️
+- **Default**: OFF — a box per detected control clutters the screen. Opt in via the "Element Detection Boxes" toggle in Peekaboo.app settings, `"visualizer": {"elementDetectionEnabled": true}` in `~/.peekaboo/config.json`, or `PEEKABOO_VISUAL_ELEMENT_BOXES=true` (env wins over config). The app toggle writes the config key, so one switch governs the CLI dispatch gate and the app render gate; the app reads the config value at launch.
 - **Effect**: Every detected element gets an accent outline sized exactly to the control, with its opaque ID in a small HUD tag above
 - **Coordinates**: Element rects in the payload are AppKit screen coordinates. Senders convert global Accessibility bounds through `VisualizerScreenGeometry`, flipping once against `NSScreen.screens[0]` (the primary display); logical point sizes are preserved, so Retina scale is never multiplied into overlay geometry
 - **Rendering**: One overlay window per screen holds every highlight (`ElementOverlaySheetView`); degenerate and screen-filling container rects are dropped and the count is capped at 120, preferring the smallest rects
@@ -230,6 +231,7 @@ Overlay invariants worth knowing when adding animations:
 ```bash
 PEEKABOO_VISUAL_FEEDBACK=false            # Disable all visual feedback
 PEEKABOO_VISUAL_SCREENSHOTS=false         # Disable just screenshot flash
+PEEKABOO_VISUAL_ELEMENT_BOXES=true        # Opt in to per-element bounding boxes during `see` (off by default)
 PEEKABOO_VISUALIZER_STDOUT=true           # Force VisualizationClient logs to stderr/stdout
 PEEKABOO_VISUALIZER_STORAGE=/tmp/events   # Override the shared events directory
 PEEKABOO_VISUALIZER_APP_GROUP=group.boo   # Resolve storage inside an App Group container

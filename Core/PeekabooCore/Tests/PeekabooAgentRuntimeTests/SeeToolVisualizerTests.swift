@@ -41,6 +41,27 @@ struct SeeToolVisualizerTests {
     }
 
     @Test
+    func `Element detection dispatch requires config or env opt-in`() {
+        // Regression: element boxes default to OFF — no env, no config ⇒ no dispatch.
+        #expect(!SeeTool.elementDetectionVisualsEnabled(environment: [:], configuration: nil))
+
+        var config = PeekabooAutomation.Configuration()
+        #expect(!SeeTool.elementDetectionVisualsEnabled(environment: [:], configuration: config))
+
+        // config.json opt-in enables dispatch.
+        config.visualizer = PeekabooAutomation.Configuration.VisualizerConfig(elementDetectionEnabled: true)
+        #expect(SeeTool.elementDetectionVisualsEnabled(environment: [:], configuration: config))
+
+        // The env var overrides config in both directions.
+        #expect(!SeeTool.elementDetectionVisualsEnabled(
+            environment: ["PEEKABOO_VISUAL_ELEMENT_BOXES": "false"],
+            configuration: config))
+        #expect(SeeTool.elementDetectionVisualsEnabled(
+            environment: ["PEEKABOO_VISUAL_ELEMENT_BOXES": "true"],
+            configuration: nil))
+    }
+
+    @Test
     func `Produces protocol elements with flipped coordinates`() {
         let sample = PeekabooAutomation.DetectedElement(
             id: "B1",

@@ -154,6 +154,28 @@ struct VisualizerSettingsView: View {
             }
             .opacity(self.settings.visualizerEnabled ? 1 : 0.5)
 
+            Section("Element Detection") {
+                AnimationToggleRow(
+                    title: "Element Detection Boxes",
+                    subtitle: "Outline every accessibility element found by `peekaboo see`. " +
+                        "Off by default — a box per control is visually noisy.",
+                    icon: "rectangle.dashed",
+                    isOn: self.$settings.elementDetectionEnabled,
+                    isEnabled: self.settings.visualizerEnabled,
+                    animationType: "elements",
+                    settings: self.settings)
+
+                AnimationToggleRow(
+                    title: "Annotated Screenshots",
+                    subtitle: "Overlay element IDs on screen after `peekaboo see --annotate`",
+                    icon: "photo.on.rectangle",
+                    isOn: self.$settings.annotatedScreenshotEnabled,
+                    isEnabled: self.settings.visualizerEnabled,
+                    animationType: "annotated",
+                    settings: self.settings)
+            }
+            .opacity(self.settings.visualizerEnabled ? 1 : 0.5)
+
             Section("Watch Capture") {
                 AnimationToggleRow(
                     title: "Watch Capture HUD",
@@ -216,25 +238,33 @@ struct AnimationToggleRow: View {
 
             Spacer()
 
-            // Preview button
-            Button {
-                Task {
-                    await self.runPreview()
+            // Preview button (hidden for rows without a standalone preview)
+            if Self.previewableAnimationTypes.contains(self.animationType) {
+                Button {
+                    Task {
+                        await self.runPreview()
+                    }
+                } label: {
+                    Image(systemName: self.isPreviewRunning ? "stop.circle" : "play.circle")
+                        .foregroundStyle(self.canPreview ? Color.accentColor : .secondary)
+                        .font(.title3)
                 }
-            } label: {
-                Image(systemName: self.isPreviewRunning ? "stop.circle" : "play.circle")
-                    .foregroundStyle(self.canPreview ? Color.accentColor : .secondary)
-                    .font(.title3)
+                .buttonStyle(.plain)
+                .disabled(!self.canPreview || self.isPreviewRunning)
+                .help("Preview \(self.title) animation")
             }
-            .buttonStyle(.plain)
-            .disabled(!self.canPreview || self.isPreviewRunning)
-            .help("Preview \(self.title) animation")
 
             Toggle(self.title, isOn: self.$isOn)
                 .labelsHidden()
                 .disabled(!self.isEnabled)
         }
     }
+
+    /// Annotated screenshots need real capture data, so that row has no preview.
+    private static let previewableAnimationTypes: Set<String> = [
+        "screenshot", "click", "type", "scroll", "trail", "swipe", "hotkey",
+        "app_launch", "window", "menu", "dialog", "space", "ghost", "watch", "elements",
+    ]
 
     private var canPreview: Bool {
         self.isEnabled && self.settings.visualizerEnabled && self.isOn
@@ -280,6 +310,8 @@ struct AnimationToggleRow: View {
             await self.previewDialog(on: screen)
         case "space":
             await self.previewSpaceSwitch()
+        case "elements":
+            await self.previewElementDetection(on: screen)
         case "ghost":
             await self.previewGhostFlash(on: screen)
         case "watch":
@@ -402,6 +434,19 @@ struct AnimationToggleRow: View {
     private func previewSpaceSwitch() async {
         await self.visualizerCoordinator.runPreview {
             _ = await self.visualizerCoordinator.showSpaceSwitch(from: 1, to: 2, direction: .right)
+        }
+    }
+
+    @MainActor
+    private func previewElementDetection(on screen: NSScreen) async {
+        let origin = CGPoint(x: screen.frame.midX - 160, y: screen.frame.midY - 60)
+        let sampleElements: [String: CGRect] = [
+            "B1": CGRect(x: origin.x, y: origin.y + 80, width: 120, height: 32),
+            "T1": CGRect(x: origin.x + 140, y: origin.y + 80, width: 180, height: 32),
+            "B2": CGRect(x: origin.x, y: origin.y, width: 320, height: 44),
+        ]
+        await self.visualizerCoordinator.runPreview {
+            _ = await self.visualizerCoordinator.showElementDetection(elements: sampleElements, duration: 2.0)
         }
     }
 

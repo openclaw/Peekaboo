@@ -361,6 +361,15 @@ final class PeekabooSettings {
         }
     }
 
+    /// Accessibility element bounding boxes during `see`. Off by default —
+    /// a box per detected control clutters the screen.
+    var elementDetectionEnabled: Bool = false {
+        didSet {
+            self.save()
+            self.updateConfigFile()
+        }
+    }
+
     var annotatedScreenshotEnabled: Bool = true {
         didSet {
             self.save()
@@ -551,6 +560,10 @@ extension PeekabooSettings {
         self.dialogInteractionEnabled = self.userDefaults.bool(forKey: self.namespaced("dialogInteractionEnabled"))
         self.spaceTransitionEnabled = self.userDefaults.bool(forKey: self.namespaced("spaceTransitionEnabled"))
         self.ghostEasterEggEnabled = self.userDefaults.bool(forKey: self.namespaced("ghostEasterEggEnabled"))
+        // Not in `animationKeys`: that list force-sets absent keys to true,
+        // and element boxes must stay off until the user opts in.
+        self.elementDetectionEnabled = self.valueOrDefault(key: "elementDetectionEnabled", defaultValue: false)
+        self.annotatedScreenshotEnabled = self.valueOrDefault(key: "annotatedScreenshotEnabled", defaultValue: true)
     }
 
     private func loadRealtimeVoiceSettings() {
@@ -608,6 +621,8 @@ extension PeekabooSettings {
         self.userDefaults.set(self.dialogInteractionEnabled, forKey: "\(self.keyPrefix)dialogInteractionEnabled")
         self.userDefaults.set(self.spaceTransitionEnabled, forKey: "\(self.keyPrefix)spaceTransitionEnabled")
         self.userDefaults.set(self.ghostEasterEggEnabled, forKey: "\(self.keyPrefix)ghostEasterEggEnabled")
+        self.userDefaults.set(self.elementDetectionEnabled, forKey: "\(self.keyPrefix)elementDetectionEnabled")
+        self.userDefaults.set(self.annotatedScreenshotEnabled, forKey: "\(self.keyPrefix)annotatedScreenshotEnabled")
 
         // Save Realtime Voice settings
         if let voice = self.realtimeVoice {
@@ -629,7 +644,14 @@ extension PeekabooSettings {
         defer { self.isLoading = wasLoading }
 
         // Use ConfigurationManager to load from config.json
-        _ = self.configManager.loadConfiguration()
+        let config = self.configManager.loadConfiguration()
+
+        // config.json is the cross-process switch for element boxes (the CLI
+        // consults the same key before dispatching), so an explicit value there
+        // wins over the locally persisted toggle at launch.
+        if let elementBoxes = config?.visualizer?.elementDetectionEnabled {
+            self.elementDetectionEnabled = elementBoxes
+        }
 
         // Don't copy environment variables into settings!
         // Only load from credentials file if they exist there
@@ -800,6 +822,13 @@ extension PeekabooSettings {
                 if self.ollamaBaseURL != "http://localhost:11434" {
                     config.aiProviders?.ollamaBaseUrl = self.ollamaBaseURL
                 }
+
+                // Mirror the element-box toggle into config.json so the CLI's
+                // dispatch gate (SeeTool) follows the app setting.
+                if config.visualizer == nil {
+                    config.visualizer = Configuration.VisualizerConfig()
+                }
+                config.visualizer?.elementDetectionEnabled = self.elementDetectionEnabled
             }
         } catch {
             print("Failed to update config.json: \(error)")

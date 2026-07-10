@@ -43,6 +43,7 @@ Peekaboo resolves settings in this order (highest → lowest):
 | Tool allow-list | `tools.allow` | `PEEKABOO_ALLOW_TOOLS` | CSV or space list. If set, only these tools are exposed (env replaces config). |
 | Tool deny-list | `tools.deny` | `PEEKABOO_DISABLE_TOOLS` | CSV or space list. Always removed; env list is additive with config. |
 | UI input strategy | `input.*` | `PEEKABOO_INPUT_STRATEGY` and per-verb variants | Choose action invocation versus synthetic input. Built-in policy uses `actionFirst` for click/scroll and `synthFirst` for type/hotkey. |
+| Element detection boxes | `visualizer.elementDetectionEnabled` | `PEEKABOO_VISUAL_ELEMENT_BOXES` | Draw a bounding box per accessibility element during `peekaboo see`. Default `false` (visually noisy); env var overrides config. The Peekaboo.app settings toggle writes the same config key. |
 
 ## API Key Storage
 

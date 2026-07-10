@@ -214,8 +214,12 @@ extension VisualizerCoordinator {
     }
 
     func displayElementOverlays(elements: [String: CGRect], duration: TimeInterval) async -> Bool {
-        // Check if enabled
-        guard self.settings?.visualizerEnabled ?? true else {
+        // Element boxes are opt-in (unlike the other animations): they outline
+        // every detected control, which clutters the screen, so a missing
+        // settings source falls back to `false` instead of `true`.
+        guard self.settings?.visualizerEnabled ?? true,
+              self.settings?.elementDetectionEnabled ?? false
+        else {
             return false
         }
 

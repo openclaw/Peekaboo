@@ -151,6 +151,9 @@ public struct Configuration: Codable {
         public var menuNavigationEnabled: Bool?
         public var dialogInteractionEnabled: Bool?
         public var spaceTransitionEnabled: Bool?
+        /// Accessibility element bounding boxes during `see`. Defaults to `false`
+        /// (visually noisy); set to `true` to draw a box per detected element.
+        public var elementDetectionEnabled: Bool?
         public var ghostEasterEggEnabled: Bool?
 
         public init(
@@ -170,6 +173,7 @@ public struct Configuration: Codable {
             menuNavigationEnabled: Bool? = nil,
             dialogInteractionEnabled: Bool? = nil,
             spaceTransitionEnabled: Bool? = nil,
+            elementDetectionEnabled: Bool? = nil,
             ghostEasterEggEnabled: Bool? = nil)
         {
             self.enabled = enabled
@@ -188,6 +192,7 @@ public struct Configuration: Codable {
             self.menuNavigationEnabled = menuNavigationEnabled
             self.dialogInteractionEnabled = dialogInteractionEnabled
             self.spaceTransitionEnabled = spaceTransitionEnabled
+            self.elementDetectionEnabled = elementDetectionEnabled
             self.ghostEasterEggEnabled = ghostEasterEggEnabled
         }
     }
