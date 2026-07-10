@@ -6,6 +6,27 @@ import PeekabooFoundation
 
 // MARK: - Error Handling Protocol
 
+/// Captures the original error a command reports via `handleError` before it rethrows the opaque
+/// `ExitCode.failure`. The runtime executor consumes it to decide whether the failed command could
+/// have mutated the desktop (and therefore whether cached UI snapshots must be invalidated).
+@MainActor
+enum CommandFailureErrorRecorder {
+    private static var recordedError: (any Error)?
+
+    static func record(_ error: any Error) {
+        self.recordedError = error
+    }
+
+    static func consume() -> (any Error)? {
+        defer { self.recordedError = nil }
+        return self.recordedError
+    }
+
+    static func reset() {
+        self.recordedError = nil
+    }
+}
+
 /// Protocol for commands that need standardized error handling
 @MainActor
 protocol ErrorHandlingCommand {
@@ -15,6 +36,7 @@ protocol ErrorHandlingCommand {
 extension ErrorHandlingCommand {
     /// Handle errors with appropriate output format
     func handleError(_ error: any Error, customCode: ErrorCode? = nil) {
+        CommandFailureErrorRecorder.record(error)
         if jsonOutput {
             let errorCode = customCode ?? self.mapErrorToCode(error)
             let logger: Logger = if let formattable = self as? any OutputFormattable {
@@ -109,7 +131,7 @@ extension ErrorHandlingCommand {
             .ELEMENT_NOT_FOUND
         case .sessionNotFound:
             .SESSION_NOT_FOUND
-        case .snapshotNotFound:
+        case .snapshotNotFound, .snapshotNotAvailable:
             .SNAPSHOT_NOT_FOUND
         case .snapshotStale:
             .SNAPSHOT_STALE

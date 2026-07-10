@@ -151,8 +151,11 @@ extension SnapshotManager {
                 self.readImplicitLatestInvalidationWatermarkUnlocked()
             }
         } catch {
-            self.logger.error("Failed to lock implicit-latest watermark for reading: \(error)")
-            return Date()
+            // A transient lock failure must not be treated as "invalidate everything": the file is
+            // written atomically, so an unlocked read is a safe best effort.
+            self.logger.error(
+                "Failed to lock implicit-latest watermark for reading; falling back to unlocked read: \(error)")
+            return self.readImplicitLatestInvalidationWatermarkUnlocked()
         }
     }
 
@@ -164,9 +167,13 @@ extension SnapshotManager {
         guard let data = try? Data(contentsOf: url),
               let watermark = try? JSONDecoder().decode(Date.self, from: data)
         else {
-            self.logger.error("Implicit-latest invalidation watermark is unreadable; hiding cached snapshots")
+            // A corrupt watermark still marks a real past invalidation, so approximate it with the
+            // file's own timestamps. If even those are unreadable, fail open: hiding every cached
+            // snapshot over a transient I/O hiccup is worse than one potentially stale lookup.
+            self.logger.error(
+                "Implicit-latest invalidation watermark is unreadable; using its file timestamp instead")
             let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .creationDateKey])
-            return values?.contentModificationDate ?? values?.creationDate ?? Date()
+            return values?.contentModificationDate ?? values?.creationDate
         }
         return watermark
     }
@@ -220,8 +227,12 @@ extension SnapshotManager {
                 return self.validImplicitLatestPreservationUnlocked(watermark: watermark)
             }
         } catch {
-            self.logger.error("Failed to lock implicit-latest preservation for reading: \(error)")
-            return nil
+            // Same fail-open rationale as the watermark reader: preservation records are written
+            // atomically, so an unlocked read beats silently dropping a preserved snapshot.
+            self.logger.error(
+                "Failed to lock implicit-latest preservation for reading; falling back to unlocked read: \(error)")
+            let watermark = self.readImplicitLatestInvalidationWatermarkUnlocked()
+            return self.validImplicitLatestPreservationUnlocked(watermark: watermark)
         }
     }
 
@@ -374,43 +385,57 @@ extension SnapshotManager {
         let sharedWatermark = self.desktopMutationWatermarkStore?.effectiveWatermark()
         do {
             return try self.withImplicitLatestInvalidationLock(mode: .read) {
-                let snapshotDir = self.getSnapshotStorageURL()
-                guard let snapshots = try? FileManager.default.contentsOfDirectory(
-                    at: snapshotDir,
-                    includingPropertiesForKeys: [.creationDateKey],
-                    options: .skipsHiddenFiles)
-                else {
-                    return nil
-                }
-
-                let cutoff = Date().addingTimeInterval(-self.snapshotValidityWindow)
-                let watermark = Self.latestWatermark(
-                    self.readImplicitLatestInvalidationWatermarkUnlocked(),
-                    sharedWatermark)
-                let candidates = snapshots.compactMap { url -> SnapshotLatestCandidate? in
-                    guard let values = try? url.resourceValues(forKeys: [.creationDateKey]),
-                          let createdAt = self.snapshotCreationDate(at: url, fallback: values.creationDate),
-                          createdAt > cutoff,
-                          watermark.map({ createdAt > $0 }) ?? true,
-                          latestCreationDate.map({ createdAt <= $0 }) ?? true,
-                          url.hasDirectoryPath,
-                          !self.isPendingSnapshot(at: url),
-                          FileManager.default.fileExists(atPath: url.appendingPathComponent("snapshot.json").path)
-                    else {
-                        return nil
-                    }
-                    return SnapshotLatestCandidate(url: url, createdAt: createdAt)
-                }.sorted { $0.createdAt > $1.createdAt }
-                let preservation = self.validImplicitLatestPreservationUnlocked(watermark: watermark)
-                return SnapshotLatestReadState(
-                    cutoff: cutoff,
-                    candidates: candidates,
-                    preservation: preservation)
+                self.latestSnapshotReadStateUnlocked(
+                    createdAtOrBefore: latestCreationDate,
+                    sharedWatermark: sharedWatermark)
             }
         } catch {
-            self.logger.error("Failed to lock snapshot state for latest-snapshot read: \(error)")
+            // A transient lock failure must not hide every cached snapshot. Watermark and
+            // preservation files are written atomically, so an unlocked read is a safe best effort.
+            self.logger.error(
+                "Failed to lock snapshot state for latest-snapshot read; falling back to unlocked read: \(error)")
+            return self.latestSnapshotReadStateUnlocked(
+                createdAtOrBefore: latestCreationDate,
+                sharedWatermark: sharedWatermark)
+        }
+    }
+
+    private func latestSnapshotReadStateUnlocked(
+        createdAtOrBefore latestCreationDate: Date?,
+        sharedWatermark: Date?) -> SnapshotLatestReadState?
+    {
+        let snapshotDir = self.getSnapshotStorageURL()
+        guard let snapshots = try? FileManager.default.contentsOfDirectory(
+            at: snapshotDir,
+            includingPropertiesForKeys: [.creationDateKey],
+            options: .skipsHiddenFiles)
+        else {
             return nil
         }
+
+        let cutoff = Date().addingTimeInterval(-self.snapshotValidityWindow)
+        let watermark = Self.latestWatermark(
+            self.readImplicitLatestInvalidationWatermarkUnlocked(),
+            sharedWatermark)
+        let candidates = snapshots.compactMap { url -> SnapshotLatestCandidate? in
+            guard let values = try? url.resourceValues(forKeys: [.creationDateKey]),
+                  let createdAt = self.snapshotCreationDate(at: url, fallback: values.creationDate),
+                  createdAt > cutoff,
+                  watermark.map({ createdAt > $0 }) ?? true,
+                  latestCreationDate.map({ createdAt <= $0 }) ?? true,
+                  url.hasDirectoryPath,
+                  !self.isPendingSnapshot(at: url),
+                  FileManager.default.fileExists(atPath: url.appendingPathComponent("snapshot.json").path)
+            else {
+                return nil
+            }
+            return SnapshotLatestCandidate(url: url, createdAt: createdAt)
+        }.sorted { $0.createdAt > $1.createdAt }
+        let preservation = self.validImplicitLatestPreservationUnlocked(watermark: watermark)
+        return SnapshotLatestReadState(
+            cutoff: cutoff,
+            candidates: candidates,
+            preservation: preservation)
     }
 
     func convertElementTypeToRole(_ type: ElementType) -> String {

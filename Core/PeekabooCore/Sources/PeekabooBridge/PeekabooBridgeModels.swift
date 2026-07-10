@@ -386,3 +386,31 @@ extension PeekabooBridgeErrorEnvelope: PendingSnapshotFailureDispositionProvidin
         }
     }
 }
+
+extension PeekabooBridgeErrorEnvelope {
+    /// Whether the failed operation is known to have stopped during validation or lookup, before
+    /// any desktop event (mouse, keyboard, AX action) could be dispatched.
+    ///
+    /// Used by snapshot bookkeeping to avoid invalidating cached UI snapshots after failures that
+    /// cannot have changed the desktop. Timeouts and internal errors stay conservative (`false`)
+    /// because the operation may have partially executed.
+    public var failedBeforeDispatchingDesktopEvent: Bool {
+        guard !self.operationMayHaveCompleted else { return false }
+        // elementNotFound / snapshotNotFound / snapshotStale are lookup-phase failures.
+        if self.kind != nil {
+            return true
+        }
+        switch self.code {
+        case .permissionDenied,
+             .notFound,
+             .invalidRequest,
+             .operationNotSupported,
+             .serverBusy,
+             .versionMismatch,
+             .unauthorizedClient:
+            return true
+        case .timeout, .decodingFailed, .internalError:
+            return false
+        }
+    }
+}

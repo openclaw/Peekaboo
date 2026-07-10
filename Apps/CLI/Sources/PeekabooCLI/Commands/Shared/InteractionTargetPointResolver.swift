@@ -72,7 +72,12 @@ enum InteractionTargetPointResolver {
         }
 
         guard let snapshotId = request.snapshotId else {
-            throw PeekabooError.snapshotNotFound("No snapshot found")
+            throw PeekabooError.snapshotNotAvailable(
+                """
+                No UI snapshot is available to resolve the \(request.description) element \
+                '\(elementId)'. Run 'peekaboo see' first, or pass coordinates instead.
+                """
+            )
         }
 
         // Validate the snapshot before waiting so stale/missing snapshot diagnostics stay explicit.

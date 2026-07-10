@@ -9,11 +9,33 @@ enum InteractionSnapshotSource: String {
     case none
 }
 
+/// Why implicit "latest snapshot" resolution came back empty.
+enum InteractionSnapshotUnavailability {
+    /// No usable snapshot exists at all (never captured, expired, or cleaned).
+    case noSnapshotCaptured
+    /// Snapshots exist on disk but the newest one sits at or below the invalidation watermark,
+    /// i.e. an earlier desktop mutation (such as a click) marked it stale.
+    case invalidatedByMutation
+}
+
 @MainActor
 struct InteractionObservationContext {
     let explicitSnapshotId: String?
     let snapshotId: String?
     let source: InteractionSnapshotSource
+    let unavailability: InteractionSnapshotUnavailability?
+
+    init(
+        explicitSnapshotId: String?,
+        snapshotId: String?,
+        source: InteractionSnapshotSource,
+        unavailability: InteractionSnapshotUnavailability? = nil
+    ) {
+        self.explicitSnapshotId = explicitSnapshotId
+        self.snapshotId = snapshotId
+        self.source = source
+        self.unavailability = unavailability
+    }
 
     var hasSnapshot: Bool {
         self.snapshotId != nil
@@ -26,11 +48,26 @@ struct InteractionObservationContext {
         return nil
     }
 
-    func requireSnapshot(message: String = "No snapshot found") throws -> String {
+    func requireSnapshot() throws -> String {
         guard let snapshotId else {
-            throw PeekabooError.snapshotNotFound(message)
+            throw self.snapshotUnavailableError()
         }
         return snapshotId
+    }
+
+    /// Distinguishes "nothing was ever captured" from "the latest snapshot was invalidated by a
+    /// prior desktop mutation" so the failure is actionable instead of a misleading not-found.
+    func snapshotUnavailableError() -> PeekabooError {
+        switch self.unavailability {
+        case .invalidatedByMutation:
+            .snapshotStale(
+                "the most recent UI snapshot was invalidated because an earlier command changed the desktop"
+            )
+        case .noSnapshotCaptured, nil:
+            .snapshotNotAvailable(
+                "No UI snapshot is available. Run 'peekaboo see' first to capture the current screen."
+            )
+        }
     }
 
     func validateIfExplicit(using snapshots: any SnapshotManagerProtocol) async throws {
@@ -84,7 +121,26 @@ struct InteractionObservationContext {
             )
         }
 
-        return InteractionObservationContext(explicitSnapshotId: nil, snapshotId: nil, source: .none)
+        return await InteractionObservationContext(
+            explicitSnapshotId: nil,
+            snapshotId: nil,
+            source: .none,
+            unavailability: self.latestSnapshotUnavailability(from: snapshots)
+        )
+    }
+
+    private static func latestSnapshotUnavailability(
+        from snapshots: any SnapshotManagerProtocol
+    ) async -> InteractionSnapshotUnavailability {
+        // `listSnapshots` ignores the invalidation watermark, so snapshots that exist there but did
+        // not resolve as "latest" were hidden by a prior mutation rather than missing.
+        guard let watermark = snapshots.effectiveImplicitLatestInvalidationWatermark,
+              let newestCreatedAt = await (try? snapshots.listSnapshots())?.map(\.createdAt).max(),
+              newestCreatedAt <= watermark
+        else {
+            return .noSnapshotCaptured
+        }
+        return .invalidatedByMutation
     }
 
     private static func normalizedSnapshotId(_ snapshotId: String?) -> String? {

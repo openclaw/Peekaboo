@@ -247,6 +247,71 @@ struct PeekabooBridgeApplicationLaunchTests {
     }
 
     @Test
+    func `pre-dispatch launch failure cancels the mutation barrier without advancing the watermark`() async throws {
+        let (store, root) = Self.makeTemporaryWatermarkStore(named: "predispatch-cancel")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        _ = try await self.launchFailureEnvelope(
+            .appNotFound("com.example.Missing"),
+            store: store)
+
+        // The launch failed during app lookup, before any desktop event; cached snapshots on other
+        // hosts must stay resolvable, so the shared watermark must not move.
+        #expect(store.effectiveWatermark() == nil)
+        let pendingDirectory = root.appendingPathComponent("desktop-mutation-pending", isDirectory: true)
+        #expect(
+            ((try? FileManager.default.contentsOfDirectory(
+                at: pendingDirectory,
+                includingPropertiesForKeys: nil)) ?? []).isEmpty)
+    }
+
+    @Test
+    func `ambiguous launch failure still advances the watermark conservatively`() async throws {
+        let (store, root) = Self.makeTemporaryWatermarkStore(named: "ambiguous-complete")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        _ = try await self.launchFailureEnvelope(
+            .timeout("Launch timed out"),
+            store: store)
+
+        // A timeout leaves the desktop state unknown, so the barrier completes and hides
+        // pre-existing snapshots.
+        #expect(store.effectiveWatermark() != nil)
+    }
+
+    @MainActor
+    private func launchFailureEnvelope(
+        _ error: PeekabooError,
+        store: DesktopMutationWatermarkStore) async throws -> PeekabooBridgeErrorEnvelope?
+    {
+        let applicationService = LaunchRecordingApplicationService()
+        applicationService.launchError = error
+        let server = PeekabooBridgeServer(
+            services: StubServices(applications: applicationService),
+            hostKind: .gui,
+            allowlistedTeams: [],
+            allowlistedBundles: [],
+            desktopMutationWatermarkStore: store)
+        let requestData = try JSONEncoder.peekabooBridgeEncoder().encode(
+            PeekabooBridgeRequest.launchApplicationWithOptions(
+                ApplicationLaunchRequest(applicationIdentifier: "com.example.Missing")))
+
+        let responseData = await server.decodeAndHandle(requestData, peer: nil)
+        let response = try self.decode(responseData)
+        guard case let .error(envelope) = response else {
+            Issue.record("Expected bridge error response, got \(response)")
+            return nil
+        }
+        return envelope
+    }
+
+    private static func makeTemporaryWatermarkStore(named name: String) -> (DesktopMutationWatermarkStore, URL) {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekaboo-bridge-\(name)-\(UUID().uuidString)", isDirectory: true)
+        return (DesktopMutationWatermarkStore(directoryURL: root), root)
+    }
+
+    @Test
     func `application launch preserves app not found errors`() async throws {
         try await self.assertLaunchError(.appNotFound("Missing"), expectedCode: .notFound)
     }

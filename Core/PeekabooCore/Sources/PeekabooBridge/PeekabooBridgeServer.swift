@@ -290,16 +290,36 @@ public final class PeekabooBridgeServer {
             operationError = error
         }
 
+        // Failures raised before any desktop event was dispatched must not advance the shared
+        // watermark; doing so would retroactively hide every cached UI snapshot after a no-op.
+        var canceledBarrier = false
+        if let operationError, Self.failureLeavesDesktopUnchanged(operationError) {
+            do {
+                try desktopMutationWatermarkStore.cancelMutation(mutation)
+                canceledBarrier = true
+            } catch {
+                self.logger.error(
+                    """
+                    Could not cancel the desktop mutation barrier after a pre-dispatch failure; \
+                    completing it instead: \(error.localizedDescription, privacy: .public)
+                    """)
+            }
+        }
+
         let completedResponse: PeekabooBridgeResponse?
-        do {
-            completedResponse = try await self.completeDesktopMutation(
-                mutation,
-                request: request,
-                response: response,
-                store: desktopMutationWatermarkStore)
-        } catch {
-            await self.desktopMutationGate.release()
-            throw error
+        if canceledBarrier {
+            completedResponse = nil
+        } else {
+            do {
+                completedResponse = try await self.completeDesktopMutation(
+                    mutation,
+                    request: request,
+                    response: response,
+                    store: desktopMutationWatermarkStore)
+            } catch {
+                await self.desktopMutationGate.release()
+                throw error
+            }
         }
         await self.desktopMutationGate.release()
 
@@ -312,6 +332,18 @@ public final class PeekabooBridgeServer {
                 message: "Desktop operation returned neither a response nor an error")
         }
         return completedResponse
+    }
+
+    /// Whether a failed desktop operation is known to have stopped before dispatching any desktop
+    /// event, meaning cached UI snapshots are still valid and the barrier can be canceled.
+    private static func failureLeavesDesktopUnchanged(_ error: any Error) -> Bool {
+        if let envelope = error as? PeekabooBridgeErrorEnvelope {
+            return envelope.failedBeforeDispatchingDesktopEvent
+        }
+        if let peekabooError = error as? PeekabooError {
+            return peekabooError.failedBeforeDispatchingDesktopEvent
+        }
+        return false
     }
 
     private func completeDesktopMutation(

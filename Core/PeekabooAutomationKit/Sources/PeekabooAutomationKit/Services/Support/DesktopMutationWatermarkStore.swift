@@ -119,9 +119,51 @@ public final class DesktopMutationWatermarkStore: @unchecked Sendable {
                     : persisted
             }
         } catch {
-            self.logger.error("Failed to read desktop mutation watermark: \(error.localizedDescription)")
-            return Date()
+            // A transient lock failure must not be treated as "hide every cached snapshot".
+            // All records are written atomically, so a lockless read is a safe best effort;
+            // orphan recovery simply waits for the next locked reader.
+            self.logger
+                .error("Failed to lock desktop mutation watermark; using lockless read: \(error.localizedDescription)")
+            return self.effectiveWatermarkLockless()
         }
+    }
+
+    /// Read-only variant of the locked read: no orphan recovery, no reconciliation writes.
+    /// Unresolved records (live or orphaned) count as pending, and resolved-but-unreconciled
+    /// completions contribute their published cutoff, matching the locked reader's outcome.
+    private func effectiveWatermarkLockless() -> Date? {
+        let now = Date()
+        let excludedMutationIDs = Self.visiblePendingMutationIDs
+        var effective = self.readUnlocked()
+        guard let urls = try? FileManager.default.contentsOfDirectory(
+            at: self.pendingDirectoryURL,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles])
+        else { return effective }
+        for url in urls {
+            let mutationID = UUID(uuidString: url.deletingPathExtension().lastPathComponent)
+            if mutationID.map(excludedMutationIDs.contains) ?? false {
+                continue
+            }
+            guard let record = self.readPendingRecordUnlocked(at: url) else {
+                // Unreadable records stay fail-closed, matching `hasPendingMutationUnlocked`.
+                return max(effective ?? now, now)
+            }
+            switch record.resolution {
+            case .canceled:
+                continue
+            case let .completed(cutoffReferenceDateSeconds, _):
+                let cutoff = Date(timeIntervalSinceReferenceDate: cutoffReferenceDateSeconds)
+                effective = Self.maxWatermark(effective, cutoff)
+            case nil:
+                return max(effective ?? now, now)
+            }
+        }
+        return effective
+    }
+
+    private static func maxWatermark(_ lhs: Date?, _ rhs: Date) -> Date {
+        lhs.map { max($0, rhs) } ?? rhs
     }
 
     /// Installs a durable, cross-process barrier before a mutation is dispatched.
@@ -309,12 +351,14 @@ public final class DesktopMutationWatermarkStore: @unchecked Sendable {
             return record.cutoff
         }
 
-        self.logger.error("Desktop mutation watermark is unreadable; hiding cached implicit snapshots")
+        // A corrupt watermark still marks a real past boundary, so approximate it with the file's
+        // own timestamps. If even those are unreadable, fail open instead of hiding every snapshot.
+        self.logger.error("Desktop mutation watermark is unreadable; using its file timestamp instead")
         let values = try? self.watermarkURL.resourceValues(forKeys: [
             .contentModificationDateKey,
             .creationDateKey,
         ])
-        return values?.contentModificationDate ?? values?.creationDate ?? Date()
+        return values?.contentModificationDate ?? values?.creationDate
     }
 
     private func readCompletionGenerationUnlocked() -> UInt64 {
