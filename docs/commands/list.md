@@ -23,6 +23,7 @@ read_when:
 - Application inventory prefers the GUI bridge host so sandboxed CLI callers see the GUI session’s complete process list. Other read-only inventory stays local by default unless its command needs host state or you pass `--bridge-socket <path>`.
 - `windows` calls `requireScreenRecordingPermission` before crawling AX so macOS doesn’t silently strip metadata; `apps` does not require Screen Recording.
 - `windows` accepts either user-friendly names or `PID:####` tokens and normalizes `--include-details` values by lowercasing + replacing `-` with `_`, so both `--include-details offscreen,bounds` and `off_screen` work.
+- `windows` deduplicates entries by `window_id` and assigns contiguous `index` values afterwards, so `--window-index` targeting lines up with what is printed. It intentionally shows the full enumeration (including tiny/utility windows on non-zero layers); `peekaboo window list` filters those out but keeps the same IDs and indexes.
 - Menu bar listing is powered by the same `MenuServiceBridge` used by `peekaboo menubar`, so indices reported here line up with what `menubar click --index` expects.
 - App/window/screen inventory uses `UnifiedToolOutput` payloads, which include `data`, `summary`, and `metadata`. `list permissions --json` mirrors `permissions status --json` with the standard `{ success, data }` envelope.
 

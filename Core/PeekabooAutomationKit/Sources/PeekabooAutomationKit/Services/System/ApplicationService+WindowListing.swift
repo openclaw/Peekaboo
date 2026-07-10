@@ -26,7 +26,11 @@ extension ApplicationService {
     }
 
     static func normalizeWindowIndices(_ windows: [ServiceWindowInfo]) -> [ServiceWindowInfo] {
-        windows.enumerated().map { index, window in
+        // Deduplicate by windowID before assigning indexes: a duplicate entry (e.g. from merged
+        // CG/AX enumeration) would otherwise consume an index slot and shift --window-index targets.
+        var seenWindowIDs = Set<Int>()
+        let uniqueWindows = windows.filter { seenWindowIDs.insert($0.windowID).inserted }
+        return uniqueWindows.enumerated().map { index, window in
             ServiceWindowInfo(
                 windowID: window.windowID,
                 title: window.title,

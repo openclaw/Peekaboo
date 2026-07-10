@@ -194,7 +194,18 @@ struct WindowEnumerationContext {
         axResult: AXWindowResult) async -> UnifiedToolOutput<ServiceWindowListData>
     {
         var enrichedWindows: [ServiceWindowInfo] = []
+        // windowsByTitle is keyed by title only, so two AX windows sharing a title resolve to the
+        // same CG snapshot entry. Guard every append by windowID or the same window is listed twice.
+        var seenWindowIDs = Set<Int>()
         var warnings: [String] = []
+
+        func appendIfNew(_ window: ServiceWindowInfo) {
+            guard seenWindowIDs.insert(window.windowID).inserted else {
+                self.logger.debug("Skipping duplicate window id \(window.windowID) ('\(window.title)')")
+                return
+            }
+            enrichedWindows.append(window)
+        }
 
         for (index, axWindow) in axResult.windows.indexed() {
             if Date().timeIntervalSince(self.startTime) > Double(self.axTimeout * 2) {
@@ -207,17 +218,17 @@ struct WindowEnumerationContext {
             }
 
             if let cgWindow = snapshot.windowsByTitle[axTitle] {
-                enrichedWindows.append(cgWindow)
+                appendIfNew(cgWindow)
             } else if let windowInfo = await self.service.createWindowInfo(from: axWindow, index: index) {
-                enrichedWindows.append(windowInfo)
+                appendIfNew(windowInfo)
             }
         }
 
-        for cgWindow in snapshot.windows where !enrichedWindows.contains(where: { $0.windowID == cgWindow.windowID }) {
+        for cgWindow in snapshot.windows where !seenWindowIDs.contains(cgWindow.windowID) {
             if cgWindow.title.isEmpty {
                 self.logger.debug("CGWindow \(cgWindow.windowID) has no title, including as-is")
             }
-            enrichedWindows.append(cgWindow)
+            appendIfNew(cgWindow)
         }
 
         if axResult.timedOut {
