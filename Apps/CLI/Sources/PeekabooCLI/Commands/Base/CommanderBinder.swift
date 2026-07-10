@@ -65,6 +65,7 @@ enum CommanderCLIBinder {
             commandType,
             parsedValues: parsedValues
         )
+        options.requestsHostPermissionGrant = Self.isInteractivePermissionRequest(commandType)
         options.usesPerToolSnapshotInvalidation = commandType == AgentCommand.self ||
             commandType == MCPCommand.Serve.self ||
             commandType == InspectUICommand.self

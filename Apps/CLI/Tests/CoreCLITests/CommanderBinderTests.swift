@@ -1357,4 +1357,19 @@ extension CommanderBinderTests {
         #expect(options.preferRemote == true)
         #expect(options.bridgeSocketPath == "/tmp/peekaboo.sock")
     }
+
+    @Test
+    func `Permission request commands opt out of host permission gating`() throws {
+        let parsed = ParsedValues(positional: [], options: [:], flags: [])
+        let requestOptions = try CommanderCLIBinder.makeRuntimeOptions(
+            from: parsed,
+            commandType: PermissionsCommand.RequestEventSynthesizingSubcommand.self
+        )
+        let captureOptions = try CommanderCLIBinder.makeRuntimeOptions(
+            from: parsed,
+            commandType: ImageCommand.self
+        )
+        #expect(requestOptions.requestsHostPermissionGrant)
+        #expect(!captureOptions.requestsHostPermissionGrant)
+    }
 }

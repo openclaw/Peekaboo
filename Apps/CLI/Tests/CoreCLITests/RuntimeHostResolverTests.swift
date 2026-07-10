@@ -263,4 +263,201 @@ struct RuntimeHostResolverTests {
             options: options
         ) != nil)
     }
+
+    @Test
+    func `Candidate validation rejects hosts that explicitly lack required capture permission`() async {
+        // Mirrors the reproduced bug: a stale GUI build serving bridge.sock while holding zero
+        // TCC permissions must not win selection for a capture-dependent command.
+        let candidate = RuntimeHostResolver.ImplicitRemoteCandidate(
+            socketPath: "/tmp/bridge.sock",
+            requireReusableDaemon: false,
+            requiredHostKind: .gui,
+            requiresValidatedHistoricalDaemon: false
+        )
+        let unpermissioned = PeekabooBridgeHandshakeResponse(
+            negotiatedVersion: PeekabooBridgeConstants.protocolVersion,
+            hostKind: .gui,
+            build: "stale-debug",
+            supportedOperations: [.captureScreen, .listApplications],
+            permissions: PermissionsStatus(
+                screenRecording: false,
+                accessibility: false,
+                appleScript: false,
+                postEvent: false
+            ),
+            enabledOperations: [.captureScreen, .listApplications],
+            permissionTags: [PeekabooBridgeOperation.captureScreen.rawValue: [.screenRecording]]
+        )
+
+        #expect(await RuntimeHostResolver.validateRemoteCandidate(
+            candidate,
+            handshake: unpermissioned,
+            options: CommandRuntimeOptions()
+        ) == nil)
+        #expect(BridgeCapabilityPolicy.explicitlyMissingRemotePermissions(
+            for: unpermissioned,
+            options: CommandRuntimeOptions()
+        ) == [.screenRecording])
+    }
+
+    @Test
+    func `Candidate validation rejects permission-less hosts even without permission tags`() async {
+        // Hosts that report permissions but predate permissionTags fall back to the client-side
+        // operation-to-permission mapping.
+        let candidate = RuntimeHostResolver.ImplicitRemoteCandidate(
+            socketPath: "/tmp/bridge.sock",
+            requireReusableDaemon: false,
+            requiredHostKind: nil,
+            requiresValidatedHistoricalDaemon: false
+        )
+        let untagged = PeekabooBridgeHandshakeResponse(
+            negotiatedVersion: PeekabooBridgeConstants.protocolVersion,
+            hostKind: .gui,
+            build: nil,
+            supportedOperations: [.captureScreen],
+            permissions: PermissionsStatus(
+                screenRecording: false,
+                accessibility: false,
+                appleScript: false,
+                postEvent: false
+            )
+        )
+
+        #expect(await RuntimeHostResolver.validateRemoteCandidate(
+            candidate,
+            handshake: untagged,
+            options: CommandRuntimeOptions()
+        ) == nil)
+    }
+
+    @Test
+    func `Candidate validation accepts hosts that omit the permission report`() async {
+        // Back-compat: older hosts do not include permissions in the handshake. Unknown is
+        // acceptable; only an explicit false rejects.
+        let candidate = RuntimeHostResolver.ImplicitRemoteCandidate(
+            socketPath: "/tmp/bridge.sock",
+            requireReusableDaemon: false,
+            requiredHostKind: .gui,
+            requiresValidatedHistoricalDaemon: false
+        )
+        let unknownPermissions = PeekabooBridgeHandshakeResponse(
+            negotiatedVersion: PeekabooBridgeConstants.protocolVersion,
+            hostKind: .gui,
+            build: nil,
+            supportedOperations: [.captureScreen]
+        )
+
+        #expect(await RuntimeHostResolver.validateRemoteCandidate(
+            candidate,
+            handshake: unknownPermissions,
+            options: CommandRuntimeOptions()
+        ) != nil)
+    }
+
+    @Test
+    func `Candidate validation selects hosts that hold the required permissions`() async {
+        let candidate = RuntimeHostResolver.ImplicitRemoteCandidate(
+            socketPath: "/tmp/bridge.sock",
+            requireReusableDaemon: false,
+            requiredHostKind: .gui,
+            requiresValidatedHistoricalDaemon: false
+        )
+        let permissioned = PeekabooBridgeHandshakeResponse(
+            negotiatedVersion: PeekabooBridgeConstants.protocolVersion,
+            hostKind: .gui,
+            build: nil,
+            supportedOperations: [.captureScreen],
+            permissions: PermissionsStatus(
+                screenRecording: true,
+                accessibility: true,
+                appleScript: true,
+                postEvent: true
+            ),
+            enabledOperations: [.captureScreen],
+            permissionTags: [PeekabooBridgeOperation.captureScreen.rawValue: [.screenRecording]]
+        )
+
+        #expect(await RuntimeHostResolver.validateRemoteCandidate(
+            candidate,
+            handshake: permissioned,
+            options: CommandRuntimeOptions()
+        ) != nil)
+    }
+
+    @Test
+    func `Required permissions follow the operations the command uses`() async {
+        let candidate = RuntimeHostResolver.ImplicitRemoteCandidate(
+            socketPath: "/tmp/bridge.sock",
+            requireReusableDaemon: false,
+            requiredHostKind: nil,
+            requiresValidatedHistoricalDaemon: false
+        )
+        let captureOnlyPermissions = PeekabooBridgeHandshakeResponse(
+            negotiatedVersion: PeekabooBridgeConstants.protocolVersion,
+            hostKind: .onDemand,
+            build: nil,
+            supportedOperations: [.captureScreen, .inspectAccessibilityTree],
+            permissions: PermissionsStatus(
+                screenRecording: true,
+                accessibility: false,
+                appleScript: false,
+                postEvent: false
+            ),
+            enabledOperations: [.captureScreen],
+            permissionTags: [
+                PeekabooBridgeOperation.captureScreen.rawValue: [.screenRecording],
+                PeekabooBridgeOperation.inspectAccessibilityTree.rawValue: [.accessibility],
+            ]
+        )
+
+        var inspectOptions = CommandRuntimeOptions()
+        inspectOptions.requiresInspectAccessibilityTree = true
+
+        #expect(await RuntimeHostResolver.validateRemoteCandidate(
+            candidate,
+            handshake: captureOnlyPermissions,
+            options: CommandRuntimeOptions()
+        ) != nil)
+        #expect(await RuntimeHostResolver.validateRemoteCandidate(
+            candidate,
+            handshake: captureOnlyPermissions,
+            options: inspectOptions
+        ) == nil)
+        #expect(BridgeCapabilityPolicy.explicitlyMissingRemotePermissions(
+            for: captureOnlyPermissions,
+            options: inspectOptions
+        ) == [.accessibility])
+    }
+
+    @Test
+    func `Permission request commands may target hosts that lack the permission`() async {
+        let candidate = RuntimeHostResolver.ImplicitRemoteCandidate(
+            socketPath: "/tmp/bridge.sock",
+            requireReusableDaemon: false,
+            requiredHostKind: .gui,
+            requiresValidatedHistoricalDaemon: false
+        )
+        let unpermissioned = PeekabooBridgeHandshakeResponse(
+            negotiatedVersion: PeekabooBridgeConstants.protocolVersion,
+            hostKind: .gui,
+            build: nil,
+            supportedOperations: [.captureScreen, .requestPostEventPermission],
+            permissions: PermissionsStatus(
+                screenRecording: false,
+                accessibility: false,
+                appleScript: false,
+                postEvent: false
+            ),
+            permissionTags: [PeekabooBridgeOperation.captureScreen.rawValue: [.screenRecording]]
+        )
+
+        var requestOptions = CommandRuntimeOptions()
+        requestOptions.requestsHostPermissionGrant = true
+
+        #expect(await RuntimeHostResolver.validateRemoteCandidate(
+            candidate,
+            handshake: unpermissioned,
+            options: requestOptions
+        ) != nil)
+    }
 }

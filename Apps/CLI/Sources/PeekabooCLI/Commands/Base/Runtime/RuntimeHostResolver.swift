@@ -94,11 +94,13 @@ enum RuntimeHostResolver {
             hostname: Host.current().name
         )
 
+        var permissionRejections: [String] = []
         if let resolved = await resolveRemoteServices(
             candidates: candidatePlan.candidates,
             identity: identity,
             options: options,
-            snapshotInvalidationRemoteSocketPaths: snapshotInvalidationRemoteSocketPaths
+            snapshotInvalidationRemoteSocketPaths: snapshotInvalidationRemoteSocketPaths,
+            permissionRejections: &permissionRejections
         ) {
             return resolved
         }
@@ -124,15 +126,21 @@ enum RuntimeHostResolver {
                     )],
                     identity: identity,
                     options: options,
-                    snapshotInvalidationRemoteSocketPaths: snapshotInvalidationRemoteSocketPaths
+                    snapshotInvalidationRemoteSocketPaths: snapshotInvalidationRemoteSocketPaths,
+                    permissionRejections: &permissionRejections
                 ) {
                 return resolved
             }
         }
 
+        // Name the hosts skipped for missing TCC permissions so a fallback is explainable
+        // instead of the previous silent selection of a permission-less bridge host.
+        let rejectionSummary = permissionRejections.isEmpty
+            ? ""
+            : "; rejected " + permissionRejections.joined(separator: "; ")
         return Resolution(
             services: RuntimeServiceFactory.makeLocalServices(options: options),
-            hostDescription: "local (in-process fallback)",
+            hostDescription: "local (in-process fallback\(rejectionSummary))",
             selectedRemoteSocketPath: nil,
             selectedRemoteHostProcessIdentifier: nil,
             snapshotInvalidationRemoteSocketPaths: snapshotInvalidationRemoteSocketPaths,
@@ -356,7 +364,8 @@ enum RuntimeHostResolver {
         candidates: [ImplicitRemoteCandidate],
         identity: PeekabooBridgeClientIdentity,
         options: CommandRuntimeOptions,
-        snapshotInvalidationRemoteSocketPaths: [String]
+        snapshotInvalidationRemoteSocketPaths: [String],
+        permissionRejections: inout [String]
     )
     async -> Resolution? {
         for candidate in candidates {
@@ -368,7 +377,21 @@ enum RuntimeHostResolver {
                     candidate,
                     handshake: handshake,
                     options: options
-                ) else { continue }
+                ) else {
+                    let missingPermissions = BridgeCapabilityPolicy.explicitlyMissingRemotePermissions(
+                        for: handshake,
+                        options: options
+                    )
+                    if !missingPermissions.isEmpty {
+                        let permissionNames = BridgeCapabilityPolicy
+                            .missingPermissionNames(missingPermissions)
+                            .joined(separator: ", ")
+                        permissionRejections.append(
+                            "\(handshake.hostKind.rawValue) host via \(socketPath) missing \(permissionNames)"
+                        )
+                    }
+                    continue
+                }
                 let reusableDaemonStatus = validation.reusableDaemonStatus
 
                 let targetedHotkeyAvailability = BridgeCapabilityPolicy.targetedHotkeyAvailability(for: handshake)

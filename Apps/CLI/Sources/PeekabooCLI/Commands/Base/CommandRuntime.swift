@@ -35,6 +35,9 @@ struct CommandRuntimeOptions {
     var usesPerToolSnapshotInvalidation = false
     var requiresExactWindowTargetedClicks = false
     var requiresPostEventClickPermission = false
+    /// Set for interactive permission-request commands, which must be able to reach a host that
+    /// still lacks the permission being requested.
+    var requestsHostPermissionGrant = false
 
     func makeConfiguration() -> CommandRuntime.Configuration {
         CommandRuntime.Configuration(
