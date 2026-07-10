@@ -33,6 +33,14 @@ protocol AutomationElementRepresenting: Sendable {
     /// (e.g. non-blocking `AXShowMenu`). In-memory test elements return `nil`.
     var underlyingAXElement: AXUIElement? { get }
 
+    /// Whether the element advertises `actionName`.
+    ///
+    /// This must query `AXUIElementCopyActionNames` — the dedicated actions API — rather than the
+    /// `AXActionNames` *attribute*. Many elements (notably SwiftUI `AXButton`s) return
+    /// `attributeUnsupported` for the attribute read even though `AXUIElementCopyActionNames`
+    /// reports `AXPress`, so relying on `actionNames` silently rejects pressable elements.
+    func supportsAction(_ actionName: String) -> Bool
+
     func performAutomationAction(_ actionName: String) throws
     func setAutomationValue(_ value: UIElementValue) throws
     func setAutomationFocused(_ focused: Bool) throws
@@ -43,6 +51,10 @@ protocol AutomationElementRepresenting: Sendable {
 extension AutomationElementRepresenting {
     var underlyingAXElement: AXUIElement? {
         nil
+    }
+
+    func supportsAction(_ actionName: String) -> Bool {
+        self.actionNames.contains(actionName)
     }
 }
 
@@ -166,6 +178,20 @@ struct AutomationElement: AutomationElementRepresenting {
     @MainActor
     var underlyingAXElement: AXUIElement? {
         self.element.underlyingElement
+    }
+
+    @MainActor
+    func supportsAction(_ actionName: String) -> Bool {
+        // Query the dedicated actions API. AXorcist's `supportedActions()` reads the `AXActionNames`
+        // attribute via `AXUIElementCopyAttributeValue`, which returns `attributeUnsupported` for
+        // many elements (e.g. SwiftUI buttons) even when `AXUIElementCopyActionNames` reports the
+        // action. Falling back to `actionNames` preserves behavior if the actions API itself fails.
+        var actionNames: CFArray?
+        let error = AXUIElementCopyActionNames(self.element.underlyingElement, &actionNames)
+        guard error == .success, let names = actionNames as? [String] else {
+            return self.actionNames.contains(actionName)
+        }
+        return names.contains(actionName)
     }
 
     @MainActor

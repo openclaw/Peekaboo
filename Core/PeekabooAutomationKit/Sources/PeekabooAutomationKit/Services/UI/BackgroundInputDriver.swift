@@ -48,11 +48,11 @@ enum BackgroundInputDriver {
 
     static func noActionableElementMessage(at point: CGPoint, targetProcessIdentifier: pid_t) -> String {
         """
-        No actionable accessibility element found at (\(Int(point.x)), \(Int(point.y))) in \
-        PID \(targetProcessIdentifier). Background clicks are delivered through accessibility \
-        actions and need a pressable element at the target point; positioned mouse events cannot \
-        be routed to a background process. Re-run with --foreground to focus the app and send a \
-        real mouse click.
+        No pressable accessibility element was found at (\(Int(point.x)), \(Int(point.y))) in \
+        PID \(targetProcessIdentifier). Background clicks press the accessibility element at the \
+        target point, and nothing pressable was found there — the point may be empty, a \
+        custom-drawn view, or an element that exposes no press action. Re-run with --foreground to \
+        focus the app and send a real mouse click at these coordinates.
         """
     }
 
@@ -93,10 +93,10 @@ enum BackgroundInputDriver {
             throw PeekabooError.permissionDeniedAccessibility
         }
 
-        let chain = self.hitTestElementChain(at: point, targetProcessIdentifier: targetProcessIdentifier)
-        guard let resolved = Self.positionalClickTarget(inChain: chain, at: point, button: button) else {
-            throw PeekabooError.operationError(
-                message: Self.noActionableElementMessage(at: point, targetProcessIdentifier: targetProcessIdentifier))
+        let candidates = self.hitTestCandidates(at: point, targetProcessIdentifier: targetProcessIdentifier)
+        guard let resolved = Self.positionalClickTarget(inCandidates: candidates, at: point, button: button) else {
+            throw PeekabooError.serviceUnavailable(
+                Self.noActionableElementMessage(at: point, targetProcessIdentifier: targetProcessIdentifier))
         }
 
         switch resolved.action {
@@ -117,29 +117,34 @@ enum BackgroundInputDriver {
 
     /// Picks the element that should receive a positional background click.
     ///
-    /// `chain` is the hit-tested element followed by its ancestors (nearest first). Hit-testing
-    /// usually returns a leaf (static text or image inside a button), so the chain is walked for
-    /// the first element that supports the required action and still contains the click point.
-    /// Left clicks on text inputs have no `AXPress`; those fall back to focusing the element,
-    /// mirroring `ActionInputDriver`'s focus-for-click behavior.
+    /// `candidates` is ordered: the hit-tested element first, then its descendants, then its
+    /// ancestors (see `hitTestCandidates`). The hit-test element is authoritative — macOS returned
+    /// it for this exact point — so it is never rejected on frame grounds; every other candidate
+    /// must still contain the point. The first enabled candidate that supports the required action
+    /// wins. SwiftUI hit-tests can land on a non-pressable container whose pressable target is a
+    /// descendant, so descendants are searched before ancestors. Left clicks on text inputs (which
+    /// have no `AXPress`) fall back to focusing the element, mirroring `ActionInputDriver`.
     @MainActor
     static func positionalClickTarget(
-        inChain chain: [any AutomationElementRepresenting],
+        inCandidates candidates: [any AutomationElementRepresenting],
         at point: CGPoint,
         button: MouseButton) -> (element: any AutomationElementRepresenting, action: PositionalClickAction)?
     {
-        let requiredAction = button == .right ? AXActionNames.kAXShowMenuAction : AXActionNames.kAXPressAction
-        let candidates = chain.filter { element in
+        guard let hit = candidates.first else { return nil }
+        // Trust the hit-test element regardless of its reported frame (coordinate-space quirks must
+        // not veto the element macOS resolved for the point); spatially filter the rest.
+        let spatiallyValid = [hit] + candidates.dropFirst().filter { element in
             guard let frame = element.frame else { return true }
             return frame.contains(point)
         }
 
-        if let actionable = candidates.first(where: { $0.isEnabled && $0.actionNames.contains(requiredAction) }) {
+        let requiredAction = button == .right ? AXActionNames.kAXShowMenuAction : AXActionNames.kAXPressAction
+        if let actionable = spatiallyValid.first(where: { $0.isEnabled && $0.supportsAction(requiredAction) }) {
             return (actionable, button == .right ? .showMenu : .press)
         }
 
         guard button == .left else { return nil }
-        let focusable = candidates.first { element in
+        let focusable = spatiallyValid.first { element in
             ActionInputDriver.canFocusForClick(
                 role: element.role,
                 subrole: element.subrole,
@@ -149,8 +154,14 @@ enum BackgroundInputDriver {
         return focusable.map { ($0, .focus) }
     }
 
+    /// Gathers positional-click candidates for `point`, ordered hit → descendants → ancestors.
+    ///
+    /// The hit-test element is where macOS says the point lands. Descendants are searched next
+    /// because SwiftUI frequently hit-tests to a container whose pressable button is nested inside
+    /// it; ancestors are the last resort. All three sets are bounded so a deep tree cannot stall
+    /// the click.
     @MainActor
-    private static func hitTestElementChain(
+    private static func hitTestCandidates(
         at point: CGPoint,
         targetProcessIdentifier: pid_t) -> [any AutomationElementRepresenting]
     {
@@ -158,15 +169,37 @@ enum BackgroundInputDriver {
             return []
         }
 
-        var chain: [any AutomationElementRepresenting] = []
-        var current: Element? = hit
-        var remainingDepth = 8
-        while let element = current, remainingDepth > 0 {
-            chain.append(AutomationElement(element))
+        var candidates: [any AutomationElementRepresenting] = [AutomationElement(hit)]
+        candidates.append(contentsOf: self.descendantsBreadthFirst(of: hit, maxVisited: 256, maxDepth: 8))
+
+        var current = hit.parent()
+        var remainingAncestors = 8
+        while let element = current, remainingAncestors > 0 {
+            candidates.append(AutomationElement(element))
             current = element.parent()
-            remainingDepth -= 1
+            remainingAncestors -= 1
         }
-        return chain
+        return candidates
+    }
+
+    @MainActor
+    private static func descendantsBreadthFirst(
+        of root: Element,
+        maxVisited: Int,
+        maxDepth: Int) -> [any AutomationElementRepresenting]
+    {
+        var result: [any AutomationElementRepresenting] = []
+        var queue: [(element: Element, depth: Int)] = (root.children() ?? []).map { ($0, 1) }
+        var visited = 0
+        while !queue.isEmpty, visited < maxVisited {
+            let (element, depth) = queue.removeFirst()
+            visited += 1
+            result.append(AutomationElement(element))
+            if depth < maxDepth {
+                queue.append(contentsOf: (element.children() ?? []).map { ($0, depth + 1) })
+            }
+        }
+        return result
     }
 
     @MainActor
