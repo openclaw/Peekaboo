@@ -72,47 +72,41 @@ extension WindowCommand {
                     reason: "window move"
                 )
 
-                // Create result with new bounds
-                let updatedInfo = windowInfo.map { info in
-                    ServiceWindowInfo(
-                        windowID: info.windowID,
-                        title: info.title,
-                        bounds: CGRect(origin: newOrigin, size: info.bounds.size),
-                        isMinimized: info.isMinimized,
-                        isMainWindow: info.isMainWindow,
-                        windowLevel: info.windowLevel,
-                        alpha: info.alpha,
-                        index: info.index,
-                        isOffScreen: info.isOffScreen
-                    )
-                }
-
+                // Read the frame back so the report shows what the OS actually applied.
                 let refreshedWindowInfo = await self.windowOptions.refetchWindowInfo(
                     services: self.services,
                     logger: self.logger,
                     context: "window-move"
                 )
-                let finalWindowInfo = refreshedWindowInfo ?? updatedInfo ?? windowInfo
+                let verified = try verifiedWindowActionResult(
+                    action: "move",
+                    appName: appName,
+                    requested: WindowGeometryExpectation(origin: newOrigin, size: nil),
+                    originalInfo: windowInfo,
+                    refreshedInfo: refreshedWindowInfo
+                )
 
                 logWindowAction(
                     action: "move",
                     appName: appName,
-                    windowInfo: finalWindowInfo
+                    windowInfo: verified.windowInfo
                 )
 
-                let data = createWindowActionResult(
-                    action: "move",
-                    success: true,
-                    windowInfo: finalWindowInfo,
-                    appName: appName
-                )
-
-                output(data) {
-                    print(
-                        "Successfully moved window '\(finalWindowInfo?.title ?? "Untitled")' to (\(self.x), \(self.y))"
-                    )
+                output(verified.result) {
+                    let title = verified.windowInfo?.title ?? "Untitled"
+                    let actualOrigin = verified.windowInfo?.bounds.origin ?? newOrigin
+                    if let warning = verified.warning {
+                        print("Moved window '\(title)' to \(formatWindowPoint(actualOrigin)) " +
+                            "(requested \(formatWindowPoint(newOrigin)))")
+                        print("Warning: \(warning)")
+                    } else {
+                        print("Successfully moved window '\(title)' to \(formatWindowPoint(actualOrigin))")
+                    }
                 }
 
+            } catch let geometryError as WindowGeometryIgnoredError {
+                handleError(geometryError, customCode: .WINDOW_MANIPULATION_ERROR)
+                throw ExitCode(1)
             } catch {
                 handleError(error)
                 throw ExitCode(1)
@@ -187,30 +181,41 @@ extension WindowCommand {
                     reason: "window resize"
                 )
 
+                // Read the frame back: AX accepts resizes the app then clamps (e.g. minimum size).
                 let refreshedWindowInfo = await self.windowOptions.refetchWindowInfo(
                     services: self.services,
                     logger: self.logger,
                     context: "window-resize"
                 )
-                let finalWindowInfo = refreshedWindowInfo ?? windowInfo
+                let verified = try verifiedWindowActionResult(
+                    action: "resize",
+                    appName: appName,
+                    requested: WindowGeometryExpectation(origin: nil, size: newSize),
+                    originalInfo: windowInfo,
+                    refreshedInfo: refreshedWindowInfo
+                )
+
                 logWindowAction(
                     action: "resize",
                     appName: appName,
-                    windowInfo: finalWindowInfo
+                    windowInfo: verified.windowInfo
                 )
 
-                let data = createWindowActionResult(
-                    action: "resize",
-                    success: true,
-                    windowInfo: finalWindowInfo,
-                    appName: appName
-                )
-
-                output(data) {
-                    let title = finalWindowInfo?.title ?? "Untitled"
-                    print("Successfully resized window '\(title)' to \(self.width)x\(self.height)")
+                output(verified.result) {
+                    let title = verified.windowInfo?.title ?? "Untitled"
+                    let actualSize = verified.windowInfo?.bounds.size ?? newSize
+                    if let warning = verified.warning {
+                        print("Resized window '\(title)' to \(formatWindowSize(actualSize)) " +
+                            "(requested \(formatWindowSize(newSize)))")
+                        print("Warning: \(warning)")
+                    } else {
+                        print("Successfully resized window '\(title)' to \(formatWindowSize(actualSize))")
+                    }
                 }
 
+            } catch let geometryError as WindowGeometryIgnoredError {
+                handleError(geometryError, customCode: .WINDOW_MANIPULATION_ERROR)
+                throw ExitCode(1)
             } catch {
                 handleError(error)
                 throw ExitCode(1)
@@ -295,31 +300,45 @@ extension WindowCommand {
                     reason: "window set-bounds"
                 )
 
+                // Read the frame back so the report shows what the OS actually applied.
                 let refreshedWindowInfo = await self.windowOptions.refetchWindowInfo(
                     services: self.services,
                     logger: self.logger,
                     context: "window-set-bounds"
                 )
-                let finalWindowInfo = refreshedWindowInfo ?? windowInfo
+                let verified = try verifiedWindowActionResult(
+                    action: "set-bounds",
+                    appName: appName,
+                    requested: WindowGeometryExpectation(origin: newBounds.origin, size: newBounds.size),
+                    originalInfo: windowInfo,
+                    refreshedInfo: refreshedWindowInfo
+                )
+
                 logWindowAction(
                     action: "set-bounds",
                     appName: appName,
-                    windowInfo: finalWindowInfo
+                    windowInfo: verified.windowInfo
                 )
 
-                let data = createWindowActionResult(
-                    action: "set-bounds",
-                    success: true,
-                    windowInfo: finalWindowInfo,
-                    appName: appName
-                )
-
-                output(data) {
-                    let title = finalWindowInfo?.title ?? "Untitled"
-                    let boundsDescription = "(\(self.x), \(self.y)) \(self.width)x\(self.height)"
-                    print("Successfully set window '\(title)' bounds to \(boundsDescription)")
+                output(verified.result) {
+                    let title = verified.windowInfo?.title ?? "Untitled"
+                    let actualBounds = verified.windowInfo?.bounds ?? newBounds
+                    let actualDescription =
+                        "\(formatWindowPoint(actualBounds.origin)) \(formatWindowSize(actualBounds.size))"
+                    if let warning = verified.warning {
+                        let requestedDescription =
+                            "\(formatWindowPoint(newBounds.origin)) \(formatWindowSize(newBounds.size))"
+                        print("Set window '\(title)' bounds to \(actualDescription) " +
+                            "(requested \(requestedDescription))")
+                        print("Warning: \(warning)")
+                    } else {
+                        print("Successfully set window '\(title)' bounds to \(actualDescription)")
+                    }
                 }
 
+            } catch let geometryError as WindowGeometryIgnoredError {
+                handleError(geometryError, customCode: .WINDOW_MANIPULATION_ERROR)
+                throw ExitCode(1)
             } catch {
                 handleError(error)
                 throw ExitCode(1)

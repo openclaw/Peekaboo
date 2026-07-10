@@ -224,21 +224,36 @@ extension WindowCommand {
                     runtime: self.resolvedRuntime,
                     reason: "window maximize"
                 )
+
+                // Read the frame back so new_bounds reflects the maximized frame, not the old one.
+                let refreshedWindowInfo = await self.windowOptions.refetchWindowInfo(
+                    services: self.services,
+                    logger: self.logger,
+                    context: "window-maximize"
+                )
+                let finalWindowInfo = refreshedWindowInfo ?? windowInfo
                 logWindowAction(
                     action: "maximize",
                     appName: appName,
-                    windowInfo: windowInfo
+                    windowInfo: finalWindowInfo
                 )
 
+                let warning: String? = refreshedWindowInfo == nil
+                    ? "Could not read back the window frame after maximize; reported bounds may be stale."
+                    : nil
                 let data = createWindowActionResult(
                     action: "maximize",
                     success: true,
-                    windowInfo: windowInfo,
-                    appName: appName
+                    windowInfo: finalWindowInfo,
+                    appName: appName,
+                    warning: warning
                 )
 
                 output(data) {
-                    print("Successfully maximized window '\(windowInfo?.title ?? "Untitled")' of \(appName)")
+                    print("Successfully maximized window '\(finalWindowInfo?.title ?? "Untitled")' of \(appName)")
+                    if let warning {
+                        print("Warning: \(warning)")
+                    }
                 }
 
             } catch {

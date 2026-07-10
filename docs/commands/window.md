@@ -21,7 +21,11 @@ read_when:
 
 ## Implementation notes
 - Every action validates that at least an app, PID, or window ID is supplied; optional `--window-title` and `--window-index` disambiguate when multiple windows exist.
-- All geometry-changing commands re-fetch window info after acting (when possible) and stuff the updated bounds into the JSON payload so automated tests can assert the final rectangle.
+- `move`, `resize`, `set-bounds`, and `maximize` read the window frame back after acting; `new_bounds` in the JSON payload always reflects the frame the window actually settled at, not the requested one.
+- `move`, `resize`, and `set-bounds` also verify the achieved frame against the request. macOS accepts geometry requests and then lets the app constrain them (e.g. a SwiftUI `minWidth`/`minHeight`), so the request can be applied only partially or not at all:
+  - Partially applied (frame changed but missed the request): the command still succeeds, `requested_bounds` and a `warning` string are included in the JSON payload, and the text output prints the actual frame plus the warning.
+  - Fully ignored (frame did not change at all): the command fails with exit code 1 and error code `WINDOW_MANIPULATION_ERROR`, because reporting success would silently lie to scripts. Typical cause: shrinking a window below its minimum size when it already sits at that minimum.
+  - If the frame cannot be re-read after the operation, the command succeeds with a `warning` that the reported bounds may be stale.
 - `focus` routes through `WindowServiceBridge.focusWindow` and honors the global focus flags (`--space-switch` to jump Spaces, `--bring-to-current-space` to move the window instead, etc.). It logs debug output when focus fails so agents know to fall back.
 - `focus --verify` checks the frontmost app (and window ID when available) before returning success.
 - When `window list` runs, it simply calls the same helper as `peekaboo list windows` but saves you from retyping the longer command.

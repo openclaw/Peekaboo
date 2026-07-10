@@ -7,7 +7,12 @@ struct WindowActionResult: Codable {
     let success: Bool
     let app_name: String
     let window_title: String?
+    /// The frame the window actually has after the operation (read back from the OS).
     let new_bounds: WindowBounds?
+    /// The frame the command asked for; differs from `new_bounds` when the app constrained it.
+    let requested_bounds: WindowBounds?
+    /// Set when the achieved geometry differs from the requested one or could not be verified.
+    let warning: String?
 }
 
 // MARK: - Subcommand Conformances

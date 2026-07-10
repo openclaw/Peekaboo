@@ -133,7 +133,9 @@ func createWindowActionResult(
     action: String,
     success: Bool,
     windowInfo: ServiceWindowInfo?,
-    appName: String? = nil
+    appName: String? = nil,
+    requestedBounds: WindowBounds? = nil,
+    warning: String? = nil
 ) -> WindowActionResult {
     let bounds: WindowBounds? = if let windowInfo {
         WindowBounds(
@@ -151,7 +153,9 @@ func createWindowActionResult(
         success: success,
         app_name: appName ?? "Unknown",
         window_title: windowInfo?.title,
-        new_bounds: bounds
+        new_bounds: bounds,
+        requested_bounds: requestedBounds,
+        warning: warning
     )
 }
 
