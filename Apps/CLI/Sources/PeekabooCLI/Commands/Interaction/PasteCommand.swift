@@ -352,7 +352,11 @@ struct PasteCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
             success: true,
             pastedUti: currentClipboard?.utiIdentifier ?? "current-clipboard",
             pastedSize: currentClipboard?.data.count ?? 0,
-            pastedTextPreview: currentClipboard?.textPreview,
+            // Never echo ambient clipboard content into structured output: the
+            // user did not supply it to this command, and JSON lands in agent/CI
+            // logs. Explicit-payload pastes still report the preview the caller
+            // provided themselves.
+            pastedTextPreview: nil,
             previousClipboardPresent: currentClipboard != nil,
             restoredUti: nil,
             restoredSize: nil,

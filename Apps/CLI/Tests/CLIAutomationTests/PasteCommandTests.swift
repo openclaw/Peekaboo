@@ -96,7 +96,8 @@ struct PasteCommandTests {
             as: CodableJSONResponse<PasteResult>.self
         )
         #expect(payload.data.deliveryMode == "foreground")
-        #expect(payload.data.pastedTextPreview == "current")
+        // Ambient clipboard content must not leak into structured output.
+        #expect(payload.data.pastedTextPreview == nil)
         #expect(payload.data.previousClipboardPresent == true)
         #expect(payload.data.restoreSucceeded == true)
     }
