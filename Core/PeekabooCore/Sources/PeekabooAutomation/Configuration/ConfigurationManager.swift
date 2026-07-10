@@ -135,6 +135,22 @@ public final class ConfigurationManager: @unchecked Sendable {
         return self.configuration
     }
 
+    private func migrateHardcodedCredentials(from config: Configuration) throws {
+        guard let apiKey = config.aiProviders?.openaiApiKey,
+              !apiKey.hasPrefix("${"),
+              !apiKey.isEmpty
+        else {
+            return
+        }
+
+        try self.saveCredentials(["OPENAI_API_KEY": apiKey])
+
+        var updatedConfig = config
+        updatedConfig.aiProviders?.openaiApiKey = nil
+        let data = try JSONCoding.encoder.encode(updatedConfig)
+        try data.write(to: URL(fileURLWithPath: Self.configPath), options: .atomic)
+    }
+
     /// Reload `config.json` only if it changed on disk since the last load.
     ///
     /// Long-running processes (e.g. an MCP server) cache the configuration at startup,
@@ -151,21 +167,5 @@ public final class ConfigurationManager: @unchecked Sendable {
 
     private static func modificationDate(ofFileAtPath path: String) -> Date? {
         (try? FileManager.default.attributesOfItem(atPath: path))?[.modificationDate] as? Date
-    }
-
-    private func migrateHardcodedCredentials(from config: Configuration) throws {
-        guard let apiKey = config.aiProviders?.openaiApiKey,
-              !apiKey.hasPrefix("${"),
-              !apiKey.isEmpty
-        else {
-            return
-        }
-
-        try self.saveCredentials(["OPENAI_API_KEY": apiKey])
-
-        var updatedConfig = config
-        updatedConfig.aiProviders?.openaiApiKey = nil
-        let data = try JSONCoding.encoder.encode(updatedConfig)
-        try data.write(to: URL(fileURLWithPath: Self.configPath), options: .atomic)
     }
 }
