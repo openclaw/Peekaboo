@@ -125,6 +125,15 @@ extension AgentCommand {
     func validatedModelSelection(configuration: PeekabooCore.ConfigurationManager? = nil) throws -> LanguageModel? {
         guard let modelString = self.model else { return nil }
         guard let parsed = self.parseModelString(modelString, configuration: configuration) else {
+            // A model that parses but lacks tool support is a real, installed model —
+            // saying "unsupported" and listing an allowlist implies the name is wrong.
+            if let known = LanguageModel.parse(from: modelString), !known.supportsTools {
+                throw PeekabooError.invalidInput(
+                    "Model '\(modelString)' does not support tool calling, which `peekaboo agent` requires. " +
+                        "Use it for vision instead (`peekaboo image --analyze` / `see --analyze`), " +
+                        "or pick a tool-capable model."
+                )
+            }
             throw PeekabooError.invalidInput(
                 "Unsupported model '\(modelString)'. Allowed values: \(Self.allowedModelList)"
             )

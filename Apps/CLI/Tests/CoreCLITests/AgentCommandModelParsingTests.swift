@@ -82,6 +82,35 @@ struct AgentCommandTests {
     }
 
     @Test
+    @MainActor
+    func `Tool-incapable models explain the tool requirement instead of claiming unsupported`() throws {
+        // A real, installed vision model. The agent rejects it for lacking tool
+        // support, so the message must say that rather than list an allowlist and
+        // imply the name is wrong.
+        var command = try AgentCommand.parse([])
+        command.model = "ollama/qwen2.5vl:3b"
+        do {
+            _ = try command.validatedModelSelection()
+            Issue.record("expected a validation error for a tool-incapable model")
+        } catch let error as PeekabooError {
+            let message = error.localizedDescription
+            #expect(message.contains("does not support tool calling"))
+            #expect(message.contains("--analyze"))
+            #expect(!message.contains("Allowed values"))
+        }
+
+        // An unknown name keeps the allowlist hint.
+        var unknown = try AgentCommand.parse([])
+        unknown.model = "definitely-not-a-model-xyz"
+        do {
+            _ = try unknown.validatedModelSelection()
+            Issue.record("expected a validation error for an unknown model")
+        } catch let error as PeekabooError {
+            #expect(error.localizedDescription.contains("Allowed values"))
+        }
+    }
+
+    @Test
     func `Current Gemini models are accepted`() throws {
         let command = try AgentCommand.parse([])
 
