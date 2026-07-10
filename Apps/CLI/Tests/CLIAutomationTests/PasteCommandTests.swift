@@ -7,6 +7,32 @@ import Testing
 struct PasteCommandTests {
     @Test
     @MainActor
+    func `Literally bare paste invocation executes instead of printing help`() async throws {
+        // Regression: with showHelpOnEmptyInvocation the router intercepted the
+        // exact argv ["paste"] and printed help, so the documented default
+        // invocation never sent Cmd+V. Flagged variants like ["paste", "--json"]
+        // bypass that interception and cannot catch this.
+        let automation = StubAutomationService()
+        let clipboard = StubClipboardService()
+        clipboard.current = ClipboardReadResult(
+            utiIdentifier: "public.utf8-plain-text",
+            data: Data("current".utf8),
+            textPreview: "current"
+        )
+        let services = TestServicesFactory.makePeekabooServices(
+            clipboard: clipboard,
+            automation: automation
+        )
+
+        let result = try await InProcessCommandRunner.run(["paste"], services: services)
+
+        #expect(result.exitStatus == 0)
+        #expect(automation.hotkeyCalls.map(\.keys) == ["cmd,v"])
+        #expect(!result.stdout.contains("Usage"))
+    }
+
+    @Test
+    @MainActor
     func `Bare paste sends current clipboard without mutating clipboard`() async throws {
         let automation = StubAutomationService()
         let clipboard = StubClipboardService()

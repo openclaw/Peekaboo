@@ -455,7 +455,9 @@ extension PasteCommand: ParsableCommand {
                       peekaboo paste --data-base64 \"$BASE64\" --uti public.rtf --also-text \"fallback\" --app TextEdit
                       peekaboo paste --file-path /tmp/snippet.png --app Notes
                 """,
-                showHelpOnEmptyInvocation: true
+                // Bare `peekaboo paste` pastes the current clipboard; routing it to help
+                // would make the documented default invocation a no-op.
+                showHelpOnEmptyInvocation: false
             )
         }
     }
