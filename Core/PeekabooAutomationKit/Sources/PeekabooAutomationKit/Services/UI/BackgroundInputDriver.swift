@@ -56,6 +56,16 @@ enum BackgroundInputDriver {
         """
     }
 
+    static func occludedWindowMessage(at point: CGPoint, targetWindowID: CGWindowID) -> String {
+        """
+        Point (\(Int(point.x)), \(Int(point.y))) is occluded for the pinned target window \
+        \(targetWindowID): accessibility hit-testing resolved an element in a different window of \
+        the same app. Background clicks press the frontmost element at the point and cannot reach \
+        an overlapped window. Move the overlapping window aside, or re-run with --foreground to \
+        raise and click the target window.
+        """
+    }
+
     /// Deliver a positional click to a background process via accessibility.
     ///
     /// Synthetic positioned mouse events are intentionally not used: `SLEventPostToPid` /
@@ -97,6 +107,14 @@ enum BackgroundInputDriver {
         guard let resolved = Self.positionalClickTarget(inCandidates: candidates, at: point, button: button) else {
             throw PeekabooError.serviceUnavailable(
                 Self.noActionableElementMessage(at: point, targetProcessIdentifier: targetProcessIdentifier))
+        }
+
+        // AX hit-testing is only PID-scoped: if an exact window was pinned, verify the element we
+        // are about to press actually lives in that window. Another window of the same process can
+        // overlap the point, in which case the hit resolves to the frontmost window's element and
+        // pressing it would silently click the wrong window.
+        if let targetWindowID {
+            try self.assertBelongsToTargetWindow(resolved.element, targetWindowID: targetWindowID, at: point)
         }
 
         switch resolved.action {
@@ -160,6 +178,28 @@ enum BackgroundInputDriver {
     /// because SwiftUI frequently hit-tests to a container whose pressable button is nested inside
     /// it; ancestors are the last resort. All three sets are bounded so a deep tree cannot stall
     /// the click.
+    /// Rejects a resolved element that does not belong to the pinned `targetWindowID`.
+    ///
+    /// `_AXUIElementGetWindow` (via `AXWindowResolver`) returns the element's containing window in
+    /// the same CGWindowID namespace as the pinning selector. A `nil` window id means the element
+    /// exposes no window (or the lookup failed); for a pinned exact-window click that is treated as
+    /// a mismatch so the click is never delivered to an unverified window.
+    @MainActor
+    private static func assertBelongsToTargetWindow(
+        _ element: any AutomationElementRepresenting,
+        targetWindowID: CGWindowID,
+        at point: CGPoint) throws
+    {
+        guard let axElement = element.underlyingAXElement else {
+            // In-memory elements (tests) carry no AX identity and cannot be window-verified.
+            return
+        }
+        guard AXWindowResolver().windowID(from: axElement) == targetWindowID else {
+            throw PeekabooError.serviceUnavailable(
+                Self.occludedWindowMessage(at: point, targetWindowID: targetWindowID))
+        }
+    }
+
     @MainActor
     private static func hitTestCandidates(
         at point: CGPoint,

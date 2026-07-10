@@ -645,7 +645,7 @@ struct ClickCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
             // click". Element/query targets are resolved to their adjusted screen point and
             // dispatched as a real coordinate click so double/right-click semantics hold,
             // instead of silently degrading to an AX press.
-            let resolvedPoint = await self.foregroundMousePoint(
+            let resolvedPoint = try await self.foregroundMousePoint(
                 for: target,
                 resolvedElement: context.resolvedElement,
                 snapshotId: effectiveSnapshotId
@@ -686,7 +686,7 @@ struct ClickCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
         for target: ClickTarget,
         resolvedElement: DetectedElement?,
         snapshotId: String?
-    ) async -> CGPoint? {
+    ) async throws -> CGPoint? {
         if case .coordinates = target {
             return nil
         }
@@ -701,6 +701,9 @@ struct ClickCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
                 snapshots: self.services.snapshots
             )
             return resolution.point
+        } catch let error as CancellationError {
+            // A cancelled interaction must abort, not fall back to stale bounds and still click.
+            throw error
         } catch {
             self.logger.debug("Foreground click point resolution fell back to bounds: \(error.localizedDescription)")
             return CGPoint(x: resolvedElement.bounds.midX, y: resolvedElement.bounds.midY)

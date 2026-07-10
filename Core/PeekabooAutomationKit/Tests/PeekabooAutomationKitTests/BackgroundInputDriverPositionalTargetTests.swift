@@ -208,6 +208,14 @@ struct BackgroundInputDriverPositionalTargetTests {
         #expect(BackgroundInputDriver.doubleClickUnsupportedMessage.contains("--foreground"))
         #expect(BackgroundInputDriver.middleClickUnsupportedMessage.contains("--foreground"))
     }
+
+    @Test
+    func `occluded window message names the pinned window and the escape hatches`() {
+        let message = BackgroundInputDriver.occludedWindowMessage(at: CGPoint(x: 2396, y: 162), targetWindowID: 3279)
+        #expect(message.contains("3279"))
+        #expect(message.contains("(2396, 162)"))
+        #expect(message.contains("--foreground"))
+    }
 }
 
 @MainActor
