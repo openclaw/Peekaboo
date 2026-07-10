@@ -69,6 +69,7 @@ MCP Server → peekaboo CLI → VisualizerEventStore → Distributed Notificatio
 
 - `PEEKABOO_VISUAL_FEEDBACK=false` – disable the client entirely (no files, no notifications).
 - `PEEKABOO_VISUAL_SCREENSHOTS=false` – skip screenshot flash events but allow the rest.
+- `PEEKABOO_VISUAL_ELEMENT_BOXES=true|false` – opt in to (or force off) the per-element bounding boxes during `see`; they default to off and the env var beats `visualizer.elementDetectionEnabled` in `config.json`.
 - `PEEKABOO_VISUALIZER_MASK_TYPED_TEXT=true` – always mask typed characters as bullets. By default the typing HUD shows the text verbatim (that's the point of the caption); secure text fields are detected and masked automatically before the event is persisted.
 - `PEEKABOO_VISUALIZER_STDOUT=true|false` – force VisualizationClient logs to stderr regardless of bundle context.
 - `PEEKABOO_VISUALIZER_STORAGE=/path` – override the shared directory.
