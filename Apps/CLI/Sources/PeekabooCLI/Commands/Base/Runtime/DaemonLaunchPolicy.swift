@@ -18,6 +18,32 @@ enum DaemonLaunchPolicy {
         }
     }
 
+    enum DaemonLaunchError: LocalizedError {
+        case executableNotFound(argument: String?)
+        case launchFailed(executableURL: URL, underlyingError: any Error)
+        case exited(executableURL: URL, status: Int32, logURL: URL)
+        case timedOut(timeout: TimeInterval, logURL: URL)
+
+        var errorDescription: String? {
+            switch self {
+            case let .executableNotFound(argument):
+                let executable = argument.map { "'\($0)'" } ?? "the current executable"
+                return "Could not resolve \(executable) to launch the Peekaboo daemon"
+            case let .launchFailed(executableURL, underlyingError):
+                return "Could not launch the Peekaboo daemon at \(executableURL.path): " +
+                    underlyingError.localizedDescription
+            case let .exited(executableURL, status, logURL):
+                return "Peekaboo daemon at \(executableURL.path) exited before becoming ready " +
+                    "(status \(status)); see \(logURL.path)"
+            case let .timedOut(timeout, logURL):
+                let seconds = timeout.rounded() == timeout
+                    ? String(Int(timeout))
+                    : String(format: "%.1f", timeout)
+                return "Peekaboo daemon did not become ready within \(seconds)s; see \(logURL.path)"
+            }
+        }
+    }
+
     enum SocketAvailability: Equatable {
         case available
         case reusableDaemon
@@ -71,6 +97,42 @@ enum DaemonLaunchPolicy {
             "\(fileSize)",
             "\(modificationBits)",
         ].joined(separator: "|")
+    }
+
+    static func daemonExecutableURL(
+        bundleExecutableURL: URL? = Bundle.main.executableURL,
+        arguments: [String] = CommandLine.arguments,
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        currentDirectoryURL: URL = URL(
+            fileURLWithPath: FileManager.default.currentDirectoryPath,
+            isDirectory: true
+        ),
+        isExecutableFile: (String) -> Bool = { FileManager.default.isExecutableFile(atPath: $0) }
+    ) -> URL? {
+        // Foundation's Process launches an exact filesystem path; it never searches PATH for a bare argv[0].
+        if let bundleExecutableURL, bundleExecutableURL.isFileURL {
+            return bundleExecutableURL.standardizedFileURL
+        }
+
+        guard let argument = arguments.first?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !argument.isEmpty
+        else { return nil }
+
+        if argument.contains("/") {
+            return URL(fileURLWithPath: argument, relativeTo: currentDirectoryURL).standardizedFileURL
+        }
+
+        guard let path = environment["PATH"] else { return nil }
+        for pathComponent in path.split(separator: ":", omittingEmptySubsequences: false) {
+            let directoryURL = pathComponent.isEmpty
+                ? currentDirectoryURL
+                : URL(fileURLWithPath: String(pathComponent), relativeTo: currentDirectoryURL)
+            let candidate = directoryURL.appendingPathComponent(argument).standardizedFileURL
+            if isExecutableFile(candidate.path) {
+                return candidate
+            }
+        }
+        return nil
     }
 
     private enum ByteOrder {
@@ -386,7 +448,7 @@ enum DaemonLaunchPolicy {
                DaemonControlClient.isIdleForMigration(legacyStatus) {
                 launchArguments = migrationArguments
 
-                guard let replacement = await launchDaemon(
+                guard let replacement = try? await launchDaemon(
                     socketPath: socketPath,
                     arguments: launchArguments
                 )
@@ -437,10 +499,15 @@ enum DaemonLaunchPolicy {
             )
         }
 
-        return await self.launchDaemon(
-            socketPath: socketPath,
-            arguments: launchArguments
-        ) != nil ? socketPath : nil
+        do {
+            _ = try await self.launchDaemon(
+                socketPath: socketPath,
+                arguments: launchArguments
+            )
+            return socketPath
+        } catch {
+            return nil
+        }
     }
 
     static func compatibleLegacyFallbackSocketPath(for status: PeekabooDaemonStatus) -> String? {
@@ -541,40 +608,89 @@ enum DaemonLaunchPolicy {
     static func launchDaemon(
         socketPath: String,
         arguments: [String],
-        timeout: TimeInterval = 3
-    ) async -> LaunchResult? {
-        let executable = CommandLine.arguments.first ?? "/usr/local/bin/peekaboo"
+        timeout: TimeInterval = 3,
+        executableURL: URL? = nil,
+        logHandle: FileHandle? = nil
+    ) async throws -> LaunchResult {
+        try Task.checkCancellation()
+        guard let executableURL = executableURL ?? self.daemonExecutableURL() else {
+            throw DaemonLaunchError.executableNotFound(argument: CommandLine.arguments.first)
+        }
+
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: executable)
+        process.executableURL = executableURL
         process.arguments = arguments
-        let logHandle = DaemonPaths.openDaemonLogForAppend() ?? FileHandle.nullDevice
-        process.standardOutput = logHandle
-        process.standardError = logHandle
+        let daemonLogURL = DaemonPaths.daemonLogURL()
+        let outputHandle = logHandle ?? DaemonPaths.openDaemonLogForAppend() ?? FileHandle.nullDevice
+        process.standardOutput = outputHandle
+        process.standardError = outputHandle
         process.standardInput = FileHandle.nullDevice
 
         do {
             try process.run()
         } catch {
-            return nil
+            throw DaemonLaunchError.launchFailed(executableURL: executableURL, underlyingError: error)
         }
 
         let deadline = Date().addingTimeInterval(timeout)
         let client = DaemonControlClient(socketPath: socketPath)
         while Date() < deadline {
-            if let status = await client.fetchReusableDaemonStatus() {
+            let status = await client.fetchReusableDaemonStatus()
+            if Task.isCancelled {
+                await self.terminateLaunchedProcess(process)
+                throw CancellationError()
+            }
+            if let status {
                 let processID = process.processIdentifier
-                if status.pid != processID, process.isRunning {
-                    process.terminate()
+                if status.pid != processID {
+                    await self.terminateLaunchedProcess(process)
                 }
                 return LaunchResult(status: status, processID: processID)
             }
-            try? await Task.sleep(nanoseconds: 100_000_000)
-            guard !Task.isCancelled else { break }
+            if !process.isRunning {
+                process.waitUntilExit()
+                throw DaemonLaunchError.exited(
+                    executableURL: executableURL,
+                    status: process.terminationStatus,
+                    logURL: daemonLogURL
+                )
+            }
+            do {
+                try await Task.sleep(nanoseconds: 100_000_000)
+            } catch {
+                await self.terminateLaunchedProcess(process)
+                throw error
+            }
+        }
+        if !process.isRunning {
+            process.waitUntilExit()
+            throw DaemonLaunchError.exited(
+                executableURL: executableURL,
+                status: process.terminationStatus,
+                logURL: daemonLogURL
+            )
+        }
+        await self.terminateLaunchedProcess(process)
+        throw DaemonLaunchError.timedOut(timeout: timeout, logURL: daemonLogURL)
+    }
+
+    private static func terminateLaunchedProcess(_ process: Process) async {
+        guard process.isRunning else {
+            process.waitUntilExit()
+            return
+        }
+
+        process.terminate()
+        let deadline = Date().addingTimeInterval(0.5)
+        while process.isRunning, Date() < deadline {
+            _ = await Task.detached {
+                usleep(20000)
+            }.value
         }
         if process.isRunning {
-            process.terminate()
+            kill(process.processIdentifier, SIGKILL)
         }
-        return nil
+        process.waitUntilExit()
     }
 
     static func stopReplacement(

@@ -15,7 +15,9 @@ enum TestChildProcess {
 
     static func runPeekaboo(
         _ arguments: [String],
-        environment extraEnvironment: [String: String] = [:]
+        environment extraEnvironment: [String: String] = [:],
+        executablePathOverride: String? = nil,
+        workingDirectory: URL? = nil
     ) async throws -> Result {
         let binaryURL = try Self.peekabooBinaryURL()
         var environmentOverrides: [Environment.Key: String?] = [:]
@@ -35,8 +37,12 @@ enum TestChildProcess {
         let environment = Environment.inherit.updating(environmentOverrides)
         let collected = try await Subprocess.run(
             .path(FilePath(binaryURL.path)),
-            arguments: Arguments(arguments),
+            arguments: Arguments(
+                executablePathOverride: executablePathOverride,
+                remainingValues: arguments
+            ),
             environment: environment,
+            workingDirectory: workingDirectory.map { FilePath($0.path) },
             output: .string(limit: .max),
             error: .string(limit: .max)
         )

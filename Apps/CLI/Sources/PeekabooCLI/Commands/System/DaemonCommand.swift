@@ -479,10 +479,8 @@ enum DaemonControlResolver {
 
 enum DaemonPaths {
     static func daemonLogURL() -> URL {
-        let root = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".peekaboo")
-        try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        return root.appendingPathComponent("daemon.log")
+        URL(fileURLWithPath: ConfigurationManager.baseDir, isDirectory: true)
+            .appendingPathComponent("daemon.log")
     }
 
     static func openDaemonLogForAppend() -> FileHandle? {

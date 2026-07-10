@@ -132,13 +132,17 @@ extension DaemonCommand {
                     ?? legacyTarget?.status.windowTracker?.cgPollIntervalMs,
                 idleTimeoutSeconds: CommandRuntime.defaultDaemonIdleTimeoutSeconds
             )
-            guard let replacement = await DaemonLaunchPolicy.launchDaemon(
-                socketPath: socketPath,
-                arguments: arguments,
-                timeout: TimeInterval(self.waitSeconds)
-            )
-            else {
-                throw PeekabooError.operationError(message: "Daemon did not start within \(self.waitSeconds)s")
+            let replacement: DaemonLaunchPolicy.LaunchResult
+            do {
+                replacement = try await DaemonLaunchPolicy.launchDaemon(
+                    socketPath: socketPath,
+                    arguments: arguments,
+                    timeout: TimeInterval(self.waitSeconds)
+                )
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                throw PeekabooError.operationError(message: error.localizedDescription)
             }
 
             if let legacyTarget {
