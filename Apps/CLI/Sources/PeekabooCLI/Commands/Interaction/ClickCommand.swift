@@ -704,9 +704,25 @@ struct ClickCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
         } catch let error as CancellationError {
             // A cancelled interaction must abort, not fall back to stale bounds and still click.
             throw error
+        } catch let error as PeekabooError where Self.isUnsafeForegroundPointFallback(error) {
+            // The captured window moved, disappeared, resized, or changed owner. Falling back to the
+            // snapshot midpoint would synthesize a coordinate click at stale screen coordinates in
+            // whatever app is frontmost, so abort instead.
+            throw error
         } catch {
             self.logger.debug("Foreground click point resolution fell back to bounds: \(error.localizedDescription)")
             return CGPoint(x: resolvedElement.bounds.midX, y: resolvedElement.bounds.midY)
+        }
+    }
+
+    /// Point-resolution failures that make a coordinate fallback unsafe: the resolved point can no
+    /// longer be trusted, so a foreground coordinate click must abort rather than click stale bounds.
+    private static func isUnsafeForegroundPointFallback(_ error: PeekabooError) -> Bool {
+        switch error {
+        case .snapshotStale:
+            true
+        default:
+            false
         }
     }
 
