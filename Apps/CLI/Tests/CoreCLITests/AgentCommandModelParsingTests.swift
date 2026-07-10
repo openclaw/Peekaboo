@@ -28,11 +28,24 @@ struct AgentCommandTests {
     }
 
     @Test
+    func `GPT-5_6 aliases preserve the selected tier`() throws {
+        let command = try AgentCommand.parse([])
+
+        #expect(command.parseModelString("gpt-5.6") == .openai(.gpt56Sol))
+        #expect(command.parseModelString("gpt-5.6-sol") == .openai(.gpt56Sol))
+        #expect(command.parseModelString("gpt-5.6-terra") == .openai(.gpt56Terra))
+        #expect(command.parseModelString("gpt-5.6-luna") == .openai(.gpt56Luna))
+        #expect(command.parseModelString("gpt-5.6-mars") == nil)
+    }
+
+    @Test
     func `Supported Anthropic aliases parse current models`() throws {
         let command = try AgentCommand.parse([])
 
         #expect(command.parseModelString("claude-fable-5") == .anthropic(.fable5))
         #expect(command.parseModelString("fable") == .anthropic(.fable5))
+        #expect(command.parseModelString("claude-sonnet-5") == .anthropic(.sonnet5))
+        #expect(command.parseModelString("sonnet") == .anthropic(.sonnet5))
         #expect(command.parseModelString("claude-opus-4.8") == .anthropic(.opus48))
         #expect(command.parseModelString("claude-opus-4.7") == .anthropic(.opus47))
         #expect(command.parseModelString("claude-sonnet-4.6") == .anthropic(.sonnet46))

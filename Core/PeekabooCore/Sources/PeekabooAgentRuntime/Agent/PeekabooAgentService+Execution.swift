@@ -121,6 +121,9 @@ extension PeekabooAgentService {
         case let .openai(openAIModel):
             switch openAIModel {
             case .chatLatest,
+                 .gpt56Sol,
+                 .gpt56Terra,
+                 .gpt56Luna,
                  .gpt55,
                  .gpt54,
                  .gpt54Mini,

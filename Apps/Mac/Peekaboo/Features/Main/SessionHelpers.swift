@@ -7,6 +7,9 @@ import SwiftUI
 func formatModelName(_ model: String) -> String {
     // Shorten common model names for display
     switch model {
+    case "gpt-5.6-sol": "GPT-5.6 Sol"
+    case "gpt-5.6-terra": "GPT-5.6 Terra"
+    case "gpt-5.6-luna": "GPT-5.6 Luna"
     case "gpt-5.5": "GPT-5.5"
     case "gpt-5.4": "GPT-5.4"
     case "gpt-5.4-mini": "GPT-5.4 mini"
@@ -14,6 +17,7 @@ func formatModelName(_ model: String) -> String {
     case "gpt-5": "GPT-5"
     case "gpt-5-mini": "GPT-5 mini"
     case "claude-fable-5": "Claude Fable 5"
+    case "claude-sonnet-5": "Claude Sonnet 5"
     case "claude-opus-4-8": "Claude Opus 4.8"
     case "claude-opus-4-7": "Claude Opus 4.7"
     case "claude-sonnet-4-6": "Claude Sonnet 4.6"
