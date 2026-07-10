@@ -141,20 +141,20 @@ enum CommanderCLIBinder {
             commandType == AppCommand.ListSubcommand.self
     }
 
-    /// Commands that genuinely acquire screen pixels (capture, element detection, desktop
+    /// Commands that unconditionally acquire screen pixels (capture, element detection, desktop
     /// observation) and therefore need a remote host that holds the Screen Recording permission.
-    /// `run` is included because its script steps route `see`/`image` captures through the remote
-    /// screen-capture service. Interaction commands (`click`/`scroll`/`type`) are intentionally
-    /// excluded: they target cached snapshots and their optional observation barrier degrades
-    /// gracefully without Screen Recording.
+    /// Interaction commands (`click`/`scroll`/`type`) are excluded: they target cached snapshots and
+    /// their optional observation barrier degrades gracefully without Screen Recording. `run` is
+    /// also excluded: whether a script captures depends on its steps, which are not known at
+    /// host-resolution time, so gating every `run` would push non-capture scripts off otherwise
+    /// valid hosts. Any capture step inside a script still surfaces a permission error at execution.
     private static func requiresScreenCapturePermission(_ commandType: (any ParsableCommand.Type)?) -> Bool {
         commandType == ImageCommand.self ||
             commandType == SeeCommand.self ||
             commandType == CaptureLiveCommand.self ||
             commandType == CaptureWatchAlias.self ||
             commandType == CaptureVideoCommand.self ||
-            commandType == CaptureActionCommand.self ||
-            commandType == RunCommand.self
+            commandType == CaptureActionCommand.self
     }
 
     private static func requiresImplicitSnapshotInvalidation(

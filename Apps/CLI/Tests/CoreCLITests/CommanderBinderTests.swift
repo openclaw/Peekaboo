@@ -1383,19 +1383,21 @@ extension CommanderBinderTests {
             CaptureWatchAlias.self,
             CaptureVideoCommand.self,
             CaptureActionCommand.self,
-            RunCommand.self,
         ]
         for commandType in captureCommands {
             let options = try CommanderCLIBinder.makeRuntimeOptions(from: parsed, commandType: commandType)
             #expect(options.requiresScreenCapturePermission, "Expected capture gating for \(commandType)")
         }
 
+        // `run` is intentionally NOT gated: its script may contain only non-capture steps, and the
+        // steps are unknown at host-resolution time, so gating would push valid hosts away.
         let nonCaptureCommands: [any ParsableCommand.Type] = [
             ClickCommand.self,
             ScrollCommand.self,
             TypeCommand.self,
             AppCommand.LaunchSubcommand.self,
             ListCommand.AppsSubcommand.self,
+            RunCommand.self,
         ]
         for commandType in nonCaptureCommands {
             let options = try CommanderCLIBinder.makeRuntimeOptions(from: parsed, commandType: commandType)
