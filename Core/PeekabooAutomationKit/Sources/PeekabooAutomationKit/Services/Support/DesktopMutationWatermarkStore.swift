@@ -135,11 +135,19 @@ public final class DesktopMutationWatermarkStore: @unchecked Sendable {
         let now = Date()
         let excludedMutationIDs = Self.visiblePendingMutationIDs
         var effective = self.readUnlocked()
+        // An absent pending directory means no in-flight mutations (matches the locked reader).
+        guard FileManager.default.fileExists(atPath: self.pendingDirectoryURL.path) else {
+            return effective
+        }
         guard let urls = try? FileManager.default.contentsOfDirectory(
             at: self.pendingDirectoryURL,
             includingPropertiesForKeys: nil,
             options: [.skipsHiddenFiles])
-        else { return effective }
+        else {
+            // The directory exists but cannot be enumerated: a pending marker may be present, so
+            // fail closed rather than exposing snapshots during a possible in-flight mutation.
+            return max(effective ?? now, now)
+        }
         for url in urls {
             let mutationID = UUID(uuidString: url.deletingPathExtension().lastPathComponent)
             if mutationID.map(excludedMutationIDs.contains) ?? false {
