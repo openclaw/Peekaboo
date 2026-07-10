@@ -99,7 +99,7 @@ private struct VisualizerSmokeSequence {
     private static let stepNames = [
         "Screenshot flash",
         "Watch capture HUD",
-        "Click ripple",
+        "Cursor click",
         "Typing indicator",
         "Scroll indicator",
         "Mouse movement trail",
@@ -154,7 +154,7 @@ private struct VisualizerSmokeSequence {
             await client.showWatchCapture(in: primaryRect)
         })
 
-        try await steps.append(self.step("Click ripple") {
+        try await steps.append(self.step("Cursor click") {
             await client.showClickFeedback(at: point, type: .single)
         })
 

@@ -78,7 +78,7 @@ extension VisualizerCoordinator {
         _ = self.overlayManager.showAnimation(
             at: Self.paddedRect(rect, padding: Self.OverlayPadding.click),
             content: clickView,
-            duration: self.scaledDuration(AnimationBaseline.clickRipple),
+            duration: self.scaledDuration(AnimationBaseline.clickCursor),
             fadeOut: true)
 
         return true
@@ -179,7 +179,7 @@ extension VisualizerCoordinator {
             to: Self.windowLocalPoint(to, in: windowRect),
             duration: mouseDuration)
 
-        // Comet coordinates are window-local; the travel padding is the margin.
+        // Cursor-trail coordinates are window-local; the travel padding is the margin.
         _ = self.overlayManager.showAnimation(
             at: windowRect,
             content: mouseView,

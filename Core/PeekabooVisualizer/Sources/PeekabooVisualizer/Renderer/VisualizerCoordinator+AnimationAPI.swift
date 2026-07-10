@@ -103,7 +103,7 @@ extension VisualizerCoordinator {
         ].joined(separator: " ")
         self.logger.info("\(message, privacy: .public)")
 
-        // Short hops don't need a comet, and rapid successive moves would
+        // Short hops don't need a cursor trail, and rapid successive moves would
         // paint overlapping trails.
         let distance = hypot(to.x - from.x, to.y - from.y)
         guard distance >= FeedbackThrottle.minimumTrailDistance else { return true }

@@ -11,7 +11,7 @@ Runs a lightweight smoke sequence that fires a representative set of visualizer 
 
 ## What it does
 - Connects to the visualizer host (typically `Peekaboo.app`)
-- Emits events such as screenshot flash, capture HUD, click ripple, typing overlay, scroll indicator, swipe path, hotkey HUD, window/app/menu/dialog overlays, and a sample element-detection overlay
+- Emits events such as screenshot flash, capture HUD, cursor click, typing overlay, scroll indicator, cursor movement, swipe path, hotkey HUD, window/app/menu/dialog overlays, and a sample element-detection overlay
 
 ## Usage
 ```bash

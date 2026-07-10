@@ -49,7 +49,7 @@ Use `peekaboo <command> --help` for inline flag descriptions; this page links to
 - [`open`](commands/open.md) – Enhanced macOS `open` that respects `--app/--bundle-id`, `--wait-until-ready`, `--no-focus`, and emits JSON payloads for scripting.
 - [`dock`](commands/dock.md) – `launch`, `right-click`, `hide`, `show`, `list` Dock items.
 - [`dialog`](commands/dialog.md) – `click`, `input`, `file`, `dismiss`, `list` system dialogs.
-- [`visualizer`](commands/visualizer.md) – Run the built-in visual feedback smoke suite (fires screenshot flash, capture HUD, click ripple, menu highlights, etc.) to verify Peekaboo.app overlays.
+- [`visualizer`](commands/visualizer.md) – Run the built-in visual feedback smoke suite (fires screenshot flash, capture HUD, cursor click, menu highlights, etc.) to verify Peekaboo.app overlays.
 
 ## Automation & Integrations
 

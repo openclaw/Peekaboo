@@ -2,15 +2,14 @@
 //  ClickAnimationView.swift
 //  Peekaboo
 //
-//  A targeting reticle that locks onto the click point and pulses on impact.
+//  A macOS-style cursor that glides to the click point and visibly presses.
 //
 
 import PeekabooFoundation
 import SwiftUI
 
-/// Click feedback: an outer ring contracts onto the point, a center dot pops,
-/// and an impact pulse expands outward. Double-click pulses twice; right-click
-/// uses a dashed ring to hint at a context menu.
+/// Click feedback: a cursor glides onto the point, presses, and emits a subtle ripple.
+/// Double-click presses twice; right-click uses the secondary accent.
 struct ClickAnimationView: View {
     // MARK: - Properties
 
@@ -21,130 +20,134 @@ struct ClickAnimationView: View {
     let durationScale: Double
 
     /// Animation state
-    @State private var ringDiameter: CGFloat = 130
-    @State private var ringOpacity: Double = 0
-    @State private var dotScale: CGFloat = 0.2
-    @State private var dotOpacity: Double = 0
-    @State private var glowOpacity: Double = 0
-    @State private var reticleOpacity: Double = 1
+    @State private var cursorOffset = CGSize(width: 60, height: 50)
+    @State private var cursorOpacity: Double = 0
+    @State private var cursorScale: CGFloat = 1.12
+
+    private let clickPoint = CGPoint(x: 160, y: 160)
 
     private var tint: Color {
         self.clickType == .right ? VisualizerTheme.accentSecondary : VisualizerTheme.accent
     }
 
-    private var ringStyle: StrokeStyle {
-        switch self.clickType {
-        case .right:
-            StrokeStyle(lineWidth: 2.5, lineCap: .round, dash: [7, 6])
-        case .single, .double:
-            StrokeStyle(lineWidth: 2.5, lineCap: .round)
-        }
-    }
-
-    private var pulseDelays: [Double] {
-        self.clickType == .double ? [0.22, 0.36] : [0.22]
+    private var pressDelays: [Double] {
+        self.clickType == .double ? [0.36, 0.62] : [0.36]
     }
 
     // MARK: - Body
 
     var body: some View {
-        ZStack {
-            // Soft bloom behind the impact point
-            Circle()
-                .fill(
-                    RadialGradient(
-                        colors: [self.tint.opacity(0.45), self.tint.opacity(0)],
-                        center: .center,
-                        startRadius: 0,
-                        endRadius: 44))
-                .frame(width: 88, height: 88)
-                .opacity(self.glowOpacity)
-
-            // Targeting ring that contracts onto the point
-            Circle()
-                .stroke(self.tint, style: self.ringStyle)
-                .frame(width: self.ringDiameter, height: self.ringDiameter)
-                .opacity(self.ringOpacity)
-
-            // Impact pulses expanding outward
-            ForEach(Array(self.pulseDelays.enumerated()), id: \.offset) { _, delay in
-                ImpactPulseView(tint: self.tint, delay: delay * self.durationScale, duration: 0.3 * self.durationScale)
+        ZStack(alignment: .topLeading) {
+            ForEach(Array(self.pressDelays.enumerated()), id: \.offset) { _, delay in
+                ClickRippleView(
+                    tint: self.tint,
+                    delay: delay * self.durationScale,
+                    duration: 0.3 * self.durationScale)
+                    .position(self.clickPoint)
             }
 
-            // Center dot
-            Circle()
-                .fill(self.tint)
-                .frame(width: 9, height: 9)
-                .scaleEffect(self.dotScale)
-                .opacity(self.dotOpacity)
-                .shadow(color: self.tint.opacity(0.8), radius: 6)
+            CursorGlyphView()
+                .scaleEffect(self.cursorScale, anchor: .topLeading)
+                .opacity(self.cursorOpacity)
+                .offset(
+                    x: self.clickPoint.x + self.cursorOffset.width,
+                    y: self.clickPoint.y + self.cursorOffset.height)
         }
-        .opacity(self.reticleOpacity)
         .frame(width: 320, height: 320)
-        .onAppear {
-            self.startAnimation()
+        .task {
+            await self.startAnimation()
         }
     }
 
     // MARK: - Methods
 
-    private func startAnimation() {
+    private func startAnimation() async {
         let scale = self.durationScale
 
-        // Ring locks onto the target
-        withAnimation(VisualizerMotion.enter(0.1 * scale)) {
-            self.ringOpacity = 1
+        withAnimation(VisualizerMotion.enter(0.12 * scale)) {
+            self.cursorOpacity = 1
         }
-        withAnimation(VisualizerMotion.enter(0.26 * scale)) {
-            self.ringDiameter = 46
-        }
-
-        // Center dot pops with a glow bloom
-        withAnimation(VisualizerMotion.pop(0.3 * scale).delay(0.06 * scale)) {
-            self.dotScale = 1.0
-            self.dotOpacity = 1
-        }
-        withAnimation(VisualizerMotion.enter(0.2 * scale).delay(0.16 * scale)) {
-            self.glowOpacity = 1
-        }
-        withAnimation(VisualizerMotion.exit(0.18 * scale).delay(0.34 * scale)) {
-            self.glowOpacity = 0
+        withAnimation(VisualizerMotion.glide(0.32 * scale)) {
+            self.cursorOffset = .zero
+            self.cursorScale = 1
         }
 
-        // Everything dissolves at the end
-        withAnimation(VisualizerMotion.exit(0.14 * scale).delay(0.31 * scale)) {
-            self.reticleOpacity = 0
-            self.dotScale = 0.6
+        await self.sleep(0.36 * scale)
+        guard !Task.isCancelled else { return }
+        withAnimation(VisualizerMotion.pop(0.1 * scale)) {
+            self.cursorScale = 0.82
         }
+
+        await self.sleep(0.14 * scale)
+        guard !Task.isCancelled else { return }
+        withAnimation(VisualizerMotion.settle(0.16 * scale)) {
+            self.cursorScale = 1
+        }
+
+        if self.clickType == .double {
+            await self.sleep(0.12 * scale)
+            guard !Task.isCancelled else { return }
+            withAnimation(VisualizerMotion.pop(0.1 * scale)) {
+                self.cursorScale = 0.82
+            }
+
+            await self.sleep(0.14 * scale)
+            guard !Task.isCancelled else { return }
+            withAnimation(VisualizerMotion.settle(0.16 * scale)) {
+                self.cursorScale = 1
+            }
+        }
+
+        await self.sleep(0.2 * scale)
+        guard !Task.isCancelled else { return }
+        withAnimation(VisualizerMotion.exit(0.15 * scale)) {
+            self.cursorOpacity = 0
+        }
+    }
+
+    private func sleep(_ seconds: Double) async {
+        try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
     }
 }
 
-/// A single expanding impact ring.
-private struct ImpactPulseView: View {
+/// A small expanding click ring centered on the cursor hotspot.
+private struct ClickRippleView: View {
     let tint: Color
     let delay: Double
     let duration: Double
 
-    @State private var pulseScale: CGFloat = 0.3
-    @State private var pulseOpacity: Double = 0
+    @State private var diameter: CGFloat = 10
+    @State private var rippleOpacity: Double = 0
 
     var body: some View {
         Circle()
-            .stroke(self.tint, lineWidth: 2)
-            .frame(width: 150, height: 150)
-            .scaleEffect(self.pulseScale)
-            .opacity(self.pulseOpacity)
-            .onAppear {
-                withAnimation(VisualizerMotion.enter(0.05).delay(self.delay)) {
-                    self.pulseOpacity = 0.9
-                }
-                withAnimation(VisualizerMotion.enter(self.duration).delay(self.delay)) {
-                    self.pulseScale = 1.0
-                }
-                withAnimation(VisualizerMotion.exit(self.duration * 0.7).delay(self.delay + self.duration * 0.3)) {
-                    self.pulseOpacity = 0
-                }
+            .stroke(self.tint, lineWidth: 1.5)
+            .frame(width: self.diameter, height: self.diameter)
+            .opacity(self.rippleOpacity)
+            .task {
+                await self.animateRipple()
             }
+    }
+
+    private func animateRipple() async {
+        await self.sleep(self.delay)
+        guard !Task.isCancelled else { return }
+        withAnimation(VisualizerMotion.enter(0.02 * self.duration / 0.3)) {
+            self.rippleOpacity = 0.85
+        }
+        withAnimation(VisualizerMotion.glide(self.duration)) {
+            self.diameter = 34
+        }
+
+        await self.sleep(self.duration * 0.1)
+        guard !Task.isCancelled else { return }
+        withAnimation(VisualizerMotion.exit(self.duration * 0.9)) {
+            self.rippleOpacity = 0
+        }
+    }
+
+    private func sleep(_ seconds: Double) async {
+        try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
     }
 }
 

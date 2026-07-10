@@ -472,7 +472,7 @@ The following subsections spell out the concrete steps, required Playground surf
 - **Setup**: Ensure `Peekaboo.app` is running (visual feedback host) and keep Playground visible so you can quickly spot overlays.
 - **Steps**:
   1. `peekaboo visualizer --json-output > .artifacts/playground-tools/<timestamp>-visualizer.json`
-  2. Visually confirm you see (in order): screenshot flash, capture HUD, click ripple, typing overlay, scroll indicator, mouse trail, swipe path, hotkey HUD, window move overlay, app launch/quit animation, menu breadcrumb, dialog highlight, space switch indicator, and element detection overlay.
+  2. Visually confirm you see (in order): screenshot flash, capture HUD, cursor click, typing overlay, scroll indicator, cursor movement trail, swipe path, hotkey HUD, window move overlay, app launch/quit animation, menu breadcrumb, dialog highlight, space switch indicator, and element detection overlay.
 - **Pass criteria**: No CLI errors, the JSON report shows every step `dispatched=true`, and the full overlay sequence renders end-to-end.
 - **2025-12-18 run**:
   - JSON reports all 15 steps `dispatched=true` (manual “eyes on overlay” still required for full pass criteria).

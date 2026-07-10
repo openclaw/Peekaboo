@@ -38,7 +38,7 @@ public final class VisualizerCoordinator {
 
     enum AnimationBaseline {
         static let screenshotFlash: TimeInterval = 0.35
-        static let clickRipple: TimeInterval = 0.45
+        static let clickCursor: TimeInterval = 1.15
         static let typingOverlay: TimeInterval = 1.2
         static let scrollIndicator: TimeInterval = 0.6
         static let mouseTrail: TimeInterval = 0.75
@@ -62,7 +62,7 @@ public final class VisualizerCoordinator {
         static let scroll: TimeInterval = 0.3
         static let mouseTrail: TimeInterval = 0.4
         static let elementDetection: TimeInterval = 1.0
-        /// Mouse moves shorter than this aren't worth a comet.
+        /// Mouse moves shorter than this aren't worth a cursor trail.
         static let minimumTrailDistance: CGFloat = 80
     }
 

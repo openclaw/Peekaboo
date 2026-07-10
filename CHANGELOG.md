@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Changed
+- Clicks and mouse moves are now visualized by a small animated macOS-style cursor that glides to the target and presses (double-press for double-click, blue-tinted for right-click), replacing the targeting reticle and comet.
+
 ## [3.7.1] - 2026-07-05
 
 ### Changed

@@ -115,9 +115,9 @@ extension UIAutomationService {
      *
      * ## Visual Feedback
      * When visualizer is connected, shows:
-     * - Ripple animation at click location
-     * - Click type indicator (single, double, right)
-     * - Targeting crosshairs for precision feedback
+     * - Animated cursor gliding to the click location
+     * - Visible single, double, or right-button press
+     * - Subtle click ring centered on the cursor hotspot
      *
      * ## Performance
      * - **Element Resolution**: 10-50ms for cached elements
