@@ -7,7 +7,7 @@ import SystemPackage
 #endif
 
 enum TestChildProcess {
-    struct Result: Sendable {
+    struct Result {
         let standardOutput: String
         let standardError: String
         let status: TerminationStatus
@@ -17,47 +17,7 @@ enum TestChildProcess {
         _ arguments: [String],
         environment extraEnvironment: [String: String] = [:],
         executablePathOverride: String? = nil,
-        workingDirectory: URL? = nil,
-        timeout: Duration? = nil
-    ) async throws -> Result {
-        if let timeout {
-            return try await withThrowingTaskGroup(of: Result.self) { group in
-                group.addTask {
-                    try await Self.runPeekabooProcess(
-                        arguments,
-                        environment: extraEnvironment,
-                        executablePathOverride: executablePathOverride,
-                        workingDirectory: workingDirectory,
-                        isolateProcessGroup: true
-                    )
-                }
-                group.addTask {
-                    try await Task.sleep(for: timeout)
-                    throw RuntimeError("Peekaboo child process timed out")
-                }
-                defer { group.cancelAll() }
-                guard let result = try await group.next() else {
-                    throw RuntimeError("Peekaboo child process produced no result")
-                }
-                return result
-            }
-        }
-
-        return try await Self.runPeekabooProcess(
-            arguments,
-            environment: extraEnvironment,
-            executablePathOverride: executablePathOverride,
-            workingDirectory: workingDirectory,
-            isolateProcessGroup: false
-        )
-    }
-
-    private static func runPeekabooProcess(
-        _ arguments: [String],
-        environment extraEnvironment: [String: String],
-        executablePathOverride: String?,
-        workingDirectory: URL?,
-        isolateProcessGroup: Bool
+        workingDirectory: URL? = nil
     ) async throws -> Result {
         let binaryURL = try Self.peekabooBinaryURL()
         var environmentOverrides: [Environment.Key: String?] = [:]
@@ -75,17 +35,6 @@ enum TestChildProcess {
             }
         }
         let environment = Environment.inherit.updating(environmentOverrides)
-        var platformOptions = PlatformOptions()
-        if isolateProcessGroup {
-            platformOptions.createSession = true
-            platformOptions.teardownSequence = [
-                .send(
-                    signal: .terminate,
-                    toProcessGroup: true,
-                    allowedDurationToNextStep: .milliseconds(250)
-                ),
-            ]
-        }
         let collected = try await Subprocess.run(
             .path(FilePath(binaryURL.path)),
             arguments: Arguments(
@@ -94,7 +43,6 @@ enum TestChildProcess {
             ),
             environment: environment,
             workingDirectory: workingDirectory.map { FilePath($0.path) },
-            platformOptions: platformOptions,
             output: .string(limit: .max),
             error: .string(limit: .max)
         )

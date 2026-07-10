@@ -22,6 +22,12 @@ struct DaemonCommandTests {
     }
 
     @Test
+    func `Daemon start accepts an immediate readiness deadline`() throws {
+        let command = try DaemonCommand.Start.parse(["--wait-seconds", "0"])
+        #expect(command.waitSeconds == 0)
+    }
+
+    @Test
     func `Daemon stop defaults`() throws {
         let command = try DaemonCommand.Stop.parse([])
         #expect(command.bridgeSocket == nil)
