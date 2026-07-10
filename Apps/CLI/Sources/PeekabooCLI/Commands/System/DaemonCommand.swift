@@ -487,11 +487,10 @@ enum DaemonPaths {
         self.openFileForAppend(at: self.daemonLogURL())
     }
 
-    static func openDaemonStartupLock() -> FileHandle? {
-        let root = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".peekaboo")
-        try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        return self.openFileForAppend(at: root.appendingPathComponent("daemon-start.lock"))
+    static func daemonStartupLockURL() -> URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".peekaboo", isDirectory: true)
+            .appendingPathComponent("daemon-start.lock")
     }
 
     static func openFileForAppend(at fileURL: URL) -> FileHandle? {

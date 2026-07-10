@@ -458,18 +458,22 @@ enum DaemonLaunchPolicy {
         )
     }
 
+    @MainActor
     static func startOnDemandDaemon(socketPath: String, environment: [String: String]) async -> String? {
+        try? await DaemonStartupGate.withExclusiveStartup { _ in
+            await self.startOnDemandDaemonWithStartupLockHeld(
+                socketPath: socketPath,
+                environment: environment
+            )
+        }
+    }
+
+    @MainActor
+    private static func startOnDemandDaemonWithStartupLockHeld(
+        socketPath: String,
+        environment: [String: String]
+    ) async -> String? {
         let client = DaemonControlClient(socketPath: socketPath)
-        let lockHandle = DaemonPaths.openDaemonStartupLock()
-        if let fileDescriptor = lockHandle?.fileDescriptor {
-            flock(fileDescriptor, LOCK_EX)
-        }
-        defer {
-            if let fileDescriptor = lockHandle?.fileDescriptor {
-                flock(fileDescriptor, LOCK_UN)
-            }
-            try? lockHandle?.close()
-        }
 
         if await client.fetchReusableDaemonStatus() != nil {
             return socketPath

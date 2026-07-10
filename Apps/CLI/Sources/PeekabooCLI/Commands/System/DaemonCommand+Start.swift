@@ -1,5 +1,4 @@
 import Commander
-import Darwin
 import Foundation
 import PeekabooBridge
 import PeekabooFoundation
@@ -49,21 +48,17 @@ extension DaemonCommand {
 
         mutating func run(using runtime: CommandRuntime) async throws {
             self.runtime = runtime
+            try await DaemonStartupGate.withExclusiveStartup { _ in
+                try await self.runWithStartupLockHeld()
+            }
+        }
+
+        private func runWithStartupLockHeld() async throws {
             let defaultSocketPath = PeekabooBridgeConstants.daemonSocketPath
             let buildScopedSocketPath = DaemonLaunchPolicy.buildScopedDaemonSocketPath(
                 daemonSocketPath: defaultSocketPath,
                 runtimeBuildIdentity: DaemonLaunchPolicy.runtimeBuildIdentity()
             )
-            let lockHandle = DaemonPaths.openDaemonStartupLock()
-            if let fileDescriptor = lockHandle?.fileDescriptor {
-                flock(fileDescriptor, LOCK_EX)
-            }
-            defer {
-                if let fileDescriptor = lockHandle?.fileDescriptor {
-                    flock(fileDescriptor, LOCK_UN)
-                }
-                try? lockHandle?.close()
-            }
 
             let targets = await DaemonControlResolver.targets(explicitSocket: self.bridgeSocket)
             let action = DaemonControlPlanner.startAction(
