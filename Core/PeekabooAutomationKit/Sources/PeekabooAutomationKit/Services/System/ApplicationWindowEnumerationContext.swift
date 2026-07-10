@@ -210,7 +210,7 @@ struct WindowEnumerationContext {
         var warnings: [String] = []
         let descriptors = await self.collectAXDescriptors(
             axResult: axResult,
-            cgWindows: snapshot.windows,
+            cgWindowIDs: Set(snapshot.windows.map(\.windowID)),
             warnings: &warnings)
 
         let merged = Self.mergeWindows(cgWindows: snapshot.windows, axDescriptors: descriptors)
@@ -227,15 +227,15 @@ struct WindowEnumerationContext {
     }
 
     /// Resolve each AX window into a plain descriptor: CGWindowID (via `_AXUIElementGetWindow`),
-    /// title, and bounds. A full record is only built for AX windows CGWindowList never reported,
-    /// so the common enrichment path stays cheap.
+    /// title, and bounds. A full `standaloneInfo` record is materialized for every titled AX window
+    /// that is *not* an exact CGWindowID match, so no AX-only window can be lost; the merge step then
+    /// decides whether that record enriches an untitled CG window or is appended standalone.
     private func collectAXDescriptors(
         axResult: AXWindowResult,
-        cgWindows: [ServiceWindowInfo],
+        cgWindowIDs: Set<Int>,
         warnings: inout [String]) async -> [AXWindowDescriptor]
     {
         let windowIdentityService = WindowIdentityService()
-        let cgWindowIDs = Set(cgWindows.map(\.windowID))
         var descriptors: [AXWindowDescriptor] = []
         descriptors.reserveCapacity(axResult.windows.count)
 
@@ -251,20 +251,14 @@ struct WindowEnumerationContext {
                 CGRect(origin: position, size: axWindow.size() ?? .zero)
             }
 
-            // Decide whether this AX window already has a CG counterpart. Match by CGWindowID first,
-            // then by bounds; title is never an association key. When there is no counterpart we still
-            // materialize a full record so the window surfaces (mirrors the prior AX-only fallback,
-            // including AX windows whose CGWindowID cannot be resolved via _AXUIElementGetWindow).
-            let matchesCGWindow: Bool = if let resolvedID {
-                cgWindowIDs.contains(resolvedID)
-            } else if let bounds {
-                cgWindows.contains { Self.boundsMatch($0.bounds, bounds) }
-            } else {
-                false
-            }
-
+            // An exact CGWindowID match means this AX window is already in the CG snapshot, so it only
+            // supplies a title. Otherwise materialize a full record: the merge appends it (deduping by
+            // the resolved ID) unless it is consumed to title an untitled CG window by bounds. Building
+            // it here — rather than suppressing on a loose bounds match — guarantees the window is
+            // never silently dropped, even when its CGWindowID cannot be resolved.
+            let hasExactCGMatch = resolvedID.map(cgWindowIDs.contains) ?? false
             var standaloneInfo: ServiceWindowInfo?
-            if !matchesCGWindow, !title.isEmpty {
+            if !hasExactCGMatch, !title.isEmpty {
                 standaloneInfo = await self.service.createWindowInfo(from: axWindow, index: index)
             }
 
@@ -300,16 +294,15 @@ struct WindowEnumerationContext {
             }
         }
 
-        // Bounds-based enrichment only applies to titled AX windows AX could not resolve to a
-        // CGWindowID. Each such descriptor is consumed at most once so several identically framed
-        // untitled windows (e.g. stacked/maximized) can never all inherit the same title.
-        let boundsFallbacks: [(bounds: CGRect, title: String)] = axDescriptors.compactMap { descriptor in
-            guard descriptor.windowID == nil, !descriptor.title.isEmpty, let bounds = descriptor.bounds else {
-                return nil
-            }
-            return (bounds, descriptor.title)
+        // Titled AX windows AX could not resolve to a CGWindowID: eligible to title an untitled CG
+        // window by bounds. Each descriptor is consumed at most once, and a descriptor used for
+        // enrichment is never also appended standalone — so identically framed windows are not all
+        // relabeled, nothing is double-counted, and nothing is dropped.
+        let boundsFallbackIndices = axDescriptors.indices.filter { index in
+            let descriptor = axDescriptors[index]
+            return descriptor.windowID == nil && !descriptor.title.isEmpty && descriptor.bounds != nil
         }
-        var consumedFallbacks = Set<Int>()
+        var consumedDescriptors = Set<Int>()
 
         var merged: [ServiceWindowInfo] = []
         merged.reserveCapacity(cgWindows.count + axDescriptors.count)
@@ -326,19 +319,27 @@ struct WindowEnumerationContext {
                 continue
             }
 
-            if let matchIndex = boundsFallbacks.indices.first(where: { index in
-                !consumedFallbacks.contains(index) && Self.boundsMatch(boundsFallbacks[index].bounds, cgWindow.bounds)
+            if let descriptorIndex = boundsFallbackIndices.first(where: { index in
+                guard !consumedDescriptors.contains(index), let bounds = axDescriptors[index].bounds else {
+                    return false
+                }
+                return Self.boundsMatch(bounds, cgWindow.bounds)
             }) {
-                consumedFallbacks.insert(matchIndex)
-                merged.append(cgWindow.withTitle(boundsFallbacks[matchIndex].title))
+                consumedDescriptors.insert(descriptorIndex)
+                merged.append(cgWindow.withTitle(axDescriptors[descriptorIndex].title))
                 continue
             }
 
             merged.append(cgWindow)
         }
 
-        for descriptor in axDescriptors {
-            guard let info = descriptor.standaloneInfo, seenWindowIDs.insert(info.windowID).inserted else {
+        // Append AX-only windows CGWindowList never reported, in AX order. Skip descriptors already
+        // consumed to title a CG window and any whose ID is already present.
+        for (index, descriptor) in axDescriptors.enumerated() {
+            guard let info = descriptor.standaloneInfo,
+                  !consumedDescriptors.contains(index),
+                  seenWindowIDs.insert(info.windowID).inserted
+            else {
                 continue
             }
             merged.append(info)

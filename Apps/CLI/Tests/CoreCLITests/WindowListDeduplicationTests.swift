@@ -152,6 +152,51 @@ struct WindowListDeduplicationTests {
     }
 
     @Test
+    func `Bounds-matched descriptor titles the CG window without also appending its standalone`() {
+        // The live path materializes a standalone record for every non-exact-ID AX window. When that
+        // descriptor is consumed to title an untitled CG window by bounds, its standalone must NOT
+        // also be appended, or the window would appear twice.
+        let frame = CGRect(x: 40, y: 40, width: 600, height: 400)
+        let cgWindows = [Self.window(id: 88, title: "", index: 0, bounds: frame)]
+        let axDescriptors = [
+            Self.descriptor(
+                id: nil,
+                title: "Palette",
+                bounds: frame,
+                standaloneInfo: Self.window(id: 88, title: "Palette", index: 0, bounds: frame)
+            ),
+        ]
+
+        let merged = WindowEnumerationContext.mergeWindows(cgWindows: cgWindows, axDescriptors: axDescriptors)
+
+        #expect(merged.map(\.windowID) == [88])
+        #expect(merged.map(\.title) == ["Palette"])
+    }
+
+    @Test
+    func `Extra bounds-fallback AX window is appended when no untitled CG window is left to title`() {
+        // Regression for the loose-bounds suppression bug: an AX window whose frame matches an
+        // already-titled CG window has no untitled window to enrich, so it must surface as a
+        // standalone entry rather than being silently dropped.
+        let frame = CGRect(x: 0, y: 0, width: 800, height: 600)
+        let cgWindows = [Self.window(id: 5, title: "Main", index: 0, bounds: frame)]
+        let axDescriptors = [
+            Self.descriptor(id: 5, title: "Main"),
+            Self.descriptor(
+                id: nil,
+                title: "Overlay",
+                bounds: frame,
+                standaloneInfo: Self.window(id: 6, title: "Overlay", index: 0, bounds: frame)
+            ),
+        ]
+
+        let merged = WindowEnumerationContext.mergeWindows(cgWindows: cgWindows, axDescriptors: axDescriptors)
+
+        #expect(merged.map(\.windowID) == [5, 6])
+        #expect(merged.map(\.title) == ["Main", "Overlay"])
+    }
+
+    @Test
     func `Bounds fallback assigns distinct titles to identically framed windows in order`() {
         let frame = CGRect(x: 0, y: 0, width: 1440, height: 900)
         let cgWindows = [
