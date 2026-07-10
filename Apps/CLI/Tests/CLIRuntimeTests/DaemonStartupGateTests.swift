@@ -56,6 +56,13 @@ struct DaemonStartupGateTests {
         #expect(
             DaemonPaths.daemonStartupLockURL(socketPath: buildScopedSocketURL.path) == defaultLockURL
         )
+        let customLookalikeSocketURL = buildScopedSocketURL
+            .deletingLastPathComponent()
+            .appendingPathComponent("daemon-testing.sock")
+        #expect(
+            DaemonPaths.daemonStartupLockURL(socketPath: customLookalikeSocketURL.path).path ==
+                "\(customLookalikeSocketURL.path).start.lock"
+        )
     }
 
     @Test

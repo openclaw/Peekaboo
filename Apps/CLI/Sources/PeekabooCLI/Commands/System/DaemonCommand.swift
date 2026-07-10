@@ -466,7 +466,7 @@ enum DaemonControlResolver {
         )
     }
 
-    private static func isBuildScopedSocketName(_ name: String) -> Bool {
+    static func isBuildScopedSocketName(_ name: String) -> Bool {
         guard name.hasPrefix("daemon-"), name.hasSuffix(".sock") else { return false }
         let hash = name.dropFirst("daemon-".count).dropLast(".sock".count)
         return hash.count == 16 && hash.allSatisfy { ("0"..."9").contains($0) || ("a"..."f").contains($0) }
@@ -499,8 +499,7 @@ enum DaemonPaths {
             // Build-scoped fallback daemons share lifecycle promotion with the canonical daemon.
             let isBuildScopedDefault = socketURL.deletingLastPathComponent() ==
                 defaultSocketURL.deletingLastPathComponent() &&
-                socketURL.lastPathComponent.hasPrefix("daemon-") &&
-                socketURL.pathExtension == "sock"
+                DaemonControlResolver.isBuildScopedSocketName(socketURL.lastPathComponent)
             if socketURL != defaultSocketURL, !isBuildScopedDefault {
                 return URL(fileURLWithPath: "\(socketURL.path).start.lock")
             }
