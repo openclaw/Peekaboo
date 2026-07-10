@@ -32,8 +32,11 @@ struct PasteCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
     @Flag(name: .long, help: "Allow payloads larger than 10 MB")
     var allowLarge = false
 
-    @Option(name: .customLong("restore-delay-ms"), help: "Delay before restoring the previous clipboard (ms)")
-    var restoreDelayMs: Int = 150
+    @Option(
+        name: .customLong("restore-delay-ms"),
+        help: "Delay before restoring the previous clipboard (ms; default: 150)"
+    )
+    var restoreDelayMs: Int?
 
     @OptionGroup var target: InteractionTargetOptions
     @OptionGroup var focusOptions: FocusCommandOptions
@@ -73,16 +76,20 @@ struct PasteCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
         return self.textOption
     }
 
+    private var resolvedRestoreDelayMs: Int {
+        self.restoreDelayMs ?? 150
+    }
+
     private var hasExplicitPayload: Bool {
         // Any payload source OR payload-modifier flag counts: `paste --uti public.rtf`
         // or `paste --allow-large` without data must fail validation, not silently
         // paste the current clipboard. An explicitly provided empty positional ("")
         // is also an explicit payload. Only targeting/focus/delivery flags may
-        // combine with the bare-paste path. restoreDelayMs uses its default as the
-        // "not provided" proxy since Commander cannot distinguish an explicit 150.
+        // combine with the bare-paste path. Keep restoreDelayMs optional so an
+        // explicitly provided default value remains distinguishable from omission.
         self.text != nil || self.textOption != nil || self.filePath != nil || self.imagePath != nil
             || self.dataBase64 != nil || self.uti != nil || self.alsoText != nil
-            || self.allowLarge || self.restoreDelayMs != 150
+            || self.allowLarge || self.restoreDelayMs != nil
     }
 
     @MainActor
@@ -189,7 +196,7 @@ struct PasteCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
                 restoredSize: restoreResult?.data.count,
                 restoreSucceeded: restoreErrorDescription == nil,
                 restoreError: restoreErrorDescription,
-                restoreDelayMs: self.restoreDelayMs,
+                restoreDelayMs: self.resolvedRestoreDelayMs,
                 deliveryMode: targetPID == nil ? KeyboardDeliveryMode.foreground.rawValue :
                     KeyboardDeliveryMode.background.rawValue,
                 targetPID: targetPID.map(Int.init)
@@ -268,8 +275,8 @@ struct PasteCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
         priorClipboardPresent: Bool,
         slot: String
     ) throws -> ClipboardReadResult? {
-        if self.restoreDelayMs > 0 {
-            usleep(useconds_t(self.restoreDelayMs) * 1000)
+        if self.resolvedRestoreDelayMs > 0 {
+            usleep(useconds_t(self.resolvedRestoreDelayMs) * 1000)
         }
         guard priorClipboardPresent else {
             self.services.clipboard.clear()

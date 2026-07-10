@@ -4,10 +4,10 @@ import PeekabooCore
 extension ListCommand {
     @MainActor
     struct AppsSubcommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConfigurable {
-        @Flag(help: "Accepted for parity with 'app list'; 'list apps' already returns the full inventory")
+        @Flag(help: "Accepted for parity with 'app list'; 'list apps' already includes hidden apps")
         var includeHidden = false
 
-        @Flag(help: "Accepted for parity with 'app list'; 'list apps' already returns the full inventory")
+        @Flag(help: "Accepted for parity with 'app list'; 'list apps' already includes background apps")
         var includeBackground = false
 
         @RuntimeStorage private var runtime: CommandRuntime?
@@ -77,16 +77,16 @@ extension ListCommand.AppsSubcommand: ParsableCommand {
         MainActorCommandDescription.describe {
             CommandDescription(
                 commandName: "apps",
-                abstract: "List all running applications with details",
+                abstract: "List running applications with details",
                 discussion: """
-                Lists all running applications using the ApplicationService from PeekabooCore.
+                Lists running applications exposed by ApplicationService from PeekabooCore.
                 Applications are sorted by name and include process IDs, bundle identifiers,
                 and activation status.
 
-                This is the full inventory form. `peekaboo app list` is the app-management
+                This is the broader inventory form. `peekaboo app list` is the app-management
                 view and filters hidden/background apps by default; `list apps` accepts
-                --include-hidden and --include-background for parity, but its output is already
-                unfiltered.
+                --include-hidden and --include-background for parity, but already includes
+                those applications when ApplicationService exposes them.
 
                 JSON emits both the legacy `applications` key and the preferred `apps` alias.
                 """

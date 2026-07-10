@@ -12,7 +12,7 @@ read_when:
 ## Subcommands
 | Subcommand | What it does | Notable options |
 | --- | --- | --- |
-| `apps` (default) | Full running-app inventory with bundle ID, PID, and focus status. | Accepts `--include-hidden`, `--include-background` for `app list` parity; output is already unfiltered. |
+| `apps` (default) | Broader running-app inventory with bundle ID, PID, and focus status. | Accepts `--include-hidden`, `--include-background` for `app list` parity; hidden/background apps are already included when exposed by ApplicationService. |
 | `windows` | Full window enumeration for one process with optional bounds/ID metadata. | `--app <name|bundle|PID:1234>` (required), `--pid`, `--include-details bounds,ids,off_screen`. |
 | `menubar` | Dumps every status-item title/index so you can target them via `menubar click`. | Supports `--json` for scripts piping into `jq`; prefer `data.menu_bar_items`. |
 | `screens` | Shows connected displays, resolution, scaling, and whether they are main/secondary. | None. |
@@ -20,7 +20,7 @@ read_when:
 
 ## Implementation notes
 - The root command does nothing; Commander dispatches straight to the subcommand so `peekaboo list` defaults to `list apps`.
-- `list apps` is the full inventory view. `peekaboo app list` is the app-management view and filters hidden/background apps unless `--include-hidden` or `--include-background` is passed. `list apps` accepts those flags so sibling invocations do not fail, but they do not narrow the already-unfiltered payload.
+- `list apps` is the broader inventory view. `peekaboo app list` is the app-management view and filters hidden/background apps unless `--include-hidden` or `--include-background` is passed. `list apps` accepts those flags so sibling invocations do not fail, but they do not change its broader payload.
 - `list apps --json` keeps the legacy `data.applications` key and also emits preferred `data.apps`.
 - Application inventory prefers the GUI bridge host so sandboxed CLI callers see the GUI session’s complete process list. Other read-only inventory stays local by default unless its command needs host state or you pass `--bridge-socket <path>`.
 - `windows` calls `requireScreenRecordingPermission` before crawling AX so macOS doesn’t silently strip metadata; `apps` does not require Screen Recording.

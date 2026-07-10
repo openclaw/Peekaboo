@@ -4,7 +4,7 @@
 
 ### Added
 - `peekaboo agent` supports GPT-5.6 (`gpt-5.6`, `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`) and Claude Sonnet 5 (`claude-sonnet-5`, `sonnet`) alongside Fable 5, with matching display names in the Mac app's session view.
-- Bare `peekaboo paste` now pastes the current clipboard into the focused (or targeted background) app instead of erroring; payload flags without a payload still fail validation, and the current clipboard's contents are never echoed into structured output.
+- Bare `peekaboo paste` now pastes the current clipboard into the focused (or targeted background) app instead of erroring; payload flags without a payload still fail validation even when `--restore-delay-ms` explicitly uses its 150ms default, and the current clipboard's contents are never echoed into structured output.
 - `peekaboo list apps` accepts `--include-hidden`/`--include-background` for parity with `app list`, and `list apps`, `list menubar`, and `dock list` JSON now emit snake_case keys (`apps`, `menu_bar_items`, `dock_items`) alongside the legacy keys.
 
 ### Changed

@@ -53,6 +53,7 @@ struct PasteCommandTests {
             ["paste", "--uti", "public.rtf", "--json", "--no-remote"],
             ["paste", "--also-text", "fallback", "--json", "--no-remote"],
             ["paste", "--allow-large", "--json", "--no-remote"],
+            ["paste", "--restore-delay-ms", "150", "--json", "--no-remote"],
             ["paste", "--restore-delay-ms", "500", "--json", "--no-remote"],
         ] {
             let result = try await InProcessCommandRunner.run(argv, services: services)

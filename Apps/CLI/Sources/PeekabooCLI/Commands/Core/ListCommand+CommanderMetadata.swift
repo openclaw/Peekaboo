@@ -30,12 +30,12 @@ extension ListCommand.AppsSubcommand: CommanderSignatureProviding {
             flags: [
                 .commandFlag(
                     "includeHidden",
-                    help: "Accepted for parity with app list; list apps is already unfiltered",
+                    help: "Accepted for parity with app list; list apps already includes hidden apps",
                     long: "include-hidden"
                 ),
                 .commandFlag(
                     "includeBackground",
-                    help: "Accepted for parity with app list; list apps is already unfiltered",
+                    help: "Accepted for parity with app list; list apps already includes background apps",
                     long: "include-background"
                 ),
             ]

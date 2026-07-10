@@ -24,7 +24,7 @@ extension PasteCommand: CommanderSignatureProviding {
                 ),
                 .commandOption(
                     "restoreDelayMs",
-                    help: "Delay before restoring previous clipboard (ms)",
+                    help: "Delay before restoring previous clipboard (ms; default: 150)",
                     long: "restore-delay-ms"
                 ),
             ],

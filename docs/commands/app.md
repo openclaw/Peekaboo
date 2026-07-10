@@ -26,7 +26,7 @@ read_when:
 - `switch --cycle` synthesizes Cmd+Tab events using `CGEvent` so it behaves like the real keyboard shortcut; `switch --to` activates the exact PID resolved via AX.
 - `switch --verify` confirms the requested app is frontmost after activation (only supported with `--to`).
 - `relaunch` sends quit, termination polling (up to 5 s), the requested delay, and launch as one daemon-held transaction, so even a short daemon idle timeout cannot strand the app closed. It refuses to relaunch its own daemon, launches via bundle ID or bundle path, and can wait for `isFinishedLaunching` before reporting success.
-- `app list` is the app-management view and filters hidden/background apps unless `--include-hidden` or `--include-background` is passed. `peekaboo list apps` is the full inventory view; it accepts the same flags for parity and emits both legacy `data.applications` and preferred `data.apps`.
+- `app list` is the app-management view and filters hidden/background apps unless `--include-hidden` or `--include-background` is passed. `peekaboo list apps` is the broader inventory view; it accepts the same flags for parity and emits both legacy `data.applications` and preferred `data.apps`.
 
 ## Examples
 ```bash

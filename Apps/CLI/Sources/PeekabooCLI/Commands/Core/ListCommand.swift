@@ -13,8 +13,8 @@ struct ListCommand: ParsableCommand {
           peekaboo list SUBCOMMAND [OPTIONS]
 
         EXAMPLES:
-          peekaboo list                                  # List all applications (default)
-          peekaboo list apps                             # List all running applications
+          peekaboo list                                  # List applications (default)
+          peekaboo list apps                             # List running applications
           peekaboo list apps --include-hidden            # Accepted for app-list parity
           peekaboo list apps --json                      # Output as JSON
 
@@ -31,7 +31,7 @@ struct ListCommand: ParsableCommand {
           peekaboo list screens --json                   # Output as JSON
 
         SUBCOMMANDS:
-          apps          List all running applications with process IDs
+          apps          List running applications with process IDs
           windows       List windows for a specific application
           permissions   Check permissions required for Peekaboo
           menubar       List all menu bar items (status icons)
@@ -40,7 +40,7 @@ struct ListCommand: ParsableCommand {
         RELATED COMMANDS:
           peekaboo app list is the app-management view. It filters hidden/background apps
           unless --include-hidden/--include-background is passed. peekaboo list apps is
-          the full inventory view and accepts those flags for parity.
+          the broader inventory view and accepts those flags for parity.
 
           peekaboo window list is the renderable-window view used for window targeting.
           peekaboo list windows is the full per-application enumeration and may include

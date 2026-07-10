@@ -639,6 +639,12 @@ struct CommanderBinderCommandBindingTests {
 
     @Test
     func `Paste command binding (text + target)`() throws {
+        let defaultCommand = try CommanderCLIBinder.instantiateCommand(
+            ofType: PasteCommand.self,
+            parsedValues: ParsedValues(positional: [], options: [:], flags: [])
+        )
+        #expect(defaultCommand.restoreDelayMs == nil)
+
         let parsed = ParsedValues(
             positional: ["Hello"],
             options: [
@@ -656,6 +662,9 @@ struct CommanderBinderCommandBindingTests {
         #expect(command.target.windowTitle == "Untitled")
         #expect(command.restoreDelayMs == 250)
         #expect(command.allowLarge == true)
+
+        let restoreDelay = PasteCommand.commanderSignature().options.first { $0.label == "restoreDelayMs" }
+        #expect(restoreDelay?.help?.contains("default: 150") == true)
     }
 
     @Test
