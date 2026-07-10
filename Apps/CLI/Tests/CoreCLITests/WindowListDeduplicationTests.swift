@@ -130,6 +130,42 @@ struct WindowListDeduplicationTests {
         #expect(merged.map(\.title) == ["Main", "Detached"])
     }
 
+    @Test
+    func `Bounds fallback title is consumed once so identical frames are not all relabeled`() {
+        // Two untitled CG windows share an identical frame (stacked/maximized). A single AX
+        // descriptor without a resolvable CGWindowID matches that frame. It must relabel exactly one
+        // window; the other stays untitled rather than borrowing the same title and mislabeling.
+        let frame = CGRect(x: 0, y: 0, width: 1440, height: 900)
+        let cgWindows = [
+            Self.window(id: 11, title: "", index: 0, bounds: frame),
+            Self.window(id: 12, title: "", index: 1, bounds: frame),
+        ]
+        let axDescriptors = [Self.descriptor(id: nil, title: "Document", bounds: frame)]
+
+        let merged = WindowEnumerationContext.mergeWindows(cgWindows: cgWindows, axDescriptors: axDescriptors)
+
+        #expect(merged.map(\.windowID) == [11, 12])
+        #expect(merged.map(\.title) == ["Document", ""])
+    }
+
+    @Test
+    func `Bounds fallback assigns distinct titles to identically framed windows in order`() {
+        let frame = CGRect(x: 0, y: 0, width: 1440, height: 900)
+        let cgWindows = [
+            Self.window(id: 11, title: "", index: 0, bounds: frame),
+            Self.window(id: 12, title: "", index: 1, bounds: frame),
+        ]
+        let axDescriptors = [
+            Self.descriptor(id: nil, title: "First", bounds: frame),
+            Self.descriptor(id: nil, title: "Second", bounds: frame),
+        ]
+
+        let merged = WindowEnumerationContext.mergeWindows(cgWindows: cgWindows, axDescriptors: axDescriptors)
+
+        #expect(merged.map(\.windowID) == [11, 12])
+        #expect(merged.map(\.title) == ["First", "Second"])
+    }
+
     @MainActor
     @Test
     func `--window-index resolves to the window printed at that position`() async throws {

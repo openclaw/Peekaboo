@@ -290,6 +290,8 @@ struct WindowEnumerationContext {
         cgWindows: [ServiceWindowInfo],
         axDescriptors: [AXWindowDescriptor]) -> [ServiceWindowInfo]
     {
+        // CGWindowID → title is inherently one-to-one (CG windows are deduplicated by ID), so it is
+        // an unambiguous enrichment source for untitled CG windows.
         var axTitleByID: [Int: String] = [:]
         for descriptor in axDescriptors {
             guard let id = descriptor.windowID, !descriptor.title.isEmpty else { continue }
@@ -298,12 +300,41 @@ struct WindowEnumerationContext {
             }
         }
 
+        // Bounds-based enrichment only applies to titled AX windows AX could not resolve to a
+        // CGWindowID. Each such descriptor is consumed at most once so several identically framed
+        // untitled windows (e.g. stacked/maximized) can never all inherit the same title.
+        let boundsFallbacks: [(bounds: CGRect, title: String)] = axDescriptors.compactMap { descriptor in
+            guard descriptor.windowID == nil, !descriptor.title.isEmpty, let bounds = descriptor.bounds else {
+                return nil
+            }
+            return (bounds, descriptor.title)
+        }
+        var consumedFallbacks = Set<Int>()
+
         var merged: [ServiceWindowInfo] = []
         merged.reserveCapacity(cgWindows.count + axDescriptors.count)
         var seenWindowIDs = Set<Int>()
 
         for cgWindow in cgWindows where seenWindowIDs.insert(cgWindow.windowID).inserted {
-            merged.append(Self.titleEnriched(cgWindow, axTitleByID: axTitleByID, axDescriptors: axDescriptors))
+            guard cgWindow.title.isEmpty else {
+                merged.append(cgWindow)
+                continue
+            }
+
+            if let title = axTitleByID[cgWindow.windowID] {
+                merged.append(cgWindow.withTitle(title))
+                continue
+            }
+
+            if let matchIndex = boundsFallbacks.indices.first(where: { index in
+                !consumedFallbacks.contains(index) && Self.boundsMatch(boundsFallbacks[index].bounds, cgWindow.bounds)
+            }) {
+                consumedFallbacks.insert(matchIndex)
+                merged.append(cgWindow.withTitle(boundsFallbacks[matchIndex].title))
+                continue
+            }
+
+            merged.append(cgWindow)
         }
 
         for descriptor in axDescriptors {
@@ -314,29 +345,6 @@ struct WindowEnumerationContext {
         }
 
         return merged
-    }
-
-    private nonisolated static func titleEnriched(
-        _ window: ServiceWindowInfo,
-        axTitleByID: [Int: String],
-        axDescriptors: [AXWindowDescriptor]) -> ServiceWindowInfo
-    {
-        guard window.title.isEmpty else { return window }
-
-        if let title = axTitleByID[window.windowID] {
-            return window.withTitle(title)
-        }
-
-        // Fallback: AX could not expose a CGWindowID, so match by bounds instead of title.
-        if let matched = axDescriptors.first(where: { descriptor in
-            descriptor.windowID == nil &&
-                !descriptor.title.isEmpty &&
-                descriptor.bounds.map { Self.boundsMatch($0, window.bounds) } == true
-        }) {
-            return window.withTitle(matched.title)
-        }
-
-        return window
     }
 
     private nonisolated static func boundsMatch(_ lhs: CGRect, _ rhs: CGRect, tolerance: CGFloat = 5) -> Bool {
