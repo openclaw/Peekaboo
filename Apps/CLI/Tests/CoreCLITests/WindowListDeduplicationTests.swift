@@ -1,14 +1,19 @@
 import CoreGraphics
 import Foundation
+import PeekabooFoundation
 import Testing
 @testable import PeekabooAutomationKit
 
-/// Regression tests for duplicate window IDs leaking out of window enumeration.
+/// Regression tests for duplicate / mis-ordered window IDs leaking out of window enumeration.
 ///
 /// `peekaboo list windows` returned the same CGWindowID twice (with distinct indexes) because the
-/// CG/AX merge in `WindowEnumerationContext` appended one entry per AX window keyed by title only,
-/// and indexes were assigned before any deduplication. `peekaboo window list` hid the duplicate via
-/// `ObservationTargetResolver.filteredWindows(mode: .list)` but inherited the shifted indexes.
+/// CG/AX merge in `WindowEnumerationContext` associated AX windows to CG entries by title alone.
+/// Two windows sharing a title collapsed onto a single CG entry, so one was dropped from its AX
+/// position and re-appended later as a leftover — unique IDs, but the emitted order no longer
+/// matched the CG/frontmost enumeration, which is exactly what `--window-index` indexes into.
+///
+/// The fix preserves CGWindowList order and associates AX windows by `CGWindowID` (bounds as a
+/// fallback), never by title, then assigns contiguous indexes after deduplication.
 @Suite("Window list deduplication")
 struct WindowListDeduplicationTests {
     @Test
@@ -42,6 +47,96 @@ struct WindowListDeduplicationTests {
 
         #expect(normalized.map(\.index) == Array(0..<normalized.count))
         #expect(normalized.map(\.windowID) == [10, 20, 30, 40])
+    }
+
+    @Test
+    func `Same-titled windows keep distinct positions in CG order on the hybrid merge path`() {
+        // Playground reproduction: two real windows share the title "Text Fixture" and an untitled
+        // CG utility window forces the CG+AX hybrid path (the fast path only fires when every CG
+        // window already has a title). Association by title alone previously reordered these; the
+        // merge must keep CGWindowList order and enrich the untitled window from its AX counterpart.
+        let cgWindows = [
+            Self.window(id: 3459, title: "Text Fixture", index: 0),
+            Self.window(id: 3460, title: "Text Fixture", index: 1),
+            Self.window(id: 99, title: "", index: 2),
+        ]
+        let axDescriptors = [
+            Self.descriptor(id: 3459, title: "Text Fixture"),
+            Self.descriptor(id: 3460, title: "Text Fixture"),
+            Self.descriptor(id: 99, title: "Utility Panel"),
+        ]
+
+        let merged = WindowEnumerationContext.mergeWindows(cgWindows: cgWindows, axDescriptors: axDescriptors)
+
+        #expect(merged.map(\.windowID) == [3459, 3460, 99])
+        #expect(merged.map(\.title) == ["Text Fixture", "Text Fixture", "Utility Panel"])
+
+        let normalized = ApplicationService.normalizeWindowIndices(merged)
+        #expect(normalized.map(\.index) == [0, 1, 2])
+        #expect(normalized.map(\.windowID) == [3459, 3460, 99])
+    }
+
+    @Test
+    func `Untitled CG window is enriched by bounds when AX cannot expose a window id`() {
+        let cgWindows = [
+            Self.window(id: 501, title: "Editor", index: 0),
+            Self.window(id: 502, title: "", index: 1, bounds: CGRect(x: 40, y: 40, width: 600, height: 400)),
+        ]
+        let axDescriptors = [
+            Self.descriptor(id: 501, title: "Editor"),
+            Self.descriptor(id: nil, title: "Palette", bounds: CGRect(x: 42, y: 41, width: 600, height: 400)),
+        ]
+
+        let merged = WindowEnumerationContext.mergeWindows(cgWindows: cgWindows, axDescriptors: axDescriptors)
+
+        #expect(merged.map(\.windowID) == [501, 502])
+        #expect(merged.map(\.title) == ["Editor", "Palette"])
+    }
+
+    @Test
+    func `AX-only windows are appended after the CG enumeration`() {
+        let cgWindows = [Self.window(id: 1, title: "Main", index: 0)]
+        let axDescriptors = [
+            Self.descriptor(id: 1, title: "Main"),
+            Self.descriptor(id: 2, title: "Detached", standaloneInfo: Self.window(id: 2, title: "Detached", index: 0)),
+        ]
+
+        let merged = WindowEnumerationContext.mergeWindows(cgWindows: cgWindows, axDescriptors: axDescriptors)
+
+        #expect(merged.map(\.windowID) == [1, 2])
+        #expect(merged.map(\.title) == ["Main", "Detached"])
+    }
+
+    @MainActor
+    @Test
+    func `--window-index resolves to the window printed at that position`() async throws {
+        // Drive the real WindowManagementService.listWindows(.index) path over the real merge +
+        // normalize output, so a positional target genuinely lands on the printed window.
+        let cgWindows = [
+            Self.window(id: 3459, title: "Text Fixture", index: 0),
+            Self.window(id: 3460, title: "Text Fixture", index: 1),
+            Self.window(id: 42, title: "Playground", index: 2),
+            Self.window(id: 99, title: "", index: 3),
+        ]
+        let axDescriptors = [
+            Self.descriptor(id: 3459, title: "Text Fixture"),
+            Self.descriptor(id: 3460, title: "Text Fixture"),
+            Self.descriptor(id: 42, title: "Playground"),
+            Self.descriptor(id: 99, title: "Utility Panel"),
+        ]
+
+        let merged = WindowEnumerationContext.mergeWindows(cgWindows: cgWindows, axDescriptors: axDescriptors)
+        let enumeration = ApplicationService.normalizeWindowIndices(merged)
+
+        let appService = FakeApplicationService(windows: enumeration)
+        let windowService = WindowManagementService(applicationService: appService)
+
+        for position in enumeration.indices {
+            let resolved = try await windowService.listWindows(target: .index(app: "Playground", index: position))
+            #expect(resolved.count == 1)
+            #expect(resolved.first?.windowID == enumeration[position].windowID)
+            #expect(resolved.first?.index == position)
+        }
     }
 
     @Test
@@ -87,12 +182,13 @@ struct WindowListDeduplicationTests {
         id: Int,
         title: String,
         index: Int,
-        layer: Int = 0
+        layer: Int = 0,
+        bounds: CGRect = CGRect(x: 14, y: 59, width: 1200, height: 832)
     ) -> ServiceWindowInfo {
         ServiceWindowInfo(
             windowID: id,
             title: title,
-            bounds: CGRect(x: 14, y: 59, width: 1200, height: 832),
+            bounds: bounds,
             isMinimized: false,
             isMainWindow: false,
             windowLevel: layer,
@@ -104,4 +200,82 @@ struct WindowListDeduplicationTests {
             isExcludedFromWindowsMenu: false
         )
     }
+
+    private static func descriptor(
+        id: Int?,
+        title: String,
+        bounds: CGRect? = nil,
+        standaloneInfo: ServiceWindowInfo? = nil
+    ) -> WindowEnumerationContext.AXWindowDescriptor {
+        WindowEnumerationContext.AXWindowDescriptor(
+            windowID: id,
+            title: title,
+            bounds: bounds,
+            standaloneInfo: standaloneInfo
+        )
+    }
+}
+
+/// Minimal `ApplicationServiceProtocol` that returns a fixed, pre-computed window enumeration so the
+/// real `WindowManagementService.listWindows(.index)` selection can be exercised without live AX/CG.
+@MainActor
+private final class FakeApplicationService: ApplicationServiceProtocol {
+    private let windows: [ServiceWindowInfo]
+    private let app = ServiceApplicationInfo(
+        processIdentifier: 4242,
+        bundleIdentifier: "boo.peekaboo.playground.debug",
+        name: "Playground",
+        isActive: true,
+        windowCount: 4
+    )
+
+    init(windows: [ServiceWindowInfo]) {
+        self.windows = windows
+    }
+
+    func listApplications() async throws -> UnifiedToolOutput<ServiceApplicationListData> {
+        UnifiedToolOutput(
+            data: ServiceApplicationListData(applications: [self.app]),
+            summary: .init(brief: "1 app", status: .success, counts: ["applications": 1]),
+            metadata: .init(duration: 0)
+        )
+    }
+
+    func findApplication(identifier _: String) async throws -> ServiceApplicationInfo {
+        self.app
+    }
+
+    func listWindows(for _: String, timeout _: Float?) async throws -> UnifiedToolOutput<ServiceWindowListData> {
+        UnifiedToolOutput(
+            data: ServiceWindowListData(windows: self.windows, targetApplication: self.app),
+            summary: .init(
+                brief: "\(self.windows.count) windows",
+                status: .success,
+                counts: ["windows": self.windows.count]
+            ),
+            metadata: .init(duration: 0)
+        )
+    }
+
+    func getFrontmostApplication() async throws -> ServiceApplicationInfo {
+        self.app
+    }
+
+    func isApplicationRunning(identifier _: String) async -> Bool {
+        true
+    }
+
+    func launchApplication(identifier _: String) async throws -> ServiceApplicationInfo {
+        self.app
+    }
+
+    func activateApplication(identifier _: String) async throws {}
+    func quitApplication(identifier _: String, force _: Bool) async throws -> Bool {
+        true
+    }
+
+    func hideApplication(identifier _: String) async throws {}
+    func unhideApplication(identifier _: String) async throws {}
+    func hideOtherApplications(identifier _: String) async throws {}
+    func showAllApplications() async throws {}
 }

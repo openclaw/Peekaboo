@@ -8,12 +8,29 @@ import PeekabooFoundation
 struct WindowEnumerationContext {
     struct CGSnapshot {
         let windows: [ServiceWindowInfo]
-        let windowsByTitle: [String: ServiceWindowInfo]
     }
 
     struct AXWindowResult {
         let windows: [Element]
         let timedOut: Bool
+    }
+
+    /// Plain, testable description of an AX window used to enrich or extend the CG snapshot.
+    ///
+    /// AX windows are associated with CG windows by `CGWindowID` (resolved via `_AXUIElementGetWindow`)
+    /// and, as a fallback, by matching bounds. Title is deliberately *not* an association key: two
+    /// windows of the same app can share a title, and keying by title collapses them onto a single
+    /// CG entry, reordering the enumeration and mis-aligning `--window-index` targets.
+    struct AXWindowDescriptor: Sendable {
+        /// Resolved CGWindowID, when AX could expose one.
+        let windowID: Int?
+        /// AX window title (may be empty).
+        let title: String
+        /// AX-reported bounds, used only as a fallback matcher when `windowID` is unavailable.
+        let bounds: CGRect?
+        /// Fully materialized record for an AX window that has no CG counterpart. Nil when the AX
+        /// window matched a CG entry (the CG entry is authoritative and only borrows the title).
+        let standaloneInfo: ServiceWindowInfo?
     }
 
     unowned let service: ApplicationService
@@ -54,7 +71,6 @@ struct WindowEnumerationContext {
 
         var windowIndex = 0
         var windows: [ServiceWindowInfo] = []
-        var windowsByTitle: [String: ServiceWindowInfo] = [:]
         let screenService = ScreenService()
         let spaceService = SpaceManagementService()
 
@@ -75,9 +91,7 @@ struct WindowEnumerationContext {
             }
 
             windows.append(windowInfo)
-            if !windowInfo.title.isEmpty {
-                windowsByTitle[windowInfo.title] = windowInfo
-            } else {
+            if windowInfo.title.isEmpty {
                 let missingTitleMessage =
                     "Window \(windowInfo.windowID) has no title in CGWindowList, will need AX enrichment"
                 self.logger.debug("\(missingTitleMessage)")
@@ -90,7 +104,7 @@ struct WindowEnumerationContext {
         }
 
         self.logger.debug("CGWindowList found \(windows.count) windows for \(self.app.name)")
-        return CGSnapshot(windows: windows, windowsByTitle: windowsByTitle)
+        return CGSnapshot(windows: windows)
     }
 
     private func snapshotWindowInfo(
@@ -193,19 +207,36 @@ struct WindowEnumerationContext {
         _ snapshot: CGSnapshot,
         axResult: AXWindowResult) async -> UnifiedToolOutput<ServiceWindowListData>
     {
-        var enrichedWindows: [ServiceWindowInfo] = []
-        // windowsByTitle is keyed by title only, so two AX windows sharing a title resolve to the
-        // same CG snapshot entry. Guard every append by windowID or the same window is listed twice.
-        var seenWindowIDs = Set<Int>()
         var warnings: [String] = []
+        let descriptors = await self.collectAXDescriptors(
+            axResult: axResult,
+            cgWindowIDs: Set(snapshot.windows.map(\.windowID)),
+            warnings: &warnings)
 
-        func appendIfNew(_ window: ServiceWindowInfo) {
-            guard seenWindowIDs.insert(window.windowID).inserted else {
-                self.logger.debug("Skipping duplicate window id \(window.windowID) ('\(window.title)')")
-                return
-            }
-            enrichedWindows.append(window)
+        let merged = Self.mergeWindows(cgWindows: snapshot.windows, axDescriptors: descriptors)
+
+        if axResult.timedOut {
+            warnings.append("Window enumeration timed out after \(self.axTimeout)s, results may be incomplete")
         }
+
+        return self.service.buildWindowListOutput(
+            windows: merged,
+            app: self.app,
+            startTime: self.startTime,
+            warnings: warnings)
+    }
+
+    /// Resolve each AX window into a plain descriptor: CGWindowID (via `_AXUIElementGetWindow`),
+    /// title, and bounds. A full record is only built for AX windows CGWindowList never reported,
+    /// so the common enrichment path stays cheap.
+    private func collectAXDescriptors(
+        axResult: AXWindowResult,
+        cgWindowIDs: Set<Int>,
+        warnings: inout [String]) async -> [AXWindowDescriptor]
+    {
+        let windowIdentityService = WindowIdentityService()
+        var descriptors: [AXWindowDescriptor] = []
+        descriptors.reserveCapacity(axResult.windows.count)
 
         for (index, axWindow) in axResult.windows.indexed() {
             if Date().timeIntervalSince(self.startTime) > Double(self.axTimeout * 2) {
@@ -213,33 +244,95 @@ struct WindowEnumerationContext {
                 break
             }
 
-            guard let axTitle = axWindow.title(), !axTitle.isEmpty else {
+            let title = axWindow.title() ?? ""
+            let resolvedID = windowIdentityService.getWindowID(from: axWindow).map(Int.init)
+            let bounds: CGRect? = axWindow.position().map { position in
+                CGRect(origin: position, size: axWindow.size() ?? .zero)
+            }
+
+            // Materialize a full record only when this AX window has no CG counterpart; those are the
+            // windows CGWindowList missed and that we still need to surface.
+            var standaloneInfo: ServiceWindowInfo?
+            if let resolvedID, !cgWindowIDs.contains(resolvedID) {
+                standaloneInfo = await self.service.createWindowInfo(from: axWindow, index: index)
+            }
+
+            descriptors.append(AXWindowDescriptor(
+                windowID: resolvedID,
+                title: title,
+                bounds: bounds,
+                standaloneInfo: standaloneInfo))
+        }
+
+        return descriptors
+    }
+
+    /// Merge CG and AX windows preserving CGWindowList enumeration order.
+    ///
+    /// - CG windows are emitted first, in CGWindowList order, deduplicated by `CGWindowID`. Untitled
+    ///   CG entries borrow a title from the AX window with the same `CGWindowID` (or matching bounds).
+    /// - AX-only windows (a resolved `CGWindowID` that CGWindowList never reported) are appended last.
+    ///
+    /// Association is by `CGWindowID`/bounds, never by title, so same-titled windows keep distinct
+    /// positions and `--window-index` continues to line up with the printed list.
+    nonisolated static func mergeWindows(
+        cgWindows: [ServiceWindowInfo],
+        axDescriptors: [AXWindowDescriptor]) -> [ServiceWindowInfo]
+    {
+        var axTitleByID: [Int: String] = [:]
+        for descriptor in axDescriptors {
+            guard let id = descriptor.windowID, !descriptor.title.isEmpty else { continue }
+            if axTitleByID[id] == nil {
+                axTitleByID[id] = descriptor.title
+            }
+        }
+
+        var merged: [ServiceWindowInfo] = []
+        merged.reserveCapacity(cgWindows.count + axDescriptors.count)
+        var seenWindowIDs = Set<Int>()
+
+        for cgWindow in cgWindows where seenWindowIDs.insert(cgWindow.windowID).inserted {
+            merged.append(Self.titleEnriched(cgWindow, axTitleByID: axTitleByID, axDescriptors: axDescriptors))
+        }
+
+        for descriptor in axDescriptors {
+            guard let info = descriptor.standaloneInfo, seenWindowIDs.insert(info.windowID).inserted else {
                 continue
             }
-
-            if let cgWindow = snapshot.windowsByTitle[axTitle] {
-                appendIfNew(cgWindow)
-            } else if let windowInfo = await self.service.createWindowInfo(from: axWindow, index: index) {
-                appendIfNew(windowInfo)
-            }
+            merged.append(info)
         }
 
-        for cgWindow in snapshot.windows where !seenWindowIDs.contains(cgWindow.windowID) {
-            if cgWindow.title.isEmpty {
-                self.logger.debug("CGWindow \(cgWindow.windowID) has no title, including as-is")
-            }
-            appendIfNew(cgWindow)
+        return merged
+    }
+
+    private nonisolated static func titleEnriched(
+        _ window: ServiceWindowInfo,
+        axTitleByID: [Int: String],
+        axDescriptors: [AXWindowDescriptor]) -> ServiceWindowInfo
+    {
+        guard window.title.isEmpty else { return window }
+
+        if let title = axTitleByID[window.windowID] {
+            return window.withTitle(title)
         }
 
-        if axResult.timedOut {
-            warnings.append("Window enumeration timed out after \(self.axTimeout)s, results may be incomplete")
+        // Fallback: AX could not expose a CGWindowID, so match by bounds instead of title.
+        if let matched = axDescriptors.first(where: { descriptor in
+            descriptor.windowID == nil &&
+                !descriptor.title.isEmpty &&
+                descriptor.bounds.map { Self.boundsMatch($0, window.bounds) } == true
+        }) {
+            return window.withTitle(matched.title)
         }
 
-        return self.service.buildWindowListOutput(
-            windows: enrichedWindows,
-            app: self.app,
-            startTime: self.startTime,
-            warnings: warnings)
+        return window
+    }
+
+    private nonisolated static func boundsMatch(_ lhs: CGRect, _ rhs: CGRect, tolerance: CGFloat = 5) -> Bool {
+        abs(lhs.origin.x - rhs.origin.x) < tolerance &&
+            abs(lhs.origin.y - rhs.origin.y) < tolerance &&
+            abs(lhs.size.width - rhs.size.width) < tolerance &&
+            abs(lhs.size.height - rhs.size.height) < tolerance
     }
 
     private func buildAXOnlyResult(from axResult: AXWindowResult) async -> UnifiedToolOutput<ServiceWindowListData> {
@@ -286,5 +379,29 @@ struct WindowEnumerationContext {
             app: self.app,
             startTime: self.startTime,
             warnings: warnings)
+    }
+}
+
+extension ServiceWindowInfo {
+    /// Returns a copy of this window with a replacement title, preserving every other field.
+    fileprivate func withTitle(_ newTitle: String) -> ServiceWindowInfo {
+        ServiceWindowInfo(
+            windowID: self.windowID,
+            title: newTitle,
+            bounds: self.bounds,
+            isMinimized: self.isMinimized,
+            isMainWindow: self.isMainWindow,
+            windowLevel: self.windowLevel,
+            alpha: self.alpha,
+            index: self.index,
+            spaceID: self.spaceID,
+            spaceName: self.spaceName,
+            screenIndex: self.screenIndex,
+            screenName: self.screenName,
+            isOffScreen: self.isOffScreen,
+            layer: self.layer,
+            isOnScreen: self.isOnScreen,
+            sharingState: self.sharingState,
+            isExcludedFromWindowsMenu: self.isExcludedFromWindowsMenu)
     }
 }
