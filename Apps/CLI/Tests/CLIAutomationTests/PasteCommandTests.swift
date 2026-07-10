@@ -33,6 +33,34 @@ struct PasteCommandTests {
 
     @Test
     @MainActor
+    func `Malformed payload flags fail validation instead of pasting the clipboard`() async throws {
+        // Regression: `paste --uti public.rtf` (payload modifier, no payload) previously
+        // reached makeWriteRequest() and failed; the bare-paste branch must not swallow
+        // it into an unintended Cmd+V of whatever is on the clipboard.
+        let automation = StubAutomationService()
+        let clipboard = StubClipboardService()
+        clipboard.current = ClipboardReadResult(
+            utiIdentifier: "public.utf8-plain-text",
+            data: Data("sensitive".utf8),
+            textPreview: "sensitive"
+        )
+        let services = TestServicesFactory.makePeekabooServices(
+            clipboard: clipboard,
+            automation: automation
+        )
+
+        let result = try await InProcessCommandRunner.run(
+            ["paste", "--uti", "public.rtf", "--json", "--no-remote"],
+            services: services
+        )
+
+        #expect(result.exitStatus != 0)
+        #expect(automation.hotkeyCalls.isEmpty)
+        #expect(automation.targetedHotkeyCalls.isEmpty)
+    }
+
+    @Test
+    @MainActor
     func `Bare paste sends current clipboard without mutating clipboard`() async throws {
         let automation = StubAutomationService()
         let clipboard = StubClipboardService()

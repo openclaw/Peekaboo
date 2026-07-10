@@ -74,7 +74,11 @@ struct PasteCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
     }
 
     private var hasExplicitPayload: Bool {
-        self.resolvedText != nil || self.filePath != nil || self.imagePath != nil || self.dataBase64 != nil
+        // Any payload source OR payload-modifier flag counts: `paste --uti public.rtf`
+        // without data must fail validation, not silently paste the current clipboard.
+        // An explicitly provided empty positional ("") is also an explicit payload.
+        self.text != nil || self.textOption != nil || self.filePath != nil || self.imagePath != nil
+            || self.dataBase64 != nil || self.uti != nil || self.alsoText != nil
     }
 
     @MainActor
