@@ -189,3 +189,118 @@ func formatWindowPoint(_ point: CGPoint) -> String {
 func formatWindowSize(_ size: CGSize) -> String {
     "\(Int(size.width))x\(Int(size.height))"
 }
+
+// MARK: - Frame Settling
+
+/// Result of polling a window's frame until it stops changing.
+struct SettledWindowFrame {
+    let info: ServiceWindowInfo?
+    /// `true` when two consecutive reads agreed within tolerance before the attempt budget ran out.
+    let stabilized: Bool
+}
+
+/// Whether two rectangles match within `tolerance` on every edge.
+func windowFramesMatch(_ lhs: CGRect, _ rhs: CGRect, tolerance: CGFloat) -> Bool {
+    abs(lhs.origin.x - rhs.origin.x) <= tolerance &&
+        abs(lhs.origin.y - rhs.origin.y) <= tolerance &&
+        abs(lhs.size.width - rhs.size.width) <= tolerance &&
+        abs(lhs.size.height - rhs.size.height) <= tolerance
+}
+
+/// Poll a window's frame until it is stable across two consecutive reads or the attempt budget is spent.
+///
+/// Animated window operations (notably `maximize`, which presses the green zoom button) report an
+/// intermediate frame if read immediately, so callers that need the *settled* frame must wait for the
+/// animation to finish. Synchronous AX geometry setters (`resize`/`move`/`set-bounds`) do not animate
+/// and therefore do not need this.
+@MainActor
+func settleWindowFrame(
+    tolerance: CGFloat = 1.0,
+    maxAttempts: Int = 24,
+    pollInterval: Duration = .milliseconds(50),
+    read: () async -> ServiceWindowInfo?
+) async -> SettledWindowFrame {
+    var previous = await read()
+    var attempts = 1
+    while attempts < maxAttempts {
+        if pollInterval > .zero {
+            try? await Task.sleep(for: pollInterval)
+        }
+        let current = await read()
+        attempts += 1
+        if let previousBounds = previous?.bounds, let currentBounds = current?.bounds,
+           windowFramesMatch(previousBounds, currentBounds, tolerance: tolerance) {
+            return SettledWindowFrame(info: current, stabilized: true)
+        }
+        previous = current ?? previous
+    }
+    return SettledWindowFrame(info: previous, stabilized: false)
+}
+
+// MARK: - Idempotent Maximize
+
+/// Detect whether a maximize toggle *undid* an existing maximization.
+///
+/// AppKit's green zoom button is a toggle: pressing it on an already-maximized window restores the
+/// previous (smaller) user frame. When the read-back frame is meaningfully smaller than the frame we
+/// started from, the window was already maximized and the caller should press again to re-assert the
+/// maximized state, keeping `maximize` idempotent. A minimum shrink ratio avoids re-pressing on
+/// sub-point rounding noise; a genuine un-maximize shrinks the window substantially.
+func maximizeToggleUndidMaximization(
+    original: CGRect,
+    achieved: CGRect,
+    minimumShrinkRatio: CGFloat = 0.02
+) -> Bool {
+    let originalArea = original.width * original.height
+    let achievedArea = achieved.width * achieved.height
+    guard originalArea > 0 else { return false }
+    return achievedArea < originalArea * (1 - minimumShrinkRatio)
+}
+
+/// Outcome of an idempotent maximize: the settled frame plus whether the window had to be re-asserted.
+struct MaximizeOutcome {
+    let info: ServiceWindowInfo?
+    /// `true` when the window was already maximized and the toggle was corrected back to maximized.
+    let alreadyMaximized: Bool
+    /// `false` when the frame never stopped changing within the poll budget.
+    let stabilized: Bool
+}
+
+/// Maximize a window idempotently: press, wait for the animation to settle, and re-assert if the
+/// toggle un-maximized an already-maximized window.
+///
+/// `press` performs the underlying (animated) maximize; `read` returns the current frame. Both are
+/// injected so the flow can be exercised without a live window server.
+@MainActor
+func resolveIdempotentMaximize(
+    original: ServiceWindowInfo?,
+    tolerance: CGFloat = 1.0,
+    maxAttempts: Int = 24,
+    pollInterval: Duration = .milliseconds(50),
+    press: () async throws -> Void,
+    read: () async -> ServiceWindowInfo?
+) async throws -> MaximizeOutcome {
+    try await press()
+    var settled = await settleWindowFrame(
+        tolerance: tolerance,
+        maxAttempts: maxAttempts,
+        pollInterval: pollInterval,
+        read: read
+    )
+    var alreadyMaximized = false
+
+    if let originalBounds = original?.bounds, let achievedBounds = settled.info?.bounds,
+       maximizeToggleUndidMaximization(original: originalBounds, achieved: achievedBounds) {
+        // The window was already maximized; the toggle restored the user frame. Re-assert maximize.
+        try await press()
+        settled = await settleWindowFrame(
+            tolerance: tolerance,
+            maxAttempts: maxAttempts,
+            pollInterval: pollInterval,
+            read: read
+        )
+        alreadyMaximized = true
+    }
+
+    return MaximizeOutcome(info: settled.info, alreadyMaximized: alreadyMaximized, stabilized: settled.stabilized)
+}

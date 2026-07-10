@@ -217,30 +217,49 @@ extension WindowCommand {
                     throw PeekabooError.windowNotFound(criteria: "No windows found for \(appName)")
                 }
 
-                // Perform the action
+                // Quiet per-attempt reader used while polling for the frame to settle. Unlike
+                // `refetchWindowInfo`, it does not log a warning on every poll.
+                let readTarget = try self.windowOptions.toWindowTarget()
+                let readWindow: () async -> ServiceWindowInfo? = { [services = self.services] in
+                    guard let windows = try? await WindowServiceBridge.listWindows(
+                        windows: services.windows,
+                        target: readTarget
+                    ) else {
+                        return nil
+                    }
+                    return self.windowOptions.selectWindow(from: windows)
+                }
+
+                // Perform the action. `maximize` presses the animated green zoom button, so the frame
+                // must settle before we read it back, and the toggle must be re-asserted if the window
+                // was already maximized (see resolveIdempotentMaximize).
                 self.resolvedRuntime.beginInteractionMutation()
-                try await WindowServiceBridge.maximizeWindow(windows: self.services.windows, target: target)
-                await invalidateLatestSnapshotAfterWindowMutation(
-                    runtime: self.resolvedRuntime,
-                    reason: "window maximize"
+                let outcome = try await resolveIdempotentMaximize(
+                    original: windowInfo,
+                    press: {
+                        try await WindowServiceBridge.maximizeWindow(windows: self.services.windows, target: target)
+                        await invalidateLatestSnapshotAfterWindowMutation(
+                            runtime: self.resolvedRuntime,
+                            reason: "window maximize"
+                        )
+                    },
+                    read: readWindow
                 )
 
-                // Read the frame back so new_bounds reflects the maximized frame, not the old one.
-                let refreshedWindowInfo = await self.windowOptions.refetchWindowInfo(
-                    services: self.services,
-                    logger: self.logger,
-                    context: "window-maximize"
-                )
-                let finalWindowInfo = refreshedWindowInfo ?? windowInfo
+                let finalWindowInfo = outcome.info ?? windowInfo
                 logWindowAction(
                     action: "maximize",
                     appName: appName,
                     windowInfo: finalWindowInfo
                 )
 
-                let warning: String? = refreshedWindowInfo == nil
-                    ? "Could not read back the window frame after maximize; reported bounds may be stale."
-                    : nil
+                let warning: String? = if outcome.info == nil {
+                    "Could not read back the window frame after maximize; reported bounds may be stale."
+                } else if !outcome.stabilized {
+                    "The window frame was still changing after maximize; reported bounds may be approximate."
+                } else {
+                    nil
+                }
                 let data = createWindowActionResult(
                     action: "maximize",
                     success: true,
@@ -250,7 +269,12 @@ extension WindowCommand {
                 )
 
                 output(data) {
-                    print("Successfully maximized window '\(finalWindowInfo?.title ?? "Untitled")' of \(appName)")
+                    let title = finalWindowInfo?.title ?? "Untitled"
+                    if outcome.alreadyMaximized {
+                        print("Window '\(title)' of \(appName) is already maximized")
+                    } else {
+                        print("Successfully maximized window '\(title)' of \(appName)")
+                    }
                     if let warning {
                         print("Warning: \(warning)")
                     }
