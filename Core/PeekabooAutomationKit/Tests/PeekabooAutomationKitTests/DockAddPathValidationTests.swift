@@ -53,7 +53,7 @@ struct DockAddPathValidationTests {
     func `shell metacharacter path stays a single non-shell argument payload`() throws {
         let payload = #"/tmp/x'; touch /tmp/pwned; echo '"#
         let path = try DockService.validatedDockItemPath(payload)
-        let command = DockService.dockDefaultsWriteCommand(forPath: path, isFolder: false)
+        let command = DockService.dockDefaultsWriteCommand(forPath: path)
 
         #expect(command.executable == "/usr/bin/defaults")
         #expect(command.arguments == [
@@ -84,7 +84,6 @@ struct DockAddPathValidationTests {
         let domain = temporaryDirectory.appendingPathComponent("dock-domain").path
         let command = DockService.dockDefaultsWriteCommand(
             forPath: payload,
-            isFolder: false,
             domain: domain)
 
         try DockService.runProcess(command)
@@ -99,5 +98,74 @@ struct DockAddPathValidationTests {
         let tileData = try #require(tile["tile-data"] as? [String: Any])
         let fileData = try #require(tileData["file-data"] as? [String: Any])
         #expect(fileData["_CFURLString"] as? String == payload)
+    }
+
+    @Test
+    func `application bundles use the Dock applications array`() {
+        let path = "/System/Applications/Calculator.app"
+        #expect(FileManager.default.fileExists(atPath: path))
+
+        let command = DockService.dockDefaultsWriteCommand(forPath: path)
+
+        #expect(command.arguments[2] == "persistent-apps")
+    }
+
+    @Test
+    func `ordinary directories use the Dock folders array`() throws {
+        let fileManager = FileManager.default
+        let directory = fileManager.temporaryDirectory
+            .appendingPathComponent("peekaboo-dock-folder-\(UUID().uuidString)", isDirectory: true)
+        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: directory) }
+
+        let command = DockService.dockDefaultsWriteCommand(forPath: directory.path)
+
+        #expect(command.arguments[2] == "persistent-others")
+    }
+
+    @Test
+    func `symlinks to application bundles keep their path and use the applications array`() throws {
+        let fileManager = FileManager.default
+        let temporaryDirectory = fileManager.temporaryDirectory
+            .appendingPathComponent("peekaboo-dock-symlink-\(UUID().uuidString)", isDirectory: true)
+        try fileManager.createDirectory(at: temporaryDirectory, withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: temporaryDirectory) }
+
+        let symlink = temporaryDirectory.appendingPathComponent("Calculator Link.app")
+        try fileManager.createSymbolicLink(
+            at: symlink,
+            withDestinationURL: URL(fileURLWithPath: "/System/Applications/Calculator.app"))
+
+        let command = DockService.dockDefaultsWriteCommand(forPath: symlink.path)
+
+        #expect(command.arguments[2] == "persistent-apps")
+        #expect(command.arguments[4].contains("<string>\(symlink.path)</string>"))
+    }
+
+    @Test
+    func `real defaults write places an application bundle in persistent apps`() throws {
+        let fileManager = FileManager.default
+        let temporaryDirectory = fileManager.temporaryDirectory
+            .appendingPathComponent("peekaboo-dock-app-test-\(UUID().uuidString)", isDirectory: true)
+        try fileManager.createDirectory(at: temporaryDirectory, withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: temporaryDirectory) }
+
+        let calculatorPath = "/System/Applications/Calculator.app"
+        let domain = temporaryDirectory.appendingPathComponent("dock-domain").path
+        let command = DockService.dockDefaultsWriteCommand(forPath: calculatorPath, domain: domain)
+
+        try DockService.runProcess(command)
+
+        let plistURL = URL(fileURLWithPath: domain + ".plist")
+        let plistData = try Data(contentsOf: plistURL)
+        let plist = try PropertyListSerialization.propertyList(from: plistData, format: nil)
+        let root = try #require(plist as? [String: Any])
+        let persistentApps = try #require(root["persistent-apps"] as? [[String: Any]])
+        #expect(root["persistent-others"] == nil)
+        #expect(persistentApps.count == 1)
+
+        let tileData = try #require(persistentApps[0]["tile-data"] as? [String: Any])
+        let fileData = try #require(tileData["file-data"] as? [String: Any])
+        #expect(fileData["_CFURLString"] as? String == calculatorPath)
     }
 }

@@ -13,6 +13,7 @@
 - The accessibility element boxes drawn during `peekaboo see` are off by default now; they were visual clutter on every capture. Re-enable them in Peekaboo.app under Settings › Visualizer › Element Detection Boxes, by setting `visualizer.elementDetectionEnabled` in `~/.peekaboo/config.json`, or per-run with `PEEKABOO_VISUAL_ELEMENT_BOXES=true`. The app toggle and the config file now stay in sync, and a running MCP server picks up the change without a restart.
 
 ### Fixed
+- Adding a macOS application bundle to the Dock now places it with applications instead of mistaking its on-disk directory for a folder.
 - Synchronous default MCP tool-context access now fails fast off the main thread, with an async main-actor accessor for background callers. Thanks @SebTardif for #253.
 - Default `PeekabooMCPServer` startup now throws an actionable configuration error instead of terminating the process when no default tool context was installed. Thanks @SebTardif for #252.
 - `peekaboo agent` with a local Ollama model now actually runs its tools. Ollama's streaming API returns tool calls alongside empty content, and those were being dropped, so models fell back to printing tool-call JSON as text: the agent executed nothing, reported zero tool calls and empty content, and still claimed success. Asking the agent to click a button now clicks it.

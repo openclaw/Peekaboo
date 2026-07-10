@@ -2,6 +2,7 @@
 import CoreGraphics
 import Foundation
 import PeekabooFoundation
+import UniformTypeIdentifiers
 
 struct DockProcessCommand: Equatable, Sendable {
     let executable: String
@@ -27,15 +28,12 @@ extension DockService {
 
     func addToDockImpl(path: String, persistent _: Bool = true) async throws {
         let sanitizedPath = try DockService.validatedDockItemPath(path)
-        var isDirectory: ObjCBool = false
-        _ = FileManager.default.fileExists(atPath: sanitizedPath, isDirectory: &isDirectory)
-        let isFolder = isDirectory.boolValue
 
         // Invoke defaults directly (no shell) so path content cannot break out of
         // a bash -c script. Still XML-escape the path so malformed strings cannot
         // corrupt the Dock plist fragment.
         try DockService.runProcess(
-            DockService.dockDefaultsWriteCommand(forPath: sanitizedPath, isFolder: isFolder))
+            DockService.dockDefaultsWriteCommand(forPath: sanitizedPath))
         try DockService.runProcess(DockService.restartDockCommand)
     }
 
@@ -93,14 +91,24 @@ extension DockService {
 
     static func dockDefaultsWriteCommand(
         forPath path: String,
-        isFolder: Bool,
         domain: String = "com.apple.dock") -> DockProcessCommand
     {
-        let plistKey = isFolder ? "persistent-others" : "persistent-apps"
+        let plistKey = self.dockPlistKey(forPath: path)
         return DockProcessCommand(
             executable: "/usr/bin/defaults",
             arguments: ["write", domain, plistKey, "-array-add", self.dockTilePlistFragment(forPath: path)],
             failurePrefix: "Failed to add item to Dock")
+    }
+
+    private static func dockPlistKey(forPath path: String) -> String {
+        // App bundles are directories on disk but belong in the Dock's application array.
+        // Resolve symlinks only for classification; the tile keeps the exact supplied path.
+        let classificationURL = URL(fileURLWithPath: path).resolvingSymlinksInPath()
+        let values = try? classificationURL.resourceValues(forKeys: [.contentTypeKey, .isDirectoryKey])
+        if values?.contentType?.conforms(to: .applicationBundle) == true {
+            return "persistent-apps"
+        }
+        return values?.isDirectory == true ? "persistent-others" : "persistent-apps"
     }
 
     static let restartDockCommand = DockProcessCommand(
