@@ -26,7 +26,7 @@ enum DaemonStartupGate {
         }
     }
 
-    private static var activeInProcess = false
+    private static var activeLockPaths: Set<String> = []
 
     static func withExclusiveStartup<T: Sendable>(
         lockURL: URL = DaemonPaths.daemonStartupLockURL(),
@@ -36,8 +36,9 @@ enum DaemonStartupGate {
     ) async throws -> T {
         let clock = ContinuousClock()
         let deadline = clock.now.advanced(by: timeout)
+        let lockPath = lockURL.standardizedFileURL.path
 
-        while self.activeInProcess {
+        while self.activeLockPaths.contains(lockPath) {
             try await self.waitToRetry(
                 clock: clock,
                 deadline: deadline,
@@ -49,8 +50,8 @@ enum DaemonStartupGate {
         guard clock.now < deadline else {
             throw GateError.timedOut(path: lockURL.path)
         }
-        self.activeInProcess = true
-        defer { self.activeInProcess = false }
+        self.activeLockPaths.insert(lockPath)
+        defer { self.activeLockPaths.remove(lockPath) }
 
         do {
             try FileManager.default.createDirectory(

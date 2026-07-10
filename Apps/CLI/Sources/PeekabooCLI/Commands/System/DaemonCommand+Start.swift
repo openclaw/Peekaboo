@@ -48,7 +48,9 @@ extension DaemonCommand {
 
         mutating func run(using runtime: CommandRuntime) async throws {
             self.runtime = runtime
-            try await DaemonStartupGate.withExclusiveStartup { _ in
+            try await DaemonStartupGate.withExclusiveStartup(
+                lockURL: DaemonPaths.daemonStartupLockURL(socketPath: self.bridgeSocket)
+            ) { _ in
                 try await self.runWithStartupLockHeld()
             }
         }

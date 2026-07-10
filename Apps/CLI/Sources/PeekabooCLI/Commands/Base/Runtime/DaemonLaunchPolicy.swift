@@ -460,7 +460,9 @@ enum DaemonLaunchPolicy {
 
     @MainActor
     static func startOnDemandDaemon(socketPath: String, environment: [String: String]) async -> String? {
-        try? await DaemonStartupGate.withExclusiveStartup { _ in
+        try? await DaemonStartupGate.withExclusiveStartup(
+            lockURL: DaemonPaths.daemonStartupLockURL(socketPath: socketPath)
+        ) { _ in
             await self.startOnDemandDaemonWithStartupLockHeld(
                 socketPath: socketPath,
                 environment: environment

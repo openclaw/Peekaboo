@@ -487,8 +487,26 @@ enum DaemonPaths {
         self.openFileForAppend(at: self.daemonLogURL())
     }
 
-    static func daemonStartupLockURL() -> URL {
-        FileManager.default.homeDirectoryForCurrentUser
+    static func daemonStartupLockURL(socketPath: String? = nil) -> URL {
+        if let socketPath = socketPath?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !socketPath.isEmpty {
+            let socketURL = URL(
+                fileURLWithPath: (socketPath as NSString).expandingTildeInPath
+            ).standardizedFileURL
+            let defaultSocketURL = URL(
+                fileURLWithPath: PeekabooBridgeConstants.daemonSocketPath
+            ).standardizedFileURL
+            // Build-scoped fallback daemons share lifecycle promotion with the canonical daemon.
+            let isBuildScopedDefault = socketURL.deletingLastPathComponent() ==
+                defaultSocketURL.deletingLastPathComponent() &&
+                socketURL.lastPathComponent.hasPrefix("daemon-") &&
+                socketURL.pathExtension == "sock"
+            if socketURL != defaultSocketURL, !isBuildScopedDefault {
+                return URL(fileURLWithPath: "\(socketURL.path).start.lock")
+            }
+        }
+
+        return FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".peekaboo", isDirectory: true)
             .appendingPathComponent("daemon-start.lock")
     }

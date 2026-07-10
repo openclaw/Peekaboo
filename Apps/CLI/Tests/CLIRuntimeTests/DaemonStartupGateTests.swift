@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import PeekabooBridge
 import Testing
 @testable import PeekabooCLI
 
@@ -35,6 +36,57 @@ struct DaemonStartupGateTests {
         #expect(inspection.mode & mode_t(S_IFMT) == mode_t(S_IFREG))
         #expect(inspection.mode & mode_t(0o777) == mode_t(S_IRUSR | S_IWUSR))
         #expect(inspection.owner == geteuid())
+    }
+
+    @Test
+    func `custom daemon sockets use an isolated startup lock while default family stays shared`() {
+        let customSocketPath = "/tmp/peekaboo-custom-\(UUID().uuidString).sock"
+        #expect(
+            DaemonPaths.daemonStartupLockURL(socketPath: customSocketPath).path ==
+                "\(customSocketPath).start.lock"
+        )
+        let defaultLockURL = DaemonPaths.daemonStartupLockURL()
+        #expect(
+            DaemonPaths.daemonStartupLockURL(socketPath: PeekabooBridgeConstants.daemonSocketPath) ==
+                defaultLockURL
+        )
+        let buildScopedSocketURL = URL(fileURLWithPath: PeekabooBridgeConstants.daemonSocketPath)
+            .deletingLastPathComponent()
+            .appendingPathComponent("daemon-0123456789abcdef.sock")
+        #expect(
+            DaemonPaths.daemonStartupLockURL(socketPath: buildScopedSocketURL.path) == defaultLockURL
+        )
+    }
+
+    @Test
+    func `startup gate allows distinct lock paths concurrently`() async throws {
+        let (root, firstLockURL) = try self.temporaryLockURL()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let secondLockURL = root.appendingPathComponent("other-daemon-start.lock")
+
+        var releaseFirst: CheckedContinuation<Void, Never>?
+        defer { releaseFirst?.resume() }
+        let first = Task { @MainActor in
+            try await DaemonStartupGate.withExclusiveStartup(lockURL: firstLockURL) { _ in
+                await withCheckedContinuation { continuation in
+                    releaseFirst = continuation
+                }
+                return true
+            }
+        }
+        while releaseFirst == nil {
+            await Task.yield()
+        }
+
+        let secondEntered = try await DaemonStartupGate.withExclusiveStartup(
+            lockURL: secondLockURL,
+            timeout: .seconds(1)
+        ) { _ in true }
+        #expect(secondEntered)
+
+        releaseFirst?.resume()
+        releaseFirst = nil
+        #expect(try await first.value)
     }
 
     @Test
@@ -154,6 +206,7 @@ struct DaemonStartupGateTests {
         )
 
         var releaseFirst: CheckedContinuation<Void, Never>?
+        var secondStarted = false
         var secondEntered = false
         let first = Task { @MainActor in
             try await DaemonStartupGate.withExclusiveStartup(lockURL: lockURL) { _ in
@@ -168,15 +221,19 @@ struct DaemonStartupGateTests {
         }
 
         let second = Task { @MainActor in
-            try await DaemonStartupGate.withExclusiveStartup(
+            secondStarted = true
+            return try await DaemonStartupGate.withExclusiveStartup(
                 lockURL: lockURL,
-                timeout: .milliseconds(200)
+                timeout: .seconds(1)
             ) { _ in
                 secondEntered = true
                 return true
             }
         }
-        try await Task.sleep(for: .milliseconds(80))
+        while !secondStarted {
+            await Task.yield()
+        }
+        await Task.yield()
         #expect(!secondEntered)
 
         releaseFirst?.resume()
