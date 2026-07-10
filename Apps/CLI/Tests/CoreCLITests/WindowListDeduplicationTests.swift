@@ -14,6 +14,9 @@ import Testing
 ///
 /// The fix preserves CGWindowList order and associates AX windows by `CGWindowID` (bounds as a
 /// fallback), never by title, then assigns contiguous indexes after deduplication.
+/// `normalizeWindowIndices` and `WindowManagementService` are `@MainActor`; pin the whole suite so
+/// the isolation is explicit rather than relying on the target's default MainActor isolation.
+@MainActor
 @Suite("Window list deduplication")
 struct WindowListDeduplicationTests {
     @Test
@@ -166,7 +169,6 @@ struct WindowListDeduplicationTests {
         #expect(merged.map(\.title) == ["First", "Second"])
     }
 
-    @MainActor
     @Test
     func `--window-index resolves to the window printed at that position`() async throws {
         // Drive the real WindowManagementService.listWindows(.index) path over the real merge +
