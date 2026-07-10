@@ -637,7 +637,11 @@ struct PeekabooBridgeTargetedClickTests {
 
     @Test
     @MainActor
-    func `remote targeted click preflights synthetic variants without transport`() async throws {
+    func `remote coordinate click is not preflight-rejected on an accessibility-only host`() async {
+        // Current hosts deliver coordinate targeted clicks through accessibility, so the client
+        // must not reject them for missing Event Synthesizing even when the legacy availability
+        // flag is set. The request must reach transport (and here fail against a missing socket)
+        // rather than throw `permissionDeniedEventSynthesizing` up front.
         let remote = RemoteUIAutomationService(
             client: PeekabooBridgeClient(
                 socketPath: "/tmp/peekaboo-missing-\(UUID().uuidString).sock",
@@ -651,9 +655,11 @@ struct PeekabooBridgeTargetedClickTests {
                 clickType: .single,
                 snapshotId: nil,
                 targetProcessIdentifier: 9001)
-            Issue.record("Expected Event Synthesizing permission error")
+            Issue.record("Expected a transport error against the missing socket")
         } catch PeekabooError.permissionDeniedEventSynthesizing {
-            // Expected before the missing socket is contacted.
+            Issue.record("Coordinate click must not be preflight-rejected for Event Synthesizing")
+        } catch {
+            // Expected: the request reached transport and failed to connect to the missing socket.
         }
     }
 

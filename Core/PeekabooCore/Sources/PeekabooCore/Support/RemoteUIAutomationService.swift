@@ -109,12 +109,10 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
                 requiresEventSynthesizingPermission: self.targetedClickRequiresEventSynthesizingPermission)
         }
 
-        if self.targetedClickRequiresEventSynthesizingPermission,
-           PeekabooBridgeTargetedClickRequest.requiresPostEventPermission(target: target, clickType: clickType)
-        {
-            throw PeekabooError.permissionDeniedEventSynthesizing
-        }
-
+        // No Event Synthesizing preflight: current hosts deliver every targeted click (coordinates
+        // included) through accessibility, so a coordinate click on an Accessibility-only host must
+        // reach the server rather than being rejected here. Variants the host genuinely cannot
+        // deliver (e.g. background double-click) are rejected authoritatively by the server.
         do {
             try await self.client.click(
                 target: target,
@@ -143,12 +141,7 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
                 requiresEventSynthesizingPermission: self.targetedClickRequiresEventSynthesizingPermission)
         }
 
-        if self.targetedClickRequiresEventSynthesizingPermission,
-           PeekabooBridgeTargetedClickRequest.requiresPostEventPermission(target: target, clickType: clickType)
-        {
-            throw PeekabooError.permissionDeniedEventSynthesizing
-        }
-
+        // See the process-targeted overload: no Event Synthesizing preflight, the server decides.
         do {
             try await self.client.click(
                 target: target,
