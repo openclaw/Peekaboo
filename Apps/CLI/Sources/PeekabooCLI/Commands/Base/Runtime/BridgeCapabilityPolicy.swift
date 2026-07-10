@@ -13,9 +13,11 @@ enum BridgeCapabilityPolicy {
         }
 
         // Never select a host that explicitly reports it lacks a TCC permission this command
-        // needs (e.g. a stale GUI host with screenRecording=false serving bridge.sock); rejecting
-        // here lets the resolver fall through to a permissioned daemon. Hosts that omit the
-        // permission report entirely stay eligible for backward compatibility.
+        // actually needs (e.g. a stale GUI host with screenRecording=false serving bridge.sock for
+        // a capture command); rejecting here lets the resolver fall through to a permissioned
+        // daemon. Only the permissions the command uses are required, so a non-capture command is
+        // not blocked by a missing Screen Recording grant. Hosts that omit the permission report
+        // entirely stay eligible for backward compatibility.
         guard self.explicitlyMissingRemotePermissions(for: handshake, options: options).isEmpty else {
             return false
         }
@@ -92,31 +94,26 @@ enum BridgeCapabilityPolicy {
             .subtracting(self.grantedPermissions(from: handshake.permissions))
     }
 
-    /// Operations the current command is known to route through a remote host, based on the
-    /// declared runtime options. `captureScreen` is the baseline every remote-routed command
-    /// relies on (shared snapshots and detection state); the rest mirror the option flags.
+    /// Operations whose required TCC permissions the current command must find granted on a remote
+    /// host, based on declared runtime options. This is a permission gate only: capability (does the
+    /// host support the operation) is enforced separately by `supportsRemoteRequirements`. Screen
+    /// Recording is demanded ONLY for commands that actually acquire screen pixels
+    /// (`requiresScreenCapturePermission`); non-capture commands are never rejected for lacking it.
+    /// Operations that require no permission (app launch/relaunch, inventory, exact-window clicks)
+    /// are intentionally absent — they are already capability-gated and add nothing here.
     private static func requiredRemoteOperations(options: CommandRuntimeOptions) -> [PeekabooBridgeOperation] {
         // Permission-request commands intentionally target hosts that still lack grants.
         guard !options.requestsHostPermissionGrant else { return [] }
 
-        var operations: [PeekabooBridgeOperation] = [.captureScreen]
+        var operations: [PeekabooBridgeOperation] = []
+        if options.requiresScreenCapturePermission {
+            operations.append(.captureScreen)
+        }
         if options.requiresElementActions {
             operations.append(contentsOf: [.setValue, .performAction])
         }
         if options.requiresInspectAccessibilityTree {
             operations.append(.inspectAccessibilityTree)
-        }
-        if options.requiresApplicationLaunchOptions {
-            operations.append(.launchApplicationWithOptions)
-        }
-        if options.requiresApplicationRelaunch {
-            operations.append(.relaunchApplicationWithOptions)
-        }
-        if options.requiresHostApplicationInventory {
-            operations.append(.listApplications)
-        }
-        if options.requiresExactWindowTargetedClicks {
-            operations.append(.exactWindowTargetedClick)
         }
         return operations
     }

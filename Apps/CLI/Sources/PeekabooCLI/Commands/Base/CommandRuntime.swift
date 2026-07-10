@@ -35,6 +35,10 @@ struct CommandRuntimeOptions {
     var usesPerToolSnapshotInvalidation = false
     var requiresExactWindowTargetedClicks = false
     var requiresPostEventClickPermission = false
+    /// Set for commands that acquire screen pixels (capture/detection/desktop observation) so a
+    /// remote host that explicitly lacks Screen Recording is rejected during selection. Not set for
+    /// interaction commands (click/scroll/type) that operate on cached snapshots.
+    var requiresScreenCapturePermission = false
     /// Set for interactive permission-request commands, which must be able to reach a host that
     /// still lacks the permission being requested.
     var requestsHostPermissionGrant = false

@@ -1372,4 +1372,34 @@ extension CommanderBinderTests {
         #expect(requestOptions.requestsHostPermissionGrant)
         #expect(!captureOptions.requestsHostPermissionGrant)
     }
+
+    @Test
+    func `Screen capture permission is required only by capture commands`() throws {
+        let parsed = ParsedValues(positional: [], options: [:], flags: [])
+        let captureCommands: [any ParsableCommand.Type] = [
+            ImageCommand.self,
+            SeeCommand.self,
+            CaptureLiveCommand.self,
+            CaptureWatchAlias.self,
+            CaptureVideoCommand.self,
+            CaptureActionCommand.self,
+            RunCommand.self,
+        ]
+        for commandType in captureCommands {
+            let options = try CommanderCLIBinder.makeRuntimeOptions(from: parsed, commandType: commandType)
+            #expect(options.requiresScreenCapturePermission, "Expected capture gating for \(commandType)")
+        }
+
+        let nonCaptureCommands: [any ParsableCommand.Type] = [
+            ClickCommand.self,
+            ScrollCommand.self,
+            TypeCommand.self,
+            AppCommand.LaunchSubcommand.self,
+            ListCommand.AppsSubcommand.self,
+        ]
+        for commandType in nonCaptureCommands {
+            let options = try CommanderCLIBinder.makeRuntimeOptions(from: parsed, commandType: commandType)
+            #expect(!options.requiresScreenCapturePermission, "Unexpected capture gating for \(commandType)")
+        }
+    }
 }

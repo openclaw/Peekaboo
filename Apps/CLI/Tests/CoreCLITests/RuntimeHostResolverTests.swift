@@ -264,6 +264,12 @@ struct RuntimeHostResolverTests {
         ) != nil)
     }
 
+    private static func captureOptions() -> CommandRuntimeOptions {
+        var options = CommandRuntimeOptions()
+        options.requiresScreenCapturePermission = true
+        return options
+    }
+
     @Test
     func `Candidate validation rejects hosts that explicitly lack required capture permission`() async {
         // Mirrors the reproduced bug: a stale GUI build serving bridge.sock while holding zero
@@ -292,12 +298,61 @@ struct RuntimeHostResolverTests {
         #expect(await RuntimeHostResolver.validateRemoteCandidate(
             candidate,
             handshake: unpermissioned,
-            options: CommandRuntimeOptions()
+            options: Self.captureOptions()
         ) == nil)
         #expect(BridgeCapabilityPolicy.explicitlyMissingRemotePermissions(
             for: unpermissioned,
-            options: CommandRuntimeOptions()
+            options: Self.captureOptions()
         ) == [.screenRecording])
+    }
+
+    @Test
+    func `Non-capture commands tolerate hosts that lack screen recording`() async {
+        // Regression: a host that supports the capture operation but reports screenRecording=false,
+        // while holding the permissions its own commands need, must NOT be rejected for non-capture
+        // commands such as `app launch` (no permission) or `app list` (no permission).
+        let candidate = RuntimeHostResolver.ImplicitRemoteCandidate(
+            socketPath: "/tmp/bridge.sock",
+            requireReusableDaemon: false,
+            requiredHostKind: nil,
+            requiresValidatedHistoricalDaemon: false
+        )
+        let noScreenRecording = PeekabooBridgeHandshakeResponse(
+            negotiatedVersion: PeekabooBridgeConstants.protocolVersion,
+            hostKind: .onDemand,
+            build: nil,
+            supportedOperations: [.captureScreen, .launchApplicationWithOptions, .listApplications],
+            permissions: PermissionsStatus(
+                screenRecording: false,
+                accessibility: true,
+                appleScript: true,
+                postEvent: true
+            ),
+            enabledOperations: [.captureScreen, .launchApplicationWithOptions, .listApplications],
+            permissionTags: [PeekabooBridgeOperation.captureScreen.rawValue: [.screenRecording]]
+        )
+
+        var launchOptions = CommandRuntimeOptions()
+        launchOptions.requiresApplicationLaunchOptions = true
+        var inventoryOptions = CommandRuntimeOptions()
+        inventoryOptions.requiresHostApplicationInventory = true
+
+        #expect(await RuntimeHostResolver.validateRemoteCandidate(
+            candidate,
+            handshake: noScreenRecording,
+            options: launchOptions
+        ) != nil)
+        #expect(await RuntimeHostResolver.validateRemoteCandidate(
+            candidate,
+            handshake: noScreenRecording,
+            options: inventoryOptions
+        ) != nil)
+        // ... yet the same host is still rejected for a command that actually captures pixels.
+        #expect(await RuntimeHostResolver.validateRemoteCandidate(
+            candidate,
+            handshake: noScreenRecording,
+            options: Self.captureOptions()
+        ) == nil)
     }
 
     @Test
@@ -326,7 +381,7 @@ struct RuntimeHostResolverTests {
         #expect(await RuntimeHostResolver.validateRemoteCandidate(
             candidate,
             handshake: untagged,
-            options: CommandRuntimeOptions()
+            options: Self.captureOptions()
         ) == nil)
     }
 
@@ -350,7 +405,7 @@ struct RuntimeHostResolverTests {
         #expect(await RuntimeHostResolver.validateRemoteCandidate(
             candidate,
             handshake: unknownPermissions,
-            options: CommandRuntimeOptions()
+            options: Self.captureOptions()
         ) != nil)
     }
 
@@ -380,7 +435,7 @@ struct RuntimeHostResolverTests {
         #expect(await RuntimeHostResolver.validateRemoteCandidate(
             candidate,
             handshake: permissioned,
-            options: CommandRuntimeOptions()
+            options: Self.captureOptions()
         ) != nil)
     }
 
@@ -392,6 +447,7 @@ struct RuntimeHostResolverTests {
             requiredHostKind: nil,
             requiresValidatedHistoricalDaemon: false
         )
+        // Holds Screen Recording but not Accessibility.
         let captureOnlyPermissions = PeekabooBridgeHandshakeResponse(
             negotiatedVersion: PeekabooBridgeConstants.protocolVersion,
             hostKind: .onDemand,
@@ -413,11 +469,13 @@ struct RuntimeHostResolverTests {
         var inspectOptions = CommandRuntimeOptions()
         inspectOptions.requiresInspectAccessibilityTree = true
 
+        // A capture command is satisfied (Screen Recording present)...
         #expect(await RuntimeHostResolver.validateRemoteCandidate(
             candidate,
             handshake: captureOnlyPermissions,
-            options: CommandRuntimeOptions()
+            options: Self.captureOptions()
         ) != nil)
+        // ...but an AX-tree inspection command is rejected (Accessibility missing).
         #expect(await RuntimeHostResolver.validateRemoteCandidate(
             candidate,
             handshake: captureOnlyPermissions,
