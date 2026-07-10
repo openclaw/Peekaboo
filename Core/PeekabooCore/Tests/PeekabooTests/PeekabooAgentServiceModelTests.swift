@@ -71,6 +71,37 @@ extension PeekabooAgentServiceTests {
 
     @Test
     @MainActor
+    func `Sonnet 5 and GPT-5_6 preserve current generation capabilities`() throws {
+        try self.withIsolatedAgentEnvironment(
+            [:],
+            configurationJSON: """
+            {
+              "agent": {
+                "maxTokens": 128000,
+                "temperature": 0.2
+              }
+            }
+            """) {
+                let agentService = try PeekabooAgentService(services: self.makeServices())
+                let sonnetSettings = agentService.generationSettings(for: .anthropic(.sonnet5))
+
+                #expect(sonnetSettings.maxTokens == 128_000)
+                #expect(sonnetSettings.temperature == 0.2)
+
+                for model in [
+                    LanguageModel.openai(.gpt56Sol),
+                    .openai(.gpt56Terra),
+                    .openai(.gpt56Luna),
+                ] {
+                    let settings = agentService.generationSettings(for: model)
+                    #expect(settings.maxTokens == 128_000)
+                    #expect(settings.providerOptions.openai?.verbosity == .medium)
+                }
+            }
+    }
+
+    @Test
+    @MainActor
     func `Generation settings clamp max tokens to provider capabilities`() throws {
         try self.withIsolatedAgentEnvironment(
             [:],

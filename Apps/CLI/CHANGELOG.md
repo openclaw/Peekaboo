@@ -7,7 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [3.8.1] - Unreleased
 
+### Added
+- `peekaboo agent --model` now accepts GPT-5.6 Sol, Terra, and Luna (`gpt-5.6` selects Sol) plus Claude Sonnet 5.
+
 ### Fixed
+- OpenRouter, Together, and OpenAI-compatible GPT-5.6 routes now preserve the 372K context/128K output capability profile, omit unsupported temperature, and recognize routing suffixes such as `:online`.
 - Adding a macOS application bundle to the Dock now places it with applications instead of mistaking its on-disk directory for a folder.
 - Bare `peekaboo paste` now pastes the current clipboard, while payload-only flags without a payload fail validation even when `--restore-delay-ms` explicitly uses its 150ms default; `list apps` also accepts the `app list` visibility flags and emits preferred snake_case keys alongside legacy keys.
 - `peekaboo clean --snapshot` now rejects empty, traversal, nested-path, absolute-path, and symlink snapshot IDs, keeping cleanup confined to one real snapshot folder directly beneath the cache root.

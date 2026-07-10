@@ -3,7 +3,7 @@
 ## [3.8.1] - Unreleased
 
 ### Added
-- `peekaboo agent` supports GPT-5.6 (`gpt-5.6`, `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`) and Claude Sonnet 5 (`claude-sonnet-5`, `sonnet`) alongside Fable 5, with matching display names in the Mac app's session view.
+- `peekaboo agent` supports GPT-5.6 (`gpt-5.6`, `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`) and Claude Sonnet 5 (`claude-sonnet-5`, `sonnet`) alongside Fable 5, with current context/output/sampling limits and matching choices in the Mac app's assistant pickers, Settings, and session view.
 - Bare `peekaboo paste` now pastes the current clipboard into the focused (or targeted background) app instead of erroring; payload flags without a payload still fail validation even when `--restore-delay-ms` explicitly uses its 150ms default, and the current clipboard's contents are never echoed into structured output.
 - `peekaboo list apps` accepts `--include-hidden`/`--include-background` for parity with `app list`, and `list apps`, `list menubar`, and `dock list` JSON now emit snake_case keys (`apps`, `menu_bar_items`, `dock_items`) alongside the legacy keys.
 
@@ -13,6 +13,7 @@
 - The accessibility element boxes drawn during `peekaboo see` are off by default now; they were visual clutter on every capture. Re-enable them in Peekaboo.app under Settings › Visualizer › Element Detection Boxes, by setting `visualizer.elementDetectionEnabled` in `~/.peekaboo/config.json`, or per-run with `PEEKABOO_VISUAL_ELEMENT_BOXES=true`. The app toggle and the config file now stay in sync, and a running MCP server picks up the change without a restart.
 
 ### Fixed
+- OpenRouter, Together, and OpenAI-compatible GPT-5.6 routes now preserve the 372K context/128K output capability profile, omit unsupported temperature, and recognize routing suffixes such as `:online`.
 - Adding a macOS application bundle to the Dock now places it with applications instead of mistaking its on-disk directory for a folder.
 - Synchronous default MCP tool-context access now fails fast off the main thread, with an async main-actor accessor for background callers. Thanks @SebTardif for #253.
 - Default `PeekabooMCPServer` startup now throws an actionable configuration error instead of terminating the process when no default tool context was installed. Thanks @SebTardif for #252.

@@ -27,8 +27,17 @@ struct ConversationSessionTests {
 
     @Test
     func `Supported Anthropic model names remain human readable`() {
+        #expect(formatModelName("claude-fable-5") == "Claude Fable 5")
+        #expect(formatModelName("claude-sonnet-5") == "Claude Sonnet 5")
         #expect(formatModelName("claude-opus-4-7") == "Claude Opus 4.7")
         #expect(formatModelName("claude-sonnet-4-5-20250929") == "Claude Sonnet 4.5")
+    }
+
+    @Test
+    func `GPT-5_6 model names remain human readable`() {
+        #expect(formatModelName("gpt-5.6-sol") == "GPT-5.6 Sol")
+        #expect(formatModelName("gpt-5.6-terra") == "GPT-5.6 Terra")
+        #expect(formatModelName("gpt-5.6-luna") == "GPT-5.6 Luna")
     }
 
     @Test

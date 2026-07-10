@@ -86,6 +86,76 @@ struct PeekabooAgentGenerationSettingsTests {
 
     @Test
     @MainActor
+    func `GPT-5_6 compatible routes preserve limits and omit unsupported temperature`() throws {
+        try self.withTemporaryConfig(
+            """
+            {
+              "agent": { "temperature": 0.7, "maxTokens": 128000 }
+            }
+            """) {
+                let agentService = try PeekabooAgentService(services: PeekabooServices())
+                let models: [LanguageModel] = [
+                    .openaiCompatible(
+                        modelId: "gpt-5.6-sol",
+                        baseURL: "https://openai-compatible.example"),
+                    .openaiCompatible(
+                        modelId: "openai/gpt-5.6-terra",
+                        baseURL: "https://openai-compatible.example"),
+                    .openRouter(modelId: "openai/gpt-5.6-terra:online"),
+                    .together(modelId: "openai/gpt-5.6-luna"),
+                ]
+
+                for model in models {
+                    let settings = agentService.generationSettings(for: model)
+                    #expect(settings.temperature == nil)
+                    #expect(settings.maxTokens == 128_000)
+                }
+            }
+    }
+
+    @Test
+    @MainActor
+    func `Configured custom OpenAI GPT-5_6 model infers current limits`() throws {
+        try self.withTemporaryConfig(
+            """
+            {
+              "aiProviders": { "providers": "local-openai/openai/gpt-5.6-sol" },
+              "agent": { "temperature": 0.7, "maxTokens": 128000 },
+              "customProviders": {
+                "local-openai": {
+                  "name": "Local OpenAI",
+                  "type": "openai",
+                  "enabled": true,
+                  "options": {
+                    "baseURL": "https://openai-compatible.example",
+                    "apiKey": "test-key"
+                  },
+                  "models": {
+                    "openai/gpt-5.6-sol": {
+                      "name": "GPT-5.6 Sol",
+                      "supportsTools": true
+                    }
+                  }
+                }
+              }
+            }
+            """) {
+                let configuration = ConfigurationManager.shared
+                _ = configuration.loadConfiguration()
+                let aiService = PeekabooAIService(configuration: configuration)
+                let model = try #require(aiService.availableModels().first)
+                let agentService = try PeekabooAgentService(services: PeekabooServices())
+                let settings = agentService.generationSettings(for: model)
+
+                #expect(model.modelId == "local-openai/openai/gpt-5.6-sol")
+                #expect(model.contextLength == 372_000)
+                #expect(settings.maxTokens == 128_000)
+                #expect(settings.temperature == nil)
+            }
+    }
+
+    @Test
+    @MainActor
     func `Configured custom OpenAI GPT 5 provider omits unsupported temperature`() throws {
         try self.withTemporaryConfig(
             """

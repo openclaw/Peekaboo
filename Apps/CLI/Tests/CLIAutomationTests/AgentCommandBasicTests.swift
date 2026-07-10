@@ -11,4 +11,13 @@ struct AgentCommandBasicTests {
         #expect(config.commandName == "agent")
         #expect(config.abstract == "Execute complex automation tasks using the Peekaboo agent")
     }
+
+    @Test
+    func `Agent help lists current model examples`() async throws {
+        let result = try await InProcessCommandRunner.runShared(["agent", "--help"])
+
+        #expect(result.exitStatus == 0)
+        #expect(result.combinedOutput.contains("gpt-5.6"))
+        #expect(result.combinedOutput.contains("claude-sonnet-5"))
+    }
 }

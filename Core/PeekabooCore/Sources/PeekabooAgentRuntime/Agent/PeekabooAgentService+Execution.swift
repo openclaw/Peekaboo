@@ -14,7 +14,8 @@ extension PeekabooAgentService {
         let temperature = self.shouldOmitTemperature(for: model) ? nil : self.configuredTemperature(for: model)
 
         return switch model {
-        case .openai(.gpt55), .openai(.gpt54), .openai(.gpt54Mini), .openai(.gpt54Nano), .openai(.gpt5):
+        case .openai(.gpt56Sol), .openai(.gpt56Terra), .openai(.gpt56Luna),
+             .openai(.gpt55), .openai(.gpt54), .openai(.gpt54Mini), .openai(.gpt54Nano), .openai(.gpt5):
             GenerationSettings(
                 maxTokens: maxTokens,
                 temperature: temperature,
@@ -70,7 +71,7 @@ extension PeekabooAgentService {
 
     private func shouldOmitTemperature(for model: LanguageModel) -> Bool {
         switch model {
-        case let .openaiCompatible(modelId, _):
+        case let .openRouter(modelId), let .together(modelId), let .openaiCompatible(modelId, _):
             return self.isOpenAIGPT5TemperatureExcludedModel(modelId)
         case let .custom(provider):
             guard let parsed = ProviderParser.parse(provider.modelId) else {
@@ -86,7 +87,11 @@ extension PeekabooAgentService {
     }
 
     private func isOpenAIGPT5TemperatureExcludedModel(_ modelId: String) -> Bool {
-        switch self.normalizedOpenAIModelID(modelId) {
+        if LanguageModel.OpenAI.gpt56Model(for: modelId) != nil {
+            return true
+        }
+
+        return switch self.normalizedOpenAIModelID(modelId) {
         case "chat-latest",
              "gpt-5.5",
              "gpt-5.4",
@@ -151,7 +156,11 @@ extension PeekabooAgentService {
         case .mistral, .groq, .grok, .ollama, .lmstudio, .azureOpenAI, .replicate:
             4096
         case let .openRouter(modelId), let .together(modelId), let .openaiCompatible(modelId, _):
-            AnthropicModelCapabilityInference.capabilities(for: modelId)?.maxOutputTokens ?? 4096
+            if let maxOutputTokens = AnthropicModelCapabilityInference.capabilities(for: modelId)?.maxOutputTokens {
+                maxOutputTokens
+            } else {
+                LanguageModel.OpenAI.gpt56Model(for: modelId) == nil ? 4096 : 128_000
+            }
         case let .anthropicCompatible(modelId, _):
             AnthropicModelCapabilityInference.capabilities(for: modelId)?.maxOutputTokens ?? 8192
         }

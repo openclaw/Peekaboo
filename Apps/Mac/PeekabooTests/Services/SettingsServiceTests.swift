@@ -818,6 +818,37 @@ struct PeekabooSettingsConfigHydrationTests {
     }
 
     @Test
+    func `Built-in model picker includes current frontier models in tier order`() throws {
+        #expect(AISettingsView.builtinName(forModelId: "gpt-5.6-sol") == "GPT-5.6 Sol")
+        #expect(AISettingsView.builtinName(forModelId: "gpt-5.6-terra") == "GPT-5.6 Terra")
+        #expect(AISettingsView.builtinName(forModelId: "gpt-5.6-luna") == "GPT-5.6 Luna")
+        #expect(AISettingsView.builtinName(forModelId: "claude-fable-5") == "Claude Fable 5")
+        #expect(AISettingsView.builtinName(forModelId: "claude-sonnet-5") == "Claude Sonnet 5")
+
+        let openAI = try #require(AISettingsView.builtinProviderCatalog.first { $0.provider == "openai" })
+        let anthropic = try #require(AISettingsView.builtinProviderCatalog.first { $0.provider == "anthropic" })
+        #expect(openAI.models.prefix(4).map(\.id) == [
+            "gpt-5.6-sol",
+            "gpt-5.6-terra",
+            "gpt-5.6-luna",
+            "gpt-5.5",
+        ])
+        #expect(anthropic.models.prefix(2).map(\.id) == [
+            "claude-fable-5",
+            "claude-sonnet-5",
+        ])
+        #expect(AIAssistantModelCatalog.options.map(\.model.modelId) == [
+            "gpt-5.6-sol",
+            "gpt-5.6-terra",
+            "gpt-5.6-luna",
+            "gpt-5.5",
+            "claude-fable-5",
+            "claude-sonnet-5",
+            "claude-opus-4-8",
+        ])
+    }
+
+    @Test
     func `Hydrated OpenRouter model remains available in model picker`() {
         let modelGroups = AISettingsView.appendingSelectedOpenRouterModel(
             to: [("openai", [(id: "gpt-5.5", name: "GPT-5.5")])],

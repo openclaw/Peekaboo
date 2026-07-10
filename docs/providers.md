@@ -16,10 +16,10 @@ Peekaboo's agent runtime is provider-agnostic — it talks to any chat-completio
 This table is the central reference for user-facing provider docs. Link here from architecture, install, and README
 pages instead of duplicating provider lists in multiple places.
 
-| Provider | Models we test | Credential |
+| Provider | Example model IDs | Credential |
 | --- | --- | --- |
-| **OpenAI** | gpt-5, gpt-5-mini, gpt-4.1 | `OPENAI_API_KEY` |
-| **Anthropic** | claude-fable-5, claude-opus-4-8, claude-sonnet-4-6, claude-haiku-4-5 | `ANTHROPIC_API_KEY` |
+| **OpenAI** | gpt-5.6-sol, gpt-5.6-terra, gpt-5.6-luna, gpt-5.5, gpt-5-mini, gpt-4.1 | `OPENAI_API_KEY` |
+| **Anthropic** | claude-fable-5, claude-sonnet-5, claude-opus-4-8, claude-sonnet-4-6, claude-haiku-4-5 | `ANTHROPIC_API_KEY` |
 | **xAI** | grok-4 | `XAI_API_KEY` |
 | **Google** | gemini-3.1-pro-preview, gemini-3-flash | `GEMINI_API_KEY` |
 | **MiniMax** | MiniMax-M3, MiniMax-M2.7, MiniMax-M2.7-highspeed | `MINIMAX_API_KEY` |
@@ -56,7 +56,10 @@ See [configuration.md](configuration.md) for the full precedence table.
 ## Picking a model
 
 ```bash
+peekaboo agent --model gpt-5.6 "summarize this window"
+peekaboo agent --model gpt-5.6-terra "summarize this window"
 peekaboo agent --model claude-fable-5 "summarize this window"
+peekaboo agent --model claude-sonnet-5 "summarize this window"
 peekaboo agent --model claude-opus-4-8 "summarize this window"
 peekaboo agent --model gemini-3-flash "summarize this window"
 peekaboo agent --model minimax/MiniMax-M3 "summarize this window"
@@ -68,15 +71,15 @@ peekaboo agent --model ollama/llama3.1:8b "describe this screenshot"
 peekaboo agent --model lmstudio/openai/gpt-oss-120b "summarize this window"
 ```
 
-Defaults come from `agent.defaultModel` in `~/.peekaboo/config.json`. Anthropic defaults stay on Opus 4.8 for zero-retention compatibility; select Fable explicitly when your Anthropic organization allows it. Set a per-project default with `PEEKABOO_AGENT_MODEL`.
+Defaults come from `agent.defaultModel` in `~/.peekaboo/config.json`. Anthropic defaults stay on Opus 4.8 for zero-retention compatibility; select Fable 5 or Sonnet 5 explicitly when your Anthropic organization allows it. Set a per-project default with `PEEKABOO_AGENT_MODEL`.
 
 The app and CLI share `agent.temperature` and `agent.maxTokens`. Peekaboo clamps those requests to provider
-capabilities; Fable supports a 1M context window and up to 128K output. See
+capabilities; Peekaboo currently catalogs Fable 5 and Sonnet 5 with 1M context windows and up to 128K output. See
 [configuration.md](configuration.md#agent-generation-settings).
 
 ## Tool calling
 
-The agent expects tool-calling capable models. If your provider doesn't support it (some tiny local models), Peekaboo falls back to a structured-output prompt — slower and less reliable. Stick with mainstream tool-calling models for production runs.
+The agent requires a tool-calling capable model. If the selected model does not support tools, Peekaboo rejects it and points to `peekaboo image --analyze` / `see --analyze` for vision-only use. Choose a tool-capable model for agent runs.
 
 ## Local-only mode
 

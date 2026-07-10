@@ -18,6 +18,27 @@ private enum AIAssistantPrompts {
     static let compactDefault = "You are a helpful assistant."
 }
 
+struct AIAssistantModelOption: Identifiable, Sendable {
+    let title: String
+    let model: Model
+
+    var id: Model {
+        self.model
+    }
+}
+
+enum AIAssistantModelCatalog {
+    static let options = [
+        AIAssistantModelOption(title: "GPT-5.6 Sol", model: .openai(.gpt56Sol)),
+        AIAssistantModelOption(title: "GPT-5.6 Terra", model: .openai(.gpt56Terra)),
+        AIAssistantModelOption(title: "GPT-5.6 Luna", model: .openai(.gpt56Luna)),
+        AIAssistantModelOption(title: "GPT-5.5", model: .openai(.gpt55)),
+        AIAssistantModelOption(title: "Claude Fable 5", model: .anthropic(.fable5)),
+        AIAssistantModelOption(title: "Claude Sonnet 5", model: .anthropic(.sonnet5)),
+        AIAssistantModelOption(title: "Claude Opus 4.8", model: .anthropic(.opus48)),
+    ]
+}
+
 // MARK: - AI Assistant Window
 
 @available(macOS 14.0, *)
@@ -39,8 +60,9 @@ public struct AIAssistantWindow: View {
                         .font(.headline)
 
                     Picker("Model", selection: self.$selectedModel) {
-                        Text("GPT-5.5").tag(Model.openai(.gpt55))
-                        Text("Claude Opus 4.8").tag(Model.anthropic(.opus48))
+                        ForEach(AIAssistantModelCatalog.options) { option in
+                            Text(option.title).tag(option.model)
+                        }
                     }
                     .pickerStyle(.menu)
                 }
@@ -139,8 +161,9 @@ public struct CompactAIAssistant: View {
                 Spacer()
 
                 Picker("Model", selection: self.$model) {
-                    Text("GPT-5.5").tag(Model.openai(.gpt55))
-                    Text("Claude Opus 4.8").tag(Model.anthropic(.opus48))
+                    ForEach(AIAssistantModelCatalog.options) { option in
+                        Text(option.title).tag(option.model)
+                    }
                 }
                 .pickerStyle(.menu)
                 .controlSize(.small)
