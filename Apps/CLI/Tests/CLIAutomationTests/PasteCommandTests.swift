@@ -49,14 +49,17 @@ struct PasteCommandTests {
             automation: automation
         )
 
-        let result = try await InProcessCommandRunner.run(
+        for argv in [
             ["paste", "--uti", "public.rtf", "--json", "--no-remote"],
-            services: services
-        )
-
-        #expect(result.exitStatus != 0)
-        #expect(automation.hotkeyCalls.isEmpty)
-        #expect(automation.targetedHotkeyCalls.isEmpty)
+            ["paste", "--also-text", "fallback", "--json", "--no-remote"],
+            ["paste", "--allow-large", "--json", "--no-remote"],
+            ["paste", "--restore-delay-ms", "500", "--json", "--no-remote"],
+        ] {
+            let result = try await InProcessCommandRunner.run(argv, services: services)
+            #expect(result.exitStatus != 0, "expected validation failure for \(argv)")
+            #expect(automation.hotkeyCalls.isEmpty, "unexpected paste for \(argv)")
+            #expect(automation.targetedHotkeyCalls.isEmpty, "unexpected targeted paste for \(argv)")
+        }
     }
 
     @Test

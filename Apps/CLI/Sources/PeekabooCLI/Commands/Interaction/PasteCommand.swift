@@ -75,10 +75,14 @@ struct PasteCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
 
     private var hasExplicitPayload: Bool {
         // Any payload source OR payload-modifier flag counts: `paste --uti public.rtf`
-        // without data must fail validation, not silently paste the current clipboard.
-        // An explicitly provided empty positional ("") is also an explicit payload.
+        // or `paste --allow-large` without data must fail validation, not silently
+        // paste the current clipboard. An explicitly provided empty positional ("")
+        // is also an explicit payload. Only targeting/focus/delivery flags may
+        // combine with the bare-paste path. restoreDelayMs uses its default as the
+        // "not provided" proxy since Commander cannot distinguish an explicit 150.
         self.text != nil || self.textOption != nil || self.filePath != nil || self.imagePath != nil
             || self.dataBase64 != nil || self.uti != nil || self.alsoText != nil
+            || self.allowLarge || self.restoreDelayMs != 150
     }
 
     @MainActor
