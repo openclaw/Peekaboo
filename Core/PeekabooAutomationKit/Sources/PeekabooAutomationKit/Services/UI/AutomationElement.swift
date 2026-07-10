@@ -29,11 +29,21 @@ protocol AutomationElementRepresenting: Sendable {
     var anchorPoint: CGPoint? { get }
     var automationChildren: [any AutomationElementRepresenting] { get }
 
+    /// Raw accessibility element for callers that must issue AX calls off the main actor
+    /// (e.g. non-blocking `AXShowMenu`). In-memory test elements return `nil`.
+    var underlyingAXElement: AXUIElement? { get }
+
     func performAutomationAction(_ actionName: String) throws
     func setAutomationValue(_ value: UIElementValue) throws
     func setAutomationFocused(_ focused: Bool) throws
     func stringAttribute(_ name: String) -> String?
     func intAttribute(_ name: String) -> Int?
+}
+
+extension AutomationElementRepresenting {
+    var underlyingAXElement: AXUIElement? {
+        nil
+    }
 }
 
 /// Typed wrapper around an accessibility element used by action-first input paths.
@@ -151,6 +161,11 @@ struct AutomationElement: AutomationElementRepresenting {
     @MainActor
     var automationChildren: [any AutomationElementRepresenting] {
         self.children
+    }
+
+    @MainActor
+    var underlyingAXElement: AXUIElement? {
+        self.element.underlyingElement
     }
 
     @MainActor

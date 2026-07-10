@@ -6,13 +6,13 @@ import enum PeekabooFoundation.PeekabooError
 @MainActor
 protocol SyntheticInputDriving: Sendable {
     func click(at point: CGPoint, button: MouseButton, count: Int) throws
-    func click(at point: CGPoint, button: MouseButton, count: Int, targetProcessIdentifier: pid_t) throws
+    func click(at point: CGPoint, button: MouseButton, count: Int, targetProcessIdentifier: pid_t) async throws
     func click(
         at point: CGPoint,
         button: MouseButton,
         count: Int,
         targetProcessIdentifier: pid_t,
-        targetWindowID: CGWindowID?) throws
+        targetWindowID: CGWindowID?) async throws
     func move(to point: CGPoint) throws
     func currentLocation() -> CGPoint?
     func pressHold(at point: CGPoint, button: MouseButton, duration: TimeInterval) throws
@@ -28,13 +28,13 @@ extension SyntheticInputDriving {
         button: MouseButton,
         count: Int,
         targetProcessIdentifier: pid_t,
-        targetWindowID: CGWindowID?) throws
+        targetWindowID: CGWindowID?) async throws
     {
         guard targetWindowID == nil else {
             throw PeekabooError.serviceUnavailable(
                 "Synthetic input driver does not support exact-window click delivery")
         }
-        try self.click(
+        try await self.click(
             at: point,
             button: button,
             count: count,
@@ -49,8 +49,13 @@ struct SyntheticInputDriver: SyntheticInputDriving {
         try InputDriver.click(at: point, button: button, count: count)
     }
 
-    func click(at point: CGPoint, button: MouseButton = .left, count: Int = 1, targetProcessIdentifier: pid_t) throws {
-        try self.click(
+    func click(
+        at point: CGPoint,
+        button: MouseButton = .left,
+        count: Int = 1,
+        targetProcessIdentifier: pid_t) async throws
+    {
+        try await self.click(
             at: point,
             button: button,
             count: count,
@@ -63,9 +68,9 @@ struct SyntheticInputDriver: SyntheticInputDriving {
         button: MouseButton = .left,
         count: Int = 1,
         targetProcessIdentifier: pid_t,
-        targetWindowID: CGWindowID?) throws
+        targetWindowID: CGWindowID?) async throws
     {
-        try BackgroundInputDriver.click(
+        try await BackgroundInputDriver.click(
             at: point,
             button: button,
             count: count,

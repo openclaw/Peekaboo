@@ -100,6 +100,12 @@ public final class ClickService {
         targetWindowID: Int? = nil) async throws -> UIInputExecutionResult
     {
         self.logger.debug("Click requested - target: \(String(describing: target)), type: \(clickType)")
+        if targetProcessIdentifier != nil, clickType == .double {
+            // AX exposes no double-press action and pid-routed mouse events cannot be positioned,
+            // so a background double-click can never be delivered faithfully. Fail up front
+            // instead of silently mis-clicking (or reporting a success that never happened).
+            throw PeekabooError.serviceUnavailable(BackgroundInputDriver.doubleClickUnsupportedMessage)
+        }
         let bundleIdentifier = await self.bundleIdentifier(
             snapshotId: snapshotId,
             targetProcessIdentifier: targetProcessIdentifier)
@@ -176,7 +182,7 @@ public final class ClickService {
             }
             return try self.actionInputDriver.tryClick(element: element)
         case .right:
-            return try self.actionInputDriver.tryRightClick(element: element)
+            return try await self.actionInputDriver.tryRightClick(element: element)
         case .double:
             throw ActionInputError.unsupported(.actionUnsupported)
         }
@@ -770,21 +776,21 @@ public final class ClickService {
 
         switch clickType {
         case .single:
-            try self.performSyntheticClick(
+            try await self.performSyntheticClick(
                 at: point,
                 button: .left,
                 count: 1,
                 targetProcessIdentifier: targetProcessIdentifier,
                 targetWindowID: targetWindowID)
         case .right:
-            try self.performSyntheticClick(
+            try await self.performSyntheticClick(
                 at: point,
                 button: .right,
                 count: 1,
                 targetProcessIdentifier: targetProcessIdentifier,
                 targetWindowID: targetWindowID)
         case .double:
-            try self.performSyntheticClick(
+            try await self.performSyntheticClick(
                 at: point,
                 button: .left,
                 count: 2,
@@ -798,10 +804,10 @@ public final class ClickService {
         button: MouseButton,
         count: Int,
         targetProcessIdentifier: pid_t?,
-        targetWindowID: CGWindowID?) throws
+        targetWindowID: CGWindowID?) async throws
     {
         if let targetProcessIdentifier {
-            try self.syntheticInputDriver.click(
+            try await self.syntheticInputDriver.click(
                 at: point,
                 button: button,
                 count: count,

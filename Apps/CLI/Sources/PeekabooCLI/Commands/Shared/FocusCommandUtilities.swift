@@ -14,6 +14,27 @@ enum FocusTargetResolver {
         applicationName: String?,
         windowTitle: String?
     ) -> FocusTargetRequest? {
+        self.resolve(
+            windowID: windowID,
+            snapshot: snapshot,
+            windowContext: nil,
+            applicationName: applicationName,
+            windowTitle: windowTitle
+        )
+    }
+
+    /// Resolve a focus target, falling back to the detection result's window context.
+    ///
+    /// Remote snapshot stores do not expose `UIAutomationSnapshot` over the bridge, so
+    /// `snapshot` is nil there even for valid snapshots. Without the window-context fallback,
+    /// `ensureFocused` silently resolved no target and `--foreground` never activated the app.
+    static func resolve(
+        windowID: CGWindowID?,
+        snapshot: UIAutomationSnapshot?,
+        windowContext: WindowContext?,
+        applicationName: String?,
+        windowTitle: String?
+    ) -> FocusTargetRequest? {
         if let windowID {
             return .windowId(windowID)
         }
@@ -22,9 +43,15 @@ enum FocusTargetResolver {
             return .windowId(snapshotWindowID)
         }
 
+        if let contextWindowID = windowContext?.windowID.flatMap(CGWindowID.init(exactly:)) {
+            return .windowId(contextWindowID)
+        }
+
         let resolvedApplicationName =
-            applicationName ?? snapshot?.applicationBundleId ?? snapshot?.applicationName
-        let resolvedWindowTitle = windowTitle ?? snapshot?.windowTitle
+            applicationName
+                ?? snapshot?.applicationBundleId ?? snapshot?.applicationName
+                ?? windowContext?.applicationBundleId ?? windowContext?.applicationName
+        let resolvedWindowTitle = windowTitle ?? snapshot?.windowTitle ?? windowContext?.windowTitle
 
         if let resolvedApplicationName {
             return .bestWindow(applicationName: resolvedApplicationName, windowTitle: resolvedWindowTitle)
@@ -91,9 +118,22 @@ func ensureFocused(
     }
     try Task.checkCancellation()
 
+    // Remote snapshot stores return nil for getUIAutomationSnapshot; recover the focus target
+    // from the detection result's window context so foreground focus still resolves.
+    var windowContext: WindowContext?
+    if snapshot == nil, let snapshotId {
+        windowContext = await (try? services.snapshots.getDetectionResult(snapshotId: snapshotId))?
+            .metadata.windowContext
+        try Task.checkCancellation()
+    }
+
+    let resolvedApplicationName = applicationName
+        ?? snapshot?.applicationBundleId ?? snapshot?.applicationName
+        ?? windowContext?.applicationBundleId ?? windowContext?.applicationName
     let targetRequest = FocusTargetResolver.resolve(
         windowID: windowID,
         snapshot: snapshot,
+        windowContext: windowContext,
         applicationName: applicationName,
         windowTitle: windowTitle
     )
@@ -135,8 +175,8 @@ func ensureFocused(
         case .windowNotFound, .axElementNotFound:
             var fallbackErrors: [any Error] = []
             var fallbackTargets: [WindowTarget] = [.windowId(Int(windowID))]
-            if let applicationName {
-                fallbackTargets.append(.application(applicationName))
+            if let resolvedApplicationName {
+                fallbackTargets.append(.application(resolvedApplicationName))
             }
             fallbackTargets.append(.frontmost)
 
@@ -152,7 +192,7 @@ func ensureFocused(
                 }
             }
 
-            if let appName = applicationName {
+            if let appName = resolvedApplicationName {
                 try Task.checkCancellation()
                 do {
                     try await services.applications.activateApplication(identifier: appName)

@@ -220,26 +220,12 @@ struct ClickCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
                 }
             }
 
-            let backgroundProcessIdentifier: pid_t? = if self.usesBackgroundDelivery {
-                try await self.resolveBackgroundClickProcessIdentifier(
-                    snapshotId: activeSnapshotId.isEmpty ? nil : activeSnapshotId,
-                    coordinateResolution: coordinateResolution,
-                    explicitWindowResolution: explicitWindowResolution
-                )
-            } else {
-                nil
-            }
-
-            // Determine click type
-            let clickType: ClickType = self.right ? .right : (self.double ? .double : .single)
-            self.resolvedRuntime.beginInteractionMutation()
-            try await self.performClick(
+            try await self.resolveAndDispatchClick(
                 clickTarget,
-                clickType: clickType,
                 snapshotId: activeSnapshotId,
+                resolvedElement: waitResult.element,
                 coordinateResolution: coordinateResolution,
-                explicitWindowResolution: explicitWindowResolution,
-                backgroundProcessIdentifier: backgroundProcessIdentifier
+                explicitWindowResolution: explicitWindowResolution
             )
 
             // Brief delay to ensure click is processed
@@ -590,22 +576,59 @@ struct ClickCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
         return score
     }
 
+    private struct ClickDispatchContext {
+        let snapshotId: String
+        let resolvedElement: DetectedElement?
+        let coordinateResolution: InteractionCoordinateResolution?
+        let explicitWindowResolution: InteractionWindowResolution?
+        let backgroundProcessIdentifier: pid_t?
+    }
+
+    private func resolveAndDispatchClick(
+        _ clickTarget: ClickTarget,
+        snapshotId: String,
+        resolvedElement: DetectedElement?,
+        coordinateResolution: InteractionCoordinateResolution?,
+        explicitWindowResolution: InteractionWindowResolution?
+    ) async throws {
+        let backgroundProcessIdentifier: pid_t? = if self.usesBackgroundDelivery {
+            try await self.resolveBackgroundClickProcessIdentifier(
+                snapshotId: snapshotId.isEmpty ? nil : snapshotId,
+                coordinateResolution: coordinateResolution,
+                explicitWindowResolution: explicitWindowResolution
+            )
+        } else {
+            nil
+        }
+
+        let clickType: ClickType = self.right ? .right : (self.double ? .double : .single)
+        self.resolvedRuntime.beginInteractionMutation()
+        try await self.performClick(
+            clickTarget,
+            clickType: clickType,
+            context: ClickDispatchContext(
+                snapshotId: snapshotId,
+                resolvedElement: resolvedElement,
+                coordinateResolution: coordinateResolution,
+                explicitWindowResolution: explicitWindowResolution,
+                backgroundProcessIdentifier: backgroundProcessIdentifier
+            )
+        )
+    }
+
     private func performClick(
         _ target: ClickTarget,
         clickType: ClickType,
-        snapshotId: String,
-        coordinateResolution: InteractionCoordinateResolution?,
-        explicitWindowResolution: InteractionWindowResolution?,
-        backgroundProcessIdentifier: pid_t?
+        context: ClickDispatchContext
     ) async throws {
         let effectiveSnapshotId: String? = if case .coordinates = target {
             nil
         } else {
-            snapshotId.isEmpty ? nil : snapshotId
+            context.snapshotId.isEmpty ? nil : context.snapshotId
         }
 
         if self.usesBackgroundDelivery {
-            guard let backgroundProcessIdentifier else {
+            guard let backgroundProcessIdentifier = context.backgroundProcessIdentifier else {
                 preconditionFailure("Background process identifier must be resolved before click delivery")
             }
             try await AutomationServiceBridge.click(
@@ -614,15 +637,106 @@ struct ClickCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
                 clickType: clickType,
                 snapshotId: effectiveSnapshotId,
                 targetProcessIdentifier: backgroundProcessIdentifier,
-                targetWindowID: explicitWindowResolution?.windowInfo.windowID ?? coordinateResolution?.targetWindowID
+                targetWindowID: context.explicitWindowResolution?.windowInfo.windowID
+                    ?? context.coordinateResolution?.targetWindowID
             )
         } else {
-            try await AutomationServiceBridge.click(
-                automation: self.services.automation,
-                target: target,
-                clickType: clickType,
+            // Foreground delivery is documented as "focus target and send a foreground mouse
+            // click". Element/query targets are resolved to their adjusted screen point and
+            // dispatched as a real coordinate click so double/right-click semantics hold,
+            // instead of silently degrading to an AX press.
+            let resolvedPoint = await self.foregroundMousePoint(
+                for: target,
+                resolvedElement: context.resolvedElement,
                 snapshotId: effectiveSnapshotId
             )
+            let foregroundTarget = Self.foregroundMouseTarget(for: target, resolvedPoint: resolvedPoint)
+            if resolvedPoint != nil {
+                // The synthetic click lands wherever the frontmost window is; enforce that the
+                // focus step actually brought the snapshot's app to the front (see #90).
+                try await self.verifyFocusForElementClick(snapshotId: effectiveSnapshotId)
+            }
+            let foregroundSnapshotId: String? = if case .coordinates = foregroundTarget {
+                nil
+            } else {
+                effectiveSnapshotId
+            }
+            try await AutomationServiceBridge.click(
+                automation: self.services.automation,
+                target: foregroundTarget,
+                clickType: clickType,
+                snapshotId: foregroundSnapshotId
+            )
+        }
+    }
+
+    /// Converts an element/query target into a coordinate target once its point is resolved.
+    /// Coordinate targets and unresolved elements pass through unchanged.
+    static func foregroundMouseTarget(for target: ClickTarget, resolvedPoint: CGPoint?) -> ClickTarget {
+        switch target {
+        case .coordinates:
+            return target
+        case .elementId, .query:
+            guard let resolvedPoint else { return target }
+            return .coordinates(resolvedPoint)
+        }
+    }
+
+    private func foregroundMousePoint(
+        for target: ClickTarget,
+        resolvedElement: DetectedElement?,
+        snapshotId: String?
+    ) async -> CGPoint? {
+        if case .coordinates = target {
+            return nil
+        }
+        guard let resolvedElement else {
+            return nil
+        }
+        do {
+            let resolution = try await InteractionTargetPointResolver.elementCenterResolution(
+                element: resolvedElement,
+                elementId: resolvedElement.id,
+                snapshotId: snapshotId,
+                snapshots: self.services.snapshots
+            )
+            return resolution.point
+        } catch {
+            self.logger.debug("Foreground click point resolution fell back to bounds: \(error.localizedDescription)")
+            return CGPoint(x: resolvedElement.bounds.midX, y: resolvedElement.bounds.midY)
+        }
+    }
+
+    /// Foreground element clicks are synthesized at screen coordinates; fail loudly when the
+    /// snapshot's application is not frontmost so the click cannot land in another app.
+    private func verifyFocusForElementClick(snapshotId: String?) async throws {
+        guard self.focusOptions.autoFocus else {
+            return
+        }
+        guard let snapshotId,
+              let detectionResult = try? await services.snapshots.getDetectionResult(snapshotId: snapshotId),
+              let windowContext = detectionResult.metadata.windowContext
+        else {
+            return
+        }
+
+        let targetApp = windowContext.applicationBundleId ?? windowContext.applicationName
+        let targetPID = windowContext.applicationProcessId
+        guard targetApp != nil || targetPID != nil else {
+            return
+        }
+
+        let frontmostInfo = try? await self.services.applications.getFrontmostApplication()
+        let frontmost = FrontmostApplicationIdentity(application: frontmostInfo)
+        if let message = CoordinateClickFocusVerifier.mismatchMessage(
+            targetApp: targetApp,
+            targetPID: targetPID,
+            frontmost: frontmost
+        ) {
+            self.outputLogger.warn(
+                "Foreground element click focus mismatch. Frontmost is \(frontmost.displayDescription)."
+            )
+            throw PeekabooError.clickFailed(message)
         }
     }
 

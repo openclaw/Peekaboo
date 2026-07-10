@@ -260,14 +260,14 @@ struct ActionInputDriverTests {
 
     @MainActor
     @Test
-    func `right click target unavailable becomes fallback eligible`() throws {
+    func `right click target unavailable becomes fallback eligible`() async throws {
         let element = MockAutomationElement(
             role: AXRoleNames.kAXButtonRole,
             actionNames: [AXActionNames.kAXShowMenuAction],
             actionErrors: [AXActionNames.kAXShowMenuAction: AccessibilitySystemError(.cannotComplete)])
 
         do {
-            _ = try ActionInputDriver().tryRightClick(element: element)
+            _ = try await ActionInputDriver().tryRightClick(element: element)
             Issue.record("Expected right-click action to request synthetic fallback")
         } catch let error as ActionInputError {
             #expect(error == .unsupported(.actionUnsupported))
@@ -278,12 +278,12 @@ struct ActionInputDriverTests {
 
     @MainActor
     @Test
-    func `right click performs show menu action`() throws {
+    func `right click performs show menu action`() async throws {
         let element = MockAutomationElement(
             role: AXRoleNames.kAXButtonRole,
             actionNames: [AXActionNames.kAXShowMenuAction])
 
-        let result = try ActionInputDriver().tryRightClick(element: element)
+        let result = try await ActionInputDriver().tryRightClick(element: element)
 
         #expect(element.performedActions == [AXActionNames.kAXShowMenuAction])
         #expect(result.actionName == AXActionNames.kAXShowMenuAction)
@@ -385,7 +385,7 @@ private final class RecordingActionInputDriver: ActionInputDriving {
         return ActionInputResult()
     }
 
-    func tryRightClick(element _: any AutomationElementRepresenting) throws -> ActionInputResult {
+    func tryRightClick(element _: any AutomationElementRepresenting) async throws -> ActionInputResult {
         Issue.record("Action driver should not be called")
         return ActionInputResult()
     }

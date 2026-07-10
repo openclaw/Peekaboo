@@ -73,7 +73,7 @@ struct ActionInputResult: Equatable {
 @MainActor
 protocol ActionInputDriving: Sendable {
     func tryClick(element: AutomationElement) throws -> ActionInputResult
-    func tryRightClick(element: any AutomationElementRepresenting) throws -> ActionInputResult
+    func tryRightClick(element: any AutomationElementRepresenting) async throws -> ActionInputResult
     func tryScroll(
         element: AutomationElement,
         direction: PeekabooFoundation.ScrollDirection,
@@ -102,11 +102,46 @@ struct ActionInputDriver: ActionInputDriving {
         }
     }
 
-    func tryRightClick(element: any AutomationElementRepresenting) throws -> ActionInputResult {
+    func tryRightClick(element: any AutomationElementRepresenting) async throws -> ActionInputResult {
         do {
-            return try self.performAction(AXActionNames.kAXShowMenuAction, on: element)
+            return try await self.performShowMenuAction(on: element)
         } catch ActionInputError.targetUnavailable {
             throw ActionInputError.unsupported(.actionUnsupported)
+        }
+    }
+
+    /// Issues `AXShowMenu` without waiting on the menu's tracking runloop.
+    ///
+    /// A successful `AXShowMenu` opens an NSMenu whose tracking loop is a nested runloop on the
+    /// target app's main thread, so `AXUIElementPerformAction` does not return until the menu is
+    /// dismissed. Awaiting it deadlocks the caller (and blocks a bridge host's main actor) until
+    /// the client times out even though the menu is visibly open. The action is therefore issued
+    /// from a detached thread; if it is still running after a short grace period, the menu is
+    /// considered open and the right-click reports success.
+    private func performShowMenuAction(on element: any AutomationElementRepresenting) async throws
+        -> ActionInputResult
+    {
+        // Attribute reads happen before the action while the target app is still responsive.
+        let result = ActionInputResult(
+            actionName: AXActionNames.kAXShowMenuAction,
+            anchorPoint: element.anchorPoint,
+            elementRole: element.role)
+
+        guard let axElement = element.underlyingAXElement else {
+            // In-memory test elements have no AX identity and cannot block; act synchronously.
+            _ = try self.performAction(AXActionNames.kAXShowMenuAction, on: element)
+            return result
+        }
+
+        let outcome = await DetachedAXActionRunner.perform(
+            action: AXActionNames.kAXShowMenuAction,
+            on: axElement,
+            gracePeriod: DetachedAXActionRunner.showMenuGracePeriod)
+        switch outcome {
+        case .completed(.success), .stillRunning:
+            return result
+        case let .completed(axError):
+            throw Self.classify(axError)
         }
     }
 

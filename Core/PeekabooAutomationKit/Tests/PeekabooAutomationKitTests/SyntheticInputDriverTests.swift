@@ -152,7 +152,7 @@ private final class RecordingSyntheticInputDriver: SyntheticInputDriving {
         self.events.append(.click(point: point, button: button, count: count))
     }
 
-    func click(at point: CGPoint, button: MouseButton, count: Int, targetProcessIdentifier _: pid_t) throws {
+    func click(at point: CGPoint, button: MouseButton, count: Int, targetProcessIdentifier _: pid_t) async throws {
         self.events.append(.click(point: point, button: button, count: count))
     }
 

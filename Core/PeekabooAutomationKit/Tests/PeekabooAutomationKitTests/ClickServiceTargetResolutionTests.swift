@@ -93,7 +93,7 @@ struct ClickServiceTargetResolutionTests {
 
         let result = try await service.click(
             target: .coordinates(CGPoint(x: 10, y: 20)),
-            clickType: .double,
+            clickType: .single,
             snapshotId: nil,
             targetProcessIdentifier: 12345)
 
@@ -104,10 +104,78 @@ struct ClickServiceTargetResolutionTests {
             .targetedClick(
                 point: CGPoint(x: 10, y: 20),
                 button: .left,
-                count: 2,
+                count: 1,
                 targetProcessIdentifier: 12345,
                 targetWindowID: nil),
         ])
+    }
+
+    @Test
+    @MainActor
+    func `background double click fails fast instead of reporting background success`() async {
+        let synthetic = ClickRecordingSyntheticInputDriver()
+        let service = ClickService(
+            snapshotManager: InMemorySnapshotManager(),
+            inputPolicy: UIInputPolicy(defaultStrategy: .actionFirst),
+            syntheticInputDriver: synthetic)
+
+        do {
+            _ = try await service.click(
+                target: .coordinates(CGPoint(x: 10, y: 20)),
+                clickType: .double,
+                snapshotId: nil,
+                targetProcessIdentifier: 12345)
+            Issue.record("Expected background double-click to be rejected")
+        } catch let PeekabooError.serviceUnavailable(message) {
+            #expect(message.contains("--foreground"))
+            #expect(message.contains("double-click"))
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+        #expect(synthetic.events.isEmpty)
+    }
+
+    @Test
+    @MainActor
+    func `background element double click is rejected before AX or synthesis run`() async {
+        let pid = getpid()
+        let element = DetectedElement(
+            id: "B1",
+            type: .button,
+            label: "Background Button",
+            bounds: .init(x: 20, y: 30, width: 100, height: 40))
+        let detectionResult = ElementDetectionResult(
+            snapshotId: "snapshot",
+            screenshotPath: "/tmp/shot.png",
+            elements: DetectedElements(buttons: [element]),
+            metadata: DetectionMetadata(
+                detectionTime: 0.01,
+                elementCount: 1,
+                method: "test",
+                windowContext: WindowContext(applicationProcessId: pid, windowID: 42)))
+        let action = ClickSuccessfulActionInputDriver()
+        let synthetic = ClickRecordingSyntheticInputDriver()
+        let service = ClickService(
+            snapshotManager: InMemorySnapshotManager(detectionResult: detectionResult),
+            inputPolicy: UIInputPolicy(defaultStrategy: .actionFirst),
+            actionInputDriver: action,
+            syntheticInputDriver: synthetic,
+            automationElementResolver: ClickFixedAutomationElementResolver())
+
+        do {
+            _ = try await service.click(
+                target: .elementId("B1"),
+                clickType: .double,
+                snapshotId: "snapshot",
+                targetProcessIdentifier: pid)
+            Issue.record("Expected background double-click to be rejected")
+        } catch let PeekabooError.serviceUnavailable(message) {
+            #expect(message.contains("--foreground"))
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+        #expect(action.performedActionNames.isEmpty)
+        #expect(synthetic.events.isEmpty)
     }
 
     @Test
@@ -968,8 +1036,8 @@ final class ClickRecordingSyntheticInputDriver: SyntheticInputDriving {
         self.events.append(.click(point: point, button: button, count: count))
     }
 
-    func click(at point: CGPoint, button: MouseButton, count: Int, targetProcessIdentifier: pid_t) throws {
-        try self.click(
+    func click(at point: CGPoint, button: MouseButton, count: Int, targetProcessIdentifier: pid_t) async throws {
+        try await self.click(
             at: point,
             button: button,
             count: count,
@@ -982,7 +1050,7 @@ final class ClickRecordingSyntheticInputDriver: SyntheticInputDriving {
         button: MouseButton,
         count: Int,
         targetProcessIdentifier: pid_t,
-        targetWindowID: CGWindowID?) throws
+        targetWindowID: CGWindowID?) async throws
     {
         self.targetedClickAttempts += 1
         if let targetedClickError {
@@ -1102,7 +1170,7 @@ private final class ClickSuccessfulActionInputDriver: ActionInputDriving {
         return ActionInputResult(actionName: "AXPress", anchorPoint: CGPoint(x: 70, y: 50), elementRole: "AXButton")
     }
 
-    func tryRightClick(element _: any AutomationElementRepresenting) throws -> ActionInputResult {
+    func tryRightClick(element _: any AutomationElementRepresenting) async throws -> ActionInputResult {
         self.rightClickCount += 1
         return ActionInputResult(
             actionName: AXActionNames.kAXShowMenuAction,
@@ -1152,7 +1220,7 @@ private final class ClickFailingActionInputDriver: ActionInputDriving {
         throw self.error
     }
 
-    func tryRightClick(element _: any AutomationElementRepresenting) throws -> ActionInputResult {
+    func tryRightClick(element _: any AutomationElementRepresenting) async throws -> ActionInputResult {
         throw self.error
     }
 

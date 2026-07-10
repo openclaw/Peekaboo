@@ -446,20 +446,13 @@ public final class PeekabooBridgeServer {
         _ request: PeekabooBridgeTargetedClickRequest,
         permissions: PermissionsStatus) throws
     {
-        if request.requiresPostEventPermission {
-            guard permissions.postEvent else {
-                throw PeekabooBridgeErrorEnvelope(
-                    code: .permissionDenied,
-                    message: "Coordinate and double background clicks require Event Synthesizing permission",
-                    permission: .postEvent)
-            }
-            return
-        }
-
-        guard permissions.accessibility || permissions.postEvent else {
+        // All background clicks are delivered through accessibility actions; positioned
+        // pid-routed mouse events are broken on modern macOS (they land at the window corner),
+        // so Event Synthesizing permission no longer enables any targeted click path.
+        guard permissions.accessibility else {
             throw PeekabooBridgeErrorEnvelope(
                 code: .permissionDenied,
-                message: "Element and query background clicks require Accessibility or Event Synthesizing permission",
+                message: "Background clicks require Accessibility permission",
                 permission: .accessibility)
         }
     }

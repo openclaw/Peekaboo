@@ -57,7 +57,7 @@ private final class FailingDialogSyntheticInputDriver: SyntheticInputDriving {
     }
 
     func click(at _: CGPoint, button _: MouseButton, count _: Int) throws {}
-    func click(at _: CGPoint, button _: MouseButton, count _: Int, targetProcessIdentifier _: pid_t) throws {}
+    func click(at _: CGPoint, button _: MouseButton, count _: Int, targetProcessIdentifier _: pid_t) async throws {}
     func move(to _: CGPoint) throws {}
     func currentLocation() -> CGPoint? {
         nil

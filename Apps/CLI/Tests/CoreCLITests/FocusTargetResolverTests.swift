@@ -115,4 +115,97 @@ struct FocusTargetResolverTests {
 
         #expect(result == nil)
     }
+
+    // Remote snapshot stores return nil for getUIAutomationSnapshot, which used to make
+    // `--foreground` silently skip focusing. The detection-result window context must resolve
+    // a focus target in that case.
+
+    @Test
+    func `detection window context windowID resolves when snapshot is unavailable`() {
+        let result = FocusTargetResolver.resolve(
+            windowID: nil,
+            snapshot: nil,
+            windowContext: WindowContext(
+                applicationName: "Playground",
+                applicationBundleId: "boo.peekaboo.playground.debug",
+                applicationProcessId: 92941,
+                windowTitle: "Playground",
+                windowID: 3279
+            ),
+            applicationName: nil,
+            windowTitle: nil
+        )
+
+        #expect(result == .windowId(3279))
+    }
+
+    @Test
+    func `detection window context app resolves best window when windowID missing`() {
+        let result = FocusTargetResolver.resolve(
+            windowID: nil,
+            snapshot: nil,
+            windowContext: WindowContext(
+                applicationName: "Playground",
+                applicationBundleId: "boo.peekaboo.playground.debug",
+                windowTitle: "Playground"
+            ),
+            applicationName: nil,
+            windowTitle: nil
+        )
+
+        #expect(result == .bestWindow(
+            applicationName: "boo.peekaboo.playground.debug",
+            windowTitle: "Playground"
+        ))
+    }
+
+    @Test
+    func `explicit windowID still wins over the detection window context`() {
+        let result = FocusTargetResolver.resolve(
+            windowID: 777,
+            snapshot: nil,
+            windowContext: WindowContext(windowID: 3279),
+            applicationName: nil,
+            windowTitle: nil
+        )
+
+        #expect(result == .windowId(777))
+    }
+
+    @Test
+    func `snapshot windowID wins over the detection window context`() {
+        let snapshot = UIAutomationSnapshot(
+            applicationBundleId: "com.example.app",
+            windowTitle: "X",
+            windowID: 42
+        )
+        let result = FocusTargetResolver.resolve(
+            windowID: nil,
+            snapshot: snapshot,
+            windowContext: WindowContext(windowID: 3279),
+            applicationName: nil,
+            windowTitle: nil
+        )
+
+        #expect(result == .windowId(42))
+    }
+
+    @Test
+    func `out of range context windowID falls back to context app identity`() {
+        let result = FocusTargetResolver.resolve(
+            windowID: nil,
+            snapshot: nil,
+            windowContext: WindowContext(
+                applicationBundleId: "boo.peekaboo.playground.debug",
+                windowID: -1
+            ),
+            applicationName: nil,
+            windowTitle: nil
+        )
+
+        #expect(result == .bestWindow(
+            applicationName: "boo.peekaboo.playground.debug",
+            windowTitle: nil
+        ))
+    }
 }

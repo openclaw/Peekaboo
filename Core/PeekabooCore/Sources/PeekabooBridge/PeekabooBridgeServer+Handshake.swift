@@ -150,9 +150,10 @@ extension PeekabooBridgeServer {
                 operation.requiredPermissions.isSubset(of: granted)
             })
 
-        // Targeted clicks support two alternative delivery paths. Permission tags model
-        // conjunctive requirements, so keep the operation enabled when either path is usable.
-        if !permissions.accessibility, !permissions.postEvent {
+        // Targeted clicks are delivered exclusively through accessibility actions; the
+        // synthetic pid-routed mouse path was removed because macOS delivers those events at
+        // the window corner regardless of the requested point.
+        if !permissions.accessibility {
             operations.remove(.targetedClick)
             operations.remove(.exactWindowTargetedClick)
         }

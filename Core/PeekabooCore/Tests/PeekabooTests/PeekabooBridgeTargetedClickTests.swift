@@ -82,19 +82,19 @@ struct PeekabooBridgeTargetedClickTests {
             hostKind: .gui,
             allowlistedTeams: [],
             allowlistedBundles: [],
-            postEventAccessEvaluator: { true },
+            postEventAccessEvaluator: { false },
             permissionStatusEvaluator: { _ in
                 PermissionsStatus(
                     screenRecording: false,
-                    accessibility: false,
+                    accessibility: true,
                     appleScript: false,
-                    postEvent: true)
+                    postEvent: false)
             })
 
         let request = PeekabooBridgeRequest.targetedClick(
             PeekabooBridgeTargetedClickRequest(
                 target: .coordinates(CGPoint(x: 10, y: 20)),
-                clickType: .double,
+                clickType: .single,
                 snapshotId: nil,
                 targetProcessIdentifier: 9001))
         let requestData = try JSONEncoder.peekabooBridgeEncoder().encode(request)
@@ -112,7 +112,7 @@ struct PeekabooBridgeTargetedClickTests {
         } else {
             Issue.record("Expected coordinates click, got \(String(describing: lastClick?.target))")
         }
-        #expect(lastClick?.type == .double)
+        #expect(lastClick?.type == .single)
         #expect(lastClick?.targetProcessIdentifier == 9001)
         #expect(lastClick?.targetWindowID == nil)
     }
@@ -126,13 +126,13 @@ struct PeekabooBridgeTargetedClickTests {
             hostKind: .gui,
             allowlistedTeams: [],
             allowlistedBundles: [],
-            postEventAccessEvaluator: { true },
+            postEventAccessEvaluator: { false },
             permissionStatusEvaluator: { _ in
                 PermissionsStatus(
                     screenRecording: false,
-                    accessibility: false,
+                    accessibility: true,
                     appleScript: false,
-                    postEvent: true)
+                    postEvent: false)
             })
         let request = PeekabooBridgeRequest.targetedClick(.init(
             target: .coordinates(CGPoint(x: 10, y: 20)),
@@ -349,8 +349,14 @@ struct PeekabooBridgeTargetedClickTests {
 
     @Test
     @MainActor
-    func `targeted click is enabled when either delivery permission is granted`() async throws {
-        for (accessibility, postEvent) in [(true, false), (false, true)] {
+    func `targeted click requires accessibility now that delivery is AX-only`() async throws {
+        // Positioned pid-routed mouse events mis-deliver at the window corner, so the synthetic
+        // path was removed; Event Synthesizing permission alone no longer enables targeted clicks.
+        for (accessibility, postEvent, expectedEnabled) in [
+            (true, false, true),
+            (true, true, true),
+            (false, true, false),
+        ] {
             let server = PeekabooBridgeServer(
                 services: StubServices(),
                 hostKind: .gui,
@@ -383,8 +389,8 @@ struct PeekabooBridgeTargetedClickTests {
                 continue
             }
 
-            #expect(handshake.enabledOperations?.contains(.targetedClick) == true)
-            #expect(handshake.enabledOperations?.contains(.exactWindowTargetedClick) == true)
+            #expect(handshake.enabledOperations?.contains(.targetedClick) == expectedEnabled)
+            #expect(handshake.enabledOperations?.contains(.exactWindowTargetedClick) == expectedEnabled)
         }
     }
 
@@ -464,7 +470,44 @@ struct PeekabooBridgeTargetedClickTests {
 
     @Test
     @MainActor
-    func `accessibility-only host rejects synthetic targeted click variants`() async throws {
+    func `accessibility-only host accepts coordinate targeted clicks`() async throws {
+        // Coordinate background clicks are now hit-tested and pressed via accessibility, so
+        // they no longer require Event Synthesizing permission.
+        let services = StubServices()
+        let server = PeekabooBridgeServer(
+            services: services,
+            hostKind: .gui,
+            allowlistedTeams: [],
+            allowlistedBundles: [],
+            postEventAccessEvaluator: { false },
+            permissionStatusEvaluator: { _ in
+                PermissionsStatus(
+                    screenRecording: false,
+                    accessibility: true,
+                    appleScript: false,
+                    postEvent: false)
+            })
+        let payload = PeekabooBridgeTargetedClickRequest(
+            target: .coordinates(CGPoint(x: 10, y: 20)),
+            clickType: .single,
+            snapshotId: nil,
+            targetProcessIdentifier: 9001)
+
+        let responseData = try await server.decodeAndHandle(
+            JSONEncoder.peekabooBridgeEncoder().encode(PeekabooBridgeRequest.targetedClick(payload)),
+            peer: nil)
+        let response = try self.decode(responseData)
+
+        guard case .ok = response else {
+            Issue.record("Expected ok response, got \(response)")
+            return
+        }
+        #expect(services.automationStub.lastProcessTargetedClick?.type == .single)
+    }
+
+    @Test
+    @MainActor
+    func `post event only host rejects targeted clicks with accessibility permission`() async throws {
         let requests: [PeekabooBridgeTargetedClickRequest] = [
             .init(
                 target: .coordinates(CGPoint(x: 10, y: 20)),
@@ -473,7 +516,7 @@ struct PeekabooBridgeTargetedClickTests {
                 targetProcessIdentifier: 9001),
             .init(
                 target: .elementId("B1"),
-                clickType: .double,
+                clickType: .single,
                 snapshotId: "snapshot",
                 targetProcessIdentifier: 9001),
         ]
@@ -485,13 +528,13 @@ struct PeekabooBridgeTargetedClickTests {
                 hostKind: .gui,
                 allowlistedTeams: [],
                 allowlistedBundles: [],
-                postEventAccessEvaluator: { false },
+                postEventAccessEvaluator: { true },
                 permissionStatusEvaluator: { _ in
                     PermissionsStatus(
                         screenRecording: false,
-                        accessibility: true,
+                        accessibility: false,
                         appleScript: false,
-                        postEvent: false)
+                        postEvent: true)
                 })
             let responseData = try await server.decodeAndHandle(
                 JSONEncoder.peekabooBridgeEncoder().encode(PeekabooBridgeRequest.targetedClick(payload)),
@@ -503,7 +546,7 @@ struct PeekabooBridgeTargetedClickTests {
                 continue
             }
             #expect(envelope.code == .permissionDenied)
-            #expect(envelope.permission == .postEvent)
+            #expect(envelope.permission == .accessibility)
             #expect(services.automationStub.lastProcessTargetedClick == nil)
         }
     }

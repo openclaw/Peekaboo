@@ -174,7 +174,10 @@ public struct PeekabooBridgeTargetedClickRequest: Codable, Sendable {
         self.targetWindowID = targetWindowID
     }
 
-    /// Whether this request necessarily uses the synthetic event path.
+    /// Whether a legacy (protocol <= 1.8) host would deliver this request via the synthetic
+    /// pid-routed event path. Current hosts deliver every targeted click through accessibility;
+    /// this remains only so clients can refuse these variants against old hosts, whose synthetic
+    /// path mis-delivers positioned clicks at the window corner.
     public var requiresPostEventPermission: Bool {
         Self.requiresPostEventPermission(target: self.target, clickType: self.clickType)
     }
