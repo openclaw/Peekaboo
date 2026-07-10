@@ -371,48 +371,6 @@ public nonisolated enum PeekabooError: LocalizedError, StandardizedError, Peekab
     }
 }
 
-// MARK: - Desktop Mutation Classification
-
-extension PeekabooError {
-    /// Whether *every* throw site for this error case raises it during target lookup/resolution,
-    /// before the automation stack can dispatch any desktop event (mouse, keyboard, AX action).
-    ///
-    /// Snapshot bookkeeping uses this to skip invalidating cached UI snapshots after a failed
-    /// command. It must be conservative: the SAME error case can be thrown from both a pre-dispatch
-    /// lookup and a post-dispatch path (e.g. `.menuNotFound` is thrown by a Dock right-click AFTER
-    /// the menu-opening click, and `.snapshotStale` is thrown from `normalizingSnapshotErrors`
-    /// wrapping the action itself). So a case qualifies only if it is provably pre-dispatch at
-    /// EVERY throw site in the codebase; anything raised after (or possibly after) an event was
-    /// posted must return `false` so the desktop is conservatively treated as mutated.
-    ///
-    /// Kept (audited pre-dispatch at every throw site):
-    /// - `.elementNotFound`: element/dock lookups, wait-for-element, and cached matches, all raised
-    ///   while resolving the target before any click/press. No post-dispatch throw site exists.
-    /// - `.snapshotNotFound` / `.snapshotNotAvailable`: snapshot-cache misses during target
-    ///   resolution; the cache is consulted to decide where to act.
-    /// - `.sessionNotFound`: legacy session-cache lookup, same family as the snapshot cache.
-    ///
-    /// Deliberately excluded (thrown, or possibly thrown, after an event was dispatched):
-    /// `.menuNotFound` / `.menuItemNotFound` (Dock/menu interaction throws these after clicking),
-    /// `.snapshotStale` (`normalizingSnapshotErrors` wraps the action execution),
-    /// `.invalidInput` / `.invalidCoordinates` (many mid-service sites incl. input drivers),
-    /// permission errors (per-event checks inside `BackgroundInputDriver`), and
-    /// `.windowNotFound` / `.appNotFound` / `.ambiguousAppIdentifier` (window/app operations that
-    /// dispatch AX events or launches). CLI-layer `Commander.ValidationError` stays pre-dispatch
-    /// and is handled separately by the executor.
-    public var failedBeforeDispatchingDesktopEvent: Bool {
-        switch self {
-        case .elementNotFound,
-             .snapshotNotFound,
-             .snapshotNotAvailable,
-             .sessionNotFound:
-            true
-        default:
-            false
-        }
-    }
-}
-
 // MARK: - Convenience Factory Methods
 
 extension PeekabooError {

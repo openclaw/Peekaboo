@@ -386,24 +386,3 @@ extension PeekabooBridgeErrorEnvelope: PendingSnapshotFailureDispositionProvidin
         }
     }
 }
-
-extension PeekabooBridgeErrorEnvelope {
-    /// Whether the remote operation is known to have stopped during target lookup, before any
-    /// desktop event (mouse, keyboard, AX action) could be dispatched.
-    ///
-    /// Mirrors `PeekabooError.failedBeforeDispatchingDesktopEvent` and is just as conservative: it
-    /// keys off the explicit failure `kind` and trusts ONLY the two kinds that are pre-dispatch at
-    /// every server throw site. `.snapshotStale` is deliberately excluded because the host raises
-    /// it from action execution (`normalizingSnapshotErrors`), and generic error codes are not
-    /// trusted because they conflate pre- and post-dispatch failures (e.g. `.notFound` also carries
-    /// Dock/menu `menuNotFound`, which is thrown after the menu-opening click).
-    public var failedBeforeDispatchingDesktopEvent: Bool {
-        guard !self.operationMayHaveCompleted else { return false }
-        switch self.kind {
-        case .elementNotFound, .snapshotNotFound:
-            return true
-        case .snapshotStale, .none:
-            return false
-        }
-    }
-}

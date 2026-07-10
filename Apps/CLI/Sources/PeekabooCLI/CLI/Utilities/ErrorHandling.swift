@@ -29,9 +29,6 @@ private func emitError(
 // Callers should use handleGenericError instead
 
 func handleGenericError(_ error: any Error, jsonOutput: Bool, logger: Logger) {
-    // Surface the original error so the runtime executor can classify the failure's dispatch phase
-    // before the command rethrows an opaque ExitCode.
-    CommandFailureErrorRecorder.record(error)
     emitError(
         message: error.localizedDescription,
         code: .UNKNOWN_ERROR,
@@ -41,7 +38,6 @@ func handleGenericError(_ error: any Error, jsonOutput: Bool, logger: Logger) {
 }
 
 func handleValidationError(_ error: any Error, jsonOutput: Bool, logger: Logger) {
-    CommandFailureErrorRecorder.record(error)
     emitError(
         message: error.localizedDescription,
         code: .VALIDATION_ERROR,

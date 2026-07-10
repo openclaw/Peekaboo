@@ -6,41 +6,6 @@ import PeekabooFoundation
 
 // MARK: - Error Handling Protocol
 
-/// Captures the original error a command reports before it rethrows the opaque `ExitCode.failure`.
-/// The runtime executor consumes it to decide whether the failed command could have mutated the
-/// desktop (and therefore whether cached UI snapshots must be invalidated).
-///
-/// Command errors funnel through one of the shared handlers (`ErrorHandlingCommand.handleError`,
-/// `handleGenericError`, `handleValidationError`) before the command throws `ExitCode.failure`, and
-/// each records here. The store is lock-backed so those handlers can record from any isolation; the
-/// executor resets it before running and consumes it in its catch. If a command ever throws
-/// `ExitCode` without recording, the executor falls back to conservative invalidation.
-enum CommandFailureErrorRecorder {
-    private static let lock = NSLock()
-    private nonisolated(unsafe) static var recordedError: (any Error)?
-
-    static func record(_ error: any Error) {
-        self.lock.lock()
-        defer { self.lock.unlock() }
-        self.recordedError = error
-    }
-
-    static func consume() -> (any Error)? {
-        self.lock.lock()
-        defer {
-            self.recordedError = nil
-            self.lock.unlock()
-        }
-        return self.recordedError
-    }
-
-    static func reset() {
-        self.lock.lock()
-        defer { self.lock.unlock() }
-        self.recordedError = nil
-    }
-}
-
 /// Protocol for commands that need standardized error handling
 @MainActor
 protocol ErrorHandlingCommand {
@@ -50,7 +15,6 @@ protocol ErrorHandlingCommand {
 extension ErrorHandlingCommand {
     /// Handle errors with appropriate output format
     func handleError(_ error: any Error, customCode: ErrorCode? = nil) {
-        CommandFailureErrorRecorder.record(error)
         if jsonOutput {
             let errorCode = customCode ?? self.mapErrorToCode(error)
             let logger: Logger = if let formattable = self as? any OutputFormattable {
