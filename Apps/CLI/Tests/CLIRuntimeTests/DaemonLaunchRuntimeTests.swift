@@ -3,7 +3,16 @@ import Foundation
 import Subprocess
 import Testing
 
-@Suite(.serialized)
+/// These tests spawn the real peekaboo binary and its daemon. CI runners
+/// cannot host the daemon (the child times out and is SIGKILLed after
+/// minutes), so they run only alongside the automation suites.
+private enum DaemonRuntimeTestEnvironment {
+    nonisolated static var isEnabled: Bool {
+        ProcessInfo.processInfo.environment["PEEKABOO_INCLUDE_AUTOMATION_TESTS"]?.lowercased() == "true"
+    }
+}
+
+@Suite(.serialized, .enabled(if: DaemonRuntimeTestEnvironment.isEnabled))
 struct DaemonLaunchRuntimeTests {
     @Test
     func `bare argv zero starts and stops the production daemon from an empty directory`() async throws {
