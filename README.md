@@ -62,6 +62,9 @@ peekaboo agent "Open Notes and create a TODO list with three items"
 # Run as an MCP server (Codex, Claude Code, Cursor)
 npx -y @steipete/peekaboo
 
+# Register the same MCP server with Autohand Code
+autohand mcp add peekaboo npx -y @steipete/peekaboo
+
 # Minimal MCP client config snippet:
 # {
 #   "mcpServers": {
@@ -75,6 +78,8 @@ npx -y @steipete/peekaboo
 #   }
 # }
 ```
+
+Add `--scope project` after `add` to keep the server configuration in the current project. See [Autohand Code](https://github.com/autohandai/code-cli/) for current installation and CLI details.
 
 ## Shell completions
 
