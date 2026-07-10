@@ -259,12 +259,7 @@ extension SnapshotManager {
     }
 
     private func safeSnapshotURL(for snapshotId: String) -> URL? {
-        guard !snapshotId.isEmpty, snapshotId != ".", snapshotId != ".." else { return nil }
-        let root = self.getSnapshotStorageURL().resolvingSymlinksInPath().standardizedFileURL
-        let candidate = root.appendingPathComponent(snapshotId, isDirectory: true)
-            .resolvingSymlinksInPath().standardizedFileURL
-        guard candidate.deletingLastPathComponent().path == root.path else { return nil }
-        return candidate
+        SnapshotPathValidator.directChildURL(for: snapshotId, in: self.getSnapshotStorageURL())
     }
 
     func removeSnapshotAndPreservation(snapshotId: String) throws -> Bool {

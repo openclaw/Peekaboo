@@ -124,4 +124,26 @@ struct CleanCommandSimpleTests {
         #expect(textResult.stdout.contains("was not found on disk"))
         #expect(textResult.stdout.contains("Daemon-memory snapshots are not pruned"))
     }
+
+    @Test
+    @MainActor
+    func `Clean invalid snapshot ID reports validation error`() async throws {
+        let services = TestServicesFactory.makePeekabooServices(
+            files: StubFileService(cleanSpecificError: .invalidSnapshotID)
+        )
+
+        let result = try await InProcessCommandRunner.run(
+            ["clean", "--snapshot", "../outside", "--json"],
+            services: services
+        )
+
+        #expect(result.exitStatus == 1)
+        let response = try JSONDecoder().decode(
+            JSONResponse.self,
+            from: Data(result.combinedOutput.utf8)
+        )
+        #expect(response.success == false)
+        #expect(response.error?.code == ErrorCode.VALIDATION_ERROR.rawValue)
+        #expect(response.error?.message == "Invalid snapshot ID: expected one folder name")
+    }
 }

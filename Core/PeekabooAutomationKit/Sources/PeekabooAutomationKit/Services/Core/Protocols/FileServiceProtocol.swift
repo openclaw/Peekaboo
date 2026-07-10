@@ -138,6 +138,7 @@ public struct FileSnapshotInfo: Sendable, Codable {
 
 /// Errors that can occur during file operations.
 public enum FileServiceError: LocalizedError, Sendable {
+    case invalidSnapshotID
     case snapshotNotFound(String)
     case directoryNotFound(URL)
     case insufficientPermissions(URL)
@@ -145,6 +146,8 @@ public enum FileServiceError: LocalizedError, Sendable {
 
     public var errorDescription: String? {
         switch self {
+        case .invalidSnapshotID:
+            "Invalid snapshot ID: expected one folder name"
         case let .snapshotNotFound(snapshotId):
             "Snapshot '\(snapshotId)' not found"
         case let .directoryNotFound(url):

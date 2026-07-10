@@ -6,7 +6,15 @@ import UniformTypeIdentifiers
 
 /// Default implementation of file system operations for snapshot management
 public final class FileService: FileServiceProtocol {
-    public init() {}
+    private let snapshotCacheDirectoryOverride: URL?
+
+    public init() {
+        self.snapshotCacheDirectoryOverride = nil
+    }
+
+    init(snapshotCacheDirectory: URL) {
+        self.snapshotCacheDirectoryOverride = snapshotCacheDirectory
+    }
 
     public func cleanAllSnapshots(dryRun: Bool) async throws -> SnapshotCleanResult {
         let cacheDir = self.getSnapshotCacheDirectory()
@@ -113,7 +121,9 @@ public final class FileService: FileServiceProtocol {
 
     public func cleanSpecificSnapshot(snapshotId: String, dryRun: Bool) async throws -> SnapshotCleanResult {
         let cacheDir = self.getSnapshotCacheDirectory()
-        let snapshotDir = cacheDir.appendingPathComponent(snapshotId)
+        guard let snapshotDir = SnapshotPathValidator.directChildURL(for: snapshotId, in: cacheDir) else {
+            throw FileServiceError.invalidSnapshotID
+        }
 
         guard FileManager.default.fileExists(atPath: snapshotDir.path) else {
             // Return empty result instead of throwing error for consistency with original behavior
@@ -146,6 +156,9 @@ public final class FileService: FileServiceProtocol {
     }
 
     public func getSnapshotCacheDirectory() -> URL {
+        if let snapshotCacheDirectoryOverride {
+            return snapshotCacheDirectoryOverride
+        }
         let homeDir = FileManager.default.homeDirectoryForCurrentUser
         return homeDir.appendingPathComponent(".peekaboo/snapshots")
     }

@@ -218,6 +218,8 @@ struct CleanCommand: OutputFormattable, RuntimeOptionsConfigurable {
 
 private func handleFileServiceError(_ error: FileServiceError, jsonOutput: Bool, logger: Logger) {
     let errorCode: ErrorCode = switch error {
+    case .invalidSnapshotID:
+        .VALIDATION_ERROR
     case .snapshotNotFound:
         .SNAPSHOT_NOT_FOUND
     case .directoryNotFound:

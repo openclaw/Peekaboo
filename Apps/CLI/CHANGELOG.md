@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [3.8.1] - Unreleased
 
 ### Fixed
+- `peekaboo clean --snapshot` now rejects empty, traversal, nested-path, absolute-path, and symlink snapshot IDs, keeping cleanup confined to one real snapshot folder directly beneath the cache root.
 - Invoking `peekaboo daemon start` through `PATH` now relaunches the canonical executable instead of looking for a `peekaboo` file in the current directory, startup errors now distinguish launch failures, early exits, and readiness timeouts, and daemon logs honor `PEEKABOO_CONFIG_DIR`. Thanks @mattash for #231.
 - Canceling an app relaunch wait now stops its running-state poll immediately instead of spinning through the remaining timeout budget. Thanks @SebTardif for #230.
 - Snapshot-backed MCP actions now synchronize cached application, window, and process metadata across concurrent observation updates and action reads, preventing data races. Thanks @SebTardif for #228.

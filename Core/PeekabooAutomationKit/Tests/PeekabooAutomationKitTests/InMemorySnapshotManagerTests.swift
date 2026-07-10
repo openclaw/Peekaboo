@@ -187,6 +187,53 @@ struct InMemorySnapshotManagerTests {
     }
 
     @Test
+    func `disk cleanup rejects traversal and terminal symlinks without touching targets`() async throws {
+        let container = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekaboo-safe-cleanup-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: container) }
+        let storageURL = container.appendingPathComponent("snapshots", isDirectory: true)
+        let outsideURL = container.appendingPathComponent("outside", isDirectory: true)
+        let siblingURL = storageURL.appendingPathComponent("sibling", isDirectory: true)
+        let outsideSentinel = outsideURL.appendingPathComponent("outside-sentinel")
+        let siblingSentinel = siblingURL.appendingPathComponent("snapshot.json")
+        let outsideContents = Data("outside".utf8)
+        let siblingContents = Data("sibling".utf8)
+
+        try FileManager.default.createDirectory(at: storageURL, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: outsideURL, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: siblingURL, withIntermediateDirectories: true)
+        try outsideContents.write(to: outsideSentinel)
+        try siblingContents.write(to: siblingSentinel)
+
+        let outsideLink = storageURL.appendingPathComponent("outside-link")
+        let siblingLink = storageURL.appendingPathComponent("sibling-link")
+        let danglingLink = storageURL.appendingPathComponent("dangling-link")
+        let missingTarget = container.appendingPathComponent("missing-target", isDirectory: true)
+        try FileManager.default.createSymbolicLink(at: outsideLink, withDestinationURL: outsideURL)
+        try FileManager.default.createSymbolicLink(at: siblingLink, withDestinationURL: siblingURL)
+        try FileManager.default.createSymbolicLink(at: danglingLink, withDestinationURL: missingTarget)
+        let manager = SnapshotManager(snapshotStorageURL: storageURL)
+
+        for snapshotID in [
+            "../outside",
+            outsideLink.lastPathComponent,
+            siblingLink.lastPathComponent,
+            danglingLink.lastPathComponent,
+        ] {
+            await #expect(throws: SnapshotError.self) {
+                try await manager.cleanSnapshot(snapshotId: snapshotID)
+            }
+            #expect(try Data(contentsOf: outsideSentinel) == outsideContents)
+            #expect(try Data(contentsOf: siblingSentinel) == siblingContents)
+        }
+
+        #expect(try FileManager.default.destinationOfSymbolicLink(atPath: outsideLink.path) == outsideURL.path)
+        #expect(try FileManager.default.destinationOfSymbolicLink(atPath: siblingLink.path) == siblingURL.path)
+        #expect(try FileManager.default.destinationOfSymbolicLink(atPath: danglingLink.path) == missingTarget.path)
+        #expect(!FileManager.default.fileExists(atPath: missingTarget.path))
+    }
+
+    @Test
     func `disk clean all removes incomplete and corrupt snapshot directories`() async throws {
         let storageURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("peekaboo-incomplete-cleanup-\(UUID().uuidString)", isDirectory: true)

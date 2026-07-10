@@ -14,15 +14,17 @@ read_when:
 | --- | --- |
 | `--all-snapshots` | Delete every cached snapshot directory. |
 | `--older-than <hours>` | Delete snapshots older than the given hour threshold (defaults to 24 if omitted). |
-| `--snapshot <id>` | Remove a single on-disk snapshot by folder name (the `snapshotId` from `see`). |
+| `--snapshot <id>` | Remove a single on-disk snapshot by its validated folder name (the `snapshotId` from `see`). |
 | `--dry-run` | Print what would be removed without touching disk. |
 
 Only one of the three selection flags may be supplied at a time; the command validates this before doing any IO.
 
+`--snapshot` accepts exactly one folder name directly beneath the snapshot cache. Empty values, `.`/`..` traversal, nested or absolute paths, control characters, and symlinks are rejected; ordinary IDs such as `12345`, `abc`, and `a..b` remain valid.
+
 ## Implementation notes
-- Cleanup work is delegated to `services.files` (`cleanAllSnapshots`, `cleanOldSnapshots`, `cleanSpecificSnapshot`), so it benefits from the same file-locking + sandbox awareness as the rest of Peekaboo.
+- Cleanup work is delegated to `services.files` (`cleanAllSnapshots`, `cleanOldSnapshots`, `cleanSpecificSnapshot`); specific-snapshot cleanup validates and resolves the folder before either previewing or deleting it.
 - Text output summarizes number of snapshots removed and bytes freed (using `ByteCountFormatter`), while JSON output wraps the raw `CleanResult` with an `executionTime` so you can log metrics.
-- When `--snapshot <id>` is not found on disk, text output says the ID missed the disk cache and JSON includes `data.not_found: true`. This command does not delete daemon-memory snapshots; that is tracked separately from disk pruning.
+- A valid `--snapshot <id>` that is not found on disk succeeds with zero removals: text output says the ID missed the disk cache and JSON includes `data.not_found: true`. This command does not delete daemon-memory snapshots; that is tracked separately from disk pruning.
 
 ## Examples
 ```bash

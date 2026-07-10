@@ -842,6 +842,12 @@ final class StubSnapshotManager: SnapshotManagerProtocol, @unchecked Sendable {
 }
 
 final class StubFileService: FileServiceProtocol {
+    private let cleanSpecificError: FileServiceError?
+
+    init(cleanSpecificError: FileServiceError? = nil) {
+        self.cleanSpecificError = cleanSpecificError
+    }
+
     func cleanAllSnapshots(dryRun: Bool) async throws -> SnapshotCleanResult {
         SnapshotCleanResult(snapshotsRemoved: 0, bytesFreed: 0, snapshotDetails: [], dryRun: dryRun)
     }
@@ -851,7 +857,10 @@ final class StubFileService: FileServiceProtocol {
     }
 
     func cleanSpecificSnapshot(snapshotId _: String, dryRun: Bool) async throws -> SnapshotCleanResult {
-        SnapshotCleanResult(snapshotsRemoved: 0, bytesFreed: 0, snapshotDetails: [], dryRun: dryRun)
+        if let cleanSpecificError {
+            throw cleanSpecificError
+        }
+        return SnapshotCleanResult(snapshotsRemoved: 0, bytesFreed: 0, snapshotDetails: [], dryRun: dryRun)
     }
 
     func getSnapshotCacheDirectory() -> URL {
