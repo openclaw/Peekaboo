@@ -65,7 +65,10 @@ struct VisualizerOverlaySizingTests {
     }
 
     @Test
-    func `Element overlays stay off unless a settings source opts in`() async throws {
+    func `Element overlays render on the visualizer switch, not a per-feature gate`() async throws {
+        // Option (a): the sender (SeeTool / VisualizationClient) owns the default-off
+        // decision, so the renderer must draw whatever it is handed once the top-level
+        // visualizer switch is on — a second renderer gate would swallow the env/config opt-in.
         let coordinator = VisualizerCoordinator()
         defer { coordinator.overlayManager.removeAllWindows() }
         let screen = try #require(NSScreen.screens.first)
@@ -75,30 +78,23 @@ struct VisualizerOverlaySizingTests {
             width: 40,
             height: 20)
 
-        // No settings source connected: boxes stay off (`?? false`, not `?? true`).
-        #expect(await coordinator.displayElementOverlays(elements: ["B1": element], duration: 60) == false)
-
-        // A connected source that never enabled the flag keeps them off too.
-        let settings = StubVisualizerSettings()
-        coordinator.connectSettings(settings)
-        #expect(await coordinator.displayElementOverlays(elements: ["B1": element], duration: 60) == false)
-        #expect(coordinator.overlayManager.activeReplaceKeys
-            .allSatisfy { !$0.hasPrefix(VisualizerCoordinator.OverlaySlot.elementSheetPrefix) })
-
-        // Explicit opt-in draws the per-screen sheet.
-        settings.elementDetectionEnabled = true
+        // No settings source connected: the visualizer switch defaults on, so it renders.
         #expect(await coordinator.displayElementOverlays(elements: ["B1": element], duration: 60))
         #expect(coordinator.overlayManager.activeReplaceKeys.contains(
             VisualizerCoordinator.OverlaySlot.elementSheet(screenIndex: 0)))
+
+        // Visualizer switch off ⇒ nothing renders regardless of the sender decision.
+        let settings = StubVisualizerSettings()
+        settings.visualizerEnabled = false
+        coordinator.connectSettings(settings)
+        _ = await coordinator.displayElementOverlays(elements: [:], duration: 60)
+        #expect(await coordinator.displayElementOverlays(elements: ["B1": element], duration: 60) == false)
     }
 
     @Test
     func `Empty element refresh retires stale screen sheets`() async throws {
         let coordinator = VisualizerCoordinator()
         defer { coordinator.overlayManager.removeAllWindows() }
-        let settings = StubVisualizerSettings()
-        settings.elementDetectionEnabled = true
-        coordinator.connectSettings(settings)
         let screen = try #require(NSScreen.screens.first)
         let element = CGRect(
             x: screen.frame.midX - 20,
@@ -198,8 +194,8 @@ struct VisualizerOverlaySizingTests {
     }
 }
 
-/// Host-settings stand-in mirroring the product defaults: every animation on,
-/// except the opt-in element boxes.
+/// Host-settings stand-in with every animation on. Element-detection boxes are gated in
+/// the sender, not this protocol, so there is no `elementDetectionEnabled` member here.
 @MainActor
 private final class StubVisualizerSettings: VisualizerSettingsProviding {
     var visualizerEnabled = true
@@ -218,7 +214,6 @@ private final class StubVisualizerSettings: VisualizerSettingsProviding {
     var menuNavigationEnabled = true
     var dialogInteractionEnabled = true
     var spaceTransitionEnabled = true
-    var elementDetectionEnabled = false
     var annotatedScreenshotEnabled = true
     var watchCaptureHUDEnabled = true
 }

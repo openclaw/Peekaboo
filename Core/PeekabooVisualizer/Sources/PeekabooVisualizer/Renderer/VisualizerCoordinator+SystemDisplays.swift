@@ -214,12 +214,13 @@ extension VisualizerCoordinator {
     }
 
     func displayElementOverlays(elements: [String: CGRect], duration: TimeInterval) async -> Bool {
-        // Element boxes are opt-in (unlike the other animations): they outline
-        // every detected control, which clutters the screen, so a missing
-        // settings source falls back to `false` instead of `true`.
-        guard self.settings?.visualizerEnabled ?? true,
-              self.settings?.elementDetectionEnabled ?? false
-        else {
+        // The default-off decision for element boxes lives in the *sender*
+        // (SeeTool + VisualizationClient, gated by `PEEKABOO_VISUAL_ELEMENT_BOXES`
+        // / `visualizer.elementDetectionEnabled`), mirroring how
+        // `PEEKABOO_VISUAL_SCREENSHOTS` works: the receiver renders whatever
+        // element-detection event it is handed once the top-level visualizer
+        // switch is on. A second gate here would swallow the env/config opt-in.
+        guard self.settings?.visualizerEnabled ?? true else {
             return false
         }
 

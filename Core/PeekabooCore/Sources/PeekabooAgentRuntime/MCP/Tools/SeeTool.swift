@@ -274,11 +274,12 @@ public struct SeeTool: MCPTool {
 
     // Removed getRolePrefix - no longer needed after refactoring to use main UIElement struct
 
-    /// Element boxes are opt-in: skip persisting/dispatching the event entirely unless
+    /// Element boxes are opt-in, and this sender-side gate is the single default-off
+    /// decision: skip persisting/dispatching the event entirely unless
     /// `PEEKABOO_VISUAL_ELEMENT_BOXES` or `visualizer.elementDetectionEnabled` in
-    /// `~/.peekaboo/config.json` turns them on. The Mac app renderer applies the same
-    /// default, and its settings toggle writes this config key, so one switch governs
-    /// both processes.
+    /// `~/.peekaboo/config.json` turns them on. The Mac app's settings toggle writes
+    /// this same config key, so one switch governs both processes; the renderer draws
+    /// whatever event it receives once the master visualizer switch is on.
     static func elementDetectionVisualsEnabled(
         environment: [String: String],
         configuration: PeekabooAutomation.Configuration?) -> Bool
@@ -295,6 +296,9 @@ public struct SeeTool: MCPTool {
 
     @MainActor
     private func emitElementDetectionVisualizer(from detected: [AutomationDetectedElement]) async {
+        // Pick up config edits made after this (possibly long-lived MCP) process started,
+        // e.g. the Mac app writing the toggle into config.json. Cheap: a stat unless it changed.
+        ConfigurationManager.shared.reloadConfigurationIfChanged()
         guard Self.elementDetectionVisualsEnabled(
             environment: ProcessInfo.processInfo.environment,
             configuration: ConfigurationManager.shared.getConfiguration())

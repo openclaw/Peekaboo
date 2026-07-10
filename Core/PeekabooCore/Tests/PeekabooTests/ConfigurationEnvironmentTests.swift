@@ -35,6 +35,40 @@ struct ConfigurationManagerEnvironmentTests {
     }
 
     @Test
+    func `reloadConfigurationIfChanged picks up out-of-process config edits`() throws {
+        try withIsolatedConfigurationEnvironment { configDir in
+            let configPath = configDir.appendingPathComponent("config.json")
+
+            func writeConfig(elementBoxes: Bool, modifiedAt: Date? = nil) throws {
+                let json = """
+                { "visualizer": { "elementDetectionEnabled": \(elementBoxes) } }
+                """
+                try json.write(to: configPath, atomically: true, encoding: .utf8)
+                if let modifiedAt {
+                    try FileManager.default.setAttributes(
+                        [.modificationDate: modifiedAt],
+                        ofItemAtPath: configPath.path)
+                }
+            }
+
+            // Simulate a long-running process that loaded the config at startup.
+            try writeConfig(elementBoxes: false)
+            _ = self.manager.loadConfiguration()
+            #expect(self.manager.getConfiguration()?.visualizer?.elementDetectionEnabled == false)
+
+            // Another process (the Mac app) flips the toggle in config.json.
+            try writeConfig(elementBoxes: true, modifiedAt: Date().addingTimeInterval(5))
+
+            // Without a reload the cached value is stale — this is the bug the fix addresses.
+            #expect(self.manager.getConfiguration()?.visualizer?.elementDetectionEnabled == false)
+
+            // The cheap mtime-guarded reload observes the change.
+            self.manager.reloadConfigurationIfChanged()
+            #expect(self.manager.getConfiguration()?.visualizer?.elementDetectionEnabled == true)
+        }
+    }
+
+    @Test
     func `getGeminiAPIKey accepts compatibility aliases`() {
         let previousGeminiAPIKey = getenv("GEMINI_API_KEY").map { String(cString: $0) }
         let previousGoogleAPIKey = getenv("GOOGLE_API_KEY").map { String(cString: $0) }

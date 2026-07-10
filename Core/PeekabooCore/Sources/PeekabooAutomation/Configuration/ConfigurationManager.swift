@@ -57,6 +57,11 @@ public final class ConfigurationManager: @unchecked Sendable {
     /// Loaded configuration
     var configuration: Configuration?
 
+    /// Modification date of `config.json` when it was last read into `configuration`.
+    /// `reloadConfigurationIfChanged()` uses it to detect out-of-process edits (e.g. the
+    /// Mac app flipping a visualizer toggle) without re-parsing the file on every call.
+    private var configFileModificationDate: Date?
+
     /// Cached credentials
     var credentials: [String: String] = [:]
 
@@ -70,6 +75,7 @@ public final class ConfigurationManager: @unchecked Sendable {
     /// Clear cached configuration/credentials so tests can re-seed with a different base dir.
     public func resetForTesting() {
         self.configuration = nil
+        self.configFileModificationDate = nil
         self.credentials = [:]
     }
     #endif
@@ -115,6 +121,7 @@ public final class ConfigurationManager: @unchecked Sendable {
         try? self.migrateIfNeeded()
         self.loadCredentials()
         self.configuration = self.loadConfigurationFromPath(Self.configPath)
+        self.configFileModificationDate = Self.modificationDate(ofFileAtPath: Self.configPath)
         return self.configuration
     }
 
@@ -126,6 +133,24 @@ public final class ConfigurationManager: @unchecked Sendable {
             _ = self.loadConfiguration()
         }
         return self.configuration
+    }
+
+    /// Reload `config.json` only if it changed on disk since the last load.
+    ///
+    /// Long-running processes (e.g. an MCP server) cache the configuration at startup,
+    /// so a config value flipped in another process — like the Mac app writing
+    /// `visualizer.elementDetectionEnabled` — would otherwise be ignored until restart.
+    /// The steady-state cost is a single `stat`; the parse only runs when the file's
+    /// modification date actually changes, keeping this safe on hot paths like `see`.
+    public func reloadConfigurationIfChanged() {
+        let currentDate = Self.modificationDate(ofFileAtPath: Self.configPath)
+        // Reload when the file appeared, disappeared, or was rewritten.
+        guard currentDate != self.configFileModificationDate else { return }
+        _ = self.loadConfiguration()
+    }
+
+    private static func modificationDate(ofFileAtPath path: String) -> Date? {
+        (try? FileManager.default.attributesOfItem(atPath: path))?[.modificationDate] as? Date
     }
 
     private func migrateHardcodedCredentials(from config: Configuration) throws {
