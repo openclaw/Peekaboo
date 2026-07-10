@@ -123,7 +123,15 @@ extension DockCommand.ShowSubcommand: CommanderBindableCommand {
 extension DockCommand.ListSubcommand: ParsableCommand {
     nonisolated(unsafe) static var commandDescription: CommandDescription {
         MainActorCommandDescription.describe {
-            CommandDescription(commandName: "list", abstract: "List all Dock items")
+            CommandDescription(
+                commandName: "list",
+                abstract: "List all Dock items",
+                discussion: """
+                Enumerates Dock items, their bundle IDs, and running state.
+
+                JSON emits legacy `dockItems` plus preferred `dock_items`.
+                """
+            )
         }
     }
 }

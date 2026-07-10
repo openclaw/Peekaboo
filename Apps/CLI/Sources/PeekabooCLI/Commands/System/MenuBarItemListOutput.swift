@@ -4,13 +4,20 @@ import PeekabooCore
 enum MenuBarItemListOutput {
     struct Payload: Codable {
         let items: [MenuBarItemInfo]
+        let menu_bar_items: [MenuBarItemInfo]
         let count: Int
+
+        init(items: [MenuBarItemInfo]) {
+            self.items = items
+            self.menu_bar_items = items
+            self.count = items.count
+        }
     }
 
     @MainActor
     static func outputJSON(items: [MenuBarItemInfo], logger: Logger) {
         outputSuccessCodable(
-            data: Payload(items: items, count: items.count),
+            data: Payload(items: items),
             logger: logger
         )
     }

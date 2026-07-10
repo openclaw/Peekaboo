@@ -73,6 +73,10 @@ struct PasteCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
         return self.textOption
     }
 
+    private var hasExplicitPayload: Bool {
+        self.resolvedText != nil || self.filePath != nil || self.imagePath != nil || self.dataBase64 != nil
+    }
+
     @MainActor
     mutating func run(using runtime: CommandRuntime) async throws {
         self.runtime = runtime
@@ -84,48 +88,17 @@ struct PasteCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
                 foreground: self.foreground,
                 focusOptions: self.focusOptions
             )
-            let request = try self.makeWriteRequest()
 
             let targetPID = try await self.backgroundProcessIdentifier()
+            guard self.hasExplicitPayload else {
+                try await self.pasteCurrentClipboard(targetPID: targetPID)
+                return
+            }
+
+            let request = try self.makeWriteRequest()
             if let targetPID,
                let text = self.resolvedText {
-                let setResult = try Self.readResult(for: request)
-                self.resolvedRuntime.beginInteractionMutation()
-                _ = try await AutomationServiceBridge.typeActions(
-                    automation: self.services.automation,
-                    request: TypeActionsRequest(
-                        actions: [.text(text)],
-                        cadence: .fixed(milliseconds: 0),
-                        snapshotId: nil
-                    ),
-                    targetProcessIdentifier: targetPID
-                )
-                await InteractionObservationInvalidator.invalidateAfterMutation(
-                    targets: self.resolvedRuntime.interactionMutationTargets,
-                    logger: self.logger,
-                    reason: "paste"
-                )
-
-                let result = PasteResult(
-                    success: true,
-                    pastedUti: setResult.utiIdentifier,
-                    pastedSize: setResult.data.count,
-                    pastedTextPreview: setResult.textPreview,
-                    previousClipboardPresent: false,
-                    restoredUti: nil,
-                    restoredSize: nil,
-                    restoreSucceeded: true,
-                    restoreError: nil,
-                    restoreDelayMs: 0,
-                    deliveryMode: KeyboardDeliveryMode.background.rawValue,
-                    targetPID: Int(targetPID)
-                )
-
-                self.output(result) {
-                    print("✅ Pasted text")
-                    print("📋 Pasted: \(setResult.utiIdentifier) (\(setResult.data.count) bytes)")
-                    print("🎯 Mode: background to PID \(targetPID)")
-                }
+                try await self.pasteTextInBackground(text, request: request, targetPID: targetPID)
                 return
             }
 
@@ -239,6 +212,50 @@ struct PasteCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
         }
     }
 
+    private func pasteTextInBackground(
+        _ text: String,
+        request: ClipboardWriteRequest,
+        targetPID: pid_t
+    ) async throws {
+        let setResult = try Self.readResult(for: request)
+        self.resolvedRuntime.beginInteractionMutation()
+        _ = try await AutomationServiceBridge.typeActions(
+            automation: self.services.automation,
+            request: TypeActionsRequest(
+                actions: [.text(text)],
+                cadence: .fixed(milliseconds: 0),
+                snapshotId: nil
+            ),
+            targetProcessIdentifier: targetPID
+        )
+        await InteractionObservationInvalidator.invalidateAfterMutation(
+            targets: self.resolvedRuntime.interactionMutationTargets,
+            logger: self.logger,
+            reason: "paste"
+        )
+
+        let result = PasteResult(
+            success: true,
+            pastedUti: setResult.utiIdentifier,
+            pastedSize: setResult.data.count,
+            pastedTextPreview: setResult.textPreview,
+            previousClipboardPresent: false,
+            restoredUti: nil,
+            restoredSize: nil,
+            restoreSucceeded: true,
+            restoreError: nil,
+            restoreDelayMs: 0,
+            deliveryMode: KeyboardDeliveryMode.background.rawValue,
+            targetPID: Int(targetPID)
+        )
+
+        self.output(result) {
+            print("✅ Pasted text")
+            print("📋 Pasted: \(setResult.utiIdentifier) (\(setResult.data.count) bytes)")
+            print("🎯 Mode: background to PID \(targetPID)")
+        }
+    }
+
     private func restoreClipboard(
         priorClipboardPresent: Bool,
         slot: String
@@ -288,6 +305,65 @@ struct PasteCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
         }
 
         throw ValidationError("Provide text, --file-path/--image-path, or --data-base64 with --uti")
+    }
+
+    private func pasteCurrentClipboard(targetPID: pid_t?) async throws {
+        let currentClipboard = try? self.services.clipboard.get(prefer: nil)
+        self.resolvedRuntime.beginInteractionMutation()
+        if targetPID == nil {
+            try await ensureFocused(
+                snapshotId: nil,
+                target: self.target,
+                options: self.focusOptions,
+                services: self.services
+            )
+        }
+
+        if let targetPID {
+            try await AutomationServiceBridge.hotkey(
+                automation: self.services.automation,
+                keys: "cmd,v",
+                holdDuration: 50,
+                targetProcessIdentifier: targetPID
+            )
+        } else {
+            try await AutomationServiceBridge.hotkey(
+                automation: self.services.automation,
+                keys: "cmd,v",
+                holdDuration: 50
+            )
+        }
+
+        await InteractionObservationInvalidator.invalidateAfterMutation(
+            targets: self.resolvedRuntime.interactionMutationTargets,
+            logger: self.logger,
+            reason: "paste"
+        )
+
+        let result = PasteResult(
+            success: true,
+            pastedUti: currentClipboard?.utiIdentifier ?? "current-clipboard",
+            pastedSize: currentClipboard?.data.count ?? 0,
+            pastedTextPreview: currentClipboard?.textPreview,
+            previousClipboardPresent: currentClipboard != nil,
+            restoredUti: nil,
+            restoredSize: nil,
+            restoreSucceeded: true,
+            restoreError: nil,
+            restoreDelayMs: 0,
+            deliveryMode: targetPID == nil ? KeyboardDeliveryMode.foreground.rawValue :
+                KeyboardDeliveryMode.background.rawValue,
+            targetPID: targetPID.map(Int.init)
+        )
+
+        self.output(result) {
+            print("✅ Pasted current clipboard")
+            if let targetPID {
+                print("🎯 Mode: background to PID \(targetPID)")
+            } else {
+                print("🎯 Mode: foreground")
+            }
+        }
     }
 
     private static func readResult(for request: ClipboardWriteRequest) throws -> ClipboardReadResult {
@@ -357,17 +433,22 @@ extension PasteCommand: ParsableCommand {
         MainActorCommandDescription.describe {
             CommandDescription(
                 commandName: "paste",
-                abstract: "Set clipboard, paste (Cmd+V), then restore previous clipboard",
+                abstract: "Paste current clipboard or set clipboard, paste, and restore",
                 discussion: """
+                    With no payload, paste sends Cmd+V using the current clipboard contents.
+                    Target flags send process-targeted Cmd+V when possible; otherwise it uses
+                    the focused target/global foreground delivery.
+
                     This command reduces drift in automation flows by collapsing:
                       1) clipboard set
                       2) paste delivery
                       3) clipboard restore
-                    into one operation.
+                    into one operation when you provide text, a file, an image, or base64 data.
                     Background text delivery is used by default when a target process is known;
                     binary payloads use background Cmd+V. Add --foreground for focused/global paste.
 
                     EXAMPLES:
+                      peekaboo paste
                       peekaboo paste \"Hello\" --app TextEdit
                       peekaboo paste \"Hello\" --app TextEdit --foreground
                       peekaboo paste --text \"Hello\" --app TextEdit --window-title \"Untitled\"

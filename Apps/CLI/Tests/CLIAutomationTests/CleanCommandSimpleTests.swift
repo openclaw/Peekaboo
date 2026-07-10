@@ -97,4 +97,31 @@ struct CleanCommandSimpleTests {
         #expect(result.snapshotDetails.count == 2)
         #expect(result.dryRun == false)
     }
+
+    @Test
+    @MainActor
+    func `Clean snapshot miss reports disk not found in JSON and text`() async throws {
+        let services = TestServicesFactory.makePeekabooServices(files: StubFileService())
+
+        let jsonResult = try await InProcessCommandRunner.run(
+            ["clean", "--snapshot", "memory-only", "--json"],
+            services: services
+        )
+
+        #expect(jsonResult.exitStatus == 0)
+        let jsonData = try #require(jsonResult.stdout.data(using: .utf8))
+        let json = try #require(JSONSerialization.jsonObject(with: jsonData) as? [String: Any])
+        let payloadData = try #require(json["data"] as? [String: Any])
+        #expect(payloadData["snapshotsRemoved"] as? Int == 0)
+        #expect(payloadData["not_found"] as? Bool == true)
+
+        let textResult = try await InProcessCommandRunner.run(
+            ["clean", "--snapshot", "memory-only"],
+            services: services
+        )
+
+        #expect(textResult.exitStatus == 0)
+        #expect(textResult.stdout.contains("was not found on disk"))
+        #expect(textResult.stdout.contains("Daemon-memory snapshots are not pruned"))
+    }
 }

@@ -15,6 +15,7 @@ struct ListCommand: ParsableCommand {
         EXAMPLES:
           peekaboo list                                  # List all applications (default)
           peekaboo list apps                             # List all running applications
+          peekaboo list apps --include-hidden            # Accepted for app-list parity
           peekaboo list apps --json                      # Output as JSON
 
           peekaboo list windows --app Safari             # List Safari windows
@@ -35,6 +36,15 @@ struct ListCommand: ParsableCommand {
           permissions   Check permissions required for Peekaboo
           menubar       List all menu bar items (status icons)
           screens       List all available displays/monitors
+
+        RELATED COMMANDS:
+          peekaboo app list is the app-management view. It filters hidden/background apps
+          unless --include-hidden/--include-background is passed. peekaboo list apps is
+          the full inventory view and accepts those flags for parity.
+
+          peekaboo window list is the renderable-window view used for window targeting.
+          peekaboo list windows is the full per-application enumeration and may include
+          utility, off-screen, tiny, or non-renderable entries.
         """,
         subcommands: [
             AppsSubcommand.self,
@@ -181,7 +191,13 @@ extension ListCommand.MenuBarSubcommand: ParsableCommand {
         MainActorCommandDescription.describe {
             CommandDescription(
                 commandName: "menubar",
-                abstract: "List all menu bar items (status icons)"
+                abstract: "List all menu bar items (status icons)",
+                discussion: """
+                Lists status items from the right side of the macOS menu bar. This is the
+                inventory counterpart to `peekaboo menubar list` and uses the same indexes.
+
+                JSON emits legacy `items` plus preferred `menu_bar_items`.
+                """
             )
         }
     }

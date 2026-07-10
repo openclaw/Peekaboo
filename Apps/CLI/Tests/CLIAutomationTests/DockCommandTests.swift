@@ -72,3 +72,37 @@ struct DockCommandTests {
     }
 }
 #endif
+
+@Suite(.tags(.safe), .serialized)
+struct DockCommandJSONContractTests {
+    @Test
+    @MainActor
+    func `dock list JSON emits legacy and preferred item keys`() async throws {
+        let dockItems = [
+            DockItem(
+                index: 0,
+                title: "Finder",
+                itemType: .application,
+                isRunning: true,
+                bundleIdentifier: "com.apple.finder",
+                position: CGPoint(x: 0, y: 0),
+                size: CGSize(width: 64, height: 64)
+            ),
+        ]
+        let services = TestServicesFactory.makePeekabooServices(
+            dock: StubDockService(items: dockItems, autoHidden: false)
+        )
+
+        let result = try await InProcessCommandRunner.run(["dock", "list", "--json"], services: services)
+
+        #expect(result.exitStatus == 0)
+        let data = try #require(result.stdout.data(using: .utf8))
+        let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let payloadData = try #require(json["data"] as? [String: Any])
+        let dockItemsLegacy = try #require(payloadData["dockItems"] as? [[String: Any]])
+        let dockItemsPreferred = try #require(payloadData["dock_items"] as? [[String: Any]])
+        #expect(dockItemsLegacy.count == 1)
+        #expect(dockItemsPreferred.count == dockItemsLegacy.count)
+        #expect(payloadData["count"] as? Int == 1)
+    }
+}

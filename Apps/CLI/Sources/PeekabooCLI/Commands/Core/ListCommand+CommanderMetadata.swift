@@ -26,7 +26,20 @@ extension ListCommand.WindowsSubcommand: CommanderSignatureProviding {
 
 extension ListCommand.AppsSubcommand: CommanderSignatureProviding {
     static func commanderSignature() -> CommandSignature {
-        CommandSignature()
+        CommandSignature(
+            flags: [
+                .commandFlag(
+                    "includeHidden",
+                    help: "Accepted for parity with app list; list apps is already unfiltered",
+                    long: "include-hidden"
+                ),
+                .commandFlag(
+                    "includeBackground",
+                    help: "Accepted for parity with app list; list apps is already unfiltered",
+                    long: "include-background"
+                ),
+            ]
+        )
     }
 }
 

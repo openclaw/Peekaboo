@@ -4,6 +4,12 @@ import PeekabooCore
 extension ListCommand {
     @MainActor
     struct AppsSubcommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConfigurable {
+        @Flag(help: "Accepted for parity with 'app list'; 'list apps' already returns the full inventory")
+        var includeHidden = false
+
+        @Flag(help: "Accepted for parity with 'app list'; 'list apps' already returns the full inventory")
+        var includeBackground = false
+
         @RuntimeStorage private var runtime: CommandRuntime?
         var runtimeOptions = CommandRuntimeOptions()
 
@@ -40,7 +46,10 @@ extension ListCommand {
                 let output = try await services.applications.listApplications()
 
                 if self.jsonOutput {
-                    outputSuccessCodable(data: output.data, logger: self.outputLogger)
+                    outputSuccessCodable(
+                        data: ApplicationInventoryPayload(from: output.data),
+                        logger: self.outputLogger
+                    )
                 } else {
                     print(CLIFormatter.format(output))
                 }
@@ -48,6 +57,16 @@ extension ListCommand {
                 handleError(error)
                 throw ExitCode(1)
             }
+        }
+    }
+
+    private struct ApplicationInventoryPayload: Codable {
+        let applications: [ServiceApplicationInfo]
+        let apps: [ServiceApplicationInfo]
+
+        init(from data: ServiceApplicationListData) {
+            self.applications = data.applications
+            self.apps = data.applications
         }
     }
 }
@@ -63,6 +82,13 @@ extension ListCommand.AppsSubcommand: ParsableCommand {
                 Lists all running applications using the ApplicationService from PeekabooCore.
                 Applications are sorted by name and include process IDs, bundle identifiers,
                 and activation status.
+
+                This is the full inventory form. `peekaboo app list` is the app-management
+                view and filters hidden/background apps by default; `list apps` accepts
+                --include-hidden and --include-background for parity, but its output is already
+                unfiltered.
+
+                JSON emits both the legacy `applications` key and the preferred `apps` alias.
                 """
             )
         }
@@ -74,7 +100,7 @@ extension ListCommand.AppsSubcommand: AsyncRuntimeCommand {}
 @MainActor
 extension ListCommand.AppsSubcommand: CommanderBindableCommand {
     mutating func applyCommanderValues(_ values: CommanderBindableValues) throws {
-        // Apps has no parameters today; binding exists to keep Commander parity.
-        _ = values
+        self.includeHidden = values.flag("includeHidden")
+        self.includeBackground = values.flag("includeBackground")
     }
 }

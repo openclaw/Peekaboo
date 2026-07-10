@@ -17,7 +17,7 @@ read_when:
 | `relaunch` | Quit + relaunch the same app in one step. | Positional `<app>`, `--wait <seconds>` between quit/launch, `--force`, `--wait-until-ready`. |
 | `hide` / `unhide` | Toggle app visibility. | Accept the same targeting flags as `launch`/`quit`. |
 | `switch` | Activate a specific app (`--to`) or cycle Cmd+Tab style (`--cycle`). | `--to <name|bundle|PID:1234>`, `--cycle`, `--verify` (only with `--to`). |
-| `list` | Enumerate running apps. | `--include-hidden`, `--include-background`. |
+| `list` | App-management view of running apps, filtering hidden/background apps by default. | `--include-hidden`, `--include-background`. |
 
 ## Implementation notes
 - Launch resolves explicit paths, bundle IDs, and friendly names on the selected runtime host. `--open` can be repeated to pass multiple documents/URLs to the launched app; `--no-focus` is preserved across the bridge and suppresses activation and launch feedback UI.
@@ -26,6 +26,7 @@ read_when:
 - `switch --cycle` synthesizes Cmd+Tab events using `CGEvent` so it behaves like the real keyboard shortcut; `switch --to` activates the exact PID resolved via AX.
 - `switch --verify` confirms the requested app is frontmost after activation (only supported with `--to`).
 - `relaunch` sends quit, termination polling (up to 5 s), the requested delay, and launch as one daemon-held transaction, so even a short daemon idle timeout cannot strand the app closed. It refuses to relaunch its own daemon, launches via bundle ID or bundle path, and can wait for `isFinishedLaunching` before reporting success.
+- `app list` is the app-management view and filters hidden/background apps unless `--include-hidden` or `--include-background` is passed. `peekaboo list apps` is the full inventory view; it accepts the same flags for parity and emits both legacy `data.applications` and preferred `data.apps`.
 
 ## Examples
 ```bash

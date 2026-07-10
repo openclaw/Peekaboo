@@ -162,6 +162,11 @@ extension ListCommand.WindowsSubcommand: ParsableCommand {
                 discussion: """
                 Lists all windows for the specified application using PeekabooServices.
                 Windows are listed in z-order (frontmost first) with optional details.
+
+                This is the full per-application enumeration and can include utility,
+                off-screen, tiny, or otherwise non-renderable windows. `peekaboo window list`
+                uses the same window IDs and indexes but filters to renderable windows for
+                interaction targeting.
                 """
             )
         }

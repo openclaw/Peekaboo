@@ -7,14 +7,14 @@ read_when:
 
 # `peekaboo paste`
 
-`paste` is an atomic “clipboard + Cmd+V + restore” helper. It temporarily replaces the system clipboard with your payload, pastes into the focused target, then restores the previous clipboard contents (or clears it if it was empty).
+`paste` sends Cmd+V. With no payload, it pastes the current clipboard contents. With text, a file, an image, or base64 data, it becomes an atomic “clipboard + Cmd+V + restore” helper: temporarily replace the system clipboard with your payload, paste into the target, then restore the previous clipboard contents (or clear it if it was empty).
 
 This reduces drift by collapsing multiple CLI steps into one command. Background process-targeted Cmd+V delivery is the default when Peekaboo can resolve a target process; pass `--foreground` for focused/global paste.
 
 ## Key options
 | Flag | Description |
 | --- | --- |
-| `[text]` / `--text` | Plain text to paste. |
+| `[text]` / `--text` | Plain text to paste; omit payload flags to paste the current clipboard. |
 | `--file-path` / `--image-path` | Copy a file or image into the clipboard, then paste. |
 | `--data-base64` + `--uti` | Paste raw base64 payload with explicit UTI (e.g. `public.rtf`). |
 | `--also-text` | Optional plain-text companion when pasting binary. |
@@ -24,12 +24,15 @@ This reduces drift by collapsing multiple CLI steps into one command. Background
 | Focus flags | Foreground focus controls (`--space-switch`, `--no-auto-focus`, etc.). |
 
 ## Delivery modes
-- **Background** is the default when Peekaboo can resolve a target process from target flags or snapshot metadata. It sets the clipboard, posts process-targeted Cmd+V, then restores the previous clipboard without activating the app.
+- **Background** is the default when Peekaboo can resolve a target process from target flags or snapshot metadata. With no payload it posts process-targeted Cmd+V using the current clipboard. With a payload it sets the clipboard, posts process-targeted Cmd+V, then restores the previous clipboard without activating the app.
 - **Foreground** (`--foreground`) focuses the target first and sends normal/global Cmd+V. Use it for apps that ignore background paste or for flows where focus should visibly move.
 - Background paste still mutates the system clipboard briefly; `paste` restores the previous contents after `--restore-delay-ms`.
 
 ## Examples
 ```bash
+# Paste the current clipboard into the focused app
+peekaboo paste
+
 # Paste plain text into TextEdit
 peekaboo paste "Hello, world" --app TextEdit
 

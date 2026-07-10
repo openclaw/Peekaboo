@@ -7,7 +7,7 @@ extension PasteCommand: CommanderSignatureProviding {
             arguments: [
                 .make(
                     label: "text",
-                    help: "Text to paste",
+                    help: "Text to paste; omit to paste current clipboard",
                     isOptional: true
                 ),
             ],

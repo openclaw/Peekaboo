@@ -51,6 +51,7 @@ extension DockCommand {
                 if self.jsonOutput {
                     struct DockListResult: Codable {
                         let dockItems: [DockItemInfo]
+                        let dock_items: [DockItemInfo]
                         let count: Int
 
                         struct DockItemInfo: Codable {
@@ -59,6 +60,12 @@ extension DockCommand {
                             let type: String
                             let running: Bool?
                             let bundleId: String?
+                        }
+
+                        init(items: [DockItemInfo]) {
+                            self.dockItems = items
+                            self.dock_items = items
+                            self.count = items.count
                         }
                     }
 
@@ -72,7 +79,7 @@ extension DockCommand {
                         )
                     }
 
-                    let outputData = DockListResult(dockItems: items, count: items.count)
+                    let outputData = DockListResult(items: items)
                     outputSuccessCodable(data: outputData, logger: self.outputLogger)
                 } else {
                     print("Dock items:")

@@ -7,6 +7,75 @@ import Testing
 struct PasteCommandTests {
     @Test
     @MainActor
+    func `Bare paste sends current clipboard without mutating clipboard`() async throws {
+        let automation = StubAutomationService()
+        let clipboard = StubClipboardService()
+        clipboard.current = ClipboardReadResult(
+            utiIdentifier: "public.utf8-plain-text",
+            data: Data("current".utf8),
+            textPreview: "current"
+        )
+        let services = TestServicesFactory.makePeekabooServices(
+            clipboard: clipboard,
+            automation: automation
+        )
+
+        let result = try await InProcessCommandRunner.run(
+            [
+                "paste",
+                "--json",
+                "--no-remote",
+            ],
+            services: services
+        )
+
+        #expect(result.exitStatus == 0)
+        #expect(automation.hotkeyCalls.map(\.keys) == ["cmd,v"])
+        #expect(automation.targetedHotkeyCalls.isEmpty)
+        #expect(clipboard.current?.textPreview == "current")
+        #expect(clipboard.restoreCallCount == 0)
+        let payload = try ExternalCommandRunner.decodeJSONResponse(
+            from: result,
+            as: CodableJSONResponse<PasteResult>.self
+        )
+        #expect(payload.data.deliveryMode == "foreground")
+        #expect(payload.data.pastedTextPreview == "current")
+        #expect(payload.data.previousClipboardPresent == true)
+        #expect(payload.data.restoreSucceeded == true)
+    }
+
+    @Test
+    @MainActor
+    func `Bare paste with app target uses background hotkey`() async throws {
+        let app = ServiceApplicationInfo(
+            processIdentifier: 2468,
+            bundleIdentifier: "com.apple.TextEdit",
+            name: "TextEdit"
+        )
+        let automation = StubAutomationService()
+        let services = TestServicesFactory.makePeekabooServices(
+            applications: StubApplicationService(applications: [app]),
+            automation: automation
+        )
+
+        let result = try await InProcessCommandRunner.run(
+            [
+                "paste",
+                "--app", "TextEdit",
+                "--json",
+                "--no-remote",
+            ],
+            services: services
+        )
+
+        #expect(result.exitStatus == 0)
+        #expect(automation.hotkeyCalls.isEmpty)
+        #expect(automation.targetedHotkeyCalls.map(\.keys) == ["cmd,v"])
+        #expect(automation.targetedHotkeyCalls.first?.targetProcessIdentifier == 2468)
+    }
+
+    @Test
+    @MainActor
     func `Paste with app target defaults to background process delivery`() async throws {
         let app = ServiceApplicationInfo(
             processIdentifier: 2468,

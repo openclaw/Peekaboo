@@ -45,6 +45,11 @@ struct ListCommandCLIHarnessTests {
         #expect(payload.success == true)
         #expect(payload.data.applications.count == 2)
         #expect(payload.data.applications.first?.name == "AlphaApp")
+
+        let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let payloadData = try #require(json["data"] as? [String: Any])
+        #expect(payloadData["applications"] is [[String: Any]])
+        #expect(payloadData["apps"] is [[String: Any]])
     }
 
     @Test
@@ -65,6 +70,29 @@ struct ListCommandCLIHarnessTests {
         let output = output(from: result)
         #expect(output.contains("Viewer"))
         #expect(output.contains("PID"))
+    }
+
+    @Test
+    func `list apps accepts app list parity flags through command runner`() async throws {
+        let applications = [
+            ServiceApplicationInfo(
+                processIdentifier: 333,
+                bundleIdentifier: "com.example.viewer",
+                name: "Viewer",
+                isActive: true,
+                windowCount: 4
+            ),
+        ]
+        let context = await makeContext(applications: applications)
+
+        let result = try await runList(
+            arguments: ["list", "apps", "--include-hidden", "--include-background", "--json"],
+            services: context.services
+        )
+
+        #expect(result.exitStatus == 0)
+        #expect(self.output(from: result).contains("\"apps\""))
+        #expect(self.output(from: result).contains("\"applications\""))
     }
 
     @Test
@@ -134,6 +162,20 @@ struct ListCommandCLIHarnessTests {
         #expect(self.output(from: result).contains("AlphaApp"))
     }
 
+    @Test
+    func `list menubar JSON emits legacy and preferred keys`() async throws {
+        let context = await makeContext(applications: [])
+
+        let result = try await runList(arguments: ["list", "menubar", "--json"], services: context.services)
+
+        #expect(result.exitStatus == 0)
+        let data = try #require(output(from: result).data(using: .utf8))
+        let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let payloadData = try #require(json["data"] as? [String: Any])
+        #expect(payloadData["items"] is [[String: Any]])
+        #expect(payloadData["menu_bar_items"] is [[String: Any]])
+    }
+
     // MARK: - Helpers
 
     private func runList(arguments: [String], services: PeekabooServices) async throws -> CommandRunResult {
@@ -174,6 +216,77 @@ struct ListCommandCLIHarnessTests {
 }
 #endif
 
+@Suite(.serialized, .tags(.safe))
+struct ListCommandJSONContractTests {
+    @Test
+    @MainActor
+    func `list apps JSON emits legacy and preferred application keys`() async throws {
+        let applications = [
+            ServiceApplicationInfo(
+                processIdentifier: 101,
+                bundleIdentifier: "com.example.alpha",
+                name: "AlphaApp",
+                isActive: true,
+                windowCount: 2
+            ),
+        ]
+        let services = TestServicesFactory.makePeekabooServices(
+            applications: StubApplicationService(applications: applications)
+        )
+
+        let result = try await InProcessCommandRunner.run(["list", "apps", "--json"], services: services)
+
+        #expect(result.exitStatus == 0)
+        let data = try #require(result.stdout.data(using: .utf8))
+        let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let payloadData = try #require(json["data"] as? [String: Any])
+        let applicationsLegacy = try #require(payloadData["applications"] as? [[String: Any]])
+        let appsPreferred = try #require(payloadData["apps"] as? [[String: Any]])
+        #expect(applicationsLegacy.count == 1)
+        #expect(appsPreferred.count == applicationsLegacy.count)
+    }
+
+    @Test
+    @MainActor
+    func `list apps accepts app list parity flags through command runner`() async throws {
+        let applications = [
+            ServiceApplicationInfo(
+                processIdentifier: 333,
+                bundleIdentifier: "com.example.viewer",
+                name: "Viewer",
+                isActive: true,
+                windowCount: 4
+            ),
+        ]
+        let services = TestServicesFactory.makePeekabooServices(
+            applications: StubApplicationService(applications: applications)
+        )
+
+        let result = try await InProcessCommandRunner.run(
+            ["list", "apps", "--include-hidden", "--include-background", "--json"],
+            services: services
+        )
+
+        #expect(result.exitStatus == 0)
+        #expect(result.stdout.contains("Viewer"))
+    }
+
+    @Test
+    @MainActor
+    func `list menubar JSON emits legacy and preferred item keys`() async throws {
+        let services = TestServicesFactory.makePeekabooServices(menu: StubMenuService(menusByApp: [:]))
+
+        let result = try await InProcessCommandRunner.run(["list", "menubar", "--json"], services: services)
+
+        #expect(result.exitStatus == 0)
+        let data = try #require(result.stdout.data(using: .utf8))
+        let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let payloadData = try #require(json["data"] as? [String: Any])
+        #expect(payloadData["items"] is [[String: Any]])
+        #expect(payloadData["menu_bar_items"] is [[String: Any]])
+    }
+}
+
 @Suite(.serialized, .tags(.unit))
 struct ListCommandTests {
     // MARK: - Command Parsing Tests
@@ -202,6 +315,13 @@ struct ListCommandTests {
         // Test apps subcommand with JSON flag
         let command = try AppsSubcommand.parse(["--json"])
         #expect(command.jsonOutput == true)
+    }
+
+    @Test(.tags(.fast))
+    func `AppsSubcommand accepts app list parity flags`() throws {
+        let command = try AppsSubcommand.parse(["--include-hidden", "--include-background"])
+        #expect(command.includeHidden == true)
+        #expect(command.includeBackground == true)
     }
 
     @Test(.tags(.fast))

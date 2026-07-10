@@ -12,19 +12,21 @@ read_when:
 ## Subcommands
 | Subcommand | What it does | Notable options |
 | --- | --- | --- |
-| `apps` (default) | Enumerates every running GUI app with bundle ID, PID, and focus status. | None. |
-| `windows` | Lists the windows owned by a specific process with optional bounds/ID metadata. | `--app <name|bundle|PID:1234>` (required), `--pid`, `--include-details bounds,ids,off_screen`. |
-| `menubar` | Dumps every status-item title/index so you can target them via `menubar click`. | Supports `--json` for scripts piping into `jq`. |
+| `apps` (default) | Full running-app inventory with bundle ID, PID, and focus status. | Accepts `--include-hidden`, `--include-background` for `app list` parity; output is already unfiltered. |
+| `windows` | Full window enumeration for one process with optional bounds/ID metadata. | `--app <name|bundle|PID:1234>` (required), `--pid`, `--include-details bounds,ids,off_screen`. |
+| `menubar` | Dumps every status-item title/index so you can target them via `menubar click`. | Supports `--json` for scripts piping into `jq`; prefer `data.menu_bar_items`. |
 | `screens` | Shows connected displays, resolution, scaling, and whether they are main/secondary. | None. |
 | `permissions` | Mirrors `peekaboo permissions status` for quick entitlement checks. | None.
 
 ## Implementation notes
 - The root command does nothing; Commander dispatches straight to the subcommand so `peekaboo list` defaults to `list apps`.
+- `list apps` is the full inventory view. `peekaboo app list` is the app-management view and filters hidden/background apps unless `--include-hidden` or `--include-background` is passed. `list apps` accepts those flags so sibling invocations do not fail, but they do not narrow the already-unfiltered payload.
+- `list apps --json` keeps the legacy `data.applications` key and also emits preferred `data.apps`.
 - Application inventory prefers the GUI bridge host so sandboxed CLI callers see the GUI session’s complete process list. Other read-only inventory stays local by default unless its command needs host state or you pass `--bridge-socket <path>`.
 - `windows` calls `requireScreenRecordingPermission` before crawling AX so macOS doesn’t silently strip metadata; `apps` does not require Screen Recording.
 - `windows` accepts either user-friendly names or `PID:####` tokens and normalizes `--include-details` values by lowercasing + replacing `-` with `_`, so both `--include-details offscreen,bounds` and `off_screen` work.
 - `windows` deduplicates entries by `window_id` and assigns contiguous `index` values afterwards, so `--window-index` targeting lines up with what is printed. It intentionally shows the full enumeration (including tiny/utility windows on non-zero layers); `peekaboo window list` filters those out but keeps the same IDs and indexes.
-- Menu bar listing is powered by the same `MenuServiceBridge` used by `peekaboo menubar`, so indices reported here line up with what `menubar click --index` expects.
+- Menu bar listing is powered by the same `MenuServiceBridge` used by `peekaboo menubar`, so indices reported here line up with what `menubar click --index` expects. JSON keeps legacy `data.items` and also emits preferred `data.menu_bar_items`.
 - App/window/screen inventory uses `UnifiedToolOutput` payloads, which include `data`, `summary`, and `metadata`. `list permissions --json` mirrors `permissions status --json` with the standard `{ success, data }` envelope.
 
 ## Examples

@@ -21,6 +21,9 @@ struct CleanCommand: OutputFormattable, RuntimeOptionsConfigurable {
               Snapshots are stored in ~/.peekaboo/snapshots/<snapshot-id>/
               Each snapshot contains:
               - snapshot.json: UI element mapping and metadata
+
+              --snapshot only checks the on-disk cache. If the ID exists only in the
+              daemon's memory backend, the command reports not_found and removes nothing.
         """,
 
         showHelpOnEmptyInvocation: true
@@ -97,6 +100,7 @@ struct CleanCommand: OutputFormattable, RuntimeOptionsConfigurable {
 
             // Perform cleanup based on option using the FileService
             let result: SnapshotCleanResult
+            let requestedSnapshotId = self.snapshot
 
             if self.allSnapshots {
                 result = try await self.services.files.cleanAllSnapshots(dryRun: self.dryRun)
@@ -116,11 +120,18 @@ struct CleanCommand: OutputFormattable, RuntimeOptionsConfigurable {
 
             // Output results
             if self.jsonOutput {
-                var outputData = result
-                outputData.executionTime = executionTime
+                let outputData = CleanResultPayload(
+                    result: result,
+                    executionTime: executionTime,
+                    requestedSnapshotId: requestedSnapshotId
+                )
                 outputSuccessCodable(data: outputData, logger: self.outputLogger)
             } else {
-                self.printResults(result, executionTime: executionTime)
+                self.printResults(
+                    result,
+                    executionTime: executionTime,
+                    requestedSnapshotId: requestedSnapshotId
+                )
             }
 
         } catch let error as ValidationError {
@@ -145,14 +156,23 @@ struct CleanCommand: OutputFormattable, RuntimeOptionsConfigurable {
         }
     }
 
-    private func printResults(_ result: SnapshotCleanResult, executionTime: TimeInterval) {
+    private func printResults(
+        _ result: SnapshotCleanResult,
+        executionTime: TimeInterval,
+        requestedSnapshotId: String?
+    ) {
         if result.dryRun {
             print("🔍 Dry run mode - no files will be deleted")
             print("")
         }
 
         if result.snapshotsRemoved == 0 {
-            print("✅ No snapshots to clean")
+            if let requestedSnapshotId {
+                print("✅ Snapshot '\(requestedSnapshotId)' was not found on disk; no disk snapshots were removed")
+                print("ℹ️  Daemon-memory snapshots are not pruned by this command.")
+            } else {
+                print("✅ No snapshots to clean")
+            }
         } else {
             let action = result.dryRun ? "Would remove" : "Removed"
             print("🗑️  \(action) \(result.snapshotsRemoved) snapshot\(result.snapshotsRemoved == 1 ? "" : "s")")
@@ -173,6 +193,24 @@ struct CleanCommand: OutputFormattable, RuntimeOptionsConfigurable {
         let formatter = ByteCountFormatter()
         formatter.countStyle = .file
         return formatter.string(fromByteCount: bytes)
+    }
+
+    private struct CleanResultPayload: Codable {
+        let snapshotsRemoved: Int
+        let bytesFreed: Int64
+        let snapshotDetails: [SnapshotDetail]
+        let dryRun: Bool
+        let executionTime: TimeInterval?
+        let not_found: Bool?
+
+        init(result: SnapshotCleanResult, executionTime: TimeInterval, requestedSnapshotId: String?) {
+            self.snapshotsRemoved = result.snapshotsRemoved
+            self.bytesFreed = result.bytesFreed
+            self.snapshotDetails = result.snapshotDetails
+            self.dryRun = result.dryRun
+            self.executionTime = executionTime
+            self.not_found = requestedSnapshotId != nil && result.snapshotsRemoved == 0 ? true : nil
+        }
     }
 }
 

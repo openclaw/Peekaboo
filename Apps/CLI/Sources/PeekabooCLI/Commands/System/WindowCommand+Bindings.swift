@@ -54,7 +54,17 @@ extension WindowCommand.SetBoundsSubcommand: AsyncRuntimeCommand {}
 extension WindowCommand.WindowListSubcommand: ParsableCommand {
     nonisolated(unsafe) static var commandDescription: CommandDescription {
         MainActorCommandDescription.describe {
-            CommandDescription(commandName: "list", abstract: "List windows for an application")
+            CommandDescription(
+                commandName: "list",
+                abstract: "List renderable windows for an application",
+                discussion: """
+                Lists windows suitable for interaction targeting. It uses the same window IDs
+                and indexes as `peekaboo list windows`, but filters out non-renderable entries
+                such as non-zero layer, tiny, transparent, or Windows-menu-excluded windows.
+
+                Use `peekaboo list windows --app <app>` when you need the full enumeration.
+                """
+            )
         }
     }
 }
