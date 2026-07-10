@@ -26,6 +26,7 @@ struct DaemonLaunchRuntimeTests {
         defer {
             try? FileManager.default.removeItem(atPath: socketPath)
             try? FileManager.default.removeItem(atPath: "\(socketPath).lock")
+            try? FileManager.default.removeItem(atPath: "\(socketPath).start.lock")
             try? FileManager.default.removeItem(at: root)
         }
 

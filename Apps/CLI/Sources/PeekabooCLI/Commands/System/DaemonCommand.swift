@@ -376,6 +376,9 @@ enum DaemonControlResolver {
 
     static func targets(explicitSocket: String?) async -> [DaemonControlTarget] {
         if let explicitSocket {
+            // A missing Unix socket cannot answer status. Avoid spending the full bridge
+            // request deadline before the startup path creates it.
+            guard FileManager.default.fileExists(atPath: explicitSocket) else { return [] }
             let client = DaemonControlClient(socketPath: explicitSocket)
             guard let status = await client.fetchStatus() else { return [] }
             return [DaemonControlTarget(client: client, status: status, role: .explicit)]
