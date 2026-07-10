@@ -1,3 +1,4 @@
+import AppKit
 import Commander
 import Foundation
 import PeekabooCore
@@ -231,11 +232,14 @@ extension WindowCommand {
                 }
 
                 // Perform the action. `maximize` presses the animated green zoom button, so the frame
-                // must settle before we read it back, and the toggle must be re-asserted if the window
-                // was already maximized (see resolveIdempotentMaximize).
+                // must settle before we read it back. It is also idempotent: an already-maximized
+                // window (one that fills a screen's visible area) is left as-is (see
+                // resolveIdempotentMaximize).
+                let screenVisibleSizes = NSScreen.screens.map(\.visibleFrame.size)
                 self.resolvedRuntime.beginInteractionMutation()
                 let outcome = try await resolveIdempotentMaximize(
                     original: windowInfo,
+                    screenVisibleSizes: screenVisibleSizes,
                     press: {
                         try await WindowServiceBridge.maximizeWindow(windows: self.services.windows, target: target)
                         await invalidateLatestSnapshotAfterWindowMutation(

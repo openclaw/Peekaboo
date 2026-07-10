@@ -239,68 +239,69 @@ func settleWindowFrame(
 
 // MARK: - Idempotent Maximize
 
-/// Detect whether a maximize toggle *undid* an existing maximization.
+/// Whether the window's size matches any screen's visible-frame size within `tolerance`.
 ///
-/// AppKit's green zoom button is a toggle: pressing it on an already-maximized window restores the
-/// previous (smaller) user frame. When the read-back frame is meaningfully smaller than the frame we
-/// started from, the window was already maximized and the caller should press again to re-assert the
-/// maximized state, keeping `maximize` idempotent. A minimum shrink ratio avoids re-pressing on
-/// sub-point rounding noise; a genuine un-maximize shrinks the window substantially.
-func maximizeToggleUndidMaximization(
-    original: CGRect,
-    achieved: CGRect,
-    minimumShrinkRatio: CGFloat = 0.02
+/// A window whose size equals its screen's visible frame is already maximized. This compares sizes
+/// only, never origins, so it is independent of AppKit/CoreGraphics coordinate-origin differences.
+/// AX window sizes and `NSScreen.visibleFrame` are both in points, so the comparison is
+/// unit-consistent. Note: a not-maximized window whose green-button zoom target is *smaller* than the
+/// screen (rare, app-specific) will not match here — that is intentional. It means `maximize` presses
+/// zoom for such apps rather than misclassifying a legitimate resize as an already-maximized no-op.
+func windowFillsAnyScreen(
+    size: CGSize,
+    screenVisibleSizes: [CGSize],
+    tolerance: CGFloat = 2.0
 ) -> Bool {
-    let originalArea = original.width * original.height
-    let achievedArea = achieved.width * achieved.height
-    guard originalArea > 0 else { return false }
-    return achievedArea < originalArea * (1 - minimumShrinkRatio)
+    screenVisibleSizes.contains { candidate in
+        abs(size.width - candidate.width) <= tolerance && abs(size.height - candidate.height) <= tolerance
+    }
 }
 
-/// Outcome of an idempotent maximize: the settled frame plus whether the window had to be re-asserted.
+/// Outcome of an idempotent maximize: the settled frame plus whether the window was already maximized.
 struct MaximizeOutcome {
     let info: ServiceWindowInfo?
-    /// `true` when the window was already maximized and the toggle was corrected back to maximized.
+    /// `true` when the window already filled its screen, so the (toggling) zoom press was skipped.
     let alreadyMaximized: Bool
     /// `false` when the frame never stopped changing within the poll budget.
     let stabilized: Bool
 }
 
-/// Maximize a window idempotently: press, wait for the animation to settle, and re-assert if the
-/// toggle un-maximized an already-maximized window.
+/// Maximize a window idempotently.
+///
+/// AppKit's green zoom button is a toggle: pressing it on an already-maximized window would restore
+/// the smaller user frame. So if the window already fills a screen's visible area, this no-ops and
+/// reports the current frame. Otherwise it presses zoom and waits for the animated frame to settle
+/// before reporting, so `new_bounds` is the settled frame rather than a mid-animation one.
 ///
 /// `press` performs the underlying (animated) maximize; `read` returns the current frame. Both are
 /// injected so the flow can be exercised without a live window server.
 @MainActor
 func resolveIdempotentMaximize(
     original: ServiceWindowInfo?,
+    screenVisibleSizes: [CGSize],
     tolerance: CGFloat = 1.0,
+    screenMatchTolerance: CGFloat = 2.0,
     maxAttempts: Int = 24,
     pollInterval: Duration = .milliseconds(50),
     press: () async throws -> Void,
     read: () async -> ServiceWindowInfo?
 ) async throws -> MaximizeOutcome {
+    // Idempotency: an already-maximized window stays maximized; pressing the toggle would shrink it.
+    if let originalBounds = original?.bounds,
+       windowFillsAnyScreen(
+           size: originalBounds.size,
+           screenVisibleSizes: screenVisibleSizes,
+           tolerance: screenMatchTolerance
+       ) {
+        return MaximizeOutcome(info: original, alreadyMaximized: true, stabilized: true)
+    }
+
     try await press()
-    var settled = await settleWindowFrame(
+    let settled = await settleWindowFrame(
         tolerance: tolerance,
         maxAttempts: maxAttempts,
         pollInterval: pollInterval,
         read: read
     )
-    var alreadyMaximized = false
-
-    if let originalBounds = original?.bounds, let achievedBounds = settled.info?.bounds,
-       maximizeToggleUndidMaximization(original: originalBounds, achieved: achievedBounds) {
-        // The window was already maximized; the toggle restored the user frame. Re-assert maximize.
-        try await press()
-        settled = await settleWindowFrame(
-            tolerance: tolerance,
-            maxAttempts: maxAttempts,
-            pollInterval: pollInterval,
-            read: read
-        )
-        alreadyMaximized = true
-    }
-
-    return MaximizeOutcome(info: settled.info, alreadyMaximized: alreadyMaximized, stabilized: settled.stabilized)
+    return MaximizeOutcome(info: settled.info, alreadyMaximized: false, stabilized: settled.stabilized)
 }
