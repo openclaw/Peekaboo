@@ -244,17 +244,35 @@ func settleWindowFrame(
 /// A window whose size equals its screen's visible frame is already maximized. This compares sizes
 /// only, never origins, so it is independent of AppKit/CoreGraphics coordinate-origin differences.
 /// AX window sizes and `NSScreen.visibleFrame` are both in points, so the comparison is
-/// unit-consistent. Note: a not-maximized window whose green-button zoom target is *smaller* than the
-/// screen (rare, app-specific) will not match here — that is intentional. It means `maximize` presses
-/// zoom for such apps rather than misclassifying a legitimate resize as an already-maximized no-op.
-func windowFillsAnyScreen(
-    size: CGSize,
-    screenVisibleSizes: [CGSize],
-    tolerance: CGFloat = 2.0
+/// Convert an AppKit screen frame (bottom-left origin, y-up) into the global top-left coordinate
+/// space (y-down) used by AX/CoreGraphics window bounds.
+///
+/// AX window positions and AppKit `NSScreen` frames both use points but opposite vertical origins,
+/// so a maximized window can only be recognized by first flipping the screen frame using the primary
+/// display's height (the primary display is the one whose AppKit origin is `.zero`).
+func convertAppKitFrameToTopLeft(_ frame: CGRect, primaryDisplayHeight: CGFloat) -> CGRect {
+    CGRect(
+        x: frame.origin.x,
+        y: primaryDisplayHeight - frame.origin.y - frame.height,
+        width: frame.width,
+        height: frame.height
+    )
+}
+
+/// Whether the window's frame matches any screen's visible frame on both origin and size.
+///
+/// A full-rectangle match (not size-only) is required so a screen-sized window that has been moved
+/// or pushed partly off-screen is *not* treated as maximized. `screenVisibleFramesTopLeft` must
+/// already be in the same top-left coordinate space as `bounds` (see `convertAppKitFrameToTopLeft`).
+/// The match is deliberately conservative: if the app's zoom target differs from the visible frame
+/// (so nothing matches), `maximize` simply presses zoom instead of skipping — it never skips a real
+/// request.
+func windowMatchesAnyScreen(
+    bounds: CGRect,
+    screenVisibleFramesTopLeft: [CGRect],
+    tolerance: CGFloat = 4.0
 ) -> Bool {
-    screenVisibleSizes.contains { candidate in
-        abs(size.width - candidate.width) <= tolerance && abs(size.height - candidate.height) <= tolerance
-    }
+    screenVisibleFramesTopLeft.contains { windowFramesMatch(bounds, $0, tolerance: tolerance) }
 }
 
 /// Outcome of an idempotent maximize: the settled frame plus whether the window was already maximized.
@@ -269,18 +287,19 @@ struct MaximizeOutcome {
 /// Maximize a window idempotently.
 ///
 /// AppKit's green zoom button is a toggle: pressing it on an already-maximized window would restore
-/// the smaller user frame. So if the window already fills a screen's visible area, this no-ops and
-/// reports the current frame. Otherwise it presses zoom and waits for the animated frame to settle
-/// before reporting, so `new_bounds` is the settled frame rather than a mid-animation one.
+/// the smaller user frame. So if the window already occupies a screen's visible frame (matched on
+/// origin and size), this no-ops and reports the current frame. Otherwise it presses zoom and waits
+/// for the animated frame to settle before reporting, so `new_bounds` is the settled frame rather
+/// than a mid-animation one.
 ///
 /// `press` performs the underlying (animated) maximize; `read` returns the current frame. Both are
 /// injected so the flow can be exercised without a live window server.
 @MainActor
 func resolveIdempotentMaximize(
     original: ServiceWindowInfo?,
-    screenVisibleSizes: [CGSize],
+    screenVisibleFramesTopLeft: [CGRect],
     tolerance: CGFloat = 1.0,
-    screenMatchTolerance: CGFloat = 2.0,
+    screenMatchTolerance: CGFloat = 4.0,
     maxAttempts: Int = 24,
     pollInterval: Duration = .milliseconds(50),
     press: () async throws -> Void,
@@ -288,9 +307,9 @@ func resolveIdempotentMaximize(
 ) async throws -> MaximizeOutcome {
     // Idempotency: an already-maximized window stays maximized; pressing the toggle would shrink it.
     if let originalBounds = original?.bounds,
-       windowFillsAnyScreen(
-           size: originalBounds.size,
-           screenVisibleSizes: screenVisibleSizes,
+       windowMatchesAnyScreen(
+           bounds: originalBounds,
+           screenVisibleFramesTopLeft: screenVisibleFramesTopLeft,
            tolerance: screenMatchTolerance
        ) {
         return MaximizeOutcome(info: original, alreadyMaximized: true, stabilized: true)

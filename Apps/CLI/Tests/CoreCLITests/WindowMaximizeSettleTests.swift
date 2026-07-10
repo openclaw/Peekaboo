@@ -69,8 +69,9 @@ private final class FakeZoomWindow {
 struct WindowMaximizeSettleTests {
     private let userFrame = CGRect(x: 463, y: 179, width: 700, height: 500)
     private let maxFrame = CGRect(x: 0, y: 0, width: 3200, height: 1690)
-    private var screenSizes: [CGSize] {
-        [CGSize(width: 3200, height: 1690)]
+    /// The maximized frame in the same top-left space as window bounds, as the command would pass it.
+    private var screenFrames: [CGRect] {
+        [CGRect(x: 0, y: 0, width: 3200, height: 1690)]
     }
 
     // MARK: - Settle logic
@@ -105,19 +106,33 @@ struct WindowMaximizeSettleTests {
         #expect(result.info != nil)
     }
 
-    // MARK: - windowFillsAnyScreen
+    // MARK: - Coordinate conversion & maximized detection
 
-    @Test func `screen-fill detection matches a screen-sized window`() {
-        #expect(windowFillsAnyScreen(size: CGSize(width: 3200, height: 1690), screenVisibleSizes: self.screenSizes))
+    @Test func `AppKit frame flips into the top-left coordinate space`() {
+        // Primary display 1800pt tall; visible frame excludes a 25pt menu bar and a 110pt dock.
+        let visible = CGRect(x: 0, y: 110, width: 3200, height: 1665)
+        let converted = convertAppKitFrameToTopLeft(visible, primaryDisplayHeight: 1800)
+        #expect(converted == CGRect(x: 0, y: 25, width: 3200, height: 1665))
     }
 
-    @Test func `screen-fill detection tolerates sub-threshold rounding`() {
-        #expect(windowFillsAnyScreen(size: CGSize(width: 3199, height: 1689), screenVisibleSizes: self.screenSizes))
+    @Test func `maximized detection matches a window at the visible frame`() {
+        #expect(windowMatchesAnyScreen(bounds: self.maxFrame, screenVisibleFramesTopLeft: self.screenFrames))
     }
 
-    @Test func `screen-fill detection rejects an oversized-but-not-screen-sized window`() {
-        // Larger than the screen in one dimension: not maximized.
-        #expect(!windowFillsAnyScreen(size: CGSize(width: 3000, height: 1600), screenVisibleSizes: self.screenSizes))
+    @Test func `maximized detection tolerates sub-threshold rounding`() {
+        let jittered = CGRect(x: 1, y: 1, width: 3199, height: 1689)
+        #expect(windowMatchesAnyScreen(bounds: jittered, screenVisibleFramesTopLeft: self.screenFrames))
+    }
+
+    @Test func `maximized detection rejects a screen-sized window that was moved`() {
+        // Same size as the screen but displaced: NOT maximized (reviewer regression).
+        let displaced = CGRect(x: 500, y: 300, width: 3200, height: 1690)
+        #expect(!windowMatchesAnyScreen(bounds: displaced, screenVisibleFramesTopLeft: self.screenFrames))
+    }
+
+    @Test func `maximized detection rejects an oversized window`() {
+        let oversized = CGRect(x: 0, y: 0, width: 3000, height: 1600)
+        #expect(!windowMatchesAnyScreen(bounds: oversized, screenVisibleFramesTopLeft: self.screenFrames))
     }
 
     // MARK: - Idempotent maximize
@@ -127,7 +142,7 @@ struct WindowMaximizeSettleTests {
 
         let outcome = try await resolveIdempotentMaximize(
             original: window.currentInfo,
-            screenVisibleSizes: self.screenSizes,
+            screenVisibleFramesTopLeft: self.screenFrames,
             pollInterval: .zero,
             press: { window.press() },
             read: { window.read() }
@@ -146,7 +161,7 @@ struct WindowMaximizeSettleTests {
 
         let outcome = try await resolveIdempotentMaximize(
             original: window.currentInfo,
-            screenVisibleSizes: self.screenSizes,
+            screenVisibleFramesTopLeft: self.screenFrames,
             pollInterval: .zero,
             press: { window.press() },
             read: { window.read() }
@@ -163,7 +178,7 @@ struct WindowMaximizeSettleTests {
 
         let first = try await resolveIdempotentMaximize(
             original: window.currentInfo,
-            screenVisibleSizes: self.screenSizes,
+            screenVisibleFramesTopLeft: self.screenFrames,
             pollInterval: .zero,
             press: { window.press() },
             read: { window.read() }
@@ -175,7 +190,7 @@ struct WindowMaximizeSettleTests {
         // Second call: the window now fills the screen, so it must be a no-op, not a toggle.
         let second = try await resolveIdempotentMaximize(
             original: window.currentInfo,
-            screenVisibleSizes: self.screenSizes,
+            screenVisibleFramesTopLeft: self.screenFrames,
             pollInterval: .zero,
             press: { window.press() },
             read: { window.read() }
@@ -195,7 +210,7 @@ struct WindowMaximizeSettleTests {
 
         let outcome = try await resolveIdempotentMaximize(
             original: window.currentInfo,
-            screenVisibleSizes: self.screenSizes,
+            screenVisibleFramesTopLeft: self.screenFrames,
             pollInterval: .zero,
             press: { window.press() },
             read: { window.read() }
@@ -204,5 +219,24 @@ struct WindowMaximizeSettleTests {
         #expect(window.pressCount == 1) // zoom was actually pressed, not skipped
         #expect(!outcome.alreadyMaximized) // not a no-op
         #expect(outcome.info?.bounds == zoomTarget) // reports the real (smaller) settled frame
+    }
+
+    @Test func `maximizing a moved screen-sized window presses zoom to reposition it`() async throws {
+        // Reviewer regression: a window the size of the screen but displaced must NOT be skipped;
+        // maximize should press zoom and move it back to the visible frame.
+        let displaced = CGRect(x: 500, y: 300, width: 3200, height: 1690)
+        let window = FakeZoomWindow(isMaximized: false, userFrame: displaced, zoomTarget: self.maxFrame)
+
+        let outcome = try await resolveIdempotentMaximize(
+            original: window.currentInfo,
+            screenVisibleFramesTopLeft: self.screenFrames,
+            pollInterval: .zero,
+            press: { window.press() },
+            read: { window.read() }
+        )
+
+        #expect(window.pressCount == 1) // pressed, not skipped
+        #expect(!outcome.alreadyMaximized)
+        #expect(outcome.info?.bounds == self.maxFrame) // repositioned to the visible frame
     }
 }

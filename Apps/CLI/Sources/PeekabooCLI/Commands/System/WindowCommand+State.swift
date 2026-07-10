@@ -232,14 +232,19 @@ extension WindowCommand {
                 }
 
                 // Perform the action. `maximize` presses the animated green zoom button, so the frame
-                // must settle before we read it back. It is also idempotent: an already-maximized
-                // window (one that fills a screen's visible area) is left as-is (see
-                // resolveIdempotentMaximize).
-                let screenVisibleSizes = NSScreen.screens.map(\.visibleFrame.size)
+                // must settle before we read it back. It is also idempotent: a window already occupying
+                // a screen's visible frame (matched on origin and size) is left as-is (see
+                // resolveIdempotentMaximize). Screen frames are flipped into the AX/CG top-left space
+                // that window bounds use.
+                let primaryDisplayHeight = (NSScreen.screens.first { $0.frame.origin == .zero }
+                    ?? NSScreen.main)?.frame.height ?? 0
+                let screenVisibleFramesTopLeft = NSScreen.screens.map {
+                    convertAppKitFrameToTopLeft($0.visibleFrame, primaryDisplayHeight: primaryDisplayHeight)
+                }
                 self.resolvedRuntime.beginInteractionMutation()
                 let outcome = try await resolveIdempotentMaximize(
                     original: windowInfo,
-                    screenVisibleSizes: screenVisibleSizes,
+                    screenVisibleFramesTopLeft: screenVisibleFramesTopLeft,
                     press: {
                         try await WindowServiceBridge.maximizeWindow(windows: self.services.windows, target: target)
                         await invalidateLatestSnapshotAfterWindowMutation(
