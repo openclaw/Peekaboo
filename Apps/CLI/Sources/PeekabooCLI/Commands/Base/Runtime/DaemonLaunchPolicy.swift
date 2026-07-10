@@ -4,6 +4,64 @@ import MachO
 import PeekabooBridge
 
 enum DaemonLaunchPolicy {
+    /// Retains the Foundation process until its termination source has reaped the child.
+    private final nonisolated class ProcessExitObserver: @unchecked Sendable {
+        private let lock = NSLock()
+        private var retainedProcess: Process?
+        private var didExit = false
+        private var nextWaiterID = 0
+        private var waiters: [Int: CheckedContinuation<Bool, Never>] = [:]
+
+        init(process: Process) {
+            self.retainedProcess = process
+        }
+
+        func processDidExit() {
+            self.lock.lock()
+            guard !self.didExit else {
+                self.lock.unlock()
+                return
+            }
+            self.didExit = true
+            self.retainedProcess = nil
+            let continuations = Array(self.waiters.values)
+            self.waiters.removeAll()
+            self.lock.unlock()
+
+            for continuation in continuations {
+                continuation.resume(returning: true)
+            }
+        }
+
+        func wait(timeout: TimeInterval) async -> Bool {
+            await withCheckedContinuation { continuation in
+                self.lock.lock()
+                guard !self.didExit else {
+                    self.lock.unlock()
+                    continuation.resume(returning: true)
+                    return
+                }
+                self.nextWaiterID += 1
+                let waiterID = self.nextWaiterID
+                self.waiters[waiterID] = continuation
+                self.lock.unlock()
+
+                DispatchQueue.global(qos: .utility).asyncAfter(
+                    deadline: .now() + max(0, timeout)
+                ) {
+                    self.timeout(waiterID: waiterID)
+                }
+            }
+        }
+
+        private func timeout(waiterID: Int) {
+            self.lock.lock()
+            let continuation = self.waiters.removeValue(forKey: waiterID)
+            self.lock.unlock()
+            continuation?.resume(returning: false)
+        }
+    }
+
     enum ImplicitRuntimeCandidateRole: Equatable {
         case reusableDaemon
         case defaultAppFallback
@@ -631,24 +689,27 @@ enum DaemonLaunchPolicy {
         } catch {
             throw DaemonLaunchError.launchFailed(executableURL: executableURL, underlyingError: error)
         }
+        let exitObserver = ProcessExitObserver(process: process)
+        process.terminationHandler = { _ in
+            exitObserver.processDidExit()
+        }
 
         let deadline = Date().addingTimeInterval(timeout)
         let client = DaemonControlClient(socketPath: socketPath)
         while Date() < deadline {
             let status = await client.fetchReusableDaemonStatus()
             if Task.isCancelled {
-                await self.terminateLaunchedProcess(process)
+                await self.terminateLaunchedProcess(process, exitObserver: exitObserver)
                 throw CancellationError()
             }
             if let status {
                 let processID = process.processIdentifier
                 if status.pid != processID {
-                    await self.terminateLaunchedProcess(process)
+                    await self.terminateLaunchedProcess(process, exitObserver: exitObserver)
                 }
                 return LaunchResult(status: status, processID: processID)
             }
             if !process.isRunning {
-                process.waitUntilExit()
                 throw DaemonLaunchError.exited(
                     executableURL: executableURL,
                     status: process.terminationStatus,
@@ -658,39 +719,37 @@ enum DaemonLaunchPolicy {
             do {
                 try await Task.sleep(nanoseconds: 100_000_000)
             } catch {
-                await self.terminateLaunchedProcess(process)
+                await self.terminateLaunchedProcess(process, exitObserver: exitObserver)
                 throw error
             }
         }
         if !process.isRunning {
-            process.waitUntilExit()
             throw DaemonLaunchError.exited(
                 executableURL: executableURL,
                 status: process.terminationStatus,
                 logURL: daemonLogURL
             )
         }
-        await self.terminateLaunchedProcess(process)
+        await self.terminateLaunchedProcess(process, exitObserver: exitObserver)
         throw DaemonLaunchError.timedOut(timeout: timeout, logURL: daemonLogURL)
     }
 
-    private static func terminateLaunchedProcess(_ process: Process) async {
-        guard process.isRunning else {
-            process.waitUntilExit()
-            return
-        }
+    private static func terminateLaunchedProcess(
+        _ process: Process,
+        exitObserver: ProcessExitObserver
+    ) async {
+        guard process.isRunning else { return }
 
         process.terminate()
-        let deadline = Date().addingTimeInterval(0.5)
-        while process.isRunning, Date() < deadline {
-            _ = await Task.detached {
-                usleep(20000)
-            }.value
-        }
-        if process.isRunning {
-            kill(process.processIdentifier, SIGKILL)
-        }
-        process.waitUntilExit()
+        let exitedAfterTermination = await exitObserver.wait(timeout: 0.5)
+        guard !exitedAfterTermination else { return }
+        guard process.isRunning else { return }
+
+        _ = kill(process.processIdentifier, SIGKILL)
+        // `Process.waitUntilExit()` can itself block indefinitely on a wedged Foundation
+        // process source. The termination handler retains and eventually reaps the child,
+        // while this caller waits for only a bounded SIGKILL grace period.
+        _ = await exitObserver.wait(timeout: 1)
     }
 
     static func stopReplacement(

@@ -112,6 +112,47 @@ struct DaemonLaunchPolicyTests {
         }
     }
 
+    @Test(.timeLimit(.minutes(1)))
+    func `daemon timeout bounds termination for a TERM ignoring child`() async throws {
+        let pidURL = URL(fileURLWithPath: "/tmp/peekaboo-daemon-term-\(UUID().uuidString).pid")
+        var childPID: pid_t?
+        defer {
+            if let childPID, kill(childPID, 0) == 0 {
+                kill(childPID, SIGKILL)
+            }
+            unlink(pidURL.path)
+        }
+
+        let clock = ContinuousClock()
+        let startedAt = clock.now
+        do {
+            _ = try await DaemonLaunchPolicy.launchDaemon(
+                socketPath: "/tmp/peekaboo-daemon-term-\(UUID().uuidString).sock",
+                arguments: ["-c", "trap '' TERM; echo $$ > \(pidURL.path); exec /bin/sleep 30"],
+                timeout: 0.05,
+                executableURL: URL(fileURLWithPath: "/bin/sh"),
+                logHandle: .nullDevice
+            )
+            Issue.record("Expected daemon readiness to time out")
+        } catch let error as DaemonLaunchPolicy.DaemonLaunchError {
+            guard case .timedOut = error else {
+                Issue.record("Expected a readiness timeout, got \(error)")
+                return
+            }
+        } catch {
+            Issue.record("Unexpected daemon launch error: \(error)")
+        }
+
+        #expect(clock.now - startedAt < .seconds(3))
+        let pidText = try String(contentsOf: pidURL, encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        childPID = pid_t(pidText)
+        let stoppedPID = try #require(childPID)
+        #expect(kill(stoppedPID, 0) == -1)
+        #expect(errno == ESRCH)
+        childPID = nil
+    }
+
     @Test
     func `canceling daemon launch terminates and reaps the child`() async throws {
         let pidURL = URL(fileURLWithPath: "/tmp/peekaboo-daemon-cancel-\(UUID().uuidString).pid")
