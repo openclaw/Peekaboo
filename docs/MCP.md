@@ -88,7 +88,8 @@ Common environment variables:
 - `OPENAI_API_KEY`: OpenAI API key for GPT models.
 - `ANTHROPIC_API_KEY`: Anthropic API key for Claude models.
 - `X_AI_API_KEY` or `XAI_API_KEY`: xAI API key for Grok models.
-- `PEEKABOO_OLLAMA_BASE_URL`: Ollama server URL, defaults to `http://localhost:11434`.
+- `PEEKABOO_OLLAMA_BASE_URL` / `OLLAMA_BASE_URL`: native Ollama server base. The Peekaboo-specific variable wins,
+  then the Ollama variable, config, and finally `http://localhost:11434`; do not append `/v1`.
 
 ## Verify client setup
 

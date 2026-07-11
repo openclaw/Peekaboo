@@ -15,6 +15,9 @@
 
 ### Fixed
 - The Mac app's status bar menu now follows the system light/dark mode. It previously inherited the menu bar's wallpaper-derived vibrant appearance, which could render a dark menu while the system was in light mode (and vice versa).
+- Resuming an agent session without an explicit model now preserves its credential-free provider-qualified model selection instead of silently switching to the current default and potentially sending saved context to a different provider; ambiguous legacy sessions fail closed and require an explicit override.
+- Multi-step Ollama agent runs now replay assistant tool calls and named results, preserve recursive arguments and array schemas, surface HTTP-200 stream errors, and fail with a resumable saved session instead of claiming success when pending tool work exhausts the step budget.
+- Custom-provider models marked `supportsTools: false` now get actionable agent guidance, and `config models-provider --save` preserves existing capabilities, limits, and parameters instead of resetting model definitions, including in JSON mode.
 - OpenRouter, Together, and OpenAI-compatible GPT-5.6 routes now preserve the 372K context/128K output capability profile, omit unsupported temperature, and recognize routing suffixes such as `:online`.
 - Adding a macOS application bundle to the Dock now places it with applications instead of mistaking its on-disk directory for a folder.
 - Synchronous default MCP tool-context access now fails fast off the main thread, with an async main-actor accessor for background callers. Thanks @SebTardif for #253.

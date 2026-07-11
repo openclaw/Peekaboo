@@ -15,7 +15,7 @@ read_when:
 | `[task]` | Optional free-form task description. Required unless you pass `--resume`/`--resume-session`. |
 | `--chat` | Force the interactive chat loop even when stdin/stdout are not TTYs. |
 | `--dry-run` | Emit the planned steps without actually invoking tools. |
-| `--max-steps <n>` | Cap how many tool invocations the agent may issue before aborting (default: 100). |
+| `--max-steps <n>` | Cap model turns to `1...100` (default: 100). One turn may contain multiple tool calls. |
 | `--model gpt-5.6|gpt-5.5|claude-fable-5|claude-sonnet-5|gemini-3-flash|minimax|minimax-cn/<model>|openrouter/<provider>/<model>|ollama/<model>|lmstudio/<model>` | Override the default model (`gpt-5.5`). Input is validated against supported hosted providers and local model providers. |
 | `--resume` / `--resume-session <id>` | Continue the most recent session or a specific session ID. |
 | `--list-sessions` | Print cached sessions (id, task, timestamps, message count) instead of running anything. |
@@ -31,6 +31,12 @@ read_when:
 - Audio flags wire into Tachikoma’s audio stack: `--audio` opens the microphone, `--audio-file` loads a WAV/CAF file, and `--realtime` enables low-latency streaming (OpenAI-only).
 - Generation uses `agent.temperature` and `agent.maxTokens` from the shared config written by the macOS Settings UI.
   Token requests are capped to model capability; unsupported temperature controls are omitted automatically.
+- A run saves its session and fails when its final permitted turn still requests tools and therefore needs another
+  model turn to interpret their results. This avoids reporting an empty success when the step budget expires with
+  pending work; resume the reported session to continue.
+- Native `ollama/<model>` runs replay each assistant tool call and named tool result on the next model turn. Ollama
+  support is model-dependent, and current native stream output is response-buffered rather than token-live. See the
+  [Ollama guide](../providers/ollama.md).
 
 ## Chat mode
 

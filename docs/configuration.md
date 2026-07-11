@@ -33,7 +33,7 @@ Peekaboo resolves settings in this order (highest → lowest):
 | MiniMax API Key | credentials file | `MINIMAX_API_KEY` | Required for MiniMax international; also works as fallback for MiniMax China. |
 | MiniMax China API Key | credentials file | `MINIMAX_CN_API_KEY` | Optional China-specific key for `minimax-cn/...` models. |
 | Kimi API Key | credentials file | `MOONSHOT_API_KEY` / `KIMI_API_KEY` | Required for Kimi models; `MOONSHOT_API_KEY` takes precedence. |
-| Ollama URL | `aiProviders.ollamaBaseUrl` | `PEEKABOO_OLLAMA_BASE_URL` | Base URL for local/remote Ollama (default `http://localhost:11434`). |
+| Ollama URL | `aiProviders.ollamaBaseUrl` | `PEEKABOO_OLLAMA_BASE_URL`, `OLLAMA_BASE_URL` | Native Ollama server base; precedence is Peekaboo env, Ollama env, config, then `http://localhost:11434`. Do not append `/v1`. |
 | Default Save Path | `defaults.savePath` | `PEEKABOO_DEFAULT_SAVE_PATH` | Directory for screenshots (supports `~`). |
 | Log Level | `logging.level` | `PEEKABOO_LOG_LEVEL` | `trace`, `debug`, `info`, `warn`, `error`, `fatal` (default `info`). |
 | Log Path | `logging.path` | `PEEKABOO_LOG_FILE` | Custom log destination (default `/tmp/peekaboo-mcp.log` for MCP; CLI uses stderr). |
@@ -55,7 +55,9 @@ Peekaboo resolves settings in this order (highest → lowest):
 
 - `PEEKABOO_AI_PROVIDERS`: `provider/model` CSV. Example: `openai/gpt-5.5,anthropic/claude-opus-4-8,grok/grok-4.3,ollama/llava:latest`.
 - `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GROK_API_KEY` | `X_AI_API_KEY` | `XAI_API_KEY`, `GEMINI_API_KEY`, `MINIMAX_API_KEY`, `MINIMAX_CN_API_KEY`, `MOONSHOT_API_KEY` | `KIMI_API_KEY`: required for their respective providers when using API keys.
-- `PEEKABOO_OLLAMA_BASE_URL`: change when your Ollama daemon isn’t on `localhost:11434`.
+- Ollama native endpoint precedence: `PEEKABOO_OLLAMA_BASE_URL` > `OLLAMA_BASE_URL` >
+  `aiProviders.ollamaBaseUrl` > `http://localhost:11434`. Set the server base without `/api/chat` or `/v1`; see the
+  [Ollama provider guide](providers/ollama.md#endpoint-selection).
 
 ## Defaults & Paths
 

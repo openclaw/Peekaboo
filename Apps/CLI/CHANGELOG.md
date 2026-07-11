@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `peekaboo agent --model` now accepts GPT-5.6 Sol, Terra, and Luna (`gpt-5.6` selects Sol) plus Claude Sonnet 5.
 
 ### Fixed
+- Resuming an agent session without `--model` now preserves its credential-free provider-qualified model selection instead of silently switching to the current default; ambiguous legacy sessions fail closed and require an explicit override.
+- Multi-step Ollama agent runs now preserve native tool-call history and recursive schemas, surface streamed server errors, and fail with a resumable saved session when pending tool work exhausts the validated `1...100` step budget.
+- Custom-provider models marked `supportsTools: false` now get actionable agent guidance, and `config models-provider --save` preserves existing model capabilities, limits, and parameters in both human and JSON modes.
 - OpenRouter, Together, and OpenAI-compatible GPT-5.6 routes now preserve the 372K context/128K output capability profile, omit unsupported temperature, and recognize routing suffixes such as `:online`.
 - Adding a macOS application bundle to the Dock now places it with applications instead of mistaking its on-disk directory for a folder.
 - Bare `peekaboo paste` now pastes the current clipboard, while payload-only flags without a payload fail validation even when `--restore-delay-ms` explicitly uses its 150ms default; `list apps` also accepts the `app list` visibility flags and emits preferred snake_case keys alongside legacy keys.

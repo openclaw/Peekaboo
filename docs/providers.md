@@ -26,10 +26,10 @@ pages instead of duplicating provider lists in multiple places.
 | **MiniMax China** | MiniMax-M3, MiniMax-M2.7, MiniMax-M2.7-highspeed | `MINIMAX_CN_API_KEY` or `MINIMAX_API_KEY` |
 | **Kimi** | kimi-k2.6, kimi-k2.7-code, kimi-k2.7-code-highspeed | `MOONSHOT_API_KEY` or `KIMI_API_KEY` |
 | **OpenRouter** | any tool-calling OpenRouter model ID | `OPENROUTER_API_KEY` |
-| **Ollama** | any local model with tool-calling | runs at `http://localhost:11434` |
+| **Ollama** | `ollama/<tool-capable-model>` | No key; native server defaults to `http://localhost:11434` |
 | **LM Studio** | any local OpenAI-compatible model with tool-calling | runs at `http://localhost:1234/v1` |
 
-Other Tachikoma-supported providers also work — see the [Tachikoma docs](https://github.com/steipete/Tachikoma) for the full list.
+Other Tachikoma-supported providers also work — see the [Tachikoma docs](https://github.com/openclaw/Tachikoma) for the full list.
 
 ## Credentials
 
@@ -67,7 +67,7 @@ peekaboo agent --model minimax-cn/MiniMax-M3 "summarize this window"
 peekaboo agent --model kimi/kimi-k2.7-code "summarize this window"
 peekaboo agent --model openrouter/xiaomi/mimo-v2.5-pro "summarize this window"
 peekaboo agent --model gpt-5-mini "click Continue and wait for the dialog"
-peekaboo agent --model ollama/llama3.1:8b "describe this screenshot"
+peekaboo agent --model ollama/llama3.1:8b "open System Settings"
 peekaboo agent --model lmstudio/openai/gpt-oss-120b "summarize this window"
 ```
 
@@ -79,21 +79,30 @@ capabilities; Peekaboo currently catalogs Fable 5 and Sonnet 5 with 1M context w
 
 ## Tool calling
 
-The agent requires a tool-calling capable model. If the selected model does not support tools, Peekaboo rejects it and points to `peekaboo image --analyze` / `see --analyze` for vision-only use. Choose a tool-capable model for agent runs.
+The agent requires a tool-calling capable model. Peekaboo rejects a configured model marked `supportsTools: false`;
+only opt that model into tools when its endpoint actually implements tool calling. Vision is a separate capability, so
+use `peekaboo image --analyze` / `see --analyze` only with a model that also supports vision. Ollama capabilities vary
+by model and tag; see the [Ollama provider guide](providers/ollama.md) before assuming a locally installed model
+supports tools.
 
-## Local-only mode
+## On-device Ollama mode
 
-Want everything on-device? Run an Ollama model with tool calling and point the CLI at it:
+To keep model inference on-device, run an Ollama model with tool calling and select it explicitly:
 
 ```bash
-ollama run llama3.1:8b
+ollama pull llama3.1:8b
 peekaboo agent --model ollama/llama3.1:8b "open System Settings"
 ```
 
-No network requests leave the machine. Captures, AX queries, and reasoning all stay local.
+The loopback endpoint only guarantees that Peekaboo talks to the local Ollama daemon. Ollama cloud-model tags can be
+automatically offloaded by that daemon. For strict on-device inference, select a locally installed model and disable
+Ollama cloud features with `OLLAMA_NO_CLOUD=1` or `disable_ollama_cloud` in `~/.ollama/server.json`. Model downloads,
+network-capable tools, and a remote Ollama base URL remain separate network paths. See the
+[Ollama privacy boundary](providers/ollama.md#privacy-boundary) and Ollama's
+[cloud documentation](https://docs.ollama.com/cloud).
 
 ## Troubleshooting
 
 - **"401 Unauthorized"** — credential isn't set, or env var overrides the saved one. Run `peekaboo config get-credential <provider>`.
-- **"context length exceeded"** — long sessions accumulate screenshots. Start a fresh session with `peekaboo agent --new`.
+- **"context length exceeded"** — long sessions accumulate history. Start a fresh run without `--resume`.
 - **"no tool-call support"** — pick a different model. The error log lists the providers and models with confirmed tool-calling.

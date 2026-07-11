@@ -162,7 +162,7 @@ macOS Settings UI reads and writes the same values.
 - Testing guide: [docs/testing/tools.md](docs/testing/tools.md)
 - MCP setup: [docs/commands/mcp.md](docs/commands/mcp.md)
 - Permissions: [docs/permissions.md](docs/permissions.md)
-- Ollama/local models: [docs/ollama.md](docs/ollama.md)
+- Ollama/local models: [docs/providers/ollama.md](docs/providers/ollama.md)
 - Agent chat loop: [docs/agent-chat.md](docs/agent-chat.md)
 - Service API reference: [docs/service-api-reference.md](docs/service-api-reference.md)
 

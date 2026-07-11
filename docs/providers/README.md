@@ -14,7 +14,8 @@ read_when:
 - **MiniMax China** — use `minimax-cn/...` with `MINIMAX_CN_API_KEY` or the shared `MINIMAX_API_KEY`; routes to `api.minimaxi.com`.
 - **Kimi** — use `kimi/...` with `MOONSHOT_API_KEY` or `KIMI_API_KEY`; supports Kimi K2.6 and K2.7 Code through Moonshot's coding API.
 - **Grok** — `grok.md`: Grok 4 implementation guide and checkpoints.
-- **Ollama** — `ollama.md`: local model configuration; `ollama-models.md` for model catalog notes.
+- **Ollama** — `ollama.md`: native API, endpoints, tool history, and streaming behavior; `ollama-models.md` for
+  capability-first model selection.
 
 Use [`docs/providers.md`](../providers.md) as the central reference for the user-facing provider list,
 configuration syntax, and environment variable reference.
@@ -30,7 +31,7 @@ configuration syntax, and environment variable reference.
 | MiniMax China | Yes | Model-dependent | Yes | No | API key |
 | Kimi | Yes | Yes | Yes | No | API key |
 | Grok | Yes | Limited | Yes | No | API key |
-| Ollama | Yes (via local server) | Model-dependent | Yes | **Yes** (local) | None (local daemon) |
+| Ollama | Model-dependent | Model-dependent | Response-buffered NDJSON | Model-dependent; disable cloud for strict local use | None for local models |
 | LM Studio | Yes (OpenAI-compatible local server) | Model-dependent | Yes | **Yes** (local) | None by default |
 
 See individual pages for model lists, quirks, and test coverage expectations.
