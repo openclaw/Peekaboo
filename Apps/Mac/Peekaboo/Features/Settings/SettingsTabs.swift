@@ -2,18 +2,18 @@ import Foundation
 
 enum PeekabooSettingsTab: Hashable, CaseIterable {
     case general
-    case ai
+    case agent
+    case providers
     case visualizer
-    case shortcuts
     case permissions
     case about
 
     var title: String {
         switch self {
         case .general: "General"
-        case .ai: "AI"
+        case .agent: "Agent"
+        case .providers: "Providers"
         case .visualizer: "Visualizer"
-        case .shortcuts: "Shortcuts"
         case .permissions: "Permissions"
         case .about: "About"
         }

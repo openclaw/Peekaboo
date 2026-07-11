@@ -184,10 +184,6 @@ final class PeekabooSettings {
     // See KeyboardShortcutNames.swift for the defined shortcuts
 
     /// Mac-specific UI Features
-    var voiceActivationEnabled: Bool = true {
-        didSet { self.save() }
-    }
-
     var agentModeEnabled: Bool = false {
         didSet { self.save() }
     }
@@ -519,7 +515,6 @@ extension PeekabooSettings {
         self.launchAtLogin = SMAppService.mainApp.status == .enabled
         self.userDefaults.set(self.launchAtLogin, forKey: self.namespaced("launchAtLogin"))
 
-        self.voiceActivationEnabled = self.valueOrDefault(key: "voiceActivationEnabled", defaultValue: true)
         self.agentModeEnabled = self.valueOrDefault(key: "agentModeEnabled", defaultValue: false)
         self.hapticFeedbackEnabled = self.userDefaults.bool(forKey: self.namespaced("hapticFeedbackEnabled"))
         self.soundEffectsEnabled = self.userDefaults.bool(forKey: self.namespaced("soundEffectsEnabled"))
@@ -595,7 +590,6 @@ extension PeekabooSettings {
 
         // Keyboard shortcuts are automatically saved by the KeyboardShortcuts library
 
-        self.userDefaults.set(self.voiceActivationEnabled, forKey: "\(self.keyPrefix)voiceActivationEnabled")
         self.userDefaults.set(self.agentModeEnabled, forKey: "\(self.keyPrefix)agentModeEnabled")
         self.userDefaults.set(self.hapticFeedbackEnabled, forKey: "\(self.keyPrefix)hapticFeedbackEnabled")
         self.userDefaults.set(self.soundEffectsEnabled, forKey: "\(self.keyPrefix)soundEffectsEnabled")

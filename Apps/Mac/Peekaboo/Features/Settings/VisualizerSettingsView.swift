@@ -12,16 +12,15 @@ struct VisualizerSettingsView: View {
         Form {
             Section {
                 SettingsToggleRow(
-                    title: "Visual Feedback",
-                    subtitle: "Animated on-screen feedback for Peekaboo operations.",
+                    title: "Enable visualizer",
+                    subtitle: "Show animated on-screen feedback for Peekaboo operations.",
                     systemImage: "sparkles",
                     isOn: self.$settings.visualizerEnabled)
             }
 
-            // Animation Controls Section
-            Section("Animation Settings") {
+            Section("Playback") {
                 HStack {
-                    Label("Animation Speed", systemImage: "speedometer")
+                    Label("Animation speed", systemImage: "speedometer")
                     Spacer()
                     Slider(value: self.$settings.visualizerAnimationSpeed, in: 0.1...2.0, step: 0.1)
                         .frame(width: 150)
@@ -33,7 +32,7 @@ struct VisualizerSettingsView: View {
                 }
 
                 HStack {
-                    Label("Effect Intensity", systemImage: "wand.and.rays")
+                    Label("Effect intensity", systemImage: "wand.and.rays")
                     Spacer()
                     Slider(value: self.$settings.visualizerEffectIntensity, in: 0.1...2.0, step: 0.1)
                         .frame(width: 150)
@@ -45,27 +44,19 @@ struct VisualizerSettingsView: View {
                 }
 
                 HStack {
-                    Label("Sound Effects", systemImage: "speaker.wave.2")
+                    Label("Play sounds", systemImage: "speaker.wave.2")
                     Spacer()
-                    Toggle("Sound Effects", isOn: self.$settings.visualizerSoundEnabled)
+                    Toggle("Play sounds", isOn: self.$settings.visualizerSoundEnabled)
                         .labelsHidden()
                 }
                 .disabled(!self.settings.visualizerEnabled)
             }
             .opacity(self.settings.visualizerEnabled ? 1 : 0.5)
+            .disabled(!self.settings.visualizerEnabled)
 
-            // Individual Animations Section
-            Section("Animation Types") {
+            Section("Pointer") {
                 AnimationToggleRow(
-                    title: "Screenshot Flash",
-                    icon: "camera.viewfinder",
-                    isOn: self.$settings.screenshotFlashEnabled,
-                    isEnabled: self.settings.visualizerEnabled,
-                    animationType: "screenshot",
-                    settings: self.settings)
-
-                AnimationToggleRow(
-                    title: "Click Animation",
+                    title: "Clicks",
                     icon: "cursorarrow.click",
                     isOn: self.$settings.clickAnimationEnabled,
                     isEnabled: self.settings.visualizerEnabled,
@@ -73,23 +64,7 @@ struct VisualizerSettingsView: View {
                     settings: self.settings)
 
                 AnimationToggleRow(
-                    title: "Type Animation",
-                    icon: "keyboard",
-                    isOn: self.$settings.typeAnimationEnabled,
-                    isEnabled: self.settings.visualizerEnabled,
-                    animationType: "type",
-                    settings: self.settings)
-
-                AnimationToggleRow(
-                    title: "Scroll Animation",
-                    icon: "arrow.up.arrow.down",
-                    isOn: self.$settings.scrollAnimationEnabled,
-                    isEnabled: self.settings.visualizerEnabled,
-                    animationType: "scroll",
-                    settings: self.settings)
-
-                AnimationToggleRow(
-                    title: "Mouse Trail",
+                    title: "Mouse trail",
                     icon: "scribble",
                     isOn: self.$settings.mouseTrailEnabled,
                     isEnabled: self.settings.visualizerEnabled,
@@ -97,7 +72,7 @@ struct VisualizerSettingsView: View {
                     settings: self.settings)
 
                 AnimationToggleRow(
-                    title: "Swipe Path",
+                    title: "Swipe paths",
                     icon: "hand.draw",
                     isOn: self.$settings.swipePathEnabled,
                     isEnabled: self.settings.visualizerEnabled,
@@ -105,58 +80,56 @@ struct VisualizerSettingsView: View {
                     settings: self.settings)
 
                 AnimationToggleRow(
-                    title: "Hotkey Overlay",
+                    title: "Scrolling",
+                    icon: "arrow.up.arrow.down",
+                    isOn: self.$settings.scrollAnimationEnabled,
+                    isEnabled: self.settings.visualizerEnabled,
+                    animationType: "scroll",
+                    settings: self.settings)
+            }
+            .opacity(self.settings.visualizerEnabled ? 1 : 0.5)
+            .disabled(!self.settings.visualizerEnabled)
+
+            Section("Keyboard") {
+                AnimationToggleRow(
+                    title: "Typing",
+                    icon: "keyboard",
+                    isOn: self.$settings.typeAnimationEnabled,
+                    isEnabled: self.settings.visualizerEnabled,
+                    animationType: "type",
+                    settings: self.settings)
+
+                AnimationToggleRow(
+                    title: "Hotkey overlay",
                     icon: "command",
                     isOn: self.$settings.hotkeyOverlayEnabled,
                     isEnabled: self.settings.visualizerEnabled,
                     animationType: "hotkey",
                     settings: self.settings)
-
-                AnimationToggleRow(
-                    title: "App Lifecycle",
-                    icon: "app.badge",
-                    isOn: self.$settings.appLifecycleEnabled,
-                    isEnabled: self.settings.visualizerEnabled,
-                    animationType: "app_launch",
-                    settings: self.settings)
-
-                AnimationToggleRow(
-                    title: "Window Operations",
-                    icon: "macwindow",
-                    isOn: self.$settings.windowOperationEnabled,
-                    isEnabled: self.settings.visualizerEnabled,
-                    animationType: "window",
-                    settings: self.settings)
-
-                AnimationToggleRow(
-                    title: "Menu Navigation",
-                    icon: "menubar.rectangle",
-                    isOn: self.$settings.menuNavigationEnabled,
-                    isEnabled: self.settings.visualizerEnabled,
-                    animationType: "menu",
-                    settings: self.settings)
-
-                AnimationToggleRow(
-                    title: "Dialog Interaction",
-                    icon: "text.bubble",
-                    isOn: self.$settings.dialogInteractionEnabled,
-                    isEnabled: self.settings.visualizerEnabled,
-                    animationType: "dialog",
-                    settings: self.settings)
-
-                AnimationToggleRow(
-                    title: "Space Transitions",
-                    icon: "squares.below.rectangle",
-                    isOn: self.$settings.spaceTransitionEnabled,
-                    isEnabled: self.settings.visualizerEnabled,
-                    animationType: "space",
-                    settings: self.settings)
             }
             .opacity(self.settings.visualizerEnabled ? 1 : 0.5)
+            .disabled(!self.settings.visualizerEnabled)
 
-            Section("Element Detection") {
+            Section("Screen") {
                 AnimationToggleRow(
-                    title: "Element Detection Boxes",
+                    title: "Screenshot flash",
+                    icon: "camera.viewfinder",
+                    isOn: self.$settings.screenshotFlashEnabled,
+                    isEnabled: self.settings.visualizerEnabled,
+                    animationType: "screenshot",
+                    settings: self.settings)
+
+                AnimationToggleRow(
+                    title: "Screenshot annotations",
+                    subtitle: "Overlay element IDs on screen after `peekaboo see --annotate`.",
+                    icon: "photo.on.rectangle",
+                    isOn: self.$settings.annotatedScreenshotEnabled,
+                    isEnabled: self.settings.visualizerEnabled,
+                    animationType: "annotated",
+                    settings: self.settings)
+
+                AnimationToggleRow(
+                    title: "Element boxes",
                     subtitle: "Outline every accessibility element found by `peekaboo see`. " +
                         "Off by default — a box per control is visually noisy.",
                     icon: "rectangle.dashed",
@@ -166,33 +139,65 @@ struct VisualizerSettingsView: View {
                     settings: self.settings)
 
                 AnimationToggleRow(
-                    title: "Annotated Screenshots",
-                    subtitle: "Overlay element IDs on screen after `peekaboo see --annotate`",
-                    icon: "photo.on.rectangle",
-                    isOn: self.$settings.annotatedScreenshotEnabled,
-                    isEnabled: self.settings.visualizerEnabled,
-                    animationType: "annotated",
-                    settings: self.settings)
-            }
-            .opacity(self.settings.visualizerEnabled ? 1 : 0.5)
-
-            Section("Watch Capture") {
-                AnimationToggleRow(
-                    title: "Watch Capture HUD",
-                    subtitle: "Pulse indicator for `peekaboo capture live` sessions",
-                    icon: "applewatch.watchface",
+                    title: "Live capture indicator",
+                    subtitle: "Pulse indicator for `peekaboo capture live` sessions.",
+                    icon: "record.circle",
                     isOn: self.$settings.watchCaptureHUDEnabled,
                     isEnabled: self.settings.visualizerEnabled,
                     animationType: "watch",
                     settings: self.settings)
             }
             .opacity(self.settings.visualizerEnabled ? 1 : 0.5)
+            .disabled(!self.settings.visualizerEnabled)
 
-            // Easter Eggs Section
-            Section("Easter Eggs") {
+            Section("Apps & Windows") {
                 AnimationToggleRow(
-                    title: "Ghost Animation",
-                    subtitle: "Shows every 10th screenshot",
+                    title: "App launch & quit",
+                    icon: "app.badge",
+                    isOn: self.$settings.appLifecycleEnabled,
+                    isEnabled: self.settings.visualizerEnabled,
+                    animationType: "app_launch",
+                    settings: self.settings)
+
+                AnimationToggleRow(
+                    title: "Window operations",
+                    icon: "macwindow",
+                    isOn: self.$settings.windowOperationEnabled,
+                    isEnabled: self.settings.visualizerEnabled,
+                    animationType: "window",
+                    settings: self.settings)
+
+                AnimationToggleRow(
+                    title: "Menu navigation",
+                    icon: "menubar.rectangle",
+                    isOn: self.$settings.menuNavigationEnabled,
+                    isEnabled: self.settings.visualizerEnabled,
+                    animationType: "menu",
+                    settings: self.settings)
+
+                AnimationToggleRow(
+                    title: "Dialogs",
+                    icon: "text.bubble",
+                    isOn: self.$settings.dialogInteractionEnabled,
+                    isEnabled: self.settings.visualizerEnabled,
+                    animationType: "dialog",
+                    settings: self.settings)
+
+                AnimationToggleRow(
+                    title: "Space transitions",
+                    icon: "squares.below.rectangle",
+                    isOn: self.$settings.spaceTransitionEnabled,
+                    isEnabled: self.settings.visualizerEnabled,
+                    animationType: "space",
+                    settings: self.settings)
+            }
+            .opacity(self.settings.visualizerEnabled ? 1 : 0.5)
+            .disabled(!self.settings.visualizerEnabled)
+
+            Section("Extras") {
+                AnimationToggleRow(
+                    title: "Ghost cameo",
+                    subtitle: "A ghost appears on every 10th screenshot.",
                     icon: "eye.slash",
                     isOn: self.$settings.ghostEasterEggEnabled,
                     isEnabled: self.settings.visualizerEnabled,
@@ -200,6 +205,7 @@ struct VisualizerSettingsView: View {
                     settings: self.settings)
             }
             .opacity(self.settings.visualizerEnabled ? 1 : 0.5)
+            .disabled(!self.settings.visualizerEnabled)
         }
         .formStyle(.grouped)
     }

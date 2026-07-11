@@ -1,4 +1,5 @@
 import AppKit
+import KeyboardShortcuts
 import Observation
 import PeekabooCore
 import SwiftUI
@@ -6,7 +7,6 @@ import SwiftUI
 struct SettingsWindow: View {
     let updater: any UpdaterProviding
 
-    @Environment(PeekabooSettings.self) private var settings
     @Environment(Permissions.self) private var permissions
     @State private var selectedTab: PeekabooSettingsTab = .general
     @State private var monitoringPermissions = false
@@ -17,19 +17,23 @@ struct SettingsWindow: View {
 
     var body: some View {
         TabView(selection: self.$selectedTab) {
-            GeneralSettingsView()
+            GeneralSettingsView(updater: self.updater)
                 .tabItem {
                     Label("General", systemImage: "gear")
                 }
                 .tag(PeekabooSettingsTab.general)
 
-            if self.settings.agentModeEnabled {
-                AISettingsView()
-                    .tabItem {
-                        Label("AI", systemImage: "brain")
-                    }
-                    .tag(PeekabooSettingsTab.ai)
-            }
+            AgentSettingsView()
+                .tabItem {
+                    Label("Agent", systemImage: "brain")
+                }
+                .tag(PeekabooSettingsTab.agent)
+
+            ProvidersSettingsView()
+                .tabItem {
+                    Label("Providers", systemImage: "key.horizontal")
+                }
+                .tag(PeekabooSettingsTab.providers)
 
             VisualizerSettingsTabView()
                 .tabItem {
@@ -37,19 +41,13 @@ struct SettingsWindow: View {
                 }
                 .tag(PeekabooSettingsTab.visualizer)
 
-            ShortcutSettingsView()
-                .tabItem {
-                    Label("Shortcuts", systemImage: "keyboard")
-                }
-                .tag(PeekabooSettingsTab.shortcuts)
-
             PermissionsSettingsView()
                 .tabItem {
                     Label("Permissions", systemImage: "lock.shield")
                 }
                 .tag(PeekabooSettingsTab.permissions)
 
-            AboutSettingsView(updater: self.updater)
+            AboutSettingsView()
                 .tabItem {
                     Label("About", systemImage: "info.circle")
                 }
@@ -59,37 +57,22 @@ struct SettingsWindow: View {
         .onReceive(NotificationCenter.default.publisher(for: .peekabooSelectSettingsTab)) { note in
             if let tab = note.object as? PeekabooSettingsTab {
                 withAnimation(.spring(response: 0.32, dampingFraction: 0.85)) {
-                    self.selectedTab = self.sanitizedTabSelection(tab)
+                    self.selectedTab = tab
                 }
             }
         }
         .onAppear {
             if let pending = SettingsTabRouter.consumePending() {
-                self.selectedTab = self.sanitizedTabSelection(pending)
-            }
-            if !self.settings.agentModeEnabled, self.selectedTab == .ai {
-                self.selectedTab = .general
+                self.selectedTab = pending
             }
             self.updatePermissionMonitoring(for: self.selectedTab)
         }
         .onChange(of: self.selectedTab) { _, newValue in
             self.updatePermissionMonitoring(for: newValue)
         }
-        .onChange(of: self.settings.agentModeEnabled) { _, enabled in
-            if !enabled, self.selectedTab == .ai {
-                self.selectedTab = .general
-            }
-        }
         .onDisappear {
             self.stopPermissionMonitoring()
         }
-    }
-
-    private func sanitizedTabSelection(_ tab: PeekabooSettingsTab) -> PeekabooSettingsTab {
-        if tab == .ai, !self.settings.agentModeEnabled {
-            return .general
-        }
-        return tab
     }
 
     private func updatePermissionMonitoring(for tab: PeekabooSettingsTab) {
@@ -113,7 +96,11 @@ struct SettingsWindow: View {
 // MARK: - General Settings
 
 struct GeneralSettingsView: View {
+    let updater: any UpdaterProviding
+
     @Environment(PeekabooSettings.self) private var settings
+    @AppStorage("autoUpdateEnabled") private var autoUpdateEnabled: Bool = true
+    @State private var didLoadUpdaterState = false
 
     var body: some View {
         @Bindable var settings = self.settings
@@ -122,43 +109,99 @@ struct GeneralSettingsView: View {
                 SettingsIntroRow()
             }
 
-            Section("App") {
+            Section("Startup & Window") {
                 SettingsToggleRow(
                     title: "Launch at login",
                     subtitle: "Start Peekaboo automatically when you sign in.",
                     systemImage: "power",
                     isOn: $settings.launchAtLogin)
+                DockVisibilityPickerRow(showInDock: $settings.showInDock)
                 SettingsToggleRow(
-                    title: "Show in Dock",
-                    subtitle: "Keep a Dock icon and normal app switching behavior.",
-                    systemImage: "dock.rectangle",
-                    isOn: $settings.showInDock)
-                SettingsToggleRow(
-                    title: "Keep window on top",
+                    title: "Keep main window on top",
                     subtitle: "Pin the main session window above other apps.",
                     systemImage: "macwindow.on.rectangle",
                     isOn: $settings.alwaysOnTop)
             }
 
-            Section("Interaction") {
-                SettingsToggleRow(
-                    title: "Agent mode",
-                    subtitle: "Enable chat sessions and automation from the app.",
-                    systemImage: "sparkles",
-                    isOn: $settings.agentModeEnabled)
+            Section("Feedback") {
                 SettingsToggleRow(
                     title: "Haptic feedback",
                     subtitle: "Use subtle feedback for supported controls.",
                     systemImage: "waveform.path",
                     isOn: $settings.hapticFeedbackEnabled)
                 SettingsToggleRow(
-                    title: "Sound effects",
+                    title: "Interface sounds",
                     subtitle: "Play quiet confirmations for app actions.",
                     systemImage: "speaker.wave.2",
                     isOn: $settings.soundEffectsEnabled)
             }
+
+            Section("Shortcuts") {
+                KeyboardShortcuts.Recorder("Toggle popover", name: .togglePopover)
+                KeyboardShortcuts.Recorder("Show main window", name: .showMainWindow)
+                KeyboardShortcuts.Recorder("Show Inspector", name: .showInspector)
+
+                Text("Shortcuts must include at least one modifier key (⌘, ⌥, ⌃, or ⇧) and take effect immediately.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Updates") {
+                if self.updater.isAvailable {
+                    SettingsToggleRow(
+                        title: "Check for updates automatically",
+                        subtitle: "Look for new Peekaboo versions in the background.",
+                        systemImage: "arrow.triangle.2.circlepath",
+                        isOn: self.$autoUpdateEnabled)
+                    Button("Check for Updates…") { self.updater.checkForUpdates(nil) }
+                } else {
+                    Text("Updates unavailable in this build.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
         }
         .formStyle(.grouped)
+        .onAppear {
+            guard !self.didLoadUpdaterState else { return }
+            self.updater.automaticallyChecksForUpdates = self.autoUpdateEnabled
+            self.didLoadUpdaterState = true
+        }
+        .onChange(of: self.autoUpdateEnabled) { _, newValue in
+            self.updater.automaticallyChecksForUpdates = newValue
+        }
+    }
+}
+
+private struct DockVisibilityPickerRow: View {
+    @Binding var showInDock: Bool
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 12) {
+            Image(systemName: "dock.rectangle")
+                .font(.system(size: 16, weight: .medium))
+                .foregroundStyle(.secondary)
+                .frame(width: 24)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Show Peekaboo in")
+                Text("Peekaboo always lives in the menu bar.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 12)
+
+            Picker("Show Peekaboo in", selection: self.$showInDock) {
+                Text("Menu bar only").tag(false)
+                Text("Menu bar and Dock").tag(true)
+            }
+            .pickerStyle(.menu)
+            .labelsHidden()
+            .fixedSize()
+        }
+        .padding(.vertical, 3)
     }
 }
 
@@ -218,9 +261,9 @@ struct SettingsToggleRow: View {
     }
 }
 
-// MARK: - AI Settings
+// MARK: - Agent Settings
 
-struct AISettingsView: View {
+struct AgentSettingsView: View {
     @Environment(PeekabooSettings.self) private var settings
     @State private var detectedOllamaModelOptions: [(id: String, name: String)] = []
     @State private var hasAttemptedOllamaDetection = false
@@ -264,7 +307,7 @@ struct AISettingsView: View {
             ("MiniMax-M2.7", "MiniMax China M2.7"),
             ("MiniMax-M2.7-highspeed", "MiniMax China M2.7 Highspeed"),
         ]),
-        ("ollama", AISettingsView.defaultOllamaModels),
+        ("ollama", AgentSettingsView.defaultOllamaModels),
         ("lmstudio", [
             ("openai/gpt-oss-120b", "GPT-OSS 120B"),
             ("openai/gpt-oss-20b", "GPT-OSS 20B"),
@@ -473,6 +516,14 @@ struct AISettingsView: View {
     var body: some View {
         @Bindable var settings = self.settings
         Form {
+            Section {
+                SettingsToggleRow(
+                    title: "Enable agent",
+                    subtitle: "Allow chat sessions and automation from the app.",
+                    systemImage: "sparkles",
+                    isOn: $settings.agentModeEnabled)
+            }
+
             Section("Model") {
                 LabeledContent("Model") {
                     // Menu of plain buttons: a Menu wrapping a Picker is promoted to a
@@ -512,26 +563,7 @@ struct AISettingsView: View {
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-            }
 
-            Section("API Keys") {
-                APIKeyField(provider: .openai, apiKey: $settings.openAIAPIKey)
-                APIKeyField(provider: .anthropic, apiKey: $settings.anthropicAPIKey)
-                APIKeyField(provider: .grok, apiKey: $settings.grokAPIKey)
-                APIKeyField(provider: .google, apiKey: $settings.googleAPIKey)
-                APIKeyField(provider: .minimax, apiKey: $settings.miniMaxAPIKey)
-                APIKeyField(provider: .minimaxChina, apiKey: $settings.miniMaxChinaAPIKey)
-            }
-
-            Section("Ollama") {
-                TextField("Base URL", text: $settings.ollamaBaseURL, prompt: Text("http://localhost:11434"))
-                    .multilineTextAlignment(.trailing)
-                Text("Models are detected automatically while Ollama is running locally.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Section("Generation") {
                 HStack {
                     Text("Temperature")
                     Spacer()
@@ -544,51 +576,68 @@ struct AISettingsView: View {
                 }
 
                 TextField(
-                    "Max Tokens",
+                    "Max tokens",
                     value: $settings.maxTokens,
                     format: .number.grouping(.never),
                     prompt: Text("16384"))
                     .multilineTextAlignment(.trailing)
             }
+            .opacity(self.settings.agentModeEnabled ? 1 : 0.5)
+            .disabled(!self.settings.agentModeEnabled)
 
             Section("Vision") {
-                Toggle("Use a custom model for vision tasks", isOn: $settings.useCustomVisionModel)
+                LabeledContent("Vision model") {
+                    Menu {
+                        Button {
+                            self.settings.useCustomVisionModel = false
+                        } label: {
+                            if !self.settings.useCustomVisionModel {
+                                Label("Same as agent model", systemImage: "checkmark")
+                            } else {
+                                Text("Same as agent model")
+                            }
+                        }
 
-                if self.settings.useCustomVisionModel {
-                    LabeledContent("Vision Model") {
-                        Menu {
-                            ForEach(self.allModels, id: \.provider) { provider, models in
-                                Section(provider.capitalized) {
-                                    ForEach(models, id: \.id) { model in
-                                        Button {
-                                            self.settings.customVisionModel = model.id
-                                        } label: {
-                                            if model.id == self.settings.customVisionModel {
-                                                Label(model.name, systemImage: "checkmark")
-                                            } else {
-                                                Text(model.name)
-                                            }
+                        Divider()
+
+                        ForEach(self.allModels, id: \.provider) { provider, models in
+                            Section(provider.capitalized) {
+                                ForEach(models, id: \.id) { model in
+                                    Button {
+                                        self.settings.useCustomVisionModel = true
+                                        self.settings.customVisionModel = model.id
+                                    } label: {
+                                        if self.settings.useCustomVisionModel,
+                                           model.id == self.settings.customVisionModel
+                                        {
+                                            Label(model.name, systemImage: "checkmark")
+                                        } else {
+                                            Text(model.name)
                                         }
                                     }
                                 }
                             }
-                        } label: {
-                            Text(self.modelDisplayName(forId: self.settings.customVisionModel))
                         }
-                        .menuStyle(.button)
-                        .buttonStyle(.bordered)
-                        .fixedSize()
+                    } label: {
+                        if self.settings.useCustomVisionModel {
+                            Text(self.modelDisplayName(forId: self.settings.customVisionModel))
+                        } else {
+                            Text("Same as agent model")
+                        }
                     }
+                    .menuStyle(.button)
+                    .buttonStyle(.bordered)
+                    .fixedSize()
+                }
 
+                if self.settings.useCustomVisionModel {
                     Text("Used for screenshots and image analysis, regardless of the primary model selection.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
             }
-
-            Section("Custom Providers") {
-                CustomProviderView()
-            }
+            .opacity(self.settings.agentModeEnabled ? 1 : 0.5)
+            .disabled(!self.settings.agentModeEnabled)
         }
         .formStyle(.grouped)
         .task(id: self.settings.ollamaBaseURL) {

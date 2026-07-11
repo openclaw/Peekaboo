@@ -17,7 +17,6 @@ struct PeekabooSettingsTests {
             #expect(settings.alwaysOnTop == false)
             #expect(settings.showInDock == true)
             #expect(settings.launchAtLogin == false)
-            #expect(settings.voiceActivationEnabled == true)
             #expect(settings.hapticFeedbackEnabled == true)
             #expect(settings.soundEffectsEnabled == true)
             #expect(settings.maxTokens == 16384)
@@ -97,7 +96,6 @@ struct PeekabooSettingsTests {
                 (\.alwaysOnTop, "alwaysOnTop"),
                 (\.showInDock, "showInDock"),
                 (\.launchAtLogin, "launchAtLogin"),
-                (\.voiceActivationEnabled, "voiceActivationEnabled"),
                 (\.hapticFeedbackEnabled, "hapticFeedbackEnabled"),
                 (\.soundEffectsEnabled, "soundEffectsEnabled"),
             ]
@@ -135,7 +133,6 @@ struct PeekabooSettingsPersistenceTests {
             settings1.selectedModel = testModel
             settings1.temperature = testTemperature
             settings1.alwaysOnTop = true
-            settings1.voiceActivationEnabled = true
 
             // Create new instance and verify
             let settings2 = PeekabooSettings()
@@ -144,7 +141,6 @@ struct PeekabooSettingsPersistenceTests {
             #expect(settings2.selectedModel == testModel)
             #expect(settings2.temperature == testTemperature)
             #expect(settings2.alwaysOnTop == true)
-            #expect(settings2.voiceActivationEnabled == true)
         }
     }
 }
@@ -819,14 +815,14 @@ struct PeekabooSettingsConfigHydrationTests {
 
     @Test
     func `Built-in model picker includes current frontier models in tier order`() throws {
-        #expect(AISettingsView.builtinName(forModelId: "gpt-5.6-sol") == "GPT-5.6 Sol")
-        #expect(AISettingsView.builtinName(forModelId: "gpt-5.6-terra") == "GPT-5.6 Terra")
-        #expect(AISettingsView.builtinName(forModelId: "gpt-5.6-luna") == "GPT-5.6 Luna")
-        #expect(AISettingsView.builtinName(forModelId: "claude-fable-5") == "Claude Fable 5")
-        #expect(AISettingsView.builtinName(forModelId: "claude-sonnet-5") == "Claude Sonnet 5")
+        #expect(AgentSettingsView.builtinName(forModelId: "gpt-5.6-sol") == "GPT-5.6 Sol")
+        #expect(AgentSettingsView.builtinName(forModelId: "gpt-5.6-terra") == "GPT-5.6 Terra")
+        #expect(AgentSettingsView.builtinName(forModelId: "gpt-5.6-luna") == "GPT-5.6 Luna")
+        #expect(AgentSettingsView.builtinName(forModelId: "claude-fable-5") == "Claude Fable 5")
+        #expect(AgentSettingsView.builtinName(forModelId: "claude-sonnet-5") == "Claude Sonnet 5")
 
-        let openAI = try #require(AISettingsView.builtinProviderCatalog.first { $0.provider == "openai" })
-        let anthropic = try #require(AISettingsView.builtinProviderCatalog.first { $0.provider == "anthropic" })
+        let openAI = try #require(AgentSettingsView.builtinProviderCatalog.first { $0.provider == "openai" })
+        let anthropic = try #require(AgentSettingsView.builtinProviderCatalog.first { $0.provider == "anthropic" })
         #expect(openAI.models.prefix(4).map(\.id) == [
             "gpt-5.6-sol",
             "gpt-5.6-terra",
@@ -850,7 +846,7 @@ struct PeekabooSettingsConfigHydrationTests {
 
     @Test
     func `Hydrated OpenRouter model remains available in model picker`() {
-        let modelGroups = AISettingsView.appendingSelectedOpenRouterModel(
+        let modelGroups = AgentSettingsView.appendingSelectedOpenRouterModel(
             to: [("openai", [(id: "gpt-5.5", name: "GPT-5.5")])],
             selectedProvider: "openrouter",
             selectedModel: "anthropic/claude-sonnet-4.6",
