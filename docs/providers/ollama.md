@@ -101,9 +101,8 @@ returning an empty success. Resume that session to continue from the preserved t
 Ollama's native chat API returns newline-delimited JSON when streaming. Peekaboo asks for that format and validates
 each chunk, including [errors delivered after an HTTP 200 response](https://docs.ollama.com/api/errors).
 
-The current Tachikoma transport buffers the HTTP response before emitting its decoded deltas. Tool calls and errors
-follow streaming semantics, but CLI text appears response-by-response rather than token-by-token. Do not rely on
-token-live output for progress or timeout decisions.
+Tachikoma parses each NDJSON chunk as it arrives and emits text deltas incrementally. The exact chunk cadence depends
+on the model and Ollama server; tool calls become actionable only after Ollama has supplied their complete arguments.
 
 ## Privacy boundary
 

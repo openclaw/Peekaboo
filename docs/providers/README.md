@@ -31,7 +31,7 @@ configuration syntax, and environment variable reference.
 | MiniMax China | Yes | Model-dependent | Yes | No | API key |
 | Kimi | Yes | Yes | Yes | No | API key |
 | Grok | Yes | Limited | Yes | No | API key |
-| Ollama | Model-dependent | Model-dependent | Response-buffered NDJSON | Model-dependent; disable cloud for strict local use | None for local models |
+| Ollama | Model-dependent | Model-dependent | Incremental NDJSON | Model-dependent; disable cloud for strict local use | None for local models |
 | LM Studio | Yes (OpenAI-compatible local server) | Model-dependent | Yes | **Yes** (local) | None by default |
 
 See individual pages for model lists, quirks, and test coverage expectations.
