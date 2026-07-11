@@ -112,7 +112,8 @@ extension AgentCommand {
         task: String,
         requestedModel: LanguageModel?,
         maxSteps: Int,
-        queueMode: QueueMode
+        queueMode: QueueMode,
+        preserveStepLimitError: Bool = false
     ) async throws -> AgentExecutionResult {
         let outputDelegate = self.makeDisplayDelegate(for: task)
         let streamingDelegate = self.makeStreamingDelegate(using: outputDelegate)
@@ -139,8 +140,15 @@ extension AgentCommand {
                     + "session=\(sessionId) tokens=\(finalTokens)"
             )
             return result
+        } catch let error as PeekabooAgentService.AgentStepLimitExceededError where preserveStepLimitError {
+            if outputDelegate?.hasReceivedError != true {
+                self.printAgentExecutionError("Agent execution failed: \(error.localizedDescription)")
+            }
+            throw error
         } catch {
-            self.printAgentExecutionError("Agent execution failed: \(error.localizedDescription)")
+            if outputDelegate?.hasReceivedError != true {
+                self.printAgentExecutionError("Agent execution failed: \(error.localizedDescription)")
+            }
             throw ExitCode.failure
         }
     }
@@ -157,6 +165,10 @@ extension AgentCommand {
 
     var resolvedMaxSteps: Int {
         self.maxSteps ?? 100
+    }
+
+    func validatedMaxStepCount() throws -> Int {
+        try AgentStepBudget.validate(self.resolvedMaxSteps)
     }
 
     func resolvedQueueMode() throws -> QueueMode {

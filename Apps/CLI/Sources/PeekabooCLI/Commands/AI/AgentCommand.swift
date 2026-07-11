@@ -80,7 +80,7 @@ struct AgentCommand: RuntimeOptionsConfigurable {
     @Flag(name: .long, help: "Dry run - show planned steps without executing")
     var dryRun = false
 
-    @Option(name: .long, help: "Maximum number of steps the agent can take")
+    @Option(name: .long, help: "Maximum model turns before failing (1-100, default 100)")
     var maxSteps: Int?
 
     @Option(name: .long, help: "Queue mode for queued prompts: one-at-a-time (default) or all")
@@ -214,7 +214,15 @@ extension AgentCommand {
     mutating func runInternal(runtime: CommandRuntime) async throws {
         if self.isAgentDisabled() {
             self.emitAgentUnavailableMessage()
-            return
+            throw ExitCode.failure
+        }
+
+        let maxSteps: Int
+        do {
+            maxSteps = try self.validatedMaxStepCount()
+        } catch {
+            self.printAgentExecutionError(error.localizedDescription)
+            throw ExitCode.failure
         }
 
         let services = runtime.services
@@ -241,6 +249,7 @@ extension AgentCommand {
                 configuration: services.configuration,
                 existingAgentModel: existingAgentModel
             )
+        let usesPersistedSessionModel = self.shouldUsePersistedSessionModel(requestedModel: requestedModel)
         if self.listSessions {
             let listingModel = selectedModel ?? existingAgentModel ?? .anthropic(.opus48)
             let agentService: any AgentServiceProtocol = if let existing = existingAgent {
@@ -256,22 +265,32 @@ extension AgentCommand {
             return
         }
 
-        guard let selectedModel else {
+        if selectedModel == nil, !usesPersistedSessionModel {
+            if let capabilityError = self.unavailableImplicitCustomModelToolCapabilityError(
+                from: configuredAIService,
+                configuration: services.configuration
+            ) {
+                self.printAgentExecutionError(capabilityError.localizedDescription)
+                throw ExitCode.failure
+            }
             self.emitAgentUnavailableMessage()
-            return
+            throw ExitCode.failure
         }
 
-        guard self.hasCredentials(for: selectedModel) || self.isLocalModel(selectedModel) else {
+        let serviceDefaultModel = selectedModel ?? existingAgentModel ?? .anthropic(.opus48)
+        if !usesPersistedSessionModel,
+           !self.hasCredentials(for: serviceDefaultModel),
+           !self.isLocalModel(serviceDefaultModel) {
             if requestedModel != nil {
-                let providerName = self.providerDisplayName(for: selectedModel)
-                let envVar = self.providerEnvironmentVariable(for: selectedModel)
+                let providerName = self.providerDisplayName(for: serviceDefaultModel)
+                let envVar = self.providerEnvironmentVariable(for: serviceDefaultModel)
                 self.printAgentExecutionError(
                     "Missing API key for \(providerName). Set \(envVar) and retry."
                 )
             } else {
                 self.emitAgentUnavailableMessage()
             }
-            return
+            throw ExitCode.failure
         }
 
         let agentService: any AgentServiceProtocol = if let existing = existingAgent {
@@ -279,7 +298,7 @@ extension AgentCommand {
         } else {
             try PeekabooAgentService(
                 services: services,
-                defaultModel: selectedModel,
+                defaultModel: serviceDefaultModel,
                 snapshotMutationCoordinator: mutationCoordinator
             )
         }
@@ -296,8 +315,10 @@ extension AgentCommand {
             throw PeekabooError.commandFailed("Agent service not properly initialized")
         }
 
-        guard self.ensureAgentHasCredentials(selectedModel: selectedModel) else {
-            return
+        if !usesPersistedSessionModel {
+            guard self.ensureAgentHasCredentials(selectedModel: serviceDefaultModel) else {
+                throw ExitCode.failure
+            }
         }
 
         let chatPolicy = AgentChatLaunchPolicy()
@@ -306,7 +327,8 @@ extension AgentCommand {
             hasTaskInput: self.hasTaskInput,
             listSessions: self.listSessions,
             normalizedTaskInput: self.normalizedTaskInput,
-            capabilities: terminalCapabilities
+            capabilities: terminalCapabilities,
+            hasSessionResumption: self.resume || self.resumeSession != nil
         )
 
         let queueMode: QueueMode
@@ -337,7 +359,7 @@ extension AgentCommand {
         if try await self.handleSessionResumption(
             peekabooAgent,
             requestedModel: requestedModel,
-            maxSteps: self.maxSteps ?? 100,
+            maxSteps: maxSteps,
             queueMode: queueMode
         ) {
             return
@@ -351,7 +373,7 @@ extension AgentCommand {
             peekabooAgent,
             task: executionTask,
             requestedModel: requestedModel,
-            maxSteps: self.maxSteps ?? 100,
+            maxSteps: maxSteps,
             queueMode: queueMode
         )
     }

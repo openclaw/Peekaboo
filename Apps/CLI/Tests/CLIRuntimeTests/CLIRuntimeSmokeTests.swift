@@ -388,14 +388,14 @@ struct CLIRuntimeSmokeTests {
     }
 
     @Test
-    func `peekaboo agent warns when no provider credentials exist`() async throws {
+    func `peekaboo agent fails when no provider credentials exist`() async throws {
         guard Self.ensureLocalRuntimeAvailable() else { return }
         let result = try await TestChildProcess.runPeekaboo([
             "agent",
             "list files",
             "--dry-run"
         ], environment: ["PEEKABOO_DISABLE_AGENT": "1", "PEEKABOO_NO_REMOTE": "1"])
-        #expect(result.status == .exited(0))
+        #expect(result.status == .exited(1))
         #expect(result.standardOutput.contains("Agent service not available"))
     }
 

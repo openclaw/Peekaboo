@@ -17,6 +17,23 @@ struct AgentChatLaunchContext {
     let listSessions: Bool
     let normalizedTaskInput: String?
     let capabilities: TerminalCapabilities
+    let hasSessionResumption: Bool
+
+    init(
+        chatFlag: Bool,
+        hasTaskInput: Bool,
+        listSessions: Bool,
+        normalizedTaskInput: String?,
+        capabilities: TerminalCapabilities,
+        hasSessionResumption: Bool = false
+    ) {
+        self.chatFlag = chatFlag
+        self.hasTaskInput = hasTaskInput
+        self.listSessions = listSessions
+        self.normalizedTaskInput = normalizedTaskInput
+        self.capabilities = capabilities
+        self.hasSessionResumption = hasSessionResumption
+    }
 }
 
 /// Determines how the agent should launch chat mode based on flags and terminal context.
@@ -27,7 +44,7 @@ struct AgentChatLaunchPolicy {
             return .interactive(initialPrompt: context.normalizedTaskInput)
         }
 
-        if context.hasTaskInput || context.listSessions {
+        if context.hasTaskInput || context.listSessions || context.hasSessionResumption {
             return .none
         }
 

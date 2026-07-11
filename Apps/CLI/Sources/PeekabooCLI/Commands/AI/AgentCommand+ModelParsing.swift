@@ -5,6 +5,10 @@ import Tachikoma
 
 @available(macOS 14.0, *)
 extension AgentCommand {
+    func shouldUsePersistedSessionModel(requestedModel: LanguageModel?) -> Bool {
+        (self.resume || self.resumeSession != nil) && requestedModel == nil
+    }
+
     @MainActor
     func parseModelString(
         _ modelString: String,
@@ -124,6 +128,15 @@ extension AgentCommand {
     @MainActor
     func validatedModelSelection(configuration: PeekabooCore.ConfigurationManager? = nil) throws -> LanguageModel? {
         guard let modelString = self.model else { return nil }
+
+        if let configuration,
+           let configuredModel = PeekabooAIService(configuration: configuration)
+               .resolveConfiguredModel(modelString),
+               case .custom = configuredModel,
+               !configuredModel.supportsTools {
+            throw Self.configuredCustomModelToolCapabilityError(modelString)
+        }
+
         guard let parsed = self.parseModelString(modelString, configuration: configuration) else {
             // A model that parses but lacks tool support is a real, installed model —
             // saying "unsupported" and listing an allowlist implies the name is wrong.
@@ -139,6 +152,46 @@ extension AgentCommand {
             )
         }
         return parsed
+    }
+
+    @MainActor
+    func unavailableImplicitCustomModelToolCapabilityError(
+        from service: PeekabooAIService,
+        configuration: PeekabooCore.ConfigurationManager
+    ) -> PeekabooError? {
+        let selections: [String]
+        if configuration.hasExplicitAIProviderList() {
+            selections = configuration.getAIProviders()
+                .split(separator: ",")
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+        } else if let defaultModel = configuration.getAgentModel()?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+            !defaultModel.isEmpty {
+            selections = [defaultModel]
+        } else {
+            return nil
+        }
+
+        for selection in selections {
+            guard let model = service.resolveConfiguredModel(selection),
+                  case .custom = model,
+                  !model.supportsTools
+            else {
+                continue
+            }
+            return Self.configuredCustomModelToolCapabilityError(selection)
+        }
+
+        return nil
+    }
+
+    private static func configuredCustomModelToolCapabilityError(_ modelString: String) -> PeekabooError {
+        PeekabooError.invalidInput(
+            "Model '\(modelString)' is configured with supportsTools: false, but `peekaboo agent` " +
+                "requires tool calling. Choose a tool-capable model, or set this model's supportsTools " +
+                "setting to true only if the endpoint actually supports tool calls."
+        )
     }
 
     private static let supportedOpenAIInputs: Set<LanguageModel.OpenAI> = [

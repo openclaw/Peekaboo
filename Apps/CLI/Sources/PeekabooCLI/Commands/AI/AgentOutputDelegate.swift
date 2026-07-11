@@ -29,6 +29,7 @@ final class AgentOutputDelegate: PeekabooCore.AgentEventDelegate {
     private var hasReceivedContent = false
     private var isThinking = false
     private var hasShownFinalSummary = false
+    private(set) var hasReceivedError = false
     private let startTime = Date()
 
     // MARK: - Initialization
@@ -70,6 +71,7 @@ extension AgentOutputDelegate {
             break
 
         case let .error(message):
+            self.hasReceivedError = true
             self.handleError(message)
 
         case let .completed(summary, usage):

@@ -154,6 +154,12 @@ final class AgentChatUI {
         self.requestRender()
     }
 
+    func updateSessionId(_ sessionId: String) {
+        self.sessionId = sessionId
+        self.sessionLine.text = AgentChatUI.sessionDescription(for: sessionId, queueMode: self.queueMode)
+        self.requestRender()
+    }
+
     func showToolStart(name: String, summary: String?, icon: String?, displayName: String?) {
         let label = displayName ?? name
         let detail = summary.flatMap { $0.isEmpty ? nil : $0 }

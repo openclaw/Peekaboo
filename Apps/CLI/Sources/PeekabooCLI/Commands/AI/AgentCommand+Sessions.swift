@@ -1,3 +1,4 @@
+import Commander
 import Foundation
 import PeekabooAgentRuntime
 import PeekabooCore
@@ -233,8 +234,10 @@ extension AgentCommand {
             )
             self.displayResult(result, delegate: outputDelegate)
         } catch {
-            self.printAgentExecutionError("Failed to resume session: \(error.localizedDescription)")
-            throw error
+            if outputDelegate?.hasReceivedError != true {
+                self.printAgentExecutionError("Failed to resume session: \(error.localizedDescription)")
+            }
+            throw ExitCode.failure
         }
     }
 }

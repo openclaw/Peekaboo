@@ -236,7 +236,13 @@ extension AgentCommand {
             } catch is CancellationError {
                 chatUI.showCancelled()
             } catch {
-                chatUI.showError(error.localizedDescription)
+                if let sessionId = self.stepLimitSessionId(from: error) {
+                    activeSessionId = sessionId
+                    chatUI.updateSessionId(sessionId)
+                }
+                if !tuiDelegate.hasReceivedError {
+                    chatUI.showError(error.localizedDescription)
+                }
             }
 
             currentRun = nil
@@ -359,7 +365,8 @@ extension AgentCommand {
                     task: batchedInput,
                     requestedModel: requestedModel,
                     maxSteps: self.resolvedMaxSteps,
-                    queueMode: queueMode
+                    queueMode: queueMode,
+                    preserveStepLimitError: true
                 )
             }
         }
@@ -381,6 +388,13 @@ extension AgentCommand {
         } catch is CancellationError {
             cancelMonitor.stop()
             return
+        } catch {
+            cancelMonitor.stop()
+            if let sessionId = self.stepLimitSessionId(from: error) {
+                context.sessionId = sessionId
+                return
+            }
+            throw error
         }
 
         if let updatedSessionId = result.sessionId {
@@ -388,6 +402,10 @@ extension AgentCommand {
         }
 
         self.printChatTurnSummary(result)
+    }
+
+    func stepLimitSessionId(from error: any Error) -> String? {
+        (error as? PeekabooAgentService.AgentStepLimitExceededError)?.sessionId
     }
 
     private func printChatTurnSummary(_ result: AgentExecutionResult) {

@@ -295,29 +295,33 @@ extension ConfigCommand {
                 throw ExitCode.failure
             }
 
-            let manager = self.configManager
-            let providerId = self.providerId
-            let modelResult: Result<(models: [String], error: String?), TimeoutError> = await withTimeout(
-                ConfigCommandTimeouts.network
-            ) {
-                await manager.discoverModelsForCustomProvider(id: providerId)
-            }
-
             let models: [String]
             let apiError: String?
 
-            switch modelResult {
-            case .failure:
-                models = []
-                apiError = "Model discovery timed out"
-            case let .success(tuple):
-                if self.discover && provider.type == .openai {
+            if self.discover && provider.type == .openai {
+                let manager = self.configManager
+                let providerId = self.providerId
+                let modelResult: Result<(models: [String], error: String?), TimeoutError> = await withTimeout(
+                    ConfigCommandTimeouts.network
+                ) {
+                    await manager.discoverModelsForCustomProvider(id: providerId)
+                }
+                switch modelResult {
+                case .failure:
+                    models = []
+                    apiError = "Model discovery timed out"
+                case let .success(tuple):
                     models = tuple.models
                     apiError = tuple.error
-                } else {
-                    models = provider.models?.keys.map { String($0) } ?? []
-                    apiError = tuple.error
                 }
+            } else {
+                models = provider.models?.keys.map { String($0) } ?? []
+                apiError = nil
+            }
+
+            let saved = self.save && apiError == nil
+            if saved {
+                try self.saveModels(models, for: self.providerId, existing: provider)
             }
 
             if self.jsonOutput {
@@ -325,10 +329,14 @@ extension ConfigCommand {
                     "providerId": providerId,
                     "models": models,
                     "source": discover && provider.type == .openai ? "api" : "configuration",
-                    "error": apiError as Any
+                    "error": apiError as Any,
+                    "saved": saved
                 ]
                 let output = SuccessOutput(success: apiError == nil, data: data)
                 outputJSON(output, logger: self.logger)
+                if apiError != nil {
+                    throw ExitCode.failure
+                }
                 return
             }
 
@@ -359,8 +367,11 @@ extension ConfigCommand {
                 }
             }
 
-            if self.save, apiError == nil {
-                try self.saveModels(models, for: providerId, existing: provider)
+            if saved {
+                print("[ok] Saved \(models.count) model(s) to configuration")
+            }
+            if apiError != nil {
+                throw ExitCode.failure
             }
         }
 
@@ -384,7 +395,9 @@ extension ConfigCommand {
             existing provider: Configuration.CustomProvider
         ) throws {
             let modelDefinitions = Dictionary(
-                uniqueKeysWithValues: models.map { ($0, Configuration.ModelDefinition(name: $0)) }
+                uniqueKeysWithValues: models.map { modelID in
+                    (modelID, provider.models?[modelID] ?? Configuration.ModelDefinition(name: modelID))
+                }
             )
             let updated = Configuration.CustomProvider(
                 name: provider.name,
@@ -395,7 +408,6 @@ extension ConfigCommand {
                 enabled: provider.enabled
             )
             try self.configManager.addCustomProvider(updated, id: providerId)
-            print("[ok] Saved \(models.count) model(s) to configuration")
         }
     }
 }

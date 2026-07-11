@@ -5,6 +5,7 @@ import PeekabooAgentRuntime
 final class AgentChatEventDelegate: AgentEventDelegate {
     private weak var ui: AgentChatUI?
     private var lastToolArguments: [String: [String: Any]] = [:]
+    private(set) var hasReceivedError = false
 
     init(ui: AgentChatUI) {
         self.ui = ui
@@ -28,6 +29,7 @@ final class AgentChatEventDelegate: AgentEventDelegate {
         case .verificationCompleted, .desktopContextRefreshed:
             break
         case let .error(message):
+            self.hasReceivedError = true
             ui.showError(message)
         case .completed:
             ui.finishStreaming()

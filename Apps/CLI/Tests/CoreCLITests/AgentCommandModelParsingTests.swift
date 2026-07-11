@@ -9,6 +9,32 @@ import Testing
 @MainActor
 struct AgentCommandTests {
     @Test
+    func `Resume without model uses persisted session selection`() throws {
+        let latest = try AgentCommand.parse(["continue", "--resume"])
+        let specific = try AgentCommand.parse([
+            "continue",
+            "--resume-session",
+            "session-id",
+        ])
+
+        #expect(latest.shouldUsePersistedSessionModel(requestedModel: nil))
+        #expect(specific.shouldUsePersistedSessionModel(requestedModel: nil))
+    }
+
+    @Test
+    func `Explicit resume model still requires override preflight`() throws {
+        let command = try AgentCommand.parse([
+            "continue",
+            "--resume-session",
+            "session-id",
+            "--model",
+            "ollama/qwen3.5:9b",
+        ])
+
+        #expect(!command.shouldUsePersistedSessionModel(requestedModel: .ollama(.custom("qwen3.5:9b"))))
+    }
+
+    @Test
     func `Supported OpenAI aliases map to GPT-5.5`() throws {
         let command = try AgentCommand.parse([])
 
@@ -107,6 +133,52 @@ struct AgentCommandTests {
             Issue.record("expected a validation error for an unknown model")
         } catch let error as PeekabooError {
             #expect(error.localizedDescription.contains("Allowed values"))
+        }
+    }
+
+    @Test
+    @MainActor
+    func `Configured custom model with tools disabled gives safe agent guidance`() throws {
+        try self.withIsolatedConfiguration(
+            """
+            {
+              "customProviders": {
+                "local-proxy": {
+                  "name": "Local Proxy",
+                  "type": "openai",
+                  "enabled": true,
+                  "options": {
+                    "baseURL": "http://localhost:8317/v1",
+                    "apiKey": "test-key"
+                  },
+                  "models": {
+                    "text-only": {
+                      "name": "Text Only",
+                      "supportsVision": false,
+                      "supportsTools": false
+                    }
+                  }
+                }
+              }
+            }
+            """,
+            environment: ["PEEKABOO_CUSTOM_PROVIDER_KEY": "resolved-secret"]
+        ) {
+            var command = try AgentCommand.parse([])
+            command.model = "local-proxy/text-only"
+
+            do {
+                _ = try command.validatedModelSelection(
+                    configuration: PeekabooCore.ConfigurationManager.shared
+                )
+                Issue.record("expected a validation error for a configured tool-incapable model")
+            } catch let error as PeekabooError {
+                let message = error.localizedDescription
+                #expect(message.contains("configured with supportsTools: false"))
+                #expect(message.contains("requires tool calling"))
+                #expect(!message.contains("Allowed values"))
+                #expect(!message.contains("--analyze"))
+            }
         }
     }
 
@@ -303,6 +375,105 @@ struct AgentCommandTests {
 
             #expect(model.modelId == "local-proxy/mini")
             #expect(model.supportsTools)
+        }
+    }
+
+    @Test
+    func `Implicit custom default with tools disabled gives safe agent guidance`() throws {
+        try self.withIsolatedConfiguration(
+            """
+            {
+              "agent": {
+                "defaultModel": "local-proxy/text-only"
+              },
+              "customProviders": {
+                "local-proxy": {
+                  "name": "Local Proxy",
+                  "type": "openai",
+                  "enabled": true,
+                  "options": {
+                    "baseURL": "http://localhost:8317/v1",
+                    "apiKey": "test-key"
+                  },
+                  "models": {
+                    "text-only": {
+                      "name": "Text Only",
+                      "supportsTools": false,
+                      "supportsVision": false
+                    }
+                  }
+                }
+              }
+            }
+            """,
+            environment: ["PEEKABOO_CUSTOM_PROVIDER_KEY": "resolved-secret"]
+        ) {
+            let command = try AgentCommand.parse([])
+            let configuration = PeekabooCore.ConfigurationManager.shared
+            let service = PeekabooAIService(configuration: configuration)
+
+            #expect(command
+                .implicitToolModel(from: service, configuration: configuration, existingAgentModel: nil) == nil)
+            let error = try #require(command.unavailableImplicitCustomModelToolCapabilityError(
+                from: service,
+                configuration: configuration
+            ))
+            let message = error.localizedDescription
+            #expect(message.contains("local-proxy/text-only"))
+            #expect(message.contains("configured with supportsTools: false"))
+            #expect(message.contains("requires tool calling"))
+            #expect(!message.contains("Allowed values"))
+            #expect(!message.contains("--analyze"))
+        }
+    }
+
+    @Test
+    func `Explicit custom provider list with tools disabled gives safe agent guidance`() throws {
+        try self.withIsolatedConfiguration(
+            """
+            {
+              "aiProviders": {
+                "providers": "local-proxy/text-only"
+              },
+              "customProviders": {
+                "local-proxy": {
+                  "name": "Local Proxy",
+                  "type": "openai",
+                  "enabled": true,
+                  "options": {
+                    "baseURL": "http://localhost:8317/v1",
+                    "apiKey": "test-key"
+                  },
+                  "models": {
+                    "text-only": {
+                      "name": "Text Only",
+                      "supportsTools": false,
+                      "supportsVision": false
+                    }
+                  }
+                }
+              }
+            }
+            """,
+            environment: ["PEEKABOO_CUSTOM_PROVIDER_KEY": "resolved-secret"]
+        ) {
+            let command = try AgentCommand.parse([])
+            let configuration = PeekabooCore.ConfigurationManager.shared
+            let service = PeekabooAIService(configuration: configuration)
+
+            #expect(configuration.hasExplicitAIProviderList())
+            #expect(command
+                .implicitToolModel(from: service, configuration: configuration, existingAgentModel: nil) == nil)
+            let error = try #require(command.unavailableImplicitCustomModelToolCapabilityError(
+                from: service,
+                configuration: configuration
+            ))
+            let message = error.localizedDescription
+            #expect(message.contains("local-proxy/text-only"))
+            #expect(message.contains("configured with supportsTools: false"))
+            #expect(message.contains("requires tool calling"))
+            #expect(!message.contains("Allowed values"))
+            #expect(!message.contains("--analyze"))
         }
     }
 

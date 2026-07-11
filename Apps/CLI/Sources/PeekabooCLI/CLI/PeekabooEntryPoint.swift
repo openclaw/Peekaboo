@@ -42,7 +42,8 @@ func executePeekabooCLI(arguments: [String]) async -> Int32 {
 }
 
 private func containsJSONOutputFlag(_ arguments: [String]) -> Bool {
-    arguments.contains("--json") || arguments.contains("-j") || arguments.contains("--json-output")
+    arguments.contains("--json") || arguments.contains("-j") || arguments.contains("--json-output") ||
+        arguments.contains("--jsonOutput")
 }
 
 private func commanderErrorMessage(_ error: CommanderProgramError) -> String {
