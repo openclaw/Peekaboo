@@ -4,6 +4,7 @@ import Testing
 @testable import PeekabooAutomation
 
 @Suite(.serialized)
+// swiftlint:disable:next type_body_length
 struct PeekabooAIServiceProviderTests {
     @Test
     @MainActor
@@ -876,6 +877,8 @@ struct PeekabooAIServiceProviderTests {
             "GOOGLE_API_KEY",
             "MINIMAX_API_KEY",
             "MINIMAX_CN_API_KEY",
+            "MOONSHOT_API_KEY",
+            "KIMI_API_KEY",
             "OPENROUTER_API_KEY",
             "X_AI_API_KEY",
             "XAI_API_KEY",
@@ -943,6 +946,8 @@ struct PeekabooAIServiceProviderTests {
             "GOOGLE_API_KEY",
             "MINIMAX_API_KEY",
             "MINIMAX_CN_API_KEY",
+            "MOONSHOT_API_KEY",
+            "KIMI_API_KEY",
             "OPENROUTER_API_KEY",
             "X_AI_API_KEY",
             "XAI_API_KEY",
@@ -991,6 +996,7 @@ struct PeekabooAIServiceProviderTests {
         TachikomaConfiguration.current.removeAPIKey(for: .google)
         TachikomaConfiguration.current.removeAPIKey(for: .minimax)
         TachikomaConfiguration.current.removeAPIKey(for: .minimaxCN)
+        TachikomaConfiguration.current.removeAPIKey(for: .kimi)
         TachikomaConfiguration.current.removeAPIKey(for: .grok)
         TachikomaConfiguration.current.removeAPIKey(for: .custom("openrouter"))
         TachikomaConfiguration.current.removeBaseURL(for: .ollama)

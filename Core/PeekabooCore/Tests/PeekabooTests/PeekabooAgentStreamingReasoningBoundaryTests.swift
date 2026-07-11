@@ -8,7 +8,7 @@ import Testing
 struct PeekabooAgentStreamingReasoningBoundaryTests {
     @Test
     @MainActor
-    func `Streaming native reasoning only response records assistant boundary`() async throws {
+    func `Streaming reasoning only terminal response is rejected`() async throws {
         let provider = StreamingReasoningOnlyProvider()
         let configuration = TachikomaConfiguration(loadFromEnvironment: false)
         configuration.setProviderFactoryOverride { _, _ in provider }
@@ -23,16 +23,21 @@ struct PeekabooAgentStreamingReasoningBoundaryTests {
             services: PeekabooServices(),
             defaultModel: .anthropic(.opus47))
 
-        let result = try await agentService.executeTaskStreaming(
-            "think only",
-            model: .anthropic(.opus47)) { _ in }
+        let loopConfiguration = PeekabooAgentService.StreamingLoopConfiguration(
+            model: .anthropic(.opus47),
+            provider: provider,
+            tools: [],
+            sessionId: "reasoning-only-stream-test",
+            eventHandler: nil,
+            enhancementOptions: nil)
+        let thrownError = await #expect(throws: TachikomaError.self) {
+            _ = try await agentService.runStreamingLoop(
+                configuration: loopConfiguration,
+                maxSteps: 1,
+                initialMessages: [.user("think only")])
+        }
 
-        let thinkingIndex = try #require(result.messages.firstIndex { $0.channel == .thinking })
-        let boundaryMessage = try #require(result.messages.dropFirst(thinkingIndex + 1).first)
-
-        #expect(boundaryMessage.role == .assistant)
-        #expect(boundaryMessage.content == [.text("")])
-        #expect(boundaryMessage.metadata?.customData?["tachikoma.internal.boundary"] == "reasoning_only")
+        #expect(thrownError?.localizedDescription.contains("empty terminal response") == true)
     }
 
     @Test

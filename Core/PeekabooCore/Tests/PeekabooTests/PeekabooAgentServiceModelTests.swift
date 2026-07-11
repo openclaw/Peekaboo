@@ -1,4 +1,5 @@
 import Foundation
+import PeekabooFoundation
 import Tachikoma
 import Testing
 @testable import PeekabooAgentRuntime
@@ -212,12 +213,14 @@ extension PeekabooAgentServiceTests {
             services: PeekabooServices(),
             defaultModel: .anthropic(.fable5))
 
-        _ = try await agentService.executeTask(
-            "Use a tool once.",
-            maxSteps: 1,
-            model: .anthropic(.fable5),
-            eventDelegate: delegate,
-            enhancementOptions: nil)
+        await #expect(throws: PeekabooAgentService.AgentStepLimitExceededError.self) {
+            _ = try await agentService.executeTask(
+                "Use a tool once.",
+                maxSteps: 1,
+                model: .anthropic(.fable5),
+                eventDelegate: delegate,
+                enhancementOptions: nil)
+        }
 
         let startIndex = try #require(delegate.events.firstIndexOfToolStart("missing_test_tool"))
         let completionIndex = try #require(delegate.events.firstIndexOfToolCompletion("missing_test_tool"))
@@ -539,7 +542,7 @@ extension PeekabooAgentServiceTests {
 
     @Test
     @MainActor
-    func `Nonstreaming native reasoning only response records assistant boundary`() async throws {
+    func `Nonstreaming reasoning only terminal response is rejected`() async throws {
         let provider = NativeReasoningOnlyProvider()
         let configuration = TachikomaConfiguration(loadFromEnvironment: false)
         configuration.setProviderFactoryOverride { _, _ in provider }
@@ -554,18 +557,21 @@ extension PeekabooAgentServiceTests {
             services: PeekabooServices(),
             defaultModel: .anthropic(.fable5))
 
-        let result = try await agentService.executeTask(
-            "think only",
-            maxSteps: 1,
+        let loopConfiguration = PeekabooAgentService.StreamingLoopConfiguration(
             model: .anthropic(.fable5),
+            provider: provider,
+            tools: [],
+            sessionId: "reasoning-only-test",
+            eventHandler: nil,
             enhancementOptions: nil)
+        let thrownError = await #expect(throws: TachikomaError.self) {
+            _ = try await agentService.runGenerationLoop(
+                configuration: loopConfiguration,
+                maxSteps: 1,
+                initialMessages: [.user("think only")])
+        }
 
-        let thinkingIndex = try #require(result.messages.firstIndex { $0.channel == .thinking })
-        let boundaryMessage = try #require(result.messages.dropFirst(thinkingIndex + 1).first)
-
-        #expect(boundaryMessage.role == .assistant)
-        #expect(boundaryMessage.content == [.text("")])
-        #expect(boundaryMessage.metadata?.customData?["tachikoma.internal.boundary"] == "reasoning_only")
+        #expect(thrownError?.localizedDescription.contains("empty terminal response") == true)
     }
 
     @Test
@@ -1873,6 +1879,103 @@ extension PeekabooAgentServiceTests {
         #expect(agentService.defaultModel == customModel.description)
     }
 
+    @Test
+    @MainActor
+    func `Resume rejects stored custom model without tool support`() throws {
+        try self.withIsolatedAgentEnvironment(
+            ["PEEKABOO_CUSTOM_PROVIDER_KEY": "resolved-secret"],
+            configurationJSON: """
+            {
+              "customProviders": {
+                "text-proxy": {
+                  "name": "Text Proxy",
+                  "type": "openai",
+                  "enabled": true,
+                  "options": {
+                    "baseURL": "http://localhost:8317/v1",
+                    "apiKey": "test-key"
+                  },
+                  "models": {
+                    "text-only": {
+                      "name": "Text only",
+                      "supportsTools": false
+                    }
+                  }
+                }
+              }
+            }
+            """) {
+                let service = try PeekabooAgentService(
+                    services: self.makeServices(),
+                    defaultModel: .openai(.gpt55))
+                let now = Date()
+                let session = AgentSession(
+                    id: "resume-text-only-\(UUID().uuidString)",
+                    modelName: "Custom/text-proxy/text-only",
+                    modelSelection: "text-proxy/text-only",
+                    messages: [.system("Test system prompt"), .user("Test task")],
+                    metadata: SessionMetadata(),
+                    createdAt: now,
+                    updatedAt: now)
+
+                #expect(throws: PeekabooError.self) {
+                    _ = try service.resolveContinuationModel(explicitModel: nil, session: session)
+                }
+            }
+    }
+
+    @Test
+    @MainActor
+    func `Stored custom provider model round trips without credentials`() throws {
+        try self.withIsolatedAgentEnvironment(
+            ["PEEKABOO_CUSTOM_PROVIDER_KEY": "resolved-secret"],
+            configurationJSON: """
+            {
+              "customProviders": {
+                "local-proxy": {
+                  "name": "Local Proxy",
+                  "type": "openai",
+                  "enabled": true,
+                  "options": {
+                    "baseURL": "http://localhost:8317/v1",
+                    "apiKey": "test-key"
+                  },
+                  "models": {
+                    "mini": {
+                      "name": "Mini",
+                      "supportsTools": true
+                    }
+                  }
+                }
+              }
+            }
+            """) {
+                let service = try PeekabooAgentService(
+                    services: self.makeServices(),
+                    defaultModel: .openai(.gpt55))
+                let configured = try #require(service.resolveConfiguredModel("local-proxy/mini"))
+                let identity = service.persistedModelIdentity(for: configured)
+                let selection = try #require(identity.selection)
+                let now = Date()
+                let session = AgentSession(
+                    id: "resume-custom-\(UUID().uuidString)",
+                    modelName: identity.displayName,
+                    modelSelection: selection,
+                    modelEndpointIdentity: identity.endpointIdentity,
+                    modelProviderIdentity: identity.providerIdentity,
+                    messages: [.system("Test system prompt"), .user("Test task")],
+                    metadata: SessionMetadata(),
+                    createdAt: now,
+                    updatedAt: now)
+
+                let resolved = try service.resolveContinuationModel(explicitModel: nil, session: session)
+
+                #expect(selection == "local-proxy/mini")
+                #expect(!selection.contains("resolved-secret"))
+                #expect(resolved.modelId == configured.modelId)
+            }
+    }
+
     private func withIsolatedAgentEnvironment(
         _ overrides: [String: String],
         configurationJSON: String? = nil,
@@ -1893,6 +1996,8 @@ extension PeekabooAgentServiceTests {
             "PEEKABOO_MISSING_PROVIDER_KEY",
             "MINIMAX_API_KEY",
             "MINIMAX_CN_API_KEY",
+            "MOONSHOT_API_KEY",
+            "KIMI_API_KEY",
             "PEEKABOO_OLLAMA_BASE_URL",
             "OLLAMA_BASE_URL",
         ]
@@ -1936,6 +2041,8 @@ extension PeekabooAgentServiceTests {
         unsetenv("PEEKABOO_MISSING_PROVIDER_KEY")
         unsetenv("MINIMAX_API_KEY")
         unsetenv("MINIMAX_CN_API_KEY")
+        unsetenv("MOONSHOT_API_KEY")
+        unsetenv("KIMI_API_KEY")
         unsetenv("PEEKABOO_OLLAMA_BASE_URL")
         unsetenv("OLLAMA_BASE_URL")
         TachikomaConfiguration.current.removeAPIKey(for: .grok)
@@ -1967,6 +2074,8 @@ extension PeekabooAgentServiceTests {
             "PEEKABOO_MISSING_PROVIDER_KEY",
             "MINIMAX_API_KEY",
             "MINIMAX_CN_API_KEY",
+            "MOONSHOT_API_KEY",
+            "KIMI_API_KEY",
             "PEEKABOO_OLLAMA_BASE_URL",
             "OLLAMA_BASE_URL",
         ]
@@ -2010,6 +2119,8 @@ extension PeekabooAgentServiceTests {
         unsetenv("PEEKABOO_MISSING_PROVIDER_KEY")
         unsetenv("MINIMAX_API_KEY")
         unsetenv("MINIMAX_CN_API_KEY")
+        unsetenv("MOONSHOT_API_KEY")
+        unsetenv("KIMI_API_KEY")
         unsetenv("PEEKABOO_OLLAMA_BASE_URL")
         unsetenv("OLLAMA_BASE_URL")
         for (key, value) in overrides {
@@ -2263,19 +2374,29 @@ struct PeekabooAgentResumeTests {
             createdAt: now,
             updatedAt: now))
 
-        do {
+        let thrownError = await #expect(throws: PeekabooAgentService.AgentStepLimitExceededError.self) {
             _ = try await agentService.resumeSession(
                 sessionId: sessionId,
                 model: .openai(.gpt55),
                 maxSteps: 1,
                 enhancementOptions: nil)
-            try await agentService.deleteSession(id: sessionId)
-        } catch {
-            try? await agentService.deleteSession(id: sessionId)
-            throw error
         }
+        let error = try #require(thrownError)
 
         #expect(provider.requestCount == 1)
+        #expect(error.sessionId == sessionId)
+        let loadedSession = try await agentService.getSessionInfo(sessionId: sessionId)
+        #expect(loadedSession?.metadata.customData["status"] == "max_steps_exhausted")
+        #expect(loadedSession?.messages.contains { message in
+            message.content.contains { part in
+                if case .toolResult = part {
+                    true
+                } else {
+                    false
+                }
+            }
+        } == true)
+        try await agentService.deleteSession(id: sessionId)
     }
 }
 

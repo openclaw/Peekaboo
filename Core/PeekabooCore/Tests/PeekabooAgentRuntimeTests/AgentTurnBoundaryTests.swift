@@ -44,12 +44,26 @@ struct AgentTurnBoundaryTests {
     }
 
     @Test
-    func `non UI tools do not stop after perceive`() {
+    func `completion tools stop after successful execution`() {
+        let boundary = AgentTurnBoundary()
+
+        #expect(boundary.record(
+            toolName: "done",
+            arguments: ["message": AnyAgentToolValue(string: "Finished export")]) ==
+            .stopAfterSuccessfulTool(reason: "Finished export"))
+        #expect(boundary.record(
+            toolName: "need-info",
+            arguments: ["question": AnyAgentToolValue(string: "Which account?")]) ==
+            .stopAfterSuccessfulTool(reason: "Need more information: Which account?"))
+    }
+
+    @Test
+    func `non UI and invalid completion tools do not stop after perceive`() {
         let boundary = AgentTurnBoundary()
 
         #expect(boundary.record(toolName: "watch") == .continueTurn)
         #expect(boundary.record(toolName: "sleep") == .continueTurn)
-        #expect(boundary.record(toolName: "done") == .continueTurn)
+        #expect(boundary.record(toolName: "need_info", arguments: [:]) == .continueTurn)
     }
 
     @Test

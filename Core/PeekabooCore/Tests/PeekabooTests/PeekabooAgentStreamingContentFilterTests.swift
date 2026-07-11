@@ -130,16 +130,19 @@ struct PeekabooAgentStreamingContentFilterTests {
             services: PeekabooServices(),
             defaultModel: .openai(.gpt55))
 
-        let response = try await agentService.executeTask(
-            "trigger nil finish stream",
-            maxSteps: 1,
-            model: .openai(.gpt55),
-            eventDelegate: delegate,
-            enhancementOptions: nil)
+        let thrownError = await #expect(throws: PeekabooAgentService.AgentStepLimitExceededError.self) {
+            _ = try await agentService.executeTask(
+                "trigger nil finish stream",
+                maxSteps: 1,
+                model: .openai(.gpt55),
+                eventDelegate: delegate,
+                enhancementOptions: nil)
+        }
+        let error = try #require(thrownError)
 
-        #expect(response.content == "assistant text")
         #expect(delegate.events.containsAssistantMessage("assistant text"))
         #expect(delegate.events.firstToolStart(named: "terminal_test_tool") != nil)
+        try await agentService.deleteSession(id: error.sessionId)
     }
 }
 
