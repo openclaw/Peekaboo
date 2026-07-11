@@ -476,7 +476,8 @@ extension PeekabooAgentService {
                 messages: state.messages.sanitizedForProviderContext(
                     model: configuration.model,
                     configuration: resolvedConfiguration,
-                    peekabooConfiguration: self.services.configuration),
+                    peekabooConfiguration: self.services.configuration,
+                    provider: provider),
                 tools: configuration.tools.isEmpty ? nil : configuration.tools,
                 settings: self.generationSettings(for: configuration.model))
             let response = try await provider.generateText(request: request)
@@ -506,6 +507,7 @@ extension PeekabooAgentService {
                 model: configuration.model,
                 configuration: resolvedConfiguration,
                 peekabooConfiguration: self.services.configuration,
+                provider: provider,
                 to: &state.messages)
 
             if toolCalls.isEmpty {

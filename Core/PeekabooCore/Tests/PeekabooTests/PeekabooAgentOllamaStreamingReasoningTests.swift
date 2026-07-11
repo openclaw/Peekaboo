@@ -6,6 +6,43 @@ import Testing
 
 @Suite(.serialized)
 struct PeekabooAgentOllamaStreamingReasoningTests {
+    @Test(arguments: [false, true])
+    @MainActor
+    func `Ollama thinking replay follows the provider authentication boundary`(_ authenticated: Bool) throws {
+        let configuration = TachikomaConfiguration(loadFromEnvironment: false)
+        configuration.setBaseURL("http://127.0.0.1:11434", for: .ollama)
+        if authenticated {
+            configuration.setAPIKey("test-key", for: .ollama)
+        }
+
+        let model = LanguageModel.ollama(.custom("qwen3:8b"))
+        let provider = try OllamaProvider(model: .custom("qwen3:8b"), configuration: configuration)
+        let agentService = try PeekabooAgentService(services: PeekabooServices(), defaultModel: model)
+        var messages: [ModelMessage] = []
+
+        agentService.appendReasoningBlock(
+            ProviderReasoningBlock(text: "private thinking", type: "ollama_thinking"),
+            model: model,
+            configuration: configuration,
+            provider: provider,
+            to: &messages)
+
+        let customData = try #require(messages.first?.metadata?.customData)
+        let sanitized = messages.sanitizedForProviderContext(
+            model: model,
+            configuration: configuration,
+            provider: provider)
+        if authenticated {
+            #expect(provider.reasoningReplayIdentity == nil)
+            #expect(customData["ollama.thinking"] == nil)
+            #expect(sanitized.isEmpty)
+        } else {
+            #expect(customData["ollama.thinking"] == "private thinking")
+            #expect(customData["tachikoma.reasoning.base_url"] == provider.reasoningReplayIdentity)
+            #expect(sanitized.count == 1)
+        }
+    }
+
     @Test
     @MainActor
     func `Streaming Ollama thinking is not replayed to an injected provider`() async throws {

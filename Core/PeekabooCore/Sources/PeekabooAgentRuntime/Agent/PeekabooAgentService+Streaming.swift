@@ -251,7 +251,8 @@ extension PeekabooAgentService {
             let shouldReplayReasoning = ReasoningReplayTarget(
                 model: configuration.model,
                 configuration: resolvedConfiguration,
-                peekabooConfiguration: self.services.configuration) != nil
+                peekabooConfiguration: self.services.configuration,
+                provider: configuration.provider) != nil
             if shouldReplayReasoning {
                 for block in output.reasoningBlocks {
                     self.appendReasoningBlock(
@@ -262,6 +263,7 @@ extension PeekabooAgentService {
                         model: configuration.model,
                         configuration: resolvedConfiguration,
                         peekabooConfiguration: self.services.configuration,
+                        provider: configuration.provider,
                         to: &state.messages)
                 }
             }
@@ -442,6 +444,7 @@ extension PeekabooAgentService {
         model: LanguageModel,
         configuration: TachikomaConfiguration,
         peekabooConfiguration: ConfigurationManager? = nil,
+        provider: (any ModelProvider)? = nil,
         to messages: inout [ModelMessage])
     {
         messages.append(ModelMessage(
@@ -452,7 +455,8 @@ extension PeekabooAgentService {
                 for: block,
                 model: model,
                 configuration: configuration,
-                peekabooConfiguration: peekabooConfiguration))))
+                peekabooConfiguration: peekabooConfiguration,
+                provider: provider))))
     }
 
     func appendResponseHistory(
@@ -460,6 +464,7 @@ extension PeekabooAgentService {
         model: LanguageModel,
         configuration: TachikomaConfiguration,
         peekabooConfiguration: ConfigurationManager? = nil,
+        provider: (any ModelProvider)? = nil,
         to messages: inout [ModelMessage])
         -> Bool
     {
@@ -476,7 +481,8 @@ extension PeekabooAgentService {
                     for: block,
                     model: model,
                     configuration: configuration,
-                    peekabooConfiguration: peekabooConfiguration))))
+                    peekabooConfiguration: peekabooConfiguration,
+                    provider: provider))))
         }
 
         let toolCalls = response.toolCalls ?? []
@@ -507,7 +513,8 @@ extension PeekabooAgentService {
         for block: ProviderReasoningBlock,
         model: LanguageModel,
         configuration: TachikomaConfiguration,
-        peekabooConfiguration: ConfigurationManager? = nil)
+        peekabooConfiguration: ConfigurationManager? = nil,
+        provider: (any ModelProvider)? = nil)
         -> [String: String]
     {
         if let rawJSON = block.rawJSON,
@@ -536,7 +543,8 @@ extension PeekabooAgentService {
            let target = ReasoningReplayTarget(
                model: model,
                configuration: configuration,
-               peekabooConfiguration: peekabooConfiguration),
+               peekabooConfiguration: peekabooConfiguration,
+               provider: provider),
            target.provider == "kimi"
         {
             var metadata = [
@@ -555,7 +563,8 @@ extension PeekabooAgentService {
            let target = ReasoningReplayTarget(
                model: model,
                configuration: configuration,
-               peekabooConfiguration: peekabooConfiguration),
+               peekabooConfiguration: peekabooConfiguration,
+               provider: provider),
            target.provider == "ollama"
         {
             var metadata = [
@@ -1076,13 +1085,15 @@ extension [ModelMessage] {
     func sanitizedForProviderContext(
         model: LanguageModel,
         configuration: TachikomaConfiguration,
-        peekabooConfiguration: ConfigurationManager? = nil)
+        peekabooConfiguration: ConfigurationManager? = nil,
+        provider: (any ModelProvider)? = nil)
         -> [ModelMessage]
     {
         let target = ReasoningReplayTarget(
             model: model,
             configuration: configuration,
-            peekabooConfiguration: peekabooConfiguration)
+            peekabooConfiguration: peekabooConfiguration,
+            provider: provider)
         var previousSourceWasRetainedThinking = false
         var sanitizedMessages: [ModelMessage] = []
         sanitizedMessages.reserveCapacity(self.count)
@@ -1176,12 +1187,15 @@ private struct ReasoningReplayTarget {
     let baseURL: String?
     let allowsReasoningBoundaries: Bool
     let allowsLegacyUnknown: Bool
+    private var verifiedEndpointIdentity: String?
 
     init?(
         model: LanguageModel,
         configuration: TachikomaConfiguration,
-        peekabooConfiguration: ConfigurationManager? = nil)
+        peekabooConfiguration: ConfigurationManager? = nil,
+        provider: (any ModelProvider)? = nil)
     {
+        self.verifiedEndpointIdentity = nil
         switch model {
         case let .anthropic(anthropicModel):
             self.provider = "anthropic"
@@ -1220,11 +1234,19 @@ private struct ReasoningReplayTarget {
             self.allowsReasoningBoundaries = true
             self.allowsLegacyUnknown = false
         case let .ollama(model):
+            guard
+                let ollamaProvider = provider as? OllamaProvider,
+                ollamaProvider.modelId == model.modelId,
+                let replayIdentity = ollamaProvider.reasoningReplayIdentity
+            else {
+                return nil
+            }
             self.provider = "ollama"
             self.modelId = model.modelId
-            self.baseURL = (try? configuration.makeProvider(for: .ollama(model)))?.baseURL
+            self.baseURL = ollamaProvider.baseURL
             self.allowsReasoningBoundaries = true
             self.allowsLegacyUnknown = false
+            self.verifiedEndpointIdentity = replayIdentity
         case let .custom(provider):
             if let anthropicProvider = provider as? AnthropicProvider {
                 self.provider = "anthropic"
@@ -1289,6 +1311,6 @@ private struct ReasoningReplayTarget {
     }
 
     var endpointIdentity: String? {
-        PeekabooAgentService.canonicalEndpointIdentity(self.baseURL)
+        self.verifiedEndpointIdentity ?? PeekabooAgentService.canonicalEndpointIdentity(self.baseURL)
     }
 }
