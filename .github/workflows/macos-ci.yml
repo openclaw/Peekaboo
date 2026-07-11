@@ -19,7 +19,7 @@ jobs:
       RUN_AUTOMATION_TESTS: "false"
       RUN_LOCAL_TESTS: "false"
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
           fetch-depth: 1
@@ -74,7 +74,7 @@ jobs:
           echo "key=${CACHE_PREFIX}${HASH}" >> "$GITHUB_OUTPUT"
 
       - name: Cache SwiftPM (PeekabooCore)
-        uses: actions/cache@v5
+        uses: actions/cache@v6.1.0
         with:
           path: |
             ~/.swiftpm
@@ -138,7 +138,7 @@ jobs:
       PEEKABOO_INCLUDE_AUTOMATION_TESTS: "false"
       PEEKABOO_SKIP_AUTOMATION: "1"
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
           fetch-depth: 1
@@ -185,7 +185,7 @@ jobs:
           echo "key=${CACHE_PREFIX}${HASH}" >> "$GITHUB_OUTPUT"
 
       - name: Cache SwiftPM (CLI)
-        uses: actions/cache@v5
+        uses: actions/cache@v6.1.0
         with:
           path: |
             ~/.swiftpm
@@ -255,7 +255,7 @@ jobs:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
           fetch-depth: 1
@@ -307,7 +307,7 @@ jobs:
           echo "key=${CACHE_PREFIX}${HASH}" >> "$GITHUB_OUTPUT"
 
       - name: Cache SwiftPM (Tachikoma)
-        uses: actions/cache@v5
+        uses: actions/cache@v6.1.0
         with:
           path: |
             ~/.swiftpm
@@ -363,7 +363,7 @@ jobs:
     runs-on: macos-15
     needs: [peekaboo-cli, tachikoma]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
           fetch-depth: 1
@@ -423,7 +423,7 @@ jobs:
     runs-on: macos-15
     needs: [peekaboo-cli, tachikoma, mac-apps]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Install SwiftLint
         run: brew install swiftlint
