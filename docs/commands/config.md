@@ -24,7 +24,7 @@ read_when:
 | `list-providers` | Dump built-in + custom providers plus whether they’re enabled. | `--json` follows the same schema that the runtime loads. |
 | `test-provider` | Fires a quick `/models` request (or Anthropic equivalent) against the provider definition to make sure credentials/base URL are valid. | Positional `<provider-id>`. |
 | `remove-provider` | Delete a custom provider entry. | Positional `<provider-id>` plus optional `--force` and `--dry-run`. |
-| `models-provider` | Check the provider endpoint and list configured models, or return discovered OpenAI-compatible models with `--discover`. | Positional `<provider-id>` plus optional `--discover` and `--save`. |
+| `models-provider` | List configured models offline, or query an OpenAI-compatible provider with `--discover`. | Positional `<provider-id>` plus optional `--discover` and `--save`. |
 
 ## Implementation notes
 - The underlying auth/config plumbing lives in the shared Tachikoma library and the `tachikoma config` CLI; Peekaboo sets `TachikomaConfiguration.profileDirectoryName = ".peekaboo"` so both tools read/write the same `~/.peekaboo/credentials` without copying environment variables.
@@ -32,7 +32,8 @@ read_when:
 - `add`/`login`/`set-credential` write through `ConfigurationManager.shared`, so they use macOS file permissions + atomic temp-file renames; partial writes won’t corrupt the store even if the process crashes.
 - Provider readiness in human `init`/`show --effective` output is live-validated with per-provider pings (OpenAI/Codex, Anthropic, Grok/xai, Gemini, OpenRouter). Timeouts default to 30s and are caller overridable. JSON mode skips appended readiness text so stdout remains parseable.
 - Provider management commands share the same validation helpers: IDs must match `^[A-Za-z0-9-_]+$`, and provider types are limited to `.openai` or `.anthropic`. Headers passed via `--headers KEY:VALUE,…` are parsed into a `[String:String]` dictionary before being serialized back to disk.
-- `test-provider` and every `models-provider` invocation contact the actual endpoint (respecting proxy, TLS, and custom headers). Without `--discover`, the model list still comes from configuration, but endpoint errors and timeouts are reported. With `--discover`, an OpenAI-compatible provider returns the remote model list.
+- `test-provider` contacts the actual endpoint (respecting proxy, TLS, and custom headers). `models-provider` reads configured models without a network request unless `--discover` is passed; discovery queries an OpenAI-compatible provider's remote model list and reports endpoint errors or timeouts.
+- `models-provider --save` preserves existing model capabilities and saves newly discovered models with `supportsTools: false`; enable tool calling in `config.json` only after verifying the endpoint supports it.
 - All subcommands are `RuntimeOptionsConfigurable`, so global `--json` or `--verbose` flags work uniformly (handy when you script config changes).
 
 ## Examples

@@ -13,7 +13,8 @@ This document captures the initial design for a dependency-free interactive chat
 
 - `peekaboo agent "<task>"` keeps the existing single-shot behavior.
 - Running `peekaboo agent` **without** a task drops you into chat mode automatically when stdout is an interactive TTY.
-- In non-interactive environments the command just prints the chat help menu and exits so scripted agents know what to send next.
+- In non-interactive environments the command prints the chat help menu and exits, except a taskless
+  `--resume` / `--resume-session`, which consumes piped prompts for the saved session.
 - `--chat` always forces the interactive loop (even when piped) and doubles as the discoverable/explicit switch for documentation and tooling.
   - If you pass a task alongside `--chat`, that text becomes the first turn before the prompt reappears.
 
@@ -57,7 +58,7 @@ loop {
 
 ## Error Handling
 
-- Failed executions (missing credentials, tool errors, etc.) bubble through the current `displayResult` / error printers so behavior matches the one-shot command.
+- Failed executions (missing credentials, tool errors, etc.) bubble through the current `displayResult` / error printers so behavior matches the one-shot command. An automatic taskless piped resume exits nonzero after a failed turn; an explicit interactive `--chat` loop stays alive.
 - If the agent reports a fatal error, the loop stays alive unless the error indicates initialization failure (e.g., no provider configured), in which case we exit immediately.
 
 ## Exit Semantics
@@ -65,7 +66,8 @@ loop {
 - Ctrl+C while idle → exit the loop cleanly.
 - Ctrl+C while running → cancel the active task and return to the prompt (press again to exit entirely if desired).
 - Ctrl+D (EOF) → exit after the current prompt.
-- Non-interactive invocations without `--chat` just print the help text once and exit.
+- Non-interactive invocations without `--chat` print the help text once and exit, except taskless session resumes,
+  which read piped prompts and exit nonzero after a failed turn.
 
 ## Future Enhancements (Out of Scope for Minimal Version)
 

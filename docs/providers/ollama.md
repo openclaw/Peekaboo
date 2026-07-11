@@ -72,8 +72,11 @@ peekaboo config add-provider ollama-openai \
   --api-key "dummy-key"
 
 peekaboo config models-provider ollama-openai --discover --save
-peekaboo agent --model ollama-openai/llama3.1:8b "Open System Settings"
 ```
+
+Newly discovered custom-provider models are saved with `supportsTools: false`. After verifying that the selected
+model supports tool calling, set its model entry's `supportsTools` field to `true` in `~/.peekaboo/config.json`, then
+run `peekaboo agent --model ollama-openai/llama3.1:8b "Open System Settings"`.
 
 The two routes have different wire formats and configuration. Do not give `/v1` to
 `PEEKABOO_OLLAMA_BASE_URL`; that variable configures the native route.
