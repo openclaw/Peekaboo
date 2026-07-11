@@ -37,10 +37,10 @@ struct PeekabooAgentResumeModelContinuityTests {
             modelSelection: "removed-provider/private-model")
 
         let resolved = try service.resolveContinuationModel(
-            explicitModel: .anthropic(.opus48),
+            explicitModel: .lmstudio(.gptOSS120B),
             session: session)
 
-        #expect(resolved == .anthropic(.opus48))
+        #expect(resolved == .lmstudio(.gptOSS120B))
     }
 
     @Test
