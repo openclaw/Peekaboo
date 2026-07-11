@@ -86,12 +86,15 @@ All actions are logged using Apple's OSLog framework with the subsystem `boo.pee
 ## Building and Running
 
 ```bash
-# Build the app
-cd Playground
-swift build
+# From the repository root, build the app with its Xcode project
+xcodebuild -project Apps/Playground/Playground.xcodeproj \
+  -scheme Playground \
+  -configuration Release \
+  -derivedDataPath Apps/Playground/.build \
+  build
 
 # Run the app
-./.build/debug/Playground
+open Apps/Playground/.build/Build/Products/Release/Playground.app
 ```
 
 ## Using with Peekaboo

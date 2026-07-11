@@ -457,12 +457,12 @@ private final class CLIResumableStepLimitProvider: PeekabooCustomProviderIdentit
         }
     }
 
-    private func nextToolCall() -> AgentToolCall {
+    private func nextToolCall() -> Tachikoma.AgentToolCall {
         let requestNumber = self.lock.withLock {
             self.requests += 1
             return self.requests
         }
-        return AgentToolCall(
+        return Tachikoma.AgentToolCall(
             id: "sleep-\(requestNumber)",
             name: "sleep",
             arguments: ["duration": AnyAgentToolValue(double: 1)]

@@ -43,28 +43,30 @@ extension MenuService {
 
         let extras = menuExtrasGroup.children(strict: true) ?? []
         let normalizedTarget = normalizedMenuTitle(title)
-        guard let menuExtra = extras.first(where: { element in
-            let candidates = [
+        func candidates(for element: Element) -> [String?] {
+            [
                 element.title(),
                 element.help(),
                 element.descriptionText(),
                 element.identifier(),
             ]
-            if candidates
-                .contains(where: { titlesMatch(candidate: $0, target: title, normalizedTarget: normalizedTarget) })
-            {
-                return true
-            }
-            if self.partialMatchEnabled,
-               candidates.contains(where: { titlesMatchPartial(
-                   candidate: $0,
-                   target: title,
-                   normalizedTarget: normalizedTarget) })
-            {
-                return true
-            }
-            return false
-        }) else {
+        }
+
+        let menuExtra = extras.first(where: { element in
+            candidates(for: element).contains(where: {
+                titlesMatch(candidate: $0, target: title, normalizedTarget: normalizedTarget)
+            })
+        }) ?? extras.first(where: { element in
+            candidates(for: element).contains(where: { menuExtraTitlesMatch(candidate: $0, target: title) })
+        }) ?? extras.first(where: { element in
+            guard self.partialMatchEnabled else { return false }
+            return candidates(for: element).contains(where: { titlesMatchPartial(
+                candidate: $0,
+                target: title,
+                normalizedTarget: normalizedTarget) })
+        })
+
+        guard let menuExtra else {
             var context = ErrorContext()
             context.add("menuExtra", title)
             context.add("availableExtras", extras.count)
@@ -203,11 +205,13 @@ extension MenuService {
             let items = try await listMenuBarItems(includeRaw: false)
             let normalizedName = normalizedMenuTitle(name)
 
-            if let item = items.first(where: { titlesMatch(
-                candidate: $0.title,
-                target: name,
-                normalizedTarget: normalizedName) })
-            {
+            if let item = items.first(where: {
+                titlesMatch(candidate: $0.title, target: name, normalizedTarget: normalizedName)
+            }) {
+                return try await self.clickMenuBarItem(at: item.index)
+            }
+
+            if let item = items.first(where: { menuExtraTitlesMatch(candidate: $0.title, target: name) }) {
                 return try await self.clickMenuBarItem(at: item.index)
             }
 

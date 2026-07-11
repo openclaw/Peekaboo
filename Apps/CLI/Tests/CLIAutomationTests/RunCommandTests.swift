@@ -208,6 +208,36 @@ struct RunCommandCLIHarnessTests {
     }
 
     @Test
+    func `run command writes output file and emits JSON response`() async throws {
+        let scriptPath = "/tmp/json-output-script.peekaboo.json"
+        let script = PeekabooScript(description: "Write and emit output", steps: [])
+        let process = StubProcessService()
+        process.scriptsByPath[scriptPath] = script
+        process.nextExecuteScriptResults = []
+
+        let outputURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("run-json-results-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: outputURL) }
+
+        let services = self.makeServices(process: process)
+        let result = try await InProcessCommandRunner.run([
+            "run",
+            scriptPath,
+            "--output", outputURL.path,
+            "--json",
+        ], services: services)
+
+        #expect(result.exitStatus == 0)
+        let stdoutData = try #require(result.stdout.data(using: .utf8))
+        let response = try JSONDecoder().decode(CodableJSONResponse<ScriptExecutionResult>.self, from: stdoutData)
+        #expect(response.data.scriptPath == scriptPath)
+
+        let fileData = try Data(contentsOf: outputURL)
+        let filePayload = try JSONDecoder().decode(ScriptExecutionResult.self, from: fileData)
+        #expect(filePayload.scriptPath == scriptPath)
+    }
+
+    @Test
     func `run command expands home directory script and output paths`() async throws {
         let scriptRelativePath = "Library/Caches/peekaboo-script-\(UUID().uuidString).peekaboo.json"
         let outputRelativePath = "Library/Caches/peekaboo-run-results-\(UUID().uuidString).json"

@@ -15,6 +15,7 @@
 - The accessibility element boxes drawn during `peekaboo see` are off by default now; they were visual clutter on every capture. Re-enable them in Peekaboo.app under Settings › Visualizer › Screen › Element boxes, by setting `visualizer.elementDetectionEnabled` in `~/.peekaboo/config.json`, or per-run with `PEEKABOO_VISUAL_ELEMENT_BOXES=true`. The app toggle and the config file now stay in sync, and a running MCP server picks up the change without a restart.
 
 ### Fixed
+- `peekaboo run --json --output <file>` now emits its structured execution report to stdout as well as saving the report file, and menu bar title matching accepts common hyphen variants such as documented `Wi-Fi` against macOS's `WiFi` identifier.
 - Bridge-backed CLI commands now preserve app, window, element, menu, Dock, and snapshot lookup identities in structured errors instead of collapsing them to generic failures. Thanks @SebTardif for #258.
 - Click and type failures now emit `INTERACTION_FAILED` instead of `CAPTURE_FAILED` in structured CLI output. Thanks @SebTardif for #257.
 - The Mac app's status bar menu now follows the system light/dark mode. It previously inherited the menu bar's wallpaper-derived vibrant appearance, which could render a dark menu while the system was in light mode (and vice versa).

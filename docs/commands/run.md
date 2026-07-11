@@ -13,14 +13,14 @@ read_when:
 | Flag | Description |
 | --- | --- |
 | `<scriptPath>` | Positional argument pointing at a `.peekaboo.json` file. |
-| `--output <file>` | Write the JSON execution report to disk instead of stdout. |
+| `--output <file>` | Write the JSON execution report to disk. With `--json`, the report is also emitted to stdout. |
 | `--no-fail-fast` | Continue executing the remaining steps even if one fails (default behavior is fail-fast). |
 | `--json` | Emit machine-readable JSON to stdout (wrapper + `ScriptExecutionResult`). (Alias: `--json-output` / `-j`) |
 
 ## Implementation notes
 - Scripts are parsed on the main actor via `services.process.loadScript`, so relative paths (`~/`, `./`) resolve exactly as they do when agents run scripts.
 - Execution delegates to `services.process.executeScript`, which returns a `[StepResult]` containing individual timings, success flags, and error strings; the command wraps those in a summary with total durations and counts.
-- `--output` writes via `JSONEncoder().encode` + atomic file replacement; if the write succeeds but the script fails, you still get the partial data for debugging.
+- `--output` writes via `JSONEncoder().encode` + atomic file replacement; if the write succeeds but the script fails, you still get the partial data for debugging. Pairing it with `--json` also emits the structured response to stdout.
 - `<scriptPath>` and `--output` accept `~/...`.
 - Script-level `see` screenshot paths and clipboard file/output paths also accept `~/...`.
 - In JSON mode (`--json` / `--json-output` / `-j`), stdout is a single `CodableJSONResponse<ScriptExecutionResult>` payload (top-level `success` tracks overall script success).

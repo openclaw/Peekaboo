@@ -224,7 +224,7 @@ struct MenuBarCommand: ParsableCommand, ErrorHandlingCommand, OutputFormattable 
             throw PeekabooError.invalidInput("Please provide a menu bar item name or use --index")
         }
 
-        guard let item = self.matchMenuBarItem(named: name, items: items) else {
+        guard let item = matchMenuBarItem(named: name, items: items) else {
             throw PeekabooError.operationError(message: "Unable to resolve '\(name)' for verification")
         }
 
@@ -235,30 +235,6 @@ struct MenuBarCommand: ParsableCommand, ErrorHandlingCommand, OutputFormattable 
             bundleIdentifier: item.bundleIdentifier,
             preferredX: item.frame?.midX
         )
-    }
-
-    private func matchMenuBarItem(named name: String, items: [MenuBarItemInfo]) -> MenuBarItemInfo? {
-        let normalized = name.lowercased()
-        let candidates: [(MenuBarItemInfo, [String])] = items.map { item in
-            let fields = [
-                item.title,
-                item.rawTitle,
-                item.identifier,
-                item.axDescription,
-                item.ownerName,
-            ].compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
-            return (item, fields)
-        }
-
-        if let exact = candidates.first(where: { _, fields in
-            fields.contains(where: { $0.lowercased() == normalized })
-        })?.0 {
-            return exact
-        }
-
-        return candidates.first(where: { _, fields in
-            fields.contains(where: { $0.lowercased().contains(normalized) })
-        })?.0
     }
 }
 

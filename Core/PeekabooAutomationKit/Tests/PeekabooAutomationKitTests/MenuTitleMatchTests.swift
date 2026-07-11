@@ -19,4 +19,13 @@ final class MenuTitleMatchTests: XCTestCase {
             normalizedTarget: normalized ?? "")
         XCTAssertFalse(matches)
     }
+
+    func testMenuExtraTitlesMatchIgnoresHyphenVariants() {
+        XCTAssertTrue(menuExtraTitlesMatch(candidate: "WiFi", target: "Wi-Fi"))
+        XCTAssertTrue(menuExtraTitlesMatch(candidate: "Wi‑Fi", target: "WiFi"))
+    }
+
+    func testApplicationMenuTitlesKeepHyphensSignificant() {
+        XCTAssertFalse(titlesMatch(candidate: "Re-sign", target: "Resign"))
+    }
 }

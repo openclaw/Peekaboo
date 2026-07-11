@@ -68,6 +68,24 @@ func sanitizedMenuText(_ value: String?) -> String? {
     return candidateNormalized == targetNormalized
 }
 
+@_spi(Testing) public func menuExtraTitlesMatch(candidate: String?, target: String) -> Bool {
+    if titlesMatch(candidate: candidate, target: target) {
+        return true
+    }
+
+    func foldingHyphens(_ value: String?) -> String? {
+        normalizedMenuTitle(value)?.replacingOccurrences(
+            of: #"[-‐‑‒–—]"#,
+            with: "",
+            options: .regularExpression)
+    }
+
+    guard let candidateNormalized = foldingHyphens(candidate),
+          let targetNormalized = foldingHyphens(target)
+    else { return false }
+    return candidateNormalized == targetNormalized
+}
+
 @_spi(Testing) public func titlesMatchPartial(
     candidate: String?,
     target: String,

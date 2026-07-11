@@ -18,7 +18,7 @@ struct RunCommand: OutputFormattable {
     @Argument(help: "Path to the script file (.peekaboo.json)")
     var scriptPath: String
 
-    @Option(help: "Save results to file instead of stdout")
+    @Option(help: "Save results to file (JSON mode also emits stdout)")
     var output: String?
 
     @Flag(help: "Continue execution even if a step fails")
@@ -100,11 +100,13 @@ struct RunCommand: OutputFormattable {
             if let outputPath = self.output {
                 let resolvedOutputPath = resolvedOutputPath(from: outputPath)
                 let data = try JSONEncoder().encode(output)
-                try data.write(to: URL(fileURLWithPath: resolvedOutputPath))
+                try data.write(to: URL(fileURLWithPath: resolvedOutputPath), options: .atomic)
                 if !self.jsonOutput {
                     print("✅ Script completed. Results saved to: \(resolvedOutputPath)")
                 }
-            } else if self.jsonOutput {
+            }
+
+            if self.jsonOutput {
                 let response = CodableJSONResponse(
                     success: output.success,
                     data: output,
@@ -113,7 +115,7 @@ struct RunCommand: OutputFormattable {
                 )
                 outputJSONCodable(response, logger: self.outputLogger)
                 didEmitJSONResponse = true
-            } else {
+            } else if self.output == nil {
                 self.printSummary(output)
             }
 
