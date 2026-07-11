@@ -31,7 +31,6 @@ permissions:
 
 env:
   NODE_VERSION: "24"
-  PNPM_VERSION: "11.1.2"
 
 jobs:
   hydrate:
@@ -44,8 +43,6 @@ jobs:
           ref: ${{ inputs.ref || github.ref }}
 
       - uses: pnpm/action-setup@v6.0.9
-        with:
-          version: ${{ env.PNPM_VERSION }}
 
       - uses: actions/setup-node@v6
         with:
