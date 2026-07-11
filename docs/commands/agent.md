@@ -35,7 +35,7 @@ read_when:
   model turn to interpret their results. This avoids reporting an empty success when the step budget expires with
   pending work; resume the reported session to continue.
 - Native `ollama/<model>` runs replay each assistant tool call and named tool result on the next model turn. Ollama
-  support is model-dependent, and current native stream output is response-buffered rather than token-live. See the
+  support is model-dependent, and native text arrives incrementally with a model-dependent chunk cadence. See the
   [Ollama guide](../providers/ollama.md).
 
 ## Chat mode
