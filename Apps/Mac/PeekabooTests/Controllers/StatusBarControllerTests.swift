@@ -65,6 +65,34 @@ struct StatusBarControllerTests {
     }
 
     @Test
+    func `Status menu pins the exact application effective appearance`() {
+        let menu = NSMenu()
+
+        StatusMenuAppearance.pin(menu)
+
+        #expect(menu.appearance === NSApplication.shared.effectiveAppearance)
+    }
+
+    @Test
+    func `Submenus inherit the pinned root appearance`() throws {
+        let menu = NSMenu()
+        let submenu = NSMenu()
+        let item = NSMenuItem(title: "Agent", action: nil, keyEquivalent: "")
+        item.submenu = submenu
+        menu.addItem(item)
+
+        let light = try #require(NSAppearance(named: .aqua))
+        StatusMenuAppearance.pin(menu, to: light)
+        #expect(menu.appearance === light)
+        #expect(submenu.appearance == nil)
+        #expect(submenu.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .aqua)
+
+        let dark = try #require(NSAppearance(named: .darkAqua))
+        StatusMenuAppearance.pin(menu, to: dark)
+        #expect(submenu.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua)
+    }
+
+    @Test
     func `Popover presentation`() {
         _ = self.makeController()
 

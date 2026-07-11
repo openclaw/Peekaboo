@@ -23,6 +23,23 @@ enum AgentSessionUI {
     }
 }
 
+/// Pins status bar menus to the app's effective appearance.
+///
+/// Menus popped from a status item inherit the menu bar's vibrant appearance, which is derived
+/// from the wallpaper behind it rather than the system light/dark mode. Pinning the exact
+/// effective appearance (not just its name) keeps accessibility attributes intact; submenus
+/// inherit it automatically.
+@MainActor
+enum StatusMenuAppearance {
+    static func pin(_ menu: NSMenu) {
+        self.pin(menu, to: NSApplication.shared.effectiveAppearance)
+    }
+
+    static func pin(_ menu: NSMenu, to appearance: NSAppearance) {
+        menu.appearance = appearance
+    }
+}
+
 /// Controls the Peekaboo status bar item and popover interface.
 ///
 /// Manages the macOS status bar integration with animated icon states and popover UI.
@@ -263,6 +280,9 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         // macOS may apply “standard” images for common items (Settings/Quit).
         // Strip any images right before display.
         Self.stripMenuItemImages(menu)
+
+        // Follow the system light/dark mode instead of the menu bar's wallpaper-tinted appearance.
+        StatusMenuAppearance.pin(menu)
 
         // Avoid temporarily attaching `statusItem.menu` (which can cause AppKit to inject standard item images,
         // notably for “Settings…”). Instead, pop up the menu directly anchored to the status item button.
