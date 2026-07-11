@@ -70,6 +70,8 @@ extension AgentCommand {
                     queueMode: queueMode
                 )
                 return
+            } catch is ExitCode {
+                throw ExitCode.failure
             } catch {
                 self.printAgentExecutionError(
                     "Failed to launch TauTUI chat: \(error.localizedDescription). Falling back to basic chat."
@@ -104,7 +106,7 @@ extension AgentCommand {
             turnContext.sessionId = try await self.initialChatSessionId(agentService)
         } catch {
             self.printAgentExecutionError(error.localizedDescription)
-            return
+            throw ExitCode.failure
         }
 
         self.printChatWelcome(
@@ -160,7 +162,7 @@ extension AgentCommand {
             activeSessionId = try await self.initialChatSessionId(agentService)
         } catch {
             self.printAgentExecutionError(error.localizedDescription)
-            return
+            throw ExitCode.failure
         }
 
         let chatUI = AgentChatUI(

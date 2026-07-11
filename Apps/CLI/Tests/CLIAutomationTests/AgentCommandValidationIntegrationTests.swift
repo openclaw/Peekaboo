@@ -23,24 +23,17 @@ struct AgentCommandValidationIntegrationTests {
     }
 
     @Test
-    func `Missing resume session returns one JSON error`() async throws {
+    func `Taskless missing resume session returns a failing error`() async throws {
         let result = try await InProcessCommandRunner.runShared(
             [
                 "agent",
                 "--resume-session",
                 "missing-session-\(UUID().uuidString)",
-                "continue the task",
-                "--jsonOutput",
             ],
             allowedExitCodes: [1]
         )
 
         #expect(result.exitStatus == 1)
-
-        let data = try #require(result.stdout.trimmingCharacters(in: .whitespacesAndNewlines).data(using: .utf8))
-        let payload = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
-        #expect(payload.count == 2)
-        #expect(payload["success"] as? Bool == false)
-        #expect((payload["error"] as? String)?.contains("Failed to resume session") == true)
+        #expect(result.stdout.contains("Session not found or expired"))
     }
 }
