@@ -244,7 +244,9 @@ extension PeekabooAgentService {
                 state.usage = usageAccumulator.record(terminalUsage)
                 onCheckpoint?(self.makeLoopOutcome(state: state, reachedStepLimit: false))
             }
-            try Task.checkCancellation()
+            if output.toolCalls.isEmpty {
+                try Task.checkCancellation()
+            }
 
             state.content += output.text
 
@@ -306,9 +308,9 @@ extension PeekabooAgentService {
             onCheckpoint?(self.makeLoopOutcome(state: state, reachedStepLimit: false))
 
             if let stopReason = self.turnBoundaryStopReason(from: step.toolResults) {
-                if state.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    state.content = stopReason
-                }
+                state.content = self.contentByAppendingTurnBoundaryReason(
+                    stopReason,
+                    to: state.content)
                 break
             }
 
@@ -671,6 +673,24 @@ extension PeekabooAgentService {
 
             if emitToolStartEvents {
                 try await self.sendToolStartEvent(toolCall, eventHandler: context.eventHandler)
+                do {
+                    try Task.checkCancellation()
+                } catch {
+                    await self.appendCancelledToolResults(
+                        toolCalls: toolCalls,
+                        startingAt: index,
+                        activeToolCallId: toolCall.id,
+                        context: context,
+                        currentMessages: &currentMessages,
+                        toolResults: &toolResults,
+                        emitToolStartEvents: emitToolStartEvents)
+                    onCancellationCheckpoint?(GenerationStep(
+                        stepIndex: stepIndex,
+                        text: stepText,
+                        toolCalls: toolCalls,
+                        toolResults: toolResults))
+                    throw CancellationError()
+                }
             }
 
             guard let tool = context.tool(named: toolCall.name) else {
@@ -755,6 +775,17 @@ extension PeekabooAgentService {
                     let skippedResult = self.makeSkippedToolResult(
                         for: skippedToolCall,
                         stopReason: stopReason)
+                    if emitToolStartEvents {
+                        try? await self.sendToolStartEvent(
+                            skippedToolCall,
+                            eventHandler: context.eventHandler)
+                    }
+                    await self.sendToolCompletionEvent(
+                        name: skippedToolCall.name,
+                        payload: self.toolResultPayload(
+                            from: skippedResult.result,
+                            toolName: skippedToolCall.name),
+                        eventHandler: context.eventHandler)
                     currentMessages.append(ModelMessage(role: .tool, content: [.toolResult(skippedResult)]))
                     toolResults.append(skippedResult)
                 }
@@ -791,7 +822,9 @@ extension PeekabooAgentService {
 
             var payload = [
                 "cancelled": AnyAgentToolValue(bool: true),
+                "error": AnyAgentToolValue(string: "Agent execution was cancelled"),
                 "reason": AnyAgentToolValue(string: "Agent execution was cancelled"),
+                "success": AnyAgentToolValue(bool: false),
             ]
             if !wasActive {
                 payload["skipped"] = AnyAgentToolValue(bool: true)
@@ -826,9 +859,12 @@ extension PeekabooAgentService {
         for toolCall: AgentToolCall,
         stopReason: String) -> AgentToolResult
     {
+        let error = "Tool call skipped because the agent turn ended: \(stopReason)"
         let result = AnyAgentToolValue(object: [
+            "error": AnyAgentToolValue(string: error),
             "skipped": AnyAgentToolValue(bool: true),
             "reason": AnyAgentToolValue(string: stopReason),
+            "success": AnyAgentToolValue(bool: false),
             "turn_boundary": AnyAgentToolValue(object: [
                 "stop_after_current_step": AnyAgentToolValue(bool: true),
                 "reason": AnyAgentToolValue(string: stopReason),
@@ -838,6 +874,21 @@ extension PeekabooAgentService {
             toolCallId: toolCall.id,
             result: result,
             isError: true)
+    }
+
+    func contentByAppendingTurnBoundaryReason(
+        _ stopReason: String,
+        to content: String) -> String
+    {
+        let normalizedContent = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedReason = stopReason.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedReason.isEmpty else { return normalizedContent }
+        guard !normalizedContent.isEmpty else { return normalizedReason }
+
+        if normalizedContent == normalizedReason || normalizedContent.hasSuffix("\n\(normalizedReason)") {
+            return normalizedContent
+        }
+        return "\(normalizedContent)\n\n\(normalizedReason)"
     }
 
     private func makeUnavailableToolResult(for toolCall: AgentToolCall) -> AgentToolResult {

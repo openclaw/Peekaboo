@@ -17,7 +17,12 @@ struct PeekabooAgentOllamaStreamingReasoningTests {
 
         let model = LanguageModel.ollama(.custom("qwen3:8b"))
         let provider = try OllamaProvider(model: .custom("qwen3:8b"), configuration: configuration)
-        let agentService = try PeekabooAgentService(services: PeekabooServices(), defaultModel: model)
+        let sessionStore = try IsolatedAgentSessionStore()
+        defer { sessionStore.cleanup() }
+        let agentService = try PeekabooAgentService(
+            services: PeekabooServices(),
+            defaultModel: model,
+            sessionManager: sessionStore.manager)
         var messages: [ModelMessage] = []
 
         agentService.appendReasoningBlock(
@@ -58,9 +63,12 @@ struct PeekabooAgentOllamaStreamingReasoningTests {
         }
 
         let model = LanguageModel.ollama(.custom("qwen3:8b"))
+        let sessionStore = try IsolatedAgentSessionStore()
+        defer { sessionStore.cleanup() }
         let agentService = try PeekabooAgentService(
             services: PeekabooServices(),
-            defaultModel: model)
+            defaultModel: model,
+            sessionManager: sessionStore.manager)
 
         _ = try await agentService.executeTask(
             "Use a tool, then continue.",

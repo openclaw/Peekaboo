@@ -105,6 +105,59 @@ struct AgentSessionManagerStorageTests {
         #expect(statuses["resumable"] == .active)
     }
 
+    @Test
+    @MainActor
+    func `Session summaries preserve persisted timestamps across atomic saves`() throws {
+        let root = try Self.makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let manager = try AgentSessionManager(sessionDirectory: root)
+        let createdAt = Date(timeIntervalSince1970: 1_700_000_000)
+        let firstUpdatedAt = createdAt.addingTimeInterval(60)
+        let secondUpdatedAt = createdAt.addingTimeInterval(120)
+        try manager.saveSession(Self.session(
+            id: "timestamped",
+            createdAt: createdAt,
+            updatedAt: firstUpdatedAt))
+
+        var summary = try #require(manager.listSessions().first { $0.id == "timestamped" })
+        #expect(summary.createdAt == createdAt)
+        #expect(summary.lastAccessedAt == firstUpdatedAt)
+
+        try manager.saveSession(Self.session(
+            id: "timestamped",
+            totalTokens: 25,
+            createdAt: createdAt,
+            updatedAt: secondUpdatedAt))
+
+        summary = try #require(manager.listSessions().first { $0.id == "timestamped" })
+        #expect(summary.createdAt == createdAt)
+        #expect(summary.lastAccessedAt == secondUpdatedAt)
+    }
+
+    @Test
+    @MainActor
+    func `Session summary expiry and order use persisted update time`() throws {
+        let root = try Self.makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let manager = try AgentSessionManager(sessionDirectory: root)
+        let now = Date()
+        let expiredAt = now.addingTimeInterval(-AgentSessionManager.maxSessionAge - 60)
+        try manager.saveSession(Self.session(
+            id: "newer",
+            createdAt: now.addingTimeInterval(-120),
+            updatedAt: now.addingTimeInterval(-60)))
+        try manager.saveSession(Self.session(
+            id: "expired",
+            createdAt: expiredAt.addingTimeInterval(-60),
+            updatedAt: expiredAt))
+
+        let summaries = manager.listSessions()
+        #expect(summaries.map(\.id) == ["newer", "expired"])
+        #expect(summaries.first { $0.id == "expired" }?.status == .expired)
+    }
+
     private static func makeTemporaryDirectory() throws -> URL {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("AgentSessionManagerStorageTests-\(UUID().uuidString)", isDirectory: true)
@@ -115,7 +168,9 @@ struct AgentSessionManagerStorageTests {
     private static func session(
         id: String,
         status: String? = nil,
-        totalTokens: Int = 0) -> AgentSession
+        totalTokens: Int = 0,
+        createdAt: Date? = nil,
+        updatedAt: Date? = nil) -> AgentSession
     {
         let now = Date()
         let customData = status.map { ["status": $0] } ?? [:]
@@ -124,7 +179,7 @@ struct AgentSessionManagerStorageTests {
             modelName: "test-model",
             messages: [.user("Test session")],
             metadata: SessionMetadata(totalTokens: totalTokens, customData: customData),
-            createdAt: now,
-            updatedAt: now)
+            createdAt: createdAt ?? now,
+            updatedAt: updatedAt ?? now)
     }
 }

@@ -117,7 +117,7 @@ struct AgentTurnBoundaryTranscriptTests {
         #expect(cancelled)
     }
 
-    @Test
+    @Test(.timeLimit(.minutes(1)))
     func `parent cancellation checkpoints completed tools and skips remaining dispatch`() async throws {
         let service = try PeekabooAgentService(services: PeekabooServices())
         let probe = ToolCancellationProbe()
@@ -161,7 +161,7 @@ struct AgentTurnBoundaryTranscriptTests {
             eventHandler: nil,
             sessionId: "test-session")
 
-        let task = Task { @MainActor in
+        let task = Task { @MainActor () -> CancellationWorkerOutcome in
             var messages: [ModelMessage] = []
             var checkpoint: GenerationStep?
             do {
@@ -172,17 +172,37 @@ struct AgentTurnBoundaryTranscriptTests {
                     currentMessages: &messages,
                     stepIndex: 0,
                     onCancellationCheckpoint: { checkpoint = $0 })
+                return .completed
             } catch {
                 await transcriptStore.capture(messages: messages, checkpoint: checkpoint)
-                throw error
+                return if error is CancellationError {
+                    .cancelled
+                } else {
+                    .failed(error.localizedDescription)
+                }
             }
         }
-
-        await probe.waitForSecondStart()
-        task.cancel()
-        await #expect(throws: CancellationError.self) {
-            try await task.value
+        let taskObserver = Task {
+            let outcome = await task.value
+            await probe.markWorkerFinished(outcome)
         }
+        defer { taskObserver.cancel() }
+
+        guard await probe.waitForSecondStart(timeout: .seconds(5)) else {
+            task.cancel()
+            guard await probe.waitForWorkerFinish(timeout: .seconds(5)) != nil else {
+                Issue.record("Timed out waiting for the canceled worker to stop")
+                return
+            }
+            Issue.record("Timed out waiting for the second tool to start")
+            return
+        }
+        task.cancel()
+        guard let workerOutcome = await probe.waitForWorkerFinish(timeout: .seconds(5)) else {
+            Issue.record("Timed out waiting for the canceled worker to stop")
+            return
+        }
+        #expect(workerOutcome == .cancelled)
 
         let snapshot = await transcriptStore.snapshot()
         let checkpoint = try #require(snapshot.checkpoint)
@@ -245,27 +265,53 @@ struct AgentTurnBoundaryTranscriptTests {
     }
 }
 
+private enum CancellationWorkerOutcome: Equatable, Sendable {
+    case completed
+    case cancelled
+    case failed(String)
+}
+
 private actor ToolCancellationProbe {
     private var secondStarted = false
-    private var secondStartWaiters: [CheckedContinuation<Void, Never>] = []
+    private var workerOutcome: CancellationWorkerOutcome?
     private(set) var thirdExecutionCount = 0
 
     func markSecondStarted() {
         self.secondStarted = true
-        let waiters = self.secondStartWaiters
-        self.secondStartWaiters.removeAll()
-        for waiter in waiters {
-            waiter.resume()
-        }
     }
 
-    func waitForSecondStart() async {
-        if self.secondStarted {
-            return
+    func waitForSecondStart(timeout: Duration) async -> Bool {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: timeout)
+
+        while !self.secondStarted {
+            guard clock.now < deadline else { return false }
+            do {
+                try await Task.sleep(for: .milliseconds(10))
+            } catch {
+                return false
+            }
         }
-        await withCheckedContinuation { continuation in
-            self.secondStartWaiters.append(continuation)
+        return true
+    }
+
+    func markWorkerFinished(_ outcome: CancellationWorkerOutcome) {
+        self.workerOutcome = outcome
+    }
+
+    func waitForWorkerFinish(timeout: Duration) async -> CancellationWorkerOutcome? {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: timeout)
+
+        while self.workerOutcome == nil {
+            guard clock.now < deadline else { return nil }
+            do {
+                try await Task.sleep(for: .milliseconds(10))
+            } catch {
+                return nil
+            }
         }
+        return self.workerOutcome
     }
 
     func markThirdExecuted() {

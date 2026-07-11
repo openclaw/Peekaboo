@@ -177,7 +177,7 @@ extension PeekabooAgentService {
             metadata: AgentMetadata(
                 executionTime: 0,
                 toolCallCount: 0,
-                modelName: self.defaultLanguageModel.description,
+                modelName: self.defaultModelDisplayName,
                 startTime: now,
                 endTime: now))
     }
@@ -546,9 +546,9 @@ extension PeekabooAgentService {
             onCheckpoint?(self.makeLoopOutcome(state: state, reachedStepLimit: false))
 
             if let stopReason = self.turnBoundaryStopReason(from: step.toolResults) {
-                if state.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    state.content = stopReason
-                }
+                state.content = self.contentByAppendingTurnBoundaryReason(
+                    stopReason,
+                    to: state.content)
                 break
             }
 

@@ -10,9 +10,8 @@ struct PeekabooAgentResumeModelContinuityTests {
     @Test
     @MainActor
     func `Resume without override preserves stored Ollama model`() throws {
-        let service = try PeekabooAgentService(
-            services: PeekabooServices(),
-            defaultModel: .openai(.gpt55))
+        let (service, sessionStore) = try self.makeAgentService(defaultModel: .openai(.gpt55))
+        defer { sessionStore.cleanup() }
         let model = LanguageModel.ollama(.custom("qwen3.5:9b"))
         let identity = service.persistedModelIdentity(for: model)
         let session = Self.session(
@@ -29,9 +28,8 @@ struct PeekabooAgentResumeModelContinuityTests {
     @Test
     @MainActor
     func `Explicit resume model overrides stored selection`() throws {
-        let service = try PeekabooAgentService(
-            services: PeekabooServices(),
-            defaultModel: .openai(.gpt55))
+        let (service, sessionStore) = try self.makeAgentService(defaultModel: .openai(.gpt55))
+        defer { sessionStore.cleanup() }
         let session = Self.session(
             modelName: "Custom/removed-provider/private-model",
             modelSelection: "removed-provider/private-model")
@@ -46,9 +44,8 @@ struct PeekabooAgentResumeModelContinuityTests {
     @Test
     @MainActor
     func `Legacy Ollama session without endpoint proof fails closed`() throws {
-        let service = try PeekabooAgentService(
-            services: PeekabooServices(),
-            defaultModel: .openai(.gpt55))
+        let (service, sessionStore) = try self.makeAgentService(defaultModel: .openai(.gpt55))
+        defer { sessionStore.cleanup() }
         let session = Self.session(modelName: "Ollama/qwen3.5:9b")
 
         #expect(throws: PeekabooError.self) {
@@ -59,9 +56,8 @@ struct PeekabooAgentResumeModelContinuityTests {
     @Test
     @MainActor
     func `Unresolved legacy custom model fails closed`() throws {
-        let service = try PeekabooAgentService(
-            services: PeekabooServices(),
-            defaultModel: .openai(.gpt55))
+        let (service, sessionStore) = try self.makeAgentService(defaultModel: .openai(.gpt55))
+        defer { sessionStore.cleanup() }
         let session = Self.session(modelName: "Custom/removed-provider/private-model")
 
         let error = #expect(throws: PeekabooError.self) {
@@ -85,9 +81,8 @@ struct PeekabooAgentResumeModelContinuityTests {
     ])
     @MainActor
     func `Legacy endpoint-bearing model cannot fall through to current default`(_ legacyModel: LanguageModel) throws {
-        let service = try PeekabooAgentService(
-            services: PeekabooServices(),
-            defaultModel: .openai(.gpt55))
+        let (service, sessionStore) = try self.makeAgentService(defaultModel: .openai(.gpt55))
+        defer { sessionStore.cleanup() }
         let session = Self.session(modelName: legacyModel.description)
 
         #expect(throws: PeekabooError.self) {
@@ -103,7 +98,8 @@ struct PeekabooAgentResumeModelContinuityTests {
     @Test
     @MainActor
     func `Unregistered custom model has no implicit persisted selection`() throws {
-        let service = try PeekabooAgentService(services: PeekabooServices())
+        let (service, sessionStore) = try self.makeAgentService()
+        defer { sessionStore.cleanup() }
         let model = LanguageModel.custom(provider: CredentialBearingTestProvider())
 
         #expect(service.persistedModelSelection(for: model) == nil)
@@ -112,9 +108,8 @@ struct PeekabooAgentResumeModelContinuityTests {
     @Test
     @MainActor
     func `Bare custom model identifier cannot resume as a built in provider`() throws {
-        let service = try PeekabooAgentService(
-            services: PeekabooServices(),
-            defaultModel: .anthropic(.opus48))
+        let (service, sessionStore) = try self.makeAgentService(defaultModel: .anthropic(.opus48))
+        defer { sessionStore.cleanup() }
         let customModel = LanguageModel.custom(provider: BareCustomTestProvider())
 
         #expect(service.persistedModelSelection(for: customModel) == nil)
@@ -154,19 +149,26 @@ struct PeekabooAgentResumeModelContinuityTests {
         TachikomaConfiguration.default = configurationA
         let services = PeekabooServices()
         services.configuration.applyAIProviderKeys(to: configurationA)
-        let service = try PeekabooAgentService(services: services, defaultModel: model)
+        let (service, sessionStore) = try self.makeAgentService(services: services, defaultModel: model)
+        defer { sessionStore.cleanup() }
         let identity = service.persistedModelIdentity(for: model)
+        let selection = try #require(identity.selection)
+        let endpointIdentity = try #require(identity.endpointIdentity)
+        let providerIdentity = try #require(identity.providerIdentity)
         let session = Self.session(
             modelName: identity.displayName,
-            modelSelection: identity.selection,
-            modelEndpointIdentity: identity.endpointIdentity,
-            modelProviderIdentity: identity.providerIdentity)
+            modelSelection: selection,
+            modelEndpointIdentity: endpointIdentity,
+            modelProviderIdentity: providerIdentity)
+
+        #expect(try service.resolveContinuationModel(explicitModel: nil, session: session) == model)
 
         setenv("PEEKABOO_OLLAMA_BASE_URL", "http://127.0.0.1:22434", 1)
         let configurationB = TachikomaConfiguration(loadFromEnvironment: false)
         TachikomaConfiguration.default = configurationB
         services.configuration.applyAIProviderKeys(to: configurationB)
-        #expect(identity.endpointIdentity != service.currentEndpointIdentity(for: model))
+        let driftedEndpointIdentity = try #require(service.currentEndpointIdentity(for: model))
+        #expect(endpointIdentity != driftedEndpointIdentity)
 
         #expect(throws: PeekabooError.self) {
             _ = try service.resolveContinuationModel(explicitModel: nil, session: session)
@@ -189,7 +191,8 @@ struct PeekabooAgentResumeModelContinuityTests {
         defer { TachikomaConfiguration.default = previousConfiguration }
 
         let model = LanguageModel.openai(.gpt55)
-        let service = try PeekabooAgentService(services: PeekabooServices(), defaultModel: model)
+        let (service, sessionStore) = try self.makeAgentService(defaultModel: model)
+        defer { sessionStore.cleanup() }
         let context = try await service.prepareSession(
             task: "Answer once.",
             model: model,
@@ -212,7 +215,8 @@ struct PeekabooAgentResumeModelContinuityTests {
     @Test
     @MainActor
     func `Endpoint credentials never appear in persisted model display`() throws {
-        let service = try PeekabooAgentService(services: PeekabooServices())
+        let (service, sessionStore) = try self.makeAgentService()
+        defer { sessionStore.cleanup() }
         let model = LanguageModel.openaiCompatible(
             modelId: "private-model",
             baseURL: "https://alice:secret@example.test/v1?token=hidden")
@@ -236,7 +240,8 @@ struct PeekabooAgentResumeModelContinuityTests {
     @Test
     @MainActor
     func `Nonroundtrippable models have no implicit persisted selection`() throws {
-        let service = try PeekabooAgentService(services: PeekabooServices())
+        let (service, sessionStore) = try self.makeAgentService()
+        defer { sessionStore.cleanup() }
 
         #expect(service.persistedModelSelection(for: .azureOpenAI(deployment: "private")) == nil)
         #expect(service.persistedModelSelection(for: .openaiCompatible(
@@ -264,6 +269,21 @@ struct PeekabooAgentResumeModelContinuityTests {
         #expect(decoded.modelEndpointIdentity == nil)
         #expect(decoded.modelProviderIdentity == nil)
         #expect(decoded.modelName == session.modelName)
+    }
+
+    @MainActor
+    private func makeAgentService(
+        services: PeekabooServices? = nil,
+        defaultModel: LanguageModel = .anthropic(.opus48)) throws -> (
+        service: PeekabooAgentService,
+        store: IsolatedAgentSessionStore)
+    {
+        let store = try IsolatedAgentSessionStore()
+        let service = try PeekabooAgentService(
+            services: services ?? PeekabooServices(),
+            defaultModel: defaultModel,
+            sessionManager: store.manager)
+        return (service, store)
     }
 
     private static func session(

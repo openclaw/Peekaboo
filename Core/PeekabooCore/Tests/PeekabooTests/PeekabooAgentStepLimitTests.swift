@@ -4,6 +4,22 @@ import Testing
 @testable import PeekabooAgentRuntime
 @testable import PeekabooCore
 
+@MainActor
+final class IsolatedAgentSessionStore {
+    let manager: AgentSessionManager
+    private let directory: URL
+
+    init() throws {
+        self.directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PeekabooAgentTests-\(UUID().uuidString)", isDirectory: true)
+        self.manager = try AgentSessionManager(sessionDirectory: self.directory)
+    }
+
+    func cleanup() {
+        try? FileManager.default.removeItem(at: self.directory)
+    }
+}
+
 @Suite(.serialized)
 struct PeekabooAgentStepLimitTests {
     @Test
@@ -17,9 +33,8 @@ struct PeekabooAgentStepLimitTests {
         TachikomaConfiguration.default = configuration
         defer { TachikomaConfiguration.default = previousConfiguration }
 
-        let agentService = try PeekabooAgentService(
-            services: PeekabooServices(),
-            defaultModel: .openai(.gpt55))
+        let (agentService, sessionStore) = try self.makeAgentService(defaultModel: .openai(.gpt55))
+        defer { sessionStore.cleanup() }
 
         let thrownError = await #expect(throws: PeekabooAgentService.AgentStepLimitExceededError.self) {
             _ = try await agentService.executeTask(
@@ -55,9 +70,8 @@ struct PeekabooAgentStepLimitTests {
         defer { TachikomaConfiguration.default = previousConfiguration }
 
         let delegate = StepLimitEventDelegate()
-        let agentService = try PeekabooAgentService(
-            services: PeekabooServices(),
-            defaultModel: .openai(.gpt55))
+        let (agentService, sessionStore) = try self.makeAgentService(defaultModel: .openai(.gpt55))
+        defer { sessionStore.cleanup() }
 
         let thrownError = await #expect(throws: PeekabooAgentService.AgentStepLimitExceededError.self) {
             _ = try await agentService.executeTask(
@@ -98,9 +112,8 @@ struct PeekabooAgentStepLimitTests {
         TachikomaConfiguration.default = configuration
         defer { TachikomaConfiguration.default = previousConfiguration }
 
-        let agentService = try PeekabooAgentService(
-            services: PeekabooServices(),
-            defaultModel: .openai(.gpt55))
+        let (agentService, sessionStore) = try self.makeAgentService(defaultModel: .openai(.gpt55))
+        defer { sessionStore.cleanup() }
         let result = try await agentService.executeTask(
             "Finish this turn.",
             maxSteps: 1,
@@ -126,9 +139,8 @@ struct PeekabooAgentStepLimitTests {
         defer { TachikomaConfiguration.default = previousConfiguration }
 
         let delegate = StepLimitEventDelegate()
-        let agentService = try PeekabooAgentService(
-            services: PeekabooServices(),
-            defaultModel: .openai(.gpt55))
+        let (agentService, sessionStore) = try self.makeAgentService(defaultModel: .openai(.gpt55))
+        defer { sessionStore.cleanup() }
         let result = try await agentService.executeTask(
             "Finish this turn.",
             maxSteps: 1,
@@ -153,7 +165,8 @@ struct PeekabooAgentStepLimitTests {
     @Test(arguments: [FinishReason.length, .error, .cancelled, .other])
     @MainActor
     func `Incomplete tool responses are rejected before execution`(_ finishReason: FinishReason) throws {
-        let agentService = try PeekabooAgentService(services: PeekabooServices())
+        let (agentService, sessionStore) = try self.makeAgentService()
+        defer { sessionStore.cleanup() }
 
         let thrownError = #expect(throws: TachikomaError.self) {
             try agentService.validateToolContinuationFinishReason(finishReason, hasToolCalls: true)
@@ -167,7 +180,8 @@ struct PeekabooAgentStepLimitTests {
     @Test
     @MainActor
     func `Ollama compatible tool finish reasons remain accepted`() throws {
-        let agentService = try PeekabooAgentService(services: PeekabooServices())
+        let (agentService, sessionStore) = try self.makeAgentService()
+        defer { sessionStore.cleanup() }
 
         #expect(throws: Never.self) {
             try agentService.validateToolContinuationFinishReason(nil, hasToolCalls: true)
@@ -183,7 +197,8 @@ struct PeekabooAgentStepLimitTests {
     @Test
     @MainActor
     func `Tool-call finish without decoded calls is rejected`() throws {
-        let agentService = try PeekabooAgentService(services: PeekabooServices())
+        let (agentService, sessionStore) = try self.makeAgentService()
+        defer { sessionStore.cleanup() }
 
         let thrownError = #expect(throws: TachikomaError.self) {
             try agentService.validateToolContinuationFinishReason(.toolCalls, hasToolCalls: false)
@@ -206,9 +221,8 @@ struct PeekabooAgentStepLimitTests {
         defer { TachikomaConfiguration.default = previousConfiguration }
 
         let delegate = StepLimitEventDelegate()
-        let agentService = try PeekabooAgentService(
-            services: PeekabooServices(),
-            defaultModel: .anthropic(.fable5))
+        let (agentService, sessionStore) = try self.makeAgentService(defaultModel: .anthropic(.fable5))
+        defer { sessionStore.cleanup() }
 
         let thrownError = await #expect(throws: TachikomaError.self) {
             _ = try await agentService.executeTask(
@@ -238,9 +252,8 @@ struct PeekabooAgentStepLimitTests {
         defer { TachikomaConfiguration.default = previousConfiguration }
 
         let delegate = StepLimitEventDelegate()
-        let agentService = try PeekabooAgentService(
-            services: PeekabooServices(),
-            defaultModel: .openai(.gpt55))
+        let (agentService, sessionStore) = try self.makeAgentService(defaultModel: .openai(.gpt55))
+        defer { sessionStore.cleanup() }
 
         let thrownError = await #expect(throws: TachikomaError.self) {
             _ = try await agentService.executeTask(
@@ -270,9 +283,8 @@ struct PeekabooAgentStepLimitTests {
         defer { TachikomaConfiguration.default = previousConfiguration }
 
         let delegate = StepLimitEventDelegate()
-        let agentService = try PeekabooAgentService(
-            services: PeekabooServices(),
-            defaultModel: .openai(.gpt55))
+        let (agentService, sessionStore) = try self.makeAgentService(defaultModel: .openai(.gpt55))
+        defer { sessionStore.cleanup() }
 
         let thrownError = await #expect(throws: TachikomaError.self) {
             _ = try await agentService.executeTask(
@@ -306,9 +318,8 @@ struct PeekabooAgentStepLimitTests {
         TachikomaConfiguration.default = configuration
         defer { TachikomaConfiguration.default = previousConfiguration }
 
-        let agentService = try PeekabooAgentService(
-            services: PeekabooServices(),
-            defaultModel: .openai(.gpt55))
+        let (agentService, sessionStore) = try self.makeAgentService(defaultModel: .openai(.gpt55))
+        defer { sessionStore.cleanup() }
 
         let thrownError = await #expect(throws: TachikomaError.self) {
             _ = try await agentService.executeTask(
@@ -343,9 +354,8 @@ struct PeekabooAgentStepLimitTests {
         defer { TachikomaConfiguration.default = previousConfiguration }
 
         let delegate = StepLimitEventDelegate()
-        let agentService = try PeekabooAgentService(
-            services: PeekabooServices(),
-            defaultModel: .openai(.gpt55))
+        let (agentService, sessionStore) = try self.makeAgentService(defaultModel: .openai(.gpt55))
+        defer { sessionStore.cleanup() }
 
         let thrownError = await #expect(throws: TachikomaError.self) {
             _ = try await agentService.executeTask(
@@ -382,7 +392,7 @@ struct PeekabooAgentStepLimitTests {
             expectedStatus: "cancelled")
     }
 
-    @Test(arguments: [false, true])
+    @Test(.timeLimit(.minutes(1)), arguments: [false, true])
     @MainActor
     func `Parent cancellation persists a balanced in-flight tool batch`(_ streaming: Bool) async throws {
         let provider = MultiSleepProvider()
@@ -394,9 +404,8 @@ struct PeekabooAgentStepLimitTests {
         defer { TachikomaConfiguration.default = previousConfiguration }
 
         let model = LanguageModel.openai(.gpt55)
-        let agentService = try PeekabooAgentService(
-            services: PeekabooServices(),
-            defaultModel: model)
+        let (agentService, sessionStore) = try self.makeAgentService(defaultModel: model)
+        defer { sessionStore.cleanup() }
         let context = try await agentService.prepareSession(
             task: "Run three sleeps.",
             model: model,
@@ -428,7 +437,12 @@ struct PeekabooAgentStepLimitTests {
             }
         }
 
-        await firstCompletion.wait()
+        guard await firstCompletion.wait() else {
+            task.cancel()
+            _ = try? await task.value
+            Issue.record("Timed out waiting for the first tool completion")
+            return
+        }
         task.cancel()
         await #expect(throws: CancellationError.self) {
             _ = try await task.value
@@ -454,7 +468,7 @@ struct PeekabooAgentStepLimitTests {
         try await agentService.deleteSession(id: context.id)
     }
 
-    @Test(arguments: [false, true])
+    @Test(.timeLimit(.minutes(1)), arguments: [false, true])
     @MainActor
     func `Noncooperative provider cannot complete after parent cancellation`(_ streaming: Bool) async throws {
         let gate = NoncooperativeProviderGate()
@@ -467,9 +481,8 @@ struct PeekabooAgentStepLimitTests {
         defer { TachikomaConfiguration.default = previousConfiguration }
 
         let model = LanguageModel.anthropic(.sonnet45)
-        let agentService = try PeekabooAgentService(
-            services: PeekabooServices(),
-            defaultModel: model)
+        let (agentService, sessionStore) = try self.makeAgentService(defaultModel: model)
+        defer { sessionStore.cleanup() }
         let context = try await agentService.prepareSession(
             task: "Wait for a provider response.",
             model: model,
@@ -500,7 +513,13 @@ struct PeekabooAgentStepLimitTests {
             }
         }
 
-        await gate.waitForStart()
+        guard await gate.waitForStart() else {
+            task.cancel()
+            await gate.release()
+            _ = try? await task.value
+            Issue.record("Timed out waiting for the provider to start")
+            return
+        }
         task.cancel()
         await gate.release()
         await #expect(throws: CancellationError.self) {
@@ -527,9 +546,8 @@ struct PeekabooAgentStepLimitTests {
         defer { TachikomaConfiguration.default = previousConfiguration }
 
         let delegate = StepLimitEventDelegate()
-        let agentService = try PeekabooAgentService(
-            services: PeekabooServices(),
-            defaultModel: .openai(.gpt55))
+        let (agentService, sessionStore) = try self.makeAgentService(defaultModel: .openai(.gpt55))
+        defer { sessionStore.cleanup() }
         let result = try await agentService.executeTask(
             "Use a tool, then finish.",
             maxSteps: 2,
@@ -563,9 +581,8 @@ struct PeekabooAgentStepLimitTests {
         defer { TachikomaConfiguration.default = previousConfiguration }
 
         let delegate = StepLimitEventDelegate()
-        let agentService = try PeekabooAgentService(
-            services: PeekabooServices(),
-            defaultModel: .openai(.gpt55))
+        let (agentService, sessionStore) = try self.makeAgentService(defaultModel: .openai(.gpt55))
+        defer { sessionStore.cleanup() }
         let result = try await agentService.executeTask(
             "Use a tool, then finish.",
             maxSteps: 2,
@@ -597,9 +614,8 @@ struct PeekabooAgentStepLimitTests {
         defer { TachikomaConfiguration.default = previousConfiguration }
 
         let delegate = StepLimitEventDelegate()
-        let agentService = try PeekabooAgentService(
-            services: PeekabooServices(),
-            defaultModel: .openai(.gpt55))
+        let (agentService, sessionStore) = try self.makeAgentService(defaultModel: .openai(.gpt55))
+        defer { sessionStore.cleanup() }
         let result = try await agentService.executeTask(
             "Use a tool, then finish.",
             maxSteps: 2,
@@ -621,9 +637,8 @@ struct PeekabooAgentStepLimitTests {
     @MainActor
     func `Unknown zero-token cost remains unknown across session continuation`() async throws {
         let model = LanguageModel.openai(.gpt55)
-        let agentService = try PeekabooAgentService(
-            services: PeekabooServices(),
-            defaultModel: model)
+        let (agentService, sessionStore) = try self.makeAgentService(defaultModel: model)
+        defer { sessionStore.cleanup() }
         let context = try await agentService.prepareSession(
             task: "Start cost coverage test.",
             model: model,
@@ -680,9 +695,8 @@ struct PeekabooAgentStepLimitTests {
         defer { TachikomaConfiguration.default = previousConfiguration }
 
         let model = LanguageModel.openai(.gpt55)
-        let agentService = try PeekabooAgentService(
-            services: PeekabooServices(),
-            defaultModel: model)
+        let (agentService, sessionStore) = try self.makeAgentService(defaultModel: model)
+        defer { sessionStore.cleanup() }
         let context = try await agentService.prepareSession(
             task: "Return a billed but incomplete response.",
             model: model,
@@ -733,9 +747,8 @@ struct PeekabooAgentStepLimitTests {
         defer { TachikomaConfiguration.default = previousConfiguration }
 
         let delegate = StepLimitEventDelegate()
-        let agentService = try PeekabooAgentService(
-            services: PeekabooServices(),
-            defaultModel: .anthropic(.fable5))
+        let (agentService, sessionStore) = try self.makeAgentService(defaultModel: .anthropic(.fable5))
+        defer { sessionStore.cleanup() }
 
         let thrownError = await #expect(throws: TachikomaError.self) {
             _ = try await agentService.executeTask(
@@ -768,9 +781,8 @@ struct PeekabooAgentStepLimitTests {
         defer { TachikomaConfiguration.default = previousConfiguration }
 
         let delegate = StepLimitEventDelegate()
-        let agentService = try PeekabooAgentService(
-            services: PeekabooServices(),
-            defaultModel: .openai(.gpt55))
+        let (agentService, sessionStore) = try self.makeAgentService(defaultModel: .openai(.gpt55))
+        defer { sessionStore.cleanup() }
 
         let thrownError = await #expect(throws: TachikomaError.self) {
             _ = try await agentService.executeTask(
@@ -801,9 +813,8 @@ struct PeekabooAgentStepLimitTests {
         defer { TachikomaConfiguration.default = previousConfiguration }
 
         let delegate = StepLimitEventDelegate()
-        let agentService = try PeekabooAgentService(
-            services: PeekabooServices(),
-            defaultModel: .openai(.gpt55))
+        let (agentService, sessionStore) = try self.makeAgentService(defaultModel: .openai(.gpt55))
+        defer { sessionStore.cleanup() }
 
         let thrownError = await #expect(throws: PeekabooAgentService.AgentStepLimitExceededError.self) {
             _ = try await agentService.executeTask(
@@ -853,9 +864,8 @@ struct PeekabooAgentStepLimitTests {
         defer { TachikomaConfiguration.default = previousConfiguration }
 
         let model = LanguageModel.openai(.gpt55)
-        let agentService = try PeekabooAgentService(
-            services: PeekabooServices(),
-            defaultModel: model)
+        let (agentService, sessionStore) = try self.makeAgentService(defaultModel: model)
+        defer { sessionStore.cleanup() }
         let context = try await agentService.prepareSession(
             task: "Use a tool, then encounter a provider failure.",
             model: model,
@@ -909,6 +919,20 @@ struct PeekabooAgentStepLimitTests {
             try? await agentService.deleteSession(id: context.id)
             throw error
         }
+    }
+
+    @MainActor
+    private func makeAgentService(
+        defaultModel: LanguageModel = .anthropic(.opus48)) throws -> (
+        service: PeekabooAgentService,
+        store: IsolatedAgentSessionStore)
+    {
+        let store = try IsolatedAgentSessionStore()
+        let service = try PeekabooAgentService(
+            services: PeekabooServices(),
+            defaultModel: defaultModel,
+            sessionManager: store.manager)
+        return (service, store)
     }
 }
 
@@ -1306,25 +1330,24 @@ private final class TwoTurnUsageProvider: ModelProvider, @unchecked Sendable {
 
 private actor FirstToolCompletionGate {
     private var completed = false
-    private var waiters: [CheckedContinuation<Void, Never>] = []
 
     func signal() {
         guard !self.completed else { return }
         self.completed = true
-        let waiters = self.waiters
-        self.waiters.removeAll()
-        for waiter in waiters {
-            waiter.resume()
-        }
     }
 
-    func wait() async {
-        if self.completed {
-            return
+    func wait(timeout: Duration = .seconds(5)) async -> Bool {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: timeout)
+        while !self.completed {
+            guard clock.now < deadline else { return false }
+            do {
+                try await Task.sleep(for: .milliseconds(10))
+            } catch {
+                return false
+            }
         }
-        await withCheckedContinuation { continuation in
-            self.waiters.append(continuation)
-        }
+        return true
     }
 }
 
@@ -1369,25 +1392,24 @@ private final class MultiSleepProvider: ModelProvider, @unchecked Sendable {
 private actor NoncooperativeProviderGate {
     private var started = false
     private var released = false
-    private var startWaiters: [CheckedContinuation<Void, Never>] = []
     private var releaseWaiters: [CheckedContinuation<Void, Never>] = []
 
     func markStarted() {
         self.started = true
-        let waiters = self.startWaiters
-        self.startWaiters.removeAll()
-        for waiter in waiters {
-            waiter.resume()
-        }
     }
 
-    func waitForStart() async {
-        if self.started {
-            return
+    func waitForStart(timeout: Duration = .seconds(5)) async -> Bool {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: timeout)
+        while !self.started {
+            guard clock.now < deadline else { return false }
+            do {
+                try await Task.sleep(for: .milliseconds(10))
+            } catch {
+                return false
+            }
         }
-        await withCheckedContinuation { continuation in
-            self.startWaiters.append(continuation)
-        }
+        return true
     }
 
     func waitForRelease() async {

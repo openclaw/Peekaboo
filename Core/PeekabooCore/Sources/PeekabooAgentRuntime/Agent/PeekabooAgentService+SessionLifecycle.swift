@@ -57,10 +57,6 @@ extension PeekabooAgentService {
         guard let existingSession = try await self.sessionManager.loadSession(id: sessionId) else {
             throw PeekabooError.sessionNotFound(sessionId)
         }
-        let resolvedModel = try self.resolveContinuationModelContext(
-            explicitModel: model,
-            session: existingSession)
-        let selectedModel = resolvedModel.model
         let taskDescription = userMessage ?? "Resume session \(sessionId)"
 
         if dryRun {
@@ -74,10 +70,18 @@ extension PeekabooAgentService {
                 metadata: AgentMetadata(
                     executionTime: 0,
                     toolCallCount: 0,
-                    modelName: self.safeModelDisplayName(for: selectedModel),
+                    modelName: self.continuationDryRunModelDisplayName(
+                        explicitModel: model,
+                        session: existingSession),
                     startTime: now,
                     endTime: now))
         }
+
+        let resolvedModel = try self.resolveContinuationModelContext(
+            explicitModel: model,
+            session: existingSession)
+        let selectedModel = resolvedModel.model
+        self.currentModel = selectedModel
 
         let sessionContext = self.makeContinuationContext(
             from: existingSession,
@@ -211,8 +215,8 @@ extension PeekabooAgentService {
               persistedModel.supportsTools
         else {
             throw PeekabooError.invalidInput(
-                "Session \(session.id) was created with model '\(session.modelName)', but its original " +
-                    "provider, model, and endpoint can no longer be verified safely. Pass an explicit model " +
+                "Session \(session.id)'s original provider, model, and endpoint can no longer be verified " +
+                    "safely. Pass an explicit model " +
                     "to resume this session.")
         }
         let provider = try TachikomaConfiguration.resolve(.current).makeProvider(for: persistedModel)
@@ -223,11 +227,27 @@ extension PeekabooAgentService {
               identity.providerIdentity == providerIdentity
         else {
             throw PeekabooError.invalidInput(
-                "Session \(session.id) was created with model '\(session.modelName)', but its original " +
-                    "provider, model, and endpoint can no longer be verified safely. Pass an explicit model " +
+                "Session \(session.id)'s original provider, model, and endpoint can no longer be verified " +
+                    "safely. Pass an explicit model " +
                     "to resume this session.")
         }
         return ResolvedContinuationModel(model: persistedModel, provider: provider, identity: identity)
+    }
+
+    private func continuationDryRunModelDisplayName(
+        explicitModel: LanguageModel?,
+        session: AgentSession) -> String
+    {
+        if let explicitModel {
+            return self.safeModelDisplayName(for: explicitModel)
+        }
+
+        guard let selection = session.modelSelection,
+              let persistedModel = self.resolveConfiguredModel(selection)
+        else {
+            return "Saved session model"
+        }
+        return self.safeModelDisplayName(for: persistedModel)
     }
 
     /// Delete a specific session

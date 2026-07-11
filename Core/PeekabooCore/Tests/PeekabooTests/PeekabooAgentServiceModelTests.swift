@@ -209,9 +209,12 @@ extension PeekabooAgentServiceTests {
         defer { TachikomaConfiguration.default = previousConfiguration }
 
         let delegate = CapturingAgentEventDelegate()
+        let sessionStore = try IsolatedAgentSessionStore()
+        defer { sessionStore.cleanup() }
         let agentService = try PeekabooAgentService(
             services: PeekabooServices(),
-            defaultModel: .anthropic(.fable5))
+            defaultModel: .anthropic(.fable5),
+            sessionManager: sessionStore.manager)
 
         await #expect(throws: PeekabooAgentService.AgentStepLimitExceededError.self) {
             _ = try await agentService.executeTask(
@@ -356,9 +359,12 @@ extension PeekabooAgentServiceTests {
             TachikomaConfiguration.default = previousConfiguration
         }
 
+        let sessionStore = try IsolatedAgentSessionStore()
+        defer { sessionStore.cleanup() }
         let agentService = try PeekabooAgentService(
             services: PeekabooServices(),
-            defaultModel: .custom(provider: provider))
+            defaultModel: .custom(provider: provider),
+            sessionManager: sessionStore.manager)
 
         _ = try await agentService.executeTask(
             "Use a tool, then continue.",
@@ -1321,6 +1327,115 @@ extension PeekabooAgentServiceTests {
 
     @Test
     @MainActor
+    func `Ambiguous Settings-style custom default disables agent service`() throws {
+        try self.withIsolatedAgentEnvironment(
+            ["OPENAI_API_KEY": "test-openai-key"],
+            configurationJSON: """
+            {
+              "aiProviders": {
+                "providers": "proxy-a/mini,proxy-b/mini"
+              },
+              "agent": {
+                "defaultModel": "mini"
+              },
+              "customProviders": {
+                "proxy-a": {
+                  "name": "Proxy A",
+                  "type": "openai",
+                  "enabled": true,
+                  "options": {
+                    "baseURL": "http://localhost:8317/v1",
+                    "apiKey": "test-key"
+                  },
+                  "models": {
+                    "mini": {
+                      "name": "Mini A",
+                      "supportsVision": false,
+                      "supportsTools": true
+                    }
+                  }
+                },
+                "proxy-b": {
+                  "name": "Proxy B",
+                  "type": "openai",
+                  "enabled": true,
+                  "options": {
+                    "baseURL": "http://localhost:8318/v1",
+                    "apiKey": "test-key"
+                  },
+                  "models": {
+                    "mini": {
+                      "name": "Mini B",
+                      "supportsVision": false,
+                      "supportsTools": true
+                    }
+                  }
+                }
+              }
+            }
+            """) {
+                let services = self.makeServices()
+
+                #expect(services.agent == nil)
+            }
+    }
+
+    @Test
+    @MainActor
+    func `Environment provider list overrides ambiguous saved default`() throws {
+        try self.withIsolatedAgentEnvironment(
+            ["PEEKABOO_AI_PROVIDERS": "proxy-b/mini,proxy-a/mini"],
+            configurationJSON: """
+            {
+              "agent": {
+                "defaultModel": "mini"
+              },
+              "customProviders": {
+                "proxy-a": {
+                  "name": "Proxy A",
+                  "type": "openai",
+                  "enabled": true,
+                  "options": {
+                    "baseURL": "http://localhost:8317/v1",
+                    "apiKey": "test-key"
+                  },
+                  "models": {
+                    "mini": {
+                      "name": "Mini A",
+                      "supportsVision": false,
+                      "supportsTools": true
+                    }
+                  }
+                },
+                "proxy-b": {
+                  "name": "Proxy B",
+                  "type": "openai",
+                  "enabled": true,
+                  "options": {
+                    "baseURL": "http://localhost:8318/v1",
+                    "apiKey": "test-key"
+                  },
+                  "models": {
+                    "mini": {
+                      "name": "Mini B",
+                      "supportsVision": false,
+                      "supportsTools": true
+                    }
+                  }
+                }
+              }
+            }
+            """) {
+                let services = self.makeServices()
+                let agentService = try #require(services.agent as? PeekabooAgentService)
+
+                #expect(agentService.defaultModelSelection == "proxy-b/mini")
+                #expect(agentService.defaultModel == "Custom/proxy-b/mini")
+            }
+    }
+
+    @Test
+    @MainActor
     func `Saved custom provider does not override built-in credentials`() throws {
         try self.withIsolatedAgentEnvironment(
             [
@@ -1905,14 +2020,25 @@ extension PeekabooAgentServiceTests {
               }
             }
             """) {
+                let sessionStore = try IsolatedAgentSessionStore()
+                defer { sessionStore.cleanup() }
                 let service = try PeekabooAgentService(
                     services: self.makeServices(),
-                    defaultModel: .openai(.gpt55))
+                    defaultModel: .openai(.gpt55),
+                    sessionManager: sessionStore.manager)
+                let configured = try #require(service.resolveConfiguredModel("text-proxy/text-only"))
+                let identity = service.persistedModelIdentity(for: configured)
+                let selection = try #require(identity.selection)
+                let endpointIdentity = try #require(identity.endpointIdentity)
+                let providerIdentity = try #require(identity.providerIdentity)
+                #expect(!configured.supportsTools)
                 let now = Date()
                 let session = AgentSession(
                     id: "resume-text-only-\(UUID().uuidString)",
-                    modelName: "Custom/text-proxy/text-only",
-                    modelSelection: "text-proxy/text-only",
+                    modelName: identity.displayName,
+                    modelSelection: selection,
+                    modelEndpointIdentity: endpointIdentity,
+                    modelProviderIdentity: providerIdentity,
                     messages: [.system("Test system prompt"), .user("Test task")],
                     metadata: SessionMetadata(),
                     createdAt: now,
@@ -1950,9 +2076,12 @@ extension PeekabooAgentServiceTests {
               }
             }
             """) {
+                let sessionStore = try IsolatedAgentSessionStore()
+                defer { sessionStore.cleanup() }
                 let service = try PeekabooAgentService(
                     services: self.makeServices(),
-                    defaultModel: .openai(.gpt55))
+                    defaultModel: .openai(.gpt55),
+                    sessionManager: sessionStore.manager)
                 let configured = try #require(service.resolveConfiguredModel("local-proxy/mini"))
                 let identity = service.persistedModelIdentity(for: configured)
                 let selection = try #require(identity.selection)
@@ -2264,6 +2393,39 @@ extension PeekabooAgentServiceTests {
         #expect(result.metadata.modelName == LanguageModel.openai(.gpt55).description)
         #expect(result.content.contains("Dry run"))
     }
+
+    @Test
+    @MainActor
+    func `Dry run metadata omits compatible endpoint credentials`() async throws {
+        let sessionStore = try IsolatedAgentSessionStore()
+        defer { sessionStore.cleanup() }
+        let compatibleModel = LanguageModel.openaiCompatible(
+            modelId: "private-model",
+            baseURL: "https://agent-user:pw-value@example.invalid/v1?marker=query-value#fragment-value")
+        let agentService = try PeekabooAgentService(
+            services: self.makeServices(),
+            defaultModel: compatibleModel,
+            sessionManager: sessionStore.manager)
+
+        let taskResult = try await agentService.executeTask(
+            "describe state",
+            maxSteps: 1,
+            model: compatibleModel,
+            dryRun: true,
+            eventDelegate: nil)
+        let audioResult = try await agentService.executeTaskWithAudio(
+            audioContent: AudioContent(duration: 1, transcript: "describe audio"),
+            maxSteps: 1,
+            dryRun: true,
+            eventDelegate: nil)
+
+        #expect(taskResult.metadata.modelName == "OpenAI-Compatible/private-model")
+        #expect(audioResult.metadata.modelName == "OpenAI-Compatible/private-model")
+        #expect(!taskResult.metadata.modelName.contains("pw-value"))
+        #expect(!taskResult.metadata.modelName.contains("query-value"))
+        #expect(!audioResult.metadata.modelName.contains("pw-value"))
+        #expect(!audioResult.metadata.modelName.contains("query-value"))
+    }
 }
 
 extension PeekabooAgentServiceTests {
@@ -2358,9 +2520,12 @@ struct PeekabooAgentResumeTests {
             TachikomaConfiguration.default = previousConfiguration
         }
 
+        let sessionStore = try IsolatedAgentSessionStore()
+        defer { sessionStore.cleanup() }
         let agentService = try PeekabooAgentService(
             services: PeekabooServices(),
-            defaultModel: .openai(.gpt55))
+            defaultModel: .openai(.gpt55),
+            sessionManager: sessionStore.manager)
         let sessionId = "resume-max-steps-\(UUID().uuidString)"
         let now = Date()
         try agentService.sessionManager.saveSession(AgentSession(

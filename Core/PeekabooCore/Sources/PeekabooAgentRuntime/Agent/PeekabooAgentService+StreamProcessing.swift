@@ -55,6 +55,10 @@ extension PeekabooAgentService {
 
         try Task.checkCancellation()
         for try await delta in streamResult.stream {
+            // A terminal event closes the provider stream; never accept late tool calls.
+            guard !didReceiveDone else {
+                throw TachikomaError.apiError("Provider stream emitted an event after its terminal event")
+            }
             if delta.type != .done {
                 try Task.checkCancellation()
             }
@@ -139,7 +143,6 @@ extension PeekabooAgentService {
                     eventHandler: eventHandler)
 
             case .done:
-                let isFirstDone = !didReceiveDone
                 didReceiveDone = true
                 self.flushPendingReasoningText(
                     &pendingReasoningText,
@@ -147,9 +150,7 @@ extension PeekabooAgentService {
                     type: pendingReasoningType,
                     reasoningBlocks: &reasoningBlocks)
                 usage = delta.usage
-                if isFirstDone {
-                    onTerminalUsage?(usage)
-                }
+                onTerminalUsage?(usage)
                 finishReason = delta.finishReason
                 try Task.checkCancellation()
 
@@ -159,7 +160,7 @@ extension PeekabooAgentService {
         }
         try Task.checkCancellation()
 
-        if buffersAssistantTextUntilDone, !didReceiveDone {
+        if !didReceiveDone {
             throw TachikomaError.apiError("Provider stream ended without a terminal event")
         }
 

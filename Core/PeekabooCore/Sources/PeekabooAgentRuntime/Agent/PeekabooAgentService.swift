@@ -178,11 +178,12 @@ public final class PeekabooAgentService: AgentServiceProtocol {
         services: any PeekabooServiceProviding,
         defaultModel: LanguageModel = .anthropic(.opus48),
         snapshotMutationCoordinator: (any MCPToolSnapshotMutationCoordinating)? = nil,
-        snapshotExecutionGate: MCPToolSnapshotExecutionGate = MCPToolSnapshotExecutionGate())
+        snapshotExecutionGate: MCPToolSnapshotExecutionGate = MCPToolSnapshotExecutionGate(),
+        sessionManager: AgentSessionManager? = nil)
         throws
     {
         self.services = services
-        self.sessionManager = try AgentSessionManager()
+        self.sessionManager = try sessionManager ?? AgentSessionManager()
         self.defaultLanguageModel = defaultModel
         self.snapshotMutationCoordinator = snapshotMutationCoordinator
         self.snapshotExecutionGate = snapshotExecutionGate
@@ -299,7 +300,7 @@ public final class PeekabooAgentService: AgentServiceProtocol {
                 metadata: AgentMetadata(
                     executionTime: 0,
                     toolCallCount: 0,
-                    modelName: selectedModel.description,
+                    modelName: self.safeModelDisplayName(for: selectedModel),
                     startTime: Date(),
                     endTime: Date()))
         }

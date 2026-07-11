@@ -58,7 +58,8 @@ extension PeekabooAgentService {
         return Self.canonicalEndpointIdentity(provider.baseURL)
     }
 
-    func safeModelDisplayName(for model: LanguageModel) -> String {
+    /// A model label suitable for user-facing output. Endpoint details are intentionally omitted.
+    public func safeModelDisplayName(for model: LanguageModel) -> String {
         switch model {
         case let .azureOpenAI(deployment, _, _, _):
             "AzureOpenAI/\(deployment)"
@@ -69,6 +70,11 @@ extension PeekabooAgentService {
         default:
             model.description
         }
+    }
+
+    /// The configured default model label, without endpoint credentials or query parameters.
+    public var defaultModelDisplayName: String {
+        self.safeModelDisplayName(for: self.defaultLanguageModel)
     }
 
     func modelProviderIdentity(for model: LanguageModel) -> String? {
@@ -169,6 +175,8 @@ extension PeekabooAgentService {
 
         components.scheme = scheme
         components.host = host
+        // The authenticated principal and query routing are part of the endpoint boundary.
+        // Passwords and fragments are omitted; the remaining identity is hashed before persistence.
         components.password = nil
         components.fragment = nil
         while components.path.count > 1, components.path.hasSuffix("/") {

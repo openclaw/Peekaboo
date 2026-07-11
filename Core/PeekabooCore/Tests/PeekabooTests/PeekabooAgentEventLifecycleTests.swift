@@ -17,9 +17,12 @@ struct PeekabooAgentEventLifecycleTests {
         defer { TachikomaConfiguration.default = previousConfiguration }
 
         let delegate = EventLifecycleDelegate()
+        let sessionStore = try IsolatedAgentSessionStore()
+        defer { sessionStore.cleanup() }
         let agentService = try PeekabooAgentService(
             services: PeekabooServices(),
-            defaultModel: .openai(.gpt55))
+            defaultModel: .openai(.gpt55),
+            sessionManager: sessionStore.manager)
 
         let thrownError = await #expect(throws: PeekabooAgentService.AgentStepLimitExceededError.self) {
             _ = try await agentService.executeTask(
@@ -75,9 +78,12 @@ struct PeekabooAgentEventLifecycleTests {
         defer { TachikomaConfiguration.default = previousConfiguration }
 
         let delegate = EventLifecycleDelegate()
+        let sessionStore = try IsolatedAgentSessionStore()
+        defer { sessionStore.cleanup() }
         let agentService = try PeekabooAgentService(
             services: PeekabooServices(),
-            defaultModel: .openai(.gpt55))
+            defaultModel: .openai(.gpt55),
+            sessionManager: sessionStore.manager)
 
         await #expect(throws: CancellationError.self) {
             _ = try await agentService.executeTask(

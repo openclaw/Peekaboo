@@ -18,10 +18,30 @@ extension PeekabooServices {
         let providers = self.configuration.getAIProviders()
         let agentConfig = self.configuration.getConfiguration()
         let aiService = PeekabooAIService(configuration: self.configuration)
-        let configuredCustomDefaultModel = Self.configuredCustomDefaultModel(
-            agentConfig?.agent?.defaultModel,
-            providers: providers,
-            aiService: aiService)
+        let environmentProviders = EnvironmentVariables.value(for: "PEEKABOO_AI_PROVIDERS")?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let hasEnvironmentProviders = environmentProviders?.isEmpty == false
+        let configuredCustomDefaultResolution: ConfiguredCustomDefaultResolution = if hasEnvironmentProviders {
+            .none
+        } else {
+            Self.configuredCustomDefaultModel(
+                agentConfig?.agent?.defaultModel,
+                providers: providers,
+                aiService: aiService)
+        }
+        if case let .ambiguous(candidates) = configuredCustomDefaultResolution {
+            self.agentLock.lock()
+            defer { self.agentLock.unlock() }
+
+            self.agent = nil
+            let candidateList = candidates.sorted().joined(separator: ", ")
+            self.logger.warning("""
+            \(AgentDisplayTokens.Status.warning) Configured agent default matches multiple custom-provider \
+            models (\(candidateList, privacy: .public)) - agent service disabled
+            """)
+            return
+        }
+        let configuredCustomDefaultModel = configuredCustomDefaultResolution.model
         let configuredDefault = configuredCustomDefaultModel?.modelId ?? agentConfig?.agent?.defaultModel
 
         // Check for available providers (API key or OAuth access token)
@@ -52,10 +72,6 @@ extension PeekabooServices {
         if hasOpenAI || hasAnthropic || hasGemini || hasMiniMax || hasMiniMaxChina || hasKimi || hasOpenRouter ||
             hasGrok || hasOllama || hasLMStudio || hasCustomProvider
         {
-            let environmentProviders = EnvironmentVariables.value(for: "PEEKABOO_AI_PROVIDERS")?
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            let hasEnvironmentProviders = environmentProviders?.isEmpty == false
-
             let sources = ModelSources(
                 providers: providers,
                 hasOpenAI: hasOpenAI,
@@ -122,36 +138,56 @@ extension PeekabooServices {
     private static func configuredCustomDefaultModel(
         _ configuredDefault: String?,
         providers: String,
-        aiService: PeekabooAIService) -> LanguageModel?
+        aiService: PeekabooAIService) -> ConfiguredCustomDefaultResolution
     {
         guard let configuredDefault = configuredDefault?.trimmingCharacters(in: .whitespacesAndNewlines),
               !configuredDefault.isEmpty
         else {
-            return nil
+            return .none
+        }
+
+        if configuredDefault.contains("/") {
+            guard let model = aiService.resolveConfiguredModel(configuredDefault),
+                  case .custom = model,
+                  model.supportsTools,
+                  aiService.isModelAvailable(model)
+            else {
+                return .none
+            }
+            return .resolved(model)
         }
 
         let providerCandidates = providers
             .split(separator: ",")
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { entry in
-                guard let model = entry.split(separator: "/", maxSplits: 1).last.map(String.init) else {
-                    return false
-                }
-                return model == configuredDefault || entry == configuredDefault
-            }
-
-        for candidate in [configuredDefault] + providerCandidates {
-            guard let model = aiService.resolveConfiguredModel(candidate),
+        var matches: [(selection: String, model: LanguageModel)] = []
+        var seenSelections: Set<String> = []
+        for candidate in providerCandidates {
+            let modelID = candidate
+                .split(separator: "/", maxSplits: 1)
+                .last
+                .map(String.init)
+            guard modelID?.caseInsensitiveCompare(configuredDefault) == .orderedSame,
+                  let model = aiService.resolveConfiguredModel(candidate),
                   case .custom = model,
-                  model.supportsTools,
-                  aiService.isModelAvailable(model)
+                  seenSelections.insert(candidate.lowercased()).inserted
             else {
                 continue
             }
-            return model
+            matches.append((candidate, model))
         }
 
-        return nil
+        if matches.count > 1 {
+            return .ambiguous(matches.map(\.selection))
+        }
+
+        guard let model = matches.first?.model,
+              model.supportsTools,
+              aiService.isModelAvailable(model)
+        else {
+            return .none
+        }
+        return .resolved(model)
     }
 
     /// Parse model string to LanguageModel enum.
@@ -276,15 +312,7 @@ extension PeekabooServices {
                 }
                 let provider = providerID.lowercased()
                 if parts.count == 1 {
-                    switch provider {
-                    case "ollama" where sources.hasOllama:
-                        return LanguageModel.ollama(.llama33).description
-                    case "lmstudio" where sources.hasLMStudio,
-                         "lm-studio" where sources.hasLMStudio:
-                        return LanguageModel.lmstudio(.gptOSS120B).description
-                    default:
-                        return nil
-                    }
+                    return Self.availableLocalDefault(provider: provider, sources: sources)
                 }
                 guard parts.count == 2 else { return nil }
                 let model = parts[1]
@@ -319,6 +347,18 @@ extension PeekabooServices {
                 }
             }
             .first
+    }
+
+    private static func availableLocalDefault(provider: String, sources: ModelSources) -> String? {
+        switch provider {
+        case "ollama" where sources.hasOllama:
+            LanguageModel.ollama(.llama33).description
+        case "lmstudio" where sources.hasLMStudio,
+             "lm-studio" where sources.hasLMStudio:
+            LanguageModel.lmstudio(.gptOSS120B).description
+        default:
+            nil
+        }
     }
 
     private func hasUnavailableCustomProviderSelection(in sources: ModelSources) -> Bool {
@@ -476,4 +516,17 @@ private struct ModelSources {
     let aiService: PeekabooAIService
     let isProviderListExplicit: Bool
     let isEnvironmentProvided: Bool
+}
+
+private enum ConfiguredCustomDefaultResolution {
+    case none
+    case resolved(LanguageModel)
+    case ambiguous([String])
+
+    var model: LanguageModel? {
+        if case let .resolved(model) = self {
+            return model
+        }
+        return nil
+    }
 }

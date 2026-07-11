@@ -294,7 +294,7 @@ public final class AgentSessionManager: @unchecked Sendable {
         do {
             let sessionFiles = try fileManager.contentsOfDirectory(
                 at: self.sessionDirectory,
-                includingPropertiesForKeys: [.creationDateKey, .contentModificationDateKey])
+                includingPropertiesForKeys: nil)
 
             return sessionFiles.compactMap { url in
                 guard url.pathExtension == "json" else { return nil }
@@ -306,20 +306,13 @@ public final class AgentSessionManager: @unchecked Sendable {
                         return nil
                     }
 
-                    let resourceValues = try url.resourceValues(forKeys: [
-                        .creationDateKey,
-                        .contentModificationDateKey,
-                    ])
-                    let createdAt = resourceValues.creationDate ?? Date()
-                    let lastAccessedAt = resourceValues.contentModificationDate ?? Date()
-
                     return SessionSummary(
                         id: session.id,
                         modelName: session.modelName,
-                        createdAt: createdAt,
-                        lastAccessedAt: lastAccessedAt,
+                        createdAt: session.createdAt,
+                        lastAccessedAt: session.updatedAt,
                         messageCount: session.messages.count,
-                        status: self.sessionStatus(for: session, lastAccessedAt: lastAccessedAt),
+                        status: self.sessionStatus(for: session, lastAccessedAt: session.updatedAt),
                         summary: self.generateSessionSummary(from: session.messages))
                 } catch {
                     return nil
