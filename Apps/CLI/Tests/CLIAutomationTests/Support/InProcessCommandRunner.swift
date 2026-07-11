@@ -96,16 +96,17 @@ enum InProcessCommandRunner {
     static func run(
         _ arguments: [String],
         services: PeekabooServices,
+        standardInput: String? = nil,
         spaceService: (any SpaceCommandSpaceService)? = nil
     ) async throws -> CommandRunResult {
         try await self.gate.run {
             try await CommandRuntime.withInjectedServices(services) {
                 if let spaceService {
                     try await SpaceCommandEnvironment.withSpaceService(spaceService) {
-                        try await self.execute(arguments: arguments)
+                        try await self.execute(arguments: arguments, standardInput: standardInput)
                     }
                 } else {
-                    try await self.execute(arguments: arguments)
+                    try await self.execute(arguments: arguments, standardInput: standardInput)
                 }
             }
         }
@@ -140,13 +141,13 @@ enum InProcessCommandRunner {
         try await self.gate.run(operation)
     }
 
-    private static func execute(arguments: [String]) async throws -> CommandRunResult {
+    private static func execute(arguments: [String], standardInput: String? = nil) async throws -> CommandRunResult {
         try await self.captureOutput {
             var exitStatus: Int32 = 0
             var stdoutData = Data()
             var stderrData = Data()
 
-            let result: (Int32, Data, Data) = try await self.redirectOutput {
+            let result: (Int32, Data, Data) = try await self.redirectOutput(standardInput: standardInput) {
                 await executePeekabooCLI(arguments: ["peekaboo"] + arguments)
             }
 
@@ -168,6 +169,7 @@ enum InProcessCommandRunner {
     }
 
     private static func redirectOutput(
+        standardInput: String? = nil,
         _ body: () async throws -> Int32
     ) async throws -> (Int32, Data, Data) {
         // Prevent writes to closed pipes from crashing the test runner.
@@ -179,6 +181,74 @@ enum InProcessCommandRunner {
 
         let originalStdout = dup(STDOUT_FILENO)
         let originalStderr = dup(STDERR_FILENO)
+        let originalStdin: Int32
+        if standardInput == nil {
+            originalStdin = -1
+        } else {
+            originalStdin = dup(STDIN_FILENO)
+            guard originalStdin >= 0 else {
+                throw CocoaError(.fileReadUnknown)
+            }
+        }
+
+        defer {
+            if originalStdin >= 0 {
+                let restoreResult = dup2(originalStdin, STDIN_FILENO)
+                assert(restoreResult >= 0)
+                clearerr(stdin)
+                close(originalStdin)
+            }
+        }
+
+        if let standardInput {
+            var pathTemplate = FileManager.default.temporaryDirectory
+                .appendingPathComponent("peekaboo-cli-stdin.XXXXXX")
+                .path
+                .utf8CString
+            let inputFile = pathTemplate.withUnsafeMutableBufferPointer { buffer in
+                mkstemp(buffer.baseAddress!)
+            }
+            guard inputFile >= 0 else { throw self.currentPOSIXError() }
+
+            let inputPath = pathTemplate.withUnsafeBufferPointer { buffer in
+                String(cString: buffer.baseAddress!)
+            }
+            guard unlink(inputPath) == 0 else {
+                let error = self.currentPOSIXError()
+                close(inputFile)
+                throw error
+            }
+
+            do {
+                try Data(standardInput.utf8).withUnsafeBytes { buffer in
+                    var offset = 0
+                    while offset < buffer.count {
+                        let bytesWritten = Darwin.write(
+                            inputFile,
+                            buffer.baseAddress!.advanced(by: offset),
+                            buffer.count - offset
+                        )
+                        if bytesWritten < 0, errno == EINTR {
+                            continue
+                        }
+                        guard bytesWritten > 0 else {
+                            throw self.currentPOSIXError()
+                        }
+                        offset += bytesWritten
+                    }
+                }
+                guard lseek(inputFile, 0, SEEK_SET) >= 0,
+                      dup2(inputFile, STDIN_FILENO) >= 0
+                else {
+                    throw self.currentPOSIXError()
+                }
+            } catch {
+                close(inputFile)
+                throw error
+            }
+            close(inputFile)
+            clearerr(stdin)
+        }
 
         dup2(stdoutPipe.fileHandleForWriting.fileDescriptor, STDOUT_FILENO)
         dup2(stderrPipe.fileHandleForWriting.fileDescriptor, STDERR_FILENO)
@@ -238,6 +308,10 @@ enum InProcessCommandRunner {
         }
 
         return data
+    }
+
+    private static func currentPOSIXError() -> NSError {
+        NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
     }
 }
 

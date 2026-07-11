@@ -55,7 +55,7 @@ final class AgentChatEventDelegate: AgentEventDelegate {
 
     private func handleToolCompleted(name: String, result: String, ui: AgentChatUI) {
         let summary = self.toolResultSummary(name: name, result: result)
-        let success = self.successFlag(from: result)
+        let success = Self.successFlag(from: result)
         let toolType = ToolType(rawValue: name)
         ui.showToolCompletion(
             name: name,
@@ -117,9 +117,13 @@ final class AgentChatEventDelegate: AgentEventDelegate {
         return formatter?.formatResultSummary(result: json)
     }
 
-    private func successFlag(from result: String) -> Bool {
-        guard let json = self.parseResult(result) else { return true }
-        return (json["success"] as? Bool) ?? true
+    static func successFlag(from result: String) -> Bool {
+        guard let data = result.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else {
+            return true
+        }
+        return ToolResultExtractor.isSuccess(json)
     }
 
     /// Minimal diff between previous and new args for the same tool name.

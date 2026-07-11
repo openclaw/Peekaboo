@@ -13,6 +13,10 @@ import TauTUI
 
 @available(macOS 14.0, *)
 extension AgentCommand {
+    private struct ReportedChatTurnError: Error {
+        let underlyingError: any Error
+    }
+
     private func ensureChatModePreconditions() -> Bool {
         let flags = AgentChatPreconditions.Flags(
             jsonOutput: self.jsonOutput,
@@ -60,7 +64,7 @@ extension AgentCommand {
             throw ExitCode.failure
         }
 
-        if capabilities.isInteractive && !capabilities.isPiped {
+        if self.shouldUseTauTUIChat(capabilities: capabilities) {
             do {
                 try await self.runTauTUIChatLoop(
                     agentService,
@@ -96,6 +100,7 @@ extension AgentCommand {
         capabilities: TerminalCapabilities,
         queueMode: QueueMode
     ) async throws {
+        let failTasklessResumeTurn = self.shouldFailTasklessResumeTurn(capabilities: capabilities)
         var turnContext = ChatTurnContext(
             sessionId: nil,
             requestedModel: requestedModel,
@@ -109,9 +114,14 @@ extension AgentCommand {
             throw ExitCode.failure
         }
 
+        let modelDescription = await self.describeChatModel(
+            requestedModel,
+            sessionId: turnContext.sessionId,
+            agentService: agentService
+        )
         self.printChatWelcome(
             sessionId: turnContext.sessionId,
-            modelDescription: self.describeModel(requestedModel),
+            modelDescription: modelDescription,
             queueMode: queueMode
         )
         self.printChatHelpIntro()
@@ -122,7 +132,7 @@ extension AgentCommand {
 
         while true {
             guard let line = self.readChatLine(prompt: "> ", capabilities: capabilities) else {
-                if capabilities.isInteractive {
+                if capabilities.isInputInteractive {
                     print()
                 }
                 break
@@ -141,10 +151,26 @@ extension AgentCommand {
             let batchedPrompt = trimmed
 
             do {
-                try await self.performChatTurn(batchedPrompt, agentService: agentService, context: &turnContext)
+                try await self.performChatTurn(
+                    batchedPrompt,
+                    agentService: agentService,
+                    context: &turnContext,
+                    propagateTurnFailure: failTasklessResumeTurn
+                )
+            } catch is ReportedChatTurnError {
+                if failTasklessResumeTurn {
+                    throw ExitCode.failure
+                }
+            } catch is CancellationError {
+                if failTasklessResumeTurn {
+                    self.printAgentExecutionError("Agent turn was cancelled")
+                    throw ExitCode.failure
+                }
             } catch {
                 self.printAgentExecutionError(error.localizedDescription)
-                break
+                if failTasklessResumeTurn {
+                    throw ExitCode.failure
+                }
             }
         }
     }
@@ -165,8 +191,13 @@ extension AgentCommand {
             throw ExitCode.failure
         }
 
+        let modelDescription = await self.describeChatModel(
+            requestedModel,
+            sessionId: activeSessionId,
+            agentService: agentService
+        )
         let chatUI = AgentChatUI(
-            modelDescription: self.describeModel(requestedModel),
+            modelDescription: modelDescription,
             sessionId: activeSessionId,
             queueMode: queueMode,
             helpLines: self.chatHelpLines
@@ -319,7 +350,7 @@ extension AgentCommand {
     }
 
     private func readChatLine(prompt: String, capabilities: TerminalCapabilities) -> String? {
-        if capabilities.isInteractive {
+        if capabilities.isInputInteractive {
             fputs(prompt, stdout)
             fflush(stdout)
         }
@@ -336,7 +367,8 @@ extension AgentCommand {
     private func performChatTurn(
         _ input: String,
         agentService: PeekabooAgentService,
-        context: inout ChatTurnContext
+        context: inout ChatTurnContext,
+        propagateTurnFailure: Bool = false
     ) async throws {
         let startingSessionId = context.sessionId
         let queueMode = context.queueMode
@@ -352,18 +384,25 @@ extension AgentCommand {
             if let existingSessionId = startingSessionId {
                 let outputDelegate = self.makeDisplayDelegate(for: batchedInput)
                 let streamingDelegate = self.makeStreamingDelegate(using: outputDelegate)
-                let result = try await agentService.continueSession(
-                    sessionId: existingSessionId,
-                    userMessage: batchedInput,
-                    model: requestedModel,
-                    maxSteps: self.resolvedMaxSteps,
-                    dryRun: self.dryRun,
-                    queueMode: queueMode,
-                    eventDelegate: streamingDelegate,
-                    verbose: self.verbose
-                )
-                self.displayResult(result, delegate: outputDelegate)
-                return result
+                do {
+                    let result = try await agentService.continueSession(
+                        sessionId: existingSessionId,
+                        userMessage: batchedInput,
+                        model: requestedModel,
+                        maxSteps: self.resolvedMaxSteps,
+                        dryRun: self.dryRun,
+                        queueMode: queueMode,
+                        eventDelegate: streamingDelegate,
+                        verbose: self.verbose
+                    )
+                    self.displayResult(result, delegate: outputDelegate)
+                    return result
+                } catch {
+                    if outputDelegate?.hasReceivedError == true {
+                        throw ReportedChatTurnError(underlyingError: error)
+                    }
+                    throw error
+                }
             } else {
                 return try await self.executeAgentTask(
                     agentService,
@@ -390,13 +429,20 @@ extension AgentCommand {
         do {
             defer { cancelMonitor.stop() }
             result = try await runTask.value
-        } catch is CancellationError {
+        } catch let error as CancellationError {
             cancelMonitor.stop()
+            if propagateTurnFailure {
+                throw error
+            }
             return
         } catch {
             cancelMonitor.stop()
-            if let sessionId = self.stepLimitSessionId(from: error) {
+            let underlyingError = (error as? ReportedChatTurnError)?.underlyingError ?? error
+            if let sessionId = self.stepLimitSessionId(from: underlyingError) {
                 context.sessionId = sessionId
+                if propagateTurnFailure {
+                    throw error
+                }
                 return
             }
             throw error
@@ -413,6 +459,24 @@ extension AgentCommand {
         (error as? PeekabooAgentService.AgentStepLimitExceededError)?.sessionId
     }
 
+    func shouldFailTasklessResumeTurn(capabilities: TerminalCapabilities) -> Bool {
+        guard !self.chat,
+              !self.hasTaskInput,
+              self.resume || self.resumeSession != nil
+        else {
+            return false
+        }
+
+        return !capabilities.isInputInteractive || capabilities.isCI
+    }
+
+    func shouldUseTauTUIChat(capabilities: TerminalCapabilities) -> Bool {
+        capabilities.isInputInteractive &&
+            capabilities.isInteractive &&
+            !capabilities.isPiped &&
+            (!capabilities.isCI || self.chat)
+    }
+
     private func printChatTurnSummary(_ result: AgentExecutionResult) {
         guard !self.quiet else { return }
         let duration = String(format: "%.1fs", result.metadata.executionTime)
@@ -425,12 +489,30 @@ extension AgentCommand {
             duration,
             " • ⚒ ",
             String(result.metadata.toolCallCount),
-            TerminalColor.reset
+            TerminalColor.reset,
         ].joined()
         print(line)
     }
 
-    private func describeModel(_ requestedModel: LanguageModel?) -> String {
-        requestedModel?.description ?? "default (gpt-5.5)"
+    func describeChatModel(
+        _ requestedModel: LanguageModel?,
+        sessionId: String?,
+        agentService: PeekabooAgentService
+    ) async -> String {
+        if let requestedModel {
+            return agentService.safeModelDisplayName(for: requestedModel)
+        }
+
+        guard let sessionId else {
+            return agentService.defaultModelDisplayName
+        }
+
+        guard let session = try? await agentService.getSessionInfo(sessionId: sessionId),
+              let selection = session.modelSelection,
+              let model = agentService.resolveConfiguredModel(selection)
+        else {
+            return "saved session model"
+        }
+        return agentService.safeModelDisplayName(for: model)
     }
 }

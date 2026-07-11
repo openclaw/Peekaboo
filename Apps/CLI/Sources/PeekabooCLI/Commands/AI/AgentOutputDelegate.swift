@@ -187,13 +187,14 @@ extension AgentOutputDelegate {
 
         let (formatter, toolType) = self.toolFormatter(for: name)
         let summary = ToolEventSummary.from(resultJSON: json)
+        let success = ToolResultExtractor.isSuccess(json)
 
-        if let toolType, [ToolType.taskCompleted, .needMoreInformation, .needInfo].contains(toolType) {
+        if success,
+           let toolType,
+           [ToolType.taskCompleted, .needMoreInformation, .needInfo].contains(toolType) {
             self.handleCommunicationToolComplete(name: name, toolType: toolType)
             return
         }
-
-        let success = (json["success"] as? Bool) ?? true
 
         if success {
             let resultSummary = self.resultSummary(

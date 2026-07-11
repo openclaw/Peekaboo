@@ -383,8 +383,11 @@ struct AgentCommandTests {
         try self.withIsolatedConfiguration(
             """
             {
+              "aiProviders": {
+                "providers": "local-proxy/text-only,ollama/llava:latest"
+              },
               "agent": {
-                "defaultModel": "local-proxy/text-only"
+                "defaultModel": "text-only"
               },
               "customProviders": {
                 "local-proxy": {
@@ -393,7 +396,7 @@ struct AgentCommandTests {
                   "enabled": true,
                   "options": {
                     "baseURL": "http://localhost:8317/v1",
-                    "apiKey": "test-key"
+                    "apiKey": "${PB_KEY}"
                   },
                   "models": {
                     "text-only": {
@@ -412,6 +415,7 @@ struct AgentCommandTests {
             let configuration = PeekabooCore.ConfigurationManager.shared
             let service = PeekabooAIService(configuration: configuration)
 
+            #expect(!configuration.hasExplicitAIProviderList())
             #expect(command
                 .implicitToolModel(from: service, configuration: configuration, existingAgentModel: nil) == nil)
             let error = try #require(command.unavailableImplicitCustomModelToolCapabilityError(
@@ -424,6 +428,72 @@ struct AgentCommandTests {
             #expect(message.contains("requires tool calling"))
             #expect(!message.contains("Allowed values"))
             #expect(!message.contains("--analyze"))
+        }
+    }
+
+    @Test
+    func `Ambiguous bare custom default refuses provider guess`() throws {
+        try self.withIsolatedConfiguration(
+            """
+            {
+              "aiProviders": {
+                "providers": "proxy-a/text-only,proxy-b/text-only"
+              },
+              "agent": {
+                "defaultModel": "text-only"
+              },
+              "customProviders": {
+                "proxy-a": {
+                  "name": "Proxy A",
+                  "type": "openai",
+                  "enabled": true,
+                  "options": {
+                    "baseURL": "http://localhost:8317/v1",
+                    "apiKey": "${PB_KEY}"
+                  },
+                  "models": {
+                    "text-only": {
+                      "name": "Text Only A",
+                      "supportsTools": false,
+                      "supportsVision": false
+                    }
+                  }
+                },
+                "proxy-b": {
+                  "name": "Proxy B",
+                  "type": "openai",
+                  "enabled": true,
+                  "options": {
+                    "baseURL": "http://localhost:8318/v1",
+                    "apiKey": "${PB_KEY}"
+                  },
+                  "models": {
+                    "text-only": {
+                      "name": "Text Only B",
+                      "supportsTools": true,
+                      "supportsVision": false
+                    }
+                  }
+                }
+              }
+            }
+            """,
+            environment: ["PB_KEY": "resolved-value"]
+        ) {
+            let command = try AgentCommand.parse([])
+            let configuration = PeekabooCore.ConfigurationManager.shared
+            let service = PeekabooAIService(configuration: configuration)
+
+            let error = try #require(command.unavailableImplicitCustomModelToolCapabilityError(
+                from: service,
+                configuration: configuration
+            ))
+            let message = error.localizedDescription
+            #expect(message.contains("matches multiple custom-provider models"))
+            #expect(message.contains("proxy-a/text-only"))
+            #expect(message.contains("proxy-b/text-only"))
+            #expect(message.contains("provider-qualified"))
+            #expect(!message.contains("supportsTools: false"))
         }
     }
 
@@ -535,6 +605,24 @@ struct AgentCommandTests {
             "PEEKABOO_AI_PROVIDERS",
             "OPENAI_API_KEY",
             "ANTHROPIC_API_KEY",
+            "GEMINI_API_KEY",
+            "GOOGLE_API_KEY",
+            "MINIMAX_API_KEY",
+            "MINIMAX_CN_API_KEY",
+            "MOONSHOT_API_KEY",
+            "KIMI_API_KEY",
+            "OPENROUTER_API_KEY",
+            "X_AI_API_KEY",
+            "XAI_API_KEY",
+            "GROK_API_KEY",
+            "MISTRAL_API_KEY",
+            "GROQ_API_KEY",
+            "TOGETHER_API_KEY",
+            "REPLICATE_API_TOKEN",
+            "AZURE_OPENAI_API_KEY",
+            "AZURE_OPENAI_TOKEN",
+            "AZURE_OPENAI_BEARER_TOKEN",
+            "OLLAMA_API_KEY",
             "PB_KEY",
         ]
         let previous = Dictionary(uniqueKeysWithValues: keys.map { key in
@@ -543,10 +631,9 @@ struct AgentCommandTests {
 
         setenv("PEEKABOO_CONFIG_DIR", tempDir.path, 1)
         setenv("PEEKABOO_CONFIG_DISABLE_MIGRATION", "1", 1)
-        unsetenv("PEEKABOO_AI_PROVIDERS")
-        unsetenv("OPENAI_API_KEY")
-        unsetenv("ANTHROPIC_API_KEY")
-        unsetenv("PB_KEY")
+        for key in keys where key != "PEEKABOO_CONFIG_DIR" && key != "PEEKABOO_CONFIG_DISABLE_MIGRATION" {
+            unsetenv(key)
+        }
         for (key, value) in environment {
             setenv(key, value, 1)
         }

@@ -7,10 +7,12 @@ struct AgentChatLaunchPolicyTests {
 
     private func makeCaps(
         interactive: Bool = true,
+        inputInteractive: Bool? = nil,
         piped: Bool = false,
         ci: Bool = false
     ) -> TerminalCapabilities {
         TerminalCapabilities(
+            isInputInteractive: inputInteractive ?? interactive,
             isInteractive: interactive,
             supportsColors: true,
             supportsTrueColor: false,
@@ -112,5 +114,51 @@ struct AgentChatLaunchPolicyTests {
         )
 
         #expect(strategy == .interactive(initialPrompt: nil))
+    }
+
+    @Test
+    func `Piped input does not opt a fresh taskless command into chat based on stdout`() {
+        let strategy = self.policy.strategy(
+            for: AgentChatLaunchContext(
+                chatFlag: false,
+                hasTaskInput: false,
+                listSessions: false,
+                normalizedTaskInput: nil,
+                capabilities: self.makeCaps(interactive: true, inputInteractive: false)
+            )
+        )
+
+        #expect(strategy == .helpOnly)
+    }
+
+    @Test
+    @MainActor
+    func `Only automatic noninteractive resume propagates turn failures`() throws {
+        let tasklessResume = try AgentCommand.parse(["--resume"])
+        let interactiveResume = try AgentCommand.parse(["--resume"])
+        let explicitChat = try AgentCommand.parse(["--resume", "--chat"])
+        let oneShotResume = try AgentCommand.parse(["Continue", "--resume"])
+
+        #expect(tasklessResume.shouldFailTasklessResumeTurn(
+            capabilities: self.makeCaps(interactive: true, inputInteractive: false)
+        ))
+        #expect(!interactiveResume.shouldFailTasklessResumeTurn(capabilities: self.makeCaps()))
+        #expect(!explicitChat.shouldFailTasklessResumeTurn(
+            capabilities: self.makeCaps(interactive: false, piped: true)
+        ))
+        #expect(!oneShotResume.shouldFailTasklessResumeTurn(
+            capabilities: self.makeCaps(interactive: false, piped: true)
+        ))
+    }
+
+    @Test
+    @MainActor
+    func `Automatic CI resume avoids TauTUI while explicit chat can opt in`() throws {
+        let capabilities = self.makeCaps(interactive: true, inputInteractive: true, ci: true)
+        let automaticResume = try AgentCommand.parse(["--resume"])
+        let explicitChat = try AgentCommand.parse(["--resume", "--chat"])
+
+        #expect(!automaticResume.shouldUseTauTUIChat(capabilities: capabilities))
+        #expect(explicitChat.shouldUseTauTUIChat(capabilities: capabilities))
     }
 }

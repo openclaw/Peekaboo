@@ -145,6 +145,8 @@ extension AgentCommand {
                 self.printAgentExecutionError("Agent execution failed: \(error.localizedDescription)")
             }
             throw error
+        } catch let error as CancellationError {
+            throw error
         } catch {
             if outputDelegate?.hasReceivedError != true {
                 self.printAgentExecutionError("Agent execution failed: \(error.localizedDescription)")

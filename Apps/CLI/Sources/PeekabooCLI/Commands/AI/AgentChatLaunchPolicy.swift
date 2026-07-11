@@ -52,7 +52,10 @@ struct AgentChatLaunchPolicy {
             return .interactive(initialPrompt: nil)
         }
 
-        if context.capabilities.isInteractive && !context.capabilities.isPiped && !context.capabilities.isCI {
+        if context.capabilities.isInputInteractive,
+           context.capabilities.isInteractive,
+           !context.capabilities.isPiped,
+           !context.capabilities.isCI {
             return .interactive(initialPrompt: nil)
         }
 

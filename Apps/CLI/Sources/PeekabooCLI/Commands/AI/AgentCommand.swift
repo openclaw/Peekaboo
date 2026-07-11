@@ -1,6 +1,7 @@
 import Commander
 import Foundation
 import Logging
+import os
 import PeekabooAgentRuntime
 import PeekabooCore
 import PeekabooFoundation
@@ -44,6 +45,8 @@ func iconForTool(_ toolName: String) -> String {
 /// AI Agent command that uses new Chat Completions API architecture
 @available(macOS 14.0, *)
 struct AgentCommand: RuntimeOptionsConfigurable {
+    private static let loggingBootstrapState = OSAllocatedUnfairLock(initialState: false)
+
     static let commandDescription = CommandDescription(
         commandName: "agent",
         abstract: "Execute complex automation tasks using the Peekaboo agent",
@@ -384,18 +387,24 @@ extension AgentCommand {
     }
 
     private func configureLogging(suppressingMCPLogs: Bool) {
-        if suppressingMCPLogs {
-            LoggingSystem.bootstrap { label in
-                var handler = StreamLogHandler.standardOutput(label: label)
-                if label.hasPrefix("tachikoma.mcp") {
-                    handler.logLevel = .critical // hide MCP init chatter unless --verbose
-                } else {
-                    handler.logLevel = .info
+        Self.loggingBootstrapState.withLock { isBootstrapped in
+            // Embedders and in-process tests can invoke the CLI repeatedly; swift-log traps on a second bootstrap.
+            guard !isBootstrapped else { return }
+
+            if suppressingMCPLogs {
+                LoggingSystem.bootstrap { label in
+                    var handler = StreamLogHandler.standardOutput(label: label)
+                    if label.hasPrefix("tachikoma.mcp") {
+                        handler.logLevel = .critical // hide MCP init chatter unless --verbose
+                    } else {
+                        handler.logLevel = .info
+                    }
+                    return handler
                 }
-                return handler
+            } else {
+                LoggingSystem.bootstrap(StreamLogHandler.standardOutput)
             }
-        } else {
-            LoggingSystem.bootstrap(StreamLogHandler.standardOutput)
+            isBootstrapped = true
         }
     }
 

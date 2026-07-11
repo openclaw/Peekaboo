@@ -270,13 +270,15 @@ extension ConfigCommand {
             discussion: """
             Discover and list available models from a custom AI provider.
 
-            For OpenAI-compatible providers, this queries the /models endpoint.
+            By default, this lists configured models without contacting the provider.
+            For OpenAI-compatible providers, --discover queries the /models endpoint.
+            Newly discovered models are saved with tool calling disabled until enabled explicitly.
             For Anthropic-compatible providers, this shows configured models
             since Anthropic doesn't have a public models endpoint.
             """
         )
 
-        @Argument(help: "Provider ID to query")
+        @Argument(help: "Provider ID to inspect")
         var providerId: String
 
         @Flag(name: .long, help: "Discover models from API (for OpenAI-compatible providers)")
@@ -396,7 +398,13 @@ extension ConfigCommand {
         ) throws {
             let modelDefinitions = Dictionary(
                 uniqueKeysWithValues: models.map { modelID in
-                    (modelID, provider.models?[modelID] ?? Configuration.ModelDefinition(name: modelID))
+                    (
+                        modelID,
+                        provider.models?[modelID] ?? Configuration.ModelDefinition(
+                            name: modelID,
+                            supportsTools: false
+                        )
+                    )
                 }
             )
             let updated = Configuration.CustomProvider(

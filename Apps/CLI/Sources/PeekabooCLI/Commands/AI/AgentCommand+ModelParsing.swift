@@ -159,16 +159,45 @@ extension AgentCommand {
         from service: PeekabooAIService,
         configuration: PeekabooCore.ConfigurationManager
     ) -> PeekabooError? {
+        let configuredSelections = configuration.getAIProviders()
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+
         let selections: [String]
-        if configuration.hasExplicitAIProviderList() {
-            selections = configuration.getAIProviders()
-                .split(separator: ",")
-                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                .filter { !$0.isEmpty }
-        } else if let defaultModel = configuration.getAgentModel()?
+        if let defaultModel = configuration.getAgentModel()?
             .trimmingCharacters(in: .whitespacesAndNewlines),
             !defaultModel.isEmpty {
-            selections = [defaultModel]
+            var resolvedDefault = defaultModel
+            if !defaultModel.contains("/") {
+                var matchedSelections: [String] = []
+                var seenSelections: Set<String> = []
+                for selection in configuredSelections {
+                    let modelID = selection
+                        .split(separator: "/", maxSplits: 1)
+                        .last
+                        .map(String.init)
+                    guard modelID?.caseInsensitiveCompare(defaultModel) == .orderedSame,
+                          let model = service.resolveConfiguredModel(selection),
+                          case .custom = model,
+                          seenSelections.insert(selection.lowercased()).inserted
+                    else {
+                        continue
+                    }
+                    matchedSelections.append(selection)
+                }
+
+                if matchedSelections.count > 1 {
+                    return Self.ambiguousCustomDefaultModelError(defaultModel, matches: matchedSelections)
+                }
+                if let matchedSelection = matchedSelections.first {
+                    resolvedDefault = matchedSelection
+                }
+            }
+
+            selections = configuration.hasExplicitAIProviderList() ? configuredSelections : [resolvedDefault]
+        } else if configuration.hasExplicitAIProviderList() {
+            selections = configuredSelections
         } else {
             return nil
         }
@@ -184,6 +213,17 @@ extension AgentCommand {
         }
 
         return nil
+    }
+
+    private static func ambiguousCustomDefaultModelError(
+        _ modelString: String,
+        matches: [String]
+    ) -> PeekabooError {
+        let choices = matches.sorted().map { "'\($0)'" }.joined(separator: ", ")
+        return PeekabooError.invalidInput(
+            "Configured agent default model '\(modelString)' matches multiple custom-provider models: \(choices). " +
+                "Set agent.defaultModel to one provider-qualified model."
+        )
     }
 
     private static func configuredCustomModelToolCapabilityError(_ modelString: String) -> PeekabooError {

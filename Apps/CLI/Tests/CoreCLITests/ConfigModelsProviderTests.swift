@@ -85,11 +85,12 @@ struct ConfigModelsProviderTests {
             )
             #expect(saved.name == "Configured Model")
             #expect(saved.supportsTools == false)
+            #expect(server.acceptedRequestCount == 0)
         }
     }
 
     @Test
-    func `Discover save JSON preserves metadata and emits one JSON document`() async throws {
+    func `Discover save JSON preserves tool opt-in and defaults new models safely`() async throws {
         try await self.withTempConfigDir {
             let server = try await ModelsProviderHTTPServer.start(
                 statusCode: 200,
@@ -100,7 +101,7 @@ struct ConfigModelsProviderTests {
             let model = Configuration.ModelDefinition(
                 name: "Configured Model",
                 maxTokens: 32768,
-                supportsTools: false,
+                supportsTools: true,
                 supportsVision: false,
                 parameters: ["reasoning": "high"]
             )
@@ -135,14 +136,14 @@ struct ConfigModelsProviderTests {
             let savedExisting = try #require(savedProvider.models?["configured-model"])
             #expect(savedExisting.name == "Configured Model")
             #expect(savedExisting.maxTokens == 32768)
-            #expect(savedExisting.supportsTools == false)
+            #expect(savedExisting.supportsTools == true)
             #expect(savedExisting.supportsVision == false)
             #expect(savedExisting.parameters == ["reasoning": "high"])
 
             let savedNew = try #require(savedProvider.models?["new-model"])
             #expect(savedNew.name == "new-model")
             #expect(savedNew.maxTokens == nil)
-            #expect(savedNew.supportsTools == nil)
+            #expect(savedNew.supportsTools == false)
             #expect(savedNew.supportsVision == nil)
             #expect(savedNew.parameters == nil)
         }
@@ -282,11 +283,28 @@ private struct ModelsProviderJSONData: Decodable {
     let saved: Bool
 }
 
+private final class AcceptedRequestCounter: @unchecked Sendable {
+    private nonisolated let lock = NSLock()
+    private nonisolated(unsafe) var count = 0
+
+    nonisolated var value: Int {
+        self.lock.withLock { self.count }
+    }
+
+    nonisolated func increment() {
+        self.lock.withLock {
+            self.count += 1
+        }
+    }
+}
+
 private final class ModelsProviderHTTPServer {
     private let listener: NWListener
+    private let requestCounter: AcceptedRequestCounter
 
-    private init(listener: NWListener) {
+    private init(listener: NWListener, requestCounter: AcceptedRequestCounter) {
         self.listener = listener
+        self.requestCounter = requestCounter
     }
 
     var baseURL: String {
@@ -296,12 +314,18 @@ private final class ModelsProviderHTTPServer {
         return "http://127.0.0.1:\(port.rawValue)"
     }
 
+    var acceptedRequestCount: Int {
+        self.requestCounter.value
+    }
+
     static func start(statusCode: Int, body: String) async throws -> ModelsProviderHTTPServer {
         let listener = try NWListener(using: .tcp, on: .any)
         let queue = DispatchQueue(label: "peekaboo.tests.models-provider-http")
+        let requestCounter = AcceptedRequestCounter()
         let response = response(statusCode: statusCode, body: body)
 
         listener.newConnectionHandler = { connection in
+            requestCounter.increment()
             connection.start(queue: queue)
             connection.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { _, _, _, _ in
                 connection.send(
@@ -334,7 +358,7 @@ private final class ModelsProviderHTTPServer {
             listener.start(queue: queue)
         }
 
-        return ModelsProviderHTTPServer(listener: listener)
+        return ModelsProviderHTTPServer(listener: listener, requestCounter: requestCounter)
     }
 
     func stop() {

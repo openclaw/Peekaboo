@@ -3,6 +3,8 @@ import Foundation
 
 /// Comprehensive terminal capability detection for progressive enhancement
 struct TerminalCapabilities {
+    /// Whether stdin is connected to a terminal and can drive an interactive input loop.
+    let isInputInteractive: Bool
     let isInteractive: Bool
     let supportsColors: Bool
     let supportsTrueColor: Bool
@@ -34,6 +36,7 @@ enum TerminalDetector {
     /// Detect comprehensive terminal capabilities
     static func detectCapabilities() -> TerminalCapabilities {
         // Detect comprehensive terminal capabilities
+        let isInputInteractive = self.isInteractiveTerminal(STDIN_FILENO)
         let outputFileDescriptor = self.standardOutputFileDescriptor ?? STDOUT_FILENO
         let isInteractive = self.isInteractiveTerminal(outputFileDescriptor)
         let (width, height) = self.getTerminalDimensions(outputFileDescriptor)
@@ -44,6 +47,7 @@ enum TerminalDetector {
         let supportsColors = self.detectColorSupport(termType: termType, isInteractive: isInteractive)
         let supportsTrueColor = self.detectTrueColorSupport()
         return TerminalCapabilities(
+            isInputInteractive: isInputInteractive,
             isInteractive: isInteractive,
             supportsColors: supportsColors,
             supportsTrueColor: supportsTrueColor,
@@ -189,6 +193,9 @@ enum TerminalDetector {
 
         if caps.isInteractive {
             features.append("interactive")
+        }
+        if caps.isInputInteractive {
+            features.append("interactive-input")
         }
         if caps.supportsColors {
             features.append("colors")
