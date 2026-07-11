@@ -3,6 +3,7 @@
 //  PeekabooCLI
 //
 
+import Commander
 import Foundation
 import PeekabooAgentRuntime
 import PeekabooCore
@@ -55,7 +56,9 @@ extension AgentCommand {
         capabilities: TerminalCapabilities,
         queueMode: QueueMode
     ) async throws {
-        guard self.ensureChatModePreconditions() else { return }
+        guard self.ensureChatModePreconditions() else {
+            throw ExitCode.failure
+        }
 
         if capabilities.isInteractive && !capabilities.isPiped {
             do {

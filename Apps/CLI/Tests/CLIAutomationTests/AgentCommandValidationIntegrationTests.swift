@@ -29,6 +29,7 @@ struct AgentCommandValidationIntegrationTests {
                 "agent",
                 "--resume-session",
                 "missing-session-\(UUID().uuidString)",
+                "continue the task",
                 "--jsonOutput",
             ],
             allowedExitCodes: [1]

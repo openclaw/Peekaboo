@@ -99,7 +99,7 @@ struct AgentChatLaunchPolicyTests {
     }
 
     @Test
-    func `Taskless session resume bypasses noninteractive help`() {
+    func `Taskless session resume enters chat even without an interactive terminal`() {
         let strategy = self.policy.strategy(
             for: AgentChatLaunchContext(
                 chatFlag: false,
@@ -111,6 +111,6 @@ struct AgentChatLaunchPolicyTests {
             )
         )
 
-        #expect(strategy == .none)
+        #expect(strategy == .interactive(initialPrompt: nil))
     }
 }

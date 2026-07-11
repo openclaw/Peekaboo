@@ -44,8 +44,12 @@ struct AgentChatLaunchPolicy {
             return .interactive(initialPrompt: context.normalizedTaskInput)
         }
 
-        if context.hasTaskInput || context.listSessions || context.hasSessionResumption {
+        if context.hasTaskInput || context.listSessions {
             return .none
+        }
+
+        if context.hasSessionResumption {
+            return .interactive(initialPrompt: nil)
         }
 
         if context.capabilities.isInteractive && !context.capabilities.isPiped && !context.capabilities.isCI {
