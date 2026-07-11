@@ -1921,6 +1921,20 @@ extension PeekabooAgentServiceTests {
 
     @Test
     @MainActor
+    func `Agent skips vision-only provider before tool-capable provider`() throws {
+        try self.withIsolatedAgentEnvironment([
+            "PEEKABOO_AI_PROVIDERS": "ollama/qwen2.5vl:latest,anthropic/claude-sonnet-4-5-20250929",
+            "ANTHROPIC_API_KEY": "test-anthropic-key",
+        ]) {
+            let services = self.makeServices()
+            let agentService = try #require(services.agent as? PeekabooAgentService)
+
+            #expect(agentService.defaultModel == LanguageModel.anthropic(.sonnet45).description)
+        }
+    }
+
+    @Test
+    @MainActor
     func `Configured Ollama provider tolerates comma whitespace`() throws {
         try self.withIsolatedAgentEnvironment(["PEEKABOO_AI_PROVIDERS": "openai/gpt-5.5, ollama/llama3.3"]) {
             let services = self.makeServices()
