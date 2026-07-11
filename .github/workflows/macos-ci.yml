@@ -124,6 +124,10 @@ jobs:
         working-directory: Core/PeekabooCore
         run: |
           swift test --no-parallel --filter ScreenCaptureServiceFlowTests
+          swift test --no-parallel --filter AgentRuntimeBoundaryRegressionTests
+          swift test --no-parallel --filter AgentSessionManagerStorageTests
+          swift test --no-parallel --filter PeekabooAgentSessionSafetyTests
+          swift test --no-parallel --filter PeekabooAgentStreamTerminalIntegrityTests
 
   peekaboo-cli:
     name: Peekaboo CLI build & tests
@@ -233,6 +237,13 @@ jobs:
         working-directory: Apps/CLI
         run: |
           swift test --no-parallel -Xswiftc -DPEEKABOO_SKIP_AUTOMATION
+
+      - name: Run taskless agent resume regression (skip automation)
+        working-directory: Apps/CLI
+        env:
+          PEEKABOO_INCLUDE_AUTOMATION_TESTS: "true"
+        run: |
+          swift test --no-parallel -Xswiftc -DPEEKABOO_SKIP_AUTOMATION --filter AgentCommandValidationIntegrationTests
 
   tachikoma:
     name: Tachikoma build & tests
