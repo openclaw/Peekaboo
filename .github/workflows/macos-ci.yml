@@ -126,6 +126,7 @@ jobs:
           swift test --no-parallel --filter ScreenCaptureServiceFlowTests
           swift test --no-parallel --filter AgentRuntimeBoundaryRegressionTests
           swift test --no-parallel --filter AgentSessionManagerStorageTests
+          swift test --no-parallel --filter PeekabooAgentServiceTests
           swift test --no-parallel --filter PeekabooAgentSessionSafetyTests
           swift test --no-parallel --filter PeekabooAgentStreamTerminalIntegrityTests
 
@@ -243,7 +244,8 @@ jobs:
         env:
           PEEKABOO_INCLUDE_AUTOMATION_TESTS: "true"
         run: |
-          swift test --no-parallel -Xswiftc -DPEEKABOO_SKIP_AUTOMATION --filter AgentCommandValidationIntegrationTests
+          swift test --no-parallel -Xswiftc -DPEEKABOO_SKIP_AUTOMATION \
+            --filter 'AgentCommandBasicTests|AgentCommandValidationIntegrationTests'
 
   tachikoma:
     name: Tachikoma build & tests
