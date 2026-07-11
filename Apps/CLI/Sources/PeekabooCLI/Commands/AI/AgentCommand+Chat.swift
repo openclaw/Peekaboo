@@ -13,7 +13,7 @@ import TauTUI
 
 @available(macOS 14.0, *)
 extension AgentCommand {
-    private struct ReportedChatTurnError: Error {
+    struct ReportedChatTurnError: Error {
         let underlyingError: any Error
     }
 
@@ -127,7 +127,11 @@ extension AgentCommand {
         self.printChatHelpIntro()
 
         if let seed = initialPrompt {
-            try await self.performChatTurn(seed, agentService: agentService, context: &turnContext)
+            do {
+                try await self.performChatTurn(seed, agentService: agentService, context: &turnContext)
+            } catch is ReportedChatTurnError {
+                // The streaming delegate already rendered the provider failure.
+            }
         }
 
         while true {
@@ -410,7 +414,8 @@ extension AgentCommand {
                     requestedModel: requestedModel,
                     maxSteps: self.resolvedMaxSteps,
                     queueMode: queueMode,
-                    preserveStepLimitError: true
+                    preserveStepLimitError: true,
+                    wrapReportedFailure: true
                 )
             }
         }

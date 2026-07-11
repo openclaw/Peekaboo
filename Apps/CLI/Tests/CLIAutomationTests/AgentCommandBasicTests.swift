@@ -20,5 +20,7 @@ struct AgentCommandBasicTests {
         #expect(result.combinedOutput.contains("gpt-5.6"))
         #expect(result.combinedOutput.contains("claude-sonnet-5"))
         #expect(result.combinedOutput.contains("Maximum model turns before failing (1-100, default 100)"))
+        #expect(result.combinedOutput.contains("Resume the most recent session"))
+        #expect(!result.combinedOutput.contains("use with task argument"))
     }
 }

@@ -98,7 +98,7 @@ struct AgentCommand: RuntimeOptionsConfigurable {
         """
     )
     var model: String?
-    @Flag(name: .long, help: "Resume the most recent session (use with task argument)")
+    @Flag(name: .long, help: "Resume the most recent session")
     var resume = false
 
     @Option(name: .long, help: "Resume a specific session by ID")

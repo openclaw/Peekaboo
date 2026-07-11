@@ -221,6 +221,96 @@ struct AgentCommandValidationIntegrationTests {
 
     @Test
     @MainActor
+    func `Fresh line chat reports provider failure without opaque exit error`() async throws {
+        try await self.withIsolatedAgentEnvironment { sessionDirectory in
+            let provider = CLICancellingProvider(mode: .providerFailure)
+            let configuration = TachikomaConfiguration(loadFromEnvironment: false)
+            configuration.setProviderFactoryOverride { _, _ in provider }
+            let previousConfiguration = TachikomaConfiguration.default
+            TachikomaConfiguration.default = configuration
+            defer { TachikomaConfiguration.default = previousConfiguration }
+
+            let customProvider = try Configuration.CustomProvider(
+                name: "Failure Test",
+                type: .openai,
+                options: .init(baseURL: #require(provider.baseURL), apiKey: "test-key"),
+                models: [provider.resolvedModelID: .init(name: "Failure Test", supportsTools: true)]
+            )
+            try PeekabooCore.ConfigurationManager.shared.addCustomProvider(customProvider, id: provider.providerID)
+
+            let services = TestServicesFactory.makePeekabooServices()
+            let agentService = try PeekabooAgentService(
+                services: services,
+                defaultModel: .custom(provider: provider),
+                sessionManager: AgentSessionManager(sessionDirectory: sessionDirectory)
+            )
+            services.agent = agentService
+
+            let result = try await InProcessCommandRunner.run(
+                ["agent", "--chat"],
+                services: services,
+                standardInput: "Fail this turn\n"
+            )
+
+            #expect(result.exitStatus == 0)
+            #expect(provider.requestCount == 1)
+            #expect(
+                result.combinedOutput.components(
+                    separatedBy: CLICancellingProvider.providerFailureMessage
+                ).count == 2
+            )
+            #expect(!result.combinedOutput.contains("Commander.ExitCode"))
+            #expect(!result.combinedOutput.contains("Agent execution failed"))
+        }
+    }
+
+    @Test
+    @MainActor
+    func `Fresh line chat initial prompt reports provider failure without opaque exit error`() async throws {
+        try await self.withIsolatedAgentEnvironment { sessionDirectory in
+            let provider = CLICancellingProvider(mode: .providerFailure)
+            let configuration = TachikomaConfiguration(loadFromEnvironment: false)
+            configuration.setProviderFactoryOverride { _, _ in provider }
+            let previousConfiguration = TachikomaConfiguration.default
+            TachikomaConfiguration.default = configuration
+            defer { TachikomaConfiguration.default = previousConfiguration }
+
+            let customProvider = try Configuration.CustomProvider(
+                name: "Failure Test",
+                type: .openai,
+                options: .init(baseURL: #require(provider.baseURL), apiKey: "test-key"),
+                models: [provider.resolvedModelID: .init(name: "Failure Test", supportsTools: true)]
+            )
+            try PeekabooCore.ConfigurationManager.shared.addCustomProvider(customProvider, id: provider.providerID)
+
+            let services = TestServicesFactory.makePeekabooServices()
+            let agentService = try PeekabooAgentService(
+                services: services,
+                defaultModel: .custom(provider: provider),
+                sessionManager: AgentSessionManager(sessionDirectory: sessionDirectory)
+            )
+            services.agent = agentService
+
+            let result = try await InProcessCommandRunner.run(
+                ["agent", "Fail this turn", "--chat"],
+                services: services,
+                standardInput: ""
+            )
+
+            #expect(result.exitStatus == 0)
+            #expect(provider.requestCount == 1)
+            #expect(
+                result.combinedOutput.components(
+                    separatedBy: CLICancellingProvider.providerFailureMessage
+                ).count == 2
+            )
+            #expect(!result.combinedOutput.contains("Commander.ExitCode"))
+            #expect(!result.combinedOutput.contains("Agent execution failed"))
+        }
+    }
+
+    @Test
+    @MainActor
     func `Fresh task execution preserves CancellationError`() async throws {
         try await self.withIsolatedAgentEnvironment { sessionDirectory in
             let provider = CLICancellingProvider()
@@ -381,6 +471,13 @@ private final class CLIResumableStepLimitProvider: PeekabooCustomProviderIdentit
 }
 
 private final class CLICancellingProvider: PeekabooCustomProviderIdentityProviding, @unchecked Sendable {
+    enum Mode {
+        case cancellation
+        case providerFailure
+    }
+
+    static let providerFailureMessage = "Synthetic provider failure"
+
     let providerID = "cancellation-test"
     let resolvedModelID = "cancel"
     let providerTypeIdentity = "openai"
@@ -390,7 +487,12 @@ private final class CLICancellingProvider: PeekabooCustomProviderIdentityProvidi
     let capabilities = ModelCapabilities()
 
     private let lock = NSLock()
+    private let mode: Mode
     private var requests = 0
+
+    init(mode: Mode = .cancellation) {
+        self.mode = mode
+    }
 
     var requestCount: Int {
         self.lock.withLock { self.requests }
@@ -398,19 +500,34 @@ private final class CLICancellingProvider: PeekabooCustomProviderIdentityProvidi
 
     func generateText(request _: ProviderRequest) async throws -> ProviderResponse {
         self.recordRequest()
-        throw CancellationError()
+        throw self.failure()
     }
 
     func streamText(request _: ProviderRequest) async throws -> AsyncThrowingStream<TextStreamDelta, any Error> {
         self.recordRequest()
         return AsyncThrowingStream { continuation in
-            continuation.finish(throwing: CancellationError())
+            continuation.finish(throwing: self.failure())
         }
     }
 
     private func recordRequest() {
         self.lock.withLock {
             self.requests += 1
+        }
+    }
+
+    private func failure() -> any Error {
+        switch self.mode {
+        case .cancellation:
+            CancellationError()
+        case .providerFailure:
+            ProviderFailure()
+        }
+    }
+
+    private struct ProviderFailure: LocalizedError {
+        var errorDescription: String? {
+            CLICancellingProvider.providerFailureMessage
         }
     }
 }
