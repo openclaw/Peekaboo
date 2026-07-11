@@ -65,7 +65,9 @@ public struct MCPAgentTool: MCPTool {
                     description: "Dry run - show planned steps without executing",
                     default: false),
                 "max_steps": SchemaBuilder.integer(
-                    description: "Maximum number of steps the agent can take (1-100)"),
+                    description: "Maximum model/tool-loop turns before failing " +
+                        "(\(AgentStepBudget.supportedRange.lowerBound)-" +
+                        "\(AgentStepBudget.supportedRange.upperBound), default 20)"),
                 "resume": SchemaBuilder.boolean(
                     description: "Resume the most recent session",
                     default: false),
@@ -205,8 +207,10 @@ public struct MCPAgentTool: MCPTool {
 
     static func validatedMaxSteps(_ maxSteps: Int?) throws -> Int {
         let resolved = maxSteps ?? 20
-        guard (1...100).contains(resolved) else {
-            throw AgentToolError("max_steps must be between 1 and 100")
+        guard AgentStepBudget.supportedRange.contains(resolved) else {
+            throw AgentToolError(
+                "max_steps must be between \(AgentStepBudget.supportedRange.lowerBound) and " +
+                    "\(AgentStepBudget.supportedRange.upperBound)")
         }
         return resolved
     }

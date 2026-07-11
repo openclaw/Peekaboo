@@ -44,7 +44,13 @@ public enum AnthropicModelCapabilityInference {
     }
 }
 
-private final class PeekabooCustomProviderModel: ModelProvider, @unchecked Sendable {
+public protocol PeekabooCustomProviderIdentityProviding: ModelProvider {
+    var providerID: String { get }
+    var resolvedModelID: String { get }
+    var providerTypeIdentity: String { get }
+}
+
+private final class PeekabooCustomProviderModel: PeekabooCustomProviderIdentityProviding, @unchecked Sendable {
     enum Kind {
         case openai
         case anthropic
@@ -58,6 +64,13 @@ private final class PeekabooCustomProviderModel: ModelProvider, @unchecked Senda
     let apiKey: String?
     let additionalHeaders: [String: String]
     let capabilities: ModelCapabilities
+
+    var providerTypeIdentity: String {
+        switch self.kind {
+        case .openai: "openai"
+        case .anthropic: "anthropic"
+        }
+    }
 
     init(
         providerID: String,
@@ -406,15 +419,9 @@ public final class PeekabooAIService {
         case "openrouter":
             return .openRouter(modelId: modelString)
         case "mistral":
-            if case .mistral = loose {
-                return loose
-            }
-            return nil
+            return LanguageModel.Mistral(rawValue: modelString).map(LanguageModel.mistral)
         case "groq":
-            if case .groq = loose {
-                return loose
-            }
-            return nil
+            return LanguageModel.Groq(rawValue: modelString).map(LanguageModel.groq)
         case "grok", "xai":
             guard !self.isUnsupportedGrokModel(modelString) else { return nil }
             if case .grok = loose {
@@ -439,13 +446,21 @@ public final class PeekabooAIService {
     private static func parseLocalProviderEntry(provider: String, modelString: String) -> LanguageModel? {
         switch provider {
         case "ollama":
-            // For Ollama, prefer preserving the exact model id string.
-            // Heuristics for custom model capabilities live in Tachikoma (LanguageModel.Ollama).
-            .ollama(.custom(modelString))
+            if case let .ollama(model) = LanguageModel.parse(from: "ollama/\(modelString)"),
+               model.modelId == modelString
+            {
+                return .ollama(model)
+            }
+            return .ollama(.custom(modelString))
         case "lmstudio", "lm-studio":
-            .lmstudio(.custom(modelString))
+            if case let .lmstudio(model) = LanguageModel.parse(from: "lmstudio/\(modelString)"),
+               model.modelId == modelString
+            {
+                return .lmstudio(model)
+            }
+            return .lmstudio(.custom(modelString))
         default:
-            nil
+            return nil
         }
     }
 

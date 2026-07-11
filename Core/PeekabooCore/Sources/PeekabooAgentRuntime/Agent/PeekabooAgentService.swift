@@ -58,7 +58,31 @@ public final class PeekabooAgentService: AgentServiceProtocol {
 
     /// Credential-free provider-qualified reference for callers that need to resolve the default model.
     public var defaultModelSelection: String {
-        switch self.defaultLanguageModel {
+        self.modelSelectionReference(for: self.defaultLanguageModel)
+    }
+
+    /// Credential-free provider-qualified reference suitable for session persistence.
+    func persistedModelSelection(for model: LanguageModel) -> String? {
+        let selection: String
+        switch model {
+        case .azureOpenAI, .openaiCompatible, .anthropicCompatible, .together, .replicate:
+            return nil
+        case let .custom(provider):
+            selection = provider.modelId
+        default:
+            selection = self.modelSelectionReference(for: model)
+        }
+
+        guard let resolved = self.resolveConfiguredModel(selection),
+              resolved == model
+        else {
+            return nil
+        }
+        return selection
+    }
+
+    private func modelSelectionReference(for model: LanguageModel) -> String {
+        switch model {
         case let .openai(model): "openai/\(model.modelId)"
         case let .anthropic(model): "anthropic/\(model.modelId)"
         case let .google(model): "google/\(model.userFacingModelId)"
@@ -75,7 +99,7 @@ public final class PeekabooAgentService: AgentServiceProtocol {
         case let .replicate(modelID): "replicate/\(modelID)"
         case let .custom(provider): provider.modelId
         case .azureOpenAI, .openaiCompatible, .anthropicCompatible:
-            self.defaultLanguageModel.description
+            model.description
         }
     }
 
@@ -199,6 +223,7 @@ public final class PeekabooAgentService: AgentServiceProtocol {
         queueMode: QueueMode = .oneAtATime,
         eventDelegate: (any AgentEventDelegate)? = nil) async throws -> AgentExecutionResult
     {
+        let maxSteps = try AgentStepBudget.validate(maxSteps)
         if dryRun {
             let transcript = audioContent.transcript
             let durationSeconds = Int(audioContent.duration ?? 0)
@@ -253,6 +278,7 @@ public final class PeekabooAgentService: AgentServiceProtocol {
         verbose: Bool = false,
         enhancementOptions: AgentEnhancementOptions? = .default) async throws -> AgentExecutionResult
     {
+        let maxSteps = try AgentStepBudget.validate(maxSteps)
         // Store the verbose flag for this execution
         self.isVerbose = verbose
         if verbose {
@@ -339,9 +365,14 @@ public final class PeekabooAgentService: AgentServiceProtocol {
                 eventContinuation.finish()
                 await eventTask.value
                 return result
-            } catch {
+            } catch let error as CancellationError {
                 eventContinuation.finish()
-                eventTask.cancel()
+                await eventTask.value
+                throw error
+            } catch {
+                await eventHandler.send(.error(message: error.localizedDescription))
+                eventContinuation.finish()
+                await eventTask.value
                 throw error
             }
         } else {

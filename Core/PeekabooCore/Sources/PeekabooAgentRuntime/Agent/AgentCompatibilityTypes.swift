@@ -174,6 +174,15 @@ public struct AgentSession: Sendable, Codable {
     /// Model name used in this session
     public let modelName: String
 
+    /// Credential-free provider-qualified model selection used to resume this session.
+    public let modelSelection: String?
+
+    /// Hash of the canonical provider endpoint used by this session.
+    public let modelEndpointIdentity: String?
+
+    /// Credential-free provider kind used to prevent namespace or protocol drift.
+    public let modelProviderIdentity: String?
+
     /// Complete conversation history
     public let messages: [ModelMessage]
 
@@ -189,6 +198,9 @@ public struct AgentSession: Sendable, Codable {
     public init(
         id: String,
         modelName: String,
+        modelSelection: String? = nil,
+        modelEndpointIdentity: String? = nil,
+        modelProviderIdentity: String? = nil,
         messages: [ModelMessage],
         metadata: SessionMetadata,
         createdAt: Date,
@@ -196,6 +208,9 @@ public struct AgentSession: Sendable, Codable {
     {
         self.id = id
         self.modelName = modelName
+        self.modelSelection = modelSelection
+        self.modelEndpointIdentity = modelEndpointIdentity
+        self.modelProviderIdentity = modelProviderIdentity
         self.messages = messages
         self.metadata = metadata
         self.createdAt = createdAt
@@ -235,6 +250,18 @@ public struct SessionMetadata: Sendable, Codable {
     }
 }
 
+/// Errors raised while resolving session persistence paths.
+public enum AgentSessionManagerError: Error, LocalizedError, Equatable, Sendable {
+    case invalidSessionID
+
+    public var errorDescription: String? {
+        switch self {
+        case .invalidSessionID:
+            "Invalid session ID."
+        }
+    }
+}
+
 /// Manages agent conversation sessions with persistence and caching
 @MainActor
 public final class AgentSessionManager: @unchecked Sendable {
@@ -250,11 +277,11 @@ public final class AgentSessionManager: @unchecked Sendable {
 
     public init(sessionDirectory: URL? = nil) throws {
         if let sessionDirectory {
-            self.sessionDirectory = sessionDirectory
+            self.sessionDirectory = sessionDirectory.standardizedFileURL
         } else {
             // Default to ~/.peekaboo/sessions/
             let homeDir = self.fileManager.homeDirectoryForCurrentUser
-            self.sessionDirectory = homeDir.appendingPathComponent(".peekaboo/sessions")
+            self.sessionDirectory = homeDir.appendingPathComponent(".peekaboo/sessions").standardizedFileURL
         }
 
         // Create session directory if it doesn't exist
@@ -275,6 +302,9 @@ public final class AgentSessionManager: @unchecked Sendable {
                 do {
                     let data = try Data(contentsOf: url)
                     let session = try JSONDecoder().decode(AgentSession.self, from: data)
+                    guard try self.sessionFileURL(for: session.id) == url.standardizedFileURL else {
+                        return nil
+                    }
 
                     let resourceValues = try url.resourceValues(forKeys: [
                         .creationDateKey,
@@ -289,7 +319,7 @@ public final class AgentSessionManager: @unchecked Sendable {
                         createdAt: createdAt,
                         lastAccessedAt: lastAccessedAt,
                         messageCount: session.messages.count,
-                        status: self.isSessionExpired(lastAccessedAt) ? .expired : .active,
+                        status: self.sessionStatus(for: session, lastAccessedAt: lastAccessedAt),
                         summary: self.generateSessionSummary(from: session.messages))
                 } catch {
                     return nil
@@ -303,9 +333,9 @@ public final class AgentSessionManager: @unchecked Sendable {
     /// Save a session to persistent storage
     public func saveSession(_ session: AgentSession) throws {
         // Save a session to persistent storage
-        let sessionFile = self.sessionDirectory.appendingPathComponent("\(session.id).json")
+        let sessionFile = try self.sessionFileURL(for: session.id)
         let data = try JSONEncoder().encode(session)
-        try data.write(to: sessionFile)
+        try data.write(to: sessionFile, options: .atomic)
 
         self.sessionCache[session.id] = session
         self.evictOldCacheEntries()
@@ -313,18 +343,21 @@ public final class AgentSessionManager: @unchecked Sendable {
 
     /// Load a session from storage
     public func loadSession(id: String) async throws -> AgentSession? {
+        let sessionFile = try self.sessionFileURL(for: id)
         if let cachedSession = self.sessionCache[id] {
             return cachedSession
         }
 
         // Load from disk
-        let sessionFile = self.sessionDirectory.appendingPathComponent("\(id).json")
         guard self.fileManager.fileExists(atPath: sessionFile.path) else {
             return nil
         }
 
         let data = try Data(contentsOf: sessionFile)
         let session = try JSONDecoder().decode(AgentSession.self, from: data)
+        guard session.id == id else {
+            throw AgentSessionManagerError.invalidSessionID
+        }
 
         self.sessionCache[id] = session
         self.evictOldCacheEntries()
@@ -335,7 +368,7 @@ public final class AgentSessionManager: @unchecked Sendable {
     /// Delete a session
     public func deleteSession(id: String) async throws {
         // Delete a session
-        let sessionFile = self.sessionDirectory.appendingPathComponent("\(id).json")
+        let sessionFile = try self.sessionFileURL(for: id)
         try self.fileManager.removeItem(at: sessionFile)
 
         self.sessionCache.removeValue(forKey: id)
@@ -353,6 +386,46 @@ public final class AgentSessionManager: @unchecked Sendable {
     }
 
     // MARK: - Private Methods
+
+    private func sessionFileURL(for id: String) throws -> URL {
+        guard !id.isEmpty,
+              id != ".",
+              id != "..",
+              !id.contains("/"),
+              !id.contains("\\"),
+              !id.utf8.contains(0)
+        else {
+            throw AgentSessionManagerError.invalidSessionID
+        }
+
+        let fileName = "\(id).json"
+        let sessionFile = self.sessionDirectory
+            .appendingPathComponent(fileName, isDirectory: false)
+            .standardizedFileURL
+        guard sessionFile.deletingLastPathComponent().standardizedFileURL == self.sessionDirectory,
+              sessionFile.lastPathComponent == fileName
+        else {
+            throw AgentSessionManagerError.invalidSessionID
+        }
+        return sessionFile
+    }
+
+    private func sessionStatus(for session: AgentSession, lastAccessedAt: Date) -> SessionStatus {
+        if self.isSessionExpired(lastAccessedAt) {
+            return .expired
+        }
+
+        switch session.metadata.customData["status"] {
+        case SessionStatus.completed.rawValue:
+            return .completed
+        case SessionStatus.failed.rawValue, "cancelled":
+            return .failed
+        case SessionStatus.expired.rawValue:
+            return .expired
+        default:
+            return .active
+        }
+    }
 
     private func isSessionExpired(_ lastAccessed: Date) -> Bool {
         Date().timeIntervalSince(lastAccessed) > Self.maxSessionAge

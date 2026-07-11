@@ -1,6 +1,20 @@
 import Foundation
 import PeekabooAutomation
+import PeekabooFoundation
 import Tachikoma
+
+public enum AgentStepBudget {
+    public static let supportedRange = 1...100
+
+    public static func validate(_ maxSteps: Int) throws -> Int {
+        guard self.supportedRange.contains(maxSteps) else {
+            throw PeekabooError.invalidInput(
+                "Maximum agent steps must be between \(self.supportedRange.lowerBound) and " +
+                    "\(self.supportedRange.upperBound); received \(maxSteps).")
+        }
+        return maxSteps
+    }
+}
 
 /// Protocol defining the agent service interface
 @available(macOS 14.0, *)

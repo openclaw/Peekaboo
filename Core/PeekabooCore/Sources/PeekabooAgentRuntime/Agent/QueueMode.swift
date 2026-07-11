@@ -12,6 +12,7 @@ final class AgentTurnBoundary {
     enum Decision: Equatable {
         case continueTurn
         case stopAfterCurrentStep(reason: String)
+        case stopAfterSuccessfulTool(reason: String)
     }
 
     private static let perceiveTools: Set<String> = [
@@ -56,6 +57,23 @@ final class AgentTurnBoundary {
         arguments: [String: AnyAgentToolValue] = [:]) -> Decision
     {
         let normalizedName = Self.normalized(toolName)
+
+        if normalizedName == "done" {
+            let message = arguments["message"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let reason = if let message, !message.isEmpty {
+                message
+            } else {
+                "Task completed successfully."
+            }
+            return .stopAfterSuccessfulTool(reason: reason)
+        }
+
+        if normalizedName == "need_info",
+           let question = arguments["question"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !question.isEmpty
+        {
+            return .stopAfterSuccessfulTool(reason: "Need more information: \(question)")
+        }
 
         if Self.perceiveTools.contains(normalizedName) {
             self.hasPerceived = true

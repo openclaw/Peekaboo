@@ -3,7 +3,6 @@
 //  PeekabooCore
 //
 
-import CryptoKit
 import Foundation
 import PeekabooAutomation
 import Tachikoma
@@ -16,14 +15,53 @@ extension PeekabooAgentService {
         let steps: [GenerationStep]
         let usage: Usage?
         let toolCallCount: Int
+        let reachedStepLimit: Bool
+    }
+
+    public struct AgentStepLimitExceededError: LocalizedError, Sendable {
+        public let maxSteps: Int
+        public let sessionId: String
+
+        public init(maxSteps: Int, sessionId: String) {
+            self.maxSteps = maxSteps
+            self.sessionId = sessionId
+        }
+
+        public var errorDescription: String? {
+            let resumeGuidance = "Session \(self.sessionId) was saved and can be resumed to continue."
+            guard self.maxSteps < AgentStepBudget.supportedRange.upperBound else {
+                return "Agent reached the \(self.maxSteps)-step limit after executing tools whose results still " +
+                    "require model review. \(resumeGuidance)"
+            }
+            return "Agent reached the \(self.maxSteps)-step limit after executing tools whose results still " +
+                "require model review. \(resumeGuidance) You can also retry with a larger --max-steps value " +
+                "(maximum \(AgentStepBudget.supportedRange.upperBound))."
+        }
     }
 
     struct StreamingLoopConfiguration {
         let model: LanguageModel
+        let provider: any ModelProvider
         let tools: [AgentTool]
         let sessionId: String
         let eventHandler: EventHandler?
         let enhancementOptions: AgentEnhancementOptions?
+
+        init(
+            model: LanguageModel,
+            provider: any ModelProvider,
+            tools: [AgentTool],
+            sessionId: String,
+            eventHandler: EventHandler?,
+            enhancementOptions: AgentEnhancementOptions?)
+        {
+            self.model = model
+            self.provider = provider
+            self.tools = tools
+            self.sessionId = sessionId
+            self.eventHandler = eventHandler
+            self.enhancementOptions = enhancementOptions
+        }
     }
 
     struct ToolHandlingContext {
@@ -53,6 +91,11 @@ extension PeekabooAgentService {
         }
     }
 
+    private struct ToolCallExecutionOptions {
+        let stepIndex: Int
+        let allowSuccessfulToolBoundary: Bool
+    }
+
     struct StreamingLoopState {
         var messages: [ModelMessage]
         var content: String = ""
@@ -62,12 +105,81 @@ extension PeekabooAgentService {
         var desktopContextState = DesktopContextRefreshState()
     }
 
+    struct AgentUsageAccumulator {
+        private var inputTokens = 0
+        private var outputTokens = 0
+        private var inputCost = 0.0
+        private var outputCost = 0.0
+        private var allCostsKnown = true
+
+        mutating func record(_ usage: Usage) -> Usage {
+            self.inputTokens += usage.inputTokens
+            self.outputTokens += usage.outputTokens
+            if let cost = usage.cost {
+                self.inputCost += cost.input
+                self.outputCost += cost.output
+            } else {
+                self.allCostsKnown = false
+            }
+
+            return Usage(
+                inputTokens: self.inputTokens,
+                outputTokens: self.outputTokens,
+                cost: self.allCostsKnown ? Usage.Cost(input: self.inputCost, output: self.outputCost) : nil)
+        }
+    }
+
+    func isAgentCancellation(_ error: any Error) -> Bool {
+        if Task.isCancelled || error is CancellationError {
+            return true
+        }
+        if (error as? URLError)?.code == .cancelled {
+            return true
+        }
+
+        let nsError = error as NSError
+        if nsError.domain == NSURLErrorDomain, nsError.code == NSURLErrorCancelled {
+            return true
+        }
+
+        if let tachikomaError = error as? TachikomaError {
+            switch tachikomaError {
+            case let .networkError(underlyingError):
+                return self.isAgentCancellation(underlyingError)
+            case let .retryError(retryError):
+                if let lastError = retryError.lastError,
+                   self.isAgentCancellation(lastError)
+                {
+                    return true
+                }
+                return retryError.errors.contains { self.isAgentCancellation($0) }
+            default:
+                break
+            }
+        }
+
+        if let unifiedError = error as? TachikomaUnifiedError,
+           let underlyingError = unifiedError.underlyingError
+        {
+            return self.isAgentCancellation(underlyingError)
+        }
+
+        if let modelError = error as? ModelError,
+           case let .networkError(underlyingError) = modelError
+        {
+            return self.isAgentCancellation(underlyingError)
+        }
+
+        return false
+    }
+
     func runStreamingLoop(
         configuration: StreamingLoopConfiguration,
         maxSteps: Int,
         initialMessages: [ModelMessage],
         queueMode: QueueMode = .oneAtATime,
-        pendingUserMessages: [ModelMessage] = []) async throws -> StreamingLoopOutcome
+        pendingUserMessages: [ModelMessage] = [],
+        onCheckpoint: ((StreamingLoopOutcome) -> Void)? = nil) async throws -> StreamingLoopOutcome
     {
         var state = StreamingLoopState(messages: initialMessages)
         let resolvedConfiguration = TachikomaConfiguration.resolve(.current)
@@ -81,8 +193,11 @@ extension PeekabooAgentService {
         // Queue of pending user messages (set by caller). For now, this is empty
         // and will be injected by higher-level chat loop when we add that support.
         var queuedMessages: [ModelMessage] = pendingUserMessages
+        var reachedStepLimit = false
+        var usageAccumulator = AgentUsageAccumulator()
 
         for stepIndex in 0..<maxSteps {
+            try Task.checkCancellation()
             self.logStreamingStepStart(stepIndex, tools: configuration.tools)
 
             // If queue mode is "all" and we have queued messages, inject them
@@ -100,23 +215,38 @@ extension PeekabooAgentService {
                     state: &state.desktopContextState,
                     eventHandler: configuration.eventHandler)
             }
+            try Task.checkCancellation()
 
             let streamResult = try await streamText(
                 model: configuration.model,
+                provider: configuration.provider,
                 messages: state.messages,
                 tools: configuration.tools.isEmpty ? nil : configuration.tools,
                 settings: self.generationSettings(for: configuration.model))
 
-            let output = try await self.collectStreamOutput(
-                from: streamResult,
-                model: configuration.model,
-                eventHandler: configuration.eventHandler,
-                stepIndex: stepIndex)
+            var terminalUsage: Usage?
+            let output: StreamProcessingOutput
+            do {
+                output = try await self.collectStreamOutput(
+                    from: streamResult,
+                    model: configuration.model,
+                    eventHandler: configuration.eventHandler,
+                    stepIndex: stepIndex,
+                    onTerminalUsage: { terminalUsage = $0 })
+            } catch {
+                if let terminalUsage {
+                    state.usage = usageAccumulator.record(terminalUsage)
+                    onCheckpoint?(self.makeLoopOutcome(state: state, reachedStepLimit: false))
+                }
+                throw error
+            }
+            if let terminalUsage {
+                state.usage = usageAccumulator.record(terminalUsage)
+                onCheckpoint?(self.makeLoopOutcome(state: state, reachedStepLimit: false))
+            }
+            try Task.checkCancellation()
 
             state.content += output.text
-            if let usage = output.usage {
-                state.usage = usage
-            }
 
             let shouldReplayReasoning = ReasoningReplayTarget(
                 model: configuration.model,
@@ -136,14 +266,12 @@ extension PeekabooAgentService {
                 }
             }
 
-            if output.finishReason == .contentFilter {
-                throw TachikomaError.apiError("Model refused to answer")
-            }
+            try self.validateToolContinuationFinishReason(
+                output.finishReason,
+                hasToolCalls: !output.toolCalls.isEmpty)
 
             if output.toolCalls.isEmpty {
-                if shouldReplayReasoning, output.text.isEmpty, !output.reasoningBlocks.isEmpty {
-                    self.appendReasoningOnlyBoundary(to: &state.messages)
-                }
+                try self.validateTerminalResponse(text: output.text)
                 self.appendFinalStep(
                     text: output.text,
                     to: &state.messages,
@@ -152,20 +280,38 @@ extension PeekabooAgentService {
                 break
             }
 
-            let step = try await self.handleToolCalls(
-                stepText: output.text,
-                toolCalls: output.toolCalls,
-                context: toolContext,
-                currentMessages: &state.messages,
-                stepIndex: stepIndex)
+            var cancellationStep: GenerationStep?
+            let step: GenerationStep
+            do {
+                step = try await self.handleToolCalls(
+                    stepText: output.text,
+                    toolCalls: output.toolCalls,
+                    context: toolContext,
+                    currentMessages: &state.messages,
+                    stepIndex: stepIndex,
+                    onCancellationCheckpoint: { cancellationStep = $0 })
+            } catch {
+                if self.isAgentCancellation(error), let cancellationStep {
+                    state.steps.append(cancellationStep)
+                    state.toolCallCount += cancellationStep.toolResults.count
+                    onCheckpoint?(self.makeLoopOutcome(state: state, reachedStepLimit: false))
+                    throw CancellationError()
+                }
+                throw error
+            }
             state.steps.append(step)
             state.toolCallCount += step.toolResults.count
+            onCheckpoint?(self.makeLoopOutcome(state: state, reachedStepLimit: false))
 
             if let stopReason = self.turnBoundaryStopReason(from: step.toolResults) {
                 if state.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     state.content = stopReason
                 }
                 break
+            }
+
+            if stepIndex == maxSteps - 1 {
+                reachedStepLimit = true
             }
 
             // If queue mode is one-at-a-time, inject exactly one queued message (if any)
@@ -175,14 +321,20 @@ extension PeekabooAgentService {
             }
         }
 
-        let totalToolCalls = state.toolCallCount
+        return self.makeLoopOutcome(state: state, reachedStepLimit: reachedStepLimit)
+    }
 
-        return StreamingLoopOutcome(
+    func makeLoopOutcome(
+        state: StreamingLoopState,
+        reachedStepLimit: Bool) -> StreamingLoopOutcome
+    {
+        StreamingLoopOutcome(
             content: state.content,
             messages: state.messages,
             steps: state.steps,
             usage: state.usage,
-            toolCallCount: totalToolCalls)
+            toolCallCount: state.toolCallCount,
+            reachedStepLimit: reachedStepLimit)
     }
 
     func logStreamingStepStart(_ stepIndex: Int, tools: [AgentTool]) {
@@ -196,6 +348,43 @@ extension PeekabooAgentService {
 
         let toolNames = tools.map(\.name).joined(separator: ", ")
         self.logger.debug("Available tools: \(toolNames)")
+    }
+
+    func validateToolContinuationFinishReason(
+        _ finishReason: FinishReason?,
+        hasToolCalls: Bool) throws
+    {
+        if finishReason == .contentFilter {
+            throw TachikomaError.apiError("Model refused to answer")
+        }
+
+        if finishReason == .toolCalls, !hasToolCalls {
+            throw TachikomaError.apiError(
+                "Model reported a tool-call finish reason, but no tool calls were decoded; " +
+                    "refusing to treat the response as complete.")
+        }
+
+        switch finishReason {
+        case nil, .toolCalls, .stop:
+            return
+        case .contentFilter:
+            preconditionFailure("Content-filter responses are rejected before tool-finish validation")
+        case let finishReason?:
+            if hasToolCalls {
+                throw TachikomaError.apiError(
+                    "Model returned tool calls with finish reason '\(finishReason.rawValue)'; " +
+                        "refusing to execute incomplete tool calls.")
+            }
+            throw TachikomaError.apiError(
+                "Model returned a terminal response with finish reason '\(finishReason.rawValue)'; " +
+                    "refusing to mark the task complete.")
+        }
+    }
+
+    func validateTerminalResponse(text: String) throws {
+        guard text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        throw TachikomaError.apiError(
+            "Model returned an empty terminal response; refusing to mark the task complete.")
     }
 
     func appendFinalStep(
@@ -214,13 +403,6 @@ extension PeekabooAgentService {
             text: text,
             toolCalls: [],
             toolResults: []))
-    }
-
-    func appendReasoningOnlyBoundary(to messages: inout [ModelMessage]) {
-        messages.append(ModelMessage(
-            role: .assistant,
-            content: [.text("")],
-            metadata: .init(customData: ["tachikoma.internal.boundary": "reasoning_only"])))
     }
 
     func appendAnthropicReasoningBlock(
@@ -369,6 +551,25 @@ extension PeekabooAgentService {
             return metadata
         }
 
+        if block.type == "ollama_thinking",
+           let target = ReasoningReplayTarget(
+               model: model,
+               configuration: configuration,
+               peekabooConfiguration: peekabooConfiguration),
+           target.provider == "ollama"
+        {
+            var metadata = [
+                "ollama.thinking": block.text,
+                "tachikoma.reasoning.type": block.type,
+                "tachikoma.reasoning.provider": target.provider,
+                "tachikoma.reasoning.model": target.modelId,
+            ]
+            if let endpointIdentity = target.endpointIdentity {
+                metadata["tachikoma.reasoning.base_url"] = endpointIdentity
+            }
+            return metadata
+        }
+
         var customData: [String: String] = if let target = ReasoningReplayTarget(
             model: model,
             configuration: configuration,
@@ -414,37 +615,10 @@ extension PeekabooAgentService {
             "tachikoma.reasoning.provider": "openrouter",
             "tachikoma.reasoning.model": modelId,
         ]
-        if let endpointIdentity = self.canonicalReasoningEndpointIdentity(baseURL) {
+        if let endpointIdentity = Self.canonicalEndpointIdentity(baseURL) {
             metadata["tachikoma.reasoning.base_url"] = endpointIdentity
         }
         return metadata
-    }
-
-    private func canonicalReasoningEndpointIdentity(_ rawValue: String?) -> String? {
-        guard
-            let trimmed = rawValue?.trimmingCharacters(in: .whitespacesAndNewlines),
-            !trimmed.isEmpty,
-            var components = URLComponents(string: trimmed),
-            let scheme = components.scheme?.lowercased(),
-            let host = components.host?.lowercased()
-        else {
-            return nil
-        }
-
-        components.scheme = scheme
-        components.host = host
-        components.user = nil
-        components.password = nil
-        components.fragment = nil
-        while components.path.count > 1, components.path.hasSuffix("/") {
-            components.path.removeLast()
-        }
-
-        guard let value = components.string, let data = value.data(using: .utf8) else { return nil }
-        let digest = SHA256.hash(data: data)
-            .map { String(format: "%02x", $0) }
-            .joined()
-        return "sha256:\(digest)"
     }
 
     func handleToolCalls(
@@ -454,7 +628,8 @@ extension PeekabooAgentService {
         currentMessages: inout [ModelMessage],
         stepIndex: Int,
         appendAssistantMessage: Bool = true,
-        emitToolStartEvents: Bool = false) async throws -> GenerationStep
+        emitToolStartEvents: Bool = false,
+        onCancellationCheckpoint: ((GenerationStep) -> Void)? = nil) async throws -> GenerationStep
     {
         if appendAssistantMessage {
             self.appendAssistantMessage(
@@ -466,6 +641,25 @@ extension PeekabooAgentService {
         var toolResults: [AgentToolResult] = []
 
         for (index, toolCall) in toolCalls.enumerated() {
+            do {
+                try Task.checkCancellation()
+            } catch {
+                await self.appendCancelledToolResults(
+                    toolCalls: toolCalls,
+                    startingAt: index,
+                    activeToolCallId: nil,
+                    context: context,
+                    currentMessages: &currentMessages,
+                    toolResults: &toolResults,
+                    emitToolStartEvents: emitToolStartEvents)
+                onCancellationCheckpoint?(GenerationStep(
+                    stepIndex: stepIndex,
+                    text: stepText,
+                    toolCalls: toolCalls,
+                    toolResults: toolResults))
+                throw CancellationError()
+            }
+
             if emitToolStartEvents {
                 try await self.sendToolStartEvent(toolCall, eventHandler: context.eventHandler)
             }
@@ -478,15 +672,74 @@ extension PeekabooAgentService {
                     eventHandler: context.eventHandler)
                 currentMessages.append(ModelMessage(role: .tool, content: [.toolResult(unavailableResult)]))
                 toolResults.append(unavailableResult)
+                do {
+                    try Task.checkCancellation()
+                } catch {
+                    await self.appendCancelledToolResults(
+                        toolCalls: toolCalls,
+                        startingAt: index + 1,
+                        activeToolCallId: nil,
+                        context: context,
+                        currentMessages: &currentMessages,
+                        toolResults: &toolResults,
+                        emitToolStartEvents: emitToolStartEvents)
+                    onCancellationCheckpoint?(GenerationStep(
+                        stepIndex: stepIndex,
+                        text: stepText,
+                        toolCalls: toolCalls,
+                        toolResults: toolResults))
+                    throw CancellationError()
+                }
                 continue
             }
-            let result = try await self.executeToolCall(
-                toolCall,
-                tool: tool,
-                context: context,
-                currentMessages: &currentMessages,
-                stepIndex: stepIndex)
+            let result: AgentToolResult
+            do {
+                result = try await self.executeToolCall(
+                    toolCall,
+                    tool: tool,
+                    context: context,
+                    currentMessages: &currentMessages,
+                    options: ToolCallExecutionOptions(
+                        stepIndex: stepIndex,
+                        allowSuccessfulToolBoundary: !toolResults.contains { $0.isError }))
+            } catch {
+                guard self.isAgentCancellation(error) else { throw error }
+                await self.appendCancelledToolResults(
+                    toolCalls: toolCalls,
+                    startingAt: index,
+                    activeToolCallId: toolCall.id,
+                    context: context,
+                    currentMessages: &currentMessages,
+                    toolResults: &toolResults,
+                    emitToolStartEvents: emitToolStartEvents)
+                onCancellationCheckpoint?(GenerationStep(
+                    stepIndex: stepIndex,
+                    text: stepText,
+                    toolCalls: toolCalls,
+                    toolResults: toolResults))
+                throw CancellationError()
+            }
             toolResults.append(result)
+
+            do {
+                try Task.checkCancellation()
+            } catch {
+                await self.appendCancelledToolResults(
+                    toolCalls: toolCalls,
+                    startingAt: index + 1,
+                    activeToolCallId: nil,
+                    context: context,
+                    currentMessages: &currentMessages,
+                    toolResults: &toolResults,
+                    emitToolStartEvents: emitToolStartEvents)
+                onCancellationCheckpoint?(GenerationStep(
+                    stepIndex: stepIndex,
+                    text: stepText,
+                    toolCalls: toolCalls,
+                    toolResults: toolResults))
+                throw CancellationError()
+            }
+
             if let stopReason = self.turnBoundaryStopReason(from: result) {
                 let remainingToolCalls = toolCalls.dropFirst(index + 1)
                 for skippedToolCall in remainingToolCalls {
@@ -507,6 +760,44 @@ extension PeekabooAgentService {
             text: stepText,
             toolCalls: toolCalls,
             toolResults: toolResults)
+    }
+
+    // swiftlint:disable:next function_parameter_count
+    private func appendCancelledToolResults(
+        toolCalls: [AgentToolCall],
+        startingAt startIndex: Int,
+        activeToolCallId: String?,
+        context: ToolHandlingContext,
+        currentMessages: inout [ModelMessage],
+        toolResults: inout [AgentToolResult],
+        emitToolStartEvents: Bool) async
+    {
+        guard startIndex < toolCalls.count else { return }
+
+        for toolCall in toolCalls[startIndex...] {
+            let wasActive = toolCall.id == activeToolCallId
+            if emitToolStartEvents, !wasActive {
+                try? await self.sendToolStartEvent(toolCall, eventHandler: context.eventHandler)
+            }
+
+            var payload = [
+                "cancelled": AnyAgentToolValue(bool: true),
+                "reason": AnyAgentToolValue(string: "Agent execution was cancelled"),
+            ]
+            if !wasActive {
+                payload["skipped"] = AnyAgentToolValue(bool: true)
+            }
+            let result = AgentToolResult(
+                toolCallId: toolCall.id,
+                result: AnyAgentToolValue(object: payload),
+                isError: true)
+            await self.sendToolCompletionEvent(
+                name: toolCall.name,
+                payload: self.toolResultPayload(from: result.result, toolName: toolCall.name),
+                eventHandler: context.eventHandler)
+            currentMessages.append(ModelMessage(role: .tool, content: [.toolResult(result)]))
+            toolResults.append(result)
+        }
     }
 
     private func appendAssistantMessage(
@@ -554,7 +845,7 @@ extension PeekabooAgentService {
         tool: AgentTool,
         context: ToolHandlingContext,
         currentMessages: inout [ModelMessage],
-        stepIndex: Int) async throws -> AgentToolResult
+        options: ToolCallExecutionOptions) async throws -> AgentToolResult
     {
         let boundaryDecision = context.turnBoundary.record(toolName: toolCall.name, arguments: toolCall.arguments)
 
@@ -564,7 +855,7 @@ extension PeekabooAgentService {
                 model: context.model,
                 settings: self.generationSettings(for: context.model),
                 sessionId: context.sessionId,
-                stepIndex: stepIndex)
+                stepIndex: options.stepIndex)
             let toolArguments = AgentToolArguments(toolCall.arguments)
             let execution = try await self.executeTool(
                 tool,
@@ -577,8 +868,15 @@ extension PeekabooAgentService {
                 toolValue = self.addVerification(verification, to: toolValue)
                 await context.eventHandler?.send(.verificationCompleted(toolName: toolCall.name, result: verification))
             }
-            if case let .stopAfterCurrentStep(reason) = boundaryDecision {
+            switch boundaryDecision {
+            case let .stopAfterCurrentStep(reason):
                 toolValue = self.addTurnBoundaryStopReason(reason, to: toolValue)
+            case let .stopAfterSuccessfulTool(reason) where options.allowSuccessfulToolBoundary:
+                toolValue = self.addTurnBoundaryStopReason(reason, to: toolValue)
+            case .stopAfterSuccessfulTool:
+                break
+            case .continueTurn:
+                break
             }
             let toolResult = AgentToolResult.success(toolCallId: toolCall.id, result: toolValue)
             await self.sendToolCompletionEvent(
@@ -587,9 +885,10 @@ extension PeekabooAgentService {
                 eventHandler: context.eventHandler)
             currentMessages.append(ModelMessage(role: .tool, content: [.toolResult(toolResult)]))
             return toolResult
-        } catch let error as CancellationError {
-            throw error
         } catch {
+            if self.isAgentCancellation(error) {
+                throw CancellationError()
+            }
             var errorValue = AnyAgentToolValue(string: error.localizedDescription)
             if case let .stopAfterCurrentStep(reason) = boundaryDecision {
                 errorValue = self.addTurnBoundaryStopReason(reason, to: errorValue)
@@ -920,6 +1219,12 @@ private struct ReasoningReplayTarget {
             self.baseURL = configuration.getBaseURL(for: .kimi) ?? Provider.kimi.defaultBaseURL
             self.allowsReasoningBoundaries = true
             self.allowsLegacyUnknown = false
+        case let .ollama(model):
+            self.provider = "ollama"
+            self.modelId = model.modelId
+            self.baseURL = (try? configuration.makeProvider(for: .ollama(model)))?.baseURL
+            self.allowsReasoningBoundaries = true
+            self.allowsLegacyUnknown = false
         case let .custom(provider):
             if let anthropicProvider = provider as? AnthropicProvider {
                 self.provider = "anthropic"
@@ -984,29 +1289,6 @@ private struct ReasoningReplayTarget {
     }
 
     var endpointIdentity: String? {
-        guard
-            let trimmed = self.baseURL?.trimmingCharacters(in: .whitespacesAndNewlines),
-            !trimmed.isEmpty,
-            var components = URLComponents(string: trimmed),
-            let scheme = components.scheme?.lowercased(),
-            let host = components.host?.lowercased()
-        else {
-            return nil
-        }
-
-        components.scheme = scheme
-        components.host = host
-        components.user = nil
-        components.password = nil
-        components.fragment = nil
-        while components.path.count > 1, components.path.hasSuffix("/") {
-            components.path.removeLast()
-        }
-
-        guard let value = components.string, let data = value.data(using: .utf8) else { return nil }
-        let digest = SHA256.hash(data: data)
-            .map { String(format: "%02x", $0) }
-            .joined()
-        return "sha256:\(digest)"
+        PeekabooAgentService.canonicalEndpointIdentity(self.baseURL)
     }
 }

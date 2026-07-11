@@ -31,7 +31,8 @@ extension PeekabooAgentService {
         from streamResult: StreamTextResult,
         model: LanguageModel,
         eventHandler: EventHandler?,
-        stepIndex: Int) async throws -> StreamProcessingOutput
+        stepIndex: Int,
+        onTerminalUsage: ((Usage?) -> Void)? = nil) async throws -> StreamProcessingOutput
     {
         var stepText = ""
         var reasoningBlocks: [ReasoningBlock] = []
@@ -52,7 +53,11 @@ extension PeekabooAgentService {
             self.logger.debug("Starting to process stream for step \(stepIndex)")
         }
 
+        try Task.checkCancellation()
         for try await delta in streamResult.stream {
+            if delta.type != .done {
+                try Task.checkCancellation()
+            }
             if self.isVerbose {
                 self.logger.debug("Received delta type: \(String(describing: delta.type))")
             }
@@ -85,7 +90,6 @@ extension PeekabooAgentService {
                         stepToolCalls: &stepToolCalls,
                         seenToolCallIds: &seenToolCallIds,
                         bufferedEvents: &bufferedEvents,
-                        buffersEventsUntilDone: buffersAssistantTextUntilDone,
                         eventHandler: eventHandler)
                 }
 
@@ -135,6 +139,7 @@ extension PeekabooAgentService {
                     eventHandler: eventHandler)
 
             case .done:
+                let isFirstDone = !didReceiveDone
                 didReceiveDone = true
                 self.flushPendingReasoningText(
                     &pendingReasoningText,
@@ -142,23 +147,30 @@ extension PeekabooAgentService {
                     type: pendingReasoningType,
                     reasoningBlocks: &reasoningBlocks)
                 usage = delta.usage
+                if isFirstDone {
+                    onTerminalUsage?(usage)
+                }
                 finishReason = delta.finishReason
+                try Task.checkCancellation()
 
             default:
                 break
             }
         }
+        try Task.checkCancellation()
 
         if buffersAssistantTextUntilDone, !didReceiveDone {
             throw TachikomaError.apiError("Provider stream ended without a terminal event")
         }
 
-        if buffersAssistantTextUntilDone, finishReason != .contentFilter {
-            for event in bufferedEvents {
-                switch event {
-                case let .event(agentEvent):
-                    await eventHandler?.send(agentEvent)
-                }
+        try self.validateToolContinuationFinishReason(
+            finishReason,
+            hasToolCalls: !stepToolCalls.isEmpty)
+
+        for event in bufferedEvents {
+            switch event {
+            case let .event(agentEvent):
+                await eventHandler?.send(agentEvent)
             }
         }
 
@@ -188,6 +200,7 @@ extension PeekabooAgentService {
         pendingReasoningText = ""
     }
 
+    // swiftlint:disable:next function_parameter_count
     private func handleTextDelta(
         _ content: String,
         stepText: inout String,
@@ -229,7 +242,6 @@ extension PeekabooAgentService {
         stepToolCalls: inout [AgentToolCall],
         seenToolCallIds: inout Set<String>,
         bufferedEvents: inout [BufferedStreamEvent],
-        buffersEventsUntilDone: Bool,
         eventHandler: EventHandler?) async throws
     {
         if self.isVerbose {
@@ -244,7 +256,7 @@ extension PeekabooAgentService {
             stepToolCalls.append(toolCall)
         }
 
-        guard let eventHandler else { return }
+        guard eventHandler != nil else { return }
 
         let argumentsData = try JSONEncoder().encode(toolCall.arguments)
         let argumentsJSON = AgentToolCallArgumentPreview.redacted(from: argumentsData)
@@ -255,11 +267,7 @@ extension PeekabooAgentService {
             .toolCallUpdated(name: toolCall.name, arguments: argumentsJSON)
         }
 
-        if buffersEventsUntilDone {
-            bufferedEvents.append(.event(event))
-        } else {
-            await eventHandler.send(event)
-        }
+        bufferedEvents.append(.event(event))
     }
 
     private func handleReasoningDelta(

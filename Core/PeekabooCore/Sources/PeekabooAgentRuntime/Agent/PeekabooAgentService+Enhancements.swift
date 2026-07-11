@@ -427,6 +427,7 @@ extension PeekabooAgentService {
     /// Configuration for streaming loop with enhancements.
     struct EnhancedStreamingConfiguration {
         let model: LanguageModel
+        let provider: any ModelProvider
         let tools: [AgentTool]
         let sessionId: String
         let eventHandler: EventHandler?
@@ -434,12 +435,14 @@ extension PeekabooAgentService {
 
         init(
             model: LanguageModel,
+            provider: any ModelProvider,
             tools: [AgentTool],
             sessionId: String,
             eventHandler: EventHandler?,
             enhancementOptions: AgentEnhancementOptions = .default)
         {
             self.model = model
+            self.provider = provider
             self.tools = tools
             self.sessionId = sessionId
             self.eventHandler = eventHandler
@@ -458,6 +461,7 @@ extension PeekabooAgentService {
         // Convert to standard configuration, passing through enhancement options
         let standardConfig = StreamingLoopConfiguration(
             model: configuration.model,
+            provider: configuration.provider,
             tools: configuration.tools,
             sessionId: configuration.sessionId,
             eventHandler: configuration.eventHandler,

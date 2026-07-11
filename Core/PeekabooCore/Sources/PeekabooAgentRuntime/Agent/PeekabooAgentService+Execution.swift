@@ -5,6 +5,7 @@
 
 import Foundation
 import PeekabooAutomation
+import PeekabooFoundation
 import Tachikoma
 
 @available(macOS 14.0, *)
@@ -235,9 +236,14 @@ extension PeekabooAgentService {
             eventContinuation.finish()
             await eventTask.value
             return result
-        } catch {
+        } catch let error as CancellationError {
             eventContinuation.finish()
-            eventTask.cancel()
+            await eventTask.value
+            throw error
+        } catch {
+            await eventHandler.send(.error(message: error.localizedDescription))
+            eventContinuation.finish()
+            await eventTask.value
             throw error
         }
     }
@@ -288,34 +294,62 @@ extension PeekabooAgentService {
         eventHandler: EventHandler? = nil,
         enhancementOptions: AgentEnhancementOptions? = nil) async throws -> AgentExecutionResult
     {
+        let maxSteps = try AgentStepBudget.validate(maxSteps)
         _ = streamingDelegate
         let tools = await self.buildToolset(for: model)
         self.logModelUsage(model, prefix: "Streaming ")
+        guard let provider = context.provider else {
+            throw PeekabooError.invalidInput("The session has no verified model provider; refusing to execute it.")
+        }
 
         let configuration = StreamingLoopConfiguration(
             model: model,
+            provider: provider,
             tools: tools,
             sessionId: context.id,
             eventHandler: eventHandler,
             enhancementOptions: enhancementOptions)
 
-        let outcome = try await self.runStreamingLoop(
-            configuration: configuration,
-            maxSteps: maxSteps,
-            initialMessages: context.messages,
-            queueMode: queueMode)
+        var latestCheckpoint = self.makeLoopOutcome(
+            state: StreamingLoopState(messages: context.messages),
+            reachedStepLimit: false)
+        let outcome: StreamingLoopOutcome
+        do {
+            outcome = try await self.runStreamingLoop(
+                configuration: configuration,
+                maxSteps: maxSteps,
+                initialMessages: context.messages,
+                queueMode: queueMode)
+            { latestCheckpoint = $0 }
+        } catch {
+            let wasCancelled = self.isAgentCancellation(error)
+            self.preserveExecutionCheckpoint(
+                context: context,
+                model: model,
+                checkpoint: latestCheckpoint,
+                status: wasCancelled ? "cancelled" : "failed")
+            if wasCancelled {
+                throw CancellationError()
+            }
+            throw error
+        }
 
         let endTime = Date()
         let executionTime = endTime.timeIntervalSince(context.executionStart)
         let toolCallCount = outcome.toolCallCount
 
-        try self.saveCompletedSession(
+        try self.saveExecutionSession(
             context: context,
             model: model,
             finalMessages: outcome.messages,
             endTime: endTime,
             toolCallCount: toolCallCount,
-            usage: outcome.usage)
+            usage: outcome.usage,
+            status: outcome.reachedStepLimit ? "max_steps_exhausted" : "completed")
+
+        if outcome.reachedStepLimit {
+            throw AgentStepLimitExceededError(maxSteps: maxSteps, sessionId: context.id)
+        }
 
         return AgentExecutionResult(
             content: outcome.content,
@@ -338,31 +372,59 @@ extension PeekabooAgentService {
         eventHandler: EventHandler? = nil,
         enhancementOptions: AgentEnhancementOptions? = nil) async throws -> AgentExecutionResult
     {
+        let maxSteps = try AgentStepBudget.validate(maxSteps)
         let tools = await self.buildToolset(for: model)
         self.logModelUsage(model, prefix: "")
+        guard let provider = context.provider else {
+            throw PeekabooError.invalidInput("The session has no verified model provider; refusing to execute it.")
+        }
 
         let configuration = StreamingLoopConfiguration(
             model: model,
+            provider: provider,
             tools: tools,
             sessionId: context.id,
             eventHandler: eventHandler,
             enhancementOptions: enhancementOptions)
 
-        let outcome = try await self.runGenerationLoop(
-            configuration: configuration,
-            maxSteps: maxSteps,
-            initialMessages: context.messages)
+        var latestCheckpoint = self.makeLoopOutcome(
+            state: StreamingLoopState(messages: context.messages),
+            reachedStepLimit: false)
+        let outcome: StreamingLoopOutcome
+        do {
+            outcome = try await self.runGenerationLoop(
+                configuration: configuration,
+                maxSteps: maxSteps,
+                initialMessages: context.messages)
+            { latestCheckpoint = $0 }
+        } catch {
+            let wasCancelled = self.isAgentCancellation(error)
+            self.preserveExecutionCheckpoint(
+                context: context,
+                model: model,
+                checkpoint: latestCheckpoint,
+                status: wasCancelled ? "cancelled" : "failed")
+            if wasCancelled {
+                throw CancellationError()
+            }
+            throw error
+        }
 
         let endTime = Date()
         let executionTime = endTime.timeIntervalSince(context.executionStart)
 
-        try self.saveCompletedSession(
+        try self.saveExecutionSession(
             context: context,
             model: model,
             finalMessages: outcome.messages,
             endTime: endTime,
             toolCallCount: outcome.toolCallCount,
-            usage: outcome.usage)
+            usage: outcome.usage,
+            status: outcome.reachedStepLimit ? "max_steps_exhausted" : "completed")
+
+        if outcome.reachedStepLimit {
+            throw AgentStepLimitExceededError(maxSteps: maxSteps, sessionId: context.id)
+        }
 
         return AgentExecutionResult(
             content: outcome.content,
@@ -380,7 +442,8 @@ extension PeekabooAgentService {
     func runGenerationLoop(
         configuration: StreamingLoopConfiguration,
         maxSteps: Int,
-        initialMessages: [ModelMessage]) async throws -> StreamingLoopOutcome
+        initialMessages: [ModelMessage],
+        onCheckpoint: ((StreamingLoopOutcome) -> Void)? = nil) async throws -> StreamingLoopOutcome
     {
         var state = StreamingLoopState(messages: initialMessages)
         let toolContext = ToolHandlingContext(
@@ -391,14 +454,12 @@ extension PeekabooAgentService {
             enhancementOptions: configuration.enhancementOptions)
 
         let resolvedConfiguration = TachikomaConfiguration.resolve(.current)
-        let provider = try resolvedConfiguration.makeProvider(for: configuration.model)
-        var totalInputTokens = 0
-        var totalOutputTokens = 0
-        var totalInputCost = 0.0
-        var totalOutputCost = 0.0
-        var hasUsage = false
+        let provider = configuration.provider
+        var usageAccumulator = AgentUsageAccumulator()
+        var reachedStepLimit = false
 
         for stepIndex in 0..<maxSteps {
+            try Task.checkCancellation()
             self.logStreamingStepStart(stepIndex, tools: configuration.tools)
 
             if let options = configuration.enhancementOptions {
@@ -409,6 +470,7 @@ extension PeekabooAgentService {
                     state: &state.desktopContextState,
                     eventHandler: configuration.eventHandler)
             }
+            try Task.checkCancellation()
 
             let request = ProviderRequest(
                 messages: state.messages.sanitizedForProviderContext(
@@ -419,27 +481,25 @@ extension PeekabooAgentService {
                 settings: self.generationSettings(for: configuration.model))
             let response = try await provider.generateText(request: request)
 
-            if response.finishReason == .contentFilter {
-                throw TachikomaError.apiError("Model refused to answer")
+            if let usage = response.usage {
+                state.usage = usageAccumulator.record(usage)
+                onCheckpoint?(self.makeLoopOutcome(state: state, reachedStepLimit: false))
+            }
+            try Task.checkCancellation()
+
+            let toolCalls = response.toolCalls ?? []
+            try self.validateToolContinuationFinishReason(
+                response.finishReason,
+                hasToolCalls: !toolCalls.isEmpty)
+            if toolCalls.isEmpty {
+                try self.validateTerminalResponse(text: response.text)
             }
 
             state.content += response.text
             if !response.text.isEmpty {
                 await configuration.eventHandler?.send(.assistantMessage(content: response.text))
             }
-            if let usage = response.usage {
-                hasUsage = true
-                totalInputTokens += usage.inputTokens
-                totalOutputTokens += usage.outputTokens
-                if let cost = usage.cost {
-                    totalInputCost += cost.input
-                    totalOutputCost += cost.output
-                }
-                let totalCost = totalInputCost > 0 || totalOutputCost > 0
-                    ? Usage.Cost(input: totalInputCost, output: totalOutputCost)
-                    : nil
-                state.usage = Usage(inputTokens: totalInputTokens, outputTokens: totalOutputTokens, cost: totalCost)
-            }
+            try Task.checkCancellation()
 
             let recordedAssistantTurn = self.appendResponseHistory(
                 from: response,
@@ -448,7 +508,6 @@ extension PeekabooAgentService {
                 peekabooConfiguration: self.services.configuration,
                 to: &state.messages)
 
-            let toolCalls = response.toolCalls ?? []
             if toolCalls.isEmpty {
                 self.appendFinalStep(
                     text: response.text,
@@ -459,16 +518,30 @@ extension PeekabooAgentService {
                 break
             }
 
-            let step = try await self.handleToolCalls(
-                stepText: response.text,
-                toolCalls: toolCalls,
-                context: toolContext,
-                currentMessages: &state.messages,
-                stepIndex: stepIndex,
-                appendAssistantMessage: !recordedAssistantTurn,
-                emitToolStartEvents: true)
+            var cancellationStep: GenerationStep?
+            let step: GenerationStep
+            do {
+                step = try await self.handleToolCalls(
+                    stepText: response.text,
+                    toolCalls: toolCalls,
+                    context: toolContext,
+                    currentMessages: &state.messages,
+                    stepIndex: stepIndex,
+                    appendAssistantMessage: !recordedAssistantTurn,
+                    emitToolStartEvents: true,
+                    onCancellationCheckpoint: { cancellationStep = $0 })
+            } catch {
+                if self.isAgentCancellation(error), let cancellationStep {
+                    state.steps.append(cancellationStep)
+                    state.toolCallCount += cancellationStep.toolResults.count
+                    onCheckpoint?(self.makeLoopOutcome(state: state, reachedStepLimit: false))
+                    throw CancellationError()
+                }
+                throw error
+            }
             state.steps.append(step)
             state.toolCallCount += step.toolResults.count
+            onCheckpoint?(self.makeLoopOutcome(state: state, reachedStepLimit: false))
 
             if let stopReason = self.turnBoundaryStopReason(from: step.toolResults) {
                 if state.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -477,20 +550,11 @@ extension PeekabooAgentService {
                 break
             }
 
-            if response.finishReason != .toolCalls, response.finishReason != .stop {
-                break
+            if stepIndex == maxSteps - 1 {
+                reachedStepLimit = true
             }
         }
 
-        if !hasUsage {
-            state.usage = nil
-        }
-
-        return StreamingLoopOutcome(
-            content: state.content,
-            messages: state.messages,
-            steps: state.steps,
-            usage: state.usage,
-            toolCallCount: state.toolCallCount)
+        return self.makeLoopOutcome(state: state, reachedStepLimit: reachedStepLimit)
     }
 }
