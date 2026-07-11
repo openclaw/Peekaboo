@@ -162,7 +162,7 @@ struct AgentCommandTests {
               }
             }
             """,
-            environment: ["PEEKABOO_CUSTOM_PROVIDER_KEY": "resolved-secret"]
+            environment: ["PB_KEY": "resolved-value"]
         ) {
             var command = try AgentCommand.parse([])
             command.model = "local-proxy/text-only"
@@ -256,7 +256,7 @@ struct AgentCommandTests {
                   "enabled": true,
                   "options": {
                     "baseURL": "http://localhost:8317/v1",
-                    "apiKey": "${PEEKABOO_CUSTOM_PROVIDER_KEY}"
+                    "apiKey": "${PB_KEY}"
                   },
                   "models": {
                     "mini": {
@@ -268,7 +268,7 @@ struct AgentCommandTests {
               }
             }
             """,
-            environment: ["PEEKABOO_CUSTOM_PROVIDER_KEY": "resolved-secret"]
+            environment: ["PB_KEY": "resolved-value"]
         ) {
             let command = try AgentCommand.parse([])
             let model = try #require(command.parseModelString(
@@ -279,7 +279,7 @@ struct AgentCommandTests {
             #expect(model.modelId == "local-proxy/mini")
             #expect(model.supportsTools)
             if case let .custom(provider) = model {
-                #expect(provider.apiKey == "resolved-secret")
+                #expect(provider.apiKey == "resolved-value")
             } else {
                 Issue.record("Expected custom provider model")
             }
@@ -299,7 +299,7 @@ struct AgentCommandTests {
                   "enabled": true,
                   "options": {
                     "baseURL": "http://localhost:8317/v1",
-                    "apiKey": "${PEEKABOO_CUSTOM_PROVIDER_KEY}"
+                    "apiKey": "${PB_KEY}"
                   },
                   "models": {
                     "mini": {
@@ -313,7 +313,7 @@ struct AgentCommandTests {
             """,
             environment: [
                 "OPENAI_API_KEY": "hosted-key",
-                "PEEKABOO_CUSTOM_PROVIDER_KEY": "custom-key",
+                "PB_KEY": "custom-key",
             ]
         ) {
             let command = try AgentCommand.parse([])
@@ -358,13 +358,13 @@ struct AgentCommandTests {
                   "enabled": true,
                   "options": {
                     "baseURL": "http://localhost:8317/v1",
-                    "apiKey": "${PEEKABOO_CUSTOM_PROVIDER_KEY}"
+                    "apiKey": "${PB_KEY}"
                   }
                 }
               }
             }
             """,
-            environment: ["PEEKABOO_CUSTOM_PROVIDER_KEY": "resolved-secret"]
+            environment: ["PB_KEY": "resolved-value"]
         ) {
             let command = try AgentCommand.parse([])
             let service = PeekabooAIService(configuration: PeekabooCore.ConfigurationManager.shared)
@@ -406,7 +406,7 @@ struct AgentCommandTests {
               }
             }
             """,
-            environment: ["PEEKABOO_CUSTOM_PROVIDER_KEY": "resolved-secret"]
+            environment: ["PB_KEY": "resolved-value"]
         ) {
             let command = try AgentCommand.parse([])
             let configuration = PeekabooCore.ConfigurationManager.shared
@@ -455,7 +455,7 @@ struct AgentCommandTests {
               }
             }
             """,
-            environment: ["PEEKABOO_CUSTOM_PROVIDER_KEY": "resolved-secret"]
+            environment: ["PB_KEY": "resolved-value"]
         ) {
             let command = try AgentCommand.parse([])
             let configuration = PeekabooCore.ConfigurationManager.shared
@@ -495,13 +495,13 @@ struct AgentCommandTests {
                   "enabled": true,
                   "options": {
                     "baseURL": "http://localhost:8317/v1",
-                    "apiKey": "${PEEKABOO_CUSTOM_PROVIDER_KEY}"
+                    "apiKey": "${PB_KEY}"
                   }
                 }
               }
             }
             """,
-            environment: ["PEEKABOO_CUSTOM_PROVIDER_KEY": "resolved-secret"]
+            environment: ["PB_KEY": "resolved-value"]
         ) {
             let command = try AgentCommand.parse([])
             let configuration = PeekabooCore.ConfigurationManager.shared
@@ -535,7 +535,7 @@ struct AgentCommandTests {
             "PEEKABOO_AI_PROVIDERS",
             "OPENAI_API_KEY",
             "ANTHROPIC_API_KEY",
-            "PEEKABOO_CUSTOM_PROVIDER_KEY",
+            "PB_KEY",
         ]
         let previous = Dictionary(uniqueKeysWithValues: keys.map { key in
             (key, getenv(key).map { String(cString: $0) })
@@ -546,7 +546,7 @@ struct AgentCommandTests {
         unsetenv("PEEKABOO_AI_PROVIDERS")
         unsetenv("OPENAI_API_KEY")
         unsetenv("ANTHROPIC_API_KEY")
-        unsetenv("PEEKABOO_CUSTOM_PROVIDER_KEY")
+        unsetenv("PB_KEY")
         for (key, value) in environment {
             setenv(key, value, 1)
         }
