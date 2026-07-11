@@ -590,6 +590,14 @@ struct CommanderBinderTests {
             ),
             commandType: ClickCommand.self
         )
+        let longPress = try CommanderCLIBinder.makeRuntimeOptions(
+            from: ParsedValues(
+                positional: [],
+                options: ["on": ["B1"]],
+                flags: ["longPress"]
+            ),
+            commandType: ClickCommand.self
+        )
         let doubleClick = try CommanderCLIBinder.makeRuntimeOptions(
             from: ParsedValues(
                 positional: [],
@@ -642,6 +650,8 @@ struct CommanderBinderTests {
         #expect(coordinate.requiresPostEventClickPermission)
         #expect(coordinateDouble.requiresPostEventClickPermission)
         #expect(coordinateRight.requiresPostEventClickPermission)
+        #expect(longPress.requiresPostEventClickPermission)
+        #expect(longPress.requiresLongPressClick)
         #expect(doubleClick.requiresPostEventClickPermission)
         #expect(!singleClick.requiresPostEventClickPermission)
         #expect(!rightClick.requiresPostEventClickPermission)
@@ -725,11 +735,20 @@ extension CommanderBinderTests {
             ),
             commandType: ClickCommand.self
         )
+        let longPressWindow = try CommanderCLIBinder.makeRuntimeOptions(
+            from: ParsedValues(
+                positional: [],
+                options: ["windowId": ["42"]],
+                flags: ["longPress"]
+            ),
+            commandType: ClickCommand.self
+        )
 
         #expect(explicitWindow.requiresExactWindowTargetedClicks)
         #expect(relativeAppCoordinates.requiresExactWindowTargetedClicks)
         #expect(!globalAppCoordinates.requiresExactWindowTargetedClicks)
         #expect(!foregroundWindow.requiresExactWindowTargetedClicks)
+        #expect(!longPressWindow.requiresExactWindowTargetedClicks)
 
         let operations: [PeekabooBridgeOperation] = [
             .captureScreen,

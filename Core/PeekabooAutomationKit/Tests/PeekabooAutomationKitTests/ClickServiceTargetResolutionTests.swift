@@ -1073,7 +1073,7 @@ final class ClickRecordingSyntheticInputDriver: SyntheticInputDriving {
         return nil
     }
 
-    func pressHold(at _: CGPoint, button _: MouseButton, duration _: TimeInterval) throws {}
+    func pressHold(at _: CGPoint, button _: MouseButton, duration _: TimeInterval) async throws {}
 
     func scroll(deltaX: Double, deltaY: Double, at point: CGPoint?) throws {
         self.events.append(.scroll(deltaX: deltaX, deltaY: deltaY, at: point))

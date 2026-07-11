@@ -264,6 +264,53 @@ struct RuntimeHostResolverTests {
         ) != nil)
     }
 
+    @Test
+    func `Candidate validation rejects pre-long-press bridge hosts`() async {
+        let candidate = RuntimeHostResolver.ImplicitRemoteCandidate(
+            socketPath: "/tmp/bridge.sock",
+            requireReusableDaemon: false,
+            requiredHostKind: nil,
+            requiresValidatedHistoricalDaemon: false
+        )
+        var options = CommandRuntimeOptions()
+        options.requiresPostEventClickPermission = true
+        options.requiresLongPressClick = true
+
+        func handshake(minor: Int, supportsClick: Bool = true) -> PeekabooBridgeHandshakeResponse {
+            let operations: [PeekabooBridgeOperation] = supportsClick
+                ? [.captureScreen, .click, .targetedClick]
+                : [.captureScreen, .targetedClick]
+            return PeekabooBridgeHandshakeResponse(
+                negotiatedVersion: PeekabooBridgeProtocolVersion(major: 1, minor: minor),
+                hostKind: .gui,
+                build: nil,
+                supportedOperations: operations,
+                permissions: PermissionsStatus(
+                    screenRecording: true,
+                    accessibility: true,
+                    postEvent: true
+                ),
+                enabledOperations: operations
+            )
+        }
+
+        #expect(await RuntimeHostResolver.validateRemoteCandidate(
+            candidate,
+            handshake: handshake(minor: 9),
+            options: options
+        ) == nil)
+        #expect(await RuntimeHostResolver.validateRemoteCandidate(
+            candidate,
+            handshake: handshake(minor: 10),
+            options: options
+        ) != nil)
+        #expect(await RuntimeHostResolver.validateRemoteCandidate(
+            candidate,
+            handshake: handshake(minor: 10, supportsClick: false),
+            options: options
+        ) == nil)
+    }
+
     private static func captureOptions() -> CommandRuntimeOptions {
         var options = CommandRuntimeOptions()
         options.requiresScreenCapturePermission = true

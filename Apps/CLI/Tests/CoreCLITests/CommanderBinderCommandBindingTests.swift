@@ -412,7 +412,7 @@ struct CommanderBinderCommandBindingTests {
                 "waitFor": ["2500"],
                 "inputStrategy": ["actionOnly"]
             ],
-            flags: ["double", "noAutoFocus"]
+            flags: ["longPress", "noAutoFocus"]
         )
         let command = try CommanderCLIBinder.instantiateCommand(ofType: ClickCommand.self, parsedValues: parsed)
         #expect(command.query == "Submit")
@@ -420,7 +420,7 @@ struct CommanderBinderCommandBindingTests {
         #expect(command.on == "B1")
         #expect(command.target.app == "Safari")
         #expect(command.waitFor == 2500)
-        #expect(command.double == true)
+        #expect(command.longPress == true)
         #expect(command.focusOptions.noAutoFocus == true)
         #expect(command.runtimeOptions.inputStrategy == .actionOnly)
     }

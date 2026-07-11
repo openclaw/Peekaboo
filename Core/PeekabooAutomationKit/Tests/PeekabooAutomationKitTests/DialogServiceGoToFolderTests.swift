@@ -63,7 +63,7 @@ private final class FailingDialogSyntheticInputDriver: SyntheticInputDriving {
         nil
     }
 
-    func pressHold(at _: CGPoint, button _: MouseButton, duration _: TimeInterval) throws {}
+    func pressHold(at _: CGPoint, button _: MouseButton, duration _: TimeInterval) async throws {}
     func scroll(deltaX _: Double, deltaY _: Double, at _: CGPoint?) throws {}
 
     func type(_ text: String, delayPerCharacter: TimeInterval) throws {

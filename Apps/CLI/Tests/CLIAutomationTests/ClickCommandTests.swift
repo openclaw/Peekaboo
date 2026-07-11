@@ -43,6 +43,30 @@ struct ClickCommandTests {
     }
 
     @Test
+    func `Long press uses foreground stationary click type`() async throws {
+        let context = await makeContext()
+        let result = try await InProcessCommandRunner.run(
+            ["click", "--coords", "100,200", "--long-press", "--json"],
+            services: context.services
+        )
+
+        #expect(result.exitStatus == 0)
+        let calls = await automationState(context) { $0.clickCalls }
+        let call = try #require(calls.first)
+        #expect(call.clickType == .longPress)
+        #expect(await self.automationState(context) { $0.targetedClickCalls }.isEmpty)
+    }
+
+    @Test
+    func `Long press rejects conflicting click variants`() throws {
+        var command = try ClickCommand.parse(["--coords", "100,200", "--long-press", "--right"])
+
+        #expect(throws: (any Error).self) {
+            try command.validate()
+        }
+    }
+
+    @Test
     func `Click command defaults to background coordinate clicks when pid is supplied`() async throws {
         let context = await makeContext()
         let result = try await InProcessCommandRunner.run(

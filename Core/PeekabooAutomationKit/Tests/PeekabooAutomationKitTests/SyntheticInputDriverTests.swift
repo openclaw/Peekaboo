@@ -1,11 +1,66 @@
 @preconcurrency import AXorcist
 import CoreGraphics
 import Foundation
+import enum PeekabooFoundation.PeekabooError
 import Testing
 @testable import PeekabooAutomationKit
 
 @MainActor
 struct SyntheticInputDriverTests {
+    @Test
+    func `long press uses ordinary mouse pressure`() throws {
+        let point = CGPoint(x: 12, y: 34)
+        let events = try SyntheticInputDriver.makePressHoldEvents(at: point, button: .left)
+
+        #expect(events.down.type == .leftMouseDown)
+        #expect(events.up.type == .leftMouseUp)
+        #expect(events.down.location == point)
+        #expect(events.up.location == point)
+        #expect(events.down.getDoubleValueField(.mouseEventPressure) == 1)
+    }
+
+    @Test
+    func `long press yields and always releases after cancellation`() async throws {
+        let recorder = PressHoldRecorder()
+        let driver = SyntheticInputDriver(
+            eventPoster: { event in
+                recorder.eventTypes.append(event.type)
+            },
+            holdSleeper: { duration in
+                recorder.durations.append(duration)
+                await Task.yield()
+                throw CancellationError()
+            })
+
+        do {
+            try await driver.pressHold(at: CGPoint(x: 12, y: 34), button: .left, duration: 1.2)
+            Issue.record("Expected the hold to be cancelled")
+        } catch is CancellationError {
+            // Expected. The deferred mouse-up must still be posted.
+        }
+
+        #expect(recorder.durations == [1.2])
+        #expect(recorder.eventTypes == [.leftMouseDown, .leftMouseUp])
+    }
+
+    @Test
+    func `long press rejects missing event synthesizing permission before mouse down`() async throws {
+        let recorder = PressHoldRecorder()
+        let driver = SyntheticInputDriver(
+            postEventAccessEvaluator: { false },
+            eventPoster: { event in recorder.eventTypes.append(event.type) },
+            holdSleeper: { _ in Issue.record("Denied long press must not start its hold") })
+
+        do {
+            try await driver.pressHold(at: CGPoint(x: 12, y: 34), button: .left, duration: 1.2)
+            Issue.record("Expected Event Synthesizing permission error")
+        } catch PeekabooError.permissionDeniedEventSynthesizing {
+            // Expected.
+        }
+
+        #expect(recorder.eventTypes.isEmpty)
+    }
+
     @Test
     func `click service uses injected synthetic driver`() async throws {
         let synthetic = RecordingSyntheticInputDriver()
@@ -21,6 +76,26 @@ struct SyntheticInputDriverTests {
         #expect(result.path == UIInputExecutionPath.synth)
         #expect(synthetic.events == [
             .click(point: CGPoint(x: 12, y: 34), button: .left, count: 2),
+        ])
+    }
+
+    @Test
+    func `long press stays stationary for the native gesture interval`() async throws {
+        let synthetic = RecordingSyntheticInputDriver()
+        let service = ClickService(
+            inputPolicy: UIInputPolicy(defaultStrategy: .synthOnly),
+            syntheticInputDriver: synthetic)
+        let point = CGPoint(x: 12, y: 34)
+
+        let result = try await service.click(
+            target: .coordinates(point),
+            clickType: .longPress,
+            snapshotId: nil)
+
+        #expect(result.path == UIInputExecutionPath.synth)
+        #expect(synthetic.events == [
+            .move(point),
+            .pressHold(point: point, button: .left, duration: 1.2),
         ])
     }
 
@@ -129,6 +204,12 @@ struct SyntheticInputDriverTests {
 }
 
 @MainActor
+private final class PressHoldRecorder {
+    var eventTypes: [CGEventType] = []
+    var durations: [TimeInterval] = []
+}
+
+@MainActor
 private final class RecordingSyntheticInputDriver: SyntheticInputDriving {
     enum Event: Equatable {
         case click(point: CGPoint, button: MouseButton, count: Int)
@@ -165,7 +246,7 @@ private final class RecordingSyntheticInputDriver: SyntheticInputDriving {
         return self.location
     }
 
-    func pressHold(at point: CGPoint, button: MouseButton, duration: TimeInterval) throws {
+    func pressHold(at point: CGPoint, button: MouseButton, duration: TimeInterval) async throws {
         self.events.append(.pressHold(point: point, button: button, duration: duration))
     }
 

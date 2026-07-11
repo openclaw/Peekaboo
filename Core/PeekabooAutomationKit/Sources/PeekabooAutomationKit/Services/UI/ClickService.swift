@@ -185,6 +185,8 @@ public final class ClickService {
             return try await self.actionInputDriver.tryRightClick(element: element)
         case .double:
             throw ActionInputError.unsupported(.actionUnsupported)
+        case .longPress:
+            throw ActionInputError.unsupported(.actionUnsupported)
         }
     }
 
@@ -796,6 +798,12 @@ public final class ClickService {
                 count: 2,
                 targetProcessIdentifier: targetProcessIdentifier,
                 targetWindowID: targetWindowID)
+        case .longPress:
+            guard targetProcessIdentifier == nil else {
+                throw PeekabooError.serviceUnavailable(
+                    "Long press requires foreground delivery")
+            }
+            try await self.performLongPress(at: point)
         }
     }
 
@@ -818,10 +826,10 @@ public final class ClickService {
         }
     }
 
-    private func performForceClick(at point: CGPoint) async throws {
+    private func performLongPress(at point: CGPoint) async throws {
         try self.syntheticInputDriver.move(to: point)
         try await Task.sleep(nanoseconds: 50_000_000) // 50ms
-        try self.syntheticInputDriver.pressHold(at: point, button: .left, duration: 0.5)
+        try await self.syntheticInputDriver.pressHold(at: point, button: .left, duration: 1.2)
     }
 }
 

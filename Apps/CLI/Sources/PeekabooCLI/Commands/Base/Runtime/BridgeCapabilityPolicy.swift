@@ -60,6 +60,11 @@ enum BridgeCapabilityPolicy {
             return false
         }
 
+        if options.requiresLongPressClick,
+           !self.supportsLongPressClicks(for: handshake) {
+            return false
+        }
+
         if options.requiresImplicitSnapshotInvalidation || options.usesPerToolSnapshotInvalidation,
            !self.supportsImplicitSnapshotInvalidation(for: handshake) {
             return false
@@ -128,6 +133,15 @@ enum BridgeCapabilityPolicy {
 
     static func supportsTargetedClicks(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {
         self.targetedClickAvailability(for: handshake).isEnabled
+    }
+
+    static func supportsLongPressClicks(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {
+        guard handshake.negotiatedVersion >= PeekabooBridgeProtocolVersion(major: 1, minor: 10),
+              handshake.supportedOperations.contains(.click)
+        else {
+            return false
+        }
+        return (handshake.enabledOperations ?? handshake.supportedOperations).contains(.click)
     }
 
     static func supportsApplicationLaunchOptions(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {

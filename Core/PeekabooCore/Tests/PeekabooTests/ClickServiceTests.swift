@@ -106,7 +106,7 @@ struct ClickServiceTests {
     @MainActor
     struct ClickTypeTests {
         @Test
-        func `Click supports single, double, and right-click types`() async throws {
+        func `Click supports single, double, right-click, and long-press types`() async throws {
             let snapshotManager = MockSnapshotManager()
             let service = ClickService(snapshotManager: snapshotManager)
 
@@ -128,6 +128,11 @@ struct ClickServiceTests {
             try await service.click(
                 target: .coordinates(point),
                 clickType: .double,
+                snapshotId: nil)
+
+            try await service.click(
+                target: .coordinates(point),
+                clickType: .longPress,
                 snapshotId: nil)
         }
     }

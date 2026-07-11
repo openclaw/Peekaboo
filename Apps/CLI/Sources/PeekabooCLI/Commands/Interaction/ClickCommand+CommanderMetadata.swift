@@ -31,6 +31,7 @@ extension ClickCommand: CommanderBindableCommand {
         }
         self.double = values.flag("double")
         self.right = values.flag("right")
+        self.longPress = values.flag("longPress")
         self.foreground = values.flag("foreground")
         self.focusOptions = try values.makeFocusOptions(includeBackgroundDelivery: true)
     }
@@ -83,6 +84,11 @@ extension ClickCommand: CommanderSignatureProviding {
                     "right",
                     help: "Right-click (secondary click)",
                     long: "right"
+                ),
+                .commandFlag(
+                    "longPress",
+                    help: "Press and hold for 1.2 seconds at a stationary point",
+                    long: "long-press"
                 ),
                 .commandFlag(
                     "foreground",

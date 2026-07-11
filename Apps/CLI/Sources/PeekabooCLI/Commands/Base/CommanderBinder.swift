@@ -65,6 +65,8 @@ enum CommanderCLIBinder {
             commandType,
             parsedValues: parsedValues
         )
+        options.requiresLongPressClick = commandType == ClickCommand.self &&
+            CommanderBindableValues(parsedValues: parsedValues).flag("longPress")
         options.requiresScreenCapturePermission = Self.requiresScreenCapturePermission(commandType)
         options.requestsHostPermissionGrant = Self.isInteractivePermissionRequest(commandType)
         options.usesPerToolSnapshotInvalidation = commandType == AgentCommand.self ||
@@ -358,6 +360,9 @@ enum CommanderCLIBinder {
     ) -> Bool {
         guard commandType == ClickCommand.self else { return false }
         let values = CommanderBindableValues(parsedValues: parsedValues)
+        if values.flag("longPress") {
+            return true
+        }
         guard self.usesBackgroundClickDelivery(values) else { return false }
         if values.singleOption("coords") != nil {
             return true
@@ -369,6 +374,9 @@ enum CommanderCLIBinder {
     private static func usesBackgroundClickDelivery(_ values: CommanderBindableValues) -> Bool {
         if values.flag("focusBackground") {
             return true
+        }
+        if values.flag("longPress") {
+            return false
         }
         return !values.flag("foreground") &&
             !values.flag("noAutoFocus") &&

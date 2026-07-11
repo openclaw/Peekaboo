@@ -37,6 +37,9 @@ struct ClickCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
     @Flag(help: "Right-click (secondary click)")
     var right = false
 
+    @Flag(help: "Press and hold for 1.2 seconds at a stationary point")
+    var longPress = false
+
     @Flag(help: "Focus target and send a foreground mouse click")
     var foreground = false
 
@@ -72,7 +75,7 @@ struct ClickCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
         if self.focusOptions.backgroundDeliveryExplicitlyRequested {
             return .background
         }
-        if self.foreground || self.focusOptions.hasForegroundFocusOverrides {
+        if self.foreground || self.longPress || self.focusOptions.hasForegroundFocusOverrides {
             return .foreground
         }
         return .background
@@ -244,42 +247,55 @@ struct ClickCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
             )
             try Task.checkCancellation()
 
-            let appName = await resultApplicationName(
-                snapshotId: activeSnapshotId,
-                coordinateResolution: coordinateResolution
-            )
-
-            let details = try await clickOutputDetails(
+            try await self.outputClickResult(
                 clickTarget: clickTarget,
                 waitResult: waitResult,
                 snapshotId: activeSnapshotId,
-                coordinateResolution: coordinateResolution
+                resolutions: (coordinateResolution, explicitWindowResolution),
+                startTime: startTime
             )
-
-            // Output results
-            let result = ClickResult(
-                success: true,
-                clickedElement: details.clickedElement,
-                clickLocation: details.location,
-                waitTime: waitResult.waitTime,
-                executionTime: Date().timeIntervalSince(startTime),
-                targetApp: appName,
-                targetWindowId: explicitWindowResolution?.windowInfo.windowID ?? coordinateResolution?.targetWindowID,
-                targetWindowTitle: explicitWindowResolution?.windowInfo.title ?? coordinateResolution?
-                    .targetWindowTitle,
-                coordinateSpace: coordinateResolution?.coordinateSpace.rawValue,
-                inputCoordinates: coordinateResolution?.inputPoint,
-                screenCoordinates: coordinateResolution?.screenPoint,
-                targetPoint: details.targetPointDiagnostics,
-                deliveryMode: self.deliveryMode.rawValue
-            )
-
-            self.outputSuccess(result)
 
         } catch {
             handleError(error)
             throw ExitCode.failure
         }
+    }
+
+    private func outputClickResult(
+        clickTarget: ClickTarget,
+        waitResult: WaitForElementResult,
+        snapshotId: String,
+        resolutions: (coordinate: InteractionCoordinateResolution?, window: InteractionWindowResolution?),
+        startTime: Date
+    ) async throws {
+        let coordinateResolution = resolutions.coordinate
+        let explicitWindowResolution = resolutions.window
+        let appName = await resultApplicationName(
+            snapshotId: snapshotId,
+            coordinateResolution: coordinateResolution
+        )
+        let details = try await clickOutputDetails(
+            clickTarget: clickTarget,
+            waitResult: waitResult,
+            snapshotId: snapshotId,
+            coordinateResolution: coordinateResolution
+        )
+        let result = ClickResult(
+            success: true,
+            clickedElement: details.clickedElement,
+            clickLocation: details.location,
+            waitTime: waitResult.waitTime,
+            executionTime: Date().timeIntervalSince(startTime),
+            targetApp: appName,
+            targetWindowId: explicitWindowResolution?.windowInfo.windowID ?? coordinateResolution?.targetWindowID,
+            targetWindowTitle: explicitWindowResolution?.windowInfo.title ?? coordinateResolution?.targetWindowTitle,
+            coordinateSpace: coordinateResolution?.coordinateSpace.rawValue,
+            inputCoordinates: coordinateResolution?.inputPoint,
+            screenCoordinates: coordinateResolution?.screenPoint,
+            targetPoint: details.targetPointDiagnostics,
+            deliveryMode: self.deliveryMode.rawValue
+        )
+        self.outputSuccess(result)
     }
 
     private func clickOutputDetails(
@@ -601,7 +617,15 @@ struct ClickCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
             nil
         }
 
-        let clickType: ClickType = self.right ? .right : (self.double ? .double : .single)
+        let clickType: ClickType = if self.longPress {
+            .longPress
+        } else if self.right {
+            .right
+        } else if self.double {
+            .double
+        } else {
+            .single
+        }
         self.resolvedRuntime.beginInteractionMutation()
         try await self.performClick(
             clickTarget,

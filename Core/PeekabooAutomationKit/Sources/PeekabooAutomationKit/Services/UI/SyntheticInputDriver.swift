@@ -15,7 +15,7 @@ protocol SyntheticInputDriving: Sendable {
         targetWindowID: CGWindowID?) async throws
     func move(to point: CGPoint) throws
     func currentLocation() -> CGPoint?
-    func pressHold(at point: CGPoint, button: MouseButton, duration: TimeInterval) throws
+    func pressHold(at point: CGPoint, button: MouseButton, duration: TimeInterval) async throws
     func scroll(deltaX: Double, deltaY: Double, at point: CGPoint?) throws
     func type(_ text: String, delayPerCharacter: TimeInterval) throws
     func tapKey(_ key: SpecialKey, modifiers: CGEventFlags) throws
@@ -45,6 +45,26 @@ extension SyntheticInputDriving {
 /// Thin injectable wrapper over AXorcist's low-level synthetic input helpers.
 @MainActor
 struct SyntheticInputDriver: SyntheticInputDriving {
+    private let postEventAccessEvaluator: @MainActor @Sendable () -> Bool
+    private let eventPoster: @MainActor @Sendable (CGEvent) -> Void
+    private let holdSleeper: @MainActor @Sendable (TimeInterval) async throws -> Void
+
+    init(
+        postEventAccessEvaluator: @escaping @MainActor @Sendable () -> Bool = {
+            CGPreflightPostEventAccess()
+        },
+        eventPoster: @escaping @MainActor @Sendable (CGEvent) -> Void = { event in
+            event.post(tap: .cghidEventTap)
+        },
+        holdSleeper: @escaping @MainActor @Sendable (TimeInterval) async throws -> Void = { duration in
+            try await ContinuousClock().sleep(for: .seconds(duration))
+        })
+    {
+        self.postEventAccessEvaluator = postEventAccessEvaluator
+        self.eventPoster = eventPoster
+        self.holdSleeper = holdSleeper
+    }
+
     func click(at point: CGPoint, button: MouseButton = .left, count: Int = 1) throws {
         try InputDriver.click(at: point, button: button, count: count)
     }
@@ -86,8 +106,39 @@ struct SyntheticInputDriver: SyntheticInputDriving {
         InputDriver.currentLocation()
     }
 
-    func pressHold(at point: CGPoint, button: MouseButton = .left, duration: TimeInterval) throws {
-        try InputDriver.pressHold(at: point, button: button, duration: duration)
+    func pressHold(at point: CGPoint, button: MouseButton = .left, duration: TimeInterval) async throws {
+        guard self.postEventAccessEvaluator() else {
+            throw PeekabooError.permissionDeniedEventSynthesizing
+        }
+        let events = try Self.makePressHoldEvents(at: point, button: button)
+        self.eventPoster(events.down)
+        defer { self.eventPoster(events.up) }
+        if duration > 0 {
+            try await self.holdSleeper(duration)
+        }
+    }
+
+    static func makePressHoldEvents(
+        at point: CGPoint,
+        button: MouseButton) throws -> (down: CGEvent, up: CGEvent)
+    {
+        let cgButton: CGMouseButton = button == .left ? .left : .right
+        let downType: CGEventType = button == .left ? .leftMouseDown : .rightMouseDown
+        let upType: CGEventType = button == .left ? .leftMouseUp : .rightMouseUp
+        guard let down = CGEvent(
+            mouseEventSource: nil,
+            mouseType: downType,
+            mouseCursorPosition: point,
+            mouseButton: cgButton),
+            let up = CGEvent(
+                mouseEventSource: nil,
+                mouseType: upType,
+                mouseCursorPosition: point,
+                mouseButton: cgButton)
+        else {
+            throw UIAutomationError.failedToCreateEvent
+        }
+        return (down, up)
     }
 
     func scroll(deltaX: Double = 0, deltaY: Double, at point: CGPoint? = nil) throws {

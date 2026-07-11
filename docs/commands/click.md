@@ -20,6 +20,7 @@ read_when:
 | Target flags | `--app <name>`, `--pid <pid>`, `--window-id <id>`, `--window-title <title>`, `--window-index <n>` — resolve the app/window that should receive the click. In background mode this does not focus the app; with `--foreground` it focuses before clicking. (`--window-title`/`--window-index` require `--app` or `--pid`; `--window-id` does not.) |
 | `--wait-for <ms>` | Millisecond timeout while waiting for the element to appear (default 5000). |
 | `--double` / `--right` | Perform double-click or secondary-click instead of the default single click. `--double` requires `--foreground`; background delivery cannot position a double-click and fails with a clear error. |
+| `--long-press` | Send mouse-down, hold stationary for 1.2 seconds, then mouse-up. Long press implies foreground delivery and cannot be combined with `--double`, `--right`, or `--focus-background`. |
 | `--foreground` | Focus target and send a foreground mouse click. Focus flags also imply foreground delivery. |
 | Focus flags | `--no-auto-focus`, `--focus-timeout-seconds`, `--focus-retry-count`, `--space-switch`, `--bring-to-current-space` (foreground mode only; see `FocusCommandOptions`). |
 | `--focus-background` | Legacy alias for the default background delivery. Use `--app`, `--pid`, `--window-id`, or a snapshot with process metadata. |
@@ -28,6 +29,7 @@ read_when:
 - **Background** is the default when Peekaboo can resolve a target process from target flags or snapshot metadata. Every background click is delivered through accessibility actions and never activates or focuses the app: element/query clicks invoke the matching AX action on the cached element; coordinate clicks hit-test the AX element at the point (`AXUIElementCopyElementAtPosition`), then press (or show the menu on) the pressable element at that point — the hit result itself if it is pressable, otherwise a pressable descendant, otherwise a pressable ancestor. Pressability is checked with `AXUIElementCopyActionNames` (the actions API), not the `AXActionNames` attribute, so SwiftUI buttons that expose no action attribute are still pressed. Positioned process-targeted mouse events are never used — macOS delivers them at the window's top-left corner regardless of the requested point, so that path was removed.
 - Background clicks fail with an actionable error instead of guessing: if no pressable AX element exists at the target point (an empty spot, a custom-drawn view, or an element exposing no press action), or the click type cannot be delivered via accessibility (`--double`, middle-click), the command reports the limitation and suggests `--foreground`. A reported background success means the AX action was actually invoked at the resolved target.
 - **Foreground** (`--foreground`) focuses the target first (via `ensureFocused`, hopping Spaces if needed) and then synthesizes a real mouse click at the resolved screen point — element and query targets are resolved to their adjusted center and clicked with genuine mouse events, so double- and right-click semantics match hardware clicks. If the target app is still not frontmost after the focus step, the command fails rather than clicking into whichever app is in front.
+- Long press (`--long-press`) uses the foreground path and emits a stationary mouse-down/1.2-second hold/mouse-up sequence. It does not synthesize drag or micro-move events, because those can cancel native long-press recognizers.
 - Background coordinate clicks need `--app`, `--pid`, or `--window-id` so Peekaboo knows which process/window owns the coordinate. Without a target, use global coordinates with foreground delivery.
 - Right-click (`--right`) issues `AXShowMenu` without waiting for the context menu to close: a successfully opened menu runs a nested tracking runloop in the target app, so the command reports success once the menu is up instead of timing out behind it.
 
@@ -50,6 +52,9 @@ peekaboo click "Allow" --foreground --wait-for 8000 --space-switch
 
 # Issue a right-click at global screen coordinates
 peekaboo click --coords 1024,88 --right --foreground --no-auto-focus
+
+# Trigger a SwiftUI long-press gesture
+peekaboo click --coords 640,420 --long-press
 
 # Click 20,40 inside a resolved app window
 peekaboo click --app Safari --coords 20,40

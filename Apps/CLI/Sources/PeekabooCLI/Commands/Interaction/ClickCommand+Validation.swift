@@ -30,6 +30,14 @@ extension ClickCommand {
             throw ValidationError("--foreground cannot be combined with --focus-background")
         }
 
+        if self.longPress && (self.double || self.right) {
+            throw ValidationError("--long-press cannot be combined with --double or --right")
+        }
+
+        if self.longPress && self.focusOptions.backgroundDeliveryExplicitlyRequested {
+            throw ValidationError("--long-press requires foreground delivery")
+        }
+
         if self.focusOptions.backgroundDeliveryExplicitlyRequested &&
             self.focusOptions.hasForegroundFocusOverrides {
             throw ValidationError("--focus-background cannot be combined with focus options")

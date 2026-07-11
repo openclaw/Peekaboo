@@ -32,6 +32,7 @@ public enum ClickType: String, Sendable, Codable {
     case single
     case right
     case double
+    case longPress
 }
 
 // MARK: - Scroll & Swipe
@@ -232,6 +233,7 @@ extension ClickType: CustomStringConvertible {
         case .single: "single"
         case .right: "right"
         case .double: "double"
+        case .longPress: "long press"
         }
     }
 }

@@ -28,7 +28,7 @@ public enum PeekabooBridgeConstants {
     }
 
     /// Current protocol version supported by this build.
-    public static let protocolVersion = PeekabooBridgeProtocolVersion(major: 1, minor: 9)
+    public static let protocolVersion = PeekabooBridgeProtocolVersion(major: 1, minor: 10)
 
     /// Oldest protocol version this build can serve without changing request semantics.
     public static let minimumProtocolVersion = PeekabooBridgeProtocolVersion(major: 1, minor: 0)
