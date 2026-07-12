@@ -81,5 +81,5 @@
   "devDependencies": {
     "chrome-devtools-mcp": "1.5.0"
   },
-  "packageManager": "pnpm@10.34.4"
+  "packageManager": "pnpm@10.34.5"
 }

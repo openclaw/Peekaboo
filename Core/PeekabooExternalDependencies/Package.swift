@@ -28,8 +28,7 @@ let package = Package(
         .package(path: "../../Commander"),
         .package(url: "https://github.com/apple/swift-log", from: "1.6.4"),
         .package(url: "https://github.com/apple/swift-system", from: "1.6.3"),
-        // Use main to pick up Swift 6 fixes until the next tagged release.
-        .package(url: "https://github.com/apple/swift-collections", branch: "main"),
+        .package(url: "https://github.com/apple/swift-collections", from: "1.6.0"),
     ],
     targets: [
         .target(
