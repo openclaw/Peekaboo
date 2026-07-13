@@ -170,22 +170,29 @@ extension VisualizerCoordinator {
         let windowRect = Self.travelWindowRect(
             from: from,
             to: to,
-            padding: Self.OverlayPadding.mouseTrail + 50)
+            padding: Self.OverlayPadding.mouseTrail + 100)
 
         // Create mouse trail view with window-local coordinates
-        let mouseDuration = self.scaledDuration(for: duration, minimum: AnimationBaseline.mouseTrail)
+        let mouseDuration = self.scaledDuration(
+            for: duration,
+            minimum: AnimationBaseline.mouseTrail,
+            applySlowdown: false)
         let mouseView = MouseTrailView(
             from: Self.windowLocalPoint(from, in: windowRect),
             to: Self.windowLocalPoint(to, in: windowRect),
-            duration: mouseDuration)
+            duration: mouseDuration,
+            windowRect: windowRect,
+            primaryScreenFrame: NSScreen.screens.first?.frame,
+            tracksLivePointer: self.previewDurationOverride == nil)
 
         // Cursor-trail coordinates are window-local; the travel padding is the margin.
         _ = self.overlayManager.showAnimation(
             at: windowRect,
             content: mouseView,
-            duration: mouseDuration + 0.35,
+            duration: mouseDuration + 0.2,
             fadeOut: true,
-            chromeMargin: 0)
+            chromeMargin: 0,
+            replaceKey: OverlaySlot.pointer)
 
         return true
     }

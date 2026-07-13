@@ -52,7 +52,7 @@ struct MCPWrapperCommandBindingTests {
         let parsed = ParsedValues(
             positional: [],
             options: [
-                "appTarget": ["TextEdit"],
+                "app": ["TextEdit"],
                 "snapshot": ["snapshot-123"],
                 "maxDepth": ["4"],
                 "maxElements": ["200"],
@@ -66,6 +66,25 @@ struct MCPWrapperCommandBindingTests {
         #expect(command.maxDepth == 4)
         #expect(command.maxElements == 200)
         #expect(command.maxChildren == 20)
+    }
+
+    @Test
+    func `Inspect UI command preserves app target alias`() throws {
+        let parsed = ParsedValues(positional: [], options: ["appTarget": ["TextEdit"]], flags: [])
+        let command = try CommanderCLIBinder.instantiateCommand(ofType: InspectUICommand.self, parsedValues: parsed)
+        #expect(command.appTarget == "TextEdit")
+    }
+
+    @Test
+    func `Inspect UI command rejects both app spellings`() throws {
+        let parsed = ParsedValues(
+            positional: [],
+            options: ["app": ["TextEdit"], "appTarget": ["Finder"]],
+            flags: []
+        )
+        #expect(throws: ValidationError.self) {
+            _ = try CommanderCLIBinder.instantiateCommand(ofType: InspectUICommand.self, parsedValues: parsed)
+        }
     }
 
     @Test

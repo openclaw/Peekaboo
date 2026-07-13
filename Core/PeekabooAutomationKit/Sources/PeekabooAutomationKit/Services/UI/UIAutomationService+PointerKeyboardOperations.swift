@@ -114,12 +114,12 @@ extension UIAutomationService {
         self.logger.debug("Delegating moveMouse to GestureService")
 
         let fromPoint = InputDriver.currentLocation() ?? to
-        try await self.gestureService.moveMouse(to: to, duration: duration, steps: steps, profile: profile)
-
+        // Dispatch before moving so the overlay follows the real pointer instead of replaying it afterward.
         _ = await self.feedbackClient.showMouseMovement(
             from: fromPoint,
             to: to,
             duration: TimeInterval(duration) / 1000.0)
+        try await self.gestureService.moveMouse(to: to, duration: duration, steps: steps, profile: profile)
     }
 
     public func currentMouseLocation() -> CGPoint? {

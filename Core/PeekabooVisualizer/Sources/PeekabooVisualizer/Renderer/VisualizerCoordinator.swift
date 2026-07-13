@@ -41,7 +41,7 @@ public final class VisualizerCoordinator {
         static let clickCursor: TimeInterval = 1.15
         static let typingOverlay: TimeInterval = 1.2
         static let scrollIndicator: TimeInterval = 0.6
-        static let mouseTrail: TimeInterval = 0.75
+        static let mouseTrail: TimeInterval = 0.28
         static let swipePath: TimeInterval = 0.9
         static let hotkeyOverlay: TimeInterval = 1.2
         static let windowOperation: TimeInterval = 0.85
@@ -60,8 +60,10 @@ public final class VisualizerCoordinator {
     enum FeedbackThrottle {
         static let screenshotFlash: TimeInterval = 1.2
         static let scroll: TimeInterval = 0.3
-        static let mouseTrail: TimeInterval = 0.4
+        static let mouseTrail: TimeInterval = 0.18
         static let elementDetection: TimeInterval = 1.0
+        /// Instant pointer hops should not be replayed as a delayed animation.
+        static let minimumPointerDuration: TimeInterval = 0.05
         /// Mouse moves shorter than this aren't worth a cursor trail.
         static let minimumTrailDistance: CGFloat = 80
     }
@@ -75,6 +77,7 @@ public final class VisualizerCoordinator {
         static let space = "space"
         static let appLifecycle = "appLifecycle"
         static let watchHUD = "watchHUD"
+        static let pointer = "pointer"
         static let annotatedScreenshot = "annotatedScreenshot"
         static let elementSheetPrefix = "elements-screen-"
 

@@ -142,8 +142,8 @@ public final class GestureService {
     }
 
     private func stepDelay(duration: Int, steps: Int) -> UInt64 {
-        guard duration > 0, steps > 0 else { return 0 }
-        let secondsPerStep = Double(duration) / 1000.0 / Double(steps)
+        guard duration > 0, steps > 1 else { return 0 }
+        let secondsPerStep = Double(duration) / 1000.0 / Double(steps - 1)
         return UInt64(secondsPerStep * 1_000_000_000)
     }
 
@@ -152,20 +152,14 @@ public final class GestureService {
         start: CGPoint,
         button: MouseButton) async throws
     {
-        let endPoint = path.points.last ?? start
-        let steps = max(path.points.count, 2)
-        let interStepDelay = Double(path.duration) / 1000.0 / Double(steps)
-        try InputDriver.drag(from: start, to: endPoint, button: button, steps: steps, interStepDelay: interStepDelay)
+        try await self.playDragPath(path.points, from: start, button: button, duration: path.duration)
     }
 
     private func performDrag(
         path: HumanMousePath,
         start: CGPoint) async throws
     {
-        let endPoint = path.points.last ?? start
-        let steps = max(path.points.count, 2)
-        let delay = Double(path.duration) / 1000.0 / Double(steps)
-        try InputDriver.drag(from: start, to: endPoint, button: .left, steps: steps, interStepDelay: delay)
+        try await self.playDragPath(path.points, from: start, button: .left, duration: path.duration)
     }
 
     private func makeModifierEvents(for keys: [HeldModifierKey]) throws -> (down: [CGEvent], up: [CGEvent]) {
@@ -230,9 +224,59 @@ public final class GestureService {
     private func playPath(_ points: [CGPoint], duration: Int) async throws {
         guard !points.isEmpty else { return }
         let delay = self.stepDelay(duration: duration, steps: points.count)
-        for point in points {
+        for (index, point) in points.enumerated() {
             try InputDriver.move(to: point)
-            if delay > 0 {
+            if delay > 0, index < points.count - 1 {
+                try await Task.sleep(nanoseconds: delay)
+            }
+        }
+    }
+
+    private func playDragPath(
+        _ points: [CGPoint],
+        from start: CGPoint,
+        button: MouseButton,
+        duration: Int) async throws
+    {
+        guard let end = points.last else { return }
+        let mouseButton: CGMouseButton = button == .left ? .left : .right
+        let downType: CGEventType = button == .left ? .leftMouseDown : .rightMouseDown
+        let draggedType: CGEventType = button == .left ? .leftMouseDragged : .rightMouseDragged
+        let upType: CGEventType = button == .left ? .leftMouseUp : .rightMouseUp
+        guard let downEvent = CGEvent(
+            mouseEventSource: nil,
+            mouseType: downType,
+            mouseCursorPosition: start,
+            mouseButton: mouseButton),
+            let upEvent = CGEvent(
+                mouseEventSource: nil,
+                mouseType: upType,
+                mouseCursorPosition: end,
+                mouseButton: mouseButton)
+        else {
+            throw UIAutomationError.failedToCreateEvent
+        }
+
+        var lastPoint = start
+        downEvent.post(tap: .cghidEventTap)
+        defer {
+            upEvent.location = lastPoint
+            upEvent.post(tap: .cghidEventTap)
+        }
+
+        let delay = self.stepDelay(duration: duration, steps: points.count)
+        for (index, point) in points.enumerated() {
+            guard let dragEvent = CGEvent(
+                mouseEventSource: nil,
+                mouseType: draggedType,
+                mouseCursorPosition: point,
+                mouseButton: mouseButton)
+            else {
+                throw UIAutomationError.failedToCreateEvent
+            }
+            dragEvent.post(tap: .cghidEventTap)
+            lastPoint = point
+            if delay > 0, index < points.count - 1 {
                 try await Task.sleep(nanoseconds: delay)
             }
         }

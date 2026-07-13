@@ -64,8 +64,9 @@ struct VisualizerSettingsView: View {
                     settings: self.settings)
 
                 AnimationToggleRow(
-                    title: "Mouse trail",
-                    icon: "scribble",
+                    title: "Pointer motion",
+                    subtitle: "Show a cursor with a short fading tail during smooth moves.",
+                    icon: "cursorarrow.motionlines",
                     isOn: self.$settings.mouseTrailEnabled,
                     isEnabled: self.settings.visualizerEnabled,
                     animationType: "trail",

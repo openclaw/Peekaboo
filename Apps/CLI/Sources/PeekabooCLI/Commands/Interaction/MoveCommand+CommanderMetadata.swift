@@ -17,13 +17,13 @@ extension MoveCommand: ParsableCommand {
                       peekaboo move 100,200                 # Move to coordinates
                       peekaboo move --to "Submit Button"    # Move to element by text
                       peekaboo move --on "$ELEMENT_ID"      # ID copied from current output
-                      peekaboo move 500,300 --smooth        # Smooth movement
+                      peekaboo move 500,300 --smooth        # Natural smooth movement
                       peekaboo move --center                # Move to screen center
 
                     MOVEMENT MODES:
                       - Instant (default): Immediate cursor positioning
-                      - Smooth: Animated movement with configurable duration
-                      - Human: Natural arcs with eased velocity, enable via '--profile human'
+                      - Smooth: Natural arcs with eased velocity
+                      - Linear: Deterministic straight-line travel via '--profile linear'
 
                     ELEMENT TARGETING:
                       When targeting elements, the cursor moves to the element's center.
@@ -99,7 +99,7 @@ extension MoveCommand: CommanderSignatureProviding {
                 ),
                 .commandOption(
                     "steps",
-                    help: "Number of steps for smooth movement",
+                    help: "Number of movement samples",
                     long: "steps"
                 ),
                 .commandOption(
@@ -121,7 +121,7 @@ extension MoveCommand: CommanderSignatureProviding {
                 ),
                 .commandFlag(
                     "smooth",
-                    help: "Use smooth movement animation",
+                    help: "Use natural smooth movement",
                     long: "smooth"
                 ),
             ],

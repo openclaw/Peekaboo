@@ -244,6 +244,14 @@ struct ActionInputDriver: ActionInputDriving {
         }
     }
 
+    nonisolated static func tabPressDidNotSelect(
+        subrole: String?,
+        valueBefore: Int?,
+        valueAfter: Int?) -> Bool
+    {
+        subrole == "AXTabButton" && valueBefore == 0 && valueAfter == 0
+    }
+
     nonisolated static func scrollFallbackError(from error: ActionInputError?) -> ActionInputError {
         if error == .targetUnavailable {
             return .unsupported(.actionUnsupported)
@@ -617,6 +625,17 @@ extension ActionInputDriver {
             subrole: subrole,
             isValueSettable: isValueSettable,
             isFocusedSettable: isFocusedSettable)
+    }
+
+    nonisolated static func tabPressDidNotSelectForTesting(
+        subrole: String?,
+        valueBefore: Int?,
+        valueAfter: Int?) -> Bool
+    {
+        self.tabPressDidNotSelect(
+            subrole: subrole,
+            valueBefore: valueBefore,
+            valueAfter: valueAfter)
     }
 
     nonisolated static func shouldContinueTryingScrollActionForTesting(after error: ActionInputError) -> Bool {

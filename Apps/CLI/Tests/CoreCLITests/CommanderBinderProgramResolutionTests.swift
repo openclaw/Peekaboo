@@ -91,13 +91,26 @@ struct CommanderBinderProgramResolutionTests {
         let invocation = try program.resolve(argv: [
             "peekaboo",
             "inspect-ui",
-            "--app-target", "TextEdit",
+            "--app", "TextEdit",
             "--max-elements", "200",
         ])
         let values = invocation.parsedValues
         #expect(invocation.path == ["inspect-ui"])
-        #expect(values.options["appTarget"] == ["TextEdit"])
+        #expect(values.options["app"] == ["TextEdit"])
         #expect(values.options["maxElements"] == ["200"])
+    }
+
+    @Test
+    @MainActor
+    func `Commander program preserves inspect UI app target alias`() throws {
+        let descriptors = CommanderRegistryBuilder.buildDescriptors()
+        let program = Program(descriptors: descriptors.map(\.metadata))
+        let invocation = try program.resolve(argv: [
+            "peekaboo",
+            "inspect-ui",
+            "--app-target", "TextEdit",
+        ])
+        #expect(invocation.parsedValues.options["appTarget"] == ["TextEdit"])
     }
 
     @Test

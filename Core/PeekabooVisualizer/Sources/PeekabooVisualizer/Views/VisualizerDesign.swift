@@ -76,6 +76,11 @@ enum VisualizerMotion {
     static func glide(_ duration: Double) -> Animation {
         .easeInOut(duration: duration)
     }
+
+    /// Fast acceleration with a longer, precise settle for pointer travel.
+    static func pointerTravel(_ duration: Double) -> Animation {
+        .timingCurve(0.22, 0.05, 0.18, 1.0, duration: duration)
+    }
 }
 
 // MARK: - HUD Chip

@@ -172,6 +172,48 @@ struct VisualizerOverlaySizingTests {
     }
 
     @Test
+    func `Pointer tail preserves the live sampled path`() {
+        var samples = [CGPoint(x: 20, y: 40)]
+        samples = PointerTrailSamples.appending(CGPoint(x: 60, y: 40), to: samples)
+        samples = PointerTrailSamples.appending(CGPoint(x: 90, y: 60), to: samples)
+
+        #expect(samples.last == CGPoint(x: 90, y: 60))
+        #expect(samples.contains(CGPoint(x: 60, y: 40)))
+    }
+
+    @Test
+    func `Pointer tail stays short on long moves`() {
+        var samples = [CGPoint.zero]
+        for x in stride(from: 10, through: 2400, by: 10) {
+            samples = PointerTrailSamples.appending(CGPoint(x: x, y: x / 2), to: samples)
+        }
+
+        #expect(PointerTrailSamples.pathLength(samples) <= PointerTrailSamples.maximumLength + 0.001)
+        #expect(samples.count <= PointerTrailSamples.maximumCount)
+        #expect(samples.last == CGPoint(x: 2400, y: 1200))
+    }
+
+    @Test
+    func `Pointer settings preview is natural and lands exactly`() {
+        let path = PointerPreviewPath(
+            from: CGPoint(x: 20, y: 40),
+            to: CGPoint(x: 1020, y: 640))
+
+        #expect(path.point(at: 0) == CGPoint(x: 20, y: 40))
+        #expect(path.point(at: 1) == CGPoint(x: 1020, y: 640))
+        let midpoint = path.point(at: 0.5)
+        #expect(hypot(midpoint.x - 520, midpoint.y - 340) > 1)
+    }
+
+    @Test
+    func `Pointer duration is not multiplied by visualizer slowdown`() {
+        let coordinator = VisualizerCoordinator()
+        let duration = coordinator.scaledDuration(for: 0.6, minimum: 0.28, applySlowdown: false)
+
+        #expect(abs(duration - 0.6) < 0.001)
+    }
+
+    @Test
     func `Hotkey overlay grows with more keys`() {
         let compact = VisualizerCoordinator.estimatedHotkeyOverlaySize(for: ["cmd", "k"])
         let wide = VisualizerCoordinator.estimatedHotkeyOverlaySize(for: ["cmd", "shift", "option", "ctrl", "space"])

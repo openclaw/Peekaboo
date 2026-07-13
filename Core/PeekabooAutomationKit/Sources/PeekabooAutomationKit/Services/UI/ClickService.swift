@@ -175,12 +175,28 @@ public final class ClickService {
 
         switch clickType {
         case .single:
-            if targetProcessIdentifier != nil {
-                return try self.actionInputDriver.tryPerformAction(
+            let valueBefore = element.intAttribute(AXAttributeNames.kAXValueAttribute)
+            let result: ActionInputResult = if targetProcessIdentifier != nil {
+                try self.actionInputDriver.tryPerformAction(
                     element: element,
                     actionName: AXActionNames.kAXPressAction)
+            } else {
+                try self.actionInputDriver.tryClick(element: element)
             }
-            return try self.actionInputDriver.tryClick(element: element)
+            if element.subrole == "AXTabButton", valueBefore == 0 {
+                // SwiftUI tabs can report a successful AXPress without selecting. Give working
+                // native tab controls a brief settle window, then fall back only for a real no-op.
+                try await Task.sleep(for: .milliseconds(50))
+                let valueAfter = element.intAttribute(AXAttributeNames.kAXValueAttribute)
+                if ActionInputDriver.tabPressDidNotSelect(
+                    subrole: element.subrole,
+                    valueBefore: valueBefore,
+                    valueAfter: valueAfter)
+                {
+                    throw ActionInputError.unsupported(.actionUnsupported)
+                }
+            }
+            return result
         case .right:
             return try await self.actionInputDriver.tryRightClick(element: element)
         case .double:

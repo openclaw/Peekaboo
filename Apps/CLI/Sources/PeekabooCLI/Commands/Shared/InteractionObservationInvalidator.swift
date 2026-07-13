@@ -621,8 +621,10 @@ private final class RuntimeMCPToolSnapshotMutationCoordinator: MCPToolSnapshotMu
     @discardableResult
     func completeMutation(_ scope: MCPToolSnapshotMutationScope, succeeded: Bool) async -> Bool {
         let completedPreparedMutation = self.completedPreparedMutationIDs.remove(scope.id) != nil
+        // `see` must observe publication failure before rendering its fresh snapshot.
         let defersToOuterCommandBarrier = !self.hasRemoteSelection &&
             scope.effect == .mutationProducingFreshObservation &&
+            scope.toolName != "see" &&
             !completedPreparedMutation &&
             self.mutationTracker.hasPendingDurableMutation
         if defersToOuterCommandBarrier {

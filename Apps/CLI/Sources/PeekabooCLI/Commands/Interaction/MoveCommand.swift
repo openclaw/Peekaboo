@@ -29,16 +29,16 @@ struct MoveCommand: ErrorHandlingCommand, OutputFormattable {
     @Flag(help: "Move to screen center")
     var center = false
 
-    @Flag(help: "Use smooth movement animation")
+    @Flag(help: "Use natural smooth movement (equivalent to --profile human)")
     var smooth = false
 
-    @Option(help: "Movement duration in milliseconds (default: 500 for smooth, 0 for instant)")
+    @Option(help: "Movement duration in milliseconds (enables natural movement when no profile is given)")
     var duration: Int?
 
-    @Option(help: "Number of steps for smooth movement (default: 20)")
-    var steps: Int = 20
+    @Option(help: "Number of movement samples (automatic for human, default: 20 for linear)")
+    var steps: Int?
 
-    @Option(help: "Movement profile: linear (default) or human.")
+    @Option(help: "Movement profile: human or linear (default: human for animated moves, otherwise linear)")
     var profile: String?
 
     @Option(help: "Snapshot ID for element resolution, or 'latest'")
@@ -101,8 +101,15 @@ struct MoveCommand: ErrorHandlingCommand, OutputFormattable {
         }
 
         if let profileName = self.profile?.lowercased(),
-           MovementProfileSelection(rawValue: profileName) == nil {
+           CursorMovementProfileSelection(rawValue: profileName) == nil {
             throw ValidationError("Invalid profile '\(profileName)'. Use 'linear' or 'human'.")
+        }
+
+        if let duration, duration < 0 {
+            throw ValidationError("--duration must be zero or greater")
+        }
+        if let steps, steps < 1 {
+            throw ValidationError("--steps must be at least 1")
         }
     }
 

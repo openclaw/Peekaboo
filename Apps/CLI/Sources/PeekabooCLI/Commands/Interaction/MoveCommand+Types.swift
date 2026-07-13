@@ -39,19 +39,6 @@ struct MoveResult: Codable {
     }
 }
 
-enum MovementProfileSelection: String {
-    case linear
-    case human
-}
-
-struct MovementParameters {
-    let profile: MouseMovementProfile
-    let duration: Int
-    let steps: Int
-    let smooth: Bool
-    let profileName: String
-}
-
 struct MoveTargetResolution {
     let location: CGPoint
     let description: String

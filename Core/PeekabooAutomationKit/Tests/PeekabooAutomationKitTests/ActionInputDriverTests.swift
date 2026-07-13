@@ -168,6 +168,26 @@ struct ActionInputDriverTests {
     }
 
     @Test
+    func `only unselected no-op tab presses require synthetic fallback`() {
+        #expect(ActionInputDriver.tabPressDidNotSelectForTesting(
+            subrole: "AXTabButton",
+            valueBefore: 0,
+            valueAfter: 0))
+        #expect(!ActionInputDriver.tabPressDidNotSelectForTesting(
+            subrole: "AXTabButton",
+            valueBefore: 0,
+            valueAfter: 1))
+        #expect(!ActionInputDriver.tabPressDidNotSelectForTesting(
+            subrole: "AXTabButton",
+            valueBefore: 1,
+            valueAfter: 1))
+        #expect(!ActionInputDriver.tabPressDidNotSelectForTesting(
+            subrole: "AXRadioButton",
+            valueBefore: 0,
+            valueAfter: 0))
+    }
+
+    @Test
     func `unsupported action message includes advertised action names`() {
         let message = UIAutomationService.unsupportedActionMessage(
             actionName: "AXIncrement",

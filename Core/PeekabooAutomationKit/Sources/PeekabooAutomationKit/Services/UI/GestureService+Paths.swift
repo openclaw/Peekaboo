@@ -63,86 +63,62 @@ struct HumanMousePathGenerator {
 
     func generate() -> HumanMousePath {
         var rng = HumanMouseRandom(seed: self.configuration.randomSeed)
-        var current = self.start
-        var velocity = CGVector(dx: 0, dy: 0)
-        var wind = CGVector(dx: 0, dy: 0)
-        var samples: [CGPoint] = []
+        let sampleCount = min(max(self.stepsHint, 1), 96)
+        guard self.distance > 0.5, sampleCount > 1 else {
+            return HumanMousePath(points: [self.target], duration: self.duration)
+        }
 
-        let resolvedDuration = self.resolvedDuration()
-        let minimumSamples = max(stepsHint, Int(Double(resolvedDuration) / 8.0))
-        let settleRadius = max(self.configuration.settleRadius, min(self.distance * 0.08, 24))
+        let delta = CGVector(dx: self.target.x - self.start.x, dy: self.target.y - self.start.y)
+        let direction = CGVector(dx: delta.dx / self.distance, dy: delta.dy / self.distance)
+        let normal = CGVector(dx: -direction.dy, dy: direction.dx)
+        let curveDirection: CGFloat = rng.nextSignedUnit() < 0 ? -1 : 1
+        let curveMagnitude = min(self.distance * 0.10, 42)
+            * CGFloat(rng.nextDouble(in: 0.55...1.0))
+            * curveDirection
 
-        var overshootTarget: CGPoint?
-        if Self.shouldOvershoot(
+        let control1 = CGPoint(
+            x: self.start.x + (delta.dx * 0.28) + (normal.dx * curveMagnitude),
+            y: self.start.y + (delta.dy * 0.28) + (normal.dy * curveMagnitude))
+
+        let shouldOvershoot = Self.shouldOvershoot(
             distance: self.distance,
             probability: self.configuration.overshootProbability,
             rng: &rng)
-        {
-            overshootTarget = self.makeOvershootTarget(distance: self.distance, rng: &rng)
-        }
-        var currentTarget = overshootTarget ?? self.target
-        var overshootConsumed = overshootTarget == nil
+        let overshootDistance = shouldOvershoot
+            ? self.distance * CGFloat(rng.nextDouble(in: self.configuration.overshootFractionRange))
+            : 0
+        let control2 = CGPoint(
+            x: self.target.x + (direction.dx * overshootDistance) - (normal.dx * curveMagnitude * 0.22),
+            y: self.target.y + (direction.dy * overshootDistance) - (normal.dy * curveMagnitude * 0.22))
 
-        // Wind/gravity integration gives human profile moves small curves while seeded tests stay deterministic.
-        for _ in 0..<max(minimumSamples, 24) {
-            let delta = CGVector(dx: currentTarget.x - current.x, dy: currentTarget.y - current.y)
-            let distanceToTarget = max(0.001, hypot(delta.dx, delta.dy))
-            let gravityMagnitude = Self.gravity(for: distanceToTarget)
-            let gravity = CGVector(
-                dx: (delta.dx / distanceToTarget) * gravityMagnitude,
-                dy: (delta.dy / distanceToTarget) * gravityMagnitude)
-            wind.dx = (wind.dx * 0.8) + (rng.nextSignedUnit() * Self.windMagnitude(for: distanceToTarget))
-            wind.dy = (wind.dy * 0.8) + (rng.nextSignedUnit() * Self.windMagnitude(for: distanceToTarget))
+        var samples: [CGPoint] = []
+        samples.reserveCapacity(sampleCount)
+        for index in 1...sampleCount {
+            let time = CGFloat(index) / CGFloat(sampleCount)
+            let progress = Self.minimumJerkProgress(time)
+            var point = Self.cubicBezier(
+                from: self.start,
+                control1: control1,
+                control2: control2,
+                to: self.target,
+                progress: progress)
 
-            velocity.dx = (velocity.dx + wind.dx + gravity.dx) * 0.88
-            velocity.dy = (velocity.dy + wind.dy + gravity.dy) * 0.88
-
-            current.x += velocity.dx
-            current.y += velocity.dy
-            current = self.applyJitter(point: current, rng: &rng)
-            samples.append(current)
-
-            if distanceToTarget <= settleRadius {
-                if overshootConsumed {
-                    break
-                } else {
-                    currentTarget = self.target
-                    overshootConsumed = true
-                }
+            if index < sampleCount {
+                let distanceRemaining = self.distance * (1 - progress)
+                let settleTaper = min(1, distanceRemaining / max(self.configuration.settleRadius, 0.001))
+                let jitter = CGFloat(rng.nextSignedUnit())
+                    * self.configuration.jitterAmplitude
+                    * CGFloat(sin(Double.pi * Double(progress)))
+                    * settleTaper
+                point.x += normal.dx * jitter
+                point.y += normal.dy * jitter
             }
+            samples.append(point)
         }
 
-        samples.append(self.target)
-        return HumanMousePath(points: samples, duration: resolvedDuration)
-    }
-
-    private func resolvedDuration() -> Int {
-        if self.duration > 0 {
-            return self.duration
-        }
-
-        let distanceFactor = log2(Double(self.distance) + 1) * 90
-        let perPixel = Double(self.distance) * 0.45
-        let estimate = 220 + distanceFactor + perPixel
-        return min(max(Int(estimate), 250), 1600)
-    }
-
-    private func applyJitter(point: CGPoint, rng: inout HumanMouseRandom) -> CGPoint {
-        let amplitude = Double(self.configuration.jitterAmplitude)
-        return CGPoint(
-            x: point.x + (rng.nextSignedUnit() * amplitude),
-            y: point.y + (rng.nextSignedUnit() * amplitude))
-    }
-
-    private func makeOvershootTarget(distance: CGFloat, rng: inout HumanMouseRandom) -> CGPoint {
-        let overshootFraction = rng.nextDouble(in: self.configuration.overshootFractionRange)
-        let extraDistance = distance * CGFloat(overshootFraction)
-        let direction = CGVector(dx: self.target.x - self.start.x, dy: self.target.y - self.start.y)
-        let length = max(0.001, hypot(direction.dx, direction.dy))
-        let normalized = CGVector(dx: direction.dx / length, dy: direction.dy / length)
-        return CGPoint(
-            x: self.target.x + (normalized.dx * extraDistance),
-            y: self.target.y + (normalized.dy * extraDistance))
+        // Preserve exact targeting even with floating-point interpolation and jitter.
+        samples[samples.count - 1] = self.target
+        return HumanMousePath(points: samples, duration: self.duration)
     }
 
     private static func shouldOvershoot(
@@ -154,14 +130,28 @@ struct HumanMousePathGenerator {
         return rng.nextDouble() < probability
     }
 
-    private static func gravity(for distance: CGFloat) -> Double {
-        let clamped = min(max(distance, 1), 800)
-        return log(Double(clamped) + 2) * 1.8
+    private static func minimumJerkProgress(_ value: CGFloat) -> CGFloat {
+        let t = min(max(value, 0), 1)
+        return (10 * pow(t, 3)) - (15 * pow(t, 4)) + (6 * pow(t, 5))
     }
 
-    private static func windMagnitude(for distance: CGFloat) -> Double {
-        let normalized = min(max(distance / 400, 0.1), 1.0)
-        return 0.6 * Double(normalized)
+    private static func cubicBezier(
+        from start: CGPoint,
+        control1: CGPoint,
+        control2: CGPoint,
+        to end: CGPoint,
+        progress: CGFloat) -> CGPoint
+    {
+        let inverse = 1 - progress
+        let startWeight = pow(inverse, 3)
+        let control1Weight = 3 * pow(inverse, 2) * progress
+        let control2Weight = 3 * inverse * pow(progress, 2)
+        let endWeight = pow(progress, 3)
+        return CGPoint(
+            x: (start.x * startWeight) + (control1.x * control1Weight) +
+                (control2.x * control2Weight) + (end.x * endWeight),
+            y: (start.y * startWeight) + (control1.y * control1Weight) +
+                (control2.y * control2Weight) + (end.y * endWeight))
     }
 }
 

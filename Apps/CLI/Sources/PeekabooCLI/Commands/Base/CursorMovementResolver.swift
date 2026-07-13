@@ -40,7 +40,7 @@ enum CursorMovementResolver {
             )
         case .human:
             let resolvedDuration = request.durationOverride ?? Self.humanDuration(for: request.distance)
-            let resolvedSteps = max(request.stepsOverride ?? Self.humanSteps(for: request.distance), 30)
+            let resolvedSteps = max(request.stepsOverride ?? Self.humanSteps(for: request.distance), 1)
             return CursorMovementParameters(
                 profile: .human(),
                 duration: resolvedDuration,
@@ -59,7 +59,7 @@ enum CursorMovementResolver {
     }
 
     private static func humanSteps(for distance: CGFloat) -> Int {
-        let scaled = Int(distance * 0.35)
-        return min(max(scaled, 40), 140)
+        let scaled = Int(distance * 0.22)
+        return min(max(scaled, 30), 96)
     }
 }

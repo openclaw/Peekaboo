@@ -21,15 +21,15 @@ read_when:
 | `--snapshot <id>` | Required when using `--on`/`--id`/`--to`; defaults to the most recent snapshot. |
 | Target flags | `--app <name>`, `--pid <pid>`, `--window-id <id>`, `--window-title <title>`, `--window-index <n>` — focus a specific app/window before moving. (`--window-title`/`--window-index` require `--app` or `--pid`; `--window-id` does not.) |
 | Focus flags | `FocusCommandOptions` control Space switching + retries. |
-| `--smooth` | Animate the move over multiple steps (defaults to 500 ms, 20 steps). |
-| `--duration <ms>` / `--steps <n>` | Override the smooth-move timing/step count; instant moves use duration `0` unless overridden. |
-| `--profile <linear\|human>` | Select a movement profile. `human` enables eased arcs and micro-jitter with no extra tuning required. |
+| `--smooth` | Use natural eased movement with distance-aware timing. |
+| `--duration <ms>` / `--steps <n>` | Override movement timing/sample count; a positive duration opts into natural movement unless `--profile linear` is explicit. |
+| `--profile <linear\|human>` | Select a movement profile. Animated moves default to `human`; instant moves default to `linear`. |
 
 ## Implementation notes
 - Validation enforces exactly one target: coordinates (`[x,y]` or `--coords`), `--on`/`--id`, `--to`, or `--center`.
 - Element-based moves reuse snapshot data via `services.snapshots.getDetectionResult`; query-based moves run `AutomationServiceBridge.waitForElement`, so they automatically wait up to 5 s for dynamic UIs.
-- Smooth moves compute intermediate steps client-side and track the previous cursor location so the result payload can include the travel distance.
-- `--profile human` automatically enables smooth movement, adapts duration/steps to travel distance, and adds natural jitter/overshoot. See `docs/human-mouse-move.md` for deeper guidance.
+- Smooth moves compute a bounded minimum-jerk Bézier path and track the previous cursor location so the result payload can include the travel distance.
+- `--smooth`, a positive `--duration`, or `--profile human` enables natural movement with distance-aware duration and sample defaults. Use `--profile linear` for a straight path. See `docs/human-mouse-move.md` for deeper guidance.
 - JSON output reports `fromLocation`, `targetLocation`, `targetDescription`, total distance, and run time. Element/query targets also include `targetPoint` diagnostics with the original snapshot midpoint, final resolved point, snapshot ID, and moved-window adjustment status.
 
 ## Examples
@@ -38,8 +38,8 @@ read_when:
 peekaboo move 1024,88
 peekaboo move --coords 1024,88
 
-# Human-style movement with one flag
-peekaboo move 520,360 --profile human
+# Natural movement with one flag
+peekaboo move 520,360 --smooth
 
 # Hover the element with ID `menu_gear` using the latest snapshot
 peekaboo move --on menu_gear --smooth

@@ -35,7 +35,7 @@ struct MoveCommandTests {
         #expect(call.destination == CGPoint(x: 100, y: 200))
         #expect(call.duration == 750)
         #expect(call.steps == 10)
-        #expect(call.profile == .linear)
+        #expect(call.profile == .human())
     }
 
     @Test
@@ -185,6 +185,61 @@ struct MoveCommandTests {
         #expect(call.profile == .human())
         #expect(call.steps >= 30)
         #expect(call.duration >= 280)
+    }
+
+    @Test
+    func `Smooth defaults to natural human movement`() async throws {
+        let context = await self.makeContext()
+        let result = try await self.runMove(arguments: ["100,200", "--smooth"], context: context)
+
+        #expect(result.exitStatus == 0)
+        let call = try #require(await self.automationState(context) { $0.moveMouseCalls }.first)
+        #expect(call.profile == .human())
+        #expect(call.steps >= 30)
+        #expect(call.steps <= 96)
+    }
+
+    @Test
+    func `Explicit linear profile preserves straight smooth movement`() async throws {
+        let context = await self.makeContext()
+        let result = try await self.runMove(
+            arguments: ["100,200", "--smooth", "--profile", "linear", "--steps", "8"],
+            context: context
+        )
+
+        #expect(result.exitStatus == 0)
+        let call = try #require(await self.automationState(context) { $0.moveMouseCalls }.first)
+        #expect(call.profile == .linear)
+        #expect(call.duration == 500)
+        #expect(call.steps == 8)
+    }
+
+    @Test
+    func `Human profile honors explicit sample count`() async throws {
+        let context = await self.makeContext()
+        let result = try await self.runMove(
+            arguments: ["100,200", "--profile", "human", "--steps", "8"],
+            context: context
+        )
+
+        #expect(result.exitStatus == 0)
+        let call = try #require(await self.automationState(context) { $0.moveMouseCalls }.first)
+        #expect(call.profile == .human())
+        #expect(call.steps == 8)
+    }
+
+    @Test
+    func `Human profile honors explicit zero duration`() async throws {
+        let context = await self.makeContext()
+        let result = try await self.runMove(
+            arguments: ["100,200", "--profile", "human", "--duration", "0"],
+            context: context
+        )
+
+        #expect(result.exitStatus == 0)
+        let call = try #require(await self.automationState(context) { $0.moveMouseCalls }.first)
+        #expect(call.profile == .human())
+        #expect(call.duration == 0)
     }
 
     // MARK: - Helpers

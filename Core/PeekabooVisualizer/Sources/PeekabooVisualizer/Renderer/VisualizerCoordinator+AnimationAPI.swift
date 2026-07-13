@@ -103,8 +103,9 @@ extension VisualizerCoordinator {
         ].joined(separator: " ")
         self.logger.info("\(message, privacy: .public)")
 
-        // Short hops don't need a cursor trail, and rapid successive moves would
-        // paint overlapping trails.
+        // Instant hops should stay instant. Short hops don't need a cursor trail,
+        // and rapid successive moves are coalesced by the pointer overlay slot.
+        guard duration >= FeedbackThrottle.minimumPointerDuration else { return true }
         let distance = hypot(to.x - from.x, to.y - from.y)
         guard distance >= FeedbackThrottle.minimumTrailDistance else { return true }
         let now = Date()
