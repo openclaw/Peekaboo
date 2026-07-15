@@ -49,7 +49,7 @@ let package = Package(
             targets: ["PeekabooBridge"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/openclaw/AXorcist.git", exact: "0.1.5"),
+        .package(url: "https://github.com/openclaw/AXorcist.git", exact: "0.1.6"),
         .package(url: "https://github.com/apple/swift-algorithms", from: "1.2.1"),
     ],
     targets: [
