@@ -39,18 +39,35 @@ struct PeekabooApplicationResolver: ApplicationResolving {
             return Self.applicationInfo(from: exactName)
         }
 
+        // Exact executable-name match: the process/binary name shown by ps, pgrep, and
+        // Activity Monitor often differs from the localized app name (e.g. an app whose
+        // CFBundleName is "OpenClaw Desktop Test" ships an "openclaw-desktop" binary).
+        if let exactExecutable = runningApps.first(where: {
+            guard let executable = $0.executableURL?.lastPathComponent else { return false }
+            return executable.compare(trimmedIdentifier, options: .caseInsensitive) == .orderedSame
+        }) {
+            return Self.applicationInfo(from: exactExecutable)
+        }
+
         let fuzzyMatches = runningApps.compactMap { app -> (app: NSRunningApplication, score: Int)? in
-            guard app.activationPolicy != .prohibited,
-                  let name = app.localizedName,
-                  name.localizedCaseInsensitiveContains(trimmedIdentifier)
-            else { return nil }
+            guard app.activationPolicy != .prohibited, let name = app.localizedName else { return nil }
+            let executable = app.executableURL?.lastPathComponent
+            let nameMatches = name.localizedCaseInsensitiveContains(trimmedIdentifier)
+            let executableMatches = executable?.localizedCaseInsensitiveContains(trimmedIdentifier) ?? false
+            guard nameMatches || executableMatches else { return nil }
 
             var score = 0
             if name.compare(trimmedIdentifier, options: .caseInsensitive) == .orderedSame {
                 score += 1000
             }
+            if let executable, executable.compare(trimmedIdentifier, options: .caseInsensitive) == .orderedSame {
+                score += 800
+            }
             if name.lowercased().hasPrefix(trimmedIdentifier.lowercased()) {
                 score += 100
+            }
+            if let executable, executable.lowercased().hasPrefix(trimmedIdentifier.lowercased()) {
+                score += 80
             }
             if app.activationPolicy == .regular {
                 score += 50

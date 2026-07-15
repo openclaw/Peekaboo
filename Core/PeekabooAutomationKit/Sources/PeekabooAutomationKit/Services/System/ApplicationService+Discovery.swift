@@ -135,27 +135,46 @@ extension ApplicationService {
             return self.createApplicationInfo(from: exactName)
         }
 
-        // 4. Fuzzy matching with prioritization
-        // Collect all fuzzy matches and sort by relevance
+        // 4. Try exact executable-name match (case-insensitive)
+        // The process/binary name shown by ps, pgrep, and Activity Monitor often differs
+        // from the localized app name (e.g. an app whose CFBundleName is
+        // "OpenClaw Desktop Test" ships an "openclaw-desktop" binary).
+        if let exactExecutable = runningApps.first(where: {
+            guard let executable = $0.executableURL?.lastPathComponent else { return false }
+            return executable.compare(trimmedIdentifier, options: .caseInsensitive) == .orderedSame
+        }) {
+            return self.createApplicationInfo(from: exactExecutable)
+        }
+
+        // 5. Fuzzy matching with prioritization
+        // Collect all fuzzy matches (localized name or executable name) and sort by relevance
         let fuzzyMatches = runningApps.compactMap { app -> (app: NSRunningApplication, score: Int)? in
-            guard app.activationPolicy != .prohibited,
-                  let name = app.localizedName,
-                  name.localizedCaseInsensitiveContains(trimmedIdentifier)
-            else { return nil }
+            guard app.activationPolicy != .prohibited, let name = app.localizedName else { return nil }
+            let executable = app.executableURL?.lastPathComponent
+            let nameMatches = name.localizedCaseInsensitiveContains(trimmedIdentifier)
+            let executableMatches = executable?.localizedCaseInsensitiveContains(trimmedIdentifier) ?? false
+            guard nameMatches || executableMatches else { return nil }
 
             // Calculate match score (higher is better)
             var score = 0
 
-            // Exact match gets highest score
+            let lowercaseIdentifier = trimmedIdentifier.lowercased()
+
+            // Exact match gets highest score; an exact executable match ranks just below
+            // an exact localized-name match.
             if name.compare(trimmedIdentifier, options: .caseInsensitive) == .orderedSame {
                 score += 1000
             }
+            if let executable, executable.compare(trimmedIdentifier, options: .caseInsensitive) == .orderedSame {
+                score += 800
+            }
 
-            // Name starts with identifier gets high score
-            let lowercaseName = name.lowercased()
-            let lowercaseIdentifier = trimmedIdentifier.lowercased()
-            if lowercaseName.hasPrefix(lowercaseIdentifier) {
+            // Name / executable starts with identifier gets high score
+            if name.lowercased().hasPrefix(lowercaseIdentifier) {
                 score += 100
+            }
+            if let executable, executable.lowercased().hasPrefix(lowercaseIdentifier) {
+                score += 80
             }
 
             // Prefer regular apps over accessories/helpers
