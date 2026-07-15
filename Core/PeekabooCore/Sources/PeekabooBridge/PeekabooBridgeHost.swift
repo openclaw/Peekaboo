@@ -169,7 +169,7 @@ public final actor PeekabooBridgeHost {
         let requestTimeoutSec = self.requestTimeoutSec
         let connectionTracker = self.connectionTracker
 
-        self.acceptTask = Task.detached(priority: .utility) {
+        self.acceptTask = Task.detached(priority: .userInitiated) {
             await Self.acceptLoop(
                 listenFD: fd,
                 server: server,
@@ -1114,7 +1114,7 @@ public final actor PeekabooBridgeHost {
                 continue
             }
             await connectionTracker.begin()
-            Task.detached(priority: .utility) {
+            Task.detached(priority: .userInitiated) {
                 defer { close(client) }
                 await Self.handleClient(
                     fd: client,

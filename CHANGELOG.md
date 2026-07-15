@@ -3,7 +3,10 @@
 ## [3.9.4] - Unreleased
 
 ### Changed
-- Refresh AXorcist, Commander, Swiftdansi, Tachikoma, and TauTUI to their latest patch releases, including stricter SwiftPM checkout handling for Tachikoma's Commander dependency.
+- Refresh AXorcist, Commander, Swiftdansi, Tachikoma, and TauTUI, including stricter SwiftPM checkout handling for Tachikoma's Commander dependency plus corrected AXorcist app resolution, attribute serialization, and descendant filtering.
+
+### Fixed
+- Keep bridge acceptance and request handling responsive, and retry timed-out snapshot invalidation handshakes once so busy local endpoints are not mistaken for stale sockets.
 
 ## [3.9.3] - 2026-07-14
 

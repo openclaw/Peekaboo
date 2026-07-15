@@ -330,7 +330,8 @@ enum InteractionObservationInvalidator {
                     )
                 } else {
                     logger.debug(
-                        "Skipping unavailable alternate snapshot endpoint at \(path) after \(reason)"
+                        "Skipping unavailable alternate snapshot endpoint at \(path) after \(reason): " +
+                            error.localizedDescription
                     )
                 }
             }
@@ -377,14 +378,18 @@ enum InteractionObservationInvalidator {
     private static func makeRemoteSnapshotManager(
         socketPath: String
     ) async throws -> (any SnapshotManagerProtocol)? {
-        let client = PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 1)
         let identity = PeekabooBridgeClientIdentity(
             bundleIdentifier: Bundle.main.bundleIdentifier,
             teamIdentifier: nil,
             processIdentifier: getpid(),
             hostname: Host.current().name
         )
-        let handshake = try await client.handshake(client: identity, requestedHost: nil)
+        let (client, handshake): (PeekabooBridgeClient, PeekabooBridgeHandshakeResponse) =
+            try await self.retryBridgeTimeout { timeoutSec in
+                let client = PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: timeoutSec)
+                let handshake = try await client.handshake(client: identity, requestedHost: nil)
+                return (client, handshake)
+            }
         guard BridgeCapabilityPolicy.supportsImplicitSnapshotInvalidation(for: handshake) else {
             return nil
         }
@@ -393,6 +398,21 @@ enum InteractionObservationInvalidator {
             supportsImplicitLatestSnapshotInvalidation: true,
             desktopMutationWatermarkStore: DesktopMutationWatermarkStore()
         )
+    }
+
+    static func retryBridgeTimeout<T>(
+        operation: (TimeInterval) async throws -> T
+    ) async throws -> T {
+        do {
+            return try await operation(1)
+        } catch {
+            let isTimeout = (error as? POSIXError)?.code == .ETIMEDOUT ||
+                (error as? PeekabooBridgeErrorEnvelope)?.code == .timeout
+            guard isTimeout else { throw error }
+
+            // A busy local host can accept the connection before its handler is scheduled.
+            return try await operation(2)
+        }
     }
 
     @discardableResult

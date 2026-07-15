@@ -7,6 +7,22 @@ import Testing
 @MainActor
 struct InteractionMutationInvalidatorTests {
     @Test
+    func `Bridge timeout retries once with a longer budget`() async throws {
+        var attemptedTimeouts: [TimeInterval] = []
+
+        let result: String = try await InteractionObservationInvalidator.retryBridgeTimeout { timeoutSec in
+            attemptedTimeouts.append(timeoutSec)
+            if attemptedTimeouts.count == 1 {
+                throw POSIXError(.ETIMEDOUT)
+            }
+            return "connected"
+        }
+
+        #expect(result == "connected")
+        #expect(attemptedTimeouts == [1, 2])
+    }
+
+    @Test
     func `Mutation invalidates all hosts while preserving explicit snapshots`() async throws {
         let selectedSnapshots = InMemorySnapshotManager()
         let alternateSnapshots = InMemorySnapshotManager()
