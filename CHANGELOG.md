@@ -2,6 +2,9 @@
 
 ## [3.9.3] - Unreleased
 
+### Fixed
+- Keep swift-log calls usable from nonisolated code when importing AXorcist under current Swift 6 toolchains.
+
 ## [3.9.2] - 2026-07-14
 
 ### Added
