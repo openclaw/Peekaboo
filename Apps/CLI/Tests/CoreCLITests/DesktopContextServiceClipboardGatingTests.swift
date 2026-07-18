@@ -71,8 +71,8 @@ struct DesktopContextServiceClipboardGatingTests {
 private final class ServicesWithStubClipboard: PeekabooServiceProviding {
     private let base = PeekabooServices()
     private let stubClipboard: any ClipboardServiceProtocol
-    private let stubApplications: (any ApplicationServiceProtocol)?
-    private let stubWindows: (any WindowManagementServiceProtocol)?
+    private let stubApplications: any ApplicationServiceProtocol
+    private let stubWindows: any WindowManagementServiceProtocol
 
     init(
         clipboard: any ClipboardServiceProtocol,
@@ -80,8 +80,8 @@ private final class ServicesWithStubClipboard: PeekabooServiceProviding {
         windows: (any WindowManagementServiceProtocol)? = nil
     ) {
         self.stubClipboard = clipboard
-        self.stubApplications = applications
-        self.stubWindows = windows
+        self.stubApplications = applications ?? DesktopContextApplicationServiceStub(frontmost: nil, applications: [])
+        self.stubWindows = windows ?? DesktopContextWindowServiceStub(focusedWindow: nil)
     }
 
     func ensureVisualizerConnection() {
@@ -97,7 +97,7 @@ private final class ServicesWithStubClipboard: PeekabooServiceProviding {
     }
 
     var applications: any ApplicationServiceProtocol {
-        self.stubApplications ?? self.base.applications
+        self.stubApplications
     }
 
     var automation: any UIAutomationServiceProtocol {
@@ -105,7 +105,7 @@ private final class ServicesWithStubClipboard: PeekabooServiceProviding {
     }
 
     var windows: any WindowManagementServiceProtocol {
-        self.stubWindows ?? self.base.windows
+        self.stubWindows
     }
 
     var menu: any MenuServiceProtocol {
@@ -167,10 +167,10 @@ private enum DesktopContextStubError: Error {
 
 @MainActor
 private final class DesktopContextApplicationServiceStub: ApplicationServiceProtocol {
-    private let frontmost: ServiceApplicationInfo
+    private let frontmost: ServiceApplicationInfo?
     private let applications: [ServiceApplicationInfo]
 
-    init(frontmost: ServiceApplicationInfo, applications: [ServiceApplicationInfo]) {
+    init(frontmost: ServiceApplicationInfo?, applications: [ServiceApplicationInfo]) {
         self.frontmost = frontmost
         self.applications = applications
     }
@@ -197,7 +197,10 @@ private final class DesktopContextApplicationServiceStub: ApplicationServiceProt
     }
 
     func getFrontmostApplication() async throws -> ServiceApplicationInfo {
-        self.frontmost
+        guard let frontmost = self.frontmost else {
+            throw DesktopContextStubError.notImplemented
+        }
+        return frontmost
     }
 
     func isApplicationRunning(identifier: String) async -> Bool {
