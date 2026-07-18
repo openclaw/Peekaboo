@@ -1,6 +1,6 @@
 {
   "name": "@steipete/peekaboo",
-  "version": "3.9.4",
+  "version": "3.9.5",
   "description": "macOS automation MCP server with screen capture, UI interaction, and AI analysis",
   "private": false,
   "type": "module",
@@ -79,7 +79,7 @@
     "x64"
   ],
   "devDependencies": {
-    "chrome-devtools-mcp": "1.5.0"
+    "chrome-devtools-mcp": "1.6.0"
   },
   "packageManager": "pnpm@10.34.5"
 }
