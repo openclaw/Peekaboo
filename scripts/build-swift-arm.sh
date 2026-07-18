@@ -129,7 +129,9 @@ echo "🏗️ Building for arm64 (Apple Silicon) only..."
     cd "$SWIFT_PROJECT_PATH"
     swift build --arch arm64 -c release $SWIFT_OPTIMIZATION_FLAGS 2>&1 | pipe_build_output
 )
-cp "$SWIFT_PROJECT_PATH/.build/arm64-apple-macosx/release/$FINAL_BINARY_NAME" "$FINAL_BINARY_PATH.tmp"
+ARM64_BUILD_BINARY=$(bash "$PROJECT_ROOT/scripts/resolve-swift-binary-path.sh" \
+    "$SWIFT_PROJECT_PATH" arm64 release "$FINAL_BINARY_NAME")
+cp "$ARM64_BUILD_BINARY" "$FINAL_BINARY_PATH.tmp"
 echo "✅ arm64 build complete"
 
 echo "🤏 Stripping symbols for further size reduction..."

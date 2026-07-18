@@ -132,7 +132,9 @@ echo "🏗️ Building for arm64 (Apple Silicon)..."
     cd "$SWIFT_PROJECT_PATH"
     swift build --arch arm64 -c release $SWIFT_OPTIMIZATION_FLAGS 2>&1 | pipe_build_output
 )
-cp "$SWIFT_PROJECT_PATH/.build/arm64-apple-macosx/release/$FINAL_BINARY_NAME" "$ARM64_BINARY_TEMP"
+ARM64_BUILD_BINARY=$(bash "$PROJECT_ROOT/scripts/resolve-swift-binary-path.sh" \
+    "$SWIFT_PROJECT_PATH" arm64 release "$FINAL_BINARY_NAME")
+cp "$ARM64_BUILD_BINARY" "$ARM64_BINARY_TEMP"
 echo "✅ arm64 build complete: $ARM64_BINARY_TEMP"
 
 echo "🏗️ Building for x86_64 (Intel)..."
@@ -140,7 +142,9 @@ echo "🏗️ Building for x86_64 (Intel)..."
     cd "$SWIFT_PROJECT_PATH"
     swift build --arch x86_64 -c release $SWIFT_OPTIMIZATION_FLAGS 2>&1 | pipe_build_output
 )
-cp "$SWIFT_PROJECT_PATH/.build/x86_64-apple-macosx/release/$FINAL_BINARY_NAME" "$X86_64_BINARY_TEMP"
+X86_64_BUILD_BINARY=$(bash "$PROJECT_ROOT/scripts/resolve-swift-binary-path.sh" \
+    "$SWIFT_PROJECT_PATH" x86_64 release "$FINAL_BINARY_NAME")
+cp "$X86_64_BUILD_BINARY" "$X86_64_BINARY_TEMP"
 echo "✅ x86_64 build complete: $X86_64_BINARY_TEMP"
 
 echo "🔗 Creating universal binary..."
