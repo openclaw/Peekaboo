@@ -5,6 +5,14 @@ All notable changes to Peekaboo CLI will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- Add `peekaboo screen list` display enumeration and expose key/frontmost, layer, and accessibility subrole metadata in `window list --json`.
+
+### Fixed
+- Make coordinate clicking fail closed on generic or unverified accessibility press targets, prefer the app's actual key window over helper panels, and require exact-window focus verification before foreground input.
+
 ## [3.9.4] - Unreleased
 
 ### Changed

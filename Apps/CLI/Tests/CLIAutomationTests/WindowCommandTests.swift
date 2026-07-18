@@ -107,6 +107,10 @@ struct WindowCommandTests {
                             title: "Finder Window",
                             bounds: CGRect(x: 0, y: 0, width: 800, height: 600),
                             isMainWindow: true,
+                            isKeyWindow: true,
+                            isFrontmost: true,
+                            subrole: "AXStandardWindow",
+                            windowLevel: 0,
                             index: 0
                         ),
                     ],
@@ -127,7 +131,11 @@ struct WindowCommandTests {
             from: Data(output.utf8)
         )
         #expect(response.success == true)
-        #expect(response.data.windows.isEmpty == false)
+        let window = try #require(response.data.windows.first)
+        #expect(window.is_frontmost == true)
+        #expect(window.is_key == true)
+        #expect(window.layer == 0)
+        #expect(window.subrole == "AXStandardWindow")
     }
 
     @Test

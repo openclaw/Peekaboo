@@ -225,6 +225,15 @@ public struct ServiceWindowInfo: Sendable, Codable, Equatable {
     /// Whether the window is the main window
     public let isMainWindow: Bool
 
+    /// Whether Accessibility reports this as the app's focused/key window
+    public let isKeyWindow: Bool?
+
+    /// Whether this is the key window of the frontmost application
+    public let isFrontmost: Bool?
+
+    /// Accessibility subrole, such as AXStandardWindow or AXDialog
+    public let subrole: String?
+
     /// Window level (z-order)
     public let windowLevel: Int
 
@@ -267,6 +276,9 @@ public struct ServiceWindowInfo: Sendable, Codable, Equatable {
         case bounds
         case isMinimized
         case isMainWindow
+        case isKeyWindow
+        case isFrontmost
+        case subrole
         case windowLevel
         case alpha
         case index
@@ -287,6 +299,9 @@ public struct ServiceWindowInfo: Sendable, Codable, Equatable {
         bounds: CGRect,
         isMinimized: Bool = false,
         isMainWindow: Bool = false,
+        isKeyWindow: Bool? = nil,
+        isFrontmost: Bool? = nil,
+        subrole: String? = nil,
         windowLevel: Int = 0,
         alpha: CGFloat = 1.0,
         index: Int = 0,
@@ -305,6 +320,9 @@ public struct ServiceWindowInfo: Sendable, Codable, Equatable {
         self.bounds = bounds
         self.isMinimized = isMinimized
         self.isMainWindow = isMainWindow
+        self.isKeyWindow = isKeyWindow
+        self.isFrontmost = isFrontmost
+        self.subrole = subrole
         self.windowLevel = windowLevel
         self.alpha = alpha
         self.index = index

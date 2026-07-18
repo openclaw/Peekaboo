@@ -17,7 +17,7 @@ Core automation
 - `see.md`, `image.md`, `capture.md` — screenshots, annotated UI maps, capture sessions.
 
 System & config
-- `config.md`, `permissions.md`, `bridge.md`, `daemon.md`, `tools.md`, `clean.md`, `run.md`, `learn.md`, `list.md`.
+- `config.md`, `permissions.md`, `bridge.md`, `daemon.md`, `tools.md`, `clean.md`, `run.md`, `learn.md`, `list.md`, `screen.md`.
 - `completions.md` — install shell-native completions for zsh, bash, and fish.
 - MCP helpers: `mcp.md`.
 - Clipboard: `clipboard.md`.

@@ -60,20 +60,7 @@ extension WindowCommand {
                 let windows = ObservationTargetResolver.filteredWindows(from: rawWindows, mode: .list)
 
                 // Convert ServiceWindowInfo to WindowInfo for consistency
-                let windowInfos = windows.map { window in
-                    WindowInfo(
-                        window_title: window.title,
-                        window_id: UInt32(window.windowID),
-                        window_index: window.index,
-                        bounds: WindowBounds(
-                            x: Int(window.bounds.origin.x),
-                            y: Int(window.bounds.origin.y),
-                            width: Int(window.bounds.size.width),
-                            height: Int(window.bounds.size.height)
-                        ),
-                        is_on_screen: window.isOnScreen
-                    )
-                }
+                let windowInfos = windows.map(WindowInfo.init(serviceWindow:))
 
                 // Use PeekabooCore's WindowListData
                 let data = WindowListData(
@@ -145,5 +132,26 @@ extension WindowCommand {
                 throw ExitCode(1)
             }
         }
+    }
+}
+
+extension WindowInfo {
+    init(serviceWindow window: ServiceWindowInfo) {
+        self.init(
+            window_title: window.title,
+            window_id: UInt32(window.windowID),
+            window_index: window.index,
+            bounds: WindowBounds(
+                x: Int(window.bounds.origin.x),
+                y: Int(window.bounds.origin.y),
+                width: Int(window.bounds.size.width),
+                height: Int(window.bounds.size.height)
+            ),
+            is_on_screen: window.isOnScreen,
+            is_frontmost: window.isFrontmost,
+            is_key: window.isKeyWindow,
+            layer: window.layer,
+            subrole: window.subrole
+        )
     }
 }

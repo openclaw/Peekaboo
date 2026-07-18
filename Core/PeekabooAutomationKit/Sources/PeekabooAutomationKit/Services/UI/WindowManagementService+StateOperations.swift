@@ -123,23 +123,21 @@ extension WindowManagementService {
         self.logger.info("Attempting to focus window with target: \(target)")
         self.logger.debug("WindowManagementService.focusWindow called with target: \(target)")
 
-        var windowBounds: CGRect?
-
-        let success = try await performWindowOperation(target: target) { window in
-            if let position = window.position(), let size = window.size() {
-                windowBounds = CGRect(origin: position, size: size)
-            }
-
-            self.logger.debug("About to call window.focusWindow()")
-            let result = window.focusWindow()
-            self.logger.debug("window.focusWindow() returned: \(result)")
-            if !result {
-                self.logger.error("focusWindow() returned false for window")
-            }
-
-            self.showWindowOperation(.focus, bounds: windowBounds)
-            return result
+        let window = try await self.element(for: target)
+        let windowBounds = window.position().map { position in
+            CGRect(origin: position, size: window.size() ?? .zero)
         }
+
+        let success: Bool
+        if let windowID = self.windowIdentityService.getWindowID(from: window) {
+            let focusService = FocusManagementService(applications: self.applicationService)
+            try await focusService.focusWindow(windowID: windowID)
+            success = true
+        } else {
+            self.logger.debug("Falling back to AXorcist focus without a CGWindowID")
+            success = window.focusWindow()
+        }
+        self.showWindowOperation(.focus, bounds: windowBounds)
 
         guard success else {
             let windowInfo = self.focusFailureDescription(for: target)

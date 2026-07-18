@@ -6,7 +6,7 @@ import SwiftUI
 /// three-scoop scalloped hem. Drawn in normalized coordinates so it scales from
 /// menu-bar sizes up to the empty-state hero.
 struct GhostShape: Shape {
-    func path(in rect: CGRect) -> Path {
+    nonisolated func path(in rect: CGRect) -> Path {
         let width = rect.width
         let height = rect.height
 

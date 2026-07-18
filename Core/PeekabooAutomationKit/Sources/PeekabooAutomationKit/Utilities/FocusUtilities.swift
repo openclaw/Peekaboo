@@ -42,6 +42,7 @@
 //
 
 import AppKit
+import ApplicationServices
 import AXorcist
 import Foundation
 
@@ -230,8 +231,9 @@ public final class FocusManagementService {
         var lastError: (any Error)?
 
         for attempt in 1...options.retryCount {
-            // Try to focus the window
-            // Try to raise the window
+            // Chrome and other multi-window apps can raise a window without updating AXFocusedWindow.
+            // Ask AX to make it main as well, then require both AX and Workspace to confirm the result.
+            _ = windowElement.setValue(true, forAttribute: AXAttributeNames.kAXMainAttribute)
             do {
                 try windowElement.performAction(.raise)
             } catch {
@@ -264,14 +266,27 @@ public final class FocusManagementService {
         windowID: CGWindowID,
         timeout: TimeInterval) async throws
     {
+        guard let ownerPID = Self.processIdentifier(for: windowElement.underlyingElement),
+              let runningApp = NSRunningApplication(processIdentifier: ownerPID)
+        else {
+            throw FocusError.focusVerificationFailed(windowID)
+        }
         let startTime = Date()
 
         while Date().timeIntervalSince(startTime) < timeout {
-            let isMain = windowElement.isMain() ?? false
+            let remainingTimeout = timeout - Date().timeIntervalSince(startTime)
             let isMinimized = windowElement.isMinimized() ?? false
-            let isTopmostRenderable = self.windowIdentityService.isTopmostRenderableWindow(windowID: windowID)
+            let focusedWindowID = self.windowIdentityService.focusedWindowID(
+                for: runningApp,
+                timeout: min(0.1, remainingTimeout))
+            let frontmostPID = NSWorkspace.shared.frontmostApplication?.processIdentifier
 
-            if !isMinimized, isMain || isTopmostRenderable {
+            if !isMinimized, Self.isVerifiedFocus(
+                targetWindowID: windowID,
+                ownerPID: ownerPID,
+                focusedWindowID: focusedWindowID,
+                frontmostPID: frontmostPID)
+            {
                 return
             }
 
@@ -279,6 +294,25 @@ public final class FocusManagementService {
         }
 
         throw FocusError.focusVerificationTimeout(windowID)
+    }
+
+    nonisolated static func isVerifiedFocus(
+        targetWindowID: CGWindowID,
+        ownerPID: pid_t,
+        focusedWindowID: CGWindowID?,
+        frontmostPID: pid_t?) -> Bool
+    {
+        focusedWindowID == targetWindowID && frontmostPID == ownerPID
+    }
+
+    nonisolated static func processIdentifier(for element: AXUIElement) -> pid_t? {
+        var processIdentifier: pid_t = 0
+        guard AXUIElementGetPid(element, &processIdentifier) == .success,
+              processIdentifier > 0
+        else {
+            return nil
+        }
+        return processIdentifier
     }
 
     private func prioritizeWindows(_ windows: [WindowIdentityInfo]) -> [WindowIdentityInfo] {

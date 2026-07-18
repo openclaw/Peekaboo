@@ -445,7 +445,11 @@ struct ListCommandTests {
             window_id: 1001,
             window_index: 0,
             bounds: WindowBounds(x: 100, y: 200, width: 800, height: 600),
-            is_on_screen: true
+            is_on_screen: true,
+            is_frontmost: true,
+            is_key: true,
+            layer: 0,
+            subrole: "AXStandardWindow"
         )
 
         let encoder = JSONEncoder()
@@ -458,12 +462,66 @@ struct ListCommandTests {
         #expect(json?["window_title"] as? String == "Documents")
         #expect(json?["window_id"] as? UInt32 == 1001)
         #expect(json?["is_on_screen"] as? Bool == true)
+        #expect(json?["is_frontmost"] as? Bool == true)
+        #expect(json?["is_key"] as? Bool == true)
+        #expect(json?["layer"] as? Int == 0)
+        #expect(json?["subrole"] as? String == "AXStandardWindow")
 
         let bounds = json?["bounds"] as? [String: Any]
         #expect(bounds?["x"] as? Int == 100)
         #expect(bounds?["y"] as? Int == 200)
         #expect(bounds?["width"] as? Int == 800)
         #expect(bounds?["height"] as? Int == 600)
+    }
+
+    @Test(.tags(.fast))
+    func `ScreenListData JSON includes global bounds and display metadata`() throws {
+        let screenData = ScreenListData(
+            screens: [
+                ScreenListData.ScreenDetails(
+                    index: 0,
+                    name: "Built-in Retina Display",
+                    resolution: .init(width: 1944, height: 1274),
+                    position: .init(x: 0, y: 0),
+                    bounds: .init(x: 0, y: 0, width: 1944, height: 1274),
+                    visibleArea: .init(width: 1944, height: 1249),
+                    isPrimary: true,
+                    scaleFactor: 2,
+                    displayID: 6
+                ),
+            ],
+            primaryIndex: 0
+        )
+
+        let data = try JSONEncoder().encode(screenData)
+        let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let screens = try #require(json["screens"] as? [[String: Any]])
+        let screen = try #require(screens.first)
+        let bounds = try #require(screen["bounds"] as? [String: Any])
+
+        #expect(screen["displayID"] as? Int == 6)
+        #expect(screen["scaleFactor"] as? Double == 2)
+        #expect(screen["isPrimary"] as? Bool == true)
+        #expect(bounds["x"] as? Int == 0)
+        #expect(bounds["y"] as? Int == 0)
+        #expect(bounds["width"] as? Int == 1944)
+        #expect(bounds["height"] as? Int == 1274)
+    }
+
+    @Test(.tags(.fast))
+    func `Screen bounds use upper left global click coordinates`() {
+        let primary = CGRect(x: 0, y: 0, width: 1920, height: 1080)
+        let appKitScreenAbove = CGRect(x: 0, y: 1080, width: 1280, height: 720)
+        let appKitScreenBelow = CGRect(x: 0, y: -900, width: 1440, height: 900)
+
+        #expect(ListCommand.ScreensSubcommand.globalBounds(
+            fromAppKit: appKitScreenAbove,
+            primaryScreenFrame: primary
+        ) == CGRect(x: 0, y: -720, width: 1280, height: 720))
+        #expect(ListCommand.ScreensSubcommand.globalBounds(
+            fromAppKit: appKitScreenBelow,
+            primaryScreenFrame: primary
+        ) == CGRect(x: 0, y: 1080, width: 1440, height: 900))
     }
 
     @Test(.tags(.fast))

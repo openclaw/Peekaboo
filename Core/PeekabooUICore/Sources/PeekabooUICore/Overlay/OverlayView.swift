@@ -214,7 +214,7 @@ struct CornerIndicatorsView: View {
 
         let corner: Corner
 
-        func path(in rect: CGRect) -> SwiftUI.Path {
+        nonisolated func path(in rect: CGRect) -> SwiftUI.Path {
             var path = SwiftUI.Path()
 
             switch self.corner {

@@ -566,7 +566,15 @@ private struct SnapshotInvalidationFixture {
             services: PeekabooServices(snapshotManager: discovered),
             hostKind: .gui,
             allowlistedTeams: [],
-            allowlistedBundles: []
+            allowlistedBundles: [],
+            permissionStatusEvaluator: { _ in
+                PermissionsStatus(
+                    screenRecording: true,
+                    accessibility: true,
+                    appleScript: true,
+                    postEvent: true
+                )
+            }
         )
         let host = PeekabooBridgeHost(
             socketPath: discoveredSocketPath,

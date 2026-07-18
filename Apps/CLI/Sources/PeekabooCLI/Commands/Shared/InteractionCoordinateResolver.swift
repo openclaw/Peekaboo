@@ -112,7 +112,7 @@ enum InteractionCoordinateResolver {
         services: any PeekabooServiceProviding
     ) async throws -> ServiceWindowInfo {
         let windows = try await services.windows.listWindows(target: windowTarget)
-        guard let window = windows.first else {
+        guard let window = ObservationTargetResolver.bestWindow(from: windows) else {
             throw PeekabooError.windowNotFound(criteria: self.targetDescription(target))
         }
         return window

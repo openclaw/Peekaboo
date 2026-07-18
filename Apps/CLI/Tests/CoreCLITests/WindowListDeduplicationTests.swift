@@ -257,12 +257,104 @@ struct WindowListDeduplicationTests {
         #expect(windowListPayload.map(\.index) == [0, 2])
     }
 
+    @Test
+    func `automatic window selection prefers the AX key window over untitled panels`() {
+        let windows = [
+            Self.window(
+                id: 546,
+                title: "",
+                index: 0,
+                bounds: CGRect(x: 0, y: 774, width: 500, height: 500)
+            ),
+            Self.window(
+                id: 541,
+                title: "Actions settings · openclaw",
+                index: 3,
+                bounds: CGRect(x: 773, y: 52, width: 1151, height: 996),
+                isKeyWindow: true,
+                isFrontmost: true
+            ),
+        ]
+
+        let selected = ObservationTargetResolver.bestWindow(from: windows)
+
+        #expect(selected?.windowID == 541)
+    }
+
+    @Test
+    func `hybrid merge preserves AX focus and subrole metadata`() {
+        let cgWindows = [Self.window(id: 541, title: "Actions settings", index: 0)]
+        let axDescriptors = [WindowEnumerationContext.AXWindowDescriptor(
+            windowID: 541,
+            title: "Actions settings",
+            bounds: cgWindows[0].bounds,
+            standaloneInfo: nil,
+            isMainWindow: true,
+            isKeyWindow: true,
+            isFrontmost: true,
+            subrole: "AXStandardWindow"
+        )]
+
+        let merged = WindowEnumerationContext.mergeWindows(cgWindows: cgWindows, axDescriptors: axDescriptors)
+        let window = merged[0]
+
+        #expect(window.isMainWindow)
+        #expect(window.isKeyWindow == true)
+        #expect(window.isFrontmost == true)
+        #expect(window.subrole == "AXStandardWindow")
+    }
+
+    @Test
+    func `unresolved AX identities preserve unknown focus metadata`() {
+        let missingWindowID = WindowEnumerationContext.focusMetadata(
+            windowID: nil,
+            focusedWindowID: 541,
+            appIsActive: true
+        )
+        let missingFocusedID = WindowEnumerationContext.focusMetadata(
+            windowID: 541,
+            focusedWindowID: nil,
+            appIsActive: true
+        )
+        let inactiveMatch = WindowEnumerationContext.focusMetadata(
+            windowID: 541,
+            focusedWindowID: 541,
+            appIsActive: false
+        )
+
+        #expect(missingWindowID.isKey == nil)
+        #expect(missingWindowID.isFrontmost == nil)
+        #expect(missingFocusedID.isKey == nil)
+        #expect(missingFocusedID.isFrontmost == nil)
+        #expect(inactiveMatch.isKey == true)
+        #expect(inactiveMatch.isFrontmost == false)
+    }
+
+    @Test
+    func `window metadata additions decode responses from older bridge hosts`() throws {
+        let encoded = try JSONEncoder().encode(Self.window(id: 541, title: "Actions settings", index: 0))
+        var object = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        object.removeValue(forKey: "isKeyWindow")
+        object.removeValue(forKey: "isFrontmost")
+        object.removeValue(forKey: "subrole")
+
+        let legacyData = try JSONSerialization.data(withJSONObject: object)
+        let decoded = try JSONDecoder().decode(ServiceWindowInfo.self, from: legacyData)
+
+        #expect(decoded.windowID == 541)
+        #expect(decoded.isKeyWindow == nil)
+        #expect(decoded.isFrontmost == nil)
+        #expect(decoded.subrole == nil)
+    }
+
     private static func window(
         id: Int,
         title: String,
         index: Int,
         layer: Int = 0,
-        bounds: CGRect = CGRect(x: 14, y: 59, width: 1200, height: 832)
+        bounds: CGRect = CGRect(x: 14, y: 59, width: 1200, height: 832),
+        isKeyWindow: Bool? = nil,
+        isFrontmost: Bool? = nil
     ) -> ServiceWindowInfo {
         ServiceWindowInfo(
             windowID: id,
@@ -270,6 +362,8 @@ struct WindowListDeduplicationTests {
             bounds: bounds,
             isMinimized: false,
             isMainWindow: false,
+            isKeyWindow: isKeyWindow,
+            isFrontmost: isFrontmost,
             windowLevel: layer,
             alpha: 1,
             index: index,

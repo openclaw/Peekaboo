@@ -348,6 +348,21 @@ struct CommanderBinderProgramResolutionTests {
 
     @Test
     @MainActor
+    func `Commander program resolves screen list`() throws {
+        let descriptors = CommanderRegistryBuilder.buildDescriptors()
+        let program = Program(descriptors: descriptors.map(\.metadata))
+        let invocation = try program.resolve(argv: [
+            "peekaboo",
+            "screen",
+            "list",
+            "--json"
+        ])
+        #expect(invocation.path == ["screen", "list"])
+        #expect(invocation.parsedValues.flags.contains("jsonOutput"))
+    }
+
+    @Test
+    @MainActor
     func `Commander program resolves scroll command options`() throws {
         let descriptors = CommanderRegistryBuilder.buildDescriptors()
         let program = Program(descriptors: descriptors.map(\.metadata))

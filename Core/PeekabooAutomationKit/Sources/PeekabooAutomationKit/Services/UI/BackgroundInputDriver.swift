@@ -3,6 +3,7 @@ import ApplicationServices
 import CoreGraphics
 import Darwin
 import Foundation
+import os.log
 import PeekabooFoundation
 
 /// Background input that targets a process directly without focusing it or moving the cursor.
@@ -13,6 +14,8 @@ import PeekabooFoundation
 /// presence makes the WindowServer discard the event location, landing every click at the target
 /// window's top-left corner. See `click(at:button:count:targetProcessIdentifier:targetWindowID:)`.
 enum BackgroundInputDriver {
+    private static let logger = Logger(subsystem: "boo.peekaboo.core", category: "BackgroundInputDriver")
+
     struct MouseWindowRouteCandidate: Equatable {
         let windowID: CGWindowID
         let processIdentifier: pid_t
@@ -32,38 +35,6 @@ enum BackgroundInputDriver {
         case press
         case showMenu
         case focus
-    }
-
-    static let doubleClickUnsupportedMessage = """
-    Background double-click is not supported: macOS delivers pid-targeted mouse events at the \
-    window origin instead of the requested point. Re-run with --foreground to focus the app and \
-    send a real double-click.
-    """
-
-    static let middleClickUnsupportedMessage = """
-    Background middle-click is not supported: accessibility has no middle-button action and \
-    pid-targeted mouse events cannot be positioned. Re-run with --foreground to send a real \
-    middle-click.
-    """
-
-    static func noActionableElementMessage(at point: CGPoint, targetProcessIdentifier: pid_t) -> String {
-        """
-        No pressable accessibility element was found at (\(Int(point.x)), \(Int(point.y))) in \
-        PID \(targetProcessIdentifier). Background clicks press the accessibility element at the \
-        target point, and nothing pressable was found there — the point may be empty, a \
-        custom-drawn view, or an element that exposes no press action. Re-run with --foreground to \
-        focus the app and send a real mouse click at these coordinates.
-        """
-    }
-
-    static func occludedWindowMessage(at point: CGPoint, targetWindowID: CGWindowID) -> String {
-        """
-        Point (\(Int(point.x)), \(Int(point.y))) is occluded for the pinned target window \
-        \(targetWindowID): accessibility hit-testing resolved an element in a different window of \
-        the same app. Background clicks press the frontmost element at the point and cannot reach \
-        an overlapped window. Move the overlapping window aside, or re-run with --foreground to \
-        raise and click the target window.
-        """
     }
 
     /// Deliver a positional click to a background process via accessibility.
@@ -152,24 +123,53 @@ enum BackgroundInputDriver {
         // Trust the hit-test element regardless of its reported frame (coordinate-space quirks must
         // not veto the element macOS resolved for the point); spatially filter the rest.
         let spatiallyValid = [hit] + candidates.dropFirst().filter { element in
-            guard let frame = element.frame else { return true }
-            return frame.contains(point)
+            element.frame?.contains(point) == true
         }
 
         let requiredAction = button == .right ? AXActionNames.kAXShowMenuAction : AXActionNames.kAXPressAction
-        if let actionable = spatiallyValid.first(where: { $0.isEnabled && $0.supportsAction(requiredAction) }) {
+        if let actionable = spatiallyValid.first(where: {
+            $0.isEnabled &&
+                $0.supportsAction(requiredAction) &&
+                (button == .right || !self.nonPressableContainerRoles.contains($0.role ?? ""))
+        }) {
+            let role = actionable.role ?? "<none>"
+            let frame = String(describing: actionable.frame)
+            self.logger.debug(
+                """
+                Resolved background positional click to role=\(role, privacy: .public) \
+                action=\(requiredAction, privacy: .public) frame=\(frame, privacy: .public)
+                """)
             return (actionable, button == .right ? .showMenu : .press)
         }
 
         guard button == .left else { return nil }
-        let focusable = spatiallyValid.first { element in
-            ActionInputDriver.canFocusForClick(
-                role: element.role,
-                subrole: element.subrole,
-                isValueSettable: element.isValueSettable,
-                isFocusedSettable: element.isFocusedSettable)
+        let focusable = spatiallyValid.first(where: self.canFocusForPositionalClick)
+        if let focusable {
+            let role = focusable.role ?? "<none>"
+            let frame = String(describing: focusable.frame)
+            self.logger.debug(
+                """
+                Resolved background positional click to role=\(role, privacy: .public) \
+                action=focus frame=\(frame, privacy: .public)
+                """)
+            return (focusable, .focus)
         }
-        return focusable.map { ($0, .focus) }
+        self.logger.debug("No actionable background positional click target resolved")
+        return nil
+    }
+
+    /// Coordinate clicks may focus text-entry controls that expose no press action. Keep this
+    /// narrower than element-targeted action input: Chromium marks full-page AXGroup containers
+    /// value/focus-settable, and focusing those containers is not a delivered click.
+    @MainActor
+    private static func canFocusForPositionalClick(_ element: any AutomationElementRepresenting) -> Bool {
+        guard element.isFocusedSettable else { return false }
+        switch element.role {
+        case "AXTextField", "AXTextArea", "AXComboBox":
+            return true
+        default:
+            return element.subrole == "AXSearchField"
+        }
     }
 
     /// Gathers positional-click candidates for `point`, ordered hit → descendants → ancestors.
@@ -257,8 +257,19 @@ enum BackgroundInputDriver {
             action: actionName,
             on: axElement,
             gracePeriod: gracePeriod)
+        try self.validateDetachedActionOutcome(outcome, actionName: actionName)
+    }
+
+    static func validateDetachedActionOutcome(
+        _ outcome: DetachedAXActionOutcome,
+        actionName: String) throws
+    {
         switch outcome {
-        case .completed(.success), .stillRunning:
+        case .completed(.success):
+            return
+        case .stillRunning where actionName == "AXPress":
+            throw PeekabooError.serviceUnavailable(self.unverifiedPressMessage)
+        case .stillRunning:
             return
         case let .completed(axError):
             throw ActionInputDriver.classify(axError)
@@ -953,6 +964,55 @@ enum BackgroundInputDriver {
         "(": 0x19, ")": 0x1D, "_": 0x1B, "+": 0x18, "{": 0x21, "}": 0x1E, "|": 0x2A, ":": 0x29,
         "\"": 0x27, "<": 0x2B, ">": 0x2F, "?": 0x2C, "~": 0x32,
     ]
+}
+
+extension BackgroundInputDriver {
+    static let doubleClickUnsupportedMessage = """
+    Background double-click is not supported: macOS delivers pid-targeted mouse events at the \
+    window origin instead of the requested point. Re-run with --foreground to focus the app and \
+    send a real double-click.
+    """
+
+    static let middleClickUnsupportedMessage = """
+    Background middle-click is not supported: accessibility has no middle-button action and \
+    pid-targeted mouse events cannot be positioned. Re-run with --foreground to send a real \
+    middle-click.
+    """
+
+    static let unverifiedPressMessage = """
+    The accessibility press did not complete, so Peekaboo cannot verify that the click was delivered. \
+    Re-run with --foreground --input-strategy synthOnly to focus the app and send a real mouse click.
+    """
+
+    fileprivate static let nonPressableContainerRoles: Set<String> = [
+        "AXApplication",
+        "AXGroup",
+        "AXLayoutArea",
+        "AXRadioGroup",
+        "AXScrollArea",
+        "AXWebArea",
+        "AXWindow",
+    ]
+
+    static func noActionableElementMessage(at point: CGPoint, targetProcessIdentifier: pid_t) -> String {
+        """
+        No pressable accessibility element was found at (\(Int(point.x)), \(Int(point.y))) in \
+        PID \(targetProcessIdentifier). Background clicks press the accessibility element at the \
+        target point, and nothing pressable was found there — the point may be empty, a \
+        custom-drawn view, or an element that exposes no press action. Re-run with --foreground \
+        --input-strategy synthOnly to focus the app and send a real mouse click at these coordinates.
+        """
+    }
+
+    static func occludedWindowMessage(at point: CGPoint, targetWindowID: CGWindowID) -> String {
+        """
+        Point (\(Int(point.x)), \(Int(point.y))) is occluded for the pinned target window \
+        \(targetWindowID): accessibility hit-testing resolved an element in a different window of \
+        the same app. Background clicks press the frontmost element at the point and cannot reach \
+        an overlapped window. Move the overlapping window aside, or re-run with --foreground to \
+        raise and click the target window.
+        """
+    }
 }
 
 private enum SkyLightPerPidEventPost {

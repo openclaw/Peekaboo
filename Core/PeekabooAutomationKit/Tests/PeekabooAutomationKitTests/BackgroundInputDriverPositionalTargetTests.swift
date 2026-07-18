@@ -116,6 +116,28 @@ struct BackgroundInputDriverPositionalTargetTests {
 
     @Test
     @MainActor
+    func `non-hit pressable candidates with unknown frames are skipped`() {
+        // Regression for Chrome web content: the hit is a non-pressable AXGroup, while traversal
+        // can surface unrelated pressable descendants whose frames fail to decode. A missing frame
+        // cannot prove that the descendant is under the click point.
+        let point = CGPoint(x: 1117, y: 678)
+        let webContainer = PositionalMockElement(
+            role: "AXGroup",
+            frame: CGRect(x: 773, y: 263, width: 1136, height: 785))
+        let unrelatedButton = PositionalMockElement(
+            role: "AXButton",
+            supportedActions: [AXActionNames.kAXPressAction])
+
+        let resolved = BackgroundInputDriver.positionalClickTarget(
+            inCandidates: [webContainer, unrelatedButton],
+            at: point,
+            button: MouseButton.left)
+
+        #expect(resolved == nil)
+    }
+
+    @Test
+    @MainActor
     func `disabled elements are not pressable`() {
         let point = CGPoint(x: 50, y: 50)
         let disabledButton = PositionalMockElement(
@@ -130,6 +152,25 @@ struct BackgroundInputDriverPositionalTargetTests {
             button: MouseButton.left)
 
         #expect(resolved == nil)
+    }
+
+    @Test
+    @MainActor
+    func `generic web containers are rejected even when they advertise press`() {
+        let point = CGPoint(x: 1117, y: 678)
+        for role in ["AXWebArea", "AXGroup", "AXRadioGroup"] {
+            let container = PositionalMockElement(
+                role: role,
+                frame: CGRect(x: 1000, y: 500, width: 500, height: 500),
+                supportedActions: [AXActionNames.kAXPressAction])
+
+            let resolved = BackgroundInputDriver.positionalClickTarget(
+                inCandidates: [container],
+                at: point,
+                button: MouseButton.left)
+
+            #expect(resolved == nil, "\(role) must not produce a false-success background press")
+        }
     }
 
     @Test
@@ -149,6 +190,26 @@ struct BackgroundInputDriverPositionalTargetTests {
 
         #expect(resolved?.action == .focus)
         #expect((resolved?.element as? PositionalMockElement) === textField)
+    }
+
+    @Test
+    @MainActor
+    func `value settable web group does not masquerade as a focused click`() {
+        // Chromium exposes full-page AXGroup containers as value/focus-settable. Setting focus on
+        // that container returns success but delivers no click.
+        let point = CGPoint(x: 1117, y: 678)
+        let webContainer = PositionalMockElement(
+            role: "AXGroup",
+            frame: CGRect(x: 773, y: 139, width: 1151, height: 909),
+            isValueSettable: true,
+            isFocusedSettable: true)
+
+        let resolved = BackgroundInputDriver.positionalClickTarget(
+            inCandidates: [webContainer],
+            at: point,
+            button: MouseButton.left)
+
+        #expect(resolved == nil)
     }
 
     @Test
@@ -195,6 +256,7 @@ struct BackgroundInputDriverPositionalTargetTests {
             at: CGPoint(x: 2396, y: 162),
             targetProcessIdentifier: 92941)
         #expect(message.contains("--foreground"))
+        #expect(message.contains("--input-strategy synthOnly"))
         #expect(message.contains("(2396, 162)"))
         #expect(message.contains("92941"))
         // The message must describe the genuine "nothing pressable here" case, not claim that
@@ -207,6 +269,23 @@ struct BackgroundInputDriverPositionalTargetTests {
     func `background double and middle click messages point to foreground`() {
         #expect(BackgroundInputDriver.doubleClickUnsupportedMessage.contains("--foreground"))
         #expect(BackgroundInputDriver.middleClickUnsupportedMessage.contains("--foreground"))
+    }
+
+    @Test
+    func `timed out press is a failure because delivery is unverified`() {
+        #expect(throws: (any Error).self) {
+            try BackgroundInputDriver.validateDetachedActionOutcome(
+                .stillRunning,
+                actionName: "AXPress")
+        }
+        #expect(BackgroundInputDriver.unverifiedPressMessage.contains("synthOnly"))
+    }
+
+    @Test
+    func `timed out show menu remains delivered`() throws {
+        try BackgroundInputDriver.validateDetachedActionOutcome(
+            .stillRunning,
+            actionName: "AXShowMenu")
     }
 
     @Test

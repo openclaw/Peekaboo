@@ -37,6 +37,7 @@ enum CommandRegistry {
         .init(type: BridgeCommand.self, category: .core),
         .init(type: DaemonCommand.self, category: .core),
         .init(type: ListCommand.self, category: .core),
+        .init(type: ScreenCommand.self, category: .core),
         .init(type: ToolsCommand.self, category: .core),
         .init(type: ConfigCommand.self, category: .core),
         .init(type: PermissionsCommand.self, category: .core),

@@ -3,6 +3,7 @@ import Commander
 import CoreGraphics
 import Foundation
 import PeekabooCore
+import PeekabooFoundation
 
 private typealias ScreenOutput = UnifiedToolOutput<ScreenListData>
 
@@ -60,11 +61,16 @@ extension ListCommand {
         @MainActor
         private func displayScreenDetails(_ screens: [PeekabooCore.ScreenInfo], count: Int) {
             Swift.print("Screens (\(count) total):")
+            let primaryFrame = screens.first(where: \.isPrimary)?.frame
             for screen in screens {
+                let globalBounds = Self.globalBounds(
+                    fromAppKit: screen.frame,
+                    primaryScreenFrame: primaryFrame
+                )
                 let primaryBadge = screen.isPrimary ? " (Primary)" : ""
                 Swift.print("\n\(screen.index). \(screen.name)\(primaryBadge)")
-                Swift.print("   Resolution: \(Int(screen.frame.width))×\(Int(screen.frame.height))")
-                Swift.print("   Position: \(Int(screen.frame.origin.x)),\(Int(screen.frame.origin.y))")
+                Swift.print("   Resolution: \(Int(globalBounds.width))×\(Int(globalBounds.height))")
+                Swift.print("   Position: \(Int(globalBounds.origin.x)),\(Int(globalBounds.origin.y))")
                 let retinaBadge = screen.scaleFactor > 1 ? " (Retina)" : ""
                 Swift.print("   Scale: \(screen.scaleFactor)x\(retinaBadge)")
                 if screen.visibleFrame.size != screen.frame.size {
@@ -76,8 +82,13 @@ extension ListCommand {
 
         @MainActor
         private func buildScreenListData(from screens: [PeekabooCore.ScreenInfo]) -> ScreenListData {
+            let primaryFrame = screens.first(where: \.isPrimary)?.frame
             let details = screens.map { screen in
-                ScreenListData.ScreenDetails(
+                let globalBounds = Self.globalBounds(
+                    fromAppKit: screen.frame,
+                    primaryScreenFrame: primaryFrame
+                )
+                return ScreenListData.ScreenDetails(
                     index: screen.index,
                     name: screen.name,
                     resolution: ScreenListData.Resolution(
@@ -85,8 +96,14 @@ extension ListCommand {
                         height: Int(screen.frame.height)
                     ),
                     position: ScreenListData.Position(
-                        x: Int(screen.frame.origin.x),
-                        y: Int(screen.frame.origin.y)
+                        x: Int(globalBounds.origin.x),
+                        y: Int(globalBounds.origin.y)
+                    ),
+                    bounds: ScreenListData.Bounds(
+                        x: Int(globalBounds.origin.x),
+                        y: Int(globalBounds.origin.y),
+                        width: Int(globalBounds.width),
+                        height: Int(globalBounds.height)
                     ),
                     visibleArea: ScreenListData.Resolution(
                         width: Int(screen.visibleFrame.width),
@@ -101,6 +118,16 @@ extension ListCommand {
             return ScreenListData(
                 screens: details,
                 primaryIndex: screens.firstIndex { $0.isPrimary }
+            )
+        }
+
+        nonisolated static func globalBounds(
+            fromAppKit frame: CGRect,
+            primaryScreenFrame: CGRect?
+        ) -> CGRect {
+            GlobalScreenCoordinateGeometry.globalDisplayRect(
+                fromAppKit: frame,
+                primaryScreenFrame: primaryScreenFrame
             )
         }
 
@@ -143,6 +170,7 @@ struct ScreenListData {
         let name: String
         let resolution: Resolution
         let position: Position
+        let bounds: Bounds
         let visibleArea: Resolution
         let isPrimary: Bool
         let scaleFactor: CGFloat
@@ -158,12 +186,20 @@ struct ScreenListData {
         let x: Int
         let y: Int
     }
+
+    struct Bounds {
+        let x: Int
+        let y: Int
+        let width: Int
+        let height: Int
+    }
 }
 
 nonisolated extension ScreenListData: Sendable, Codable {}
 nonisolated extension ScreenListData.ScreenDetails: Sendable, Codable {}
 nonisolated extension ScreenListData.Resolution: Sendable, Codable {}
 nonisolated extension ScreenListData.Position: Sendable, Codable {}
+nonisolated extension ScreenListData.Bounds: Sendable, Codable {}
 
 @MainActor
 extension ListCommand.ScreensSubcommand: CommanderBindableCommand {

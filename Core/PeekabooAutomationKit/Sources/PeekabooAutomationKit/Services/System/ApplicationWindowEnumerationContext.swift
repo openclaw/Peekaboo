@@ -13,6 +13,7 @@ struct WindowEnumerationContext {
     struct AXWindowResult {
         let windows: [Element]
         let timedOut: Bool
+        let focusedWindowID: Int?
     }
 
     /// Plain, testable description of an AX window used to enrich or extend the CG snapshot.
@@ -32,6 +33,31 @@ struct WindowEnumerationContext {
         /// reliable resolved CGWindowID absent from the CG snapshot, so appending it cannot introduce
         /// a phantom entry; nil for CG-matched windows and for windows AX could not resolve to an ID.
         let standaloneInfo: ServiceWindowInfo?
+
+        let isMainWindow: Bool
+        let isKeyWindow: Bool?
+        let isFrontmost: Bool?
+        let subrole: String?
+
+        init(
+            windowID: Int?,
+            title: String,
+            bounds: CGRect?,
+            standaloneInfo: ServiceWindowInfo?,
+            isMainWindow: Bool = false,
+            isKeyWindow: Bool? = nil,
+            isFrontmost: Bool? = nil,
+            subrole: String? = nil)
+        {
+            self.windowID = windowID
+            self.title = title
+            self.bounds = bounds
+            self.standaloneInfo = standaloneInfo
+            self.isMainWindow = isMainWindow
+            self.isKeyWindow = isKeyWindow
+            self.isFrontmost = isFrontmost
+            self.subrole = subrole
+        }
     }
 
     unowned let service: ApplicationService
@@ -43,10 +69,6 @@ struct WindowEnumerationContext {
 
     func run() async -> UnifiedToolOutput<ServiceWindowListData> {
         let snapshot = self.hasScreenRecording ? self.collectCGSnapshot() : nil
-        if let snapshot, let fast = self.fastPath(using: snapshot) {
-            return fast
-        }
-
         guard self.isApplicationRunning else {
             return self.terminatedOutput()
         }
@@ -149,7 +171,7 @@ struct WindowEnumerationContext {
             title: windowTitle,
             bounds: bounds,
             isMinimized: isMinimized,
-            isMainWindow: index == 0,
+            isMainWindow: false,
             windowLevel: windowLevel,
             alpha: alpha,
             index: index,
@@ -162,19 +184,6 @@ struct WindowEnumerationContext {
             isOnScreen: isOnScreen,
             sharingState: sharingState,
             isExcludedFromWindowsMenu: excludedFromMenu)
-    }
-
-    private func fastPath(using snapshot: CGSnapshot) -> UnifiedToolOutput<ServiceWindowListData>? {
-        guard snapshot.windows.allSatisfy({ !$0.title.isEmpty }) else {
-            return nil
-        }
-
-        self.logger.debug("All windows have titles from CGWindowList, using fast path")
-        return self.service.buildWindowListOutput(
-            windows: snapshot.windows,
-            app: self.app,
-            startTime: self.startTime,
-            warnings: [])
     }
 
     private func terminatedOutput() -> UnifiedToolOutput<ServiceWindowListData> {
@@ -192,7 +201,7 @@ struct WindowEnumerationContext {
 
     private func fetchAXWindows() -> AXWindowResult {
         guard let runningApp = NSRunningApplication(processIdentifier: self.app.processIdentifier) else {
-            return AXWindowResult(windows: [], timedOut: false)
+            return AXWindowResult(windows: [], timedOut: false, focusedWindowID: nil)
         }
         let appElement = AXApp(runningApp).element
         appElement.setMessagingTimeout(self.axTimeout)
@@ -201,7 +210,10 @@ struct WindowEnumerationContext {
         let windowStartTime = Date()
         let windows = appElement.windowsWithTimeout(timeout: self.axTimeout) ?? []
         let timedOut = Date().timeIntervalSince(windowStartTime) >= Double(self.axTimeout)
-        return AXWindowResult(windows: windows, timedOut: timedOut)
+        let focusedWindowID = appElement.focusedWindow()
+            .flatMap { WindowIdentityService().getWindowID(from: $0) }
+            .map(Int.init)
+        return AXWindowResult(windows: windows, timedOut: timedOut, focusedWindowID: focusedWindowID)
     }
 
     private func mergeWithSnapshot(
@@ -259,14 +271,31 @@ struct WindowEnumerationContext {
 
             var standaloneInfo: ServiceWindowInfo?
             if let resolvedID, !cgWindowIDs.contains(resolvedID), !title.isEmpty {
-                standaloneInfo = await self.service.createWindowInfo(from: axWindow, index: index)
+                let focusMetadata = Self.focusMetadata(
+                    windowID: resolvedID,
+                    focusedWindowID: axResult.focusedWindowID,
+                    appIsActive: self.app.isActive)
+                standaloneInfo = await self.service.createWindowInfo(
+                    from: axWindow,
+                    index: index,
+                    isKeyWindow: focusMetadata.isKey,
+                    isFrontmost: focusMetadata.isFrontmost)
             }
+
+            let focusMetadata = Self.focusMetadata(
+                windowID: resolvedID,
+                focusedWindowID: axResult.focusedWindowID,
+                appIsActive: self.app.isActive)
 
             descriptors.append(AXWindowDescriptor(
                 windowID: resolvedID,
                 title: title,
                 bounds: bounds,
-                standaloneInfo: standaloneInfo))
+                standaloneInfo: standaloneInfo,
+                isMainWindow: axWindow.isMain() ?? false,
+                isKeyWindow: focusMetadata.isKey,
+                isFrontmost: focusMetadata.isFrontmost,
+                subrole: axWindow.subrole()))
         }
 
         return descriptors
@@ -289,9 +318,13 @@ struct WindowEnumerationContext {
         // Exact CGWindowID → title is one-to-one (CG windows are deduplicated by ID): an unambiguous
         // enrichment source for the untitled CG window carrying that id.
         var axTitleByID: [Int: String] = [:]
+        var axDescriptorByID: [Int: AXWindowDescriptor] = [:]
         for descriptor in axDescriptors {
-            guard let id = descriptor.windowID, !descriptor.title.isEmpty else { continue }
-            if axTitleByID[id] == nil {
+            guard let id = descriptor.windowID else { continue }
+            if axDescriptorByID[id] == nil {
+                axDescriptorByID[id] = descriptor
+            }
+            if !descriptor.title.isEmpty, axTitleByID[id] == nil {
                 axTitleByID[id] = descriptor.title
             }
         }
@@ -310,13 +343,22 @@ struct WindowEnumerationContext {
         var seenWindowIDs = Set<Int>()
 
         for cgWindow in cgWindows where seenWindowIDs.insert(cgWindow.windowID).inserted {
-            guard cgWindow.title.isEmpty else {
-                merged.append(cgWindow)
+            var enrichedWindow = cgWindow
+            if let descriptor = axDescriptorByID[cgWindow.windowID] {
+                enrichedWindow = enrichedWindow.withAXMetadata(
+                    isMainWindow: descriptor.isMainWindow,
+                    isKeyWindow: descriptor.isKeyWindow,
+                    isFrontmost: descriptor.isFrontmost,
+                    subrole: descriptor.subrole)
+            }
+
+            guard enrichedWindow.title.isEmpty else {
+                merged.append(enrichedWindow)
                 continue
             }
 
             if let title = axTitleByID[cgWindow.windowID] {
-                merged.append(cgWindow.withTitle(title))
+                merged.append(enrichedWindow.withTitle(title))
                 continue
             }
 
@@ -334,11 +376,11 @@ struct WindowEnumerationContext {
                     in: cgWindows)
             }) {
                 consumedFallbacks.insert(descriptorIndex)
-                merged.append(cgWindow.withTitle(axDescriptors[descriptorIndex].title))
+                merged.append(enrichedWindow.withTitle(axDescriptors[descriptorIndex].title))
                 continue
             }
 
-            merged.append(cgWindow)
+            merged.append(enrichedWindow)
         }
 
         // Append AX-only windows that resolved to a reliable CGWindowID absent from the CG snapshot.
@@ -375,6 +417,18 @@ struct WindowEnumerationContext {
             abs(lhs.size.height - rhs.size.height) < tolerance
     }
 
+    nonisolated static func focusMetadata(
+        windowID: Int?,
+        focusedWindowID: Int?,
+        appIsActive: Bool) -> (isKey: Bool?, isFrontmost: Bool?)
+    {
+        guard let windowID, let focusedWindowID else {
+            return (nil, nil)
+        }
+        let isKey = windowID == focusedWindowID
+        return (isKey, appIsActive && isKey)
+    }
+
     private func buildAXOnlyResult(from axResult: AXWindowResult) async -> UnifiedToolOutput<ServiceWindowListData> {
         self.logger.debug("Using pure AX approach (no screen recording permission)")
         var warnings: [String] = []
@@ -395,7 +449,17 @@ struct WindowEnumerationContext {
                 break
             }
 
-            if let windowInfo = await self.service.createWindowInfo(from: window, index: index) {
+            let windowID = WindowIdentityService().getWindowID(from: window).map(Int.init)
+            let focusMetadata = Self.focusMetadata(
+                windowID: windowID,
+                focusedWindowID: axResult.focusedWindowID,
+                appIsActive: self.app.isActive)
+            if let windowInfo = await self.service.createWindowInfo(
+                from: window,
+                index: index,
+                isKeyWindow: focusMetadata.isKey,
+                isFrontmost: focusMetadata.isFrontmost)
+            {
                 windowInfos.append(windowInfo)
             }
         }
@@ -431,6 +495,38 @@ extension ServiceWindowInfo {
             bounds: self.bounds,
             isMinimized: self.isMinimized,
             isMainWindow: self.isMainWindow,
+            isKeyWindow: self.isKeyWindow,
+            isFrontmost: self.isFrontmost,
+            subrole: self.subrole,
+            windowLevel: self.windowLevel,
+            alpha: self.alpha,
+            index: self.index,
+            spaceID: self.spaceID,
+            spaceName: self.spaceName,
+            screenIndex: self.screenIndex,
+            screenName: self.screenName,
+            isOffScreen: self.isOffScreen,
+            layer: self.layer,
+            isOnScreen: self.isOnScreen,
+            sharingState: self.sharingState,
+            isExcludedFromWindowsMenu: self.isExcludedFromWindowsMenu)
+    }
+
+    fileprivate func withAXMetadata(
+        isMainWindow: Bool,
+        isKeyWindow: Bool?,
+        isFrontmost: Bool?,
+        subrole: String?) -> ServiceWindowInfo
+    {
+        ServiceWindowInfo(
+            windowID: self.windowID,
+            title: self.title,
+            bounds: self.bounds,
+            isMinimized: self.isMinimized,
+            isMainWindow: isMainWindow,
+            isKeyWindow: isKeyWindow,
+            isFrontmost: isFrontmost,
+            subrole: subrole,
             windowLevel: self.windowLevel,
             alpha: self.alpha,
             index: self.index,

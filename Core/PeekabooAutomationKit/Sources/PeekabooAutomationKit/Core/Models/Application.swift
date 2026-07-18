@@ -53,6 +53,10 @@ public struct WindowInfo: Codable, Sendable {
     public let is_on_screen: Bool?
     public let screen_index: Int?
     public let screen_name: String?
+    public let is_frontmost: Bool?
+    public let is_key: Bool?
+    public let layer: Int?
+    public let subrole: String?
 
     public init(
         window_title: String,
@@ -61,7 +65,11 @@ public struct WindowInfo: Codable, Sendable {
         bounds: WindowBounds? = nil,
         is_on_screen: Bool? = nil,
         screen_index: Int? = nil,
-        screen_name: String? = nil)
+        screen_name: String? = nil,
+        is_frontmost: Bool? = nil,
+        is_key: Bool? = nil,
+        layer: Int? = nil,
+        subrole: String? = nil)
     {
         self.window_title = window_title
         self.window_id = window_id
@@ -70,6 +78,10 @@ public struct WindowInfo: Codable, Sendable {
         self.is_on_screen = is_on_screen
         self.screen_index = screen_index
         self.screen_name = screen_name
+        self.is_frontmost = is_frontmost
+        self.is_key = is_key
+        self.layer = layer
+        self.subrole = subrole
     }
 }
 

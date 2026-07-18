@@ -105,6 +105,14 @@ public final class WindowIdentityService {
         return AXWindowHandle(app: AXApp(result.app), element: result.window)
     }
 
+    func focusedWindowID(for app: NSRunningApplication, timeout: TimeInterval) -> CGWindowID? {
+        guard timeout > 0 else { return nil }
+        let axApp = AXApp(app)
+        axApp.element.setMessagingTimeout(Float(timeout))
+        defer { axApp.element.setMessagingTimeout(0) }
+        return axApp.focusedWindow().flatMap { self.getWindowID(from: $0) }
+    }
+
     // MARK: - Window Information
 
     public func getWindowInfo(windowID: CGWindowID) -> WindowIdentityInfo? {

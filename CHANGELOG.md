@@ -1,5 +1,13 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- Add `peekaboo screen list` display enumeration and expose key/frontmost, layer, and accessibility subrole metadata in `window list --json`.
+
+### Fixed
+- Make coordinate clicking fail closed on generic or unverified accessibility press targets, prefer the app's actual key window over helper panels, and require exact-window focus verification before foreground input.
+
 ## [3.9.4] - 2026-07-15
 
 ### Changed

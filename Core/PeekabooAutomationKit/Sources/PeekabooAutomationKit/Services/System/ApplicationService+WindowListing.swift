@@ -37,6 +37,9 @@ extension ApplicationService {
                 bounds: window.bounds,
                 isMinimized: window.isMinimized,
                 isMainWindow: window.isMainWindow,
+                isKeyWindow: window.isKeyWindow,
+                isFrontmost: window.isFrontmost,
+                subrole: window.subrole,
                 windowLevel: window.windowLevel,
                 alpha: window.alpha,
                 index: index,
@@ -52,7 +55,12 @@ extension ApplicationService {
         }
     }
 
-    func createWindowInfo(from window: Element, index: Int) async -> ServiceWindowInfo? {
+    func createWindowInfo(
+        from window: Element,
+        index: Int,
+        isKeyWindow: Bool? = nil,
+        isFrontmost: Bool? = nil) async -> ServiceWindowInfo?
+    {
         guard let title = window.title() else { return nil }
 
         let bounds = self.windowBounds(for: window)
@@ -67,6 +75,9 @@ extension ApplicationService {
             bounds: bounds,
             isMinimized: window.isMinimized() ?? false,
             isMainWindow: window.isMain() ?? false,
+            isKeyWindow: isKeyWindow,
+            isFrontmost: isFrontmost,
+            subrole: window.subrole(),
             windowLevel: level,
             index: index,
             spaceID: spaces.spaceID,

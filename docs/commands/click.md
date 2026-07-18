@@ -28,6 +28,7 @@ read_when:
 ## Delivery modes
 - **Background** is the default when Peekaboo can resolve a target process from target flags or snapshot metadata. Every background click is delivered through accessibility actions and never activates or focuses the app: element/query clicks invoke the matching AX action on the cached element; coordinate clicks hit-test the AX element at the point (`AXUIElementCopyElementAtPosition`), then press (or show the menu on) the pressable element at that point — the hit result itself if it is pressable, otherwise a pressable descendant, otherwise a pressable ancestor. Pressability is checked with `AXUIElementCopyActionNames` (the actions API), not the `AXActionNames` attribute, so SwiftUI buttons that expose no action attribute are still pressed. Positioned process-targeted mouse events are never used — macOS delivers them at the window's top-left corner regardless of the requested point, so that path was removed.
 - Background clicks fail with an actionable error instead of guessing: if no pressable AX element exists at the target point (an empty spot, a custom-drawn view, or an element exposing no press action), or the click type cannot be delivered via accessibility (`--double`, middle-click), the command reports the limitation and suggests `--foreground`. A reported background success means the AX action was actually invoked at the resolved target.
+- A background `AXPress` that does not complete within the delivery grace period is a failure, not success. Generic layout/web containers are never accepted as press targets even if an app advertises `AXPress` on them.
 - **Foreground** (`--foreground`) focuses the target first (via `ensureFocused`, hopping Spaces if needed) and then synthesizes a real mouse click at the resolved screen point — element and query targets are resolved to their adjusted center and clicked with genuine mouse events, so double- and right-click semantics match hardware clicks. If the target app is still not frontmost after the focus step, the command fails rather than clicking into whichever app is in front.
 - Long press (`--long-press`) uses the foreground path and emits a stationary mouse-down/1.2-second hold/mouse-up sequence. It does not synthesize drag or micro-move events, because those can cancel native long-press recognizers.
 - Background coordinate clicks need `--app`, `--pid`, or `--window-id` so Peekaboo knows which process/window owns the coordinate. Without a target, use global coordinates with foreground delivery.
@@ -64,6 +65,11 @@ peekaboo click --window-id 59620 --coords 1024,88 --global-coords --foreground
 
 # Click Safari coordinates without activating Safari
 peekaboo click --coords 420,180 --app Safari --global-coords
+
+# Browser fallback when web content has no actionable accessibility descendants
+peekaboo screen list --json
+peekaboo window list --app "Google Chrome" --json
+peekaboo click --window-id 59620 --coords 420,180 --foreground --input-strategy synthOnly
 ```
 
 ## Troubleshooting
@@ -71,3 +77,4 @@ peekaboo click --coords 420,180 --app Safari --global-coords
 - Confirm your target (app/window/selector) with `peekaboo list`/`peekaboo see` before rerunning.
 - If you see `SNAPSHOT_NOT_FOUND`, regenerate the snapshot with `peekaboo see` (or omit `--snapshot` to use the most recent one). Cleaned/expired snapshots cannot be reused.
 - Re-run with `--json` or `--verbose` to surface detailed errors.
+- Chromium browsers can expose menus plus generic web-area/layout containers while omitting actionable web-content descendants from `see --annotate`. This is a browser accessibility limitation, not proof that the page is empty. Use `screen list` and `window list` to map the intended display/window, then use `--foreground --input-strategy synthOnly` with window-relative coordinates. For already-focused browser automation, targetless `--global-coords` is also valid.

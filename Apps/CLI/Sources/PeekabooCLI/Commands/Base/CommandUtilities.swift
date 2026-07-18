@@ -227,11 +227,7 @@ extension WindowIdentificationOptions {
         } else if let index = windowIndex, index < windows.count {
             windows[index]
         } else {
-            windows.first(where: { window in
-                window.bounds.width >= 50 &&
-                    window.bounds.height >= 50 &&
-                    window.windowLevel == 0
-            }) ?? windows.first
+            ObservationTargetResolver.bestWindow(from: windows)
         }
     }
 

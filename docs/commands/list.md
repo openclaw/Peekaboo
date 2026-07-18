@@ -15,7 +15,7 @@ read_when:
 | `apps` (default) | Broader running-app inventory with bundle ID, PID, and focus status. | Accepts `--include-hidden`, `--include-background` for `app list` parity; hidden/background apps are already included when exposed by ApplicationService. |
 | `windows` | Full window enumeration for one process with optional bounds/ID metadata. | `--app <name|bundle|PID:1234>` (required), `--pid`, `--include-details bounds,ids,off_screen`. |
 | `menubar` | Dumps every status-item title/index so you can target them via `menubar click`. | Supports `--json` for scripts piping into `jq`; prefer `data.menu_bar_items`. |
-| `screens` | Shows connected displays, resolution, scaling, and whether they are main/secondary. | None. |
+| `screens` | Shows connected displays, global bounds, display ID, scaling, and whether they are primary. Also available as `peekaboo screen list`. | None. |
 | `permissions` | Mirrors `peekaboo permissions status` for quick entitlement checks. | None.
 
 ## Implementation notes
@@ -27,7 +27,7 @@ read_when:
 - `windows` accepts either user-friendly names or `PID:####` tokens and normalizes `--include-details` values by lowercasing + replacing `-` with `_`, so both `--include-details offscreen,bounds` and `off_screen` work.
 - `windows` deduplicates entries by `window_id` and assigns contiguous `index` values afterwards, so `--window-index` targeting lines up with what is printed. It intentionally shows the full enumeration (including tiny/utility windows on non-zero layers); `peekaboo window list` filters those out but keeps the same IDs and indexes.
 - Menu bar listing is powered by the same `MenuServiceBridge` used by `peekaboo menubar`, so indices reported here line up with what `menubar click --index` expects. JSON keeps legacy `data.items` and also emits preferred `data.menu_bar_items`.
-- App/window/screen inventory uses `UnifiedToolOutput` payloads, which include `data`, `summary`, and `metadata`. `list permissions --json` mirrors `permissions status --json` with the standard `{ success, data }` envelope.
+- App/window/screen inventory uses `UnifiedToolOutput` payloads, which include `data`, `summary`, and `metadata`. Screen JSON includes each display's `displayID`, global `bounds`, `scaleFactor`, and `isPrimary` state. `list permissions --json` mirrors `permissions status --json` with the standard `{ success, data }` envelope.
 
 ## Examples
 ```bash
@@ -38,7 +38,7 @@ peekaboo list
 peekaboo list windows --app "Google Chrome" --include-details bounds,ids
 
 # Pipe the current display layout into jq for scripting
-peekaboo list screens --json | jq '.data.screens[] | {name, size: .frame}'
+peekaboo screen list --json | jq '.data.screens[] | {id: .displayID, bounds, scale: .scaleFactor, main: .isPrimary}'
 ```
 
 ## Troubleshooting

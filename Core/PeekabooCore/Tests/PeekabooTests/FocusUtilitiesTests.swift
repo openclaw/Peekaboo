@@ -1,4 +1,5 @@
 import AppKit
+import ApplicationServices
 import CoreGraphics
 import PeekabooFoundation
 import Testing
@@ -79,6 +80,33 @@ struct FocusUtilitiesTests {
         #expect(customOptions.retryCount == 5)
         #expect(customOptions.switchSpace == false)
         #expect(customOptions.bringToCurrentSpace == true)
+    }
+
+    @Test
+    func `focus verification requires exact AX key window and frontmost app`() {
+        #expect(FocusManagementService.isVerifiedFocus(
+            targetWindowID: 541,
+            ownerPID: 65819,
+            focusedWindowID: 541,
+            frontmostPID: 65819))
+        #expect(!FocusManagementService.isVerifiedFocus(
+            targetWindowID: 541,
+            ownerPID: 65819,
+            focusedWindowID: 546,
+            frontmostPID: 65819))
+        #expect(!FocusManagementService.isVerifiedFocus(
+            targetWindowID: 541,
+            ownerPID: 65819,
+            focusedWindowID: 541,
+            frontmostPID: 90000))
+    }
+
+    @Test
+    func `focus verification reads owner pid through the AX element API`() {
+        let processIdentifier = getpid()
+        let applicationElement = AXUIElementCreateApplication(processIdentifier)
+
+        #expect(FocusManagementService.processIdentifier(for: applicationElement) == processIdentifier)
     }
 
     @Test

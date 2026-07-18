@@ -125,6 +125,7 @@ peekaboo type "github.com/openclaw/Peekaboo" --app Safari --return --foreground
 | [drag](docs/commands/drag.md) | `--from/--to`, modifiers, Dock/Trash targets | Drag-and-drop between elements/coords |
 | [move](docs/commands/move.md) | `--to <id/coords>`, `--screen-index` | Position the cursor without clicking |
 | [window](docs/commands/window.md) | `list`, `move`, `resize`, `focus`, `set-bounds` | Move/resize/focus windows and Spaces |
+| [screen](docs/commands/screen.md) | `list`, `--json` | Enumerate display IDs, global bounds, scale, and primary state |
 | [app](docs/commands/app.md) | `launch`, `quit`, `relaunch`, `switch`, `list` | Launch, quit, relaunch, switch apps |
 | [space](docs/commands/space.md) | `list`, `switch`, `move-window` | List or switch macOS Spaces |
 | [menu](docs/commands/menu.md) | `list`, `list-all`, `click`, `click-extra` | List/click app menus and extras |

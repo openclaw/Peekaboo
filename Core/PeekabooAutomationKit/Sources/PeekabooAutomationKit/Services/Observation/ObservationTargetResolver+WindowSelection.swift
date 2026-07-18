@@ -89,6 +89,14 @@ extension ObservationTargetResolver {
         // Prefer the window a human would expect: titled, normal-level, non-minimized, large, and early in AX order.
         var score = 0.0
 
+        if window.isFrontmost == true {
+            score += 20000
+        }
+
+        if window.isKeyWindow == true {
+            score += 10000
+        }
+
         if window.isMainWindow {
             score += 2000
         }
