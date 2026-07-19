@@ -16,7 +16,9 @@ APP_NAME="${APP_NAME:-${MAC_RELEASE_APP_NAME:-Peekaboo}}"
 VERSION="${VERSION:-$(node -p "require('$ROOT_DIR/package.json').version")}"
 EXPECTED_SIGN_IDENTITY="Developer ID Application: OpenClaw Foundation (FWJYW4S8P8)"
 EXPECTED_TEAM_ID="FWJYW4S8P8"
+EXPECTED_SIGN_REQUIREMENT="anchor apple generic and certificate leaf[subject.OU] = \"$EXPECTED_TEAM_ID\""
 SIGN_IDENTITY="${MAC_RELEASE_CODESIGN_IDENTITY:-${SIGN_IDENTITY:-$EXPECTED_SIGN_IDENTITY}}"
+NOTARYTOOL_PROFILE="${NOTARYTOOL_PROFILE:-${NOTARYTOOL_KEYCHAIN_PROFILE:-}}"
 RELEASE_DIR="${RELEASE_DIR:-$ROOT_DIR/build/release}"
 APP_ZIP="${APP_ZIP:-}"
 DMG_PATH="${DMG_PATH:-}"
@@ -125,6 +127,24 @@ verify_identity() {
     fail "$artifact is signed with '$authority'; expected '$EXPECTED_SIGN_IDENTITY'"
   [[ "$team_id" == "$EXPECTED_TEAM_ID" ]] ||
     fail "$artifact has TeamIdentifier '$team_id'; expected '$EXPECTED_TEAM_ID'"
+  codesign --verify --strict -R="$EXPECTED_SIGN_REQUIREMENT" "$artifact"
+}
+
+verify_nested_app_identities() {
+  local app_path="$1"
+  local candidate
+  local count=0
+
+  while IFS= read -r -d '' candidate; do
+    if file -b "$candidate" | grep -q 'Mach-O'; then
+      codesign --verify --strict --verbose=2 "$candidate"
+      verify_identity "$candidate"
+      count=$((count + 1))
+    fi
+  done < <(find "$app_path/Contents" -type f -perm -111 -print0)
+
+  ((count > 0)) || fail "No signed Mach-O payloads found in $app_path"
+  log "Verified Foundation authority on $count nested Mach-O payloads"
 }
 
 verify_app() {
@@ -137,7 +157,9 @@ verify_app() {
     fail "App version mismatch: expected $VERSION, got $short_version"
   codesign --verify --deep --strict --verbose=2 "$app_path"
   verify_identity "$app_path"
+  verify_nested_app_identities "$app_path"
   if [[ "$NOTARIZE" == true ]]; then
+    codesign --verify --deep --strict --check-notarization -R=notarized --verbose=2 "$app_path"
     xcrun stapler validate "$app_path"
     spctl --assess --type exec --verbose=4 "$app_path"
   fi
@@ -170,6 +192,7 @@ verify_dmg() {
   codesign --verify --strict --verbose=2 "$dmg_path"
   verify_identity "$dmg_path"
   if [[ "$NOTARIZE" == true ]]; then
+    codesign --verify --strict --check-notarization -R=notarized --verbose=2 "$dmg_path"
     xcrun stapler validate "$dmg_path"
     spctl --assess --type open --context context:primary-signature --verbose=4 "$dmg_path"
   fi

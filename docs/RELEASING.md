@@ -7,9 +7,9 @@ read_when:
 # Peekaboo release checklist
 
 Run from the repository root. Releases publish `@steipete/peekaboo`, universal CLI archives, checksums, and an
-OpenClaw Foundation Developer ID signed/notarized `Peekaboo.app`, branded drag-to-Applications DMG, and Sparkle appcast entry.
+OpenClaw Foundation Developer ID signed/notarized `Peekaboo.app`, standalone and npm CLIs, branded drag-to-Applications DMG, and Sparkle appcast entry.
 
-The standalone CLI intentionally remains signed by the legacy `Y5PE65HELJ` release team so current CLI releases can still authenticate to pre-3.8 GUI bridge hosts. Peekaboo 3.8 and later trust both the legacy and Foundation team IDs. The release driver uses Apple's system `codesign` only for that compatibility binary because the managed helper scopes all normal signing to the Foundation-only keychain; it then verifies the CLI's exact authority and Team ID in both archives. Treat changing the CLI team as a separate compatibility migration.
+Every shipped macOS code object uses `Developer ID Application: OpenClaw Foundation (FWJYW4S8P8)`. Peekaboo 3.8 and later bridge hosts continue accepting both the Foundation team and transition-era personal-team clients so staged upgrades remain possible; Foundation-signed 3.9.6+ CLIs do not authenticate to pre-3.8 GUI bridge hosts. The release driver signs through the shared managed passwordless Foundation keychain, notarizes the standalone CLI as well as the app and DMG, and verifies exact authority, Team ID, Developer ID requirement, and online notarization for extracted archive payloads.
 
 ## 1. Prepare
 
@@ -60,7 +60,7 @@ be:
 Developer ID Application: OpenClaw Foundation (FWJYW4S8P8)
 ```
 
-The CLI artifact must report `Developer ID Application: Peter Steinberger (Y5PE65HELJ)` and Team ID `Y5PE65HELJ`; the release driver verifies this exact compatibility signer in the standalone and npm archives.
+The app, every nested Mach-O payload, standalone CLI archive, npm CLI archive, and DMG must report the Foundation authority and Team ID `FWJYW4S8P8`. Online verification must pass `codesign --verify --strict --check-notarization -R=notarized` for the CLI, extracted app, and DMG.
 
 After npm verification, append a `Verification` section to the draft body with the npm version page, registry tarball
 URL, integrity value, publish time, and exact CI/test proof. Keep the changelog section intact, update the draft with

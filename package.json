@@ -1,6 +1,6 @@
 {
   "name": "@steipete/peekaboo",
-  "version": "3.9.5",
+  "version": "3.9.6",
   "description": "macOS automation MCP server with screen capture, UI interaction, and AI analysis",
   "private": false,
   "type": "module",
@@ -22,7 +22,7 @@
     "build:swift:all": "./scripts/build-swift-universal.sh",
     "app:restart": "./scripts/restart-peekaboo.sh",
     "build": "pnpm run build:cli",
-    "test:safe": "scripts/test-create-release-dmg.sh && node scripts/test-update-appcast-entry.mjs && swift test --package-path Apps/CLI -Xswiftc -DPEEKABOO_SKIP_AUTOMATION --no-parallel",
+    "test:safe": "scripts/test-release-signing-policy.sh && scripts/test-create-release-dmg.sh && node scripts/test-update-appcast-entry.mjs && swift test --package-path Apps/CLI -Xswiftc -DPEEKABOO_SKIP_AUTOMATION --no-parallel",
     "test:automation": "PEEKABOO_INCLUDE_AUTOMATION_TESTS=true swift test --package-path Apps/CLI --no-parallel",
     "test:automation:read": "RUN_AUTOMATION_READ=true PEEKABOO_INCLUDE_AUTOMATION_TESTS=true swift test --package-path Apps/CLI --no-parallel",
     "test:automation:input": "PEEKABOO_INCLUDE_AUTOMATION_TESTS=true PEEKABOO_RUN_INPUT_AUTOMATION_TESTS=true swift test --package-path Core/PeekabooCore --no-parallel",

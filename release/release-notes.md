@@ -1,13 +1,10 @@
-## [3.9.5] - 2026-07-18
+## [3.9.6] - 2026-07-19
 
 ### Highlights
-- Browser coordinate automation now fails closed instead of claiming success when Chrome exposes only non-actionable accessibility containers, and exact-window focus/selection keeps multi-window clicks on the intended window.
-
-### Added
-- Add `peekaboo screen list` display enumeration and expose key/frontmost, layer, and accessibility subrole metadata in `window list --json`.
+- Peekaboo 3.9.6 completes the signing migration: the app, CLI, nested helpers, zip payload, and DMG now use the OpenClaw Foundation Developer ID. macOS treats the changed CLI signer as a new TCC identity, so re-grant Screen Recording, Accessibility, and any Automation access you use after updating.
 
 ### Changed
-- Refresh `chrome-devtools-mcp` to 1.6.0.
+- Sign and notarize every shipped macOS code object with `Developer ID Application: OpenClaw Foundation (FWJYW4S8P8)` while preserving bundle identifiers and the existing Sparkle EdDSA update key; 3.8+ bridge hosts continue accepting transition-era personal-team clients, while the 3.9.6 CLI requires a 3.8+ host.
 
 ### Fixed
-- Make coordinate clicking fail closed on generic or unverified accessibility press targets, prefer the app's actual key window over helper panels, and require exact-window focus verification before foreground input.
+- Reopen permission onboarding once for users whose required grants are missing after the signing migration, with direct guidance to re-grant Screen Recording, Accessibility, and Automation access.

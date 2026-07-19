@@ -71,7 +71,7 @@ Peekaboo BridgeHost validates callers before processing any request:
 
 - Reads the peer PID via `getsockopt(..., LOCAL_PEERPID, ...)`.
 - Validates the peer’s **code signature TeamID** via Security.framework (`SecCodeCopyGuestWithAttributes`).
-- Rejects any process not signed by an allowlisted TeamID (default: `Y5PE65HELJ`).
+- Rejects any process not signed by an allowlisted TeamID (default: `FWJYW4S8P8`, plus `Y5PE65HELJ` for transition-era CLI compatibility).
 
 Debug-only escape hatch:
 

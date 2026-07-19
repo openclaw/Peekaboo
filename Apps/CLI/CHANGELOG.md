@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.9.6] - 2026-07-19
+
+### Highlights
+- The standalone and npm CLIs now use the OpenClaw Foundation Developer ID. macOS treats the changed signer as a new TCC identity, so re-grant Screen Recording, Accessibility, and any Automation access used by direct CLI execution after updating.
+
+### Changed
+- Sign and notarize the standalone and npm CLI payloads with `Developer ID Application: OpenClaw Foundation (FWJYW4S8P8)`; the 3.9.6 CLI requires a 3.8+ GUI bridge host, and newer hosts continue accepting transition-era personal-team clients.
+
 ## [3.9.5] - 2026-07-18
 
 ### Highlights

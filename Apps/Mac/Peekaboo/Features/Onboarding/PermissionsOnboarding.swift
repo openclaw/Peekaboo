@@ -1,9 +1,9 @@
 import AppKit
+import PeekabooCore
 import SwiftUI
 
 let permissionsOnboardingSeenKey = "peekaboo.permissionsOnboardingSeen"
 let permissionsOnboardingVersionKey = "peekaboo.permissionsOnboardingVersion"
-let currentPermissionsOnboardingVersion = 1
 
 @MainActor
 final class PermissionsOnboardingController {
@@ -82,7 +82,10 @@ struct PermissionsOnboardingView: View {
         self.onboardingPage {
             Text("Permissions checklist")
                 .font(.largeTitle.weight(.semibold))
-            Text("Grant the required items once; you can revisit this anytime in Settings → Permissions.")
+            Text(
+                "Peekaboo 3.9.6 completes the move to the OpenClaw Foundation signing identity. " +
+                    "macOS may treat it as a new permission client, so re-grant Screen Recording, " +
+                    "Accessibility, and any Automation access you use.")
                 .font(.body)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -143,7 +146,9 @@ struct PermissionsOnboardingView: View {
 
     private func finish() {
         UserDefaults.standard.set(true, forKey: permissionsOnboardingSeenKey)
-        UserDefaults.standard.set(currentPermissionsOnboardingVersion, forKey: permissionsOnboardingVersionKey)
+        UserDefaults.standard.set(
+            PeekabooPermissionOnboardingPolicy.currentVersion,
+            forKey: permissionsOnboardingVersionKey)
         PermissionsOnboardingController.shared.close()
     }
 }

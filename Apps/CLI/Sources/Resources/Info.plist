@@ -7,9 +7,9 @@
 	<key>CFBundleName</key>
 	<string>Peekaboo</string>
 	<key>CFBundleShortVersionString</key>
-	<string>3.9.5</string>
+	<string>3.9.6</string>
 	<key>CFBundleVersion</key>
-	<string>3.9.5</string>
+	<string>3.9.6</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>15.0</string>
 	<key>LSUIElement</key>
@@ -23,6 +23,6 @@
 	<key>NSScreenCaptureUsageDescription</key>
 	<string>Peekaboo needs screen recording permission to capture screenshots and analyze window content.</string>
 	<key>PeekabooVersionDisplayString</key>
-	<string>Peekaboo 3.9.5</string>
+	<string>Peekaboo 3.9.6</string>
 </dict>
 </plist>

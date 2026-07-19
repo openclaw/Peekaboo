@@ -95,7 +95,9 @@ RELEASE_DIR="${RELEASE_DIR:-$ROOT_DIR/release}"
 APP_NAME="${APP_NAME:-${MAC_RELEASE_APP_NAME:-Peekaboo}}"
 EXPECTED_SIGN_IDENTITY="Developer ID Application: OpenClaw Foundation (FWJYW4S8P8)"
 EXPECTED_TEAM_ID="FWJYW4S8P8"
+EXPECTED_SIGN_REQUIREMENT="anchor apple generic and certificate leaf[subject.OU] = \"$EXPECTED_TEAM_ID\""
 SIGN_IDENTITY="${MAC_RELEASE_CODESIGN_IDENTITY:-${SIGN_IDENTITY:-$EXPECTED_SIGN_IDENTITY}}"
+NOTARYTOOL_PROFILE="${NOTARYTOOL_PROFILE:-${NOTARYTOOL_KEYCHAIN_PROFILE:-}}"
 APPCAST="${APPCAST:-${MAC_RELEASE_APPCAST:-appcast.xml}}"
 APPCAST_PATH="${APPCAST_PATH:-$ROOT_DIR/$APPCAST}"
 MINIMUM_SYSTEM_VERSION="${MINIMUM_SYSTEM_VERSION:-15.0}"
@@ -340,6 +342,24 @@ verify_developer_id_signature() {
     fail "$bundle is signed with '$authority'; expected '$EXPECTED_SIGN_IDENTITY'"
   [[ "$team_id" == "$EXPECTED_TEAM_ID" ]] ||
     fail "$bundle has TeamIdentifier '$team_id'; expected '$EXPECTED_TEAM_ID'"
+  codesign --verify --strict -R="$EXPECTED_SIGN_REQUIREMENT" "$bundle"
+}
+
+verify_nested_developer_id_signatures() {
+  local app_path="$1"
+  local candidate
+  local count=0
+
+  while IFS= read -r -d '' candidate; do
+    if file -b "$candidate" | grep -q 'Mach-O'; then
+      codesign --verify --strict --verbose=2 "$candidate"
+      verify_developer_id_signature "$candidate"
+      count=$((count + 1))
+    fi
+  done < <(find "$app_path/Contents" -type f -perm -111 -print0)
+
+  ((count > 0)) || fail "No signed Mach-O payloads found in $app_path"
+  log "Verified Foundation authority on $count nested Mach-O payloads"
 }
 
 if [[ -z "$VERIFY_ONLY_ZIP" ]]; then
@@ -380,8 +400,10 @@ verify_zip() {
   verify_app_payload "$extracted_app"
   codesign --verify --deep --strict --verbose=2 "$extracted_app"
   verify_app_entitlements "$extracted_app"
+  verify_developer_id_signature "$extracted_app"
+  verify_nested_developer_id_signatures "$extracted_app"
   if [[ "$NOTARIZE" == true ]]; then
-    verify_developer_id_signature "$extracted_app"
+    codesign --verify --deep --strict --check-notarization -R=notarized --verbose=2 "$extracted_app"
     xcrun stapler validate "$extracted_app"
     assess_app_bundle "$extracted_app"
   fi
@@ -420,9 +442,8 @@ codesign --force --deep --options runtime --timestamp --sign "$SIGN_IDENTITY" "$
 codesign --force --options runtime --timestamp --entitlements "$ENTITLEMENTS_PATH" --sign "$SIGN_IDENTITY" "$APP_BUNDLE"
 codesign --verify --deep --strict --verbose=2 "$APP_BUNDLE"
 verify_app_entitlements "$APP_BUNDLE"
-if [[ "$NOTARIZE" == true ]]; then
-  verify_developer_id_signature "$APP_BUNDLE"
-fi
+verify_developer_id_signature "$APP_BUNDLE"
+verify_nested_developer_id_signatures "$APP_BUNDLE"
 
 if [[ "$NOTARIZE" == true ]]; then
   log "Submitting to Apple notarization"
@@ -463,6 +484,7 @@ EOF
   log "Stapling notarization ticket"
   xcrun stapler staple "$APP_BUNDLE"
   xcrun stapler validate "$APP_BUNDLE"
+  codesign --verify --deep --strict --check-notarization -R=notarized --verbose=2 "$APP_BUNDLE"
   assess_app_bundle "$APP_BUNDLE"
 fi
 

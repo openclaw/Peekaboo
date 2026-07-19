@@ -21,9 +21,11 @@ if [ -f "$MAC_RELEASE_MANIFEST" ]; then
     # shellcheck source=/Users/steipete/Projects/Peekaboo/.mac-release.env
     source "$MAC_RELEASE_MANIFEST"
 fi
-CLI_SIGN_IDENTITY="${MAC_RELEASE_CLI_CODESIGN_IDENTITY:-Developer ID Application: Peter Steinberger (Y5PE65HELJ)}"
-CLI_SIGN_TEAM_ID="${MAC_RELEASE_CLI_CODESIGN_TEAM_ID:-Y5PE65HELJ}"
-CLI_CODESIGN_BIN=/usr/bin/codesign
+CLI_SIGN_IDENTITY="${MAC_RELEASE_CLI_CODESIGN_IDENTITY:-Developer ID Application: OpenClaw Foundation (FWJYW4S8P8)}"
+CLI_SIGN_TEAM_ID="${MAC_RELEASE_CLI_CODESIGN_TEAM_ID:-FWJYW4S8P8}"
+CLI_SIGN_REQUIREMENT="anchor apple generic and certificate leaf[subject.OU] = \"$CLI_SIGN_TEAM_ID\""
+NOTARYTOOL_PROFILE="${NOTARYTOOL_PROFILE:-${NOTARYTOOL_KEYCHAIN_PROFILE:-}}"
+export NOTARYTOOL_PROFILE
 
 echo -e "${BLUE}🚀 Peekaboo Release Build Script${NC}"
 
@@ -50,12 +52,16 @@ verify_binary_artifact() {
     (( binary_size > 1000000 )) || fail "$label binary is unexpectedly small: $binary_size bytes"
     file "$binary_path" | grep -q 'Mach-O' || fail "$label binary is not Mach-O: $binary_path"
     codesign --verify --strict --verbose=2 "$binary_path"
+    codesign --verify --strict -R="$CLI_SIGN_REQUIREMENT" "$binary_path"
     authority=$(codesign -dv --verbose=4 "$binary_path" 2>&1 | sed -n 's/^Authority=//p' | head -1)
     team_id=$(codesign -dv --verbose=4 "$binary_path" 2>&1 | sed -n 's/^TeamIdentifier=//p' | head -1)
     [ "$authority" = "$CLI_SIGN_IDENTITY" ] ||
         fail "$label signer mismatch: expected '$CLI_SIGN_IDENTITY', got '$authority'"
     [ "$team_id" = "$CLI_SIGN_TEAM_ID" ] ||
         fail "$label TeamIdentifier mismatch: expected '$CLI_SIGN_TEAM_ID', got '$team_id'"
+    if [ "$MAC_APP_NOTARIZE" = true ]; then
+        codesign --verify --strict --check-notarization -R=notarized --verbose=2 "$binary_path"
+    fi
 
     if command -v lipo >/dev/null 2>&1; then
         lipo_output=$(lipo -info "$binary_path")
@@ -73,6 +79,77 @@ verify_binary_artifact() {
     if printf '%s\n' "$version_output" | grep -Fq -- '-dirty'; then
         fail "$label was built from a dirty tree: $version_output"
     fi
+}
+
+notarize_cli_binary() {
+    local binary_path="$1"
+    local notary_dir
+    local key_file
+    local submission_zip
+    local result_json
+    local result_status
+    local submission_id
+
+    require_command ditto
+    require_command xcrun
+
+    notary_dir=$(mktemp -d /tmp/peekaboo-cli-notary.XXXXXX)
+    submission_zip="$notary_dir/peekaboo-cli.zip"
+    ditto -c -k --sequesterRsrc "$binary_path" "$submission_zip"
+
+    if [ -n "$NOTARYTOOL_PROFILE" ]; then
+        result_json=$(xcrun notarytool submit "$submission_zip" \
+            --keychain-profile "$NOTARYTOOL_PROFILE" \
+            --no-s3-acceleration \
+            --wait \
+            --output-format json) || {
+            rm -rf "$notary_dir"
+            fail "CLI notarization submission failed"
+        }
+    else
+        require_command node
+        [ -n "${APP_STORE_CONNECT_KEY_ID:-}" ] || fail "APP_STORE_CONNECT_KEY_ID missing"
+        [ -n "${APP_STORE_CONNECT_ISSUER_ID:-}" ] || fail "APP_STORE_CONNECT_ISSUER_ID missing"
+        [ -n "${APP_STORE_CONNECT_API_KEY_P8:-}" ] || fail "APP_STORE_CONNECT_API_KEY_P8 missing"
+        key_file="$notary_dir/AuthKey_${APP_STORE_CONNECT_KEY_ID}.p8"
+        APP_STORE_CONNECT_API_KEY_P8="$APP_STORE_CONNECT_API_KEY_P8" node > "$key_file" <<'EOF'
+const raw = process.env.APP_STORE_CONNECT_API_KEY_P8 ?? "";
+let pem = raw.replace(/\\n/g, "\n").trim();
+if (!pem.includes("\n")) {
+  const match = pem.match(/^(-----BEGIN [^-]+-----)\s*(.+?)\s*(-----END [^-]+-----)$/);
+  if (match) {
+    const body = match[2].replace(/\s+/g, "");
+    const wrapped = body.match(/.{1,64}/g)?.join("\n") ?? body;
+    pem = `${match[1]}\n${wrapped}\n${match[3]}`;
+  }
+}
+process.stdout.write(`${pem}\n`);
+EOF
+        chmod 600 "$key_file"
+        if ! result_json=$(xcrun notarytool submit "$submission_zip" \
+            --key "$key_file" \
+            --key-id "$APP_STORE_CONNECT_KEY_ID" \
+            --issuer "$APP_STORE_CONNECT_ISSUER_ID" \
+            --no-s3-acceleration \
+            --wait \
+            --output-format json); then
+            /bin/rm -P "$key_file" 2>/dev/null || rm -f "$key_file"
+            rm -rf "$notary_dir"
+            fail "CLI notarization submission failed"
+        fi
+        /bin/rm -P "$key_file" 2>/dev/null || rm -f "$key_file"
+    fi
+
+    result_status=$(NOTARY_RESULT_JSON="$result_json" node -e \
+        'const r=JSON.parse(process.env.NOTARY_RESULT_JSON); process.stdout.write(r.status ?? "")')
+    submission_id=$(NOTARY_RESULT_JSON="$result_json" node -e \
+        'const r=JSON.parse(process.env.NOTARY_RESULT_JSON); process.stdout.write(r.id ?? "")')
+    rm -rf "$notary_dir"
+
+    [ "$result_status" = "Accepted" ] || fail "CLI notarization was not accepted: ${result_status:-missing status}"
+    [ -n "$submission_id" ] || fail "CLI notarization response did not include a submission ID"
+    echo -e "${GREEN}✅ CLI notarization accepted (${submission_id})${NC}"
+    codesign --verify --strict --check-notarization -R=notarized --verbose=2 "$binary_path"
 }
 
 verify_cli_tarball() {
@@ -347,17 +424,22 @@ else
     CLI_TARBALL_NAME="peekaboo-macos-arm64.tar.gz"
 fi
 
-# The managed release helper scopes normal signing to the Foundation-only keychain.
-# The compatibility CLI signer intentionally remains in the legacy user release
-# keychain, so only this build invokes Apple's codesign directly. Exact authority
-# and TeamIdentifier checks below keep the split fail-closed.
-if ! /usr/bin/security find-identity -p codesigning -v 2>/dev/null | grep -Fq "\"$CLI_SIGN_IDENTITY\""; then
-    fail "required compatibility CLI signer is unavailable: $CLI_SIGN_IDENTITY"
+# Keep CLI signing inside the same managed Foundation keychain lane as the app and DMG.
+# A full release can already be inside codesign-run; avoid taking its release lock twice.
+if [ -n "${CODESIGN_KEYCHAIN:-}" ]; then
+    BUILD_COMMAND=(pnpm run "$BUILD_SCRIPT")
+else
+    BUILD_COMMAND=("$PROJECT_ROOT/scripts/mac-release" codesign-run -- pnpm run "$BUILD_SCRIPT")
 fi
-if ! MAC_RELEASE_CODESIGN_BIN="$CLI_CODESIGN_BIN" MAC_RELEASE_CODESIGN_IDENTITY="$CLI_SIGN_IDENTITY" pnpm run "$BUILD_SCRIPT"; then
+if ! MAC_RELEASE_CODESIGN_IDENTITY="$CLI_SIGN_IDENTITY" "${BUILD_COMMAND[@]}"; then
     echo -e "${RED}❌ Swift build failed!${NC}"
     exit 1
 fi
+if [ "$MAC_APP_NOTARIZE" = true ]; then
+    echo -e "\n${BLUE}Submitting standalone CLI to Apple notarization...${NC}"
+    notarize_cli_binary "$PROJECT_ROOT/peekaboo"
+fi
+verify_binary_artifact "$PROJECT_ROOT/peekaboo" "Built CLI"
 
 # Step 5: Create release artifacts
 echo -e "\n${BLUE}Creating release artifacts...${NC}"

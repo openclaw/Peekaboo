@@ -43,10 +43,12 @@ case "${1:-}" in
       shift
     done
     [[ -n "$mount_dir" ]]
-    mkdir -p "$mount_dir/Peekaboo.app/Contents" "$mount_dir/.background"
+    mkdir -p "$mount_dir/Peekaboo.app/Contents/MacOS" "$mount_dir/.background"
     plutil -create xml1 "$mount_dir/Peekaboo.app/Contents/Info.plist"
     plutil -insert CFBundleShortVersionString -string 3.9.5 \
       "$mount_dir/Peekaboo.app/Contents/Info.plist"
+    touch "$mount_dir/Peekaboo.app/Contents/MacOS/Peekaboo"
+    chmod +x "$mount_dir/Peekaboo.app/Contents/MacOS/Peekaboo"
     ln -s /Applications "$mount_dir/Applications"
     touch \
       "$mount_dir/.background/dmg-background.png" \
@@ -69,6 +71,17 @@ case "${1:-}" in
     exit 1
     ;;
 esac
+EOF
+
+cat >"$FAKE_BIN/file" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "${1:-}" == "-b" && "${2:-}" == */Contents/MacOS/Peekaboo ]]; then
+  printf 'Mach-O 64-bit executable\n'
+else
+  /usr/bin/file "$@"
+fi
 EOF
 
 cat >"$FAKE_BIN/sleep" <<'EOF'

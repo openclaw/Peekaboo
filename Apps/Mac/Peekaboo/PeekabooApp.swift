@@ -328,13 +328,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let seenVersion = UserDefaults.standard.integer(forKey: permissionsOnboardingVersionKey)
         let hasSeen = UserDefaults.standard.bool(forKey: permissionsOnboardingSeenKey)
-        let shouldShow = seenVersion < currentPermissionsOnboardingVersion || !hasSeen
-        guard shouldShow else { return }
-
-        guard !permissions.hasAllPermissions else {
-            UserDefaults.standard.set(true, forKey: permissionsOnboardingSeenKey)
-            UserDefaults.standard.set(currentPermissionsOnboardingVersion, forKey: permissionsOnboardingVersionKey)
+        switch PeekabooPermissionOnboardingPolicy.decision(
+            seenVersion: seenVersion,
+            hasSeen: hasSeen,
+            hasRequiredPermissions: permissions.hasAllPermissions)
+        {
+        case .skip:
             return
+        case .markComplete:
+            UserDefaults.standard.set(true, forKey: permissionsOnboardingSeenKey)
+            UserDefaults.standard.set(
+                PeekabooPermissionOnboardingPolicy.currentVersion,
+                forKey: permissionsOnboardingVersionKey)
+            return
+        case .show:
+            break
         }
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
