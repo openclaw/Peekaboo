@@ -17,24 +17,9 @@ extension DialogService {
     }
 
     private func findActiveFileDialogCandidate(in element: Element) -> Element? {
-        if self.isFileDialogElement(element) {
-            return element
-        }
-
-        for sheet in self.sheetElements(for: element) {
-            if let candidate = self.findActiveFileDialogCandidate(in: sheet) {
-                return candidate
-            }
-        }
-
-        if let children = element.children() {
-            for child in children {
-                if let candidate = self.findActiveFileDialogCandidate(in: child) {
-                    return candidate
-                }
-            }
-        }
-
-        return nil
+        firstUniqueDepthFirst(
+            from: element,
+            matching: self.isFileDialogElement,
+            children: { self.sheetElements(for: $0) + ($0.children() ?? []) })
     }
 }

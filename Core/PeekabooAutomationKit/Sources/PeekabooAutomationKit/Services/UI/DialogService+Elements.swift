@@ -3,25 +3,56 @@ import AXorcist
 import Foundation
 import PeekabooFoundation
 
+func collectUniqueDepthFirst<Node: Hashable>(
+    from root: Node,
+    matching predicate: (Node) -> Bool,
+    children: (Node) -> [Node]) -> [Node]
+{
+    var matches: [Node] = []
+    var visited: Set<Node> = []
+    var stack = [root]
+
+    while let node = stack.popLast() {
+        guard visited.insert(node).inserted else { continue }
+
+        if predicate(node) {
+            matches.append(node)
+        }
+
+        stack.append(contentsOf: children(node).reversed())
+    }
+
+    return matches
+}
+
+func firstUniqueDepthFirst<Node: Hashable>(
+    from root: Node,
+    matching predicate: (Node) -> Bool,
+    children: (Node) -> [Node]) -> Node?
+{
+    var visited: Set<Node> = []
+    var stack = [root]
+
+    while let node = stack.popLast() {
+        guard visited.insert(node).inserted else { continue }
+
+        if predicate(node) {
+            return node
+        }
+
+        stack.append(contentsOf: children(node).reversed())
+    }
+
+    return nil
+}
+
 @MainActor
 extension DialogService {
     func collectTextFields(from element: Element) -> [Element] {
-        var fields: [Element] = []
-
-        func collectFields(from el: Element) {
-            if el.role() == "AXTextField" || el.role() == "AXTextArea" {
-                fields.append(el)
-            }
-
-            if let children = el.children() {
-                for child in children {
-                    collectFields(from: child)
-                }
-            }
-        }
-
-        collectFields(from: element)
-        return fields
+        collectUniqueDepthFirst(
+            from: element,
+            matching: { $0.role() == "AXTextField" || $0.role() == "AXTextArea" },
+            children: { $0.children() ?? [] })
     }
 
     func selectTextField(in textFields: [Element], identifier: String?) throws -> Element {
@@ -112,22 +143,10 @@ extension DialogService {
     }
 
     func collectButtons(from element: Element) -> [Element] {
-        var buttons: [Element] = []
-
-        func collect(from el: Element) {
-            if el.role() == "AXButton" {
-                buttons.append(el)
-            }
-
-            if let children = el.children() {
-                for child in children {
-                    collect(from: child)
-                }
-            }
-        }
-
-        collect(from: element)
-        return buttons
+        collectUniqueDepthFirst(
+            from: element,
+            matching: { $0.role() == "AXButton" },
+            children: { $0.children() ?? [] })
     }
 
     func dialogButtons(from dialog: Element) -> [DialogButton] {

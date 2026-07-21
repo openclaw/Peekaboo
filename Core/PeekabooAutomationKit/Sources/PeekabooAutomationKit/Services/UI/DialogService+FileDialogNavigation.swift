@@ -49,44 +49,31 @@ extension DialogService {
         let identifierAttribute = Attribute<String>("AXIdentifier")
 
         func findDisclosureCandidate(in element: Element) -> Element? {
-            if element.role() == "AXDisclosureTriangle" {
-                return element
-            }
-
-            let identifier = element.attribute(identifierAttribute) ?? ""
-            if identifier.localizedCaseInsensitiveContains("DISCLOSURE_TRIANGLE") ||
-                identifier.localizedCaseInsensitiveContains("DISCLOSURE") ||
-                identifier.localizedCaseInsensitiveContains("ShowDetails") ||
-                identifier.localizedCaseInsensitiveContains("HideDetails")
-            {
-                return element
-            }
-
-            let title = (element.title() ?? "").lowercased()
-            if title.contains("show details") || title.contains("hide details") {
-                return element
-            }
-
-            let description = (element.attribute(Attribute<String>("AXDescription")) ?? "").lowercased()
-            if description.contains("show details") || description.contains("hide details") {
-                return element
-            }
-
-            for sheet in self.sheetElements(for: element) {
-                if let match = findDisclosureCandidate(in: sheet) {
-                    return match
-                }
-            }
-
-            if let children = element.children() {
-                for child in children {
-                    if let match = findDisclosureCandidate(in: child) {
-                        return match
+            firstUniqueDepthFirst(
+                from: element,
+                matching: { current in
+                    if current.role() == "AXDisclosureTriangle" {
+                        return true
                     }
-                }
-            }
 
-            return nil
+                    let identifier = current.attribute(identifierAttribute) ?? ""
+                    if identifier.localizedCaseInsensitiveContains("DISCLOSURE_TRIANGLE") ||
+                        identifier.localizedCaseInsensitiveContains("DISCLOSURE") ||
+                        identifier.localizedCaseInsensitiveContains("ShowDetails") ||
+                        identifier.localizedCaseInsensitiveContains("HideDetails")
+                    {
+                        return true
+                    }
+
+                    let title = (current.title() ?? "").lowercased()
+                    if title.contains("show details") || title.contains("hide details") {
+                        return true
+                    }
+
+                    let description = (current.attribute(Attribute<String>("AXDescription")) ?? "").lowercased()
+                    return description.contains("show details") || description.contains("hide details")
+                },
+                children: { self.sheetElements(for: $0) + ($0.children() ?? []) })
         }
 
         guard let disclosure = findDisclosureCandidate(in: dialog) else { return }

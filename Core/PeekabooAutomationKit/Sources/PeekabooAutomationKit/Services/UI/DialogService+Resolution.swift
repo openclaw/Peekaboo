@@ -190,29 +190,13 @@ extension DialogService {
     }
 
     func resolveDialogCandidate(in element: Element, matching title: String?) -> Element? {
-        if self.isDialogElement(element, matching: title) {
-            return element
-        }
-
-        let sheets = title == nil ? (element.sheets() ?? []) : self.sheetElements(for: element)
-        for sheet in sheets {
-            if let candidate = self.resolveDialogCandidate(in: sheet, matching: title) {
-                return candidate
-            }
-        }
-
-        guard title != nil else {
-            return nil
-        }
-
-        if let children = element.children() {
-            for child in children {
-                if let candidate = self.resolveDialogCandidate(in: child, matching: title) {
-                    return candidate
-                }
-            }
-        }
-
-        return nil
+        firstUniqueDepthFirst(
+            from: element,
+            matching: { self.isDialogElement($0, matching: title) },
+            children: { current in
+                let sheets = title == nil ? (current.sheets() ?? []) : self.sheetElements(for: current)
+                guard title != nil else { return sheets }
+                return sheets + (current.children() ?? [])
+            })
     }
 }
