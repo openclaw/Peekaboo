@@ -27,7 +27,7 @@ extension DialogService {
         self.logger.debug("Found \(buttons.count) buttons in dialog")
 
         guard let targetButton = self.resolveButton(
-            in: dialog,
+            in: buttons,
             requestedTitle: buttonText,
             allowFallbackToDefaultAction: allowFallbackToDefaultAction)
         else {
@@ -71,12 +71,11 @@ extension DialogService {
         return result
     }
 
-    private func resolveButton(
-        in dialog: Element,
+    func resolveButton(
+        in buttons: [Element],
         requestedTitle: String,
         allowFallbackToDefaultAction: Bool) -> Element?
     {
-        let buttons = self.collectButtons(from: dialog)
         let identifierAttribute = Attribute<String>("AXIdentifier")
         let normalizedRequested = self.normalizedDialogButtonTitle(requestedTitle)
 

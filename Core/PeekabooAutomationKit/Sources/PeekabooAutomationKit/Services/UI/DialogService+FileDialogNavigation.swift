@@ -49,7 +49,7 @@ extension DialogService {
         let identifierAttribute = Attribute<String>("AXIdentifier")
 
         func findDisclosureCandidate(in element: Element) -> Element? {
-            firstUniqueDepthFirst(
+            DialogTraversal.firstUniqueDepthFirst(
                 from: element,
                 matching: { current in
                     if current.role() == "AXDisclosureTriangle" {
@@ -73,7 +73,7 @@ extension DialogService {
                     let description = (current.attribute(Attribute<String>("AXDescription")) ?? "").lowercased()
                     return description.contains("show details") || description.contains("hide details")
                 },
-                children: { self.sheetElements(for: $0) + ($0.children() ?? []) })
+                children: { self.sheetFirstTraversalChildren(for: $0) })
         }
 
         guard let disclosure = findDisclosureCandidate(in: dialog) else { return }

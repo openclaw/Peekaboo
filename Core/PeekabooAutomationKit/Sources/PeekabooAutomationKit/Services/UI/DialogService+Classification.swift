@@ -3,17 +3,6 @@ import Foundation
 
 @MainActor
 extension DialogService {
-    func sheetElements(for element: Element) -> [Element] {
-        var sheets: [Element] = []
-        if let children = element.children() {
-            sheets.append(contentsOf: children.filter { $0.role() == "AXSheet" })
-        }
-        if let attachedSheets = element.sheets() {
-            sheets.append(contentsOf: attachedSheets)
-        }
-        return sheets
-    }
-
     func isDialogElement(_ element: Element, matching title: String?) -> Bool {
         let role = element.role() ?? ""
         let subrole = element.subrole() ?? ""

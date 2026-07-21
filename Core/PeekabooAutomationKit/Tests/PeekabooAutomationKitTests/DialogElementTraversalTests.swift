@@ -16,7 +16,7 @@ struct DialogElementTraversalTests {
         primaryButton.children = [dialog]
         secondGroup.children = [sharedButton, secondaryButton]
 
-        let matches = collectUniqueDepthFirst(
+        let matches = DialogTraversal.collectUniqueDepthFirst(
             from: dialog,
             matching: { $0.isMatch },
             children: { $0.children })
@@ -37,7 +37,7 @@ struct DialogElementTraversalTests {
         firstGroup.children = [dialog, primaryButton]
         secondGroup.children = [secondaryButton]
 
-        let match = firstUniqueDepthFirst(
+        let match = DialogTraversal.firstUniqueDepthFirst(
             from: dialog,
             matching: {
                 inspected.append($0.name)
@@ -47,6 +47,31 @@ struct DialogElementTraversalTests {
 
         #expect(match === primaryButton)
         #expect(inspected == ["dialog", "first group", "primary button"])
+    }
+
+    @Test
+    func `sheet first children preserve order and deduplicate identities`() {
+        let firstOrdinary = TraversalNode(name: "first ordinary")
+        let firstChildSheet = TraversalNode(name: "first child sheet", isSheet: true)
+        let secondOrdinary = TraversalNode(name: "second ordinary")
+        let secondChildSheet = TraversalNode(name: "second child sheet", isSheet: true)
+        let attachedOnlySheet = TraversalNode(name: "attached only sheet", isSheet: true)
+
+        let children = [firstOrdinary, firstChildSheet, secondOrdinary, secondChildSheet]
+        let attachedSheets = [secondChildSheet, attachedOnlySheet, firstChildSheet]
+
+        let ordered = DialogTraversal.sheetFirstChildren(
+            children: children,
+            attachedSheets: attachedSheets,
+            isSheet: { $0.isSheet })
+
+        #expect(ordered.map(\.name) == [
+            "first child sheet",
+            "second child sheet",
+            "attached only sheet",
+            "first ordinary",
+            "second ordinary",
+        ])
     }
 
     @Test
@@ -62,7 +87,7 @@ struct DialogElementTraversalTests {
             current = child
         }
 
-        let matches = collectUniqueDepthFirst(
+        let matches = DialogTraversal.collectUniqueDepthFirst(
             from: root,
             matching: { $0.isMatch },
             children: { $0.children })
@@ -79,11 +104,13 @@ struct DialogElementTraversalTests {
 private final class TraversalNode: Hashable {
     let name: String
     let isMatch: Bool
+    let isSheet: Bool
     var children: [TraversalNode] = []
 
-    init(name: String, isMatch: Bool = false) {
+    init(name: String, isMatch: Bool = false, isSheet: Bool = false) {
         self.name = name
         self.isMatch = isMatch
+        self.isSheet = isSheet
     }
 
     static func == (lhs: TraversalNode, rhs: TraversalNode) -> Bool {

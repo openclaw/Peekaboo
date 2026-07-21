@@ -3,55 +3,15 @@ import AXorcist
 import Foundation
 import PeekabooFoundation
 
-func collectUniqueDepthFirst<Node: Hashable>(
-    from root: Node,
-    matching predicate: (Node) -> Bool,
-    children: (Node) -> [Node]) -> [Node]
-{
-    var matches: [Node] = []
-    var visited: Set<Node> = []
-    var stack = [root]
-
-    while let node = stack.popLast() {
-        guard visited.insert(node).inserted else { continue }
-
-        if predicate(node) {
-            matches.append(node)
-        }
-
-        stack.append(contentsOf: children(node).reversed())
-    }
-
-    return matches
-}
-
-func firstUniqueDepthFirst<Node: Hashable>(
-    from root: Node,
-    matching predicate: (Node) -> Bool,
-    children: (Node) -> [Node]) -> Node?
-{
-    var visited: Set<Node> = []
-    var stack = [root]
-
-    while let node = stack.popLast() {
-        guard visited.insert(node).inserted else { continue }
-
-        if predicate(node) {
-            return node
-        }
-
-        stack.append(contentsOf: children(node).reversed())
-    }
-
-    return nil
-}
-
 @MainActor
 extension DialogService {
     func collectTextFields(from element: Element) -> [Element] {
-        collectUniqueDepthFirst(
+        DialogTraversal.collectUniqueDepthFirst(
             from: element,
-            matching: { $0.role() == "AXTextField" || $0.role() == "AXTextArea" },
+            matching: {
+                let role = $0.role()
+                return role == "AXTextField" || role == "AXTextArea"
+            },
             children: { $0.children() ?? [] })
     }
 
@@ -143,7 +103,7 @@ extension DialogService {
     }
 
     func collectButtons(from element: Element) -> [Element] {
-        collectUniqueDepthFirst(
+        DialogTraversal.collectUniqueDepthFirst(
             from: element,
             matching: { $0.role() == "AXButton" },
             children: { $0.children() ?? [] })

@@ -17,9 +17,9 @@ extension DialogService {
     }
 
     private func findActiveFileDialogCandidate(in element: Element) -> Element? {
-        firstUniqueDepthFirst(
+        DialogTraversal.firstUniqueDepthFirst(
             from: element,
             matching: self.isFileDialogElement,
-            children: { self.sheetElements(for: $0) + ($0.children() ?? []) })
+            children: { self.sheetFirstTraversalChildren(for: $0) })
     }
 }
