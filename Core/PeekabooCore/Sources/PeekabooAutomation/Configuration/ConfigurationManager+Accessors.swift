@@ -135,15 +135,16 @@ extension ConfigurationManager {
     }
 
     /// Whether any OpenAI authentication material is available — either an API
-    /// key (via `getOpenAIAPIKey()`) or a non-expired OAuth access token (via
-    /// `peekaboo config login openai`). Use this for agent-availability gates;
+    /// key or a usable/refreshable OAuth session created by
+    /// `peekaboo config login openai`. Use this for agent-availability gates;
     /// `getOpenAIAPIKey()` alone deliberately ignores OAuth tokens so they are
-    /// not misclassified as `x-api-key` material.
+    /// not misclassified as API-key material.
     public func hasOpenAIAuth() -> Bool {
         if self.getOpenAIAPIKey()?.isEmpty == false {
             return true
         }
-        return self.validOAuthAccessToken(prefix: "OPENAI") != nil
+        return self.validOAuthAccessToken(prefix: "OPENAI") != nil ||
+            self.hasOAuthRefreshToken(prefix: "OPENAI")
     }
 
     /// OpenAI credential for APIs that accept Bearer tokens but still require

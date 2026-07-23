@@ -89,14 +89,38 @@ extension ConfigurationManager {
     func validOAuthAccessToken(prefix: String) -> String? {
         self.withStateLock {
             self.loadCredentials()
-            guard let token = self.credentials["\(prefix)_ACCESS_TOKEN"] else { return nil }
-            guard let expiryString = self.credentials["\(prefix)_ACCESS_EXPIRES"],
-                  let expiryInt = Int(expiryString) else { return token }
-            let expiryDate = Date(timeIntervalSince1970: TimeInterval(expiryInt))
-            if expiryDate > Date() {
-                return token
+            let tokenKey = "\(prefix)_ACCESS_TOKEN"
+            let expiryKey = "\(prefix)_ACCESS_EXPIRES"
+
+            if let environmentToken = self.environmentValue(for: tokenKey),
+               self.isOAuthAccessTokenValid(
+                   environmentToken,
+                   expiry: self.environmentValue(for: expiryKey),
+               )
+            {
+                return environmentToken
+            }
+            if let storedToken = self.credentials[tokenKey],
+               self.isOAuthAccessTokenValid(storedToken, expiry: self.credentials[expiryKey])
+            {
+                return storedToken
             }
             return nil
+        }
+    }
+
+    private func isOAuthAccessTokenValid(_ token: String, expiry: String?) -> Bool {
+        guard !token.isEmpty else { return false }
+        guard let expiry, let expiryInterval = TimeInterval(expiry) else { return true }
+        return Date(timeIntervalSince1970: expiryInterval) > Date()
+    }
+
+    func hasOAuthRefreshToken(prefix: String) -> Bool {
+        self.withStateLock {
+            self.loadCredentials()
+            let key = "\(prefix)_REFRESH_TOKEN"
+            let token = self.environmentValue(for: key) ?? self.credentials[key]
+            return token?.isEmpty == false
         }
     }
 

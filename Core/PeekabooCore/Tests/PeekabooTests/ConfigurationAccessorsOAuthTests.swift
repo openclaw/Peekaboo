@@ -79,6 +79,36 @@ struct ConfigurationAccessorsOAuthTests {
     }
 
     @Test
+    func `OpenAI availability accepts an expired access token with a refresh token`() throws {
+        try withIsolatedConfigurationEnvironment { _ in
+            self.unsetAllOpenAIEnv()
+            self.manager.resetForTesting()
+            try self.manager.saveCredentials([
+                "OPENAI_ACCESS_TOKEN": "expired-openai-oauth-access-token",
+                "OPENAI_REFRESH_TOKEN": "openai-oauth-refresh-token",
+                "OPENAI_ACCESS_EXPIRES": String(Int(Date().addingTimeInterval(-3600).timeIntervalSince1970)),
+            ])
+
+            #expect(self.manager.hasOpenAIAuth())
+        }
+    }
+
+    @Test
+    func `OAuth access and expiry stay paired by source`() throws {
+        try withIsolatedConfigurationEnvironment { _ in
+            self.unsetAllOpenAIEnv()
+            self.manager.resetForTesting()
+            try self.manager.saveCredentials([
+                "OPENAI_ACCESS_EXPIRES": String(Int(Date().addingTimeInterval(-3600).timeIntervalSince1970)),
+            ])
+            setenv("OPENAI_ACCESS_TOKEN", "valid-environment-access-token", 1)
+
+            #expect(self.manager.getOpenAITranscriptionCredential() == "valid-environment-access-token")
+            #expect(self.manager.hasOpenAIAuth())
+        }
+    }
+
+    @Test
     func `getOpenAITranscriptionCredential returns OAuth access token when no API key is stored`() throws {
         try withIsolatedConfigurationEnvironment { _ in
             self.unsetAllOpenAIEnv()
