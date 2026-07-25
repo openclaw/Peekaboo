@@ -1,5 +1,7 @@
 # Peekaboo 🫣 - Mac automation that sees the screen and does the clicks.
 
+[![MCP Toplist](https://mcptoplist.com/badge/glama%2Fopenclaw%2FPeekaboo.svg)](https://mcptoplist.com/server/glama%2Fopenclaw%2FPeekaboo)
+
 ![Peekaboo Banner](assets/peekaboo.png)
 
 [![npm package](https://img.shields.io/badge/npm_package-3.9.8-brightgreen?logo=npm&logoColor=white&style=flat-square)](https://www.npmjs.com/package/@steipete/peekaboo)
