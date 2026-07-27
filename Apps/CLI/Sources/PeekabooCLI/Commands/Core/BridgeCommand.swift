@@ -91,7 +91,7 @@ extension BridgeCommand {
             print("===============")
             print("")
             print("Selected: \(report.selected.humanSummary)")
-            if let hint = report.bridgeScreenRecordingHint {
+            if let hint = report.bridgeDeniedPermissionsHint {
                 print("")
                 print(hint)
             }

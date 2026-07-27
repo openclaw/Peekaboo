@@ -9,12 +9,22 @@ struct BridgeStatusReport: Codable {
     let candidates: [BridgeCandidateReport]
     let client: BridgeClientReport
 
-    var bridgeScreenRecordingHint: String? {
-        guard let candidate = self.candidates.first(where: { $0.screenRecordingDenied }) else { return nil }
+    /// The candidate summary prints `perm: SR=… AX=… AS=… ES=…`, so a denial is visible but its remedy
+    /// is not: the grant belongs to the host app behind the socket, never the CLI or terminal. Report
+    /// every denied permission, otherwise an AX/ES denial reads as unexplained.
+    var bridgeDeniedPermissionsHint: String? {
+        guard let candidate = self.candidates.first(where: { !$0.deniedPermissionNames.isEmpty }) else {
+            return nil
+        }
         let hostKind = candidate.hostKind ?? "Bridge host"
-        return "Hint: \(hostKind) at \(candidate.socketPath) does not have Screen Recording. Grant it to " +
-            "the host app, or run capture commands with --no-remote --capture-engine cg when the caller " +
-            "process already has permission."
+        let denied = candidate.deniedPermissionNames.joined(separator: ", ")
+        var hint = "Hint: \(hostKind) at \(candidate.socketPath) does not have \(denied). Grant it to " +
+            "that host app — granting the CLI or your terminal will not change this status."
+        if candidate.deniedPermissionNames.contains("Screen Recording") {
+            hint += " For capture, --no-remote --capture-engine cg works when the caller process already " +
+                "has permission."
+        }
+        return hint
     }
 }
 
@@ -49,11 +59,16 @@ struct BridgeCandidateReport: Codable {
         return nil
     }
 
-    var screenRecordingDenied: Bool {
-        if case let .success(handshake) = self.result {
-            return handshake.permissions?.screenRecording == false
+    /// Names match the `peekaboo permissions` labels so both surfaces describe the same grant.
+    var deniedPermissionNames: [String] {
+        guard case let .success(handshake) = self.result, let status = handshake.permissions else {
+            return []
         }
-        return false
+        var denied: [String] = []
+        if !status.screenRecording { denied.append("Screen Recording") }
+        if !status.accessibility { denied.append("Accessibility") }
+        if !status.postEvent { denied.append("Event Synthesizing") }
+        return denied
     }
 
     var humanSummary: String {

@@ -302,16 +302,24 @@ enum PermissionHelpers {
         return "\(permission.name) (\(requirement)): \(status)"
     }
 
-    static func bridgeScreenRecordingHint(for response: PermissionStatusResponse) -> String? {
-        guard response.source == "bridge",
-              response.permissions.contains(where: { permission in
-                  permission.name == "Screen Recording" && !permission.isGranted
-              })
-        else { return nil }
+    /// Bridge-sourced denials are the most common support confusion: the TCC grant must live on the
+    /// host app that answered, not on the CLI or the calling terminal. `grantInstructions` only names
+    /// the System Settings pane, so without this hint a denial sends people to grant the wrong bundle
+    /// and the status never changes. Covers every denied permission, not just Screen Recording.
+    static func bridgeDeniedPermissionsHint(for response: PermissionStatusResponse) -> String? {
+        guard response.source == "bridge" else { return nil }
+        let denied = response.permissions.filter { !$0.isGranted }
+        guard !denied.isEmpty else { return nil }
 
-        return "Hint: status came from the selected Peekaboo Bridge host. Grant Screen Recording to that " +
-            "host app, or run capture commands with --no-remote --capture-engine cg when the caller " +
-            "process already has permission."
+        var hint = "Hint: status came from the selected Peekaboo Bridge host. Grant " +
+            "\(denied.map(\.name).joined(separator: ", ")) to that host app — granting the CLI or your " +
+            "terminal will not change this status. Run peekaboo bridge status to see which host answered, " +
+            "or pass --no-remote to use the local runtime instead."
+        if denied.contains(where: { $0.name == "Screen Recording" }) {
+            hint += " For capture, --no-remote --capture-engine cg works when the caller process already " +
+                "has permission."
+        }
+        return hint
     }
 
     /// Format permissions for help display with dynamic status

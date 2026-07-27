@@ -97,10 +97,58 @@ struct PermissionHelpersTests {
             ]
         )
 
-        let hint = PermissionHelpers.bridgeScreenRecordingHint(for: response)
+        let hint = PermissionHelpers.bridgeDeniedPermissionsHint(for: response)
 
         #expect(hint?.contains("selected Peekaboo Bridge host") == true)
         #expect(hint?.contains("--no-remote --capture-engine cg") == true)
+    }
+
+    @Test
+    func `bridge hint explains remote event synthesizing denial`() {
+        let response = PermissionHelpers.PermissionStatusResponse(
+            source: "bridge",
+            permissions: [
+                PermissionHelpers.PermissionInfo(
+                    name: "Screen Recording",
+                    isRequired: true,
+                    isGranted: true,
+                    grantInstructions: "System Settings > Privacy & Security > Screen Recording"
+                ),
+                PermissionHelpers.PermissionInfo(
+                    name: "Event Synthesizing",
+                    isRequired: false,
+                    isGranted: false,
+                    grantInstructions: "System Settings > Privacy & Security > Accessibility"
+                ),
+            ]
+        )
+
+        let hint = PermissionHelpers.bridgeDeniedPermissionsHint(for: response)
+
+        // The whole point: a bridge-sourced denial must say the grant belongs to the host app,
+        // because granting the CLI or the terminal leaves the status unchanged.
+        #expect(hint?.contains("Event Synthesizing") == true)
+        #expect(hint?.contains("host app") == true)
+        #expect(hint?.contains("--no-remote") == true)
+        // Capture-only advice must not leak into a non-capture denial.
+        #expect(hint?.contains("--capture-engine cg") == false)
+    }
+
+    @Test
+    func `bridge hint stays quiet when every permission is granted`() {
+        let response = PermissionHelpers.PermissionStatusResponse(
+            source: "bridge",
+            permissions: [
+                PermissionHelpers.PermissionInfo(
+                    name: "Screen Recording",
+                    isRequired: true,
+                    isGranted: true,
+                    grantInstructions: "System Settings > Privacy & Security > Screen Recording"
+                ),
+            ]
+        )
+
+        #expect(PermissionHelpers.bridgeDeniedPermissionsHint(for: response) == nil)
     }
 
     @Test
@@ -117,6 +165,6 @@ struct PermissionHelpersTests {
             ]
         )
 
-        #expect(PermissionHelpers.bridgeScreenRecordingHint(for: response) == nil)
+        #expect(PermissionHelpers.bridgeDeniedPermissionsHint(for: response) == nil)
     }
 }
