@@ -59,7 +59,9 @@ struct BridgeCandidateReport: Codable {
         return nil
     }
 
-    /// Names match the `peekaboo permissions` labels so both surfaces describe the same grant.
+    /// Covers every permission `humanSummary` reports as SR/AX/AS/ES, so no denial the summary shows
+    /// can appear without a matching grant hint. Names match the `peekaboo permissions` labels where
+    /// they exist; AppleScript has no entry there and uses its System Settings name.
     var deniedPermissionNames: [String] {
         guard case let .success(handshake) = self.result, let status = handshake.permissions else {
             return []
@@ -67,6 +69,7 @@ struct BridgeCandidateReport: Codable {
         var denied: [String] = []
         if !status.screenRecording { denied.append("Screen Recording") }
         if !status.accessibility { denied.append("Accessibility") }
+        if !status.appleScript { denied.append("Automation (AppleScript)") }
         if !status.postEvent { denied.append("Event Synthesizing") }
         return denied
     }
