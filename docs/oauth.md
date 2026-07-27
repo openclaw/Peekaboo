@@ -13,7 +13,7 @@ Peekaboo supports OAuth for two providers:
 
 These flows avoid storing API keys and instead keep refresh/access tokens in `~/.peekaboo/credentials` (chmod 600).
 
-> Peekaboo shares the same credential layout as Tachikoma. Hosts can swap the profile directory (`TachikomaConfiguration.profileDirectoryName`). API keys from the environment are never copied into the file. If an OAuth session supplied through the environment expires, Peekaboo persists the refreshed access token and rotated refresh token so later requests continue the same refresh chain instead of reusing stale credentials.
+> Peekaboo shares the same credential layout as Tachikoma. Hosts can swap the profile directory (`TachikomaConfiguration.profileDirectoryName`). Credentials supplied through the environment are never copied into the file. Refreshed environment OAuth tokens remain in memory for the current process; use `peekaboo config login` when the rotated refresh chain must persist across launches.
 
 ## What happens during login
 1. Generate PKCE values and open the provider’s authorize URL in the browser (also printed for headless use).
@@ -25,7 +25,7 @@ These flows avoid storing API keys and instead keep refresh/access tokens in `~/
 
 ## How requests are sent
 
-- Providers resolve OAuth tokens and API keys through the shared Tachikoma credential manager. If the access token is expired, Peekaboo refreshes once per request and updates the credentials file.
+- Providers resolve OAuth tokens and API keys through the shared Tachikoma credential manager. If a stored access token is expired, Peekaboo refreshes it and atomically updates the credentials file. Environment-supplied OAuth sessions refresh only in memory.
 - OpenAI OAuth requests use the ChatGPT Codex Responses backend and include the ChatGPT account identifier from the access token. Text and image inputs are supported, including `see --analyze`, `image --analyze`, and agent vision calls.
 - Anthropic requests include the beta header used for Claude Max: `anthropic-beta: oauth-2025-04-20,claude-code-20250219,interleaved-thinking-2025-05-14,fine-grained-tool-streaming-2025-05-14`.
 - An explicit OpenAI API key remains higher priority and uses the public OpenAI API rather than the Codex OAuth transport.
