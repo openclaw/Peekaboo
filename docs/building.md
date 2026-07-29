@@ -13,6 +13,7 @@ read_when:
 - Swift 6.2+ toolchain (Xcode 26.x or newer recommended)
 - Node.js 22+ (Corepack-enabled) — only needed for pnpm helper scripts; core Swift builds do not require Node.
 - pnpm (`corepack enable pnpm`)
+- SwiftLint and SwiftFormat for the repository validation helpers (`brew install swiftlint swiftformat`)
 
 See [platform-support.md](platform-support.md) for the support matrix across released binaries, apps,
 Swift packages, source builds, and pnpm helper scripts.
@@ -51,4 +52,3 @@ pnpm run prepare-release
 # Generate artifacts / publish
 ./scripts/release-binaries.sh --create-github-release --publish-npm
 ```
-
