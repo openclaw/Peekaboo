@@ -64,6 +64,13 @@ lib-cov/
 *.lcov
 .grunt
 .lock-wscript
+/Apps/CLI/info
+/Apps/CLI/test_interface.swift
+/Core/PeekabooCore/test_results.txt
+/Examples/test_basic_api.swift
+
+# Accidental nested CLI scratch tree
+/Apps/CLI/Apps/CLI/
 
 # IDEs and editors
 .idea/
