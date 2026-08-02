@@ -13,24 +13,25 @@ struct PermissionsTests {
         var postEventStatus: ObservablePermissionsService.PermissionState = .notDetermined
 
         private(set) var checkPermissionsCallCount = 0
+        private(set) var forceScreenRecordingProbeValues: [Bool] = []
         private(set) var requestPostEventCallCount = 0
         var hasAllPermissions: Bool {
             self.screenRecordingStatus == .authorized && self.accessibilityStatus == .authorized
         }
 
-        func checkPermissions() {
+        func checkPermissions(includeOptionalPermissions: Bool, forceScreenRecordingProbe: Bool) async {
             self.checkPermissionsCallCount += 1
+            self.forceScreenRecordingProbeValues.append(forceScreenRecordingProbe)
+            self.screenRecordingStatus = .denied
+            self.accessibilityStatus = .denied
         }
 
-        func requestScreenRecording() throws {}
-        func requestAccessibility() throws {}
-        func requestAppleScript() throws {}
-        func requestPostEvent() throws {
+        func requestScreenRecording() async {}
+        func requestAccessibility() async {}
+        func requestAppleScript() async {}
+        func requestPostEvent() async {
             self.requestPostEventCallCount += 1
         }
-
-        func startMonitoring(interval: TimeInterval) {}
-        func stopMonitoring() {}
     }
 
     let permissions: Permissions
@@ -51,20 +52,20 @@ struct PermissionsTests {
 
     @Test
     func `Has all permissions when both are authorized`() {
-        self.permissions.screenRecordingStatus = .authorized
-        self.permissions.accessibilityStatus = .authorized
+        self.mockPermissionsService.screenRecordingStatus = .authorized
+        self.mockPermissionsService.accessibilityStatus = .authorized
         #expect(self.permissions.hasAllPermissions == true)
 
         // Test various combinations
-        self.permissions.screenRecordingStatus = .denied
+        self.mockPermissionsService.screenRecordingStatus = .denied
         #expect(self.permissions.hasAllPermissions == false)
 
-        self.permissions.screenRecordingStatus = .authorized
-        self.permissions.accessibilityStatus = .denied
+        self.mockPermissionsService.screenRecordingStatus = .authorized
+        self.mockPermissionsService.accessibilityStatus = .denied
         #expect(self.permissions.hasAllPermissions == false)
 
-        self.permissions.screenRecordingStatus = .notDetermined
-        self.permissions.accessibilityStatus = .authorized
+        self.mockPermissionsService.screenRecordingStatus = .notDetermined
+        self.mockPermissionsService.accessibilityStatus = .authorized
         #expect(self.permissions.hasAllPermissions == false)
     }
 
@@ -103,8 +104,8 @@ struct PermissionsTests {
         accessibility: ObservablePermissionsService.PermissionState,
         expectedHasAll: Bool)
     {
-        self.permissions.screenRecordingStatus = screenRecording
-        self.permissions.accessibilityStatus = accessibility
+        self.mockPermissionsService.screenRecordingStatus = screenRecording
+        self.mockPermissionsService.accessibilityStatus = accessibility
         #expect(self.permissions.hasAllPermissions == expectedHasAll)
     }
 
@@ -117,6 +118,15 @@ struct PermissionsTests {
         // The app-level wrapper always refreshes required permissions directly.
         #expect(self.permissions.screenRecordingStatus != .notDetermined)
         #expect(self.permissions.accessibilityStatus != .notDetermined)
+        #expect(self.mockPermissionsService.forceScreenRecordingProbeValues == [false])
+    }
+
+    @Test
+    @MainActor
+    func `Permission refresh forces screen recording probe`() async {
+        await self.permissions.refresh()
+
+        #expect(self.mockPermissionsService.forceScreenRecordingProbeValues == [true])
     }
 
     @Test
@@ -139,8 +149,8 @@ struct PermissionsTests {
 
     @Test
     @MainActor
-    func `Event synthesizing request is forwarded to permission service`() {
-        self.permissions.requestPostEvent()
+    func `Event synthesizing request is forwarded to permission service`() async {
+        await self.permissions.requestPostEvent()
 
         #expect(self.mockPermissionsService.requestPostEventCallCount == 1)
     }
@@ -156,9 +166,9 @@ struct PermissionsSystemTests {
 
         // This test is mainly to ensure the method doesn't crash
         // We can't actually test if System Preferences opens in unit tests
-        permissions.requestScreenRecording()
-        permissions.requestAccessibility()
-        permissions.requestPostEvent()
+        await permissions.requestScreenRecording()
+        await permissions.requestAccessibility()
+        await permissions.requestPostEvent()
 
         // Give a moment for any async operations
         try await Task.sleep(nanoseconds: 100_000_000) // 0.1 seconds

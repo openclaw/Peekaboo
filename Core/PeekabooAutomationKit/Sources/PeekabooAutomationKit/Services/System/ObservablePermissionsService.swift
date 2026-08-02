@@ -3,26 +3,22 @@ import Observation
 import os.log
 
 @MainActor
-public protocol ObservablePermissionsServiceProtocol {
+public protocol ObservablePermissionsServiceProtocol: AnyObject {
     var screenRecordingStatus: ObservablePermissionsService.PermissionState { get }
     var accessibilityStatus: ObservablePermissionsService.PermissionState { get }
     var appleScriptStatus: ObservablePermissionsService.PermissionState { get }
     var postEventStatus: ObservablePermissionsService.PermissionState { get }
     var hasAllPermissions: Bool { get }
-    /// Refresh the cached permission states by querying the underlying services.
-    func checkPermissions()
+    /// Refresh permission states, optionally including the slower Apple Events probe.
+    func checkPermissions(includeOptionalPermissions: Bool, forceScreenRecordingProbe: Bool) async
     /// Trigger the screen recording permission prompt if needed.
-    func requestScreenRecording() throws
+    func requestScreenRecording() async
     /// Trigger the accessibility permission prompt if needed.
-    func requestAccessibility() throws
+    func requestAccessibility() async
     /// Trigger the AppleScript permission prompt if needed.
-    func requestAppleScript() throws
+    func requestAppleScript() async
     /// Trigger the event-synthesizing permission prompt if needed.
-    func requestPostEvent() throws
-    /// Begin periodic permission polling with the given interval.
-    func startMonitoring(interval: TimeInterval)
-    /// Stop any in-flight monitoring timers.
-    func stopMonitoring()
+    func requestPostEvent() async
 }
 
 /// Observable wrapper for PermissionsService that provides UI-friendly state management
@@ -43,12 +39,6 @@ public final class ObservablePermissionsService: ObservablePermissionsServicePro
     public private(set) var accessibilityStatus: PermissionState = .notDetermined
     public private(set) var appleScriptStatus: PermissionState = .notDetermined
     public private(set) var postEventStatus: PermissionState = .notDetermined
-
-    /// Timer for monitoring permission changes
-    private var monitorTimer: Timer?
-
-    /// Whether monitoring is active
-    public private(set) var isMonitoring = false
 
     private let logger = Logger(subsystem: "boo.peekaboo.core", category: "ObservablePermissions")
 
@@ -79,66 +69,54 @@ public final class ObservablePermissionsService: ObservablePermissionsServicePro
 
     // MARK: - Public Methods
 
-    /// Check all permissions and update state
-    public func checkPermissions() {
-        // Check all permissions and update state
+    /// Check permissions and update state.
+    public func checkPermissions(
+        includeOptionalPermissions: Bool = true,
+        forceScreenRecordingProbe: Bool = false) async
+    {
         self.logger.debug("Checking all permissions")
-        self.status = self.core.checkAllPermissions()
+        let screenRecording = await self.core.checkScreenRecordingPermissionLive(forceProbe: forceScreenRecordingProbe)
+        let accessibility = self.core.checkAccessibilityPermission()
+        let appleScript = includeOptionalPermissions
+            ? self.core.checkAppleScriptPermission()
+            : self.status.appleScript
+        let postEvent = includeOptionalPermissions
+            ? self.core.checkPostEventPermission()
+            : self.status.postEvent
+        self.status = PermissionsStatus(
+            screenRecording: screenRecording,
+            accessibility: accessibility,
+            appleScript: appleScript,
+            postEvent: postEvent)
         self.updatePermissionStates()
     }
 
-    /// Start monitoring permission changes
-    public func startMonitoring(interval: TimeInterval = 1.0) {
-        // Start monitoring permission changes
-        guard !self.isMonitoring else { return }
-
-        self.logger.info("Starting permission monitoring")
-        self.isMonitoring = true
-
-        // Initial check
-        self.checkPermissions()
-
-        // Set up timer
-        self.monitorTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                self?.checkPermissions()
-            }
-        }
-    }
-
-    /// Stop monitoring permission changes
-    public func stopMonitoring() {
-        // Stop monitoring permission changes
-        guard self.isMonitoring else { return }
-
-        self.logger.info("Stopping permission monitoring")
-        self.isMonitoring = false
-        self.monitorTimer?.invalidate()
-        self.monitorTimer = nil
-    }
-
     /// Request screen recording permission
-    public func requestScreenRecording() throws {
-        _ = self.core.requestScreenRecordingPermission(interactive: true)
-        self.checkPermissions()
+    public func requestScreenRecording() async {
+        let granted = self.core.requestScreenRecordingPermission(interactive: true)
+        self.updateStatus(screenRecording: granted)
+        await self.checkPermissions(includeOptionalPermissions: false, forceScreenRecordingProbe: true)
     }
 
     /// Request accessibility permission
-    public func requestAccessibility() throws {
-        _ = self.core.requestAccessibilityPermission(interactive: true)
-        self.checkPermissions()
+    public func requestAccessibility() async {
+        let granted = self.core.requestAccessibilityPermission(interactive: true)
+        self.updateStatus(accessibility: granted)
+        await self.checkPermissions(includeOptionalPermissions: false, forceScreenRecordingProbe: true)
     }
 
     /// Request AppleScript permission
-    public func requestAppleScript() throws {
-        _ = self.core.requestAppleScriptPermission(interactive: true)
-        self.checkPermissions()
+    public func requestAppleScript() async {
+        let granted = self.core.requestAppleScriptPermission(interactive: true)
+        self.updateStatus(appleScript: granted)
+        await self.checkPermissions(includeOptionalPermissions: true, forceScreenRecordingProbe: true)
     }
 
     /// Request event-synthesizing permission
-    public func requestPostEvent() throws {
-        _ = self.core.requestPostEventPermission(interactive: true)
-        self.checkPermissions()
+    public func requestPostEvent() async {
+        let granted = self.core.requestPostEventPermission(interactive: true)
+        self.updateStatus(postEvent: granted)
+        await self.checkPermissions(includeOptionalPermissions: true, forceScreenRecordingProbe: true)
     }
 
     /// Check if all permissions are granted
@@ -160,9 +138,18 @@ public final class ObservablePermissionsService: ObservablePermissionsServicePro
         self.postEventStatus = self.status.postEvent ? .authorized : .denied
     }
 
-    deinit {
-        // Can't call MainActor methods from deinit
-        // Timer will be cleaned up automatically
+    private func updateStatus(
+        screenRecording: Bool? = nil,
+        accessibility: Bool? = nil,
+        appleScript: Bool? = nil,
+        postEvent: Bool? = nil)
+    {
+        self.status = PermissionsStatus(
+            screenRecording: screenRecording ?? self.status.screenRecording,
+            accessibility: accessibility ?? self.status.accessibility,
+            appleScript: appleScript ?? self.status.appleScript,
+            postEvent: postEvent ?? self.status.postEvent)
+        self.updatePermissionStates()
     }
 }
 

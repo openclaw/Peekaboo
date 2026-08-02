@@ -1,6 +1,3 @@
-import AppKit
-import ApplicationServices
-import CoreGraphics
 import Foundation
 import Observation
 import os.log
@@ -17,17 +14,29 @@ final class Permissions {
     private let permissionsService: any ObservablePermissionsServiceProtocol
     private let logger = Logger(subsystem: "com.peekaboo.peekaboo", category: "Permissions")
 
-    var screenRecordingStatus: ObservablePermissionsService.PermissionState = .notDetermined
-    var accessibilityStatus: ObservablePermissionsService.PermissionState = .notDetermined
-    var appleScriptStatus: ObservablePermissionsService.PermissionState = .notDetermined
-    var postEventStatus: ObservablePermissionsService.PermissionState = .notDetermined
+    var screenRecordingStatus: ObservablePermissionsService.PermissionState {
+        self.permissionsService.screenRecordingStatus
+    }
+
+    var accessibilityStatus: ObservablePermissionsService.PermissionState {
+        self.permissionsService.accessibilityStatus
+    }
+
+    var appleScriptStatus: ObservablePermissionsService.PermissionState {
+        self.permissionsService.appleScriptStatus
+    }
+
+    var postEventStatus: ObservablePermissionsService.PermissionState {
+        self.permissionsService.postEventStatus
+    }
 
     var hasAllPermissions: Bool {
-        self.screenRecordingStatus == .authorized && self.accessibilityStatus == .authorized
+        self.permissionsService.hasAllPermissions
     }
 
     private var monitorTimer: Timer?
     private var isChecking = false
+    private var pendingForcedCheck = false
     private var registrations = 0
     private var lastCheck: Date?
     private var lastOptionalCheck: Date?
@@ -38,15 +47,14 @@ final class Permissions {
 
     init(permissionsService: (any ObservablePermissionsServiceProtocol)? = nil) {
         self.permissionsService = permissionsService ?? ObservablePermissionsService()
-        self.syncFromService()
     }
 
     func check() async {
-        self.check(force: false)
+        await self.check(force: false)
     }
 
     func refresh() async {
-        self.check(force: true)
+        await self.check(force: true)
     }
 
     func setIncludeOptionalPermissions(_ enabled: Bool) {
@@ -57,40 +65,20 @@ final class Permissions {
         self.lastOptionalCheck = nil
     }
 
-    func requestScreenRecording() {
-        do {
-            try self.permissionsService.requestScreenRecording()
-        } catch {
-            self.logger.error("Failed to request screen recording permission: \(error)")
-        }
-        self.syncFromService()
+    func requestScreenRecording() async {
+        await self.permissionsService.requestScreenRecording()
     }
 
-    func requestAccessibility() {
-        do {
-            try self.permissionsService.requestAccessibility()
-        } catch {
-            self.logger.error("Failed to request accessibility permission: \(error)")
-        }
-        self.syncFromService()
+    func requestAccessibility() async {
+        await self.permissionsService.requestAccessibility()
     }
 
-    func requestAppleScript() {
-        do {
-            try self.permissionsService.requestAppleScript()
-        } catch {
-            self.logger.error("Failed to request AppleScript permission: \(error)")
-        }
-        self.syncFromService()
+    func requestAppleScript() async {
+        await self.permissionsService.requestAppleScript()
     }
 
-    func requestPostEvent() {
-        do {
-            try self.permissionsService.requestPostEvent()
-        } catch {
-            self.logger.error("Failed to request Event Synthesizing permission: \(error)")
-        }
-        self.syncFromService()
+    func requestPostEvent() async {
+        await self.permissionsService.requestPostEvent()
     }
 
     func startMonitoring() {
@@ -117,12 +105,17 @@ final class Permissions {
     }
 
     private func startMonitoringTimer() {
-        self.check(force: true)
+        // Passive on purpose: force would unlock the ScreenCaptureKit probe, which can present
+        // the system Screen Recording prompt just from opening a window that shows the checklist.
+        // Only explicit user actions (Refresh, Grant) force a probe.
+        Task { @MainActor in
+            await self.check(force: false)
+        }
 
         self.monitorTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
             guard let self else { return }
             Task { @MainActor in
-                self.check(force: false)
+                await self.check(force: false)
             }
         }
     }
@@ -134,15 +127,13 @@ final class Permissions {
         self.lastOptionalCheck = nil
     }
 
-    private func syncFromService() {
-        self.screenRecordingStatus = self.permissionsService.screenRecordingStatus
-        self.accessibilityStatus = self.permissionsService.accessibilityStatus
-        self.appleScriptStatus = self.permissionsService.appleScriptStatus
-        self.postEventStatus = self.permissionsService.postEventStatus
-    }
-
-    private func check(force: Bool) {
+    private func check(force: Bool) async {
         if self.isChecking {
+            // checkPermissions suspends across an XPC probe, so an explicit Refresh can land
+            // while a passive tick is in flight; queue it instead of silently dropping it.
+            if force {
+                self.pendingForcedCheck = true
+            }
             return
         }
 
@@ -152,41 +143,30 @@ final class Permissions {
         }
 
         self.isChecking = true
-        defer { self.isChecking = false }
 
         self.logger.info("Checking permissions...")
 
-        self.checkRequiredPermissions()
+        let shouldCheckOptionalPermissions = self.includeOptionalPermissions &&
+            (force || self.shouldCheckOptionalPermissions(now: now))
+        await self.permissionsService.checkPermissions(
+            includeOptionalPermissions: shouldCheckOptionalPermissions,
+            forceScreenRecordingProbe: force)
 
-        if self.includeOptionalPermissions {
-            if force || self.shouldCheckOptionalPermissions(now: now) {
-                self.permissionsService.checkPermissions()
-                self.syncFromService()
-                self.lastOptionalCheck = now
-            }
+        if shouldCheckOptionalPermissions {
+            self.lastOptionalCheck = now
         }
 
         self.lastCheck = Date()
+        self.isChecking = false
+
+        if self.pendingForcedCheck {
+            self.pendingForcedCheck = false
+            await self.check(force: true)
+        }
     }
 
     private func shouldCheckOptionalPermissions(now: Date) -> Bool {
         guard let lastOptionalCheck else { return true }
         return now.timeIntervalSince(lastOptionalCheck) >= self.optionalCheckInterval
-    }
-
-    private func checkRequiredPermissions() {
-        self.screenRecordingStatus = Self.screenRecordingPermissionState()
-        self.accessibilityStatus = Self.accessibilityPermissionState()
-    }
-
-    private static func screenRecordingPermissionState() -> ObservablePermissionsService.PermissionState {
-        if #available(macOS 10.15, *) {
-            return CGPreflightScreenCaptureAccess() ? .authorized : .denied
-        }
-        return .authorized
-    }
-
-    private static func accessibilityPermissionState() -> ObservablePermissionsService.PermissionState {
-        AXIsProcessTrusted() ? .authorized : .denied
     }
 }

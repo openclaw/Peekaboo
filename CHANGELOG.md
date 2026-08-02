@@ -8,6 +8,7 @@
 ### Fixed
 - MCP shell commands now support an opt-in timeout that safely terminates the launch-owned process group and bounds pipe draining without changing the legacy unlimited default. Thanks @SebTardif for #298.
 - Publish the Ollama provider guides referenced throughout the generated documentation instead of emitting broken links.
+- Refresh Screen Recording and Event Synthesizing grants in the Mac app's permissions checklist without requiring an app restart.
 
 ## [3.9.8] - 2026-07-23
 

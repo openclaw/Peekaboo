@@ -88,13 +88,13 @@ enum PermissionCapability: String, CaseIterable, Hashable {
     func request(using permissions: Permissions) async {
         switch self {
         case .screenRecording:
-            permissions.requestScreenRecording()
+            await permissions.requestScreenRecording()
         case .accessibility:
-            permissions.requestAccessibility()
+            await permissions.requestAccessibility()
         case .appleScript:
-            permissions.requestAppleScript()
+            await permissions.requestAppleScript()
         case .postEvent:
-            permissions.requestPostEvent()
+            await permissions.requestPostEvent()
         }
 
         await permissions.refresh()

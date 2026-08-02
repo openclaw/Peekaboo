@@ -1,4 +1,3 @@
-import CoreGraphics
 import Foundation
 import os.log
 import PeekabooAutomationKit
@@ -51,8 +50,8 @@ public final class PeekabooBridgeServer {
         allowedOperations: Set<PeekabooBridgeOperation> = PeekabooBridgeOperation.remoteDefaultAllowlist,
         daemonControl: (any PeekabooDaemonControlProviding)? = nil,
         desktopMutationWatermarkStore: DesktopMutationWatermarkStore? = nil,
-        postEventAccessEvaluator: @escaping @MainActor @Sendable () -> Bool = { CGPreflightPostEventAccess() },
-        postEventAccessRequester: @escaping @MainActor @Sendable () -> Bool = { CGRequestPostEventAccess() },
+        postEventAccessEvaluator: (@MainActor @Sendable () -> Bool)? = nil,
+        postEventAccessRequester: (@MainActor @Sendable () -> Bool)? = nil,
         permissionStatusEvaluator: (@MainActor @Sendable (_ allowAppleScriptLaunch: Bool) -> PermissionsStatus)? = nil,
         encoder: JSONEncoder = .peekabooBridgeEncoder(),
         decoder: JSONDecoder = .peekabooBridgeDecoder())
@@ -65,8 +64,12 @@ public final class PeekabooBridgeServer {
         self.allowedOperations = allowedOperations
         self.daemonControl = daemonControl
         self.desktopMutationWatermarkStore = desktopMutationWatermarkStore
-        self.postEventAccessEvaluator = postEventAccessEvaluator
-        self.postEventAccessRequester = postEventAccessRequester
+        self.postEventAccessEvaluator = postEventAccessEvaluator ?? { [services] in
+            services.permissions.checkPostEventPermission()
+        }
+        self.postEventAccessRequester = postEventAccessRequester ?? { [services] in
+            services.permissions.requestPostEventPermission(interactive: true)
+        }
         if let permissionStatusEvaluator {
             self.permissionStatusEvaluator = permissionStatusEvaluator
         } else {

@@ -1,18 +1,140 @@
 import ApplicationServices
-import AVFoundation
 import AXorcist
 import CoreGraphics
 import Foundation
 import os.log
 import PeekabooFoundation
-import ScreenCaptureKit
 
 /// Service for checking and managing macOS system permissions
 @MainActor
 public final class PermissionsService {
-    private let logger = Logger(subsystem: "boo.peekaboo.core", category: "PermissionsService")
+    struct Dependencies {
+        let screenRecordingPreflight: @MainActor @Sendable () -> Bool
+        let screenRecordingRequest: @MainActor @Sendable () -> Bool
+        let screenRecordingEvaluator: any ScreenRecordingPermissionEvaluating
+        let postEventPreflight: @MainActor @Sendable () -> Bool
+        let postEventRequest: @MainActor @Sendable () -> Bool
 
-    public init() {}
+        @MainActor
+        static func live() -> Dependencies {
+            Dependencies(
+                screenRecordingPreflight: { CGPreflightScreenCaptureAccess() },
+                screenRecordingRequest: {
+                    guard !PermissionsService.isRunningUnderTests else {
+                        return CGPreflightScreenCaptureAccess()
+                    }
+                    return CGRequestScreenCaptureAccess()
+                },
+                screenRecordingEvaluator: ScreenRecordingPermissionChecker(),
+                postEventPreflight: { CGPreflightPostEventAccess() },
+                postEventRequest: {
+                    guard !PermissionsService.isRunningUnderTests else {
+                        return CGPreflightPostEventAccess()
+                    }
+                    return CGRequestPostEventAccess()
+                })
+        }
+    }
+
+    @MainActor
+    final class AuthorizationState {
+        static let process = AuthorizationState()
+
+        private(set) var screenRecordingAuthorized = false
+        private(set) var screenRecordingProbeUnlocked = false
+        private(set) var postEventAuthorized = false
+
+        private var screenRecordingProbeTask: Task<Bool, Never>?
+        private var screenRecordingProbeGeneration = 0
+        private var lastScreenRecordingProbeAt: ContinuousClock.Instant?
+
+        func recordScreenRecordingAuthorization(_ authorized: Bool) -> Bool {
+            self.screenRecordingAuthorized = self.screenRecordingAuthorized || authorized
+            return self.screenRecordingAuthorized
+        }
+
+        func unlockScreenRecordingProbe() {
+            self.screenRecordingProbeUnlocked = true
+        }
+
+        func recordPostEventAuthorization(_ authorized: Bool) -> Bool {
+            self.postEventAuthorized = self.postEventAuthorized || authorized
+            return self.postEventAuthorized
+        }
+
+        func evaluateScreenRecordingAuthorization(
+            using evaluator: any ScreenRecordingPermissionEvaluating,
+            logger: CategoryLogger,
+            minimumProbeInterval: Duration,
+            bypassRateLimit: Bool = false) async -> Bool
+        {
+            if self.screenRecordingAuthorized {
+                return true
+            }
+
+            if let joinedProbeTask = screenRecordingProbeTask {
+                let joined = self.recordScreenRecordingAuthorization(await joinedProbeTask.value)
+                // Waiters can resume in any order, so every joiner clears the completed task if
+                // it is still the one it awaited; otherwise a forced call below could re-join the
+                // same stale probe instead of starting a fresh one.
+                if self.screenRecordingProbeTask == joinedProbeTask {
+                    self.screenRecordingProbeTask = nil
+                }
+                // A forced check must not settle for a probe that may predate the grant it is
+                // trying to observe; fall through to a fresh probe unless the joined one succeeded.
+                if joined || !bypassRateLimit {
+                    return joined
+                }
+                if let restartedProbeTask = self.screenRecordingProbeTask {
+                    return await self.recordScreenRecordingAuthorization(restartedProbeTask.value)
+                }
+            }
+
+            let now = ContinuousClock.now
+            if !bypassRateLimit,
+               let lastScreenRecordingProbeAt,
+               now - lastScreenRecordingProbeAt < minimumProbeInterval
+            {
+                return false
+            }
+
+            self.lastScreenRecordingProbeAt = now
+            self.screenRecordingProbeGeneration += 1
+            let generation = self.screenRecordingProbeGeneration
+            let task = Task { @MainActor in
+                await evaluator.hasPermission(logger: logger)
+            }
+            self.screenRecordingProbeTask = task
+
+            let authorized = await task.value
+            if self.screenRecordingProbeGeneration == generation {
+                self.screenRecordingProbeTask = nil
+            }
+            return self.recordScreenRecordingAuthorization(authorized)
+        }
+    }
+
+    private let logger = Logger(subsystem: "boo.peekaboo.core", category: "PermissionsService")
+    private let permissionLogger: CategoryLogger
+    private let dependencies: Dependencies
+    private let authorizationState: AuthorizationState
+    private let screenRecordingProbeMinimumInterval: Duration
+
+    public convenience init() {
+        self.init(dependencies: .live(), authorizationState: .process)
+    }
+
+    init(
+        dependencies: Dependencies,
+        authorizationState: AuthorizationState = AuthorizationState(),
+        screenRecordingProbeMinimumInterval: Duration = .milliseconds(1500),
+        loggingService: any LoggingServiceProtocol = LoggingService())
+    {
+        self.dependencies = dependencies
+        self.authorizationState = authorizationState
+        self.screenRecordingProbeMinimumInterval = screenRecordingProbeMinimumInterval
+        self.permissionLogger = loggingService.logger(category: LoggingService.Category.permissions)
+    }
 
     private static var isRunningUnderTests: Bool {
         ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil ||
@@ -20,22 +142,44 @@ public final class PermissionsService {
             NSClassFromString("XCTest") != nil
     }
 
-    /// Check if Screen Recording permission is granted (synchronous, suitable for UI polling).
+    /// Check if Screen Recording permission is granted using the cheap synchronous preflight.
     ///
-    /// Note: `CGPreflightScreenCaptureAccess` can be unreliable for CLI tools and child
-    /// processes. The async `ScreenRecordingPermissionChecker` in `ScreenCaptureService`
-    /// includes an `SCShareableContent` fallback probe for those scenarios.
+    /// UI polling should use `checkScreenRecordingPermissionLive()` so a grant made while the
+    /// process is running can be observed through ScreenCaptureKit.
     public func checkScreenRecordingPermission() -> Bool {
         self.logger.debug("Checking screen recording permission")
 
         if #available(macOS 10.15, *) {
-            let hasPermission = CGPreflightScreenCaptureAccess()
+            let hasPermission = self.authorizationState.recordScreenRecordingAuthorization(
+                self.dependencies.screenRecordingPreflight())
             self.logger.info("Screen recording permission: \(hasPermission)")
             return hasPermission
         }
 
-        self.logger.info("Screen recording permission: true (pre-10.15 fallback)")
-        return true
+        return self.authorizationState.recordScreenRecordingAuthorization(true)
+    }
+
+    /// Check Screen Recording permission using the shared preflight-or-ScreenCaptureKit probe.
+    ///
+    /// Failed preflights are rate-limited because the fallback is an XPC round-trip. Successful
+    /// authoritative results remain sticky for the lifetime of the process because CoreGraphics
+    /// can keep returning a cached denial after the user grants access in System Settings.
+    public func checkScreenRecordingPermissionLive(forceProbe: Bool = false) async -> Bool {
+        self.logger.debug("Checking live screen recording permission")
+
+        if forceProbe {
+            self.authorizationState.unlockScreenRecordingProbe()
+        }
+
+        let preflightAuthorized = self.checkScreenRecordingPermission()
+        guard !preflightAuthorized else { return true }
+        guard self.authorizationState.screenRecordingProbeUnlocked else { return false }
+
+        return await self.authorizationState.evaluateScreenRecordingAuthorization(
+            using: self.dependencies.screenRecordingEvaluator,
+            logger: self.permissionLogger,
+            minimumProbeInterval: self.screenRecordingProbeMinimumInterval,
+            bypassRateLimit: forceProbe)
     }
 
     @discardableResult
@@ -43,15 +187,14 @@ public final class PermissionsService {
         self.logger.debug("Requesting screen recording permission")
 
         guard interactive else { return self.checkScreenRecordingPermission() }
-        if Self.isRunningUnderTests {
-            return self.checkScreenRecordingPermission()
+        self.authorizationState.unlockScreenRecordingProbe()
+        guard #available(macOS 10.15, *) else {
+            return self.authorizationState.recordScreenRecordingAuthorization(true)
         }
 
-        if #available(macOS 10.15, *) {
-            _ = CGRequestScreenCaptureAccess()
-        }
-
-        return self.checkScreenRecordingPermission()
+        let granted = self.dependencies.screenRecordingRequest()
+        self.logger.info("Screen recording permission request returned: \(granted)")
+        return self.authorizationState.recordScreenRecordingAuthorization(granted)
     }
 
     /// Check if Accessibility permission is granted
@@ -70,13 +213,16 @@ public final class PermissionsService {
         self.logger.debug("Checking event-synthesizing permission")
 
         if #available(macOS 10.15, *) {
-            let hasPermission = CGPreflightPostEventAccess()
+            // Settings-only grants cannot be detected while this process is running because
+            // CGPreflightPostEventAccess is process-cached and no live probe API exists. Relaunch is required;
+            // the interactive request path remains authoritative for grants made in-process.
+            let hasPermission = self.authorizationState.recordPostEventAuthorization(
+                self.dependencies.postEventPreflight())
             self.logger.info("Event-synthesizing permission: \(hasPermission)")
             return hasPermission
         }
 
-        self.logger.info("Event-synthesizing permission: true (pre-10.15 fallback)")
-        return true
+        return self.authorizationState.recordPostEventAuthorization(true)
     }
 
     @discardableResult
@@ -84,17 +230,13 @@ public final class PermissionsService {
         self.logger.debug("Requesting event-synthesizing permission")
 
         guard interactive else { return self.checkPostEventPermission() }
-        if Self.isRunningUnderTests {
-            return self.checkPostEventPermission()
+        guard #available(macOS 10.15, *) else {
+            return self.authorizationState.recordPostEventAuthorization(true)
         }
 
-        if #available(macOS 10.15, *) {
-            let granted = CGRequestPostEventAccess()
-            self.logger.info("Event-synthesizing permission request returned: \(granted)")
-            return granted
-        }
-
-        return self.checkPostEventPermission()
+        let granted = self.dependencies.postEventRequest()
+        self.logger.info("Event-synthesizing permission request returned: \(granted)")
+        return self.authorizationState.recordPostEventAuthorization(granted)
     }
 
     @discardableResult
