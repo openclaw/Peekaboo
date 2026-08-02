@@ -4,6 +4,7 @@
 
 ### Changed
 - Refresh Swift package locks, AXorcist, Tachikoma, and the pnpm toolchain to their latest compatible releases.
+- Restructure the Mac app's status bar menu with a live permission status, primary destinations first, one Permissions entry, housekeeping grouped at the bottom, and context menus anchored beneath the status item.
 
 ### Fixed
 - OpenAI OAuth (ChatGPT login) sessions with an expired access token but valid refresh token are no longer reported unavailable; vision/`--analyze` now routes through the Codex Responses OAuth transport. Thanks @scotthuang for #293.

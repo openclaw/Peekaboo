@@ -45,6 +45,9 @@ enum StatusMenuAppearance {
 /// Manages the macOS status bar integration with animated icon states and popover UI.
 @MainActor
 final class StatusBarController: NSObject, NSMenuDelegate {
+    private static let permissionsStatusItemIdentifier = NSUserInterfaceItemIdentifier(
+        "boo.peekaboo.statusMenu.permissionsStatus")
+
     private let logger = Logger(subsystem: "boo.peekaboo.app", category: "StatusBar")
     private let statusItem: NSStatusItem
     private let popover = NSPopover()
@@ -192,9 +195,86 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     }
 
     private func showContextMenu(anchorEvent _: NSEvent) {
+        // Kick off a passive permission check so the status line self-corrects by the next open;
+        // deliberately not refresh(): a forced check unlocks the ScreenCaptureKit probe, which
+        // may present the system prompt — opening the menu is not grant intent.
+        Task { await self.permissions.check() }
+
+        let menu = self.makeContextMenu(
+            agentModeEnabled: self.settings.agentModeEnabled,
+            sessions: self.sessionStore.sessions)
+        self.refreshPermissionsStatus(in: menu)
+
+        // macOS may apply “standard” images for common items (Settings/Quit).
+        // Strip any images right before display.
+        Self.stripMenuItemImages(menu)
+
+        // Follow the system light/dark mode instead of the menu bar's wallpaper-tinted appearance.
+        StatusMenuAppearance.pin(menu)
+
+        // Native status-item anchoring: attach the menu just for this click so AppKit positions it
+        // exactly like a system status menu on every display and scale factor, then detach so
+        // left-click keeps opening the popover. AppKit's standard-image injection for attached
+        // menus is defended twice: menuWillOpen strips images, and “Settings…​” carries a
+        // zero-width space so the gear heuristic never matches.
+        guard let button = self.statusItem.button else { return }
+        self.statusItem.menu = menu
+        button.performClick(nil)
+        self.statusItem.menu = nil
+    }
+
+    func makeContextMenu(agentModeEnabled: Bool, sessions: [ConversationSession]) -> NSMenu {
         let menu = NSMenu()
         menu.delegate = self
         menu.showsStateColumn = false
+
+        let statusItem = NSMenuItem(title: "Ready", action: nil, keyEquivalent: "")
+        statusItem.identifier = Self.permissionsStatusItemIdentifier
+        statusItem.isEnabled = false
+        menu.addItem(statusItem)
+
+        menu.addItem(.separator())
+
+        // "Open Peekaboo" is agent-mode-only: openMainWindow no-ops when the agent session UI
+        // is unavailable, so showing it for default users would be a dead primary item.
+        if agentModeEnabled {
+            menu.addItem(NSMenuItem(
+                title: "Open Peekaboo",
+                action: #selector(self.openMainWindow),
+                keyEquivalent: "p").with { $0.keyEquivalentModifierMask = [.command, .shift] })
+        }
+
+        menu.addItem(NSMenuItem(
+            title: "Inspector",
+            action: #selector(self.openInspector),
+            keyEquivalent: "i").with { $0.keyEquivalentModifierMask = [.command, .shift] })
+
+        if agentModeEnabled, !sessions.isEmpty {
+            let sessionsMenu = NSMenu()
+
+            for session in sessions.prefix(5) {
+                let item = NSMenuItem(
+                    title: session.title,
+                    action: #selector(self.openSession(_:)),
+                    keyEquivalent: "")
+                item.representedObject = session.id
+                item.target = self
+                sessionsMenu.addItem(item)
+            }
+
+            let sessionsItem = NSMenuItem(title: "Recent Sessions", action: nil, keyEquivalent: "")
+            sessionsItem.submenu = sessionsMenu
+            menu.addItem(sessionsItem)
+        }
+
+        menu.addItem(.separator())
+
+        menu.addItem(NSMenuItem(
+            title: "Permissions…",
+            action: #selector(self.openPermissions),
+            keyEquivalent: ""))
+
+        menu.addItem(.separator())
 
         // macOS may inject a “standard” gear icon for a Settings… item in AppKit menus.
         // That icon causes the whole menu to reserve an (empty) image column.
@@ -208,93 +288,56 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         settingsItem.keyEquivalentModifierMask = .command
         menu.addItem(settingsItem)
 
-        let aboutItem = NSMenuItem(
-            title: "About Peekaboo",
-            action: #selector(self.showAbout),
-            keyEquivalent: "")
-        menu.addItem(aboutItem)
-
-        let updatesItem = NSMenuItem(
+        menu.addItem(NSMenuItem(
             title: "Check for Updates…",
             action: #selector(self.checkForUpdates),
-            keyEquivalent: "")
-        menu.addItem(updatesItem)
-
-        menu.addItem(NSMenuItem(
-            title: "Permissions…",
-            action: #selector(self.openPermissions),
             keyEquivalent: ""))
 
         menu.addItem(NSMenuItem(
-            title: "Permissions Onboarding…",
-            action: #selector(self.showPermissionsOnboarding),
+            title: "About Peekaboo",
+            action: #selector(self.showAbout),
             keyEquivalent: ""))
-
-        if self.settings.agentModeEnabled {
-            let agentMenu = NSMenu()
-
-            if !self.sessionStore.sessions.isEmpty {
-                let headerItem = NSMenuItem(title: "Recent Sessions", action: nil, keyEquivalent: "")
-                headerItem.isEnabled = false
-                agentMenu.addItem(headerItem)
-
-                for session in self.sessionStore.sessions.prefix(5) {
-                    let item = NSMenuItem(
-                        title: session.title,
-                        action: #selector(self.openSession(_:)),
-                        keyEquivalent: "")
-                    item.representedObject = session.id
-                    item.target = self
-                    agentMenu.addItem(item)
-                }
-
-                agentMenu.addItem(.separator())
-            }
-
-            agentMenu.addItem(NSMenuItem(
-                title: "Open Peekaboo",
-                action: #selector(self.openMainWindow),
-                keyEquivalent: "p").with { $0.keyEquivalentModifierMask = [.command, .shift] })
-
-            agentMenu.addItem(NSMenuItem(
-                title: "Inspector",
-                action: #selector(self.openInspector),
-                keyEquivalent: "i").with { $0.keyEquivalentModifierMask = [.command, .shift] })
-
-            let agentItem = NSMenuItem(title: "Agent", action: nil, keyEquivalent: "")
-            agentItem.submenu = agentMenu
-            menu.addItem(agentItem)
-        }
 
         menu.addItem(.separator())
 
-        let quitItem = NSMenuItem(title: "Quit", action: #selector(self.quit), keyEquivalent: "q")
+        let quitItem = NSMenuItem(title: "Quit Peekaboo", action: #selector(self.quit), keyEquivalent: "q")
         quitItem.keyEquivalentModifierMask = .command
         menu.addItem(quitItem)
 
-        // Configure menu items (except quit which needs NSApp as target)
+        // Configure actionable root items; submenu items already target the controller above.
         for item in menu.items where item.action != nil {
             item.target = self
         }
 
-        // macOS may apply “standard” images for common items (Settings/Quit).
-        // Strip any images right before display.
-        Self.stripMenuItemImages(menu)
-
-        // Follow the system light/dark mode instead of the menu bar's wallpaper-tinted appearance.
-        StatusMenuAppearance.pin(menu)
-
-        // Avoid temporarily attaching `statusItem.menu` (which can cause AppKit to inject standard item images,
-        // notably for “Settings…”). Instead, pop up the menu directly anchored to the status item button.
-        guard let button = self.statusItem.button else { return }
-        button.highlight(true)
-        defer { button.highlight(false) }
-
-        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: button.bounds.height), in: button)
+        return menu
     }
 
-    nonisolated func menuWillOpen(_ menu: NSMenu) {
+    // AppKit forbids mutating menu items from menuWillOpen/menuDidClose; the status line is
+    // populated in showContextMenu before the menu is attached. Only image stripping (a
+    // presentation concern AppKit itself introduces late) happens here.
+    func menuWillOpen(_ menu: NSMenu) {
         Self.stripMenuItemImages(menu)
+    }
+
+    func refreshPermissionsStatus(in menu: NSMenu) {
+        guard let statusItem = menu.items.first(where: {
+            $0.identifier == Self.permissionsStatusItemIdentifier
+        }) else { return }
+
+        let requiredPermissionsAuthorized = self.permissions.screenRecordingStatus == .authorized &&
+            self.permissions.accessibilityStatus == .authorized
+
+        if requiredPermissionsAuthorized {
+            statusItem.title = "Ready"
+            statusItem.action = nil
+            statusItem.target = nil
+            statusItem.isEnabled = false
+        } else {
+            statusItem.title = "Permissions required — open checklist"
+            statusItem.action = #selector(self.openPermissions)
+            statusItem.target = self
+            statusItem.isEnabled = true
+        }
     }
 
     private nonisolated static func stripMenuItemImages(_ menu: NSMenu) {
@@ -357,10 +400,6 @@ final class StatusBarController: NSObject, NSMenuDelegate {
 
     @objc private func openPermissions() {
         SettingsOpener.openSettings(tab: .permissions)
-    }
-
-    @objc private func showPermissionsOnboarding() {
-        PermissionsOnboardingController.shared.show(permissions: self.permissions)
     }
 
     @objc private func openInspector() {

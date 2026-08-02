@@ -1,14 +1,36 @@
 import AppKit
 import Testing
 @testable import Peekaboo
+@testable import PeekabooCore
 
 @Suite(.tags(.ui, .unit))
 @MainActor
 struct StatusBarControllerTests {
-    private func makeController() -> StatusBarController {
+    private final class MockPermissionsService: ObservablePermissionsServiceProtocol {
+        var screenRecordingStatus: ObservablePermissionsService.PermissionState = .authorized
+        var accessibilityStatus: ObservablePermissionsService.PermissionState = .authorized
+        var appleScriptStatus: ObservablePermissionsService.PermissionState = .notDetermined
+        var postEventStatus: ObservablePermissionsService.PermissionState = .notDetermined
+
+        var hasAllPermissions: Bool {
+            self.screenRecordingStatus == .authorized && self.accessibilityStatus == .authorized
+        }
+
+        func checkPermissions(includeOptionalPermissions _: Bool, forceScreenRecordingProbe _: Bool) async {}
+        func requestScreenRecording() async {}
+        func requestAccessibility() async {}
+        func requestAppleScript() async {}
+        func requestPostEvent() async {}
+    }
+
+    private func makeController(permissionsService: MockPermissionsService = MockPermissionsService())
+        -> StatusBarController
+    {
         let settings = PeekabooSettings()
-        let sessionStore = SessionStore()
-        let permissions = Permissions()
+        let sessionStore = SessionStore(
+            storageURL: FileManager.default.temporaryDirectory
+                .appendingPathComponent("StatusBarControllerTests-\(UUID().uuidString).json"))
+        let permissions = Permissions(permissionsService: permissionsService)
         let agent = PeekabooAgent(
             settings: settings,
             sessionStore: sessionStore)
@@ -46,14 +68,96 @@ struct StatusBarControllerTests {
     }
 
     @Test
-    func `Menu contains expected items`() {
-        _ = self.makeController()
+    func `Menu follows the frozen item order`() throws {
+        let controller = self.makeController()
+        defer { controller.removeStatusItem() }
+        let sessions = (1...6).map {
+            ConversationSession(id: "session-\($0)", title: "Session \($0)")
+        }
 
-        // We can't directly access the private statusItem property
-        // This test would need the StatusBarController to expose a testing API
-        // or make statusItem internal for testing
+        let menu = controller.makeContextMenu(agentModeEnabled: true, sessions: sessions)
+        controller.menuWillOpen(menu)
 
-        // Test passes - we verified controller initializes without crashing
+        #expect(menu.items.map(self.visibleTitle) == [
+            "Ready",
+            "<separator>",
+            "Open Peekaboo",
+            "Inspector",
+            "Recent Sessions",
+            "<separator>",
+            "Permissions…",
+            "<separator>",
+            "Settings…",
+            "Check for Updates…",
+            "About Peekaboo",
+            "<separator>",
+            "Quit Peekaboo",
+        ])
+
+        let recentSessionsItem = try #require(menu.items.first(where: { $0.title == "Recent Sessions" }))
+        let recentSessionsMenu = try #require(recentSessionsItem.submenu)
+        #expect(recentSessionsMenu.items.map(\.title) == [
+            "Session 1", "Session 2", "Session 3", "Session 4", "Session 5",
+        ])
+
+        let openItem = try #require(menu.items.first(where: { $0.title == "Open Peekaboo" }))
+        #expect(openItem.keyEquivalent == "p")
+        #expect(openItem.keyEquivalentModifierMask == [.command, .shift])
+
+        let inspectorItem = try #require(menu.items.first(where: { $0.title == "Inspector" }))
+        #expect(inspectorItem.keyEquivalent == "i")
+        #expect(inspectorItem.keyEquivalentModifierMask == [.command, .shift])
+
+        let settingsItem = try #require(menu.items.first(where: { $0.title.hasPrefix("Settings…") }))
+        #expect(settingsItem.title == "Settings…\u{200B}")
+        #expect(settingsItem.attributedTitle?.string == "Settings…\u{200B}")
+        #expect(settingsItem.keyEquivalent == ",")
+        #expect(settingsItem.keyEquivalentModifierMask == .command)
+
+        let quitItem = try #require(menu.items.first(where: { $0.title == "Quit Peekaboo" }))
+        #expect(quitItem.keyEquivalent == "q")
+        #expect(quitItem.keyEquivalentModifierMask == .command)
+    }
+
+    @Test
+    func `Recent sessions only appear for enabled agent mode with sessions`() {
+        let controller = self.makeController()
+        defer { controller.removeStatusItem() }
+        let sessions = [ConversationSession(id: "session-1", title: "Session 1")]
+
+        let disabledMenu = controller.makeContextMenu(agentModeEnabled: false, sessions: sessions)
+        let emptyMenu = controller.makeContextMenu(agentModeEnabled: true, sessions: [])
+
+        #expect(!disabledMenu.items.contains(where: { $0.title == "Recent Sessions" }))
+        #expect(!emptyMenu.items.contains(where: { $0.title == "Recent Sessions" }))
+        #expect(!disabledMenu.items.contains(where: { $0.title == "Open Peekaboo" }),
+                "Open Peekaboo no-ops without agent mode, so it must be hidden")
+        #expect(disabledMenu.items.contains(where: { $0.title == "Inspector" }))
+        #expect(emptyMenu.items.contains(where: { $0.title == "Open Peekaboo" }))
+    }
+
+    @Test
+    func `Permission status refreshes when the menu opens`() throws {
+        let permissionsService = MockPermissionsService()
+        permissionsService.screenRecordingStatus = .denied
+        let controller = self.makeController(permissionsService: permissionsService)
+        defer { controller.removeStatusItem() }
+        let menu = controller.makeContextMenu(agentModeEnabled: false, sessions: [])
+
+        controller.refreshPermissionsStatus(in: menu)
+
+        let statusItem = try #require(menu.items.first)
+        #expect(statusItem.title == "Permissions required — open checklist")
+        #expect(statusItem.isEnabled)
+        #expect(statusItem.action != nil)
+
+        permissionsService.screenRecordingStatus = .authorized
+        permissionsService.accessibilityStatus = .authorized
+        controller.refreshPermissionsStatus(in: menu)
+
+        #expect(statusItem.title == "Ready")
+        #expect(!statusItem.isEnabled)
+        #expect(statusItem.action == nil)
     }
 
     @Test
@@ -77,7 +181,7 @@ struct StatusBarControllerTests {
     func `Submenus inherit the pinned root appearance`() throws {
         let menu = NSMenu()
         let submenu = NSMenu()
-        let item = NSMenuItem(title: "Agent", action: nil, keyEquivalent: "")
+        let item = NSMenuItem(title: "Recent Sessions", action: nil, keyEquivalent: "")
         item.submenu = submenu
         menu.addItem(item)
 
@@ -98,5 +202,12 @@ struct StatusBarControllerTests {
 
         // We can't access private popover property
         // Test passes - controller initialized without crashing
+    }
+
+    private func visibleTitle(_ item: NSMenuItem) -> String {
+        if item.isSeparatorItem {
+            return "<separator>"
+        }
+        return item.title.replacingOccurrences(of: "\u{200B}", with: "")
     }
 }
