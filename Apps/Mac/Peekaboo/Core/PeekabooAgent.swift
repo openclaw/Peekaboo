@@ -265,6 +265,8 @@ extension PeekabooAgent {
             "[Tool call: \(toolCall.name)]"
         case let .toolResult(toolResult):
             "[Tool result: \(toolResult.toolCallId)]"
+        case .reasoning:
+            "[Reasoning]"
         }
     }
 
@@ -344,7 +346,7 @@ extension PeekabooAgent {
                 sessionId: self.currentSessionId,
                 model: nil,
                 eventDelegate: eventDelegate)
-        case .image, .toolCall, .toolResult:
+        case .image, .toolCall, .toolResult, .reasoning:
             try await agent.executeTask(
                 description,
                 sessionId: self.currentSessionId,
