@@ -94,6 +94,22 @@ struct ConfigurationAccessorsOAuthTests {
     }
 
     @Test
+    func `Empty environment refresh token does not mask stored OpenAI refresh token`() throws {
+        try withIsolatedConfigurationEnvironment { _ in
+            self.unsetAllOpenAIEnv()
+            self.manager.resetForTesting()
+            try self.manager.saveCredentials([
+                "OPENAI_ACCESS_TOKEN": "expired-openai-oauth-access-token",
+                "OPENAI_REFRESH_TOKEN": "stored-openai-oauth-refresh-token",
+                "OPENAI_ACCESS_EXPIRES": String(Int(Date().addingTimeInterval(-3600).timeIntervalSince1970)),
+            ])
+            setenv("OPENAI_REFRESH_TOKEN", "", 1)
+
+            #expect(self.manager.hasOpenAIAuth())
+        }
+    }
+
+    @Test
     func `OAuth access and expiry stay paired by source`() throws {
         try withIsolatedConfigurationEnvironment { _ in
             self.unsetAllOpenAIEnv()

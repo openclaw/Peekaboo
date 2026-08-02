@@ -93,7 +93,7 @@ extension ConfigurationManager {
             let expiryKey = "\(prefix)_ACCESS_EXPIRES"
 
             if let environmentToken = self.environmentValue(for: tokenKey),
-               self.isOAuthAccessTokenValid(
+                self.isOAuthAccessTokenValid(
                    environmentToken,
                    expiry: self.environmentValue(for: expiryKey),
                )
@@ -119,8 +119,10 @@ extension ConfigurationManager {
         self.withStateLock {
             self.loadCredentials()
             let key = "\(prefix)_REFRESH_TOKEN"
-            let token = self.environmentValue(for: key) ?? self.credentials[key]
-            return token?.isEmpty == false
+            if let environmentToken = self.environmentValue(for: key), !environmentToken.isEmpty {
+                return true
+            }
+            return self.credentials[key]?.isEmpty == false
         }
     }
 
