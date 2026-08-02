@@ -152,7 +152,10 @@ const allPages = allMarkdown(docsDir).map((file) => {
   };
 });
 
-const pages = allPages.filter((page) => !buildExcludes.some((re) => re.test(page.rel)));
+const publicProviderPages = new Set(["providers/ollama.md", "providers/ollama-models.md"]);
+const pages = allPages.filter(
+  (page) => publicProviderPages.has(page.rel) || !buildExcludes.some((re) => re.test(page.rel)),
+);
 const pageMap = new Map(pages.map((page) => [page.rel, page]));
 
 const nav = sections
