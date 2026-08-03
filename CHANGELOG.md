@@ -2,6 +2,9 @@
 
 ## [3.9.10] - Unreleased
 
+### Changed
+- Rewrite the README as a concise front door to installation, first capture, automation, and deeper documentation.
+
 ## [3.9.9] - 2026-08-02
 
 ### Changed

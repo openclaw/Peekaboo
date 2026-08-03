@@ -1,185 +1,123 @@
-# Peekaboo 🫣 - Mac automation that sees the screen and does the clicks.
+# Peekaboo 🫣 — Mac automation that sees the screen and does the clicks.
 
-![Peekaboo Banner](assets/peekaboo.png)
+[![CI](https://img.shields.io/github/actions/workflow/status/openclaw/Peekaboo/macos-ci.yml?branch=main&style=flat-square&label=ci)](https://github.com/openclaw/Peekaboo/actions/workflows/macos-ci.yml) [![npm](https://img.shields.io/npm/v/%40steipete%2Fpeekaboo?style=flat-square)](https://registry.npmjs.org/@steipete%2Fpeekaboo/latest) [![GitHub release](https://img.shields.io/github/v/release/openclaw/Peekaboo?style=flat-square)](https://github.com/openclaw/Peekaboo/releases/latest) [![macOS 15+](https://img.shields.io/badge/macOS-15%2B-0078d7?logo=apple&logoColor=white&style=flat-square)](docs/platform-support.md) [![Swift 6.2](https://img.shields.io/badge/Swift-6.2-F05138?logo=swift&logoColor=white&style=flat-square)](https://swift.org/) [![Node](https://img.shields.io/node/v/%40steipete%2Fpeekaboo?style=flat-square)](https://nodejs.org/) [![License](https://img.shields.io/github/license/openclaw/Peekaboo?style=flat-square)](LICENSE) [![Homebrew](https://img.shields.io/badge/Homebrew-steipete%2Ftap-b28f62?logo=homebrew&logoColor=white&style=flat-square)](https://github.com/steipete/homebrew-tap) [![Ask DeepWiki](https://img.shields.io/badge/Ask-DeepWiki-0088cc?style=flat-square)](https://deepwiki.com/openclaw/Peekaboo)
 
-[![npm package](https://img.shields.io/badge/npm_package-3.9.9-brightgreen?logo=npm&logoColor=white&style=flat-square)](https://www.npmjs.com/package/@steipete/peekaboo)
-[![License: MIT](https://img.shields.io/badge/License-MIT-ffd60a?style=flat-square)](https://opensource.org/licenses/MIT)
-[![macOS 15.0+ (Sequoia)](https://img.shields.io/badge/macOS-15.0%2B_(Sequoia)-0078d7?logo=apple&logoColor=white&style=flat-square)](https://www.apple.com/macos/)
-[![Swift 6.2](https://img.shields.io/badge/Swift-6.2-F05138?logo=swift&logoColor=white&style=flat-square)](https://swift.org/)
-[![node >=22](https://img.shields.io/badge/node-%3E%3D22.0.0-2ea44f?logo=node.js&logoColor=white&style=flat-square)](https://nodejs.org/)
-[![Download macOS](https://img.shields.io/badge/Download-macOS-000000?logo=apple&logoColor=white&style=flat-square)](https://github.com/openclaw/Peekaboo/releases/latest)
-[![Homebrew](https://img.shields.io/badge/Homebrew-steipete%2Ftap-b28f62?logo=homebrew&logoColor=white&style=flat-square)](https://github.com/steipete/homebrew-tap)
-[![Ask DeepWiki](https://img.shields.io/badge/Ask-DeepWiki-0088cc?style=flat-square)](https://deepwiki.com/openclaw/Peekaboo)
+Peekaboo is a macOS CLI and menu-bar app for screen capture, accessibility inspection, and native UI automation. Use it directly, let its agent plan multi-step work, or expose the same toolset to MCP clients.
 
-Peekaboo brings high-fidelity screen capture, AI analysis, and complete GUI automation to macOS. Version 3 adds native agent flows and multi-screen automation across the CLI and MCP server.
-
-## What you get
-- Pixel-accurate captures (windows, screens, menu bar) with optional Retina 2x scaling.
-- Natural-language agent that chains Peekaboo tools (see, click, type, scroll, hotkey, menu, window, app, dock, space).
-- Action-first UI automation for routine clicks/scrolls, with background process-targeted input by default when a target is known.
-- Direct accessibility tools for settable values and named actions (`set-value`, `perform-action`).
-- Menu and menubar discovery with structured JSON; no clicks required.
-- Multi-provider AI through Tachikoma, including hosted, local, and OpenAI-/Anthropic-compatible providers.
-- Claude Fable 5 support with 1M context and a 128K output ceiling; saved temperature/max-token settings are shared by the app and CLI and clamped to each model's capabilities.
-- MCP server for Codex, Claude Code, and Cursor plus a native CLI; the same tools in both.
-- Warm daemon and Peekaboo.app Bridge hosts for permission-bound automation, with distinct lease-owned sockets and local fallback.
-- Configurable, testable workflows with reproducible sessions and strict typing.
-- Requires macOS Screen Recording + Accessibility permissions (see [docs/permissions.md](docs/permissions.md)).
+![Peekaboo banner](assets/peekaboo.png)
 
 ## Install
-- macOS app + CLI (Homebrew):
-  ```bash
-  brew install steipete/tap/peekaboo
-  ```
-- MCP server (Node 22+, no global install needed):
-  ```bash
-  npx -y @steipete/peekaboo
-  ```
 
-### Important for 3.9.6 upgrades
+The released CLI and app require macOS 15 or later.
 
-Peekaboo 3.9.6 completes the move from Peter Steinberger's Developer ID team to the OpenClaw Foundation identity for every shipped macOS executable. macOS treats the new CLI signature as a different TCC client, so **re-grant Screen Recording, Accessibility, and any Automation access you use after updating**. Open Peekaboo.app's Permissions onboarding or run `peekaboo permissions grant`; see [Permissions & Performance](docs/permissions.md) for the exact System Settings panes.
+### CLI with Homebrew
+
+```sh
+brew install steipete/tap/peekaboo
+```
+
+### MCP package with npm
+
+The npm package requires Node.js 22 or later and includes the CLI plus its MCP launcher.
+
+```sh
+npx -y @steipete/peekaboo --version
+```
+
+See [MCP setup](docs/MCP.md) to connect it to Codex, Claude Code, Cursor, or another MCP client.
+
+### Mac app
+
+Download the signed DMG from the [latest GitHub release](https://github.com/openclaw/Peekaboo/releases/latest). The menu-bar app provides permission onboarding, visual feedback, and agent sessions; install the CLI separately when you also need `peekaboo` on `PATH`.
+
+For source builds and alternative install details, see the [installation guide](docs/install.md).
 
 ## Quick start
-```bash
-# Capture full screen at Retina scale and save to Desktop
-peekaboo image --mode screen --retina --path ~/Desktop/screen.png
 
-# Capture current UI state, then copy its snapshot and opaque element IDs exactly
-peekaboo see --app Safari --json
-SNAPSHOT="<snapshot-id>"
-TEXT_FIELD_ID="<text-field-id>"
-BUTTON_ID="<button-id>"
+Check the permissions available to Peekaboo, then take a screenshot:
 
-# Click a button by label
-peekaboo click --on "Reload this page" --snapshot "$SNAPSHOT"
-
-# Directly set a text field value when the accessibility value is settable
-peekaboo set-value --on "$TEXT_FIELD_ID" --value "hello" --snapshot "$SNAPSHOT"
-
-# Invoke a named accessibility action on an element
-peekaboo perform-action --on "$BUTTON_ID" --action AXPress --snapshot "$SNAPSHOT"
-
-# Run a natural-language automation
-peekaboo agent "Open Notes and create a TODO list with three items"
-
-# Run as an MCP server (Codex, Claude Code, Cursor)
-npx -y @steipete/peekaboo
-
-# Minimal MCP client config snippet:
-# {
-#   "mcpServers": {
-#     "peekaboo": {
-#       "command": "npx",
-#       "args": ["-y", "@steipete/peekaboo"],
-#       "env": {
-#         "PEEKABOO_AI_PROVIDERS": "openai/gpt-5.5,anthropic/claude-opus-4-8"
-#       }
-#     }
-#   }
-# }
+```sh
+peekaboo permissions status
+peekaboo image --mode screen --path /tmp/peekaboo-screen.png
 ```
 
-## Shell completions
+Screen capture requires Screen Recording permission. Accessibility permission enables UI inspection and control; the [permissions guide](docs/permissions.md) covers setup and the additional permission used for synthetic input.
 
-Peekaboo can generate shell-native completions directly from the same Commander
-metadata that powers CLI help and docs:
+Inspect a running app to get a structured UI map with opaque element IDs:
 
-```bash
-# Current shell (recommended)
-eval "$(peekaboo completions $SHELL)"
-
-# Explicit shells
-eval "$(peekaboo completions zsh)"
-eval "$(peekaboo completions bash)"
-peekaboo completions fish | source
+```sh
+peekaboo see --app Finder --json
 ```
 
-For persistent setup and troubleshooting, see
-[docs/commands/completions.md](docs/commands/completions.md).
+That is the core loop: observe the current screen, choose an element from the result, and act on it.
 
-## Background vs foreground input
+## Automate an app
 
-`click`, `type`, `press`, `hotkey`, and `paste` default to **background** delivery when Peekaboo can resolve a target process from `--app`, `--pid`, `--window-id`, or snapshot metadata. Background delivery posts process-targeted input without making the target app frontmost, so scripts can interact with Safari, Notes, Terminal, etc. without stealing focus.
+Target an element by its accessible label, then send text to the same app:
 
-Use `--foreground` when the app only accepts input in its focused key window, when you need a real foreground mouse event, or when you are intentionally driving the current focus. Focus flags such as `--space-switch` and `--bring-to-current-space` also imply foreground delivery. Element/query clicks first use Accessibility actions; keyboard input, coordinate clicks, and synthetic click fallback require Event Synthesizing for the sending process. Run `peekaboo permissions request-event-synthesizing` if `permissions status` reports it missing.
-
-```bash
-# Background: target Safari without activating it
+```sh
 peekaboo click "Address and search bar" --app Safari
 peekaboo type "github.com/openclaw/Peekaboo" --app Safari --return
-
-# Foreground: focus Safari first for apps/fields that reject background input
-peekaboo click "Address and search bar" --app Safari --foreground
-peekaboo type "github.com/openclaw/Peekaboo" --app Safari --return --foreground
 ```
 
-| Command | Key flags / subcommands | What it does |
+Targeted input uses background delivery when Peekaboo can resolve the process, so the app does not have to become frontmost. Add `--foreground` when an app only accepts input in its focused key window. See the [automation guide](docs/automation.md) for element IDs, coordinates, snapshots, waits, and input behavior.
+
+## Agent and MCP
+
+The agent combines the same observation and action tools into a natural-language run:
+
+```sh
+peekaboo agent "Open Safari, go to github.com, and search for Peekaboo"
+```
+
+Agent runs need a configured model provider. See [agent setup](docs/commands/agent.md) for providers and sessions, or [MCP setup](docs/MCP.md) to expose Peekaboo's tools to another client.
+
+## Command map
+
+| Goal | Commands | Guide |
 | --- | --- | --- |
-| [see](docs/commands/see.md) | `--app`, `--mode screen/window`, `--retina`, `--json` | Capture and annotate UI, return snapshot + element IDs |
-| [click](docs/commands/click.md) | `--on <id/query>`, `--snapshot`, `--wait-for`, `--coords`, `--foreground` | Click by element ID, label, or coordinates |
-| [type](docs/commands/type.md) | `--text`, `--clear`, `--profile`, `--delay`, `--foreground` | Enter text with pacing options |
-| [set-value](docs/commands/set-value.md) | `--on <id/query>`, `--value`, `--snapshot` | Directly set a settable accessibility value |
-| [perform-action](docs/commands/perform-action.md) | `--on <id/query>`, `--action`, `--snapshot` | Invoke a named accessibility action |
-| [press](docs/commands/press.md) | key names, `--count`, `--delay`, `--hold`, `--foreground` | Special keys and sequences |
-| [hotkey](docs/commands/hotkey.md) | combos like `cmd,shift,t`, `--foreground` | Modifier combos (cmd/ctrl/alt/shift) |
-| [paste](docs/commands/paste.md) | text/file/image payloads, `--restore-delay-ms`, `--foreground` | Paste with clipboard restore |
-| [scroll](docs/commands/scroll.md) | `--on <id>`, `--direction up/down`, `--amount` | Scroll views or elements |
-| [swipe](docs/commands/swipe.md) | `--from/--to`, `--duration`, `--steps` | Smooth gesture-style drags |
-| [drag](docs/commands/drag.md) | `--from/--to`, modifiers, Dock/Trash targets | Drag-and-drop between elements/coords |
-| [move](docs/commands/move.md) | `--to <id/coords>`, `--screen-index` | Position the cursor without clicking |
-| [window](docs/commands/window.md) | `list`, `move`, `resize`, `focus`, `set-bounds` | Move/resize/focus windows and Spaces |
-| [screen](docs/commands/screen.md) | `list`, `--json` | Enumerate display IDs, global bounds, scale, and primary state |
-| [app](docs/commands/app.md) | `launch`, `quit`, `relaunch`, `switch`, `list` | Launch, quit, relaunch, switch apps |
-| [space](docs/commands/space.md) | `list`, `switch`, `move-window` | List or switch macOS Spaces |
-| [menu](docs/commands/menu.md) | `list`, `list-all`, `click`, `click-extra` | List/click app menus and extras |
-| [menubar](docs/commands/menubar.md) | `list`, `click` | Target status-bar items by name/index |
-| [dock](docs/commands/dock.md) | `launch`, `right-click`, `hide`, `show`, `list` | Interact with Dock items |
-| [dialog](docs/commands/dialog.md) | `list`, `click`, `input`, `file`, `dismiss` | Drive system dialogs (open/save/etc.) |
-| [image](docs/commands/image.md) | `--mode screen/window/menu`, `--retina`, `--analyze` | Screenshot screen/window/menu bar (+analyze) |
-| [list](docs/commands/list.md) | `apps`, `windows`, `screens`, `menubar`, `permissions` | Enumerate apps, windows, screens, permissions |
-| [tools](docs/commands/tools.md) | `--verbose`, `--json`, `--no-sort` | Inspect native Peekaboo tools |
-| [completions](docs/commands/completions.md) | `[shell]` | Generate zsh/bash/fish completion scripts from Commander metadata |
-| [config](docs/commands/config.md) | `init`, `show`, `add`, `login`, `models` | Manage credentials/providers/settings |
-| [permissions](docs/commands/permissions.md) | `status`, `grant`, `request-screen-recording`, `request-event-synthesizing` | Check/grant required macOS permissions |
-| [run](docs/commands/run.md) | `.peekaboo.json`, `--output`, `--no-fail-fast` | Execute `.peekaboo.json` automation scripts |
-| [sleep](docs/commands/sleep.md) | `--duration` (ms) | Millisecond delays between steps |
-| [clean](docs/commands/clean.md) | `--all-snapshots`, `--older-than`, `--snapshot` | Prune snapshots and caches |
-| [agent](docs/commands/agent.md) | `--model`, `--dry-run`, `--resume`, `--max-steps`, audio | Natural-language multi-step automation |
-| [mcp](docs/commands/mcp.md) | `serve` (default) | Run Peekaboo as an MCP server |
+| Observe the desktop | `image`, `see`, `list`, `screen` | [Capture and inspection](docs/quickstart.md) |
+| Interact with UI | `click`, `type`, `press`, `scroll`, `drag`, `set-value`, `perform-action` | [Automation](docs/automation.md) |
+| Control macOS | `app`, `window`, `menu`, `menubar`, `dock`, `dialog`, `space` | [Command reference](docs/commands/README.md) |
+| Run workflows | `agent`, `run` | [Agent](docs/commands/agent.md) · [Scripts](docs/commands/run.md) |
+| Integrate with clients | `mcp`, `browser`, `tools` | [MCP](docs/MCP.md) |
 
-## Models and providers
+Run `peekaboo help <command>` for live CLI help. The [complete command index](docs/commands/README.md) links to flags, examples, and troubleshooting for every command.
 
-Peekaboo's provider list changes with Tachikoma and the tested model catalog. See
-[docs/providers.md](docs/providers.md) for the current provider reference, including OpenAI, Anthropic, xAI/Grok,
-Google Gemini, MiniMax, Kimi, Ollama, LM Studio, and compatible custom endpoints.
+## Configuration
 
-Set providers via `PEEKABOO_AI_PROVIDERS` or `peekaboo config add`.
-Agent generation settings live under `agent.temperature` and `agent.maxTokens` in `~/.peekaboo/config.json`; the
-macOS Settings UI reads and writes the same values.
+Peekaboo stores provider credentials and settings under `~/.peekaboo`. Use `peekaboo config` to inspect or change them, and consult the [configuration guide](docs/configuration.md) for profiles, environment variables, and custom providers. The [provider reference](docs/providers.md) covers hosted, compatible, and local model backends.
+
+Shell completions for zsh, bash, and fish come from `peekaboo completions`; see the [completion guide](docs/commands/completions.md) for persistent setup.
 
 ## Learn more
-- Project direction: [VISION.md](VISION.md)
-- Command reference: [docs/commands/](docs/commands/)
-- Platform support: [docs/platform-support.md](docs/platform-support.md)
-- Architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
-- Building from source: [docs/building.md](docs/building.md)
-- Testing guide: [docs/testing/tools.md](docs/testing/tools.md)
-- MCP setup: [docs/commands/mcp.md](docs/commands/mcp.md)
-- Permissions: [docs/permissions.md](docs/permissions.md)
-- Ollama/local models: [docs/providers/ollama.md](docs/providers/ollama.md)
-- Agent chat loop: [docs/agent-chat.md](docs/agent-chat.md)
-- Service API reference: [docs/service-api-reference.md](docs/service-api-reference.md)
+
+- [Project direction](VISION.md)
+- [Platform support](docs/platform-support.md)
+- [Architecture](docs/ARCHITECTURE.md)
+- [Building from source](docs/building.md)
+- [Testing](docs/testing/tools.md)
+- [Agent chat loop](docs/agent-chat.md)
+- [Service API](docs/service-api-reference.md)
 
 ## Community
 
 - [PeekabooWin](https://github.com/FelixKruger/PeekabooWin) — Windows-first rewrite of the Peekaboo automation loop (JavaScript + PowerShell) by [@FelixKruger](https://github.com/FelixKruger)
 - [PeekabooX](https://github.com/nordbyte/PeekabooX) — Linux-first rewrite of the Peekaboo automation loop (Rust + Python) by [@nordbyte](https://github.com/nordbyte)
 
-## Development basics
-- Requirements: see [docs/platform-support.md](docs/platform-support.md). Node 22+ is only needed for the npm MCP wrapper and pnpm helper scripts.
-- Install deps: `pnpm install` then `pnpm run build:cli` or `pnpm run test:safe`.
-- Lint/format: `pnpm run lint && pnpm run format`.
+## Development
+
+Source builds require macOS 15 or later, Swift 6.2 or later, Node.js 22 or later, and the repository's submodules.
+
+```sh
+pnpm install --frozen-lockfile
+pnpm run build:cli
+pnpm run lint:docs
+pnpm run test:safe
+```
+
+More build, signing, and test details live in [docs/building.md](docs/building.md).
 
 ## License
-MIT
+
+MIT. See [LICENSE](LICENSE).
