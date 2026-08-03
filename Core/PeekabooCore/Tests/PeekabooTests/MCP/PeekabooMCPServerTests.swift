@@ -1,4 +1,7 @@
+import Foundation
+import MCP
 import PeekabooFoundation
+import TachikomaMCP
 import Testing
 @testable import PeekabooAgentRuntime
 @testable import PeekabooAutomation
@@ -25,6 +28,29 @@ struct PeekabooMCPServerTests {
         #expect(names.contains("paste"))
         #expect(names.contains("set_value"))
         #expect(names.contains("perform_action"))
+    }
+
+    @Test
+    func `server preserves tool response metadata on the MCP wire result`() throws {
+        let response = ToolResponse.text(
+            "Captured image",
+            meta: .object([
+                "coordinate_context": .object([
+                    "version": .int(1),
+                    "logical_space": .string("global_display_points"),
+                ]),
+                "internal_diagnostics": .string("not part of the public MCP contract"),
+            ]))
+
+        let result = PeekabooMCPServer.callToolResult(from: response)
+        let encoded = try JSONEncoder().encode(result)
+        let json = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        let metadata = try #require(json["_meta"] as? [String: Any])
+        let coordinateContext = try #require(metadata["coordinate_context"] as? [String: Any])
+
+        #expect(coordinateContext["version"] as? Int == 1)
+        #expect(coordinateContext["logical_space"] as? String == "global_display_points")
+        #expect(metadata["internal_diagnostics"] == nil)
     }
 
     @Test

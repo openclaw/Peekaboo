@@ -83,9 +83,7 @@ public actor PeekabooMCPServer {
             // Execute tool on main thread
             let response = try await self.toolContext.execute(tool: tool, arguments: arguments)
 
-            return CallTool.Result(
-                content: response.content,
-                isError: response.isError)
+            return Self.callToolResult(from: response)
         }
 
         // Resources list handler (empty for now, but prevents inspector errors)
@@ -133,6 +131,21 @@ public actor PeekabooMCPServer {
             let data = try JSONEncoder().encode(result)
             return try JSONDecoder().decode(Initialize.Result.self, from: data)
         }
+    }
+
+    static func callToolResult(from response: ToolResponse) -> CallTool.Result {
+        let metadata: Metadata? = if case let .object(fields)? = response.meta,
+                                     let coordinateContext = fields["coordinate_context"]
+        {
+            Metadata(additionalFields: ["coordinate_context": coordinateContext])
+        } else {
+            nil
+        }
+
+        return CallTool.Result(
+            content: response.content,
+            isError: response.isError,
+            _meta: metadata)
     }
 
     private func registerAllTools() async {

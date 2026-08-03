@@ -345,9 +345,9 @@ public struct CaptureCoordinateContext: Sendable, Codable, Equatable {
         self.deliveredImageSize = metadata.size
         self.requestedScale = metadata.diagnostics?.requestedScale
         self.nativeScale = metadata.diagnostics?.nativeScale ?? metadata.displayInfo?.scaleFactor
-        self.outputScale = metadata.diagnostics?.outputScale ?? Self.inferredOutputScale(
+        self.outputScale = Self.inferredOutputScale(
             deliveredImageSize: metadata.size,
-            logicalBounds: logicalBounds)
+            logicalBounds: logicalBounds) ?? metadata.diagnostics?.outputScale
         self.display = metadata.displayInfo.map { DisplayIdentity(index: $0.index, name: $0.name) }
         self.window = metadata.windowInfo.map {
             WindowIdentity(

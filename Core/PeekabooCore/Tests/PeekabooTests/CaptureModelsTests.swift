@@ -237,6 +237,30 @@ struct CaptureModelsTests {
     }
 
     @Test
+    func `Capture coordinate context prefers delivered raster ratio over stale diagnostics`() {
+        let metadata = CaptureMetadata(
+            size: CGSize(width: 3024, height: 1964),
+            mode: .screen,
+            displayInfo: DisplayInfo(
+                index: 0,
+                name: "Built-in Display",
+                bounds: CGRect(x: 0, y: 0, width: 1512, height: 982),
+                scaleFactor: 2),
+            diagnostics: CaptureDiagnostics(
+                requestedScale: .logical1x,
+                nativeScale: 2,
+                outputScale: 1,
+                scaleSource: "requestedLogicalScale",
+                finalPixelSize: CGSize(width: 3024, height: 1964)))
+
+        let context = CaptureCoordinateContext(metadata: metadata)
+
+        #expect(context.requestedScale == .logical1x)
+        #expect(context.nativeScale == 2)
+        #expect(context.outputScale == 2)
+    }
+
+    @Test
     func `DisplayInfo initialization and properties`() {
         let displayInfo = DisplayInfo(
             index: 2,
