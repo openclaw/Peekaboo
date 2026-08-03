@@ -112,7 +112,7 @@ extension ImageTool {
             downscaledCaptures.append(CaptureResult(
                 imageData: result.data,
                 savedPath: capture.savedPath,
-                metadata: capture.metadata,
+                metadata: capture.metadata.withDeliveredPixelSize(result.size),
                 warning: capture.warning))
         }
 
@@ -132,6 +132,7 @@ extension ImageTool {
         let imagePath = try savedFiles.first?.path ?? saveTemporaryImage(firstCapture.imageData)
         let analysis = try await analyzeImage(at: imagePath, question: question)
         let baseMeta = ObservationDiagnosticsMetadata.merge(observation, into: .object([
+            "coordinate_context": CaptureCoordinateContextMetadata.value(for: firstCapture.metadata),
             "model": .string(analysis.modelUsed),
             "savedFiles": .array(savedFiles.map { Value.string($0.path) }),
             "question": .string(question),
@@ -151,9 +152,13 @@ extension ImageTool {
         captureResults: [CaptureResult],
         observation: DesktopObservationResult?) -> ToolResponse
     {
-        let baseMeta = ObservationDiagnosticsMetadata.merge(observation, into: .object([
+        var metadata: [String: Value] = [
             "savedFiles": .array(savedFiles.map { Value.string($0.path) }),
-        ]))
+        ]
+        if let firstCapture = captureResults.first {
+            metadata["coordinate_context"] = CaptureCoordinateContextMetadata.value(for: firstCapture.metadata)
+        }
+        let baseMeta = ObservationDiagnosticsMetadata.merge(observation, into: .object(metadata))
         let captureNote: String = if savedFiles.isEmpty {
             "Captured image"
         } else if savedFiles.count == 1, let label = savedFiles.first?.item_label {
@@ -206,7 +211,11 @@ extension ImageTool {
         return data as Data
     }
 
-    func downscale(imageData: Data, maxDimension: Int, format: ImageFormatOption) -> (data: Data, resized: Bool)? {
+    func downscale(
+        imageData: Data,
+        maxDimension: Int,
+        format: ImageFormatOption) -> (data: Data, resized: Bool, size: CGSize)?
+    {
         guard let source = CGImageSourceCreateWithData(imageData as CFData, nil) else { return nil }
 
         guard let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
@@ -218,7 +227,7 @@ extension ImageTool {
 
         let longest = max(width, height)
         guard longest > CGFloat(maxDimension) else {
-            return (imageData, false)
+            return (imageData, false, CGSize(width: width, height: height))
         }
 
         let options: [CFString: Any] = [
@@ -235,6 +244,9 @@ extension ImageTool {
             return nil
         }
 
-        return (encodedData, true)
+        return (
+            encodedData,
+            true,
+            CGSize(width: thumbnail.width, height: thumbnail.height))
     }
 }

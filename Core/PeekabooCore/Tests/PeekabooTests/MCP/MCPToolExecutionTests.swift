@@ -227,8 +227,25 @@ struct MCPToolExecutionTests {
     @Test
     func `Image tool downscales high-res inline image to custom max_dimension`() async throws {
         let highResPNG = Self.makePNGData(width: 3000, height: 2000)
+        let captureMetadata = CaptureMetadata(
+            size: CGSize(width: 3000, height: 2000),
+            mode: .screen,
+            displayInfo: DisplayInfo(
+                index: 0,
+                name: "Retina Display",
+                bounds: CGRect(x: 0, y: 0, width: 1500, height: 1000),
+                scaleFactor: 2),
+            diagnostics: CaptureDiagnostics(
+                requestedScale: .native,
+                nativeScale: 2,
+                outputScale: 2,
+                scaleSource: "screenBackingScaleFactor",
+                finalPixelSize: CGSize(width: 3000, height: 2000)))
         let screenCapture = await MainActor.run {
-            MockScreenCaptureService(screenRecordingGranted: true, imageData: highResPNG)
+            MockScreenCaptureService(
+                screenRecordingGranted: true,
+                imageData: highResPNG,
+                metadata: captureMetadata)
         }
         let context = await MCPToolTestHelpers.makeContext(screenCapture: screenCapture)
         let tool = ImageTool(context: context)
@@ -250,6 +267,11 @@ struct MCPToolExecutionTests {
         }
 
         #expect(Self.imageDimensions(from: responseData) == CGSize(width: 600, height: 400))
+        let coordinateContext = try #require(Self.coordinateContext(from: response))
+        #expect(Self.size(from: coordinateContext["delivered_image_size"]) == CGSize(width: 600, height: 400))
+        #expect(Self.rect(from: coordinateContext["logical_bounds"]) == CGRect(x: 0, y: 0, width: 1500, height: 1000))
+        #expect(Self.double(from: coordinateContext["native_scale"]) == 2)
+        #expect(Self.double(from: coordinateContext["output_scale"]) == 0.4)
     }
 
     @Test
@@ -302,6 +324,7 @@ struct MCPToolExecutionTests {
 
         let capture = try #require(result.captures.first)
         #expect(Self.imageDimensions(from: capture.imageData) == CGSize(width: 600, height: 400))
+        #expect(capture.metadata.size == CGSize(width: 600, height: 400))
         let savedData = try Data(contentsOf: URL(fileURLWithPath: outputPath))
         #expect(Self.imageDimensions(from: savedData) == CGSize(width: 600, height: 400))
     }
@@ -468,6 +491,20 @@ struct MCPToolExecutionTests {
         #expect(output.contains("help: \"Press to continue\""))
         #expect(output.contains("shortcut: Return"))
         #expect(output.contains("identifier: confirm-button"))
+
+        guard case let .object(meta) = response.meta,
+              case let .string(snapshotID)? = meta["snapshot_id"],
+              case let .object(coordinateContext)? = meta["coordinate_context"],
+              case let .string(referenceID)? = coordinateContext["reference_id"]
+        else {
+            Issue.record("Expected See metadata to contain a referenced coordinate context")
+            return
+        }
+        #expect(referenceID == snapshotID)
+        let storedSnapshot = await UISnapshotManager.shared.getSnapshot(id: snapshotID)
+        let storedContext = await storedSnapshot?.screenshotCoordinateContext
+        #expect(storedContext?.referenceID == snapshotID)
+        #expect(storedContext?.logicalSpace == .globalDisplayPoints)
     }
 
     @Test
@@ -1106,6 +1143,45 @@ struct MCPToolExecutionTests {
         }
     }
 
+    private static func coordinateContext(from response: ToolResponse) -> [String: Value]? {
+        guard case let .object(meta) = response.meta,
+              case let .object(context)? = meta["coordinate_context"]
+        else {
+            return nil
+        }
+        return context
+    }
+
+    private static func double(from value: Value?) -> Double? {
+        switch value {
+        case let .double(number): number
+        case let .int(number): Double(number)
+        default: nil
+        }
+    }
+
+    private static func size(from value: Value?) -> CGSize? {
+        guard case let .object(size)? = value,
+              let width = self.double(from: size["width"]),
+              let height = self.double(from: size["height"])
+        else {
+            return nil
+        }
+        return CGSize(width: width, height: height)
+    }
+
+    private static func rect(from value: Value?) -> CGRect? {
+        guard case let .object(rect)? = value,
+              let x = self.double(from: rect["x"]),
+              let y = self.double(from: rect["y"]),
+              let width = self.double(from: rect["width"]),
+              let height = self.double(from: rect["height"])
+        else {
+            return nil
+        }
+        return CGRect(x: x, y: y, width: width, height: height)
+    }
+
     private static func targetPID(from response: ToolResponse) -> Int32? {
         guard case let .object(meta) = response.meta,
               case let .double(pid)? = meta["target_pid"]
@@ -1550,6 +1626,7 @@ private final class MockElementActionAutomationService: MockAutomationService, E
 private final class MockScreenCaptureService: ScreenCaptureServiceProtocol {
     private let screenRecordingGranted: Bool
     private let imageData: Data
+    private let metadata: CaptureMetadata?
     private(set) var captureAttemptCount = 0
     private(set) var lastWindowID: CGWindowID?
     private(set) var lastAppIdentifier: String?
@@ -1559,11 +1636,13 @@ private final class MockScreenCaptureService: ScreenCaptureServiceProtocol {
     init(screenRecordingGranted: Bool) {
         self.screenRecordingGranted = screenRecordingGranted
         self.imageData = Self.validPNGData
+        self.metadata = nil
     }
 
-    init(screenRecordingGranted: Bool, imageData: Data) {
+    init(screenRecordingGranted: Bool, imageData: Data, metadata: CaptureMetadata? = nil) {
         self.screenRecordingGranted = screenRecordingGranted
         self.imageData = imageData
+        self.metadata = metadata
     }
 
     func captureScreen(
@@ -1638,7 +1717,7 @@ private final class MockScreenCaptureService: ScreenCaptureServiceProtocol {
     private func makeResult(mode: CaptureMode, window: ServiceWindowInfo? = nil) -> CaptureResult {
         CaptureResult(
             imageData: self.imageData,
-            metadata: CaptureMetadata(size: .zero, mode: mode, windowInfo: window))
+            metadata: self.metadata ?? CaptureMetadata(size: .zero, mode: mode, windowInfo: window))
     }
 
     private static let validPNGData = Data([

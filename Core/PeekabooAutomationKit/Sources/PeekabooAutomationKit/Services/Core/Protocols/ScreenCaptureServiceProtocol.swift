@@ -144,7 +144,7 @@ public struct CaptureResult: Sendable, Codable {
 
 /// Metadata about a captured image
 public struct CaptureMetadata: Sendable, Codable {
-    /// Size of the captured image
+    /// Pixel size of the image delivered to the caller.
     public let size: CGSize
 
     /// Capture mode used
@@ -229,6 +229,153 @@ extension CaptureMetadata {
             displayInfo: self.displayInfo,
             timestamp: self.timestamp,
             diagnostics: diagnostics)
+    }
+
+    /// Return metadata updated for an image resized after capture.
+    ///
+    /// Capture engines populate `size` and `finalPixelSize` with their raster output. Callers that
+    /// subsequently resize that raster must keep both values aligned with the delivered image.
+    public func withDeliveredPixelSize(_ deliveredPixelSize: CGSize) -> CaptureMetadata {
+        let logicalBounds = self.windowInfo?.bounds ?? self.displayInfo?.bounds
+        let deliveredOutputScale: CGFloat? = if let logicalBounds, logicalBounds.width > 0 {
+            deliveredPixelSize.width / logicalBounds.width
+        } else if let diagnostics = self.diagnostics, diagnostics.finalPixelSize.width > 0 {
+            diagnostics.outputScale * deliveredPixelSize.width / diagnostics.finalPixelSize.width
+        } else {
+            nil
+        }
+        let updatedDiagnostics = self.diagnostics.map { diagnostics in
+            CaptureDiagnostics(
+                requestedScale: diagnostics.requestedScale,
+                nativeScale: diagnostics.nativeScale,
+                outputScale: deliveredOutputScale ?? diagnostics.outputScale,
+                scaleSource: diagnostics.scaleSource,
+                finalPixelSize: deliveredPixelSize,
+                engine: diagnostics.engine,
+                fallbackReason: diagnostics.fallbackReason)
+        }
+
+        return CaptureMetadata(
+            size: deliveredPixelSize,
+            mode: self.mode,
+            videoTimestampMs: self.videoTimestampMs,
+            applicationInfo: self.applicationInfo,
+            windowInfo: self.windowInfo,
+            displayInfo: self.displayInfo,
+            timestamp: self.timestamp,
+            diagnostics: updatedDiagnostics)
+    }
+}
+
+/// Coordinate metadata that binds an image raster to Peekaboo's canonical automation space.
+///
+/// The context is descriptive only: it does not perform coordinate conversion. Consumers can use
+/// the logical bounds and delivered image size to map image-local pixels without assuming a Retina
+/// scale factor.
+public struct CaptureCoordinateContext: Sendable, Codable, Equatable {
+    public static let currentVersion = 1
+
+    public let version: Int
+    public let referenceID: String?
+    public let logicalSpace: LogicalSpace
+    public let origin: Origin
+    public let logicalBounds: CGRect?
+    public let deliveredImageSize: CGSize
+    public let requestedScale: CaptureScalePreference?
+    public let nativeScale: CGFloat?
+    public let outputScale: CGFloat?
+    public let display: DisplayIdentity?
+    public let window: WindowIdentity?
+
+    public enum LogicalSpace: String, Sendable, Codable, Equatable {
+        case globalDisplayPoints = "global_display_points"
+    }
+
+    public enum Origin: String, Sendable, Codable, Equatable {
+        case topLeft = "top_left"
+    }
+
+    public struct DisplayIdentity: Sendable, Codable, Equatable {
+        public let index: Int
+        public let name: String?
+
+        public init(index: Int, name: String?) {
+            self.index = index
+            self.name = name
+        }
+    }
+
+    public struct WindowIdentity: Sendable, Codable, Equatable {
+        public let windowID: Int
+        public let title: String
+        public let index: Int
+        public let screenIndex: Int?
+        public let screenName: String?
+
+        public init(
+            windowID: Int,
+            title: String,
+            index: Int,
+            screenIndex: Int?,
+            screenName: String?)
+        {
+            self.windowID = windowID
+            self.title = title
+            self.index = index
+            self.screenIndex = screenIndex
+            self.screenName = screenName
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case windowID = "window_id"
+            case title
+            case index
+            case screenIndex = "screen_index"
+            case screenName = "screen_name"
+        }
+    }
+
+    public init(metadata: CaptureMetadata, referenceID: String? = nil) {
+        let logicalBounds = metadata.windowInfo?.bounds ?? metadata.displayInfo?.bounds
+        self.version = Self.currentVersion
+        self.referenceID = referenceID
+        self.logicalSpace = .globalDisplayPoints
+        self.origin = .topLeft
+        self.logicalBounds = logicalBounds
+        self.deliveredImageSize = metadata.size
+        self.requestedScale = metadata.diagnostics?.requestedScale
+        self.nativeScale = metadata.diagnostics?.nativeScale ?? metadata.displayInfo?.scaleFactor
+        self.outputScale = metadata.diagnostics?.outputScale ?? Self.inferredOutputScale(
+            deliveredImageSize: metadata.size,
+            logicalBounds: logicalBounds)
+        self.display = metadata.displayInfo.map { DisplayIdentity(index: $0.index, name: $0.name) }
+        self.window = metadata.windowInfo.map {
+            WindowIdentity(
+                windowID: $0.windowID,
+                title: $0.title,
+                index: $0.index,
+                screenIndex: $0.screenIndex,
+                screenName: $0.screenName)
+        }
+    }
+
+    private static func inferredOutputScale(deliveredImageSize: CGSize, logicalBounds: CGRect?) -> CGFloat? {
+        guard let logicalBounds, logicalBounds.width > 0 else { return nil }
+        return deliveredImageSize.width / logicalBounds.width
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case version
+        case referenceID = "reference_id"
+        case logicalSpace = "logical_space"
+        case origin
+        case logicalBounds = "logical_bounds"
+        case deliveredImageSize = "delivered_image_size"
+        case requestedScale = "requested_scale"
+        case nativeScale = "native_scale"
+        case outputScale = "output_scale"
+        case display
+        case window
     }
 }
 

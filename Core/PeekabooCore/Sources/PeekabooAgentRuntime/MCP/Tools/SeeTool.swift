@@ -267,6 +267,9 @@ public struct SeeTool: MCPTool {
     {
         ObservationDiagnosticsMetadata.merge(observation, into: .object([
             "snapshot_id": .string(snapshot.id),
+            "coordinate_context": CaptureCoordinateContextMetadata.value(
+                for: observation.capture.metadata,
+                referenceID: snapshot.id),
             "element_count": .double(Double(elements.count)),
             "actionable_count": .double(Double(elements.count(where: { $0.isActionable }))),
         ]))

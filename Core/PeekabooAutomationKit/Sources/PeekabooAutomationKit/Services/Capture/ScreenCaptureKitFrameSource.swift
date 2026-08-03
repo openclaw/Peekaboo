@@ -99,14 +99,8 @@ final class ScreenCaptureKitFrameSource: CaptureFrameSource {
             ],
             correlationId: correlationId)
 
-        let size: CGSize = if request.mode == .area {
-            request.displayBounds.size
-        } else {
-            CGSize(width: frame.image.width, height: frame.image.height)
-        }
-
         let metadata = CaptureMetadata(
-            size: size,
+            size: CGSize(width: frame.image.width, height: frame.image.height),
             mode: request.mode,
             displayInfo: DisplayInfo(
                 index: request.displayIndex,

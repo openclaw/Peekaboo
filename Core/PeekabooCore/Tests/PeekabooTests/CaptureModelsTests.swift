@@ -170,6 +170,73 @@ struct CaptureModelsTests {
     }
 
     @Test
+    func `Capture coordinate context describes delivered raster in logical space`() {
+        let logicalBounds = CGRect(x: 120, y: 80, width: 1512, height: 982)
+        let metadata = CaptureMetadata(
+            size: CGSize(width: 3024, height: 1964),
+            mode: .window,
+            windowInfo: ServiceWindowInfo(
+                windowID: 42,
+                title: "Player",
+                bounds: logicalBounds,
+                index: 1,
+                screenIndex: 0,
+                screenName: "Built-in Display"),
+            displayInfo: DisplayInfo(
+                index: 0,
+                name: "Built-in Display",
+                bounds: CGRect(x: 0, y: 0, width: 1512, height: 982),
+                scaleFactor: 2),
+            diagnostics: CaptureDiagnostics(
+                requestedScale: .native,
+                nativeScale: 2,
+                outputScale: 2,
+                scaleSource: "screenBackingScaleFactor",
+                finalPixelSize: CGSize(width: 3024, height: 1964)))
+
+        let context = CaptureCoordinateContext(metadata: metadata, referenceID: "snapshot-42")
+
+        #expect(context.version == 1)
+        #expect(context.referenceID == "snapshot-42")
+        #expect(context.logicalSpace == .globalDisplayPoints)
+        #expect(context.origin == .topLeft)
+        #expect(context.logicalBounds == logicalBounds)
+        #expect(context.deliveredImageSize == CGSize(width: 3024, height: 1964))
+        #expect(context.requestedScale == .native)
+        #expect(context.nativeScale == 2)
+        #expect(context.outputScale == 2)
+        #expect(context.display?.index == 0)
+        #expect(context.window?.windowID == 42)
+        #expect(context.window?.screenName == "Built-in Display")
+    }
+
+    @Test
+    func `Delivered pixel size updates metadata and effective output scale`() {
+        let metadata = CaptureMetadata(
+            size: CGSize(width: 3024, height: 1964),
+            mode: .screen,
+            displayInfo: DisplayInfo(
+                index: 0,
+                name: "Built-in Display",
+                bounds: CGRect(x: 0, y: 0, width: 1512, height: 982),
+                scaleFactor: 2),
+            diagnostics: CaptureDiagnostics(
+                requestedScale: .native,
+                nativeScale: 2,
+                outputScale: 2,
+                scaleSource: "screenBackingScaleFactor",
+                finalPixelSize: CGSize(width: 3024, height: 1964)))
+
+        let resized = metadata.withDeliveredPixelSize(CGSize(width: 1512, height: 982))
+
+        #expect(resized.size == CGSize(width: 1512, height: 982))
+        #expect(resized.diagnostics?.finalPixelSize == CGSize(width: 1512, height: 982))
+        #expect(resized.diagnostics?.nativeScale == 2)
+        #expect(resized.diagnostics?.outputScale == 1)
+        #expect(resized.diagnostics?.requestedScale == .native)
+    }
+
+    @Test
     func `DisplayInfo initialization and properties`() {
         let displayInfo = DisplayInfo(
             index: 2,

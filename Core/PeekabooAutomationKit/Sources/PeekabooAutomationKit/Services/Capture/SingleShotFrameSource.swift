@@ -58,14 +58,8 @@ final class SingleShotFrameSource: CaptureFrameSource {
             ],
             correlationId: request.correlationId)
 
-        let size: CGSize = if request.mode == .area {
-            request.displayBounds.size
-        } else {
-            CGSize(width: image.width, height: image.height)
-        }
-
         let metadata = CaptureMetadata(
-            size: size,
+            size: CGSize(width: image.width, height: image.height),
             mode: request.mode,
             displayInfo: DisplayInfo(
                 index: request.displayIndex,

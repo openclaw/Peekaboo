@@ -13,6 +13,7 @@ actor UISnapshot {
     let id: String
     private(set) var screenshotPath: String?
     private(set) var screenshotMetadata: CaptureMetadata?
+    private(set) var screenshotCoordinateContext: CaptureCoordinateContext?
     private(set) var uiElements: [UIElement] = []
     private(set) var createdAt: Date
     private(set) var lastAccessedAt: Date
@@ -28,6 +29,7 @@ actor UISnapshot {
     func setScreenshot(path: String, metadata: CaptureMetadata) {
         self.screenshotPath = path
         self.screenshotMetadata = metadata
+        self.screenshotCoordinateContext = CaptureCoordinateContext(metadata: metadata, referenceID: self.id)
         self.targetCache.withLock {
             $0.applicationName = metadata.applicationInfo?.name
             $0.windowTitle = metadata.windowInfo?.title

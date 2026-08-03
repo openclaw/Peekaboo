@@ -132,6 +132,19 @@ The MCP `image` and `see` tools share target parsing with the desktop observatio
 
 The MCP `image` tool stores logical 1x captures by default. Pass `scale: "native"` or `retina: true` to request native display pixels. Set `max_dimension` to a positive integer to cap the longest output edge while preserving aspect ratio; inline `format: "data"` captures default to 1500 pixels when no cap is supplied.
 
+### Capture coordinate context
+
+The `image` and `see` tools include an additive, versioned `coordinate_context` object in response `_meta`. It describes how the delivered raster maps to Peekaboo's canonical top-left-origin global display coordinates, which are measured in logical points:
+
+- `logical_bounds`: the capture rectangle in global logical points;
+- `delivered_image_size`: the actual raster dimensions returned to the client, after any `max_dimension` resize;
+- `native_scale`: the display's native pixel-to-point scale when known;
+- `output_scale`: the delivered raster's effective pixel-to-point scale;
+- `display` and `window`: the resolved capture identities when available;
+- `reference_id`: the snapshot ID for `see` results, or `null` for standalone `image` results.
+
+Consumers should check `version` before interpreting the object. Version `1` uses `logical_space: "global_display_points"` and `origin: "top_left"`. To convert an image-local pixel `(px, py)` to a global logical point, scale it against `delivered_image_size` and add the `logical_bounds` origin; do not assume a fixed Retina factor. The fields are additive, so clients that do not understand them can continue ignoring `_meta`.
+
 ## Troubleshooting
 
 - Ensure Screen Recording + Accessibility permissions are granted (`peekaboo permissions status`).
