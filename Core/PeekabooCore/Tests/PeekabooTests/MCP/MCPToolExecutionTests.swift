@@ -924,6 +924,110 @@ struct MCPToolExecutionTests {
     }
 
     @Test
+    func `Click tool maps referenced image pixels to global logical points`() async throws {
+        await UISnapshotManager.shared.removeAllSnapshots()
+        let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
+        let context = await MCPToolTestHelpers.makeContext(automation: automation)
+        let snapshot = await Self.makeCoordinateSnapshot()
+        let snapshotId = await snapshot.id
+
+        let response = try await ClickTool(context: context).execute(arguments: ToolArguments(raw: [
+            "coords": "1000,500",
+            "coordinate_space": "image_pixels",
+            "coordinate_reference": snapshotId,
+        ]))
+
+        #expect(response.isError == false)
+        let call = try #require(await MainActor.run { automation.targetedClickCalls.first })
+        #expect(call.snapshotId == snapshotId)
+        #expect(call.targetProcessIdentifier == 111)
+        guard case let .coordinates(point) = call.target else {
+            Issue.record("Expected mapped coordinate target")
+            return
+        }
+        #expect(point == CGPoint(x: 600, y: 300))
+    }
+
+    @Test
+    func `Click tool maps referenced normalized coordinates`() async throws {
+        await UISnapshotManager.shared.removeAllSnapshots()
+        let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
+        let context = await MCPToolTestHelpers.makeContext(automation: automation)
+        let snapshot = await Self.makeCoordinateSnapshot()
+        let snapshotId = await snapshot.id
+
+        let response = try await ClickTool(context: context).execute(arguments: ToolArguments(raw: [
+            "coords": "0.25,0.75",
+            "coordinate_space": "normalized",
+            "coordinate_reference": snapshotId,
+            "foreground": true,
+        ]))
+
+        #expect(response.isError == false)
+        let call = try #require(await MainActor.run { automation.clickCalls.first })
+        #expect(call.snapshotId == snapshotId)
+        guard case let .coordinates(point) = call.target else {
+            Issue.record("Expected mapped coordinate target")
+            return
+        }
+        #expect(point == CGPoint(x: 350, y: 425))
+    }
+
+    @Test
+    func `Click tool rejects missing stale and out-of-bounds coordinate references`() async throws {
+        await UISnapshotManager.shared.removeAllSnapshots()
+        let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
+        let context = await MCPToolTestHelpers.makeContext(automation: automation)
+        let snapshot = await Self.makeCoordinateSnapshot()
+        let snapshotId = await snapshot.id
+        let tool = ClickTool(context: context)
+
+        let missing = try await tool.execute(arguments: ToolArguments(raw: [
+            "coords": "100,100",
+            "coordinate_space": "image_pixels",
+        ]))
+        let stale = try await tool.execute(arguments: ToolArguments(raw: [
+            "coords": "100,100",
+            "coordinate_space": "image_pixels",
+            "coordinate_reference": "missing-snapshot",
+        ]))
+        let outOfBounds = try await tool.execute(arguments: ToolArguments(raw: [
+            "coords": "2000,500",
+            "coordinate_space": "image_pixels",
+            "coordinate_reference": snapshotId,
+        ]))
+        let windowSnapshot = await UISnapshotManager.shared.createSnapshot()
+        let windowSnapshotId = await windowSnapshot.id
+        await windowSnapshot.setScreenshot(
+            path: "/tmp/stale-window-snapshot.png",
+            metadata: CaptureMetadata(
+                size: CGSize(width: 1000, height: 500),
+                mode: .window,
+                applicationInfo: ServiceApplicationInfo(
+                    processIdentifier: 111,
+                    bundleIdentifier: "com.example.snapshot",
+                    name: "SnapshotApp"),
+                windowInfo: ServiceWindowInfo(
+                    windowID: 2_147_483_647,
+                    title: "Missing Window",
+                    bounds: CGRect(x: 100, y: 50, width: 1000, height: 500),
+                    index: 0)))
+        let staleWindow = try await tool.execute(arguments: ToolArguments(raw: [
+            "coords": "500,250",
+            "coordinate_space": "image_pixels",
+            "coordinate_reference": windowSnapshotId,
+            "foreground": true,
+        ]))
+
+        #expect(missing.isError)
+        #expect(stale.isError)
+        #expect(outOfBounds.isError)
+        #expect(staleWindow.isError)
+        #expect(await MainActor.run { automation.clickCalls.isEmpty })
+        #expect(await MainActor.run { automation.targetedClickCalls.isEmpty })
+    }
+
+    @Test
     func `Type tool preserves element target when focusing before typing`() async throws {
         let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
         let context = await MCPToolTestHelpers.makeContext(automation: automation)
@@ -1150,6 +1254,25 @@ struct MCPToolExecutionTests {
             return nil
         }
         return context
+    }
+
+    private static func makeCoordinateSnapshot() async -> UISnapshot {
+        let snapshot = await UISnapshotManager.shared.createSnapshot()
+        await snapshot.setScreenshot(
+            path: "/tmp/coordinate-snapshot.png",
+            metadata: CaptureMetadata(
+                size: CGSize(width: 2000, height: 1000),
+                mode: .screen,
+                applicationInfo: ServiceApplicationInfo(
+                    processIdentifier: 111,
+                    bundleIdentifier: "com.example.snapshot",
+                    name: "SnapshotApp"),
+                displayInfo: DisplayInfo(
+                    index: 0,
+                    name: "Display",
+                    bounds: CGRect(x: 100, y: 50, width: 1000, height: 500),
+                    scaleFactor: 2)))
+        return snapshot
     }
 
     private static func double(from value: Value?) -> Double? {

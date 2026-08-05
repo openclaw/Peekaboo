@@ -1,5 +1,6 @@
 import CoreGraphics
 import Foundation
+import PeekabooAutomationKit
 import Testing
 @testable import PeekabooAgentRuntime
 @testable import PeekabooAutomation
@@ -258,6 +259,37 @@ struct CaptureModelsTests {
         #expect(context.requestedScale == .logical1x)
         #expect(context.nativeScale == 2)
         #expect(context.outputScale == 2)
+    }
+
+    @Test
+    func `Capture coordinate mapper uses delivered raster dimensions`() throws {
+        let metadata = CaptureMetadata(
+            size: CGSize(width: 2000, height: 1000),
+            mode: .screen,
+            displayInfo: DisplayInfo(
+                index: 0,
+                name: "Display",
+                bounds: CGRect(x: 100, y: 50, width: 1000, height: 500),
+                scaleFactor: 2))
+        let context = CaptureCoordinateContext(metadata: metadata, referenceID: "snapshot")
+
+        let imagePoint = try CaptureCoordinateMapper.globalPoint(
+            for: CGPoint(x: 1000, y: 500),
+            in: .imagePixels,
+            context: context)
+        let normalizedPoint = try CaptureCoordinateMapper.globalPoint(
+            for: CGPoint(x: 0.25, y: 0.75),
+            in: .normalized,
+            context: context)
+
+        #expect(imagePoint == CGPoint(x: 600, y: 300))
+        #expect(normalizedPoint == CGPoint(x: 350, y: 425))
+        #expect(throws: CaptureCoordinateMappingError.imagePointOutOfBounds) {
+            try CaptureCoordinateMapper.globalPoint(
+                for: CGPoint(x: 2000, y: 500),
+                in: .imagePixels,
+                context: context)
+        }
     }
 
     @Test

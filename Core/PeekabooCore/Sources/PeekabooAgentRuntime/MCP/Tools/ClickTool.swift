@@ -34,7 +34,16 @@ public struct ClickTool: MCPTool {
                     """),
                 "coords": SchemaBuilder.string(
                     description: """
-                    Optional. Click at specific coordinates in format 'x,y' (e.g., '100,200').
+                    Optional. Click at coordinates in format 'x,y'. Bare coordinates remain global logical points.
+                    """),
+                "coordinate_space": SchemaBuilder.string(
+                    description: """
+                    Optional. Coordinate basis for coords. image_pixels and normalized require coordinate_reference.
+                    """,
+                    enum: CaptureCoordinateSpace.allCases.map(\.rawValue)),
+                "coordinate_reference": SchemaBuilder.string(
+                    description: """
+                    Optional. Snapshot reference_id returned by see. Required for image_pixels and normalized coords.
                     """),
                 "snapshot": SchemaBuilder.string(
                     description: """
@@ -116,14 +125,7 @@ public struct ClickTool: MCPTool {
     private func resolveClickTarget(for request: ClickRequest) async throws -> ClickResolution {
         switch request.target {
         case let .coordinates(raw):
-            let point = try self.parseCoordinates(raw)
-            return ClickResolution(
-                location: point,
-                automationTarget: .coordinates(point),
-                elementDescription: nil,
-                targetProcessIdentifier: request.pid,
-                snapshotId: nil,
-                snapshotIdToInvalidate: request.snapshotId)
+            return try await self.resolveCoordinates(raw, request: request)
         case let .elementId(identifier):
             let snapshot = try await self.requireSnapshot(id: request.snapshotId)
             let element = try await self.requireElement(id: identifier, snapshot: snapshot)
@@ -225,6 +227,12 @@ public struct ClickTool: MCPTool {
         if let processId = effectiveTargetProcessIdentifier.map({ Int32($0) }) {
             metaDict["target_pid"] = .double(Double(processId))
         }
+        if let coordinateSpace = resolution.coordinateSpace {
+            metaDict["coordinate_space"] = .string(coordinateSpace.rawValue)
+        }
+        if let coordinateReference = resolution.coordinateReference {
+            metaDict["coordinate_reference"] = .string(coordinateReference)
+        }
 
         let summary = ToolEventSummary(
             targetApp: resolution.targetApp,
@@ -252,6 +260,81 @@ public struct ClickTool: MCPTool {
             throw ClickToolError("Invalid coordinates format. Use 'x,y' (e.g., '100,200').")
         }
         return CGPoint(x: x, y: y)
+    }
+
+    private func resolveCoordinates(_ raw: String, request: ClickRequest) async throws -> ClickResolution {
+        let point = try self.parseCoordinates(raw)
+        guard let coordinateSpace = request.coordinateSpace else {
+            return ClickResolution(
+                location: point,
+                automationTarget: .coordinates(point),
+                elementDescription: nil,
+                targetProcessIdentifier: request.pid,
+                snapshotId: nil,
+                snapshotIdToInvalidate: request.snapshotId)
+        }
+
+        guard let referenceID = request.coordinateReference else {
+            return ClickResolution(
+                location: point,
+                automationTarget: .coordinates(point),
+                elementDescription: nil,
+                targetProcessIdentifier: request.pid,
+                snapshotId: nil,
+                snapshotIdToInvalidate: request.snapshotId,
+                coordinateSpace: coordinateSpace)
+        }
+        guard let snapshot = await self.getSnapshot(id: referenceID) else {
+            throw ClickToolError(
+                "Coordinate reference '\(referenceID)' is stale or unavailable. Run 'see' to capture a fresh snapshot.")
+        }
+        guard let coordinateContext = await snapshot.screenshotCoordinateContext,
+              coordinateContext.referenceID == referenceID
+        else {
+            throw ClickToolError(
+                "Snapshot '\(referenceID)' has no matching coordinate context. Run 'see' to capture a fresh snapshot.")
+        }
+        try await self.validateWindowReference(coordinateContext)
+
+        let mappedPoint: CGPoint
+        do {
+            mappedPoint = try CaptureCoordinateMapper.globalPoint(
+                for: point,
+                in: coordinateSpace,
+                context: coordinateContext)
+        } catch {
+            throw ClickToolError(error.localizedDescription)
+        }
+
+        return ClickResolution(
+            location: mappedPoint,
+            automationTarget: .coordinates(mappedPoint),
+            elementDescription: nil,
+            targetApp: snapshot.applicationName,
+            windowTitle: snapshot.windowTitle,
+            targetProcessIdentifier: request.pid ?? snapshot.applicationProcessId,
+            snapshotId: snapshot.id,
+            coordinateSpace: coordinateSpace,
+            coordinateReference: referenceID)
+    }
+
+    private func validateWindowReference(_ coordinateContext: CaptureCoordinateContext) async throws {
+        guard let window = coordinateContext.window,
+              let capturedBounds = coordinateContext.logicalBounds
+        else { return }
+
+        let matches = try await self.context.windows.listWindows(target: .windowId(window.windowID))
+        guard let currentBounds = matches.first?.bounds else {
+            throw ClickToolError("Coordinate reference is stale because its captured window is no longer available.")
+        }
+        let tolerance: CGFloat = 1
+        guard abs(currentBounds.minX - capturedBounds.minX) <= tolerance,
+              abs(currentBounds.minY - capturedBounds.minY) <= tolerance,
+              abs(currentBounds.width - capturedBounds.width) <= tolerance,
+              abs(currentBounds.height - capturedBounds.height) <= tolerance
+        else {
+            throw ClickToolError("Coordinate reference is stale because its captured window moved or resized.")
+        }
     }
 
     private func requireSnapshot(id: String?) async throws -> UISnapshot {
@@ -294,19 +377,48 @@ private struct ClickRequest {
     let intent: ClickIntent
     let deliveryMode: ClickToolDeliveryMode
     let pid: Int32?
+    let coordinateSpace: CaptureCoordinateSpace?
+    let coordinateReference: String?
 
     init(arguments: ToolArguments) throws {
+        let rawCoordinateSpace = arguments.getString("coordinate_space")
+        let coordinateSpace = try rawCoordinateSpace.map { value in
+            guard let space = CaptureCoordinateSpace(rawValue: value) else {
+                throw ClickToolError(
+                    "Invalid coordinate_space '\(value)'. Use global_display_points, image_pixels, or normalized.")
+            }
+            return space
+        }
+        let coordinateReference = arguments.getString("coordinate_reference")
+
         if let coords = arguments.getString("coords") {
             self.target = .coordinates(coords)
+            if coordinateSpace == nil, coordinateReference != nil {
+                throw ClickToolError("coordinate_reference requires coordinate_space.")
+            }
+            if let coordinateSpace, coordinateSpace.requiresReference, coordinateReference == nil {
+                throw ClickToolError("\(coordinateSpace.rawValue) coordinates require coordinate_reference from see.")
+            }
         } else if let elementId = arguments.getString("on") {
+            guard coordinateSpace == nil, coordinateReference == nil else {
+                throw ClickToolError("coordinate_space and coordinate_reference are only valid with coords.")
+            }
             self.target = .elementId(elementId)
         } else if let query = arguments.getString("query") {
+            guard coordinateSpace == nil, coordinateReference == nil else {
+                throw ClickToolError("coordinate_space and coordinate_reference are only valid with coords.")
+            }
             self.target = .query(query)
         } else {
             throw ClickToolError("Must specify either 'query', 'on', or 'coords'.")
         }
 
         self.snapshotId = arguments.getString("snapshot")
+        if let snapshotId = self.snapshotId, let coordinateReference, snapshotId != coordinateReference {
+            throw ClickToolError("snapshot and coordinate_reference must match when both are provided.")
+        }
+        self.coordinateSpace = coordinateSpace
+        self.coordinateReference = coordinateReference
         let isDouble = arguments.getBool("double") ?? false
         let isRight = arguments.getBool("right") ?? false
         self.intent = ClickIntent(double: isDouble, right: isRight)
@@ -349,6 +461,8 @@ private struct ClickResolution {
     let targetProcessIdentifier: Int32?
     let snapshotId: String?
     let snapshotIdToInvalidate: String?
+    let coordinateSpace: CaptureCoordinateSpace?
+    let coordinateReference: String?
 
     init(
         location: CGPoint,
@@ -360,7 +474,9 @@ private struct ClickResolution {
         elementLabel: String? = nil,
         targetProcessIdentifier: Int32? = nil,
         snapshotId: String?,
-        snapshotIdToInvalidate: String? = nil)
+        snapshotIdToInvalidate: String? = nil,
+        coordinateSpace: CaptureCoordinateSpace? = nil,
+        coordinateReference: String? = nil)
     {
         self.location = location
         self.automationTarget = automationTarget
@@ -372,6 +488,8 @@ private struct ClickResolution {
         self.targetProcessIdentifier = targetProcessIdentifier
         self.snapshotId = snapshotId
         self.snapshotIdToInvalidate = snapshotIdToInvalidate ?? snapshotId
+        self.coordinateSpace = coordinateSpace
+        self.coordinateReference = coordinateReference
     }
 }
 

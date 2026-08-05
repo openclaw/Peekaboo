@@ -145,6 +145,17 @@ The `image` and `see` tools include an additive, versioned `coordinate_context` 
 
 Consumers should check `version` before interpreting the object. Version `1` uses `logical_space: "global_display_points"` and `origin: "top_left"`. To convert an image-local pixel `(px, py)` to a global logical point, scale it against `delivered_image_size` and add the `logical_bounds` origin; do not assume a fixed Retina factor. The fields are additive, so clients that do not understand them can continue ignoring `_meta`.
 
+The `click` tool accepts screenshot-relative coordinates when they are explicitly bound to a `see` snapshot. Pass `coordinate_space: "image_pixels"` for delivered-raster pixels or `coordinate_space: "normalized"` for values from 0 through 1, plus the snapshot's `reference_id` as `coordinate_reference`. Missing, stale, out-of-bounds, or moved-window references fail without dispatching a click. Bare `coords` retain their existing global logical-point meaning. Screen-wide references are not tied to an application process, so use `foreground: true` (or supply an explicit `pid` for background delivery).
+
+```json
+{
+  "coords": "300,220",
+  "coordinate_space": "image_pixels",
+  "coordinate_reference": "snapshot-id-from-see",
+  "foreground": true
+}
+```
+
 ## Troubleshooting
 
 - Ensure Screen Recording + Accessibility permissions are granted (`peekaboo permissions status`).

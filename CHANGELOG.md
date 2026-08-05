@@ -2,6 +2,12 @@
 
 ## [3.9.11] - Unreleased
 
+### Added
+- Add reference-bound image-pixel and normalized MCP click coordinates, building on capture context from @scotthuang in #310.
+
+### Fixed
+- Honor cancellation promptly and deterministically in daemon polling and CLI timeout helpers. Thanks @SebTardif in #311.
+
 ## [3.9.10] - 2026-08-02
 
 ### Changed
