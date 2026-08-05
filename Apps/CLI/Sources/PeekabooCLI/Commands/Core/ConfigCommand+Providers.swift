@@ -12,80 +12,25 @@ enum TimeoutError: Error {
     case cancelled
 }
 
-private final class ConfigTimeoutRace<T: Sendable>: @unchecked Sendable {
-    private let lock = NSLock()
-    private nonisolated(unsafe) var continuation: CheckedContinuation<Result<T, TimeoutError>, Never>?
-    private nonisolated(unsafe) var pendingResult: Result<T, TimeoutError>?
-    private nonisolated(unsafe) var completed = false
-
-    func wait() async -> Result<T, TimeoutError> {
-        await withCheckedContinuation { continuation in
-            let pendingResult: Result<T, TimeoutError>?
-            self.lock.lock()
-            if self.completed {
-                pendingResult = self.pendingResult
-                self.pendingResult = nil
-            } else {
-                pendingResult = nil
-                self.continuation = continuation
-            }
-            self.lock.unlock()
-
-            if let pendingResult {
-                continuation.resume(returning: pendingResult)
-            }
-        }
-    }
-
-    nonisolated func resume(with result: Result<T, TimeoutError>) {
-        let continuation: CheckedContinuation<Result<T, TimeoutError>, Never>?
-        self.lock.lock()
-        if self.completed {
-            self.lock.unlock()
-            return
-        }
-        self.completed = true
-        continuation = self.continuation
-        self.continuation = nil
-        if continuation == nil {
-            self.pendingResult = result
-        }
-        self.lock.unlock()
-
-        continuation?.resume(returning: result)
-    }
-}
-
 @Sendable
 func withTimeout<T: Sendable>(
     _ duration: Duration,
     operation: @escaping @Sendable () async -> T
 ) async -> Result<T, TimeoutError> {
-    let race = ConfigTimeoutRace<T>()
-    let operationTask = Task {
-        let value = await operation()
-        race.resume(with: .success(value))
+    do {
+        let components = duration.components
+        let seconds = Double(components.seconds) + Double(components.attoseconds) / 1e18
+        let value = try await withCommandTimeout(
+            seconds: seconds,
+            operationName: "provider operation",
+            operation: operation
+        )
+        return .success(value)
+    } catch is CancellationError {
+        return .failure(.cancelled)
+    } catch {
+        return .failure(.timedOut)
     }
-    let timeoutTask = Task {
-        do {
-            try await Task.sleep(for: duration)
-        } catch {
-            return
-        }
-        race.resume(with: .failure(.timedOut))
-        operationTask.cancel()
-    }
-
-    let result = await withTaskCancellationHandler {
-        await race.wait()
-    } onCancel: {
-        race.resume(with: .failure(.cancelled))
-        operationTask.cancel()
-        timeoutTask.cancel()
-    }
-    operationTask.cancel()
-    timeoutTask.cancel()
-    return Task.isCancelled ? .failure(.cancelled) : result
 }
 
 @available(macOS 14.0, *)
