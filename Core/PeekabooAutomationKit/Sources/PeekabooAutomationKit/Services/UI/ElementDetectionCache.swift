@@ -17,7 +17,7 @@ import PeekabooFoundation
             windowID: Int,
             processID: pid_t,
             allowWebFocus: Bool,
-            includeMenuBarElements: Bool)
+            includeMenuBarElements: Bool = false)
         {
             self.windowID = windowID
             self.processID = processID
@@ -54,7 +54,7 @@ import PeekabooFoundation
         windowID: Int?,
         processID: pid_t,
         allowWebFocus: Bool,
-        includeMenuBarElements: Bool) -> Key?
+        includeMenuBarElements: Bool = false) -> Key?
     {
         guard let windowID else { return nil }
         return Key(
