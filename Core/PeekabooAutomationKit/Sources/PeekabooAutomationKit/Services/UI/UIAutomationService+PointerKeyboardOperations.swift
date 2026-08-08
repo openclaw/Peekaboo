@@ -65,8 +65,7 @@ extension UIAutomationService {
         self.logger.debug("Delegating hotkey to HotkeyService")
         _ = try await self.hotkeyService.hotkey(keys: keys, holdDuration: holdDuration)
 
-        let keyArray = keys.split(separator: ",").map { String($0).trimmingCharacters(in: .whitespaces) }
-        _ = await self.feedbackClient.showHotkeyDisplay(keys: keyArray, duration: 1.0)
+        await self.visualizeHotkey(keys: keys, targetProcessIdentifier: nil)
     }
 
     public func hotkey(keys: String, holdDuration: Int, targetProcessIdentifier: pid_t) async throws {
@@ -76,6 +75,13 @@ extension UIAutomationService {
             holdDuration: holdDuration,
             targetProcessIdentifier: targetProcessIdentifier)
 
+        await self.visualizeHotkey(keys: keys, targetProcessIdentifier: targetProcessIdentifier)
+    }
+
+    /// PID-routed hotkeys are background operations. Suppress the desktop-global overlay so they
+    /// do not cover or distract the foreground application.
+    func visualizeHotkey(keys: String, targetProcessIdentifier: pid_t?) async {
+        guard targetProcessIdentifier == nil else { return }
         let keyArray = keys.split(separator: ",").map { String($0).trimmingCharacters(in: .whitespaces) }
         _ = await self.feedbackClient.showHotkeyDisplay(keys: keyArray, duration: 1.0)
     }

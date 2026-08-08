@@ -14,7 +14,7 @@ read_when:
 | --- | --- | --- |
 | `launch` | Start an app by name/path/bundle ID, optionally opening documents. | `--bundle-id`, `--open <path|url>` (repeatable), `--wait-until-ready`, `--no-focus`. |
 | `quit` | Quit one app or *all* regular apps (with optional exclusions). | `--app <name>`, `--pid`, `--all`, `--except "Finder,Terminal"`, `--force`. |
-| `relaunch` | Quit + relaunch the same app in one step. | Positional `<app>`, `--wait <seconds>` between quit/launch, `--force`, `--wait-until-ready`. |
+| `relaunch` | Quit + relaunch the same app in one step. | Positional `<app>` or `--pid`, `--wait <seconds>` between quit/launch, `--force`, `--wait-until-ready`. |
 | `hide` / `unhide` | Toggle app visibility. | Accept the same targeting flags as `launch`/`quit`. |
 | `switch` | Activate a specific app (`--to`) or cycle Cmd+Tab style (`--cycle`). | `--to <name|bundle|PID:1234>`, `--cycle`, `--verify` (only with `--to`). |
 | `list` | App-management view of running apps, filtering hidden/background apps by default. | `--include-hidden`, `--include-background`. |

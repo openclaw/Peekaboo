@@ -70,6 +70,13 @@ protocol AutomationWindowRootResolving: Sendable {
 }
 
 @MainActor
+protocol AutomationElementTreeReading: Sendable {
+    func descriptor(for element: Element) -> AXDescriptorReader.Descriptor?
+    func children(of element: Element) -> [Element]?
+    func processIdentifier(of element: Element) -> pid_t?
+}
+
+@MainActor
 private struct SystemAutomationWindowRootResolver: AutomationWindowRootResolving {
     private let identityService = WindowIdentityService()
 
@@ -79,11 +86,35 @@ private struct SystemAutomationWindowRootResolver: AutomationWindowRootResolving
 }
 
 @MainActor
+private struct SystemAutomationElementTreeReader: AutomationElementTreeReading {
+    func descriptor(for element: Element) -> AXDescriptorReader.Descriptor? {
+        AXDescriptorReader.describe(element)
+    }
+
+    func children(of element: Element) -> [Element]? {
+        element.children()
+    }
+
+    func processIdentifier(of element: Element) -> pid_t? {
+        var processIdentifier: pid_t = 0
+        guard AXUIElementGetPid(element.underlyingElement, &processIdentifier) == .success else {
+            return nil
+        }
+        return processIdentifier
+    }
+}
+
+@MainActor
 struct AutomationElementResolver: AutomationElementResolving {
     private let windowRootResolver: any AutomationWindowRootResolving
+    private let treeReader: any AutomationElementTreeReading
 
-    init(windowRootResolver: any AutomationWindowRootResolving = SystemAutomationWindowRootResolver()) {
+    init(
+        windowRootResolver: any AutomationWindowRootResolving = SystemAutomationWindowRootResolver(),
+        treeReader: any AutomationElementTreeReading = SystemAutomationElementTreeReader())
+    {
         self.windowRootResolver = windowRootResolver
+        self.treeReader = treeReader
     }
 
     func resolve(
@@ -106,10 +137,12 @@ struct AutomationElementResolver: AutomationElementResolving {
                 windowContext: windowContext,
                 targetProcessIdentifier: targetProcessIdentifier,
                 detectedElement: detectedElement),
-            targetProcessIdentifier: targetProcessIdentifier)
-        { element in
-            guard let descriptor = AXDescriptorReader.describe(element) else { return nil }
-            return self.score(descriptor: descriptor, for: detectedElement)
+            targetProcessIdentifier: targetProcessIdentifier,
+            exactSnapshotElement: self.canUseExactSnapshotFastPath(
+                detectedElement: detectedElement,
+                windowContext: windowContext) ? detectedElement : nil)
+        { _, descriptor in
+            self.score(descriptor: descriptor, for: detectedElement)
         }
     }
 
@@ -139,8 +172,7 @@ struct AutomationElementResolver: AutomationElementResolving {
                 windowContext: windowContext,
                 targetProcessIdentifier: targetProcessIdentifier),
             targetProcessIdentifier: targetProcessIdentifier)
-        { element in
-            guard let descriptor = AXDescriptorReader.describe(element) else { return nil }
+        { _, descriptor in
             if requireTextInput, !self.isTextInput(role: descriptor.role) {
                 return nil
             }
@@ -230,7 +262,8 @@ struct AutomationElementResolver: AutomationElementResolving {
     private func bestElement(
         in roots: [Element],
         targetProcessIdentifier: pid_t? = nil,
-        scorer: (Element) -> Int?) -> AutomationElement?
+        exactSnapshotElement: DetectedElement? = nil,
+        scorer: (Element, AXDescriptorReader.Descriptor) -> Int?) -> AutomationElement?
     {
         var visited = 0
         var stack = roots
@@ -240,26 +273,68 @@ struct AutomationElementResolver: AutomationElementResolving {
         while let element = stack.popLast(), visited < 4000 {
             visited += 1
 
-            if let score = scorer(element), score > bestScore {
-                best = element
-                bestScore = score
+            if let descriptor = self.treeReader.descriptor(for: element) {
+                if let exactSnapshotElement,
+                   self.isExactSnapshotMatch(descriptor: descriptor, for: exactSnapshotElement),
+                   self.matchesProcessIdentifier(element, targetProcessIdentifier)
+                {
+                    return AutomationElement(element)
+                }
+
+                if let score = scorer(element, descriptor), score > bestScore {
+                    best = element
+                    bestScore = score
+                }
             }
 
-            if let children = element.children() {
+            if let children = self.treeReader.children(of: element) {
                 stack.append(contentsOf: children.reversed())
             }
         }
 
-        guard let best else { return nil }
-        if let targetProcessIdentifier {
-            var resolvedProcessIdentifier: pid_t = 0
-            guard AXUIElementGetPid(best.underlyingElement, &resolvedProcessIdentifier) == .success,
-                  resolvedProcessIdentifier == targetProcessIdentifier
-            else {
-                return nil
-            }
-        }
+        guard let best, self.matchesProcessIdentifier(best, targetProcessIdentifier) else { return nil }
         return AutomationElement(best)
+    }
+
+    private func canUseExactSnapshotFastPath(
+        detectedElement: DetectedElement,
+        windowContext: WindowContext?) -> Bool
+    {
+        windowContext?.windowID != nil || DetectedElementRootPolicy.requiresApplicationRoot(detectedElement)
+    }
+
+    private func isExactSnapshotMatch(
+        descriptor: AXDescriptorReader.Descriptor,
+        for element: DetectedElement) -> Bool
+    {
+        guard let expectedIdentifier = self.normalized(element.attributes["identifier"]),
+              let actualIdentifier = self.normalized(descriptor.identifier),
+              expectedIdentifier == actualIdentifier,
+              descriptor.frame.equalTo(element.bounds)
+        else {
+            return false
+        }
+
+        if let expectedRole = self.normalized(element.attributes["role"]) {
+            return self.normalized(descriptor.role) == expectedRole
+        }
+
+        // `.other` deliberately accepts any role in fuzzy scoring, so it cannot establish exact identity.
+        return element.type != .other && self.elementType(element.type, matchesRole: descriptor.role)
+    }
+
+    private func matchesProcessIdentifier(_ element: Element, _ expectedProcessIdentifier: pid_t?) -> Bool {
+        guard let expectedProcessIdentifier else { return true }
+        return self.treeReader.processIdentifier(of: element) == expectedProcessIdentifier
+    }
+
+    private func normalized(_ value: String?) -> String? {
+        guard let normalized = value?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+              !normalized.isEmpty
+        else {
+            return nil
+        }
+        return normalized
     }
 
     private func score(descriptor: AXDescriptorReader.Descriptor, for element: DetectedElement) -> Int? {

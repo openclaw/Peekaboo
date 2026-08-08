@@ -10,6 +10,7 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
         self.logger.debug("Set value requested - target: \(target, privacy: .public)")
         let resolved = try await self.resolveActionTarget(target, snapshotId: snapshotId)
         let oldValue = self.safeValueDescription(resolved.element.value)
+            ?? resolved.element.selectedValue.map(String.init)
         let result = try await self.normalizingSnapshotErrors {
             try await UIInputDispatcher.run(
                 verb: .setValue,
@@ -30,7 +31,11 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
                         reason: "Direct value setting is not supported for this element."))
                 })
         }
-        let newValue = self.safeValueDescription(resolved.element.value) ?? value.displayString
+        guard let newValue = self.safeValueDescription(resolved.element.value)
+            ?? resolved.element.selectedValue.map(String.init)
+        else {
+            throw PeekabooError.operationError(message: "Accessibility value could not be verified after setting")
+        }
 
         return ElementActionResult(
             target: resolved.description,

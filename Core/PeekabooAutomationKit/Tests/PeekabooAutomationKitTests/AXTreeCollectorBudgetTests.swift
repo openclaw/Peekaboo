@@ -2,7 +2,7 @@
 import CoreGraphics
 import Foundation
 import XCTest
-@testable import PeekabooAutomationKit
+@testable @_spi(Testing) import PeekabooAutomationKit
 
 @MainActor
 final class AXTreeCollectorBudgetTests: XCTestCase {
@@ -136,6 +136,79 @@ final class AXTreeCollectorBudgetTests: XCTestCase {
 
         XCTAssertEqual(decoded.traversalBudget, AXTraversalBudget())
         XCTAssertEqual(decoded.allowWebFocusFallback, false)
+    }
+
+    func testDesktopDetectionDefaultsExcludeApplicationMenuBar() {
+        XCTAssertFalse(DesktopDetectionOptions().includeMenuBarElements)
+    }
+
+    func testMenuBarCollectionRequiresExplicitRequestAndActiveApplication() {
+        XCTAssertFalse(ElementDetectionService.shouldCollectMenuBarElements(requested: false, appIsActive: false))
+        XCTAssertFalse(ElementDetectionService.shouldCollectMenuBarElements(requested: false, appIsActive: true))
+        XCTAssertFalse(ElementDetectionService.shouldCollectMenuBarElements(requested: true, appIsActive: false))
+        XCTAssertTrue(ElementDetectionService.shouldCollectMenuBarElements(requested: true, appIsActive: true))
+    }
+
+    func testElementCacheSeparatesMenuBarPolicies() throws {
+        let cache = ElementDetectionCache()
+        let withoutMenuBar = try XCTUnwrap(cache.key(
+            windowID: 42,
+            processID: 123,
+            allowWebFocus: false,
+            includeMenuBarElements: false))
+        let withMenuBar = try XCTUnwrap(cache.key(
+            windowID: 42,
+            processID: 123,
+            allowWebFocus: false,
+            includeMenuBarElements: true))
+
+        XCTAssertNotEqual(withoutMenuBar, withMenuBar)
+    }
+
+    func testExactWindowResolutionDoesNotActivateBackgroundApplication() async throws {
+        guard let originalFrontmost = NSWorkspace.shared.frontmostApplication else {
+            throw XCTSkip("No frontmost application available")
+        }
+
+        let identity = WindowIdentityService()
+        var target: (app: NSRunningApplication, windowID: Int)?
+        for app in NSWorkspace.shared.runningApplications
+            where app.processIdentifier != originalFrontmost.processIdentifier && app.activationPolicy == .regular
+        {
+            let windows = AXApp(app).element.windowsWithTimeout() ?? []
+            if let windowID = windows.lazy.compactMap({ identity.getWindowID(from: $0).map(Int.init) }).first {
+                target = (app, windowID)
+                break
+            }
+        }
+
+        guard let target else {
+            throw XCTSkip("No accessible background application window available")
+        }
+
+        let resolver = ElementDetectionWindowResolver(applicationService: ApplicationService())
+        _ = try await resolver.resolveWindow(
+            for: target.app,
+            context: WindowContext(
+                applicationProcessId: target.app.processIdentifier,
+                windowID: target.windowID))
+
+        XCTAssertEqual(
+            NSWorkspace.shared.frontmostApplication?.processIdentifier,
+            originalFrontmost.processIdentifier,
+            "Resolving an AX window for observation must not activate its application")
+    }
+
+    func testDesktopDetectionOptionsDecodesPayloadWithoutMenuBarPolicy() throws {
+        let options = DesktopDetectionOptions(includeMenuBarElements: true)
+        let encoded = try JSONEncoder().encode(options)
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        object.removeValue(forKey: "includeMenuBarElements")
+        let oldPayload = try JSONSerialization.data(withJSONObject: object)
+
+        let decoded = try JSONDecoder().decode(DesktopDetectionOptions.self, from: oldPayload)
+
+        XCTAssertFalse(decoded.includeMenuBarElements)
     }
 
     func testMissingBudgetNormalizationAppliesEnvironmentOverrides() {

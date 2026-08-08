@@ -137,42 +137,13 @@ extension DockService {
     }
 
     func removeFromDockImpl(appName: String) async throws {
-        let appleScript = """
-        on run argv
-        set targetName to item 1 of argv
-        tell application "System Events"
-            tell process "Dock"
-                set dockItems to every UI element of list 1
-                repeat with dockItem in dockItems
-                    if name of dockItem contains targetName then
-                        perform action "AXShowMenu" of dockItem
-                        delay 0.1
-                        click menu item "Remove from Dock" of menu 1 of dockItem
-                        return "Removed"
-                    end if
-                end repeat
-            end tell
-        end tell
-        return "Not found"
-        end run
-        """
-
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-        task.arguments = ["-e", appleScript, appName]
-
-        let pipe = Pipe()
-        task.standardOutput = pipe
-        task.standardError = Pipe()
-
-        try task.run()
-        try DockService.waitForProcessExit(task, timeoutSeconds: 30)
-
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        let result = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-
-        if result == "Not found" {
-            throw PeekabooError.elementNotFound("App '\(appName)' not found in Dock")
+        let element = try self.findDockElement(appName: appName)
+        do {
+            _ = try await ActionInputDriver().tryRightClick(element: AutomationElement(element))
+            try await self.clickContextMenuItem("Remove from Dock", for: element)
+        } catch {
+            throw PeekabooError.operationError(
+                message: "Failed to remove '\(appName)' from Dock: \(error.localizedDescription)")
         }
     }
 

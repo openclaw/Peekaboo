@@ -360,6 +360,109 @@ struct ActionInputDriverTests {
 
     @MainActor
     @Test
+    func `numeric slider coerces CLI text to a floating point AX value`() throws {
+        let element = MockAutomationElement(
+            role: AXRoleNames.kAXSliderRole,
+            value: 50.0,
+            isValueSettable: true)
+
+        let result = try ActionInputDriver().trySetValueForTesting(element: element, value: .string("0.75"))
+
+        #expect(element.setValues == [.double(0.75)])
+        #expect((element.value as? Double) == 0.75)
+        #expect(result.actionName == AXActionNames.kAXSetValueAction)
+    }
+
+    @MainActor
+    @Test
+    func `boolean selected attribute is set and verified`() throws {
+        let element = MockAutomationElement(
+            role: AXRoleNames.kAXRowRole,
+            isSelectedSettable: true,
+            selectedValue: false)
+
+        let result = try ActionInputDriver().trySetValueForTesting(element: element, value: .string("true"))
+
+        #expect(element.setSelectedValues == [true])
+        #expect(element.selectedValue == true)
+        #expect(result.actionName == kAXSelectedAttribute as String)
+    }
+
+    @MainActor
+    @Test
+    func `numeric-looking text field value remains a string`() throws {
+        let element = MockAutomationElement(
+            role: AXRoleNames.kAXTextFieldRole,
+            value: "123",
+            isValueSettable: true)
+
+        _ = try ActionInputDriver().trySetValueForTesting(element: element, value: .string("456"))
+
+        #expect(element.setValues == [.string("456")])
+        #expect((element.value as? String) == "456")
+    }
+
+    @MainActor
+    @Test
+    func `idempotent set succeeds without writing the attribute`() throws {
+        let element = MockAutomationElement(
+            role: AXRoleNames.kAXSliderRole,
+            value: 0.75,
+            isValueSettable: true)
+
+        let result = try ActionInputDriver().trySetValueForTesting(element: element, value: .string("0.75"))
+
+        #expect(element.setValues.isEmpty)
+        #expect(result.actionName == AXActionNames.kAXSetValueAction)
+    }
+
+    @MainActor
+    @Test
+    func `phantom-success setter fails when value does not change`() {
+        let element = MockAutomationElement(
+            role: AXRoleNames.kAXSliderRole,
+            value: 50.0,
+            isValueSettable: true,
+            valueSetterDoesNotChange: true)
+
+        do {
+            _ = try ActionInputDriver().trySetValueForTesting(element: element, value: .string("0.75"))
+            Issue.record("Expected unchanged value to fail verification")
+        } catch let error as ActionInputError {
+            guard case let .failed(message) = error else {
+                Issue.record("Unexpected action input error: \(error)")
+                return
+            }
+            #expect(message.contains("did not change"))
+            #expect(element.setValues == [.double(0.75)])
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+    }
+
+    @MainActor
+    @Test
+    func `unverifiable value setter fails instead of fabricating a result`() {
+        let element = MockAutomationElement(
+            role: AXRoleNames.kAXSliderRole,
+            isValueSettable: true,
+            valueSetterDoesNotChange: true)
+
+        do {
+            _ = try ActionInputDriver().trySetValueForTesting(element: element, value: .double(0.75))
+            Issue.record("Expected unverifiable value to fail")
+        } catch let error as ActionInputError {
+            guard case .failed = error else {
+                Issue.record("Unexpected action input error: \(error)")
+                return
+            }
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+    }
+
+    @MainActor
+    @Test
     func `mock menu tree can exercise hotkey menu resolution without live AX`() throws {
         let saveItem = MockAutomationElement(
             role: AXRoleNames.kAXMenuItemRole,
@@ -389,6 +492,66 @@ struct ActionInputDriverTests {
         } catch {
             Issue.record("Unexpected error: \(error)")
         }
+    }
+
+    @MainActor
+    @Test
+    func `non-advertised action is rejected before a phantom-success AX invocation`() {
+        let element = PhantomSuccessAutomationElement(role: AXRoleNames.kAXButtonRole)
+
+        do {
+            _ = try ActionInputDriver().tryPerformActionForTesting(
+                element: element,
+                actionName: AXActionNames.kAXPressAction)
+            Issue.record("Expected non-advertised action to be rejected")
+        } catch let error as ActionInputError {
+            #expect(error == .unsupported(.actionUnsupported))
+            #expect(element.performedActions.isEmpty)
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+    }
+}
+
+@MainActor
+private final class PhantomSuccessAutomationElement: AutomationElementRepresenting, @unchecked Sendable {
+    let name: String? = nil
+    let label: String? = nil
+    let roleDescription: String? = nil
+    let identifier: String? = nil
+    let role: String?
+    let subrole: String? = nil
+    let frame: CGRect? = nil
+    let value: Any? = nil
+    let stringValue: String? = nil
+    let actionNames: [String] = []
+    let isValueSettable = false
+    let isFocusedSettable = false
+    let isEnabled = true
+    let isFocused = false
+    let isOffscreen = false
+    let anchorPoint: CGPoint? = nil
+    let automationChildren: [any AutomationElementRepresenting] = []
+    var performedActions: [String] = []
+
+    init(role: String?) {
+        self.role = role
+    }
+
+    func performAutomationAction(_ actionName: String) throws {
+        self.performedActions.append(actionName)
+    }
+
+    func setAutomationValue(_: UIElementValue) throws {}
+
+    func setAutomationFocused(_: Bool) throws {}
+
+    func stringAttribute(_: String) -> String? {
+        nil
+    }
+
+    func intAttribute(_: String) -> Int? {
+        nil
     }
 }
 
@@ -493,6 +656,8 @@ private final class MockAutomationElement: AutomationElementRepresenting, @unche
     let actionNames: [String]
     let isValueSettable: Bool
     let isFocusedSettable: Bool
+    let isSelectedSettable: Bool
+    var selectedValue: Bool?
     let isEnabled: Bool
     let isFocused: Bool
     let isOffscreen: Bool
@@ -504,9 +669,11 @@ private final class MockAutomationElement: AutomationElementRepresenting, @unche
     private let stringAttributes: [String: String]
     private let intAttributes: [String: Int]
     private let actionErrors: [String: any Error]
+    private let valueSetterDoesNotChange: Bool
     var performedActions: [String] = []
     var setValues: [UIElementValue] = []
     var setFocusedValues: [Bool] = []
+    var setSelectedValues: [Bool] = []
 
     var automationChildren: [any AutomationElementRepresenting] {
         self.children
@@ -524,13 +691,16 @@ private final class MockAutomationElement: AutomationElementRepresenting, @unche
         actionNames: [String] = [],
         isValueSettable: Bool = false,
         isFocusedSettable: Bool = false,
+        isSelectedSettable: Bool = false,
+        selectedValue: Bool? = nil,
         isEnabled: Bool = true,
         isFocused: Bool = false,
         isOffscreen: Bool = false,
         children: [MockAutomationElement] = [],
         stringAttributes: [String: String] = [:],
         intAttributes: [String: Int] = [:],
-        actionErrors: [String: any Error] = [:])
+        actionErrors: [String: any Error] = [:],
+        valueSetterDoesNotChange: Bool = false)
     {
         self.name = name
         self.label = label
@@ -543,6 +713,8 @@ private final class MockAutomationElement: AutomationElementRepresenting, @unche
         self.actionNames = actionNames
         self.isValueSettable = isValueSettable
         self.isFocusedSettable = isFocusedSettable
+        self.isSelectedSettable = isSelectedSettable
+        self.selectedValue = selectedValue
         self.isEnabled = isEnabled
         self.isFocused = isFocused
         self.isOffscreen = isOffscreen
@@ -550,6 +722,7 @@ private final class MockAutomationElement: AutomationElementRepresenting, @unche
         self.stringAttributes = stringAttributes
         self.intAttributes = intAttributes
         self.actionErrors = actionErrors
+        self.valueSetterDoesNotChange = valueSetterDoesNotChange
     }
 
     func performAutomationAction(_ actionName: String) throws {
@@ -566,8 +739,18 @@ private final class MockAutomationElement: AutomationElementRepresenting, @unche
         guard self.isValueSettable else {
             throw AccessibilitySystemError(.attributeUnsupported)
         }
-        self.value = value.displayString
         self.setValues.append(value)
+        guard !self.valueSetterDoesNotChange else { return }
+        switch value {
+        case let .bool(value):
+            self.value = value
+        case let .int(value):
+            self.value = value
+        case let .double(value):
+            self.value = value
+        case let .string(value):
+            self.value = value
+        }
     }
 
     func setAutomationFocused(_ focused: Bool) throws {
@@ -575,6 +758,14 @@ private final class MockAutomationElement: AutomationElementRepresenting, @unche
             throw AccessibilitySystemError(.attributeUnsupported)
         }
         self.setFocusedValues.append(focused)
+    }
+
+    func setAutomationSelected(_ selected: Bool) throws {
+        guard self.isSelectedSettable else {
+            throw AccessibilitySystemError(.attributeUnsupported)
+        }
+        self.setSelectedValues.append(selected)
+        self.selectedValue = selected
     }
 
     func stringAttribute(_ name: String) -> String? {

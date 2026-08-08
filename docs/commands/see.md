@@ -30,7 +30,7 @@ peekaboo see --app "Google Chrome" --window-title "Login" --json --path /tmp/chr
 | `--app`, `--window-title`, `--pid` | Limit capture to a known app/window/process. |
 | `--mode screen|window|frontmost|multi` | Override the auto target picker. `area` is intentionally rejected because `see` does not expose rectangle coordinates; use `peekaboo image --mode area --region x,y,width,height` for raw region screenshots. |
 | `--annotate` | Overlay element bounds/IDs on the output image. |
-| `--path <file>` | Save the screenshot/annotation to disk. |
+| `--path <file>` / `--save` / `--output` / `-o` | Save the screenshot/annotation to disk. |
 | `--json` | Emit structured metadata (recommended for scripting). |
 | `--menubar` | Capture menu bar popovers via window list + OCR (useful for status-item settings panels). When `--app` is set, the app name is used as an OCR hint for popover selection. |
 | `--timeout-seconds <seconds>` | Increase overall timeout for large/complex windows (defaults to 20s, or 60s with `--analyze`). |

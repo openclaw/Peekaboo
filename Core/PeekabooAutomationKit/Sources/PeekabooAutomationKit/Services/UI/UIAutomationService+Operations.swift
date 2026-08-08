@@ -157,11 +157,12 @@ extension UIAutomationService {
             try await self.clickService.click(target: target, clickType: clickType, snapshotId: snapshotId)
         }
 
-        // Show visual feedback if available
-        let fallbackPoint = try await self.getClickPoint(for: target, snapshotId: snapshotId)
-        if let clickPoint = Self.visualFeedbackPoint(actionAnchor: result.anchorPoint, fallbackPoint: fallbackPoint) {
-            _ = await self.feedbackClient.showClickFeedback(at: clickPoint, type: clickType)
-        }
+        try await self.visualizeClick(
+            target: target,
+            actionAnchor: result.anchorPoint,
+            clickType: clickType,
+            snapshotId: snapshotId,
+            targetProcessIdentifier: nil)
     }
 
     public func click(
@@ -179,10 +180,12 @@ extension UIAutomationService {
                 targetProcessIdentifier: targetProcessIdentifier)
         }
 
-        let fallbackPoint = try await self.getClickPoint(for: target, snapshotId: snapshotId)
-        if let clickPoint = Self.visualFeedbackPoint(actionAnchor: result.anchorPoint, fallbackPoint: fallbackPoint) {
-            _ = await self.feedbackClient.showClickFeedback(at: clickPoint, type: clickType)
-        }
+        try await self.visualizeClick(
+            target: target,
+            actionAnchor: result.anchorPoint,
+            clickType: clickType,
+            snapshotId: snapshotId,
+            targetProcessIdentifier: targetProcessIdentifier)
     }
 
     public func click(
@@ -202,8 +205,26 @@ extension UIAutomationService {
                 targetWindowID: targetWindowID)
         }
 
+        try await self.visualizeClick(
+            target: target,
+            actionAnchor: result.anchorPoint,
+            clickType: clickType,
+            snapshotId: snapshotId,
+            targetProcessIdentifier: targetProcessIdentifier)
+    }
+
+    /// Background delivery must remain invisible to the foreground user. Visualizer windows are
+    /// desktop-global, so only untargeted/foreground clicks may emit click feedback.
+    func visualizeClick(
+        target: ClickTarget,
+        actionAnchor: CGPoint?,
+        clickType: ClickType,
+        snapshotId: String?,
+        targetProcessIdentifier: pid_t?) async throws
+    {
+        guard targetProcessIdentifier == nil else { return }
         let fallbackPoint = try await self.getClickPoint(for: target, snapshotId: snapshotId)
-        if let clickPoint = Self.visualFeedbackPoint(actionAnchor: result.anchorPoint, fallbackPoint: fallbackPoint) {
+        if let clickPoint = Self.visualFeedbackPoint(actionAnchor: actionAnchor, fallbackPoint: fallbackPoint) {
             _ = await self.feedbackClient.showClickFeedback(at: clickPoint, type: clickType)
         }
     }

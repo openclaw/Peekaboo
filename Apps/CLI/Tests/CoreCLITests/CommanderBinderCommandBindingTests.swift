@@ -156,7 +156,10 @@ struct CommanderBinderCommandBindingTests {
                 "mode": ["screen"],
                 "path": ["/tmp/see.png"],
                 "screenIndex": ["2"],
-                "analyze": ["describe"]
+                "analyze": ["describe"],
+                "maxDepth": ["8"],
+                "maxElements": ["500"],
+                "maxChildren": ["100"]
             ],
             flags: ["annotate"]
         )
@@ -169,6 +172,9 @@ struct CommanderBinderCommandBindingTests {
         #expect(command.screenIndex == 2)
         #expect(command.annotate == true)
         #expect(command.analyze == "describe")
+        #expect(command.maxDepth == 8)
+        #expect(command.maxElements == 500)
+        #expect(command.maxChildren == 100)
     }
 
     @Test
@@ -391,7 +397,7 @@ struct CommanderBinderCommandBindingTests {
                 "app": ["Finder"],
                 "pid": ["999"]
             ],
-            flags: []
+            flags: ["groupBySpace"]
         )
         let command = try CommanderCLIBinder.instantiateCommand(
             ofType: WindowCommand.WindowListSubcommand.self,
@@ -399,6 +405,7 @@ struct CommanderBinderCommandBindingTests {
         )
         #expect(command.app == "Finder")
         #expect(command.pid == 999)
+        #expect(command.groupBySpace == true)
     }
 
     @Test

@@ -55,11 +55,7 @@ struct AppCommand: ParsableCommand {
         )
 
         @Option(help: "Application to hide")
-        var app: String
-
-        var positionalAppIdentifier: String {
-            self.app
-        }
+        var app: String?
 
         @Option(name: .long, help: "Target application by process ID")
         var pid: Int32?
@@ -133,11 +129,7 @@ struct AppCommand: ParsableCommand {
         )
 
         @Option(help: "Application to unhide")
-        var app: String
-
-        var positionalAppIdentifier: String {
-            self.app
-        }
+        var app: String?
 
         @Option(name: .long, help: "Target application by process ID")
         var pid: Int32?
@@ -364,28 +356,34 @@ struct AppCommand: ParsableCommand {
 }
 
 extension AppCommand.HideSubcommand: AsyncRuntimeCommand, ErrorHandlingCommand, OutputFormattable,
-ApplicationResolvablePositional, ApplicationResolver {}
+ApplicationResolvable, ApplicationResolver {}
 @MainActor
 extension AppCommand.HideSubcommand: CommanderBindableCommand {
     mutating func applyCommanderValues(_ values: CommanderBindableValues) throws {
         self.app = try Self.resolveAppArgument(values, label: "app")
         self.pid = try values.decodeOption("pid", as: Int32.self)
+        guard self.app != nil || self.pid != nil else {
+            throw CommanderBindingError.missingArgument(label: "app or --pid")
+        }
     }
 }
 
 extension AppCommand.UnhideSubcommand: AsyncRuntimeCommand, ErrorHandlingCommand, OutputFormattable,
-ApplicationResolvablePositional, ApplicationResolver {}
+ApplicationResolvable, ApplicationResolver {}
 @MainActor
 extension AppCommand.UnhideSubcommand: CommanderBindableCommand {
     mutating func applyCommanderValues(_ values: CommanderBindableValues) throws {
         self.app = try AppCommand.HideSubcommand.resolveAppArgument(values, label: "app")
         self.pid = try values.decodeOption("pid", as: Int32.self)
+        guard self.app != nil || self.pid != nil else {
+            throw CommanderBindingError.missingArgument(label: "app or --pid")
+        }
         self.activate = values.flag("activate")
     }
 }
 
 extension AppCommand.HideSubcommand {
-    fileprivate static func resolveAppArgument(_ values: CommanderBindableValues, label: String) throws -> String {
+    fileprivate static func resolveAppArgument(_ values: CommanderBindableValues, label: String) throws -> String? {
         let positional = values.positionalValue(at: 0)
         let option = values.singleOption(label)
 
@@ -401,7 +399,7 @@ extension AppCommand.HideSubcommand {
         case let (_, option?):
             return option
         default:
-            throw CommanderBindingError.missingArgument(label: label)
+            return nil
         }
     }
 }

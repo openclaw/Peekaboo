@@ -77,15 +77,7 @@ struct ElementDetectionWindowResolver {
                 let identifier = app.localizedName ?? app.bundleIdentifier ?? "PID:\(app.processIdentifier)"
                 self.logger.notice("Resolved window via CGWindowID \(windowID): '\(title)' for \(identifier)")
 
-                let window: Element
-                if let focused = self.focusedWindowIfMatches(app: app),
-                   self.windowIdentityService.getWindowID(from: focused).map(Int.init) == windowID
-                {
-                    window = focused
-                } else {
-                    await self.focusWindow(withID: windowID, appName: identifier)
-                    window = self.focusedWindowIfMatches(app: app) ?? handle.element
-                }
+                let window = handle.element
 
                 let subrole = window.subrole() ?? ""
                 let isDialogRole = ["AXDialog", "AXSystemDialog", "AXSheet"].contains(subrole)
@@ -214,10 +206,6 @@ struct ElementDetectionWindowResolver {
                 let fallbackTarget = app.localizedName ?? "app"
                 let fallbackTitle = matching.title ?? "Untitled"
                 self.logger.info("Using CG fallback window '\(fallbackTitle)' for \(fallbackTarget)")
-                await self.focusWindow(withID: Int(matching.windowID), appName: app.localizedName ?? "app")
-                if let focused = self.focusedWindowIfMatches(app: app) {
-                    return focused
-                }
                 return element
             }
         }
@@ -227,10 +215,6 @@ struct ElementDetectionWindowResolver {
                 let fallbackTarget = app.localizedName ?? "app"
                 let fallbackTitle = info.title ?? "Untitled"
                 self.logger.info("Using CG fallback window '\(fallbackTitle)' for \(fallbackTarget)")
-                await self.focusWindow(withID: Int(info.windowID), appName: app.localizedName ?? "app")
-                if let focused = self.focusedWindowIfMatches(app: app) {
-                    return focused
-                }
                 return element
             }
         }
@@ -278,10 +262,6 @@ struct ElementDetectionWindowResolver {
             }
 
             self.logger.notice("Using window service fallback window '\(windowInfo.title)' for \(identifier)")
-            await self.focusWindow(withID: windowInfo.windowID, appName: identifier)
-            if let focused = self.focusedWindowIfMatches(app: app) {
-                return focused
-            }
             return element
         } catch {
             self.logger.error("Window service fallback failed: \(error.localizedDescription)")
@@ -308,14 +288,6 @@ struct ElementDetectionWindowResolver {
 
         self.logger.notice("Using focused window fallback for \(app.localizedName ?? "app")")
         return focusedWindow
-    }
-
-    private func focusWindow(withID windowID: Int, appName: String) async {
-        do {
-            try await self.windowManagementService.focusWindow(target: .windowId(windowID))
-        } catch {
-            self.logger.warning("Failed to focus window \(windowID) for \(appName): \(error.localizedDescription)")
-        }
     }
 }
 

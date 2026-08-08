@@ -13,7 +13,7 @@ read_when:
 | Subcommand | Purpose | Key options |
 | --- | --- | --- |
 | `click` | Activate an application menu item via `--item` (single-level) or `--path "File > Export > PDF"`. | Target flags `--app <name|bundle|PID:1234>`, optional `--pid`, optional `--window-id`/`--window-title`/`--window-index`, plus all focus flags. Paths are normalized automatically if you accidentally pass a `'>'` string to `--item`. |
-| `click-extra` | Click status-bar menu extras (Wi-Fi, Bluetooth, custom icons). | `--title <menu-extra>` is required; `--verify` confirms the popover opened; `--item` is parsed but currently prints a warning because nested extra menus aren’t implemented yet. |
+| `click-extra` | Click status-bar menu extras (Wi-Fi, Bluetooth, custom icons). | `--title <menu-extra>` is required; `--verify` confirms the popover opened; `--item` fails with a nonzero exit because nested extra-menu selection is not implemented yet. |
 | `list` | Dump the menu tree for a specific app (optionally showing disabled items). | Same target flags as `click`, plus `--include-disabled`. |
 | `list-all` | Snapshot the frontmost app’s full menu tree *and* all system menu extras in one go. | `--include-disabled`, `--include-frames` (adds pixel coordinates for extras). |
 

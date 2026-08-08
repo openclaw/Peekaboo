@@ -11,7 +11,7 @@ extension MenuCommand {
         @Option(help: "Title of the menu extra (e.g., 'WiFi', 'Bluetooth')")
         var title: String
 
-        @Option(help: "Menu item to click after opening the extra")
+        @Option(help: "Reserved for future nested menu support; currently rejected")
         var item: String?
 
         @Flag(help: "Verify the menu extra popover opens after clicking")
@@ -47,6 +47,11 @@ extension MenuCommand {
             self.logger.setJsonOutputMode(self.jsonOutput)
 
             do {
+                guard self.item == nil else {
+                    throw ValidationError(
+                        "--item is not supported by menu click-extra; open the extra first, then use another interaction command"
+                    )
+                }
                 let verifier = MenuBarClickVerifier(services: self.services)
                 let verifyTarget = self.verify ? try await self.resolveVerificationTarget() : nil
                 let preFocus = self.verify ? try await verifier.captureFocusSnapshot() : nil
@@ -69,22 +74,15 @@ extension MenuCommand {
                     verification = nil
                 }
 
-                if self.item != nil {
-                    try await Task.sleep(nanoseconds: 200_000_000)
-                    fputs("Warning: Clicking menu items within menu extras is not yet implemented\n", stderr)
-                }
-
                 if self.jsonOutput {
                     let data = MenuExtraClickResult(
                         action: "menu_extra_click",
                         menu_extra: title,
-                        clicked_item: item ?? self.title,
+                        clicked_item: self.title,
                         location: clickResult.location.map { ["x": $0.x, "y": $0.y] },
                         verified: verification?.verified
                     )
                     outputSuccessCodable(data: data, logger: self.outputLogger)
-                } else if let clickedItem = item {
-                    print("✓ Clicked '\(clickedItem)' in \(self.title) menu")
                 } else {
                     if let location = clickResult.location {
                         print("✓ Clicked menu extra: \(self.title) at (\(Int(location.x)), \(Int(location.y)))")
@@ -96,6 +94,13 @@ extension MenuCommand {
                     }
                 }
 
+            } catch let error as Commander.ValidationError {
+                if self.jsonOutput {
+                    outputError(message: error.localizedDescription, code: .INVALID_INPUT, logger: self.outputLogger)
+                } else {
+                    fputs("Error: \(error.localizedDescription)\n", stderr)
+                }
+                throw ExitCode(1)
             } catch let error as MenuError {
                 MenuErrorOutputSupport.renderMenuError(
                     error,

@@ -27,13 +27,19 @@ extension SeeCommand: CommanderSignatureProviding {
                 ),
                 .commandOption(
                     "mode",
-                    help: "Capture mode (screen, window, frontmost)",
+                    help: "Capture mode (screen, window, frontmost, multi)",
                     long: "mode"
                 ),
-                .commandOption(
-                    "path",
-                    help: "Output path for screenshot",
-                    long: "path"
+                .make(
+                    label: "path",
+                    names: [
+                        .long("path"),
+                        .aliasLong("save"),
+                        .aliasLong("output"),
+                        .short("o"),
+                    ],
+                    help: "Output path for screenshot (aliases: --save, --output, -o)",
+                    parsing: .singleValue
                 ),
                 .commandOption(
                     "captureEngine",
@@ -54,6 +60,21 @@ extension SeeCommand: CommanderSignatureProviding {
                     "timeoutSeconds",
                     help: "Overall timeout in seconds (default: 20, or 60 when --analyze is set)",
                     long: "timeout-seconds"
+                ),
+                .commandOption(
+                    "maxDepth",
+                    help: "Maximum AX traversal depth (env: PEEKABOO_AX_MAX_DEPTH)",
+                    long: "max-depth"
+                ),
+                .commandOption(
+                    "maxElements",
+                    help: "Maximum AX elements to collect (env: PEEKABOO_AX_MAX_ELEMENTS)",
+                    long: "max-elements"
+                ),
+                .commandOption(
+                    "maxChildren",
+                    help: "Maximum AX children per node (env: PEEKABOO_AX_MAX_CHILDREN)",
+                    long: "max-children"
                 ),
             ],
             flags: [

@@ -420,6 +420,9 @@ extension SeeCommand: CommanderBindableCommand {
         self.annotate = values.flag("annotate")
         self.analyze = values.singleOption("analyze")
         self.timeoutSeconds = try values.decodeOption("timeoutSeconds", as: Int.self)
+        self.maxDepth = try values.decodeOption("maxDepth", as: Int.self)
+        self.maxElements = try values.decodeOption("maxElements", as: Int.self)
+        self.maxChildren = try values.decodeOption("maxChildren", as: Int.self)
         self.noWebFocus = values.flag("noWebFocus")
         self.menubar = values.flag("menubar")
     }

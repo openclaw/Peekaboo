@@ -47,6 +47,73 @@ struct CommanderBinderProgramResolutionTests {
 
     @Test
     @MainActor
+    func `Commander program preserves see traversal and path aliases`() throws {
+        let descriptors = CommanderRegistryBuilder.buildDescriptors()
+        let program = Program(descriptors: descriptors.map(\.metadata))
+        for alias in ["--path", "--save", "--output", "-o"] {
+            let invocation = try program.resolve(argv: [
+                "peekaboo",
+                "see",
+                alias, "/tmp/see.png",
+                "--max-depth", "8",
+                "--max-elements", "500",
+                "--max-children", "100",
+            ])
+            let values = invocation.parsedValues
+            #expect(values.options["path"] == ["/tmp/see.png"])
+            #expect(values.options["maxDepth"] == ["8"])
+            #expect(values.options["maxElements"] == ["500"])
+            #expect(values.options["maxChildren"] == ["100"])
+        }
+        let modeHelp = SeeCommand.commanderSignature().options.first { $0.label == "mode" }?.help
+        #expect(modeHelp?.contains("multi") == true)
+    }
+
+    @Test
+    @MainActor
+    func `Commander program preserves window and menu documented options`() throws {
+        let descriptors = CommanderRegistryBuilder.buildDescriptors()
+        let program = Program(descriptors: descriptors.map(\.metadata))
+        let listInvocation = try program.resolve(argv: [
+            "peekaboo", "window", "list", "--app", "Finder", "--group-by-space",
+        ])
+        #expect(listInvocation.parsedValues.flags.contains("groupBySpace"))
+
+        let resizeInvocation = try program.resolve(argv: [
+            "peekaboo", "window", "resize", "--app", "Finder", "-w", "800", "--height", "600",
+        ])
+        #expect(resizeInvocation.parsedValues.options["width"] == ["800"])
+
+        let boundsInvocation = try program.resolve(argv: [
+            "peekaboo", "window", "set-bounds", "--app", "Finder",
+            "--x", "0", "--y", "0", "-w", "800", "--height", "600",
+        ])
+        #expect(boundsInvocation.parsedValues.options["width"] == ["800"])
+
+        let menuInvocation = try program.resolve(argv: [
+            "peekaboo", "menu", "click-extra", "--title", "WiFi", "--verify",
+        ])
+        #expect(menuInvocation.parsedValues.flags.contains("verify"))
+    }
+
+    @Test
+    @MainActor
+    func `App launch help treats app as optional with bundle identifier`() throws {
+        let argument = AppCommand.LaunchSubcommand.commanderSignature().arguments.first
+        #expect(argument?.label == "app")
+        #expect(argument?.isOptional == true)
+
+        let descriptors = CommanderRegistryBuilder.buildDescriptors()
+        let program = Program(descriptors: descriptors.map(\.metadata))
+        let invocation = try program.resolve(argv: [
+            "peekaboo", "app", "launch", "--bundle-id", "com.apple.TextEdit",
+        ])
+        #expect(invocation.parsedValues.positional.isEmpty)
+        #expect(invocation.parsedValues.options["bundleId"] == ["com.apple.TextEdit"])
+    }
+
+    @Test
+    @MainActor
     func `Commander program resolves list windows options`() throws {
         let descriptors = CommanderRegistryBuilder.buildDescriptors()
         let program = Program(descriptors: descriptors.map(\.metadata))

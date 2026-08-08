@@ -58,6 +58,23 @@ struct AppCommandTests {
     }
 
     @Test
+    func `App quit exits nonzero when the application refuses to quit`() async throws {
+        let context = await MainActor.run { makeAppCommandContext() }
+        await MainActor.run {
+            context.applicationService.quitShouldSucceed = false
+        }
+        let result = try await InProcessCommandRunner.run(
+            ["app", "quit", "--app", "Finder", "--json"],
+            services: context.services
+        )
+        #expect(result.exitStatus != 0)
+        let object = try #require(
+            JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [String: Any]
+        )
+        #expect(object["success"] as? Bool == false)
+    }
+
+    @Test
     func `App hide command validation`() async throws {
         // Normal hide should work
         let output = try await runAppCommand(["app", "hide", "--app", "Finder", "--help"])
@@ -83,7 +100,7 @@ struct AppCommandTests {
     @Test
     func `App lifecycle flow`() {
         // This tests the logical flow of app lifecycle commands
-        let launchCmd = ["app", "launch", "--app", "TextEdit", "--wait-until-ready"]
+        let launchCmd = ["app", "launch", "TextEdit", "--wait-until-ready"]
         let hideCmd = ["app", "hide", "--app", "TextEdit"]
         let showCmd = ["app", "unhide", "--app", "TextEdit"]
         let quitCmd = ["app", "quit", "--app", "TextEdit", "--json"]

@@ -63,7 +63,11 @@ struct ActionInputResult: Equatable {
     var anchorPoint: CGPoint?
     var elementRole: String?
 
-    init(actionName: String? = nil, anchorPoint: CGPoint? = nil, elementRole: String? = nil) {
+    init(
+        actionName: String? = nil,
+        anchorPoint: CGPoint? = nil,
+        elementRole: String? = nil)
+    {
         self.actionName = actionName
         self.anchorPoint = anchorPoint
         self.elementRole = elementRole
@@ -214,12 +218,13 @@ struct ActionInputDriver: ActionInputDriving {
     nonisolated static func setValueRejectionReason(
         role: String?,
         subrole: String?,
-        isValueSettable: Bool) -> ActionInputUnsupportedReason?
+        isValueSettable: Bool,
+        isSelectedSettable: Bool = false) -> ActionInputUnsupportedReason?
     {
         if role == "AXSecureTextField" || subrole == "AXSecureTextField" {
             return .secureValueNotAllowed
         }
-        if !isValueSettable {
+        if !isValueSettable, !isSelectedSettable {
             return .valueNotSettable
         }
         return nil
@@ -262,6 +267,10 @@ struct ActionInputDriver: ActionInputDriving {
     private func performAction(_ actionName: String, on element: any AutomationElementRepresenting)
         throws -> ActionInputResult
     {
+        guard element.supportsAction(actionName) else {
+            throw ActionInputError.unsupported(.actionUnsupported)
+        }
+
         do {
             try element.performAutomationAction(actionName)
             return ActionInputResult(
@@ -291,13 +300,36 @@ struct ActionInputDriver: ActionInputDriving {
         if let rejectionReason = Self.setValueRejectionReason(
             role: element.role,
             subrole: element.subrole,
-            isValueSettable: element.isValueSettable)
+            isValueSettable: element.isValueSettable,
+            isSelectedSettable: element.isSelectedSettable)
         {
             throw ActionInputError.unsupported(rejectionReason)
         }
 
         do {
-            try element.setAutomationValue(value)
+            if !element.isValueSettable, element.isSelectedSettable {
+                let requested = try Self.booleanValue(value, role: element.role)
+                if element.selectedValue != requested {
+                    try element.setAutomationSelected(requested)
+                }
+                guard element.selectedValue == requested else {
+                    throw ActionInputError.failed(
+                        "Accessibility selection did not change to the requested value")
+                }
+                return ActionInputResult(
+                    actionName: kAXSelectedAttribute as String,
+                    anchorPoint: element.anchorPoint,
+                    elementRole: element.role)
+            }
+
+            let requested = try Self.coerceValue(value, currentValue: element.value, role: element.role)
+            if !Self.value(element.value, matches: requested) {
+                try element.setAutomationValue(requested)
+            }
+            guard Self.value(element.value, matches: requested) else {
+                throw ActionInputError.failed(
+                    "Accessibility value did not change to the requested value")
+            }
             return ActionInputResult(
                 actionName: AXActionNames.kAXSetValueAction,
                 anchorPoint: element.anchorPoint,
@@ -305,6 +337,174 @@ struct ActionInputDriver: ActionInputDriving {
         } catch {
             throw Self.classify(error)
         }
+    }
+
+    private nonisolated static func coerceValue(
+        _ requested: UIElementValue,
+        currentValue: Any?,
+        role: String?) throws -> UIElementValue
+    {
+        if self.isTextRole(role) || currentValue is String {
+            return .string(requested.displayString)
+        }
+        if self.isBooleanRole(role) || self.valueKind(currentValue) == .bool {
+            return try .bool(self.booleanValue(requested, role: role))
+        }
+        if self.isNumericRole(role) {
+            return try .double(self.doubleValue(requested))
+        }
+
+        switch self.valueKind(currentValue) {
+        case .int:
+            return try .int(self.integerValue(requested))
+        case .double:
+            return try .double(self.doubleValue(requested))
+        case .bool, .string:
+            // Handled above.
+            return requested
+        case .unknown:
+            return requested
+        }
+    }
+
+    private nonisolated static func booleanValue(_ value: UIElementValue, role: String?) throws -> Bool {
+        switch value {
+        case let .bool(value):
+            return value
+        case let .int(value) where value == 0 || value == 1:
+            return value == 1
+        case let .double(value) where value == 0 || value == 1:
+            return value == 1
+        case let .string(value):
+            switch value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+            case "true", "1", "yes", "on":
+                return true
+            case "false", "0", "no", "off":
+                return false
+            default:
+                break
+            }
+        default:
+            break
+        }
+        let target = role.map { " for \($0)" } ?? ""
+        throw ActionInputError.failed("Expected a boolean value\(target)")
+    }
+
+    private nonisolated static func integerValue(_ value: UIElementValue) throws -> Int {
+        switch value {
+        case let .int(value):
+            return value
+        case let .double(value) where value.isFinite:
+            if let integer = Int(exactly: value) {
+                return integer
+            }
+        case let .string(value):
+            let value = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let integer = Int(value) {
+                return integer
+            }
+            if let double = Double(value), double.isFinite, let integer = Int(exactly: double) {
+                return integer
+            }
+        case let .bool(value):
+            return value ? 1 : 0
+        default:
+            break
+        }
+        throw ActionInputError.failed("Expected an integer value")
+    }
+
+    private nonisolated static func doubleValue(_ value: UIElementValue) throws -> Double {
+        let result: Double? = switch value {
+        case let .double(value):
+            value
+        case let .int(value):
+            Double(value)
+        case let .string(value):
+            Double(value.trimmingCharacters(in: .whitespacesAndNewlines))
+        case let .bool(value):
+            value ? 1 : 0
+        }
+        guard let result, result.isFinite else {
+            throw ActionInputError.failed("Expected a finite numeric value")
+        }
+        return result
+    }
+
+    private nonisolated static func value(_ actual: Any?, matches expected: UIElementValue) -> Bool {
+        guard let actual else { return false }
+        switch expected {
+        case let .bool(expected):
+            if self.valueKind(actual) == .bool, let actual = actual as? Bool {
+                return actual == expected
+            }
+            if let number = actual as? NSNumber {
+                return number.intValue == (expected ? 1 : 0)
+            }
+            return false
+        case let .int(expected):
+            guard let number = actual as? NSNumber else { return false }
+            return !self.numberIsFloatingPoint(number) && number.intValue == expected
+        case let .double(expected):
+            guard let number = actual as? NSNumber else { return false }
+            let actual = number.doubleValue
+            let tolerance = max(1e-9, abs(expected) * 1e-9)
+            return actual.isFinite && abs(actual - expected) <= tolerance
+        case let .string(expected):
+            return (actual as? String) == expected
+        }
+    }
+
+    private enum ValueKind: Equatable {
+        case bool
+        case int
+        case double
+        case string
+        case unknown
+    }
+
+    private nonisolated static func valueKind(_ value: Any?) -> ValueKind {
+        guard let value else { return .unknown }
+        if value is String {
+            return .string
+        }
+        guard let number = value as? NSNumber else { return .unknown }
+        if CFGetTypeID(number) == CFBooleanGetTypeID() {
+            return .bool
+        }
+        return self.numberIsFloatingPoint(number) ? .double : .int
+    }
+
+    private nonisolated static func numberIsFloatingPoint(_ number: NSNumber) -> Bool {
+        switch String(cString: number.objCType) {
+        case "f", "d", "D":
+            true
+        default:
+            false
+        }
+    }
+
+    private nonisolated static func isTextRole(_ role: String?) -> Bool {
+        switch role {
+        case AXRoleNames.kAXTextFieldRole, AXRoleNames.kAXTextAreaRole, AXRoleNames.kAXComboBoxRole:
+            true
+        default:
+            false
+        }
+    }
+
+    private nonisolated static func isBooleanRole(_ role: String?) -> Bool {
+        switch role {
+        case AXRoleNames.kAXCheckBoxRole, AXRoleNames.kAXRadioButtonRole, "AXSwitch", "AXToggle":
+            true
+        default:
+            false
+        }
+    }
+
+    private nonisolated static func isNumericRole(_ role: String?) -> Bool {
+        role == "AXSlider"
     }
 
     private func scrollActionNames(for direction: PeekabooFoundation.ScrollDirection) -> [String] {

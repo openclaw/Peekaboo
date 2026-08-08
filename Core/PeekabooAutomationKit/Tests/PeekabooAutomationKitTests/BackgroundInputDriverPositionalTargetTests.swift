@@ -194,6 +194,32 @@ struct BackgroundInputDriverPositionalTargetTests {
 
     @Test
     @MainActor
+    func `left click selects a writable row ancestor when the hit label has no press action`() async throws {
+        let point = CGPoint(x: 1578, y: 609)
+        let label = PositionalMockElement(
+            role: AXRoleNames.kAXButtonRole,
+            frame: CGRect(x: 1524, y: 597, width: 108, height: 24))
+        let cell = PositionalMockElement(
+            role: "AXCell",
+            frame: CGRect(x: 1518, y: 593, width: 178, height: 32))
+        let row = PositionalMockElement(
+            role: AXRoleNames.kAXRowRole,
+            frame: CGRect(x: 1508, y: 593, width: 198, height: 32),
+            isSelectedSettable: true)
+
+        let resolved = BackgroundInputDriver.positionalClickTarget(
+            inCandidates: [label, cell, row],
+            at: point,
+            button: MouseButton.left)
+
+        #expect(resolved?.action == .select)
+        #expect((resolved?.element as? PositionalMockElement) === row)
+        try await BackgroundInputDriver.performPositionalClickAction(.select, on: row)
+        #expect(row.setSelectedValues == [true])
+    }
+
+    @Test
+    @MainActor
     func `value settable web group does not masquerade as a focused click`() {
         // Chromium exposes full-page AXGroup containers as value/focus-settable. Setting focus on
         // that container returns success but delivers no click.
@@ -238,6 +264,24 @@ struct BackgroundInputDriverPositionalTargetTests {
             button: MouseButton.right)
         #expect(withMenu?.action == .showMenu)
         #expect((withMenu?.element as? PositionalMockElement) === menuHost)
+    }
+
+    @Test
+    @MainActor
+    func `right click never selects a writable row`() {
+        let point = CGPoint(x: 50, y: 50)
+        let row = PositionalMockElement(
+            role: AXRoleNames.kAXRowRole,
+            frame: CGRect(x: 0, y: 0, width: 100, height: 100),
+            isSelectedSettable: true)
+
+        let resolved = BackgroundInputDriver.positionalClickTarget(
+            inCandidates: [row],
+            at: point,
+            button: MouseButton.right)
+
+        #expect(resolved == nil)
+        #expect(row.setSelectedValues.isEmpty)
     }
 
     @Test
@@ -311,6 +355,7 @@ private final class PositionalMockElement: AutomationElementRepresenting, @unche
     let actionNames: [String]
     let isValueSettable: Bool
     let isFocusedSettable: Bool
+    let isSelectedSettable: Bool
     let isEnabled: Bool
     let isFocused = false
     let isOffscreen = false
@@ -320,6 +365,7 @@ private final class PositionalMockElement: AutomationElementRepresenting, @unche
 
     let automationChildren: [any AutomationElementRepresenting] = []
     var setFocusedValues: [Bool] = []
+    var setSelectedValues: [Bool] = []
 
     /// Actions reported by the real `AXUIElementCopyActionNames` API in production. Kept separate
     /// from `actionNames` (the attribute read) so tests can model the SwiftUI case where the
@@ -334,6 +380,7 @@ private final class PositionalMockElement: AutomationElementRepresenting, @unche
         advertisedActionNames: [String]? = nil,
         isValueSettable: Bool = false,
         isFocusedSettable: Bool = false,
+        isSelectedSettable: Bool = false,
         isEnabled: Bool = true)
     {
         self.role = role
@@ -345,6 +392,7 @@ private final class PositionalMockElement: AutomationElementRepresenting, @unche
         self.actionNames = advertisedActionNames ?? Array(supportedActions)
         self.isValueSettable = isValueSettable
         self.isFocusedSettable = isFocusedSettable
+        self.isSelectedSettable = isSelectedSettable
         self.isEnabled = isEnabled
     }
 
@@ -364,6 +412,13 @@ private final class PositionalMockElement: AutomationElementRepresenting, @unche
 
     func setAutomationFocused(_ focused: Bool) throws {
         self.setFocusedValues.append(focused)
+    }
+
+    func setAutomationSelected(_ selected: Bool) throws {
+        guard self.isSelectedSettable else {
+            throw AccessibilitySystemError(.attributeUnsupported)
+        }
+        self.setSelectedValues.append(selected)
     }
 
     func stringAttribute(_ name: String) -> String? {

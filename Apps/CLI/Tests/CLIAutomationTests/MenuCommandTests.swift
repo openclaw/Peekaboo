@@ -95,6 +95,18 @@ struct MenuCommandTests {
         #expect(output.contains("Click a system menu extra"))
         #expect(output.contains("--title"))
         #expect(output.contains("--item"))
+        #expect(output.contains("--verify"))
+    }
+
+    @Test
+    func `Menu click-extra rejects unsupported nested item without clicking`() async throws {
+        let (result, context) = try await self.runMenuCommandWithContext([
+            "menu", "click-extra", "--title", "WiFi", "--item", "Settings", "--json",
+        ])
+        #expect(result.exitStatus != 0)
+        #expect(self.output(from: result).contains("--item is not supported"))
+        let calls = await self.menuState(context.menuService) { $0.clickExtraCalls }
+        #expect(calls.isEmpty)
     }
 
     @Test

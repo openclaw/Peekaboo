@@ -164,7 +164,7 @@ public struct DesktopDetectionOptions: Sendable, Codable, Equatable {
     public init(
         mode: DetectionMode = .accessibility,
         allowWebFocusFallback: Bool = true,
-        includeMenuBarElements: Bool = true,
+        includeMenuBarElements: Bool = false,
         preferOCR: Bool = false,
         traversalBudget: AXTraversalBudget = AXTraversalBudget.resolved())
     {
@@ -187,7 +187,7 @@ public struct DesktopDetectionOptions: Sendable, Codable, Equatable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.mode = try container.decode(DetectionMode.self, forKey: .mode)
         self.allowWebFocusFallback = try container.decode(Bool.self, forKey: .allowWebFocusFallback)
-        self.includeMenuBarElements = try container.decode(Bool.self, forKey: .includeMenuBarElements)
+        self.includeMenuBarElements = try container.decodeIfPresent(Bool.self, forKey: .includeMenuBarElements) ?? false
         self.preferOCR = try container.decode(Bool.self, forKey: .preferOCR)
         self.traversalBudget = try container.decodeIfPresent(AXTraversalBudget.self, forKey: .traversalBudget)
             ?? AXTraversalBudget.resolved()

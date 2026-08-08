@@ -344,7 +344,8 @@ struct PeekabooBridgeTargetedClickTests {
         #expect(handshake.supportedOperations.contains(.quitApplication))
         #expect(handshake.enabledOperations?.contains(.quitApplication) == true)
         #expect(handshake.permissionTags[PeekabooBridgeOperation.quitApplication.rawValue] == [])
-        #expect(handshake.enabledOperations?.contains(.hideApplication) == false)
+        #expect(handshake.enabledOperations?.contains(.hideApplication) == true)
+        #expect(handshake.permissionTags[PeekabooBridgeOperation.hideApplication.rawValue] == [])
     }
 
     @Test
@@ -718,8 +719,12 @@ struct PeekabooBridgeTargetedClickTests {
     }
 
     @Test
-    func `application quit does not require AppleScript permission`() {
+    func `native application lifecycle operations do not require AppleScript permission`() {
+        #expect(PeekabooBridgeOperation.activateApplication.requiredPermissions.isEmpty)
         #expect(PeekabooBridgeOperation.quitApplication.requiredPermissions.isEmpty)
-        #expect(PeekabooBridgeOperation.hideApplication.requiredPermissions == [.appleScript])
+        #expect(PeekabooBridgeOperation.hideApplication.requiredPermissions.isEmpty)
+        #expect(PeekabooBridgeOperation.unhideApplication.requiredPermissions.isEmpty)
+        #expect(PeekabooBridgeOperation.hideOtherApplications.requiredPermissions.isEmpty)
+        #expect(PeekabooBridgeOperation.showAllApplications.requiredPermissions.isEmpty)
     }
 }

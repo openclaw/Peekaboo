@@ -5,7 +5,7 @@ extension DockService {
     /// Wait for a launched `Process` with a hard deadline.
     ///
     /// Foundation's `waitUntilExit()` can block forever if the child wedges. Dock
-    /// commands (`defaults`, `killall`, `osascript`) should never hang the CLI/MCP.
+    /// commands (`defaults`, `killall`) should never hang the CLI/MCP.
     nonisolated static func waitForProcessExit(
         _ process: Process,
         timeoutSeconds: TimeInterval = 15) throws

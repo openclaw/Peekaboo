@@ -51,11 +51,12 @@ struct RemoteApplicationServiceTests {
     }
 
     @Test
-    func `lifecycle falls back when on-demand bridge lacks AppleScript permission`() async throws {
+    func `native lifecycle uses bridge without AppleScript permission`() async throws {
         let socketPath = "/tmp/peekaboo-bridge-app-fallback-\(UUID().uuidString).sock"
+        let bridgedApplications = await MainActor.run { RecordingApplicationFallback() }
         let server = await MainActor.run {
             PeekabooBridgeServer(
-                services: PeekabooServices(),
+                services: StubServices(applications: bridgedApplications),
                 hostKind: .onDemand,
                 allowlistedTeams: [],
                 allowlistedBundles: [],
@@ -77,13 +78,7 @@ struct RemoteApplicationServiceTests {
         defer { Task { await host.stop() } }
 
         let directClient = PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 2)
-        do {
-            try await directClient.hideApplication(identifier: "Finder")
-            Issue.record("Expected bridge AppleScript permission denial")
-        } catch let envelope as PeekabooBridgeErrorEnvelope {
-            #expect(envelope.code == .permissionDenied)
-            #expect(envelope.permission == .appleScript)
-        }
+        try await directClient.hideApplication(identifier: "Finder")
 
         let fallback = await MainActor.run { RecordingApplicationFallback() }
         let remote = await MainActor.run {
@@ -93,8 +88,10 @@ struct RemoteApplicationServiceTests {
         }
 
         try await remote.hideApplication(identifier: "Finder")
+        let bridgedIdentifiers = await MainActor.run { bridgedApplications.hiddenIdentifiers }
         let hiddenIdentifiers = await MainActor.run { fallback.hiddenIdentifiers }
-        #expect(hiddenIdentifiers == ["Finder"])
+        #expect(bridgedIdentifiers == ["Finder", "Finder"])
+        #expect(hiddenIdentifiers.isEmpty)
     }
 
     @Test

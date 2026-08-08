@@ -34,8 +34,15 @@ extension MenuCommand.ClickExtraSubcommand: CommanderSignatureProviding {
                 ),
                 .commandOption(
                     "item",
-                    help: "Menu item to click after opening the extra",
+                    help: "Reserved for future nested menu support; currently rejected",
                     long: "item"
+                ),
+            ],
+            flags: [
+                .commandFlag(
+                    "verify",
+                    help: "Verify the menu extra popover opens after clicking",
+                    long: "verify"
                 ),
             ]
         )

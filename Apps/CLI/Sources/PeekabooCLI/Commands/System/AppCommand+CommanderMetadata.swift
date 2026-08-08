@@ -7,7 +7,7 @@ extension AppCommand.LaunchSubcommand: CommanderSignatureProviding {
                 .make(
                     label: "app",
                     help: "Application name or path",
-                    isOptional: false
+                    isOptional: true
                 ),
             ],
             options: [
@@ -186,7 +186,7 @@ extension AppCommand.RelaunchSubcommand: CommanderSignatureProviding {
                 .make(
                     label: "app",
                     help: "Application name, bundle ID, or 'PID:12345'",
-                    isOptional: false
+                    isOptional: true
                 ),
             ],
             options: [

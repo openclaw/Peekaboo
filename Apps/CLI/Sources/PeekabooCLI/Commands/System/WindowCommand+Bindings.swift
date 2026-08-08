@@ -198,5 +198,6 @@ extension WindowCommand.WindowListSubcommand: CommanderBindableCommand {
     mutating func applyCommanderValues(_ values: CommanderBindableValues) throws {
         self.app = values.singleOption("app")
         self.pid = try values.decodeOption("pid", as: Int32.self)
+        self.groupBySpace = values.flag("groupBySpace")
     }
 }

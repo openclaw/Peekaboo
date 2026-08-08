@@ -15,11 +15,7 @@ extension AppCommand {
         )
 
         @Argument(help: "Application name, bundle ID, or 'PID:12345' for process ID")
-        var app: String
-
-        var positionalAppIdentifier: String {
-            self.app
-        }
+        var app: String?
 
         @Option(name: .long, help: "Target application by process ID")
         var pid: Int32?
@@ -142,14 +138,17 @@ extension AppCommand {
 }
 
 extension AppCommand.RelaunchSubcommand: AsyncRuntimeCommand, ErrorHandlingCommand, OutputFormattable,
-    ApplicationResolvablePositional,
+    ApplicationResolvable,
     ApplicationResolver {}
 
 @MainActor
 extension AppCommand.RelaunchSubcommand: CommanderBindableCommand {
     mutating func applyCommanderValues(_ values: CommanderBindableValues) throws {
-        app = try values.decodePositional(0, label: "app")
+        app = try values.decodeOptionalPositional(0, label: "app")
         pid = try values.decodeOption("pid", as: Int32.self)
+        guard app != nil || pid != nil else {
+            throw CommanderBindingError.missingArgument(label: "app or --pid")
+        }
         if let wait: TimeInterval = try values.decodeOption("wait", as: TimeInterval.self) {
             self.wait = wait
         }

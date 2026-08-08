@@ -148,6 +148,9 @@ public nonisolated struct WindowContext: Sendable, Codable {
     /// Whether element detection should attempt to focus embedded web content when inputs are missing
     public let shouldFocusWebContent: Bool?
 
+    /// Whether detection should append the application's menu-bar accessibility tree
+    public let includeMenuBarElements: Bool?
+
     /// Optional traversal budget to constrain AX tree collection
     public let traversalBudget: AXTraversalBudget?
 
@@ -159,6 +162,7 @@ public nonisolated struct WindowContext: Sendable, Codable {
         windowID: Int? = nil,
         windowBounds: CGRect? = nil,
         shouldFocusWebContent: Bool? = nil,
+        includeMenuBarElements: Bool? = nil,
         traversalBudget: AXTraversalBudget?)
     {
         self.applicationName = applicationName
@@ -168,6 +172,7 @@ public nonisolated struct WindowContext: Sendable, Codable {
         self.windowID = windowID
         self.windowBounds = windowBounds
         self.shouldFocusWebContent = shouldFocusWebContent
+        self.includeMenuBarElements = includeMenuBarElements
         self.traversalBudget = traversalBudget
     }
 
@@ -178,7 +183,8 @@ public nonisolated struct WindowContext: Sendable, Codable {
         windowTitle: String? = nil,
         windowID: Int? = nil,
         windowBounds: CGRect? = nil,
-        shouldFocusWebContent: Bool? = nil)
+        shouldFocusWebContent: Bool? = nil,
+        includeMenuBarElements: Bool? = nil)
     {
         self.init(
             applicationName: applicationName,
@@ -188,6 +194,7 @@ public nonisolated struct WindowContext: Sendable, Codable {
             windowID: windowID,
             windowBounds: windowBounds,
             shouldFocusWebContent: shouldFocusWebContent,
+            includeMenuBarElements: includeMenuBarElements,
             traversalBudget: nil)
     }
 }

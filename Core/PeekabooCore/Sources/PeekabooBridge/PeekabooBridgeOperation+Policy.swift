@@ -18,9 +18,6 @@ extension PeekabooBridgeOperation {
              .rightClickDockItem, .hideDock, .showDock, .isDockHidden, .findDockItem, .dialogFindActive,
              .dialogClickButton, .dialogEnterText, .dialogHandleFile, .dialogDismiss, .dialogListElements:
             [.accessibility]
-        case .activateApplication, .hideApplication, .unhideApplication,
-             .hideOtherApplications, .showAllApplications:
-            [.appleScript]
         case ._appleScriptProbe,
              .permissionsStatus,
              .requestPostEventPermission,
@@ -48,7 +45,12 @@ extension PeekabooBridgeOperation {
              .launchApplication,
              .launchApplicationWithOptions,
              .relaunchApplicationWithOptions,
+             .activateApplication,
              .quitApplication,
+             .hideApplication,
+             .unhideApplication,
+             .hideOtherApplications,
+             .showAllApplications,
              .targetedClick,
              .exactWindowTargetedClick:
             []

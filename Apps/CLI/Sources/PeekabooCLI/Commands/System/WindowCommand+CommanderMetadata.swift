@@ -40,7 +40,7 @@ extension WindowCommand.ResizeSubcommand: CommanderSignatureProviding {
     static func commanderSignature() -> CommandSignature {
         CommandSignature(
             options: [
-                .commandOption("width", help: "New width", long: "width"),
+                .commandOption("width", help: "New width", long: "width", short: "w"),
                 .commandOption("height", help: "New height", long: "height"),
             ],
             optionGroups: [WindowCommandSignatures.windowOptions]
@@ -54,7 +54,7 @@ extension WindowCommand.SetBoundsSubcommand: CommanderSignatureProviding {
             options: [
                 .commandOption("x", help: "New X coordinate", long: "x", short: "x"),
                 .commandOption("y", help: "New Y coordinate", long: "y", short: "y"),
-                .commandOption("width", help: "New width", long: "width"),
+                .commandOption("width", help: "New width", long: "width", short: "w"),
                 .commandOption("height", help: "New height", long: "height"),
             ],
             optionGroups: [WindowCommandSignatures.windowOptions]
@@ -86,6 +86,13 @@ extension WindowCommand.WindowListSubcommand: CommanderSignatureProviding {
             options: [
                 .commandOption("app", help: "Target application", long: "app"),
                 .commandOption("pid", help: "Target application by process ID", long: "pid"),
+            ],
+            flags: [
+                .commandFlag(
+                    "groupBySpace",
+                    help: "Group windows by Space (virtual desktop)",
+                    long: "group-by-space"
+                ),
             ]
         )
     }

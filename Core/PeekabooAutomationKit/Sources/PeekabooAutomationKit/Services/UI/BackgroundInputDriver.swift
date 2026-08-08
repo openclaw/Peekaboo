@@ -34,6 +34,7 @@ enum BackgroundInputDriver {
     enum PositionalClickAction: Equatable {
         case press
         case showMenu
+        case select
         case focus
     }
 
@@ -88,20 +89,7 @@ enum BackgroundInputDriver {
             try self.assertBelongsToTargetWindow(resolved.element, targetWindowID: targetWindowID, at: point)
         }
 
-        switch resolved.action {
-        case .press:
-            try await self.performDetachedAction(
-                AXActionNames.kAXPressAction,
-                on: resolved.element,
-                gracePeriod: DetachedAXActionRunner.pressGracePeriod)
-        case .showMenu:
-            try await self.performDetachedAction(
-                AXActionNames.kAXShowMenuAction,
-                on: resolved.element,
-                gracePeriod: DetachedAXActionRunner.showMenuGracePeriod)
-        case .focus:
-            try resolved.element.setAutomationFocused(true)
-        }
+        try await self.performPositionalClickAction(resolved.action, on: resolved.element)
     }
 
     /// Picks the element that should receive a positional background click.
@@ -143,6 +131,10 @@ enum BackgroundInputDriver {
         }
 
         guard button == .left else { return nil }
+        if let selectableRow = self.selectableRow(in: spatiallyValid) {
+            return (selectableRow, .select)
+        }
+
         let focusable = spatiallyValid.first(where: self.canFocusForPositionalClick)
         if let focusable {
             let role = focusable.role ?? "<none>"
@@ -967,6 +959,44 @@ enum BackgroundInputDriver {
 }
 
 extension BackgroundInputDriver {
+    @MainActor
+    static func performPositionalClickAction(
+        _ action: PositionalClickAction,
+        on element: any AutomationElementRepresenting) async throws
+    {
+        switch action {
+        case .press:
+            try await self.performDetachedAction(
+                AXActionNames.kAXPressAction,
+                on: element,
+                gracePeriod: DetachedAXActionRunner.pressGracePeriod)
+        case .showMenu:
+            try await self.performDetachedAction(
+                AXActionNames.kAXShowMenuAction,
+                on: element,
+                gracePeriod: DetachedAXActionRunner.showMenuGracePeriod)
+        case .select:
+            try element.setAutomationSelected(true)
+        case .focus:
+            try element.setAutomationFocused(true)
+        }
+    }
+
+    @MainActor
+    private static func selectableRow(
+        in elements: [any AutomationElementRepresenting]) -> (any AutomationElementRepresenting)?
+    {
+        guard let row = elements.first(where: {
+            $0.isEnabled && $0.role == AXRoleNames.kAXRowRole && $0.isSelectedSettable
+        }) else {
+            return nil
+        }
+        let frame = String(describing: row.frame)
+        self.logger.debug(
+            "Resolved background positional click to role=AXRow action=select frame=\(frame, privacy: .public)")
+        return row
+    }
+
     static let doubleClickUnsupportedMessage = """
     Background double-click is not supported: macOS delivers pid-targeted mouse events at the \
     window origin instead of the requested point. Re-run with --foreground to focus the app and \

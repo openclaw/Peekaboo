@@ -173,6 +173,9 @@ extension UIAutomationService {
         targetProcessIdentifier: pid_t? = nil) async
     {
         guard !keys.isEmpty else { return }
+        // Targeted typing (including press and background text paste) is intentionally invisible.
+        // The visualizer overlay is desktop-global even though the input is routed to one process.
+        guard targetProcessIdentifier == nil else { return }
         // Typed text shows verbatim in the caption; only password fields mask.
         // Type-action callers sample each text segment at delivery time; the
         // post-typing sample remains a final safety net for direct text entry.

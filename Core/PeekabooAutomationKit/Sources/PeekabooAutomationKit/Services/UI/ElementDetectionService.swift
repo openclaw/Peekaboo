@@ -83,6 +83,7 @@ public final class ElementDetectionService {
 
         var elementIdMap: [String: DetectedElement] = [:]
         let allowWebFocus = windowContext?.shouldFocusWebContent ?? true
+        let includeMenuBarElements = windowContext?.includeMenuBarElements ?? true
         let budget = AXTraversalBudget.normalizedForTraversal(windowContext?.traversalBudget)
         let usesDefaultBudget = budget == AXTraversalBudget()
         let resolvedWindowBounds = windowContext?.windowBounds ?? windowResolution.window.frame()
@@ -94,6 +95,7 @@ public final class ElementDetectionService {
             windowID: resolvedWindowID,
             windowBounds: resolvedWindowBounds,
             shouldFocusWebContent: windowContext?.shouldFocusWebContent,
+            includeMenuBarElements: windowContext?.includeMenuBarElements,
             traversalBudget: budget)
 
         // GameBridge: check if this is a known game-bridge app (SDL/GPU-rendered)
@@ -113,7 +115,8 @@ public final class ElementDetectionService {
             ? self.axTreeCache.key(
                 windowID: resolvedWindowID,
                 processID: targetApp.processIdentifier,
-                allowWebFocus: allowWebFocus)
+                allowWebFocus: allowWebFocus,
+                includeMenuBarElements: includeMenuBarElements)
             : nil
         if let cacheKey, let cached = self.axTreeCache.result(for: cacheKey) {
             self.logger.debug("Using cached AX tree for window \(cacheKey.windowID)")
@@ -127,6 +130,7 @@ public final class ElementDetectionService {
                     appElement: windowResolution.appElement,
                     appIsActive: targetApp.isActive,
                     allowWebFocus: allowWebFocus,
+                    includeMenuBarElements: includeMenuBarElements,
                     budget: budget),
                 elementIdMap: &elementIdMap)
             detectedElements = collection.elements
@@ -171,6 +175,7 @@ extension ElementDetectionService {
                 appElement: timeoutRequest.appElement,
                 appIsActive: timeoutRequest.appIsActive,
                 allowWebFocus: timeoutRequest.allowWebFocus,
+                includeMenuBarElements: timeoutRequest.includeMenuBarElements,
                 deadline: deadline,
                 budget: timeoutRequest.budget)
             let collection = await self.collectElements(
@@ -209,7 +214,10 @@ extension ElementDetectionService {
             elementIdMap = collection.elementIdMap
             truncationInfo = collection.truncationInfo
 
-            if request.appIsActive, let menuBar = request.appElement.menuBar() {
+            if Self.shouldCollectMenuBarElements(
+                requested: request.includeMenuBarElements,
+                appIsActive: request.appIsActive), let menuBar = request.appElement.menuBar()
+            {
                 let menuBarTruncation = self.menuBarElementCollector.appendMenuBar(
                     menuBar,
                     elements: &detectedElements,
@@ -242,6 +250,10 @@ extension ElementDetectionService {
             elements: detectedElements,
             truncationInfo: truncationInfo)
     }
+
+    static func shouldCollectMenuBarElements(requested: Bool, appIsActive: Bool) -> Bool {
+        requested && appIsActive
+    }
 }
 
 @_spi(Testing) public enum ElementDetectionWebFocusRetryDelay {
@@ -260,6 +272,7 @@ private struct ElementCollectionRequest {
     let appElement: Element
     let appIsActive: Bool
     let allowWebFocus: Bool
+    let includeMenuBarElements: Bool
     let deadline: Date
     let budget: AXTraversalBudget?
 }
@@ -269,6 +282,7 @@ private struct ElementCollectionTimeoutRequest {
     let appElement: Element
     let appIsActive: Bool
     let allowWebFocus: Bool
+    let includeMenuBarElements: Bool
     let budget: AXTraversalBudget?
     let timeoutSeconds = 20.0
 }

@@ -129,7 +129,10 @@ final class DesktopObservationServiceTests: XCTestCase {
 
         let result = try await service.observe(DesktopObservationRequest(
             target: .app(identifier: "Fixture", window: .title("Edit")),
-            detection: DesktopDetectionOptions(mode: .accessibility, allowWebFocusFallback: false),
+            detection: DesktopDetectionOptions(
+                mode: .accessibility,
+                allowWebFocusFallback: false,
+                includeMenuBarElements: false),
             output: DesktopObservationOutputOptions(snapshotID: "snapshot-1")))
 
         XCTAssertNotNil(result.elements)
@@ -140,6 +143,7 @@ final class DesktopObservationServiceTests: XCTestCase {
         XCTAssertEqual(automation.lastWindowContext?.windowTitle, "Editor")
         XCTAssertEqual(automation.lastWindowContext?.windowID, 77)
         XCTAssertEqual(automation.lastWindowContext?.shouldFocusWebContent, false)
+        XCTAssertEqual(automation.lastWindowContext?.includeMenuBarElements, false)
         XCTAssertEqual(result.timings.spans.map(\.name), [
             "state.snapshot",
             "target.resolve",

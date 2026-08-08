@@ -23,6 +23,8 @@ protocol AutomationElementRepresenting: Sendable {
     var actionNames: [String] { get }
     var isValueSettable: Bool { get }
     var isFocusedSettable: Bool { get }
+    var isSelectedSettable: Bool { get }
+    var selectedValue: Bool? { get }
     var isEnabled: Bool { get }
     var isFocused: Bool { get }
     var isOffscreen: Bool { get }
@@ -44,6 +46,7 @@ protocol AutomationElementRepresenting: Sendable {
     func performAutomationAction(_ actionName: String) throws
     func setAutomationValue(_ value: UIElementValue) throws
     func setAutomationFocused(_ focused: Bool) throws
+    func setAutomationSelected(_ selected: Bool) throws
     func stringAttribute(_ name: String) -> String?
     func intAttribute(_ name: String) -> Int?
 }
@@ -55,6 +58,18 @@ extension AutomationElementRepresenting {
 
     func supportsAction(_ actionName: String) -> Bool {
         self.actionNames.contains(actionName)
+    }
+
+    var isSelectedSettable: Bool {
+        false
+    }
+
+    var selectedValue: Bool? {
+        nil
+    }
+
+    func setAutomationSelected(_: Bool) throws {
+        throw AccessibilitySystemError(.attributeUnsupported)
     }
 }
 
@@ -107,7 +122,12 @@ struct AutomationElement: AutomationElementRepresenting {
 
     @MainActor
     var value: Any? {
-        self.element.value()
+        var value: CFTypeRef?
+        let error = AXUIElementCopyAttributeValue(
+            self.element.underlyingElement,
+            AXAttributeNames.kAXValueAttribute as CFString,
+            &value)
+        return error == .success ? value : nil
     }
 
     @MainActor
@@ -128,6 +148,22 @@ struct AutomationElement: AutomationElementRepresenting {
     @MainActor
     var isFocusedSettable: Bool {
         self.element.isAttributeSettable(named: AXAttributeNames.kAXFocusedAttribute)
+    }
+
+    @MainActor
+    var isSelectedSettable: Bool {
+        self.element.isAttributeSettable(named: kAXSelectedAttribute as String)
+    }
+
+    @MainActor
+    var selectedValue: Bool? {
+        var value: CFTypeRef?
+        let error = AXUIElementCopyAttributeValue(
+            self.element.underlyingElement,
+            kAXSelectedAttribute as CFString,
+            &value)
+        guard error == .success, let value else { return nil }
+        return value as? Bool
     }
 
     @MainActor
@@ -216,6 +252,17 @@ struct AutomationElement: AutomationElementRepresenting {
             self.element.underlyingElement,
             AXAttributeNames.kAXFocusedAttribute as CFString,
             (focused ? kCFBooleanTrue : kCFBooleanFalse) as CFTypeRef)
+        guard error == .success else {
+            throw AccessibilitySystemError(error)
+        }
+    }
+
+    @MainActor
+    func setAutomationSelected(_ selected: Bool) throws {
+        let error = AXUIElementSetAttributeValue(
+            self.element.underlyingElement,
+            kAXSelectedAttribute as CFString,
+            (selected ? kCFBooleanTrue : kCFBooleanFalse) as CFTypeRef)
         guard error == .success else {
             throw AccessibilitySystemError(error)
         }

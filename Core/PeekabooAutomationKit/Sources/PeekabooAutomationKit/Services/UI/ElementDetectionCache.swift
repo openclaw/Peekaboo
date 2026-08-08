@@ -11,11 +11,18 @@ import PeekabooFoundation
         public let windowID: Int
         public let processID: pid_t
         public let allowWebFocus: Bool
+        public let includeMenuBarElements: Bool
 
-        public init(windowID: Int, processID: pid_t, allowWebFocus: Bool) {
+        public init(
+            windowID: Int,
+            processID: pid_t,
+            allowWebFocus: Bool,
+            includeMenuBarElements: Bool)
+        {
             self.windowID = windowID
             self.processID = processID
             self.allowWebFocus = allowWebFocus
+            self.includeMenuBarElements = includeMenuBarElements
         }
     }
 
@@ -43,9 +50,18 @@ import PeekabooFoundation
         self.now = now
     }
 
-    public func key(windowID: Int?, processID: pid_t, allowWebFocus: Bool) -> Key? {
+    public func key(
+        windowID: Int?,
+        processID: pid_t,
+        allowWebFocus: Bool,
+        includeMenuBarElements: Bool) -> Key?
+    {
         guard let windowID else { return nil }
-        return Key(windowID: windowID, processID: processID, allowWebFocus: allowWebFocus)
+        return Key(
+            windowID: windowID,
+            processID: processID,
+            allowWebFocus: allowWebFocus,
+            includeMenuBarElements: includeMenuBarElements)
     }
 
     public func elements(for key: Key) -> [DetectedElement]? {

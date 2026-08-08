@@ -165,8 +165,17 @@ extension AppCommand {
                     force: force,
                     results: results
                 )
+                let allSucceeded = results.allSatisfy(\.success)
 
-                output(data) {
+                if self.jsonOutput {
+                    let response = CodableJSONResponse(
+                        success: allSucceeded,
+                        data: data,
+                        messages: nil,
+                        debug_logs: self.outputLogger.getDebugLogs()
+                    )
+                    outputJSONCodable(response, logger: self.outputLogger)
+                } else {
                     for result in results {
                         if result.success {
                             print("✓ Quit \(result.app_name)")
@@ -187,7 +196,12 @@ extension AppCommand {
                         "quit app=\(result.app_name) pid=\(result.pid) success=\(result.success) force=\(self.force)"
                     )
                 }
+                if !allSucceeded {
+                    throw ExitCode.failure
+                }
 
+            } catch let exitCode as ExitCode {
+                throw exitCode
             } catch {
                 handleError(error)
                 throw ExitCode(1)

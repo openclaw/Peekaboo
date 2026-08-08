@@ -5,6 +5,14 @@
 ### Changed
 - Remove the obsolete scoped-commit helper now that agent work uses isolated worktrees.
 
+### Fixed
+- Stop bridge hosts from requiring AppleScript permission for native application activate, hide, unhide, hide-others, and show-all operations.
+- Keep targeted UI observation in the background, exclude irrelevant application menu trees, and restore the documented `see` traversal flags and output-path aliases.
+- Reject phantom-success accessibility actions, support selectable sidebar rows, and verify typed `set-value` results against live AX state.
+- Suppress desktop-global visualizer overlays for process-targeted background click, type, press, paste, and hotkey delivery.
+- Restore documented app, window, and menu CLI options; unsupported menu-extra item selection and failed app quits now exit nonzero instead of claiming success.
+- Remove the Dock-removal AppleScript path in favor of native accessibility actions.
+
 ## [3.10.0] - 2026-08-02
 
 ### Added

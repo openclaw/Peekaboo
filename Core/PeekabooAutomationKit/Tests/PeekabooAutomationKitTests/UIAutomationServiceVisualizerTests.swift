@@ -1,4 +1,6 @@
 import CoreGraphics
+import Foundation
+import PeekabooFoundation
 import Testing
 @testable import PeekabooAutomationKit
 
@@ -22,5 +24,80 @@ struct UIAutomationServiceVisualizerTests {
         let point = UIAutomationService.visualFeedbackPoint(actionAnchor: nil, fallbackPoint: fallback)
 
         #expect(point == fallback)
+    }
+
+    @Test
+    @MainActor
+    func `targeted background interactions suppress global visualizer feedback`() async throws {
+        let feedback = RecordingAutomationFeedbackClient()
+        let service = UIAutomationService(feedbackClient: feedback)
+
+        try await service.visualizeClick(
+            target: .coordinates(CGPoint(x: 10, y: 20)),
+            actionAnchor: CGPoint(x: 10, y: 20),
+            clickType: .single,
+            snapshotId: nil,
+            targetProcessIdentifier: 42)
+        await service.visualizeTypeActions(
+            [.text("background"), .key(.return)],
+            cadence: .fixed(milliseconds: 0),
+            typedIntoSecureField: true,
+            targetProcessIdentifier: 42)
+        await service.visualizeHotkey(keys: "cmd,shift,p", targetProcessIdentifier: 42)
+
+        #expect(feedback.clickCount == 0)
+        #expect(feedback.typingCount == 0)
+        #expect(feedback.hotkeyCount == 0)
+    }
+
+    @Test
+    @MainActor
+    func `untargeted foreground interactions preserve global visualizer feedback`() async throws {
+        let feedback = RecordingAutomationFeedbackClient()
+        let service = UIAutomationService(feedbackClient: feedback)
+
+        try await service.visualizeClick(
+            target: .coordinates(CGPoint(x: 10, y: 20)),
+            actionAnchor: CGPoint(x: 10, y: 20),
+            clickType: .single,
+            snapshotId: nil,
+            targetProcessIdentifier: nil)
+        await service.visualizeTypeActions(
+            [.text("foreground"), .key(.return)],
+            cadence: .fixed(milliseconds: 0),
+            typedIntoSecureField: true,
+            targetProcessIdentifier: nil)
+        await service.visualizeHotkey(keys: "cmd,shift,p", targetProcessIdentifier: nil)
+
+        #expect(feedback.clickCount == 1)
+        #expect(feedback.typingCount == 1)
+        #expect(feedback.hotkeyCount == 1)
+    }
+}
+
+@MainActor
+private final class RecordingAutomationFeedbackClient: AutomationFeedbackClient {
+    private(set) var clickCount = 0
+    private(set) var typingCount = 0
+    private(set) var hotkeyCount = 0
+
+    func showClickFeedback(at _: CGPoint, type _: ClickType) async -> Bool {
+        self.clickCount += 1
+        return true
+    }
+
+    func showTypingFeedback(
+        keys _: [String],
+        duration _: TimeInterval,
+        cadence _: TypingCadence,
+        masksTypedText _: Bool) async -> Bool
+    {
+        self.typingCount += 1
+        return true
+    }
+
+    func showHotkeyDisplay(keys _: [String], duration _: TimeInterval) async -> Bool {
+        self.hotkeyCount += 1
+        return true
     }
 }
