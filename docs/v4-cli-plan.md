@@ -1,3 +1,10 @@
+---
+summary: 'Plan for redesigning the Peekaboo 4 CLI and aligning its CLI, MCP, and agent tool surfaces.'
+read_when:
+  - 'reviewing or implementing the Peekaboo 4 CLI redesign'
+  - 'changing command names, tool parity, result envelopes, or migration policy'
+---
+
 # Peekaboo 4 CLI Redesign Plan
 
 Status: draft for review · Branch: `steipete/peekaboo-v4-cli-cleanup-73955f` · 2026-08-09
