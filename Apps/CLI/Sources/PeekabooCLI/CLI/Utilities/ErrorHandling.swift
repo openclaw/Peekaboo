@@ -44,12 +44,3 @@ func genericErrorCode(for error: any Error) -> ErrorCode {
     }
     return errorCode(for: bridgeError)
 }
-
-func handleValidationError(_ error: any Error, jsonOutput: Bool, logger: Logger) {
-    emitError(
-        message: error.localizedDescription,
-        code: .VALIDATION_ERROR,
-        jsonOutput: jsonOutput,
-        logger: logger
-    )
-}

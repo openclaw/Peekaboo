@@ -2,7 +2,6 @@ import Foundation
 import PeekabooCore
 import SwiftUI
 import Tachikoma
-import TachikomaAudio
 
 /// Tool execution record for tracking agent actions
 struct ToolExecution: Identifiable {
@@ -127,52 +126,6 @@ final class PeekabooAgent {
 
         // Call the common implementation with text content
         try await self.executeTaskWithContent(.text(task))
-    }
-
-    /// Execute a task with audio content using Tachikoma Audio API
-    func executeTaskWithAudio(
-        audioData: Data,
-        duration: TimeInterval,
-        mimeType: String = "audio/wav",
-        transcript: String? = nil) async throws
-    {
-        // If transcript is already available, use it directly for faster execution
-        if let transcript {
-            try await self.executeTask(transcript)
-            return
-        }
-
-        // Otherwise, transcribe the audio using Tachikoma and then execute
-        do {
-            // Create AudioData from the raw data
-            let audioFormat: AudioFormat = switch mimeType {
-            case "audio/wav": .wav
-            case "audio/mp3": .mp3
-            case "audio/flac": .flac
-            case "audio/opus": .opus
-            case "audio/m4a": .m4a
-            case "audio/aac": .aac
-            case "audio/ogg": .ogg
-            default: .wav // Default fallback
-            }
-
-            let audioDataStruct = AudioData(
-                data: audioData,
-                format: audioFormat,
-                duration: duration)
-
-            // Transcribe using Tachikoma's OpenAI Whisper integration
-            let transcriptionResult = try await transcribe(
-                audioDataStruct,
-                using: .openai(.whisper1),
-                language: "en")
-
-            // Execute the task with the transcribed text
-            try await self.executeTask(transcriptionResult.text)
-
-        } catch {
-            throw AgentError.executionFailed("Failed to transcribe audio: \(error.localizedDescription)")
-        }
     }
 
     /// Common implementation for executing tasks with different content types

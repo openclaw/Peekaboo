@@ -186,36 +186,6 @@ enum TerminalDetector {
 
     // MARK: - Utility Methods
 
-    /// Get a human-readable description of terminal capabilities
-    static func capabilitiesDescription(_ caps: TerminalCapabilities) -> String {
-        // Get a human-readable description of terminal capabilities
-        var features: [String] = []
-
-        if caps.isInteractive {
-            features.append("interactive")
-        }
-        if caps.isInputInteractive {
-            features.append("interactive-input")
-        }
-        if caps.supportsColors {
-            features.append("colors")
-        }
-        if caps.supportsTrueColor {
-            features.append("truecolor")
-        }
-        if caps.isCI {
-            features.append("CI-environment")
-        }
-        if caps.isPiped {
-            features.append("piped")
-        }
-
-        let sizeInfo = "\(caps.width)x\(caps.height)"
-        let termInfo = caps.termType ?? "unknown"
-
-        return "\(termInfo) (\(sizeInfo)) - \(features.joined(separator: ", "))"
-    }
-
     /// Check if we should force a specific output mode based on environment
     static func shouldForceOutputMode() -> OutputMode? {
         // Check if we should force a specific output mode based on environment
@@ -270,16 +240,6 @@ extension OutputMode {
         case .minimal, .quiet:
             false
         case .compact, .enhanced, .verbose:
-            true
-        }
-    }
-
-    /// Check if this mode supports rich formatting
-    var supportsRichFormatting: Bool {
-        switch self {
-        case .minimal, .quiet, .compact:
-            false
-        case .enhanced, .verbose:
             true
         }
     }

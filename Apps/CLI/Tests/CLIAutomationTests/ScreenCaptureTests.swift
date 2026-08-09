@@ -138,16 +138,6 @@ import Testing
          )
          @MainActor
          func failsWithInvalidWindowID() async throws {
-             // Create a fake window data with invalid ID
-             let invalidWindow = WindowData(
-                 windowId: 999_999,
-                 title: "Invalid Window",
-                 bounds: CGRect(x: 0, y: 0, width: 100, height: 100),
-                 isOnScreen: false,
-                 windowIndex: 0
-             )
-             let outputPath = self.tempDir.appendingPathComponent("invalid-window.png").path
-
              await #expect(throws: PeekabooError.self) {
                  let service = PeekabooServices().screenCapture
 

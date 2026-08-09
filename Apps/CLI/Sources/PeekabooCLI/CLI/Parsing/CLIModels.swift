@@ -48,21 +48,6 @@ typealias WindowSpecifier = PeekabooCore.WindowSpecifier
 /// Re-export WindowDetailOption from PeekabooCore
 typealias WindowDetailOption = PeekabooCore.WindowDetailOption
 
-// MARK: - Window Management
-
-/// Internal window representation with complete details.
-///
-/// Used internally for window operations, containing all available
-/// information about a window including its Core Graphics identifier and bounds.
-/// This is CLI-specific and not shared with PeekabooCore.
-struct WindowData {
-    let windowId: UInt32
-    let title: String
-    let bounds: CGRect
-    let isOnScreen: Bool
-    let windowIndex: Int
-}
-
 // MARK: - Error Types
 
 /// Re-export CaptureError from PeekabooFoundation

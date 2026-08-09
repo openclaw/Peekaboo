@@ -1,3 +1,4 @@
+import Combine
 import PeekabooCore
 import SwiftUI
 
@@ -122,5 +123,20 @@ struct AssistantMessageContent: View {
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
         }
+    }
+}
+
+/// Displays elapsed time since a start time, updating every second.
+struct TimeIntervalText: View {
+    let startTime: Date
+    @State private var currentTime = Date()
+
+    private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
+
+    var body: some View {
+        Text(ToolFormatter.formatDuration(self.currentTime.timeIntervalSince(self.startTime)))
+            .onReceive(self.timer) { _ in
+                self.currentTime = Date()
+            }
     }
 }

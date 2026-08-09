@@ -309,29 +309,6 @@ final class PeekabooSettings {
         }
     }
 
-    // MARK: - Realtime Voice Settings
-
-    /// The selected voice for realtime conversations
-    var realtimeVoice: String? {
-        didSet {
-            self.save()
-        }
-    }
-
-    /// Custom instructions for the realtime assistant
-    var realtimeInstructions: String? {
-        didSet {
-            self.save()
-        }
-    }
-
-    /// Whether to use voice activity detection
-    var realtimeVAD: Bool = true {
-        didSet {
-            self.save()
-        }
-    }
-
     var menuNavigationEnabled: Bool = true {
         didSet {
             self.save()
@@ -481,7 +458,6 @@ extension PeekabooSettings {
         self.loadUIPreferences()
         self.loadVisualizerSettings()
         self.loadAnimationPreferences()
-        self.loadRealtimeVoiceSettings()
     }
 
     private func loadProviderSettings() {
@@ -568,12 +544,6 @@ extension PeekabooSettings {
         self.annotatedScreenshotEnabled = self.valueOrDefault(key: "annotatedScreenshotEnabled", defaultValue: true)
     }
 
-    private func loadRealtimeVoiceSettings() {
-        self.realtimeVoice = self.userDefaults.string(forKey: self.namespaced("realtimeVoice"))
-        self.realtimeInstructions = self.userDefaults.string(forKey: self.namespaced("realtimeInstructions"))
-        self.realtimeVAD = self.valueOrDefault(key: "realtimeVAD", defaultValue: true)
-    }
-
     private func save() {
         guard !self.isLoading else { return }
 
@@ -627,19 +597,6 @@ extension PeekabooSettings {
         self.userDefaults.set(self.ghostEasterEggEnabled, forKey: "\(self.keyPrefix)ghostEasterEggEnabled")
         self.userDefaults.set(self.elementDetectionEnabled, forKey: "\(self.keyPrefix)elementDetectionEnabled")
         self.userDefaults.set(self.annotatedScreenshotEnabled, forKey: "\(self.keyPrefix)annotatedScreenshotEnabled")
-
-        // Save Realtime Voice settings
-        if let voice = self.realtimeVoice {
-            self.userDefaults.set(voice, forKey: "\(self.keyPrefix)realtimeVoice")
-        } else {
-            self.userDefaults.removeObject(forKey: "\(self.keyPrefix)realtimeVoice")
-        }
-        if let instructions = self.realtimeInstructions {
-            self.userDefaults.set(instructions, forKey: "\(self.keyPrefix)realtimeInstructions")
-        } else {
-            self.userDefaults.removeObject(forKey: "\(self.keyPrefix)realtimeInstructions")
-        }
-        self.userDefaults.set(self.realtimeVAD, forKey: "\(self.keyPrefix)realtimeVAD")
     }
 
     private func loadFromPeekabooConfig() {

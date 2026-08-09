@@ -171,16 +171,4 @@ public final class ToolFormatterRegistry: @unchecked Sendable {
         }
         return self.formatter(for: toolType)
     }
-
-    /// Check if a tool name is valid
-    public func isValidTool(_ toolName: String) -> Bool {
-        // Check if a tool name is valid
-        ToolType(toolName: toolName) != nil
-    }
-
-    /// Get the tool type for a name
-    public func toolType(for toolName: String) -> ToolType? {
-        // Get the tool type for a name
-        ToolType(toolName: toolName)
-    }
 }

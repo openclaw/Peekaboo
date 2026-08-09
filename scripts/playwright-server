@@ -1,3 +1,0 @@
-#!/usr/bin/env sh
-# Direct binary runner for Chrome DevTools MCP
-exec /Users/steipete/.nvm/versions/node/v24.4.1/bin/node /Users/steipete/.nvm/versions/node/v24.4.1/lib/node_modules/chrome-devtools-mcp/build/src/index.js "$@"

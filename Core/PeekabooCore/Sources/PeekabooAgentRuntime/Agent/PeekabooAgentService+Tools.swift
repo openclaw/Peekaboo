@@ -54,11 +54,6 @@ extension PeekabooAgentService {
         self.makeAgentTool(from: ImageTool(context: self.makeToolContext()))
     }
 
-    public func createWatchTool() -> AgentTool {
-        // Preserve the legacy agent-facing name while using the capture implementation.
-        self.makeAgentTool(from: CaptureTool(context: self.makeToolContext()), name: "watch")
-    }
-
     public func createCaptureTool() -> AgentTool {
         self.makeAgentTool(from: CaptureTool(context: self.makeToolContext()))
     }

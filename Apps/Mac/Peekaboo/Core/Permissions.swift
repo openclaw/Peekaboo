@@ -81,14 +81,6 @@ final class Permissions {
         await self.permissionsService.requestPostEvent()
     }
 
-    func startMonitoring() {
-        self.registerMonitoring()
-    }
-
-    func stopMonitoring() {
-        self.unregisterMonitoring()
-    }
-
     func registerMonitoring() {
         self.registrations += 1
         if self.registrations == 1 {

@@ -5,6 +5,16 @@ import os.log
 import PeekabooCore
 import SwiftUI
 
+/// Cache key for storing rendered ghost images.
+struct GhostIconCacheKey: Hashable {
+    let isAnimating: Bool
+    let verticalOffset: Int
+    let horizontalOffset: Int
+    let scale: Int
+    let opacity: Int
+    let isDarkMode: Bool
+}
+
 /// Manages animation timing and rendering for the menu bar ghost icon.
 ///
 /// This controller handles adaptive timing, icon caching, and state management

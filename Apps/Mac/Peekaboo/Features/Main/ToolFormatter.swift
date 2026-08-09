@@ -5,27 +5,11 @@ import PeekabooCore
 /// This compatibility layer delegates to the shared formatter system.
 @MainActor
 struct ToolFormatter {
-    /// Format keyboard shortcuts with proper symbols
-    /// Uses the shared FormattingUtilities from PeekabooCore
-    static func formatKeyboardShortcut(_ keys: String) -> String {
-        FormattingUtilities.formatKeyboardShortcut(keys)
-    }
-
     /// Format duration with clock symbol
     /// Uses the shared FormattingUtilities from PeekabooCore
     static func formatDuration(_ duration: TimeInterval?) -> String {
         guard let duration else { return "" }
         return " ⌖ " + FormattingUtilities.formatDetailedDuration(duration)
-    }
-
-    /// Format file sizes using shared utilities
-    static func formatFileSize(_ bytes: Int) -> String {
-        FormattingUtilities.formatFileSize(bytes)
-    }
-
-    /// Truncate text using shared utilities
-    static func truncate(_ text: String, maxLength: Int = 50) -> String {
-        FormattingUtilities.truncate(text, maxLength: maxLength)
     }
 
     /// Get compact summary of what the tool will do based on arguments
