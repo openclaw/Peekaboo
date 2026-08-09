@@ -50,18 +50,32 @@ struct ConfigCommandTests {
         #expect(command.commandDescription.commandName == "config")
         #expect(command.commandDescription.abstract == "Manage Peekaboo configuration")
 
-        // Check subcommands by name — comparing existential metatypes in closures
-        // crashes SILGen on Swift 6.2.3 (Xcode 26.2 CI toolchain).
+        // Key-path map / closures over existential metatypes trip SILGen on the
+        // CI toolchain; keep the explicit loop (same idiom as MenuCommandTests).
         let subcommands = command.commandDescription.subcommands
         #expect(subcommands.count == 8)
-        let subcommandNames = subcommands.map(\.commandDescription.commandName)
+        var subcommandNames: [String] = []
+        subcommandNames.reserveCapacity(subcommands.count)
+        for descriptor in subcommands {
+            guard let name = descriptor.commandDescription.commandName else { continue }
+            subcommandNames.append(name)
+        }
         for expected in ["init", "show", "status", "edit", "validate", "login", "provider", "credential"] {
             #expect(subcommandNames.contains(expected), "missing config subcommand \(expected)")
         }
-        let providerCommands = ConfigCommand.ProviderCommand.commandDescription.subcommands
-        #expect(providerCommands.map(\.commandDescription.commandName) == ["add", "remove", "list", "test", "models"])
-        let credentialNames = ConfigCommand.CredentialCommand.commandDescription.subcommands
-            .map(\.commandDescription.commandName)
+
+        var providerNames: [String] = []
+        for descriptor in ConfigCommand.ProviderCommand.commandDescription.subcommands {
+            guard let name = descriptor.commandDescription.commandName else { continue }
+            providerNames.append(name)
+        }
+        #expect(providerNames == ["add", "remove", "list", "test", "models"])
+
+        var credentialNames: [String] = []
+        for descriptor in ConfigCommand.CredentialCommand.commandDescription.subcommands {
+            guard let name = descriptor.commandDescription.commandName else { continue }
+            credentialNames.append(name)
+        }
         #expect(credentialNames == ["set"])
     }
 
