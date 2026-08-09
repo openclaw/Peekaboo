@@ -1,6 +1,15 @@
+---
+title: Peekaboo 4 CLI Redesign Plan
+summary: 'Design principles, command map, flag grammar, tool-surface alignment, and phased implementation plan for the v4 CLI break.'
+description: The v4 CLI redesign — what gets removed, merged, renamed, and why; phased PR plan and open questions.
+read_when:
+  - 'implementing or reviewing any v4 CLI surface change'
+  - 'deciding whether a command or flag belongs in the v4 surface'
+---
+
 # Peekaboo 4 CLI Redesign Plan
 
-Status: draft for review · Branch: `steipete/peekaboo-v4-cli-cleanup-73955f` · 2026-08-09
+Status: in implementation · 2026-08-09
 
 This plan consolidates a full audit of the current CLI surface (40 root commands), the
 MCP/agent tool catalog (28 MCP tools + 5 agent-only), and reference research: trycua/cua's
