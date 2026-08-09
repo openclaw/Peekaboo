@@ -55,12 +55,12 @@ extension ConfigCommand.ValidateCommand: CommanderBindableCommand {
 }
 
 @available(macOS 14.0, *)
-extension ConfigCommand.AddCommand: AsyncRuntimeCommand {}
+extension ConfigCommand.CredentialSetCommand: AsyncRuntimeCommand {}
 @MainActor
-extension ConfigCommand.AddCommand: CommanderBindableCommand {
+extension ConfigCommand.CredentialSetCommand: CommanderBindableCommand {
     mutating func applyCommanderValues(_ values: CommanderBindableValues) throws {
-        self.provider = try values.decodePositional(0, label: "provider")
-        self.secret = try values.decodePositional(1, label: "secret")
+        self.keyOrProvider = try values.decodePositional(0, label: "keyOrProvider")
+        self.value = try values.decodePositional(1, label: "value")
         if let timeout = values.singleOption("timeout"), let seconds = Double(timeout) {
             self.timeoutSeconds = seconds
         }
@@ -81,15 +81,6 @@ extension ConfigCommand.LoginCommand: CommanderBindableCommand {
 }
 
 @available(macOS 14.0, *)
-extension ConfigCommand.SetCredentialCommand: AsyncRuntimeCommand {}
-@MainActor
-extension ConfigCommand.SetCredentialCommand: CommanderBindableCommand {
-    mutating func applyCommanderValues(_ values: CommanderBindableValues) throws {
-        self.key = try values.decodePositional(0, label: "key")
-        self.value = try values.decodePositional(1, label: "value")
-    }
-}
-
 @available(macOS 14.0, *)
 extension ConfigCommand.AddProviderCommand: AsyncRuntimeCommand {}
 @MainActor

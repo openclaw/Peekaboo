@@ -8,7 +8,7 @@ import PeekabooFoundation
 struct AppCommand: ParsableCommand {
     static let commandDescription = CommandDescription(
         commandName: "app",
-        abstract: "Control applications - launch, quit, relaunch, hide/unhide, switch, and list apps",
+        abstract: "Control applications - launch, quit, relaunch, hide/unhide, switch, focus, and list apps",
         discussion: """
         EXAMPLES:
           # Launch an application
@@ -40,6 +40,7 @@ struct AppCommand: ParsableCommand {
             HideSubcommand.self,
             UnhideSubcommand.self,
             SwitchSubcommand.self,
+            FocusSubcommand.self,
             ListSubcommand.self,
         ],
         showHelpOnEmptyInvocation: true
@@ -195,7 +196,7 @@ struct AppCommand: ParsableCommand {
             do {
                 if self.cycle {
                     if self.verify {
-                        throw ValidationError("Verify is only supported with --to (not --cycle)")
+                        throw ValidationError("Verify is only supported with an app target (not --cycle)")
                     }
                     self.resolvedRuntime.beginInteractionMutation()
                     try await self.services.automation.hotkey(keys: "cmd,tab", holdDuration: 0)
@@ -285,6 +286,50 @@ struct AppCommand: ParsableCommand {
             return frontmost.name.compare(expected.name, options: .caseInsensitive) == .orderedSame
         }
     }
+
+    @MainActor
+    struct FocusSubcommand: InjectedRuntimeBackedCommand {
+        static let commandDescription = CommandDescription(
+            commandName: "focus",
+            abstract: "Activate and focus an application"
+        )
+
+        @Option(help: "Application to focus")
+        var app: String?
+
+        @Option(name: .long, help: "Target application by process ID")
+        var pid: Int32?
+
+        @RuntimeStorage var runtime: CommandRuntime?
+
+        mutating func run(using runtime: CommandRuntime) async throws {
+            self.runtime = runtime
+            do {
+                let appIdentifier = try self.resolveApplicationIdentifier()
+                let appInfo = try await resolveApplication(appIdentifier, services: self.services)
+                self.resolvedRuntime.beginInteractionMutation()
+                try await self.services.applications.activateApplication(
+                    identifier: "PID:\(appInfo.processIdentifier)"
+                )
+
+                let result = [
+                    "action": "focus",
+                    "app_name": appInfo.name,
+                    "bundle_id": appInfo.bundleIdentifier ?? "unknown",
+                ]
+                output(result) {
+                    print("✓ Focused \(appInfo.name)")
+                }
+                AutomationEventLogger.log(
+                    .app,
+                    "focus app=\(appInfo.name) bundle=\(appInfo.bundleIdentifier ?? "unknown")"
+                )
+            } catch {
+                handleError(error)
+                throw ExitCode.failure
+            }
+        }
+    }
 }
 
 extension AppCommand.HideSubcommand: AsyncRuntimeCommand, ErrorHandlingCommand, OutputFormattable,
@@ -316,15 +361,24 @@ extension AppCommand.UnhideSubcommand: CommanderBindableCommand {
 
 extension AppCommand.HideSubcommand {
     fileprivate static func resolveAppArgument(_ values: CommanderBindableValues, label: String) throws -> String? {
+        try AppCommand.resolveAppArgument(values, optionLabel: label)
+    }
+}
+
+extension AppCommand {
+    static func resolveAppArgument(
+        _ values: CommanderBindableValues,
+        optionLabel: String
+    ) throws -> String? {
         let positional = values.positionalValue(at: 0)
-        let option = values.singleOption(label)
+        let option = values.singleOption(optionLabel)
 
         switch (positional, option) {
         case let (positional?, option?) where positional != option:
             throw CommanderBindingError.invalidArgument(
-                label: label,
+                label: optionLabel,
                 value: "\(positional), \(option)",
-                reason: "Provide app either positionally or with --app, not both"
+                reason: "Provide the app either positionally or with --\(optionLabel), not both"
             )
         case let (positional?, _):
             return positional
@@ -341,9 +395,22 @@ ApplicationResolver {}
 @MainActor
 extension AppCommand.SwitchSubcommand: CommanderBindableCommand {
     mutating func applyCommanderValues(_ values: CommanderBindableValues) throws {
-        self.to = values.singleOption("to")
+        self.to = try AppCommand.resolveAppArgument(values, optionLabel: "to")
         self.cycle = values.flag("cycle")
         self.verify = values.flag("verify")
+    }
+}
+
+extension AppCommand.FocusSubcommand: AsyncRuntimeCommand, ErrorHandlingCommand, OutputFormattable,
+ApplicationResolvable, ApplicationResolver {}
+@MainActor
+extension AppCommand.FocusSubcommand: CommanderBindableCommand {
+    mutating func applyCommanderValues(_ values: CommanderBindableValues) throws {
+        self.app = try AppCommand.resolveAppArgument(values, optionLabel: "app")
+        self.pid = try values.decodeOption("pid", as: Int32.self)
+        guard self.app != nil || self.pid != nil else {
+            throw CommanderBindingError.missingArgument(label: "app or --pid")
+        }
     }
 }
 

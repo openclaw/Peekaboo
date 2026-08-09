@@ -58,8 +58,7 @@ enum CommanderCLIBinder {
             commandType,
             parsedValues: parsedValues
         )
-        let clipboardMayMutate = commandType == ClipboardCommand.self &&
-            Self.clipboardMayMutate(parsedValues)
+        let clipboardMayMutate = Self.clipboardMayMutate(commandType)
         options.requiresCallerDesktopMutationBarrier = commandType == SwitchSubcommand.self ||
             commandType == MoveWindowSubcommand.self ||
             commandType == CaptureActionCommand.self ||
@@ -90,7 +89,7 @@ enum CommanderCLIBinder {
         options.requiresWindowRestore = commandType == WindowCommand.RestoreSubcommand.self
         options.requiresScreenCapturePermission = Self.requiresScreenCapturePermission(commandType)
         options.requestsHostPermissionGrant = Self.isInteractivePermissionRequest(commandType)
-        options.usesPerToolSnapshotInvalidation = commandType == AgentCommand.self ||
+        options.usesPerToolSnapshotInvalidation = Self.isAgentExecutionCommand(commandType) ||
             commandType == MCPCommand.Serve.self ||
             commandType == InspectUICommand.self
         options.verbose = parsedValues.flags.contains("verbose")
@@ -134,7 +133,7 @@ enum CommanderCLIBinder {
             // the Bridge server rejects self-quit requests before service dispatch.
             options.requiresSurvivingApplicationHost = false
         }
-        if commandType == AgentCommand.self,
+        if Self.isAgentExecutionCommand(commandType),
            !values.flag("no-remote"),
            !hasExplicitBridgeSocket {
             // Agent execution should stay local by default unless explicitly overridden.
@@ -144,7 +143,7 @@ enum CommanderCLIBinder {
             options.preferRemote = false
             options.autoStartDaemon = false
         }
-        if Self.requiresCallerLocalRuntime(commandType) {
+        if Self.requiresCallerLocalRuntime(commandType, parsedValues: parsedValues) {
             options.preferRemote = false
         } else if Self.prefersLocalRuntime(commandType), !values.flag("no-remote"),
                   explicitBridgeSocket?.isEmpty ?? true {
@@ -201,7 +200,7 @@ enum CommanderCLIBinder {
         parsedValues: ParsedValues
     ) -> Bool {
         if commandType == SeeCommand.self ||
-            commandType == AgentCommand.self ||
+            self.isAgentExecutionCommand(commandType) ||
             commandType == MCPCommand.Serve.self {
             return true
         }
@@ -237,11 +236,11 @@ enum CommanderCLIBinder {
         _ commandType: (any ParsableCommand.Type)?,
         parsedValues: ParsedValues
     ) -> Bool {
-        if commandType == ClipboardCommand.self {
-            return self.clipboardMayMutate(parsedValues)
+        if self.clipboardMayMutate(commandType) {
+            return true
         }
-        if commandType == MenuBarCommand.self {
-            return parsedValues.positional.first?.lowercased() == "click"
+        if commandType == MenuBarCommand.ClickSubcommand.self {
+            return true
         }
         if commandType == BrowserCommand.self {
             return BrowserCommand.actionMayMutate(parsedValues.positional.first ?? "status")
@@ -269,6 +268,7 @@ enum CommanderCLIBinder {
             commandType == AppCommand.HideSubcommand.self ||
             commandType == AppCommand.UnhideSubcommand.self ||
             commandType == AppCommand.SwitchSubcommand.self ||
+            commandType == AppCommand.FocusSubcommand.self ||
             commandType == ClickCommand.self ||
             commandType == MoveCommand.self ||
             commandType == TypeCommand.self ||
@@ -305,19 +305,20 @@ enum CommanderCLIBinder {
     private static func isInteractivePermissionRequest(
         _ commandType: (any ParsableCommand.Type)?
     ) -> Bool {
-        commandType == PermissionsCommand.RequestScreenRecordingSubcommand.self ||
-            commandType == PermissionsCommand.RequestAccessibilitySubcommand.self ||
-            commandType == PermissionsCommand.RequestEventSynthesizingSubcommand.self
+        commandType == PermissionsCommand.RequestSubcommand.self
     }
 
-    private static func clipboardMayMutate(_ parsedValues: ParsedValues) -> Bool {
-        let values = CommanderBindableValues(parsedValues: parsedValues)
-        let positionalAction = values.positionalValue(at: 0)?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        let action = (positionalAction?.isEmpty == false ? positionalAction : nil) ??
-            values.singleOption("actionOption") ??
-            values.singleOption("action")
-        return ClipboardCommand.actionMayMutate(action)
+    private static func clipboardMayMutate(_ commandType: (any ParsableCommand.Type)?) -> Bool {
+        commandType == ClipboardCommand.SetSubcommand.self ||
+            commandType == ClipboardCommand.ClearSubcommand.self ||
+            commandType == ClipboardCommand.RestoreSubcommand.self
+    }
+
+    private static func isAgentExecutionCommand(_ commandType: (any ParsableCommand.Type)?) -> Bool {
+        commandType == AgentRunSubcommand.self ||
+            commandType == AgentResumeSubcommand.self ||
+            commandType == AgentSessionsSubcommand.self ||
+            commandType == AgentChatSubcommand.self
     }
 
     private static func menuListMayFocus(_ parsedValues: ParsedValues) -> Bool {
@@ -474,22 +475,22 @@ enum CommanderCLIBinder {
             commandType == ConfigCommand.ShowCommand.self ||
             commandType == ConfigCommand.EditCommand.self ||
             commandType == ConfigCommand.ValidateCommand.self ||
-            commandType == ConfigCommand.AddCommand.self ||
+            commandType == ConfigCommand.CredentialSetCommand.self ||
             commandType == ConfigCommand.LoginCommand.self ||
-            commandType == ConfigCommand.SetCredentialCommand.self ||
             commandType == ConfigCommand.AddProviderCommand.self ||
             commandType == ConfigCommand.ListProvidersCommand.self ||
             commandType == ConfigCommand.TestProviderCommand.self ||
             commandType == ConfigCommand.RemoveProviderCommand.self ||
             commandType == ConfigCommand.ModelsProviderCommand.self ||
-            commandType == ScreenCommand.ListSubcommand.self ||
-            commandType == PermissionsCommand.RequestScreenRecordingSubcommand.self ||
-            commandType == PermissionsCommand.RequestAccessibilitySubcommand.self
+            commandType == ScreenCommand.ListSubcommand.self
     }
 
-    private static func requiresCallerLocalRuntime(_ commandType: (any ParsableCommand.Type)?) -> Bool {
-        commandType == PermissionsCommand.RequestScreenRecordingSubcommand.self ||
-            commandType == PermissionsCommand.RequestAccessibilitySubcommand.self
+    private static func requiresCallerLocalRuntime(
+        _ commandType: (any ParsableCommand.Type)?,
+        parsedValues: ParsedValues
+    ) -> Bool {
+        guard commandType == PermissionsCommand.RequestSubcommand.self else { return false }
+        return CommanderBindableValues(parsedValues: parsedValues).positionalValue(at: 0) != "event-synthesizing"
     }
 
     private static func isDaemonCommand(_ commandType: (any ParsableCommand.Type)?) -> Bool {

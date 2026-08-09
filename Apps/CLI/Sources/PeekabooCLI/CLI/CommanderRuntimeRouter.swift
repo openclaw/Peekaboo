@@ -26,7 +26,7 @@ enum CommanderRuntimeRouter {
             throw ExitCode.success
         }
         let program = Program(descriptors: descriptors.map(\.metadata))
-        let invocation = try program.resolve(argv: argv)
+        let invocation = try program.resolve(argv: self.normalizedDefaultSubcommandArguments(argv))
         guard let descriptor = Self.findDescriptor(in: descriptors, matching: invocation.path) else {
             throw CommanderProgramError.unknownCommand(invocation.path.joined(separator: ":"))
         }
@@ -59,6 +59,23 @@ enum CommanderRuntimeRouter {
             args.removeFirst()
         }
         return args
+    }
+
+    private static func normalizedDefaultSubcommandArguments(_ argv: [String]) -> [String] {
+        var arguments = argv
+        // Commander requires the root command before runtime flags; `peekaboo --json agent ...`
+        // is invalid independently of agent shorthand, so the command can only be at index 0 or 1.
+        let commandIndex = arguments.first?.hasSuffix("peekaboo") == true ? 1 : 0
+        guard arguments.indices.contains(commandIndex), arguments[commandIndex] == "agent" else {
+            return arguments
+        }
+        let nextIndex = commandIndex + 1
+        guard arguments.indices.contains(nextIndex) else { return arguments }
+        let token = arguments[nextIndex]
+        let explicitSubcommands = Set(["run", "resume", "sessions", "chat"])
+        guard !token.hasPrefix("-"), !explicitSubcommands.contains(token) else { return arguments }
+        arguments.insert("run", at: nextIndex)
+        return arguments
     }
 
     private static func handleHelpRequest(

@@ -11,9 +11,7 @@ struct PermissionsCommand: ParsableCommand {
         subcommands: [
             StatusSubcommand.self,
             GrantSubcommand.self,
-            RequestScreenRecordingSubcommand.self,
-            RequestAccessibilitySubcommand.self,
-            RequestEventSynthesizingSubcommand.self,
+            RequestSubcommand.self,
         ],
         defaultSubcommand: StatusSubcommand.self
     )
@@ -101,6 +99,37 @@ extension PermissionsCommand {
                 for permission in permissions {
                     print("• \(permission.name): \(permission.grantInstructions)")
                 }
+            }
+        }
+    }
+
+    @MainActor
+    struct RequestSubcommand: RuntimeBackedCommand {
+        @Argument(help: "Permission kind: accessibility, screen-recording, or event-synthesizing")
+        var kind: String
+
+        @RuntimeStorage var runtime: CommandRuntime?
+        var runtimeOptions = CommandRuntimeOptions()
+
+        mutating func run(using runtime: CommandRuntime) async throws {
+            switch self.kind {
+            case "accessibility":
+                var command = RequestAccessibilitySubcommand()
+                command.runtimeOptions = self.runtimeOptions
+                try await command.run(using: runtime)
+            case "screen-recording":
+                var command = RequestScreenRecordingSubcommand()
+                command.runtimeOptions = self.runtimeOptions
+                try await command.run(using: runtime)
+            case "event-synthesizing":
+                var command = RequestEventSynthesizingSubcommand()
+                command.runtimeOptions = self.runtimeOptions
+                try await command.run(using: runtime)
+            default:
+                throw ValidationError(
+                    "Invalid permission kind '\(self.kind)'. "
+                        + "Use accessibility, screen-recording, or event-synthesizing."
+                )
             }
         }
     }
@@ -290,64 +319,30 @@ extension PermissionsCommand.GrantSubcommand: CommanderBindableCommand {
 }
 
 @MainActor
-extension PermissionsCommand.RequestScreenRecordingSubcommand: ParsableCommand {
+extension PermissionsCommand.RequestSubcommand: ParsableCommand {
     nonisolated(unsafe) static var commandDescription: CommandDescription {
         MainActorCommandDescription.describe {
             CommandDescription(
-                commandName: "request-screen-recording",
-                abstract: "Request Screen Recording permission for the local Peekaboo process"
+                commandName: "request",
+                abstract: "Request one local macOS permission"
             )
         }
     }
 }
 
-extension PermissionsCommand.RequestScreenRecordingSubcommand: AsyncRuntimeCommand {}
+extension PermissionsCommand.RequestSubcommand: AsyncRuntimeCommand {}
 
 @MainActor
-extension PermissionsCommand.RequestScreenRecordingSubcommand: CommanderBindableCommand {
+extension PermissionsCommand.RequestSubcommand: CommanderBindableCommand {
     mutating func applyCommanderValues(_ values: CommanderBindableValues) throws {
-        _ = values
-    }
-}
-
-@MainActor
-extension PermissionsCommand.RequestAccessibilitySubcommand: ParsableCommand {
-    nonisolated(unsafe) static var commandDescription: CommandDescription {
-        MainActorCommandDescription.describe {
-            CommandDescription(
-                commandName: "request-accessibility",
-                abstract: "Request Accessibility permission for the local Peekaboo process"
+        self.kind = try values.decodePositional(0, label: "kind")
+        let allowed = Set(["accessibility", "screen-recording", "event-synthesizing"])
+        guard allowed.contains(self.kind) else {
+            throw CommanderBindingError.invalidArgument(
+                label: "kind",
+                value: self.kind,
+                reason: "expected accessibility, screen-recording, or event-synthesizing"
             )
         }
-    }
-}
-
-extension PermissionsCommand.RequestAccessibilitySubcommand: AsyncRuntimeCommand {}
-
-@MainActor
-extension PermissionsCommand.RequestAccessibilitySubcommand: CommanderBindableCommand {
-    mutating func applyCommanderValues(_ values: CommanderBindableValues) throws {
-        _ = values
-    }
-}
-
-@MainActor
-extension PermissionsCommand.RequestEventSynthesizingSubcommand: ParsableCommand {
-    nonisolated(unsafe) static var commandDescription: CommandDescription {
-        MainActorCommandDescription.describe {
-            CommandDescription(
-                commandName: "request-event-synthesizing",
-                abstract: "Request Event Synthesizing permission for background input"
-            )
-        }
-    }
-}
-
-extension PermissionsCommand.RequestEventSynthesizingSubcommand: AsyncRuntimeCommand {}
-
-@MainActor
-extension PermissionsCommand.RequestEventSynthesizingSubcommand: CommanderBindableCommand {
-    mutating func applyCommanderValues(_ values: CommanderBindableValues) throws {
-        _ = values
     }
 }

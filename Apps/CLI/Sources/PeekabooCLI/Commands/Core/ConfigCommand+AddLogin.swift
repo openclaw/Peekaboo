@@ -5,17 +5,21 @@ import Tachikoma
 @available(macOS 14.0, *)
 @MainActor
 extension ConfigCommand {
-    struct AddCommand: ConfigRuntimeCommand {
+    struct CredentialSetCommand: ConfigRuntimeCommand {
         static let commandDescription = CommandDescription(
-            commandName: "add",
-            abstract: "Add and validate a provider credential (API key)"
+            commandName: "set",
+            abstract: "Validate and store a provider credential, or set a raw credential key",
+            discussion: """
+            Known provider names (for example `openai`) are validated before the command succeeds.
+            Credential keys (for example `OPENAI_API_KEY`) are stored directly without validation.
+            """
         )
 
-        @Argument(help: "Provider id (openai|anthropic|grok|xai|gemini|openrouter)")
-        var provider: String
+        @Argument(help: "Provider id or raw credential key")
+        var keyOrProvider: String
 
-        @Argument(help: "Secret value (API key)")
-        var secret: String
+        @Argument(help: "Credential value")
+        var value: String
 
         @Option(name: .customLong("timeout"), help: "Validation timeout in seconds (default 30)")
         var timeoutSeconds: Double = 30
@@ -24,19 +28,22 @@ extension ConfigCommand {
 
         mutating func run(using runtime: CommandRuntime) async throws {
             self.prepare(using: runtime)
-            guard let pid = TKProviderId.normalize(self.provider) else {
-                self.output.error(
-                    code: "INVALID_PROVIDER",
-                    message: "Supported: openai, anthropic, grok, xai, gemini, openrouter"
-                )
-                throw ExitCode.failure
+            guard let provider = TKProviderId.normalize(self.keyOrProvider) else {
+                do {
+                    try self.configManager.setCredential(key: self.keyOrProvider, value: self.value)
+                    self.output.success(message: "[ok] Stored credential '\(self.keyOrProvider)'")
+                    return
+                } catch {
+                    self.output.error(code: "FILE_IO_ERROR", message: "Failed to store credential: \(error)")
+                    throw ExitCode.failure
+                }
             }
 
             let timeout = self.timeoutSeconds > 0 ? self.timeoutSeconds : 30
-            let result = await TKAuthManager.shared.validate(provider: pid, secret: self.secret, timeout: timeout)
+            let result = await TKAuthManager.shared.validate(provider: provider, secret: self.value, timeout: timeout)
 
             do {
-                try TKAuthManager.shared.setCredential(key: pid.credentialKeys.first!, value: self.secret)
+                try TKAuthManager.shared.setCredential(key: provider.credentialKeys.first!, value: self.value)
             } catch {
                 self.output.error(code: "FILE_IO_ERROR", message: "Failed to store credential: \(error)")
                 throw ExitCode.failure
@@ -44,7 +51,7 @@ extension ConfigCommand {
 
             switch result {
             case .success:
-                self.output.success(message: "[ok] Stored and validated \(pid.displayName) credential")
+                self.output.success(message: "[ok] Stored and validated \(provider.displayName) credential")
             case let .failure(reason):
                 self.output.error(
                     code: "VALIDATION_FAILED",

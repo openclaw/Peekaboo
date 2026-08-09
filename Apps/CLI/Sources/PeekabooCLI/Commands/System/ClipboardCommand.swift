@@ -5,33 +5,8 @@ import UniformTypeIdentifiers
 
 @available(macOS 14.0, *)
 @MainActor
-struct ClipboardCommand: OutputFormattable, RuntimeOptionsConfigurable {
-    nonisolated(unsafe) static var commandDescription: CommandDescription {
-        MainActorCommandDescription.describe {
-            CommandDescription(
-                commandName: "clipboard",
-                abstract: "Read/write the macOS clipboard (text, images, files)",
-                discussion: """
-                Actions:
-                  get     Read the clipboard. Use --prefer <uti> or --output <path|-> for binary.
-                  set     Write text, file/image, or base64+UTI. --also-text adds a text companion. --verify reads back.
-                  clear   Empty the clipboard.
-                  save    Snapshot clipboard to a slot (default: \"0\").
-                  restore Restore a previously saved slot.
-                  load    Shortcut for set with --file-path.
-                """,
-                showHelpOnEmptyInvocation: true
-            )
-        }
-    }
-
-    @Argument(help: "Action: get, set, clear, save, restore, load")
+struct ClipboardActionCommand: OutputFormattable, RuntimeOptionsConfigurable {
     var action: String?
-
-    @Option(
-        names: [.customShort("a", allowingJoined: false), .customLong("action")],
-        help: "Action alias: get, set, clear, save, restore, load"
-    )
     var actionOption: String?
 
     @Option(name: .long, help: "Text to set")
@@ -61,7 +36,7 @@ struct ClipboardCommand: OutputFormattable, RuntimeOptionsConfigurable {
     @Flag(name: .long, help: "Allow payloads larger than 10 MB")
     var allowLarge = false
 
-    @Flag(name: .long, help: "Read back clipboard after set/load and validate contents")
+    @Flag(name: .long, help: "Read back clipboard after setting and validate contents")
     var verify = false
 
     @RuntimeStorage private var runtime: CommandRuntime?
@@ -110,8 +85,6 @@ struct ClipboardCommand: OutputFormattable, RuntimeOptionsConfigurable {
             try self.handleGet()
         case "set":
             try self.handleSet()
-        case "load":
-            try self.handleLoad()
         case "clear":
             self.handleClear()
         case "save":
@@ -129,7 +102,7 @@ struct ClipboardCommand: OutputFormattable, RuntimeOptionsConfigurable {
         guard let action = action?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() else {
             return false
         }
-        return ["set", "load", "clear", "restore"].contains(action)
+        return ["set", "clear", "restore"].contains(action)
     }
 
     private func resolvedAction() throws -> String {
@@ -138,13 +111,13 @@ struct ClipboardCommand: OutputFormattable, RuntimeOptionsConfigurable {
 
         switch (positionalAction, optionAction) {
         case let (positional?, option?) where !positional.isEmpty && !option.isEmpty && positional != option:
-            throw ValidationError("Provide clipboard action either positionally or with --action, not both")
+            throw ValidationError("Conflicting clipboard actions")
         case let (positional?, _) where !positional.isEmpty:
             return positional
         case let (_, option?) where !option.isEmpty:
             return option
         default:
-            throw ValidationError("Missing action. Use: peekaboo clipboard get|set|clear|save|restore|load")
+            throw ValidationError("Missing clipboard action")
         }
     }
 
@@ -213,32 +186,6 @@ struct ClipboardCommand: OutputFormattable, RuntimeOptionsConfigurable {
 
         self.output(payload) {
             print("✅ Set clipboard (\(result.utiIdentifier), \(result.data.count) bytes)")
-            self.printVerificationSummary(verification)
-        }
-    }
-
-    private func handleLoad() throws {
-        guard let path = self.filePath else {
-            throw ValidationError("load requires --file-path")
-        }
-        let resolvedPath = ClipboardPathResolver.filePath(from: path) ?? path
-        let request = try self.makeWriteRequest(overridePath: path)
-        let result = try self.services.clipboard.set(request)
-        let verification = try self.verifyWriteIfNeeded(request: request)
-        let payload = ClipboardCommandResult(
-            action: "load",
-            uti: result.utiIdentifier,
-            size: result.data.count,
-            filePath: resolvedPath,
-            slot: nil,
-            text: nil,
-            textPreview: result.textPreview,
-            dataBase64: nil,
-            verification: verification
-        )
-
-        self.output(payload) {
-            print("✅ Loaded \(result.data.count) bytes (\(result.utiIdentifier)) from \(resolvedPath) into clipboard")
             self.printVerificationSummary(verification)
         }
     }

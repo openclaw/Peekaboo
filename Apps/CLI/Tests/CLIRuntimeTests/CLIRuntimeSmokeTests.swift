@@ -186,7 +186,8 @@ struct CLIRuntimeSmokeTests {
         guard Self.ensureLocalRuntimeAvailable() else { return }
         let result = try await TestChildProcess.runPeekaboo([
             "config",
-            "add-provider",
+            "provider",
+            "add",
             "bad id",
             "--type",
             "openai",

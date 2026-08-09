@@ -6,45 +6,7 @@ import PeekabooFoundation
 
 /// Command for interacting with macOS menu bar items (status items).
 @MainActor
-struct MenuBarCommand: ParsableCommand, ErrorHandlingCommand, OutputFormattable, InjectedRuntimeBackedCommand {
-    nonisolated(unsafe) static var commandDescription: CommandDescription {
-        MainActorCommandDescription.describe {
-            CommandDescription(
-                commandName: "menubar",
-                abstract: "Interact with macOS menu bar items (status items)",
-                discussion: """
-                The menubar command provides specialized support for interacting with menu bar items
-                (also known as status items) on macOS. These are the icons that appear on the right
-                side of the menu bar.
-
-                FEATURES:
-                  • Fuzzy matching - Partial text and case-insensitive search
-                  • Index-based clicking - Use item number from list output
-                  • Smart error messages - Shows available items when not found
-                  • JSON output support - For scripting and automation
-
-                EXAMPLES:
-                  # List all menu bar items with indices
-                  peekaboo menubar list
-                  peekaboo menubar list --json             # JSON format
-
-                  # Click by exact or partial name (case-insensitive)
-                  peekaboo menubar click "Wi-Fi"           # Exact match
-                  peekaboo menubar click "wi"              # Partial match
-                  peekaboo menubar click "Bluetooth"       # Click Bluetooth icon
-
-                  # Click by index from the list
-                  peekaboo menubar click --index 2         # Click listed item [2]
-
-                NOTE: Menu bar items are different from regular application menus. For application
-                menus (File, Edit, etc.), use the 'menu' command instead.
-                """,
-                showHelpOnEmptyInvocation: true
-            )
-        }
-    }
-
-    @Argument(help: "Action to perform (list or click)")
+struct MenuBarActionCommand: ErrorHandlingCommand, OutputFormattable, InjectedRuntimeBackedCommand {
     var action: String
 
     @Argument(help: "Name of the menu bar item to click (for click action)")
@@ -224,15 +186,95 @@ private struct ClickJSONOutput: Codable {
     let verified: Bool?
 }
 
-extension MenuBarCommand: AsyncRuntimeCommand {}
+@MainActor
+struct MenuBarCommand: ParsableCommand {
+    nonisolated(unsafe) static var commandDescription: CommandDescription {
+        MainActorCommandDescription.describe {
+            CommandDescription(
+                commandName: "menubar",
+                abstract: "Interact with macOS menu bar status items",
+                discussion: """
+                List status items or click one by fuzzy title match or list index.
+                Application menus such as File and Edit are handled by `peekaboo menu`.
+                """,
+                subcommands: [ListSubcommand.self, ClickSubcommand.self],
+                showHelpOnEmptyInvocation: true
+            )
+        }
+    }
+
+    struct ListSubcommand: RuntimeBackedCommand {
+        static let commandDescription = CommandDescription(
+            commandName: "list",
+            abstract: "List menu bar status items"
+        )
+
+        @Flag(name: .long, help: "Include raw debug fields (window owner/layer) in JSON output")
+        var includeRawDebug = false
+
+        @RuntimeStorage var runtime: CommandRuntime?
+        var runtimeOptions = CommandRuntimeOptions()
+
+        mutating func run(using runtime: CommandRuntime) async throws {
+            var command = MenuBarActionCommand(action: "list")
+            command.includeRawDebug = self.includeRawDebug
+            try await command.run(using: runtime)
+        }
+    }
+
+    struct ClickSubcommand: RuntimeBackedCommand {
+        static let commandDescription = CommandDescription(
+            commandName: "click",
+            abstract: "Click a menu bar status item"
+        )
+
+        @Argument(help: "Menu bar item name (exact or fuzzy match)")
+        var itemName: String?
+
+        @Option(name: .long, help: "0-based index shown by `peekaboo menubar list`")
+        var index: Int?
+
+        @Flag(name: .long, help: "Verify the click by checking for a matching popover window")
+        var verify = false
+
+        @RuntimeStorage var runtime: CommandRuntime?
+        var runtimeOptions = CommandRuntimeOptions()
+
+        mutating func run(using runtime: CommandRuntime) async throws {
+            var command = MenuBarActionCommand(action: "click")
+            command.itemName = self.itemName
+            command.index = self.index
+            command.verify = self.verify
+            try await command.run(using: runtime)
+        }
+    }
+}
+
+extension MenuBarCommand.ListSubcommand: AsyncRuntimeCommand {}
+extension MenuBarCommand.ClickSubcommand: AsyncRuntimeCommand {}
 
 @MainActor
-extension MenuBarCommand: CommanderBindableCommand {
+extension MenuBarCommand.ListSubcommand: CommanderBindableCommand {
     mutating func applyCommanderValues(_ values: CommanderBindableValues) throws {
-        self.action = try values.decodePositional(0, label: "action")
-        self.itemName = try values.decodeOptionalPositional(1, label: "itemName")
-        self.index = try values.decodeOption("index", as: Int.self)
         self.includeRawDebug = values.flag("includeRawDebug")
+    }
+}
+
+@MainActor
+extension MenuBarCommand.ClickSubcommand: CommanderBindableCommand {
+    mutating func applyCommanderValues(_ values: CommanderBindableValues) throws {
+        self.itemName = try values.decodeOptionalPositional(0, label: "itemName")
+        self.index = try values.decodeOption("index", as: Int.self)
         self.verify = values.flag("verify")
+        if self.itemName != nil, self.index != nil {
+            throw CommanderBindingError.invalidArgument(
+                label: "item-name or --index",
+                value: "both",
+                reason: "Provide a menu bar item either by name or by --index, not both"
+            )
+        }
+        guard self.itemName != nil || self.index != nil else {
+            throw CommanderBindingError.missingArgument(label: "item-name or --index")
+        }
     }
 }

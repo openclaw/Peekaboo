@@ -29,7 +29,7 @@ extension AgentCommand {
         guard self.noCache else { return }
         guard !self.resume, self.resumeSession == nil, !self.listSessions else {
             throw PeekabooError.invalidInput(
-                "--no-cache cannot be combined with --resume, --resume-session, or --list-sessions."
+                "--no-cache cannot be combined with resume or sessions mode."
             )
         }
     }
@@ -44,7 +44,7 @@ extension AgentCommand {
             guard let continuationTask = self.task else {
                 self.printMissingTaskError(
                     message: "Task argument required when resuming session",
-                    usage: "Usage: peekaboo agent --resume-session <session-id> \"<continuation-task>\""
+                    usage: "Usage: peekaboo agent resume <session-id>"
                 )
                 return true
             }
@@ -65,7 +65,7 @@ extension AgentCommand {
             guard let continuationTask = self.task else {
                 self.printMissingTaskError(
                     message: "Task argument required when resuming",
-                    usage: "Usage: peekaboo agent --resume \"<continuation-task>\""
+                    usage: "Usage: peekaboo agent resume"
                 )
                 return true
             }
@@ -197,8 +197,8 @@ extension AgentCommand {
 
         let resumeHintLine = [
             "\n",
-            "\(TerminalColor.dim)To resume: peekaboo agent --resume-session <session-id>",
-            " \"<continuation>\"\(TerminalColor.reset)"
+            "\(TerminalColor.dim)To resume: peekaboo agent resume <session-id>",
+            "\(TerminalColor.reset)"
         ].joined()
         print(resumeHintLine)
     }

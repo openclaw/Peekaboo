@@ -246,7 +246,7 @@ extension AppCommand.QuitSubcommand: AsyncRuntimeCommand, ErrorHandlingCommand, 
 @MainActor
 extension AppCommand.QuitSubcommand: CommanderBindableCommand {
     mutating func applyCommanderValues(_ values: CommanderBindableValues) throws {
-        self.app = values.singleOption("app")
+        self.app = try AppCommand.resolveAppArgument(values, optionLabel: "app")
         self.pid = try values.decodeOption("pid", as: Int32.self)
         self.expectedProcessStartIdentity = try values.decodeOption(
             "expectedProcessStartIdentity",

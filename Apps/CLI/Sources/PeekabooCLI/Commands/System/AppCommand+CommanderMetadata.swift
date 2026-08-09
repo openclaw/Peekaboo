@@ -57,6 +57,9 @@ extension AppCommand.LaunchSubcommand: CommanderSignatureProviding {
 extension AppCommand.QuitSubcommand: CommanderSignatureProviding {
     static func commanderSignature() -> CommandSignature {
         CommandSignature(
+            arguments: [
+                .make(label: "app", help: "Application to quit", isOptional: true),
+            ],
             options: [
                 .commandOption(
                     "app",
@@ -157,6 +160,9 @@ extension AppCommand.UnhideSubcommand: CommanderSignatureProviding {
 extension AppCommand.SwitchSubcommand: CommanderSignatureProviding {
     static func commanderSignature() -> CommandSignature {
         CommandSignature(
+            arguments: [
+                .make(label: "app", help: "Application to switch to", isOptional: true),
+            ],
             options: [
                 .commandOption(
                     "to",
@@ -211,6 +217,11 @@ extension AppCommand.RelaunchSubcommand: CommanderSignatureProviding {
             ],
             options: [
                 .commandOption(
+                    "app",
+                    help: "Application name, bundle ID, or 'PID:12345'",
+                    long: "app"
+                ),
+                .commandOption(
                     "pid",
                     help: "Target application by process ID",
                     long: "pid"
@@ -237,6 +248,20 @@ extension AppCommand.RelaunchSubcommand: CommanderSignatureProviding {
                     help: "Bring the app to the foreground after relaunching",
                     long: "foreground"
                 ),
+            ]
+        )
+    }
+}
+
+extension AppCommand.FocusSubcommand: CommanderSignatureProviding {
+    static func commanderSignature() -> CommandSignature {
+        CommandSignature(
+            arguments: [
+                .make(label: "app", help: "Application to focus", isOptional: true),
+            ],
+            options: [
+                .commandOption("app", help: "Application to focus", long: "app"),
+                .commandOption("pid", help: "Target application by process ID", long: "pid"),
             ]
         )
     }

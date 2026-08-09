@@ -21,9 +21,9 @@ struct CommanderBinderCommandBindingTests {
     }
 
     @Test
-    func `Clipboard command binding with file-path and also-text`() throws {
+    func `Clipboard set subcommand binds only write options`() throws {
         let parsed = ParsedValues(
-            positional: ["set"],
+            positional: [],
             options: [
                 "filePath": ["/tmp/demo.txt"],
                 "alsoText": ["Peekaboo clipboard file smoke"]
@@ -31,9 +31,10 @@ struct CommanderBinderCommandBindingTests {
             flags: ["allowLarge", "verify"]
         )
 
-        let command = try CommanderCLIBinder.instantiateCommand(ofType: ClipboardCommand.self, parsedValues: parsed)
-        #expect(command.action == "set")
-        #expect(command.actionOption == nil)
+        let command = try CommanderCLIBinder.instantiateCommand(
+            ofType: ClipboardCommand.SetSubcommand.self,
+            parsedValues: parsed
+        )
         #expect(command.filePath == "/tmp/demo.txt")
         #expect(command.text == nil)
         #expect(command.alsoText == "Peekaboo clipboard file smoke")
@@ -42,18 +43,18 @@ struct CommanderBinderCommandBindingTests {
     }
 
     @Test
-    func `Clipboard command keeps action option alias`() throws {
-        let parsed = ParsedValues(
-            positional: [],
-            options: [
-                "actionOption": ["get"]
-            ],
-            flags: []
-        )
-
-        let command = try CommanderCLIBinder.instantiateCommand(ofType: ClipboardCommand.self, parsedValues: parsed)
-        #expect(command.action == nil)
-        #expect(command.actionOption == "get")
+    func `Clipboard root exposes real subcommands and no action option`() {
+        let description = ClipboardCommand.commandDescription
+        var names: [String] = []
+        for subcommand in description.subcommands {
+            if let name = subcommand.commandDescription.commandName {
+                names.append(name)
+            }
+        }
+        #expect(names == ["get", "set", "clear", "save", "restore"])
+        #expect(!CommandSignature.describe(ClipboardCommand()).flattened().options.contains { option in
+            option.names.contains(.long("action"))
+        })
     }
 
     @Test

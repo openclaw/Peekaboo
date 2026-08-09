@@ -132,7 +132,7 @@ extension AppCommand.RelaunchSubcommand: AsyncRuntimeCommand, ErrorHandlingComma
 @MainActor
 extension AppCommand.RelaunchSubcommand: CommanderBindableCommand {
     mutating func applyCommanderValues(_ values: CommanderBindableValues) throws {
-        app = try values.decodeOptionalPositional(0, label: "app")
+        app = try AppCommand.resolveAppArgument(values, optionLabel: "app")
         pid = try values.decodeOption("pid", as: Int32.self)
         guard app != nil || pid != nil else {
             throw CommanderBindingError.missingArgument(label: "app or --pid")

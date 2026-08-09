@@ -32,20 +32,13 @@ extension PermissionsCommand.GrantSubcommand: CommanderSignatureProviding {
     }
 }
 
-extension PermissionsCommand.RequestScreenRecordingSubcommand: CommanderSignatureProviding {
+extension PermissionsCommand.RequestSubcommand: CommanderSignatureProviding {
     static func commanderSignature() -> CommandSignature {
-        CommandSignature()
-    }
-}
-
-extension PermissionsCommand.RequestAccessibilitySubcommand: CommanderSignatureProviding {
-    static func commanderSignature() -> CommandSignature {
-        CommandSignature()
-    }
-}
-
-extension PermissionsCommand.RequestEventSynthesizingSubcommand: CommanderSignatureProviding {
-    static func commanderSignature() -> CommandSignature {
-        CommandSignature()
+        CommandSignature(arguments: [
+            .make(
+                label: "kind",
+                help: "Permission kind: accessibility, screen-recording, or event-synthesizing"
+            ),
+        ])
     }
 }

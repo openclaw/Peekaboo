@@ -108,11 +108,10 @@ struct CommanderBinderAppConfigTests {
     }
 
     @Test
-    func `App quit binding`() throws {
+    func `App quit positional binding`() throws {
         let parsed = ParsedValues(
-            positional: [],
+            positional: ["Safari"],
             options: [
-                "app": ["Safari"],
                 "pid": ["123"],
                 "expectedProcessStartIdentity": ["456789"],
                 "except": ["Finder,Terminal"]
@@ -132,10 +131,29 @@ struct CommanderBinderAppConfigTests {
     }
 
     @Test
+    func `App quit rejects conflicting positional and flag targets`() {
+        let parsed = ParsedValues(
+            positional: ["Safari"],
+            options: ["app": ["TextEdit"]],
+            flags: []
+        )
+        #expect(throws: CommanderBindingError.invalidArgument(
+            label: "app",
+            value: "Safari, TextEdit",
+            reason: "Provide the app either positionally or with --app, not both"
+        )) {
+            _ = try CommanderCLIBinder.instantiateCommand(
+                ofType: AppCommand.QuitSubcommand.self,
+                parsedValues: parsed
+            )
+        }
+    }
+
+    @Test
     func `App switch binding`() throws {
         let parsed = ParsedValues(
-            positional: [],
-            options: ["to": ["Slack"]],
+            positional: ["Slack"],
+            options: [:],
             flags: ["cycle"]
         )
         let command = try CommanderCLIBinder.instantiateCommand(
@@ -144,6 +162,16 @@ struct CommanderBinderAppConfigTests {
         )
         #expect(command.to == "Slack")
         #expect(command.cycle == true)
+    }
+
+    @Test
+    func `App focus accepts positional app`() throws {
+        let command = try CommanderCLIBinder.instantiateCommand(
+            ofType: AppCommand.FocusSubcommand.self,
+            parsedValues: ParsedValues(positional: ["Safari"], options: [:], flags: [])
+        )
+        #expect(command.app == "Safari")
+        #expect(command.pid == nil)
     }
 
     @Test
@@ -240,13 +268,13 @@ struct CommanderBinderAppConfigTests {
     }
 
     @Test
-    func `Config set credential binding`() throws {
+    func `Config credential set binding`() throws {
         let parsed = ParsedValues(positional: ["OPENAI_API_KEY", "sk-123"], options: [:], flags: [])
         let command = try CommanderCLIBinder.instantiateCommand(
-            ofType: ConfigCommand.SetCredentialCommand.self,
+            ofType: ConfigCommand.CredentialSetCommand.self,
             parsedValues: parsed
         )
-        #expect(command.key == "OPENAI_API_KEY")
+        #expect(command.keyOrProvider == "OPENAI_API_KEY")
         #expect(command.value == "sk-123")
     }
 
@@ -364,20 +392,20 @@ struct CommanderBinderAppConfigTests {
                 "noColor"
             ]
         )
-        let command = try CommanderCLIBinder.instantiateCommand(ofType: AgentCommand.self, parsedValues: parsed)
+        let command = try CommanderCLIBinder.instantiateCommand(
+            ofType: AgentRunSubcommand.self,
+            parsedValues: parsed
+        )
         #expect(command.task == "Open Notes and write summary")
-        #expect(command.debugTerminal == true)
-        #expect(command.quiet == true)
-        #expect(command.dryRun == true)
-        #expect(command.maxSteps == 7)
-        #expect(command.model == "gpt-5.5")
-        #expect(command.resume == true)
-        #expect(command.resumeSession == "sess-42")
-        #expect(command.listSessions == true)
-        #expect(command.noCache == true)
-        #expect(command.audio == true)
-        #expect(command.audioFile == "/tmp/input.wav")
-        #expect(command.simple == true)
-        #expect(command.noColor == true)
+        #expect(command.options.debugTerminal == true)
+        #expect(command.options.quiet == true)
+        #expect(command.options.dryRun == true)
+        #expect(command.options.maxSteps == 7)
+        #expect(command.options.model == "gpt-5.5")
+        #expect(command.options.noCache == true)
+        #expect(command.options.audio == true)
+        #expect(command.options.audioFile == "/tmp/input.wav")
+        #expect(command.options.simple == true)
+        #expect(command.options.noColor == true)
     }
 }

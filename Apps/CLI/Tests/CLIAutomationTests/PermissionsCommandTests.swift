@@ -9,7 +9,7 @@ struct PermissionsCommandTests {
     func `permissions command metadata describes current command`() {
         #expect(PermissionsCommand.commandDescription.commandName == "permissions")
         #expect(PermissionsCommand.commandDescription.abstract == "Check Peekaboo permissions")
-        #expect(PermissionsCommand.commandDescription.subcommands.count == 4)
+        #expect(PermissionsCommand.commandDescription.subcommands.count == 3)
     }
 
     @Test
@@ -28,11 +28,12 @@ struct PermissionsCommandTests {
     }
 
     @Test
-    func `permissions request screen recording command binds`() throws {
-        _ = try CommanderCLIBinder.instantiateCommand(
-            ofType: PermissionsCommand.RequestScreenRecordingSubcommand.self,
-            parsedValues: ParsedValues(positional: [], options: [:], flags: [])
+    func `permissions request screen recording kind binds`() throws {
+        let command = try CommanderCLIBinder.instantiateCommand(
+            ofType: PermissionsCommand.RequestSubcommand.self,
+            parsedValues: ParsedValues(positional: ["screen-recording"], options: [:], flags: [])
         )
+        #expect(command.kind == "screen-recording")
     }
 
     @Test

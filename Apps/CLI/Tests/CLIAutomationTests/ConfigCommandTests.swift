@@ -52,11 +52,9 @@ struct ConfigCommandTests {
 
         // Check subcommands
         let subcommands = command.commandDescription.subcommands
-        #expect(subcommands.count == 13)
+        #expect(subcommands.count == 8)
         let hasInit = subcommands.contains { $0 == ConfigCommand.InitCommand.self }
         #expect(hasInit)
-        let hasAdd = subcommands.contains { $0 == ConfigCommand.AddCommand.self }
-        #expect(hasAdd)
         let hasShow = subcommands.contains { $0 == ConfigCommand.ShowCommand.self }
         #expect(hasShow)
         let hasStatus = subcommands.contains { $0 == ConfigCommand.StatusCommand.self }
@@ -67,18 +65,13 @@ struct ConfigCommandTests {
         #expect(hasValidate)
         let hasLogin = subcommands.contains { $0 == ConfigCommand.LoginCommand.self }
         #expect(hasLogin)
-        let hasSetCredential = subcommands.contains { $0 == ConfigCommand.SetCredentialCommand.self }
-        #expect(hasSetCredential)
-        let hasAddProvider = subcommands.contains { $0 == ConfigCommand.AddProviderCommand.self }
-        #expect(hasAddProvider)
-        let hasListProviders = subcommands.contains { $0 == ConfigCommand.ListProvidersCommand.self }
-        #expect(hasListProviders)
-        let hasTestProvider = subcommands.contains { $0 == ConfigCommand.TestProviderCommand.self }
-        #expect(hasTestProvider)
-        let hasRemoveProvider = subcommands.contains { $0 == ConfigCommand.RemoveProviderCommand.self }
-        #expect(hasRemoveProvider)
-        let hasModelsProvider = subcommands.contains { $0 == ConfigCommand.ModelsProviderCommand.self }
-        #expect(hasModelsProvider)
+        #expect(subcommands.contains { $0 == ConfigCommand.ProviderCommand.self })
+        #expect(subcommands.contains { $0 == ConfigCommand.CredentialCommand.self })
+        let providerCommands = ConfigCommand.ProviderCommand.commandDescription.subcommands
+        #expect(providerCommands.map(\.commandDescription.commandName) == ["add", "remove", "list", "test", "models"])
+        #expect(ConfigCommand.CredentialCommand.commandDescription.subcommands == [
+            ConfigCommand.CredentialSetCommand.self,
+        ])
     }
 
     @Test
@@ -110,17 +103,16 @@ struct ConfigCommandTests {
     }
 
     @Test
-    func `SetCredentialCommand has correct configuration`() {
-        let command = ConfigCommand.SetCredentialCommand.self
-        #expect(command.commandDescription.commandName == "set-credential")
-        #expect(command.commandDescription.abstract == "Set an API key or credential securely")
+    func `CredentialSetCommand has correct configuration`() {
+        let command = ConfigCommand.CredentialSetCommand.self
+        #expect(command.commandDescription.commandName == "set")
     }
 
     @Test
     func `Set credential writes to overridden credentials path`() async throws {
         try await self.withTempConfigDir { dir in
-            var command = ConfigCommand.SetCredentialCommand()
-            command.key = "OPENAI_API_KEY"
+            var command = ConfigCommand.CredentialSetCommand()
+            command.keyOrProvider = "OPENAI_API_KEY"
             command.value = "test-openai-key"
 
             try await command.run(using: self.makeRuntime())

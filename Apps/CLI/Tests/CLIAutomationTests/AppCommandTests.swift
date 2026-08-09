@@ -16,7 +16,7 @@ struct AppCommandTests {
     @Test
     func `App command has expected subcommands`() {
         let subcommands = AppCommand.commandDescription.subcommands
-        #expect(subcommands.count == 7)
+        #expect(subcommands.count == 8)
 
         var subcommandNames: [String] = []
         subcommandNames.reserveCapacity(subcommands.count)
@@ -29,6 +29,7 @@ struct AppCommandTests {
         #expect(subcommandNames.contains("hide"))
         #expect(subcommandNames.contains("unhide"))
         #expect(subcommandNames.contains("switch"))
+        #expect(subcommandNames.contains("focus"))
         #expect(subcommandNames.contains("relaunch"))
         #expect(subcommandNames.contains("list"))
     }
@@ -98,6 +99,14 @@ struct AppCommandTests {
         await #expect(throws: (any Error).self) {
             _ = try await runAppCommand(["app", "quit", "--app", "Finder", "--all"])
         }
+    }
+
+    @Test
+    func `App focus preserves an exact PID target`() async throws {
+        let (_, service) = try await runAppCommandWithService([
+            "app", "focus", "--pid", "202", "--json",
+        ])
+        #expect(await appServiceState(service) { $0.activateCalls } == ["PID:202"])
     }
 
     @Test

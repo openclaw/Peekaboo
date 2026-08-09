@@ -35,18 +35,37 @@ struct ConfigCommand: ParsableCommand {
         subcommands: [
             InitCommand.self,
             ShowCommand.self,
-            StatusCommand.self,
             EditCommand.self,
             ValidateCommand.self,
-            AddCommand.self,
+            StatusCommand.self,
+            ProviderCommand.self,
+            CredentialCommand.self,
             LoginCommand.self,
-            SetCredentialCommand.self,
-            AddProviderCommand.self,
-            ListProvidersCommand.self,
-            TestProviderCommand.self,
-            RemoveProviderCommand.self,
-            ModelsProviderCommand.self,
         ],
         showHelpOnEmptyInvocation: true
     )
+
+    struct ProviderCommand: ParsableCommand {
+        static let commandDescription = CommandDescription(
+            commandName: "provider",
+            abstract: "Manage custom AI providers",
+            subcommands: [
+                AddProviderCommand.self,
+                RemoveProviderCommand.self,
+                ListProvidersCommand.self,
+                TestProviderCommand.self,
+                ModelsProviderCommand.self,
+            ],
+            showHelpOnEmptyInvocation: true
+        )
+    }
+
+    struct CredentialCommand: ParsableCommand {
+        static let commandDescription = CommandDescription(
+            commandName: "credential",
+            abstract: "Manage provider credentials",
+            subcommands: [CredentialSetCommand.self],
+            showHelpOnEmptyInvocation: true
+        )
+    }
 }

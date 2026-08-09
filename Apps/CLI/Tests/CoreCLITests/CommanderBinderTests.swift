@@ -300,13 +300,13 @@ struct CommanderBinderTests {
         #expect(inspectOptions.usesPerToolSnapshotInvalidation)
 
         let menuBarClick = try CommanderCLIBinder.makeRuntimeOptions(
-            from: ParsedValues(positional: ["click"], options: [:], flags: []),
-            commandType: MenuBarCommand.self
+            from: parsed,
+            commandType: MenuBarCommand.ClickSubcommand.self
         )
         #expect(menuBarClick.requiresImplicitSnapshotInvalidation)
         let menuBarList = try CommanderCLIBinder.makeRuntimeOptions(
-            from: ParsedValues(positional: ["list"], options: [:], flags: []),
-            commandType: MenuBarCommand.self
+            from: parsed,
+            commandType: MenuBarCommand.ListSubcommand.self
         )
         #expect(!menuBarList.requiresImplicitSnapshotInvalidation)
 
@@ -398,82 +398,63 @@ struct CommanderBinderTests {
 
     @Test
     func `Clipboard writes require caller-side invalidation while reads and saves do not`() throws {
-        for action in ["set", "load", "clear", "restore"] {
+        let mutatingCommands: [any ParsableCommand.Type] = [
+            ClipboardCommand.SetSubcommand.self,
+            ClipboardCommand.ClearSubcommand.self,
+            ClipboardCommand.RestoreSubcommand.self,
+        ]
+        for commandType in mutatingCommands {
             let options = try CommanderCLIBinder.makeRuntimeOptions(
-                from: ParsedValues(positional: [action], options: [:], flags: []),
-                commandType: ClipboardCommand.self
+                from: ParsedValues(positional: [], options: [:], flags: []),
+                commandType: commandType
             )
-            #expect(options.requiresImplicitSnapshotInvalidation, "Missing clipboard invalidation: \(action)")
-            #expect(options.requiresCallerDesktopMutationBarrier, "Missing clipboard barrier: \(action)")
+            #expect(options.requiresImplicitSnapshotInvalidation, "Missing clipboard invalidation: \(commandType)")
+            #expect(options.requiresCallerDesktopMutationBarrier, "Missing clipboard barrier: \(commandType)")
         }
 
-        let optionAlias = try CommanderCLIBinder.makeRuntimeOptions(
-            from: ParsedValues(positional: [], options: ["actionOption": ["set"]], flags: []),
-            commandType: ClipboardCommand.self
-        )
-        #expect(optionAlias.requiresImplicitSnapshotInvalidation)
-        #expect(optionAlias.requiresCallerDesktopMutationBarrier)
-
-        let optionAfterEmptyPositional = try CommanderCLIBinder.makeRuntimeOptions(
-            from: ParsedValues(
-                positional: ["  "],
-                options: ["actionOption": ["set"]],
-                flags: []
-            ),
-            commandType: ClipboardCommand.self
-        )
-        #expect(optionAfterEmptyPositional.requiresImplicitSnapshotInvalidation)
-        #expect(optionAfterEmptyPositional.requiresCallerDesktopMutationBarrier)
-
-        for action in ["get", "save"] {
+        let readOnlyCommands: [any ParsableCommand.Type] = [
+            ClipboardCommand.GetSubcommand.self,
+            ClipboardCommand.SaveSubcommand.self,
+        ]
+        for commandType in readOnlyCommands {
             let options = try CommanderCLIBinder.makeRuntimeOptions(
-                from: ParsedValues(positional: [action], options: [:], flags: []),
-                commandType: ClipboardCommand.self
+                from: ParsedValues(positional: [], options: [:], flags: []),
+                commandType: commandType
             )
-            #expect(!options.requiresImplicitSnapshotInvalidation, "Unexpected clipboard invalidation: \(action)")
-            #expect(!options.requiresCallerDesktopMutationBarrier, "Unexpected clipboard barrier: \(action)")
+            #expect(!options.requiresImplicitSnapshotInvalidation, "Unexpected invalidation: \(commandType)")
+            #expect(!options.requiresCallerDesktopMutationBarrier, "Unexpected barrier: \(commandType)")
         }
     }
 
     @Test
     func `Interactive permission requests invalidate implicit snapshots`() throws {
-        let commandTypes: [any ParsableCommand.Type] = [
-            PermissionsCommand.RequestScreenRecordingSubcommand.self,
-            PermissionsCommand.RequestAccessibilitySubcommand.self,
-            PermissionsCommand.RequestEventSynthesizingSubcommand.self,
-        ]
-
-        for commandType in commandTypes {
+        for kind in ["screen-recording", "accessibility", "event-synthesizing"] {
             let options = try CommanderCLIBinder.makeRuntimeOptions(
-                from: ParsedValues(positional: [], options: [:], flags: []),
-                commandType: commandType
+                from: ParsedValues(positional: [kind], options: [:], flags: []),
+                commandType: PermissionsCommand.RequestSubcommand.self
             )
-            #expect(options.requiresImplicitSnapshotInvalidation, "Missing invalidation: \(commandType)")
-            #expect(!options.requiresCallerDesktopMutationBarrier, "Unexpected caller barrier: \(commandType)")
+            #expect(options.requiresImplicitSnapshotInvalidation, "Missing invalidation: \(kind)")
+            #expect(!options.requiresCallerDesktopMutationBarrier, "Unexpected caller barrier: \(kind)")
         }
 
-        let callerLocalCommandTypes: [any ParsableCommand.Type] = [
-            PermissionsCommand.RequestScreenRecordingSubcommand.self,
-            PermissionsCommand.RequestAccessibilitySubcommand.self,
-        ]
-        for commandType in callerLocalCommandTypes {
+        for kind in ["screen-recording", "accessibility"] {
             let options = try CommanderCLIBinder.makeRuntimeOptions(
-                from: ParsedValues(positional: [], options: [:], flags: []),
-                commandType: commandType
+                from: ParsedValues(positional: [kind], options: [:], flags: []),
+                commandType: PermissionsCommand.RequestSubcommand.self
             )
-            #expect(!options.preferRemote, "Caller-local prompt routed remotely: \(commandType)")
+            #expect(!options.preferRemote, "Caller-local prompt routed remotely: \(kind)")
 
             let explicitSocketOptions = try CommanderCLIBinder.makeRuntimeOptions(
                 from: ParsedValues(
-                    positional: [],
+                    positional: [kind],
                     options: ["bridge-socket": ["/tmp/permission-host.sock"]],
                     flags: []
                 ),
-                commandType: commandType
+                commandType: PermissionsCommand.RequestSubcommand.self
             )
             #expect(
                 !explicitSocketOptions.preferRemote,
-                "Explicit socket routed caller-local prompt remotely: \(commandType)"
+                "Explicit socket routed caller-local prompt remotely: \(kind)"
             )
             #expect(explicitSocketOptions.bridgeSocketPath == "/tmp/permission-host.sock")
         }
@@ -1111,7 +1092,7 @@ extension CommanderBinderTests {
     @Test
     func `Agent runtime defaults to local host mode`() throws {
         let parsed = ParsedValues(positional: [], options: [:], flags: [])
-        let options = try CommanderCLIBinder.makeRuntimeOptions(from: parsed, commandType: AgentCommand.self)
+        let options = try CommanderCLIBinder.makeRuntimeOptions(from: parsed, commandType: AgentRunSubcommand.self)
         #expect(options.preferRemote == false)
         #expect(options.usesPerToolSnapshotInvalidation)
         #expect(!options.requiresImplicitSnapshotInvalidation)
@@ -1124,7 +1105,7 @@ extension CommanderBinderTests {
             options: ["bridge-socket": ["/tmp/agent-host.sock"]],
             flags: []
         )
-        let options = try CommanderCLIBinder.makeRuntimeOptions(from: parsed, commandType: AgentCommand.self)
+        let options = try CommanderCLIBinder.makeRuntimeOptions(from: parsed, commandType: AgentRunSubcommand.self)
 
         #expect(options.preferRemote)
         #expect(options.bridgeSocketPath == "/tmp/agent-host.sock")
@@ -1134,7 +1115,7 @@ extension CommanderBinderTests {
     func `Agent runtime honors bridge socket environment override`() throws {
         let options = try CommanderCLIBinder.makeRuntimeOptions(
             from: ParsedValues(positional: [], options: [:], flags: []),
-            commandType: AgentCommand.self,
+            commandType: AgentRunSubcommand.self,
             environment: ["PEEKABOO_BRIDGE_SOCKET": "/tmp/agent-host.sock"]
         )
 
@@ -1145,7 +1126,7 @@ extension CommanderBinderTests {
     func `Agent no remote flag wins over bridge socket environment override`() throws {
         let options = try CommanderCLIBinder.makeRuntimeOptions(
             from: ParsedValues(positional: [], options: [:], flags: ["no-remote"]),
-            commandType: AgentCommand.self,
+            commandType: AgentRunSubcommand.self,
             environment: ["PEEKABOO_BRIDGE_SOCKET": "/tmp/agent-host.sock"]
         )
 
@@ -1156,7 +1137,7 @@ extension CommanderBinderTests {
     @Test
     func `Long-lived tool runtimes discover sibling snapshot hosts while staying local`() throws {
         let parsed = ParsedValues(positional: [], options: [:], flags: [])
-        for commandType in [AgentCommand.self, MCPCommand.Serve.self] as [any ParsableCommand.Type] {
+        for commandType in [AgentRunSubcommand.self, MCPCommand.Serve.self] as [any ParsableCommand.Type] {
             let options = try CommanderCLIBinder.makeRuntimeOptions(from: parsed, commandType: commandType)
             #expect(options.usesPerToolSnapshotInvalidation)
             #expect(!options.preferRemote)
@@ -1340,7 +1321,7 @@ extension CommanderBinderTests {
         let parsed = ParsedValues(positional: [], options: [:], flags: [])
         let options = try CommanderCLIBinder.makeRuntimeOptions(
             from: parsed,
-            commandType: PermissionsCommand.RequestScreenRecordingSubcommand.self
+            commandType: PermissionsCommand.RequestSubcommand.self
         )
         #expect(options.preferRemote == false)
     }
@@ -1371,10 +1352,10 @@ extension CommanderBinderTests {
 
     @Test
     func `Permission request commands opt out of host permission gating`() throws {
-        let parsed = ParsedValues(positional: [], options: [:], flags: [])
+        let parsed = ParsedValues(positional: ["event-synthesizing"], options: [:], flags: [])
         let requestOptions = try CommanderCLIBinder.makeRuntimeOptions(
             from: parsed,
-            commandType: PermissionsCommand.RequestEventSynthesizingSubcommand.self
+            commandType: PermissionsCommand.RequestSubcommand.self
         )
         let captureOptions = try CommanderCLIBinder.makeRuntimeOptions(
             from: parsed,
@@ -1420,7 +1401,7 @@ extension CommanderBinderTests {
             (SeeCommand.self, parsed),
             (CaptureLiveCommand.self, parsed),
             (CaptureActionCommand.self, parsed),
-            (AgentCommand.self, parsed),
+            (AgentRunSubcommand.self, parsed),
             (MCPCommand.Serve.self, parsed),
             (ClickCommand.self, ParsedValues(
                 positional: [],

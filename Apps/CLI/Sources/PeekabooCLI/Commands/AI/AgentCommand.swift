@@ -61,11 +61,11 @@ struct AgentCommand: RuntimeBackedCommand {
                 description: "Start a brand-new session with a natural-language brief."
             ),
             CommandUsageExample(
-                command: "peekaboo agent --resume",
+                command: "peekaboo agent resume",
                 description: "Resume the most recent session without retyping the task."
             ),
             CommandUsageExample(
-                command: "peekaboo agent --resume-session SESSION_ID --max-steps 12",
+                command: "peekaboo agent resume SESSION_ID --max-steps 12",
                 description: "Resume a known session while capping the step budget."
             )
         ]
@@ -98,13 +98,10 @@ struct AgentCommand: RuntimeBackedCommand {
         """
     )
     var model: String?
-    @Flag(name: .long, help: "Resume the most recent session")
     var resume = false
 
-    @Option(name: .long, help: "Resume a specific session by ID")
     var resumeSession: String?
 
-    @Flag(name: .long, help: "List available sessions")
     var listSessions = false
 
     @Flag(name: .long, help: "Run without saving a resumable session")
@@ -122,7 +119,6 @@ struct AgentCommand: RuntimeBackedCommand {
     @Flag(name: .long, help: "Disable colors in output")
     var noColor = false
 
-    @Flag(name: .long, help: "Start an interactive chat session")
     var chat = false
 
     /// Computed property for output mode with smart detection and progressive enhancement
@@ -435,7 +431,3 @@ extension AgentCommand {
         }
     }
 }
-
-extension AgentCommand: ParsableCommand {}
-
-extension AgentCommand: AsyncRuntimeCommand {}

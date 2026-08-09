@@ -39,7 +39,7 @@ extension ConfigCommand {
     /// Add a custom AI provider.
     struct AddProviderCommand: ConfigRuntimeCommand {
         static let commandDescription = CommandDescription(
-            commandName: "add-provider",
+            commandName: "add",
             abstract: "Add a custom AI provider",
             discussion: """
             Add a custom AI provider to your Peekaboo configuration.
@@ -50,7 +50,7 @@ extension ConfigCommand {
             Examples:
 
             # Add OpenRouter
-            peekaboo config add-provider openrouter \\
+            peekaboo config provider add openrouter \\
               --type openai \\
               --name "OpenRouter" \\
               --base-url "https://openrouter.ai/api/v1" \\
@@ -58,14 +58,14 @@ extension ConfigCommand {
               --description "Access to 300+ models via OpenRouter"
 
             # Add local Ollama with authentication
-            peekaboo config add-provider local-ollama \\
+            peekaboo config provider add local-ollama \\
               --type openai \\
               --name "Local Ollama" \\
               --base-url "http://localhost:11434/v1" \\
               --api-key "dummy-key"
 
             # Add Groq
-            peekaboo config add-provider groq \\
+            peekaboo config provider add groq \\
               --type openai \\
               --name "Groq" \\
               --base-url "https://api.groq.com/openai/v1" \\
@@ -218,7 +218,7 @@ extension ConfigCommand {
                     if let description {
                         print("   Description: \(description)")
                     }
-                    print("\nTip: Test the connection with: peekaboo config test-provider \(self.providerId)")
+                    print("\nTip: Test the connection with: peekaboo config provider test \(self.providerId)")
                 }
             } catch {
                 self.emitError(

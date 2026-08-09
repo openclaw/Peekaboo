@@ -182,18 +182,58 @@ struct CommanderBinderProgramResolutionTests {
     @Test
     @MainActor
     func `Commander program keeps natural-language agent tasks positional`() throws {
-        let descriptors = CommanderRegistryBuilder.buildDescriptors()
-        let program = Program(descriptors: descriptors.map(\.metadata))
-        let invocation = try program.resolve(argv: [
+        let invocation = try CommanderRuntimeRouter.resolve(argv: [
             "peekaboo",
             "agent",
             "list files",
             "--dry-run",
         ])
 
-        #expect(invocation.path == ["agent"])
+        #expect(invocation.metadata.name == "run")
         #expect(invocation.parsedValues.positional == ["list files"])
         #expect(invocation.parsedValues.flags.contains("dryRun"))
+    }
+
+    @Test
+    @MainActor
+    func `V4 command restructures resolve nested paths`() throws {
+        let descriptors = CommanderRegistryBuilder.buildDescriptors()
+        let program = Program(descriptors: descriptors.map(\.metadata))
+
+        #expect(try program.resolve(argv: ["peekaboo", "clipboard", "set", "--text", "hi"]).path == [
+            "clipboard", "set",
+        ])
+        #expect(try program.resolve(argv: ["peekaboo", "menubar", "click", "Wi-Fi"]).path == [
+            "menubar", "click",
+        ])
+        #expect(try program.resolve(argv: ["peekaboo", "config", "provider", "models", "local"]).path == [
+            "config", "provider", "models",
+        ])
+        #expect(try program.resolve(argv: ["peekaboo", "agent", "sessions", "--json"]).path == [
+            "agent", "sessions",
+        ])
+        #expect(try program.resolve(argv: ["peekaboo", "permissions", "request", "accessibility"]).path == [
+            "permissions", "request",
+        ])
+    }
+
+    @Test
+    @MainActor
+    func `V4 removed spellings are rejected`() {
+        let descriptors = CommanderRegistryBuilder.buildDescriptors()
+        let program = Program(descriptors: descriptors.map(\.metadata))
+        let removed = [
+            ["peekaboo", "clipboard", "-a", "get"],
+            ["peekaboo", "config", "add-provider"],
+            ["peekaboo", "agent", "--list-sessions"],
+            ["peekaboo", "permissions", "request-screen-recording"],
+        ]
+
+        for argv in removed {
+            #expect(throws: CommanderProgramError.self, "Expected rejection for \(argv)") {
+                _ = try program.resolve(argv: argv)
+            }
+        }
     }
 
     @Test

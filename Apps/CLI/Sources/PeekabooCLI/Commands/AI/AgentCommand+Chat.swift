@@ -44,8 +44,8 @@ extension AgentCommand {
 
         let hint = [
             "Interactive chat requires a TTY.",
-            "To force it from scripts: peekaboo agent --chat < prompts.txt",
-            "Provide a task arg or use --chat when piping input.",
+            "To force it from scripts: peekaboo agent chat < prompts.txt",
+            "Provide a task arg or use `agent chat` when piping input.",
             "",
         ]
         hint.forEach { print($0) }

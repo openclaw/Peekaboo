@@ -9,7 +9,7 @@ struct PermissionCommandTests {
     @Test
     func `permissions includes accessibility request`() {
         let names = PermissionsCommand.commandDescription.subcommands.compactMap(\.commandDescription.commandName)
-        #expect(names.contains("request-accessibility"))
+        #expect(names.contains("request"))
     }
 
     @Test
@@ -105,7 +105,8 @@ struct PermissionCommandTests {
 
         let result = try await InProcessCommandRunner.run([
             "permissions",
-            "request-event-synthesizing",
+            "request",
+            "event-synthesizing",
             "--json",
         ], services: services)
 

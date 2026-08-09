@@ -9,12 +9,12 @@ extension ConfigCommand {
     /// List configured custom AI providers.
     struct ListProvidersCommand: ConfigRuntimeCommand {
         static let commandDescription = CommandDescription(
-            commandName: "list-providers",
+            commandName: "list",
             abstract: "List configured custom AI providers",
             discussion: """
             Display all custom AI providers configured in Peekaboo.
 
-            This shows providers you've added with 'peekaboo config add-provider',
+            This shows providers you've added with 'peekaboo config provider add',
             not the built-in providers (openai, anthropic, ollama).
             """
         )
@@ -46,7 +46,7 @@ extension ConfigCommand {
 
             guard !customProviders.isEmpty else {
                 print("No custom providers configured.")
-                print("Add one with: peekaboo config add-provider <id> --type <type>")
+                print("Add one with: peekaboo config provider add <id> --type <type>")
                 print("  --name <name> --base-url <url> --api-key <key>")
                 return
             }
@@ -68,15 +68,15 @@ extension ConfigCommand {
                 print()
             }
 
-            print("Tip: Test a provider with: peekaboo config test-provider <id>")
-            print("Tip: Remove a provider with: peekaboo config remove-provider <id>")
+            print("Tip: Test a provider with: peekaboo config provider test <id>")
+            print("Tip: Remove a provider with: peekaboo config provider remove <id>")
         }
     }
 
     /// Test a custom AI provider connection.
     struct TestProviderCommand: ConfigRuntimeCommand {
         static let commandDescription = CommandDescription(
-            commandName: "test-provider",
+            commandName: "test",
             abstract: "Test connection to a custom AI provider",
             discussion: """
             Test the connection to a custom AI provider by making a simple API call.
@@ -157,12 +157,12 @@ extension ConfigCommand {
     /// Remove a custom AI provider.
     struct RemoveProviderCommand: ConfigRuntimeCommand {
         static let commandDescription = CommandDescription(
-            commandName: "remove-provider",
+            commandName: "remove",
             abstract: "Remove a custom AI provider",
             discussion: """
             Remove a custom AI provider from your Peekaboo configuration.
 
-            This only removes providers you've added with 'peekaboo config add-provider'.
+            This only removes providers you've added with 'peekaboo config provider add'.
             Built-in providers (openai, anthropic, ollama) cannot be removed.
             """
         )
@@ -267,7 +267,7 @@ extension ConfigCommand {
     /// Discover or list models for a custom AI provider.
     struct ModelsProviderCommand: ConfigRuntimeCommand {
         static let commandDescription = CommandDescription(
-            commandName: "models-provider",
+            commandName: "models",
             abstract: "List available models from a custom AI provider",
             discussion: """
             Discover and list available models from a custom AI provider.
