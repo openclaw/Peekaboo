@@ -27,6 +27,10 @@ extension MoveTool {
     }
 
     func parseRequest(arguments: ToolArguments) throws -> MoveRequest {
+        guard arguments.getBool("foreground") == true else {
+            throw MoveToolValidationError(
+                "move changes the shared physical cursor and requires foreground=true.")
+        }
         let target = try self.parseTarget(from: arguments)
         let snapshotId = arguments.getString("snapshot")
         let profileName = (arguments.getString("profile") ?? "linear").lowercased()

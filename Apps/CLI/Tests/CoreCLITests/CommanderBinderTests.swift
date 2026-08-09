@@ -281,15 +281,20 @@ struct CommanderBinderTests {
         #expect(!browserStatus.requiresImplicitSnapshotInvalidation)
 
         let seeWithWebFocus = try CommanderCLIBinder.makeRuntimeOptions(
-            from: parsed,
+            from: ParsedValues(positional: [], options: [:], flags: ["webFocus"]),
             commandType: SeeCommand.self
         )
         #expect(seeWithWebFocus.requiresImplicitSnapshotInvalidation)
+        let seeDefault = try CommanderCLIBinder.makeRuntimeOptions(
+            from: parsed,
+            commandType: SeeCommand.self
+        )
+        #expect(!seeDefault.requiresImplicitSnapshotInvalidation)
         let seeWithoutWebFocus = try CommanderCLIBinder.makeRuntimeOptions(
             from: ParsedValues(positional: [], options: [:], flags: ["noWebFocus"]),
             commandType: SeeCommand.self
         )
-        #expect(seeWithoutWebFocus.requiresImplicitSnapshotInvalidation)
+        #expect(!seeWithoutWebFocus.requiresImplicitSnapshotInvalidation)
 
         let readOnly = try CommanderCLIBinder.makeRuntimeOptions(
             from: parsed,
@@ -454,6 +459,11 @@ struct CommanderBinderTests {
             )),
             (ImageCommand.self, ParsedValues(
                 positional: [],
+                options: ["app": ["TextEdit"]],
+                flags: []
+            )),
+            (ImageCommand.self, ParsedValues(
+                positional: [],
                 options: ["app": ["TextEdit"], "captureFocus": ["background"]],
                 flags: []
             )),
@@ -465,6 +475,11 @@ struct CommanderBinderTests {
             (CaptureLiveCommand.self, ParsedValues(
                 positional: [],
                 options: ["mode": ["screen"], "app": ["TextEdit"]],
+                flags: []
+            )),
+            (CaptureLiveCommand.self, ParsedValues(
+                positional: [],
+                options: ["app": ["TextEdit"]],
                 flags: []
             )),
             (CaptureLiveCommand.self, ParsedValues(
@@ -488,22 +503,17 @@ struct CommanderBinderTests {
         let focusingCaptures: [(any ParsableCommand.Type, ParsedValues)] = [
             (ImageCommand.self, ParsedValues(
                 positional: [],
-                options: ["app": ["TextEdit"]],
-                flags: []
-            )),
-            (ImageCommand.self, ParsedValues(
-                positional: [],
-                options: ["mode": ["multi"], "pid": ["123"]],
+                options: ["mode": ["multi"], "pid": ["123"], "captureFocus": ["auto"]],
                 flags: []
             )),
             (CaptureLiveCommand.self, ParsedValues(
                 positional: [],
-                options: ["app": ["TextEdit"]],
+                options: ["app": ["TextEdit"], "captureFocus": ["foreground"]],
                 flags: []
             )),
             (CaptureWatchAlias.self, ParsedValues(
                 positional: [],
-                options: ["mode": ["window"], "pid": ["123"]],
+                options: ["mode": ["window"], "pid": ["123"], "captureFocus": ["auto"]],
                 flags: []
             )),
         ]
@@ -565,7 +575,7 @@ struct CommanderBinderTests {
     }
 
     @Test
-    func `Synthetic click variants require a post event capable bridge host`() throws {
+    func `Click delivery selects the permission required by its actual path`() throws {
         let coordinate = try CommanderCLIBinder.makeRuntimeOptions(
             from: ParsedValues(
                 positional: [],
@@ -647,17 +657,20 @@ struct CommanderBinderTests {
             commandType: ClickCommand.self
         )
 
-        #expect(coordinate.requiresPostEventClickPermission)
-        #expect(coordinateDouble.requiresPostEventClickPermission)
-        #expect(coordinateRight.requiresPostEventClickPermission)
-        #expect(longPress.requiresPostEventClickPermission)
+        #expect(!coordinate.requiresPostEventPermission)
+        #expect(!coordinateDouble.requiresPostEventPermission)
+        #expect(!coordinateRight.requiresPostEventPermission)
+        #expect(longPress.requiresPostEventPermission)
         #expect(longPress.requiresLongPressClick)
-        #expect(doubleClick.requiresPostEventClickPermission)
-        #expect(!singleClick.requiresPostEventClickPermission)
-        #expect(!rightClick.requiresPostEventClickPermission)
-        #expect(!rightWinsConflictingFlags.requiresPostEventClickPermission)
-        #expect(!foregroundCoordinate.requiresPostEventClickPermission)
-        #expect(!foregroundDoubleClick.requiresPostEventClickPermission)
+        #expect(!doubleClick.requiresPostEventPermission)
+        #expect(!singleClick.requiresPostEventPermission)
+        #expect(!rightClick.requiresPostEventPermission)
+        #expect(!rightWinsConflictingFlags.requiresPostEventPermission)
+        #expect(foregroundCoordinate.requiresPostEventPermission)
+        #expect(foregroundDoubleClick.requiresPostEventPermission)
+        #expect(coordinate.requiresAccessibilityPermission)
+        #expect(singleClick.requiresAccessibilityPermission)
+        #expect(!foregroundCoordinate.requiresAccessibilityPermission)
 
         let operations: [PeekabooBridgeOperation] = [
             .captureScreen,
@@ -693,14 +706,71 @@ struct CommanderBinderTests {
 
         #expect(CommandRuntime.supportsRemoteRequirements(for: accessibilityOnly, options: singleClick))
         #expect(CommandRuntime.supportsRemoteRequirements(for: accessibilityOnly, options: rightClick))
-        #expect(!CommandRuntime.supportsRemoteRequirements(for: accessibilityOnly, options: coordinate))
-        #expect(!CommandRuntime.supportsRemoteRequirements(for: accessibilityOnly, options: doubleClick))
+        #expect(CommandRuntime.supportsRemoteRequirements(for: accessibilityOnly, options: coordinate))
+        #expect(CommandRuntime.supportsRemoteRequirements(for: accessibilityOnly, options: doubleClick))
+        #expect(!CommandRuntime.supportsRemoteRequirements(for: accessibilityOnly, options: foregroundCoordinate))
         #expect(CommandRuntime.supportsRemoteRequirements(for: fullyPermitted, options: coordinate))
-        #expect(CommandRuntime.supportsRemoteRequirements(for: fullyPermitted, options: doubleClick))
+        #expect(CommandRuntime.supportsRemoteRequirements(for: fullyPermitted, options: foregroundCoordinate))
     }
 }
 
 extension CommanderBinderTests {
+    @Test
+    func `Background scroll requires strict targeted bridge capability`() throws {
+        let background = try CommanderCLIBinder.makeRuntimeOptions(
+            from: ParsedValues(
+                positional: [],
+                options: ["direction": ["down"], "on": ["S1"]],
+                flags: []
+            ),
+            commandType: ScrollCommand.self
+        )
+        let foreground = try CommanderCLIBinder.makeRuntimeOptions(
+            from: ParsedValues(
+                positional: [],
+                options: ["direction": ["down"]],
+                flags: ["foreground"]
+            ),
+            commandType: ScrollCommand.self
+        )
+
+        #expect(background.requiresTargetedScroll)
+        #expect(background.requiresAccessibilityPermission)
+        #expect(!background.requiresPostEventPermission)
+        #expect(!foreground.requiresTargetedScroll)
+        #expect(!foreground.requiresAccessibilityPermission)
+        #expect(foreground.requiresPostEventPermission)
+
+        let legacy = PeekabooBridgeHandshakeResponse(
+            negotiatedVersion: .init(major: 1, minor: 10),
+            hostKind: .onDemand,
+            build: nil,
+            supportedOperations: [.captureScreen, .scroll, .invalidateImplicitLatestSnapshot],
+            permissions: PermissionsStatus(
+                screenRecording: true,
+                accessibility: true,
+                postEvent: true
+            ),
+            enabledOperations: [.captureScreen, .scroll, .invalidateImplicitLatestSnapshot]
+        )
+        let current = PeekabooBridgeHandshakeResponse(
+            negotiatedVersion: .init(major: 1, minor: 11),
+            hostKind: .onDemand,
+            build: nil,
+            supportedOperations: [.captureScreen, .scroll, .targetedScroll, .invalidateImplicitLatestSnapshot],
+            permissions: PermissionsStatus(
+                screenRecording: true,
+                accessibility: true,
+                postEvent: true
+            ),
+            enabledOperations: [.captureScreen, .scroll, .targetedScroll, .invalidateImplicitLatestSnapshot]
+        )
+
+        #expect(!CommandRuntime.supportsRemoteRequirements(for: legacy, options: background))
+        #expect(CommandRuntime.supportsRemoteRequirements(for: current, options: background))
+        #expect(CommandRuntime.supportsRemoteRequirements(for: legacy, options: foreground))
+    }
+
     @Test
     func `Background exact-window clicks require an enabled bridge capability`() throws {
         let explicitWindow = try CommanderCLIBinder.makeRuntimeOptions(
@@ -894,11 +964,13 @@ extension CommanderBinderTests {
 
         let candidates = RuntimeHostResolver.implicitRemoteCandidates(
             options: options,
-            daemonSocketPath: "/tmp/peekaboo-daemon.sock"
+            daemonSocketPath: "/tmp/peekaboo-daemon.sock",
+            buildScopedDaemonSocketPath: "/tmp/peekaboo-daemon-current.sock"
         )
 
         #expect(candidates.map(\.socketPath) == [
             PeekabooBridgeConstants.peekabooSocketPath,
+            "/tmp/peekaboo-daemon-current.sock",
             "/tmp/peekaboo-daemon.sock",
         ])
         #expect(candidates.first?.requiredHostKind == .gui)
@@ -966,11 +1038,13 @@ extension CommanderBinderTests {
 
         let candidates = RuntimeHostResolver.implicitRemoteCandidates(
             options: options,
-            daemonSocketPath: "/tmp/peekaboo-daemon.sock"
+            daemonSocketPath: "/tmp/peekaboo-daemon.sock",
+            buildScopedDaemonSocketPath: "/tmp/peekaboo-daemon-current.sock"
         )
 
         #expect(candidates.map(\.socketPath) == [
             PeekabooBridgeConstants.peekabooSocketPath,
+            "/tmp/peekaboo-daemon-current.sock",
             "/tmp/peekaboo-daemon.sock",
         ])
         #expect(candidates.first?.requiredHostKind == .gui)
@@ -1038,8 +1112,8 @@ extension CommanderBinderTests {
         )
 
         #expect(Array(candidates.map(\.socketPath).prefix(3)) == [
-            PeekabooBridgeConstants.daemonSocketPath,
             buildScopedPath,
+            PeekabooBridgeConstants.daemonSocketPath,
             historicalPath,
         ])
         #expect(candidates[0].requiresValidatedHistoricalDaemon == false)
@@ -1162,7 +1236,9 @@ extension CommanderBinderTests {
                 environment: [:],
                 configurationInput: nil,
                 knownSnapshotInvalidationRemoteSocketPaths: ["/tmp/sibling.sock"]
-            ) == .local(snapshotInvalidationRemoteSocketPaths: ["/tmp/sibling.sock"]))
+            ) == .local(
+                snapshotInvalidationRemoteSocketPaths: ["/tmp/sibling.sock"]
+            ))
         }
     }
 

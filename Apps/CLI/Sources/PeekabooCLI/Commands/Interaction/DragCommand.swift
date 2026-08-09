@@ -40,6 +40,9 @@ struct DragCommand: ErrorHandlingCommand, OutputFormattable {
     @Option(help: "Movement profile (linear or human)")
     var profile: String?
     @OptionGroup var focusOptions: FocusCommandOptions
+
+    @Flag(help: "Confirm foreground pointer movement and focus the target when specified")
+    var foreground = false
     @RuntimeStorage private var runtime: CommandRuntime?
 
     private var resolvedRuntime: CommandRuntime {
@@ -203,6 +206,11 @@ struct DragCommand: ErrorHandlingCommand, OutputFormattable {
     /// Validate user input combinations
     private mutating func validateInputs() throws {
         try self.target.validate()
+        guard self.foreground else {
+            throw ValidationError(
+                "drag changes the physical cursor and requires explicit --foreground consent."
+            )
+        }
         guard self.from != nil || self.fromCoords != nil else {
             throw ValidationError("Must specify either --from or --from-coords")
         }
@@ -259,11 +267,13 @@ extension DragCommand: ParsableCommand {
                 Execute click-and-drag operations for moving elements, selecting text, or dragging files.
 
                 EXAMPLES:
-                  peekaboo drag --from "$SOURCE_ID" --to "$TARGET_ID"
-                  peekaboo drag --from-coords "100,200" --to-coords "400,300"
-                  peekaboo drag --from "$SOURCE_ID" --to-app Trash
-                  peekaboo drag --from "$SOURCE_ID" --to-coords "500,250" --duration 2000
-                  peekaboo drag --from "$SOURCE_ID" --to "$TARGET_ID" --modifiers shift
+                  peekaboo drag --from "$SOURCE_ID" --to "$TARGET_ID" --foreground
+                  peekaboo drag --from-coords "100,200" --to-coords "400,300" --foreground
+                  peekaboo drag --from "$SOURCE_ID" --to-app Trash --foreground
+                  peekaboo drag --from "$SOURCE_ID" --to-coords "500,250" --duration 2000 --foreground
+                  peekaboo drag --from "$SOURCE_ID" --to "$TARGET_ID" --modifiers shift --foreground
+
+                Drag always changes the shared physical cursor and requires --foreground.
                 """,
                 version: "2.0.0",
                 showHelpOnEmptyInvocation: true
@@ -292,6 +302,7 @@ extension DragCommand: CommanderBindableCommand {
         }
         self.modifiers = values.singleOption("modifiers")
         self.profile = values.singleOption("profile")
+        self.foreground = values.flag("foreground")
         self.focusOptions = try values.makeFocusOptions()
     }
 }

@@ -21,7 +21,7 @@ struct PressCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
     @Option(help: "Hold duration for each key in milliseconds")
     var hold: Int = 50
 
-    @Option(help: "Snapshot ID, or 'latest' (uses latest if not specified)")
+    @Option(help: "Snapshot ID, or 'latest'")
     var snapshot: String?
 
     @OptionGroup var focusOptions: FocusCommandOptions
@@ -189,14 +189,11 @@ struct PressCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
     }
 
     private func backgroundProcessIdentifier(snapshotId: String?) async throws -> pid_t? {
-        guard !KeyboardDeliverySupport.shouldUseForeground(
-            foreground: self.foreground,
-            focusOptions: self.focusOptions
-        ) else {
+        guard !self.foreground else {
             return nil
         }
 
-        return try await KeyboardDeliverySupport.backgroundProcessIdentifier(
+        return try await KeyboardDeliverySupport.requireBackgroundProcessIdentifier(
             target: self.target,
             snapshotId: snapshotId,
             services: self.services
@@ -230,16 +227,12 @@ extension PressCommand: ParsableCommand {
                     It's designed for special keys and navigation, not for typing text.
 
                     EXAMPLES:
-                      peekaboo press return                # Press Enter/Return
+                      peekaboo press return --foreground   # Press focused Enter/Return
                       peekaboo press return --app TextEdit # Background-target TextEdit
-                      peekaboo press tab --count 3         # Press Tab 3 times
-                      peekaboo press escape                # Press Escape
-                      peekaboo press delete                # Press Backspace/Delete
-                      peekaboo press forward_delete        # Press Forward Delete (fn+delete)
-                      peekaboo press up down left right    # Arrow key sequence
-                      peekaboo press f1                    # Press F1 function key
-                      peekaboo press space                 # Press spacebar
-                      peekaboo press enter                 # Numeric keypad Enter
+                      peekaboo press tab --count 3 --app Safari
+                      peekaboo press escape --foreground
+                      peekaboo press delete --app TextEdit
+                      peekaboo press up down left right --app Safari
 
                     AVAILABLE KEYS:
                       Navigation: up, down, left, right, home, end, pageup, pagedown
@@ -250,12 +243,16 @@ extension PressCommand: ParsableCommand {
 
                     KEY SEQUENCES:
                       Multiple keys can be pressed in sequence with optional delay:
-                      peekaboo press tab tab return        # Tab twice then Enter
-                      peekaboo press down down return      # Navigate down and select
+                      peekaboo press tab tab return --app Safari
+                      peekaboo press down down return --foreground
 
                     TIMING:
                       Use --delay to control timing between key presses (default: 100ms)
                       Use --hold to control how long each key is held (default: 50ms)
+
+                    TARGETING:
+                      Background input requires --app, --pid, or a snapshot with process metadata.
+                      Use --foreground for intentional global input and for window selectors.
                 """,
 
                 showHelpOnEmptyInvocation: true

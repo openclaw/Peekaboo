@@ -14,7 +14,8 @@ struct AppCommand: ParsableCommand {
           # Launch an application
           peekaboo app launch "Visual Studio Code"
           peekaboo app launch --bundle-id com.microsoft.VSCode --wait-until-ready
-          peekaboo app launch "Safari" --open https://example.com --open ~/Desktop/notes.txt --no-focus
+          peekaboo app launch "Safari" --open https://example.com --open ~/Desktop/notes.txt
+          peekaboo app launch "Safari" --foreground
 
           # Quit applications
           peekaboo app quit --app Safari
@@ -29,7 +30,7 @@ struct AppCommand: ParsableCommand {
           peekaboo app switch --cycle  # Cmd+Tab equivalent
 
           # Relaunch applications
-          peekaboo app relaunch Safari
+          peekaboo app relaunch Safari --foreground
           peekaboo app relaunch "Visual Studio Code" --wait 3 --wait-until-ready
         """,
         subcommands: [

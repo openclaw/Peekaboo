@@ -173,6 +173,8 @@ enum AutomationServiceBridge {
         targetProcessIdentifier: pid_t
     ) async throws {
         try await Task { @MainActor in
+            try BackgroundHotkeyPolicy.validate(keys: keys)
+
             guard let targetedHotkeyService = automation as? any TargetedHotkeyServiceProtocol else {
                 throw PeekabooError.serviceUnavailable(
                     "Background hotkeys require an automation service that supports targeted hotkey delivery"
@@ -315,9 +317,16 @@ struct DragRequest {
 }
 
 enum WindowServiceBridge {
-    static func closeWindow(windows: any WindowManagementServiceProtocol, target: WindowTarget) async throws {
+    static func closeWindow(
+        windows: any WindowManagementServiceProtocol,
+        target: WindowTarget,
+        allowForegroundFallback: Bool = false
+    ) async throws {
         let operation = Task { @MainActor in
-            try await windows.closeWindow(target: target)
+            try await windows.closeWindow(
+                target: target,
+                allowForegroundFallback: allowForegroundFallback
+            )
         }
 
         return try await withTaskCancellationHandler {

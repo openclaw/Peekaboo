@@ -443,6 +443,10 @@ final class CancellableWindowService: WindowManagementServiceProtocol {
     var closeStarted = false
     var observedCancellation = false
 
+    func closeWindow(target: WindowTarget, allowForegroundFallback _: Bool) async throws {
+        try await self.closeWindow(target: target)
+    }
+
     func closeWindow(target _: WindowTarget) async throws {
         await MainActor.run {
             self.closeStarted = true

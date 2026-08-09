@@ -310,20 +310,21 @@ extension ApplicationService {
         guard let runningApp = NSRunningApplication(processIdentifier: app.processIdentifier) else {
             throw NotFoundError.application(identifier)
         }
-        let appElement = AXApp(runningApp).element
-
-        do {
-            try appElement.performAction(Attribute<String>("AXUnhide"))
-            self.logger.debug("Unhidden via AX action: \(app.name)")
-        } catch {
-            _ = error.asPeekabooError(context: "AX unhide action failed for \(app.name)")
-            self.logger.debug("Using activate fallback")
-            let runningApp = NSRunningApplication(processIdentifier: app.processIdentifier)
-            if let runningApp {
-                runningApp.activate()
-                self.logger.debug("Activated as fallback: \(app.name)")
+        let requestSent = runningApp.unhide()
+        let deadline = Date().addingTimeInterval(1)
+        repeat {
+            // NSRunningApplication state is cached until the next main run-loop turn.
+            try await Task.sleep(for: .milliseconds(50))
+            guard runningApp.isHidden else {
+                self.logger.debug("Unhidden application without activation: \(app.name)")
+                return
             }
+        } while Date() < deadline
+
+        if requestSent {
+            throw PeekabooError.operationError(message: "Application remained hidden: \(app.name)")
         }
+        throw PeekabooError.operationError(message: "Failed to request unhide for application: \(app.name)")
     }
 
     public func hideOtherApplications(identifier: String) async throws {

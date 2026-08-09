@@ -27,6 +27,7 @@ public enum PeekabooBridgeRequest: Codable, Sendable {
     case setValue(PeekabooBridgeSetValueRequest)
     case performAction(PeekabooBridgePerformActionRequest)
     case scroll(PeekabooBridgeScrollRequest)
+    case targetedScroll(PeekabooBridgeScrollRequest)
     case hotkey(PeekabooBridgeHotkeyRequest)
     case targetedHotkey(PeekabooBridgeTargetedHotkeyRequest)
     case targetedClick(PeekabooBridgeTargetedClickRequest)
@@ -40,6 +41,7 @@ public enum PeekabooBridgeRequest: Codable, Sendable {
     case resizeWindow(PeekabooBridgeWindowResizeRequest)
     case setWindowBounds(PeekabooBridgeWindowBoundsRequest)
     case closeWindow(PeekabooBridgeWindowTargetRequest)
+    case backgroundCloseWindow(PeekabooBridgeWindowTargetRequest)
     case minimizeWindow(PeekabooBridgeWindowTargetRequest)
     case maximizeWindow(PeekabooBridgeWindowTargetRequest)
     case getFocusedWindow
@@ -75,6 +77,7 @@ public enum PeekabooBridgeRequest: Codable, Sendable {
     case findDockItem(PeekabooBridgeDockFindRequest)
     case dialogFindActive(PeekabooBridgeDialogFindRequest)
     case dialogClickButton(PeekabooBridgeDialogClickButtonRequest)
+    case backgroundDialogClickButton(PeekabooBridgeDialogClickButtonRequest)
     case dialogEnterText(PeekabooBridgeDialogEnterTextRequest)
     case dialogHandleFile(PeekabooBridgeDialogHandleFileRequest)
     case dialogDismiss(PeekabooBridgeDialogDismissRequest)
@@ -120,6 +123,7 @@ extension PeekabooBridgeRequest {
         case .setValue: .setValue
         case .performAction: .performAction
         case .scroll: .scroll
+        case .targetedScroll: .targetedScroll
         case .hotkey: .hotkey
         case .targetedHotkey: .targetedHotkey
         case let .targetedClick(payload):
@@ -134,6 +138,7 @@ extension PeekabooBridgeRequest {
         case .resizeWindow: .resizeWindow
         case .setWindowBounds: .setWindowBounds
         case .closeWindow: .closeWindow
+        case .backgroundCloseWindow: .backgroundCloseWindow
         case .minimizeWindow: .minimizeWindow
         case .maximizeWindow: .maximizeWindow
         case .getFocusedWindow: .getFocusedWindow
@@ -169,6 +174,7 @@ extension PeekabooBridgeRequest {
         case .findDockItem: .findDockItem
         case .dialogFindActive: .dialogFindActive
         case .dialogClickButton: .dialogClickButton
+        case .backgroundDialogClickButton: .backgroundDialogClickButton
         case .dialogEnterText: .dialogEnterText
         case .dialogHandleFile: .dialogHandleFile
         case .dialogDismiss: .dialogDismiss

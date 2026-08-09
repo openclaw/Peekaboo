@@ -56,7 +56,7 @@ struct CaptureVideoCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOpti
         self.logger.operationStart("capture_video", metadata: ["input": self.input])
 
         do {
-            if self.sampleFps != nil && self.everyMs != nil {
+            if self.sampleFps != nil, self.everyMs != nil {
                 throw ValidationError("--sample-fps and --every-ms are mutually exclusive")
             }
             let outputDir = try self.resolveOutputDirectory()
@@ -138,7 +138,7 @@ struct CaptureVideoCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOpti
             maxFrames: maxFrames,
             maxMegabytes: maxMb,
             highlightChanges: false,
-            captureFocus: .auto,
+            captureFocus: .background,
             resolutionCap: resolutionCap,
             diffStrategy: diffStrategy,
             diffBudgetMs: diffBudgetMs

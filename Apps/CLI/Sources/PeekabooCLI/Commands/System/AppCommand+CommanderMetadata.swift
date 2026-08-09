@@ -30,8 +30,13 @@ extension AppCommand.LaunchSubcommand: CommanderSignatureProviding {
                     long: "wait-until-ready"
                 ),
                 .commandFlag(
+                    "foreground",
+                    help: "Bring the app to the foreground after launching",
+                    long: "foreground"
+                ),
+                .commandFlag(
                     "noFocus",
-                    help: "Do not bring the app to the foreground after launching",
+                    help: "Deprecated compatibility flag; background launch is now the default",
                     long: "no-focus"
                 ),
             ]
@@ -211,6 +216,11 @@ extension AppCommand.RelaunchSubcommand: CommanderSignatureProviding {
                     "waitUntilReady",
                     help: "Wait until the app is ready after launch",
                     long: "wait-until-ready"
+                ),
+                .commandFlag(
+                    "foreground",
+                    help: "Bring the app to the foreground after relaunching",
+                    long: "foreground"
                 ),
             ]
         )

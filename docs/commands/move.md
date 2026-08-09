@@ -7,7 +7,7 @@ read_when:
 
 # `peekaboo move`
 
-`move` repositions the macOS cursor using coordinate targets, element IDs, fuzzy queries, or a simple “center of screen” flag. It’s useful for hover-driven menus, tooltips, or aligning the cursor before taking a screenshot.
+`move` repositions the shared macOS cursor using coordinate targets, element IDs, fuzzy queries, or a simple “center of screen” flag. It always affects the foreground desktop and therefore requires explicit `--foreground` consent.
 
 ## Key options
 | Flag | Description |
@@ -18,9 +18,10 @@ read_when:
 | `--id <element-id>` | Alias for `--on`. |
 | `--to <query>` | Resolve an element by text/query using `waitForElement` (5 s timeout). |
 | `--center` | Move to the main screen’s center (exclusive with other targets). |
+| `--foreground` | Required confirmation that Peekaboo may move the shared physical cursor. |
 | `--snapshot <id>` | Required when using `--on`/`--id`/`--to`; defaults to the most recent snapshot. |
 | Target flags | `--app <name>`, `--pid <pid>`, `--window-id <id>`, `--window-title <title>`, `--window-index <n>` — focus a specific app/window before moving. (`--window-title`/`--window-index` require `--app` or `--pid`; `--window-id` does not.) |
-| Focus flags | `FocusCommandOptions` control Space switching + retries. |
+| Foreground focus flags | Space switching + retries; Peekaboo aborts if a requested target cannot be focused. |
 | `--smooth` | Use natural eased movement with distance-aware timing. |
 | `--duration <ms>` / `--steps <n>` | Override movement timing/sample count; a positive duration opts into natural movement unless `--profile linear` is explicit. |
 | `--profile <linear\|human>` | Select a movement profile. Animated moves default to `human`; instant moves default to `linear`. |
@@ -35,20 +36,20 @@ read_when:
 ## Examples
 ```bash
 # Instantly move to a coordinate
-peekaboo move 1024,88
-peekaboo move --coords 1024,88
+peekaboo move 1024,88 --foreground
+peekaboo move --coords 1024,88 --foreground
 
 # Natural movement with one flag
-peekaboo move 520,360 --smooth
+peekaboo move 520,360 --smooth --foreground
 
 # Hover the element with ID `menu_gear` using the latest snapshot
-peekaboo move --on menu_gear --smooth
+peekaboo move --on menu_gear --smooth --foreground
 
 # Center the cursor on the main display before taking a screenshot
-peekaboo move --center --duration 250 --steps 15
+peekaboo move --center --duration 250 --steps 15 --foreground
 ```
 
 ## Troubleshooting
-- Verify Screen Recording + Accessibility permissions (`peekaboo permissions status`).
+- Verify Event Synthesizing permission (`peekaboo permissions status`).
 - Confirm your target (app/window/selector) with `peekaboo list`/`peekaboo see` before rerunning.
 - Re-run with `--json` or `--verbose` to surface detailed errors.

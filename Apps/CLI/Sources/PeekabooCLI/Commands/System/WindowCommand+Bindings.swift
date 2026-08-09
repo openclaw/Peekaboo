@@ -137,6 +137,7 @@ extension WindowCommand.FocusSubcommand: AsyncRuntimeCommand {}
 extension WindowCommand.CloseSubcommand: CommanderBindableCommand {
     mutating func applyCommanderValues(_ values: CommanderBindableValues) throws {
         self.windowOptions = try values.makeWindowOptions()
+        self.foreground = values.flag("foreground")
     }
 }
 

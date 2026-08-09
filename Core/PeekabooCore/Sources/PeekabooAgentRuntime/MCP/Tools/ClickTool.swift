@@ -97,7 +97,8 @@ public struct ClickTool: MCPTool {
                 snapshotId: resolution.snapshotId,
                 intent: request.intent,
                 deliveryMode: request.deliveryMode,
-                targetProcessIdentifier: effectiveTargetProcessIdentifier)
+                targetProcessIdentifier: effectiveTargetProcessIdentifier,
+                targetWindowID: resolution.targetWindowID)
 
             let invalidatedSnapshotId = await UISnapshotManager.shared
                 .invalidateActiveSnapshot(id: resolution.snapshotIdToInvalidate)
@@ -155,12 +156,14 @@ public struct ClickTool: MCPTool {
         }
     }
 
+    @MainActor
     private func performClick(
         target: ClickTarget,
         snapshotId: String?,
         intent: ClickIntent,
         deliveryMode: ClickToolDeliveryMode,
-        targetProcessIdentifier: pid_t?) async throws
+        targetProcessIdentifier: pid_t?,
+        targetWindowID: Int?) async throws
     {
         if deliveryMode == .background {
             guard let targetProcessIdentifier else {
@@ -169,11 +172,25 @@ public struct ClickTool: MCPTool {
             guard let automation = self.context.automation as? any TargetedClickServiceProtocol else {
                 throw ClickToolError("This automation host does not support background click delivery.")
             }
-            try await automation.click(
-                target: target,
-                clickType: intent.automationType,
-                snapshotId: snapshotId,
-                targetProcessIdentifier: targetProcessIdentifier)
+            if let targetWindowID {
+                guard let exactWindowAutomation = automation as? any ExactWindowTargetedClickServiceProtocol,
+                      exactWindowAutomation.supportsExactWindowTargetedClicks
+                else {
+                    throw ClickToolError("This automation host does not support exact-window background clicks.")
+                }
+                try await exactWindowAutomation.click(
+                    target: target,
+                    clickType: intent.automationType,
+                    snapshotId: snapshotId,
+                    targetProcessIdentifier: targetProcessIdentifier,
+                    targetWindowID: targetWindowID)
+            } else {
+                try await automation.click(
+                    target: target,
+                    clickType: intent.automationType,
+                    snapshotId: snapshotId,
+                    targetProcessIdentifier: targetProcessIdentifier)
+            }
         } else {
             try await self.context.automation.click(
                 target: target,
@@ -227,6 +244,9 @@ public struct ClickTool: MCPTool {
         if let processId = effectiveTargetProcessIdentifier.map({ Int32($0) }) {
             metaDict["target_pid"] = .double(Double(processId))
         }
+        if let targetWindowID = resolution.targetWindowID {
+            metaDict["target_window_id"] = .double(Double(targetWindowID))
+        }
         if let coordinateSpace = resolution.coordinateSpace {
             metaDict["coordinate_space"] = .string(coordinateSpace.rawValue)
         }
@@ -265,12 +285,20 @@ public struct ClickTool: MCPTool {
     private func resolveCoordinates(_ raw: String, request: ClickRequest) async throws -> ClickResolution {
         let point = try self.parseCoordinates(raw)
         guard let coordinateSpace = request.coordinateSpace else {
+            let snapshot = try await self.optionalExplicitSnapshot(id: request.snapshotId)
+            let screenshotMetadata = await snapshot?.screenshotMetadata
+            if let coordinateContext = await snapshot?.screenshotCoordinateContext {
+                try await self.validateWindowReference(coordinateContext)
+            }
             return ClickResolution(
                 location: point,
                 automationTarget: .coordinates(point),
                 elementDescription: nil,
-                targetProcessIdentifier: request.pid,
-                snapshotId: nil,
+                targetApp: snapshot?.applicationName,
+                windowTitle: snapshot?.windowTitle,
+                targetProcessIdentifier: request.pid ?? snapshot?.applicationProcessId,
+                targetWindowID: screenshotMetadata?.windowInfo?.windowID,
+                snapshotId: snapshot?.id,
                 snapshotIdToInvalidate: request.snapshotId)
         }
 
@@ -313,9 +341,18 @@ public struct ClickTool: MCPTool {
             targetApp: snapshot.applicationName,
             windowTitle: snapshot.windowTitle,
             targetProcessIdentifier: request.pid ?? snapshot.applicationProcessId,
+            targetWindowID: coordinateContext.window?.windowID,
             snapshotId: snapshot.id,
             coordinateSpace: coordinateSpace,
             coordinateReference: referenceID)
+    }
+
+    private func optionalExplicitSnapshot(id: String?) async throws -> UISnapshot? {
+        guard let id else { return nil }
+        guard let snapshot = await self.getSnapshot(id: id) else {
+            throw ClickToolError("Snapshot '\(id)' is stale or unavailable. Run 'see' to capture a fresh snapshot.")
+        }
+        return snapshot
     }
 
     private func validateWindowReference(_ coordinateContext: CaptureCoordinateContext) async throws {
@@ -459,6 +496,7 @@ private struct ClickResolution {
     let elementRole: String?
     let elementLabel: String?
     let targetProcessIdentifier: Int32?
+    let targetWindowID: Int?
     let snapshotId: String?
     let snapshotIdToInvalidate: String?
     let coordinateSpace: CaptureCoordinateSpace?
@@ -473,6 +511,7 @@ private struct ClickResolution {
         elementRole: String? = nil,
         elementLabel: String? = nil,
         targetProcessIdentifier: Int32? = nil,
+        targetWindowID: Int? = nil,
         snapshotId: String?,
         snapshotIdToInvalidate: String? = nil,
         coordinateSpace: CaptureCoordinateSpace? = nil,
@@ -486,6 +525,7 @@ private struct ClickResolution {
         self.elementRole = elementRole
         self.elementLabel = elementLabel
         self.targetProcessIdentifier = targetProcessIdentifier
+        self.targetWindowID = targetWindowID
         self.snapshotId = snapshotId
         self.snapshotIdToInvalidate = snapshotIdToInvalidate ?? snapshotId
         self.coordinateSpace = coordinateSpace

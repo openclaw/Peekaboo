@@ -22,10 +22,13 @@ struct ScrollCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsCon
     var snapshot: String?
 
     @Option(help: "Delay between scroll ticks in milliseconds")
-    var delay: Int = 2
+    var delay: Int = 0
 
     @Flag(help: "Use smooth scrolling with smaller increments")
     var smooth = false
+
+    @Flag(help: "Focus the target and allow synthetic wheel events")
+    var foreground = false
 
     @OptionGroup var target: InteractionTargetOptions
 
@@ -64,6 +67,7 @@ struct ScrollCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsCon
 
         do {
             try self.target.validate()
+            try self.validateDeliveryMode()
             // Parse direction
             guard let scrollDirection = ScrollDirection(rawValue: direction.lowercased()) else {
                 throw ValidationError("Invalid direction. Use: up, down, left, or right")
@@ -92,14 +96,15 @@ struct ScrollCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsCon
                 try await observation.validateIfExplicit(using: self.services.snapshots)
             }
 
-            // Ensure window is focused before scrolling
             self.resolvedRuntime.beginInteractionMutation()
-            try await ensureFocused(
-                snapshotId: observation.focusSnapshotId(for: self.target),
-                target: self.target,
-                options: self.focusOptions,
-                services: self.services
-            )
+            if self.foreground {
+                try await ensureFocused(
+                    snapshotId: observation.focusSnapshotId(for: self.target),
+                    target: self.target,
+                    options: self.focusOptions,
+                    services: self.services
+                )
+            }
 
             // Perform scroll using the service
             let scrollRequest = ScrollRequest(
@@ -108,7 +113,8 @@ struct ScrollCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsCon
                 target: self.on,
                 smooth: self.smooth,
                 delay: self.delay,
-                snapshotId: observation.snapshotId
+                snapshotId: observation.snapshotId,
+                foreground: self.foreground
             )
             try await AutomationServiceBridge.scroll(
                 automation: self.services.automation,
@@ -176,6 +182,29 @@ struct ScrollCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsCon
         }
     }
 
+    private func validateDeliveryMode() throws {
+        guard self.delay >= 0 else {
+            throw ValidationError("--delay must be zero or greater")
+        }
+        guard self.foreground else {
+            if self.on == nil {
+                throw ValidationError(
+                    "Background scroll requires --on with an Accessibility-scrollable element; " +
+                        "add --foreground to scroll at the physical pointer."
+                )
+            }
+            if self.smooth || self.delay > 0 {
+                throw ValidationError(
+                    "--smooth and a nonzero --delay require --foreground because they synthesize wheel events."
+                )
+            }
+            if self.focusOptions.hasForegroundFocusOverrides {
+                throw ValidationError("Focus options require --foreground for scroll.")
+            }
+            return
+        }
+    }
+
     // Error handling is provided by ErrorHandlingCommand protocol
 }
 
@@ -219,13 +248,14 @@ extension ScrollCommand: ParsableCommand {
                 commandName: "scroll",
                 abstract: "Scroll the mouse wheel in any direction",
                 discussion: """
-                    The 'scroll' command simulates mouse wheel scrolling events.
-                    It can scroll up, down, left, or right by a specified amount.
+                    The 'scroll' command scrolls through Accessibility by default so the target
+                    application stays in the background. Add --foreground to focus the target and
+                    allow synthetic mouse-wheel events.
 
                     EXAMPLES:
-                      peekaboo scroll --direction down --amount 5
                       peekaboo scroll --direction up --amount 10 --on element_42
-                      peekaboo scroll --direction right --amount 3 --smooth
+                      peekaboo scroll --direction down --amount 5 --foreground
+                      peekaboo scroll --direction right --amount 3 --smooth --foreground
 
                     DIRECTION:
                       up    - Scroll content up (wheel down)
@@ -259,6 +289,7 @@ extension ScrollCommand: CommanderBindableCommand {
             self.delay = delay
         }
         self.smooth = values.flag("smooth")
+        self.foreground = values.flag("foreground")
         self.target = try values.makeInteractionTargetOptions()
         self.focusOptions = try values.makeFocusOptions()
     }

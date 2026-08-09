@@ -41,13 +41,26 @@ extension MoveTool {
             let location = CGPoint(x: element.frame.midX, y: element.frame.midY)
             let label = element.title ?? element.label ?? "untitled"
             let summary = "element \(elementId) (\(element.role): \(label))"
+            let screenshotMetadata = await snapshot.screenshotMetadata
             return ResolvedMoveTarget(
                 location: location,
                 description: summary,
                 targetApp: snapshot.applicationName,
                 windowTitle: snapshot.windowTitle,
+                windowID: screenshotMetadata?.windowInfo?.windowID,
                 elementRole: element.summaryRole,
                 elementLabel: element.summaryLabel)
+        }
+    }
+
+    @MainActor
+    func focusTargetIfNeeded(_ target: ResolvedMoveTarget) async throws {
+        if let windowID = target.windowID {
+            try await self.context.windows.focusWindow(target: .windowId(windowID))
+        } else if let appName = target.targetApp, let windowTitle = target.windowTitle {
+            try await self.context.windows.focusWindow(target: .applicationAndTitle(app: appName, title: windowTitle))
+        } else if let appName = target.targetApp {
+            try await self.context.windows.focusWindow(target: .application(appName))
         }
     }
 

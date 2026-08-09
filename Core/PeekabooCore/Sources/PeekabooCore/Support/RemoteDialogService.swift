@@ -8,9 +8,11 @@ import PeekabooFoundation
 @MainActor
 public final class RemoteDialogService: DialogServiceProtocol {
     private let client: PeekabooBridgeClient
+    private let supportsBackgroundButtonClick: Bool
 
-    public init(client: PeekabooBridgeClient) {
+    public init(client: PeekabooBridgeClient, supportsBackgroundButtonClick: Bool = false) {
         self.client = client
+        self.supportsBackgroundButtonClick = supportsBackgroundButtonClick
     }
 
     public func findActiveDialog(windowTitle: String?, appName: String?) async throws -> DialogInfo {
@@ -21,6 +23,24 @@ public final class RemoteDialogService: DialogServiceProtocol {
         -> DialogActionResult
     {
         try await self.client.dialogClickButton(buttonText: buttonText, windowTitle: windowTitle, appName: appName)
+    }
+
+    public func clickButton(
+        buttonText: String,
+        windowTitle: String?,
+        appName: String?,
+        allowGlobalFallback: Bool) async throws -> DialogActionResult
+    {
+        if !allowGlobalFallback, !self.supportsBackgroundButtonClick {
+            throw PeekabooBridgeErrorEnvelope(
+                code: .operationNotSupported,
+                message: "Remote host does not support AX-only background dialog clicks; update the host or use --no-remote")
+        }
+        return try await self.client.dialogClickButton(
+            buttonText: buttonText,
+            windowTitle: windowTitle,
+            appName: appName,
+            allowGlobalFallback: allowGlobalFallback)
     }
 
     public func enterText(

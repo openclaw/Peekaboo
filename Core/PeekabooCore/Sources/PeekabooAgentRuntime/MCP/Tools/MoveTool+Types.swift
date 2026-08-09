@@ -21,6 +21,7 @@ struct ResolvedMoveTarget {
     let description: String
     let targetApp: String?
     let windowTitle: String?
+    let windowID: Int?
     let elementRole: String?
     let elementLabel: String?
 
@@ -29,6 +30,7 @@ struct ResolvedMoveTarget {
         description: String,
         targetApp: String? = nil,
         windowTitle: String? = nil,
+        windowID: Int? = nil,
         elementRole: String? = nil,
         elementLabel: String? = nil)
     {
@@ -36,6 +38,7 @@ struct ResolvedMoveTarget {
         self.description = description
         self.targetApp = targetApp
         self.windowTitle = windowTitle
+        self.windowID = windowID
         self.elementRole = elementRole
         self.elementLabel = elementLabel
     }

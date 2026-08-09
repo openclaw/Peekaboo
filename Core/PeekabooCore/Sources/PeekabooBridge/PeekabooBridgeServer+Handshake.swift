@@ -77,6 +77,8 @@ extension PeekabooBridgeServer {
             permissionTags[PeekabooBridgeOperation.targetedClick.rawValue] = [.postEvent]
             if !permissions.postEvent {
                 enabledOps.remove(.targetedClick)
+            } else {
+                enabledOps.insert(.targetedClick)
             }
         }
 

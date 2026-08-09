@@ -14,10 +14,10 @@ public struct TypeTool: MCPTool {
 
     public var description: String {
         """
-        Types text into UI elements or at current focus.
+        Types text into UI elements or a targeted app process.
         Supports special keys ({return}, {tab}, etc.) plus human typing (--wpm) or fixed-delay (--delay) pacing.
-        Can target specific elements or type at current keyboard focus. Uses background delivery by default when a
-        target process is known; set `foreground` when the app must be focused first.
+        Background delivery requires an element/snapshot/app/pid target. Set `foreground=true` for intentional input
+        at the current keyboard focus or when the app must be focused first.
         \(PeekabooMCPVersion.banner) using openai/gpt-5.5
         and anthropic/claude-opus-4-8
         """
@@ -30,10 +30,10 @@ public struct TypeTool: MCPTool {
                     description: "The text to type. If not specified, can use special key flags instead."),
                 "on": SchemaBuilder.string(
                     description: "Optional. Element ID to type into (from `see` or `inspect_ui`). " +
-                        "If not specified, types at current focus."),
+                        "If omitted, provide snapshot/app/pid for background delivery or set foreground=true."),
                 "snapshot": SchemaBuilder.string(
                     description: "Optional. Snapshot ID from `see` or `inspect_ui`. " +
-                        "Uses latest snapshot if not specified."),
+                        "When `on` is omitted, the snapshot process is the background typing target."),
                 "delay": SchemaBuilder.number(
                     description: "Optional. Delay between keystrokes in milliseconds (linear profile). Default: 0.",
                     default: 0),
@@ -56,16 +56,17 @@ public struct TypeTool: MCPTool {
                     description: "Optional. Press delete/backspace key.",
                     default: false),
                 "foreground": SchemaBuilder.boolean(
-                    description: "Optional. Focus target and send foreground/global keyboard input.",
+                    description: "Optional. Focus a supplied target or intentionally send global keyboard input.",
                     default: false),
                 "app": SchemaBuilder.string(
                     description: "Optional. Target app name/bundle ID, or 'PID:<n>' for background typing."),
                 "pid": SchemaBuilder.number(
                     description: "Optional. Target process ID for background typing when no element snapshot is used."),
-                "window_id": SchemaBuilder.number(description: "Optional. Window ID for background typing."),
-                "window_title": SchemaBuilder.string(description: "Optional. Window title (substring match)."),
+                "window_id": SchemaBuilder.number(description: "Optional. Window ID; requires foreground=true."),
+                "window_title": SchemaBuilder
+                    .string(description: "Optional. Window title (substring match); requires foreground=true."),
                 "window_index": SchemaBuilder
-                    .number(description: "Optional. Window index (0-based); requires app/pid."),
+                    .number(description: "Optional. Window index (0-based); requires app/pid and foreground=true."),
             ],
             required: [])
     }
@@ -149,10 +150,13 @@ public struct TypeTool: MCPTool {
         let startTime = Date()
 
         let targetContext = try await self.resolveTargetContext(for: request)
+        let snapshotContext = try await self.resolveSnapshotContext(
+            for: request,
+            targetContext: targetContext)
 
         let targetProcessIdentifier = try await self.backgroundProcessIdentifier(
             request: request,
-            targetContext: targetContext)
+            snapshot: snapshotContext)
 
         try await self.focusIfNeeded(
             targetContext: targetContext,
@@ -160,7 +164,7 @@ public struct TypeTool: MCPTool {
             automation: automation,
             targetProcessIdentifier: targetProcessIdentifier)
         let actions = try self.buildActions(for: request)
-        let effectiveSnapshotId = targetContext?.snapshot.id ?? request.snapshotId
+        let effectiveSnapshotId = snapshotContext?.id
         let typeResult: TypeResult = if let targetProcessIdentifier {
             try await self.performBackgroundType(
                 actions: actions,
@@ -243,21 +247,26 @@ public struct TypeTool: MCPTool {
 
     private func backgroundProcessIdentifier(
         request: TypeRequest,
-        targetContext: TargetElementContext?) async throws -> Int?
+        snapshot: UISnapshot?) async throws -> Int?
     {
         guard !request.foreground else { return nil }
 
-        if let processIdentifier = try await request.target.targetProcessIdentifierValue(
-            applications: self.context.applications,
-            windows: self.context.windows),
-            processIdentifier > 0
-        {
-            return processIdentifier
-        }
-        if let processIdentifier = targetContext?.snapshot.applicationProcessId, processIdentifier > 0 {
+        if request.target.hasTarget {
+            let processIdentifier = try await request.target.requireBackgroundProcessIdentifier(
+                applications: self.context.applications,
+                windows: self.context.windows)
             return Int(processIdentifier)
         }
-        return nil
+        if let processIdentifier = snapshot?.applicationProcessId, processIdentifier > 0 {
+            return Int(processIdentifier)
+        }
+        if snapshot != nil || request.elementId != nil || request.snapshotId != nil {
+            throw TypeToolValidationError(
+                "The selected snapshot does not identify a target process. Capture an app/window snapshot or set " +
+                    "foreground=true for intentional global input.")
+        }
+        throw TypeToolValidationError(
+            "Typing requires on, snapshot, app, or pid targeting. Set foreground=true for intentional global input.")
     }
 
     @MainActor
@@ -293,5 +302,19 @@ public struct TypeTool: MCPTool {
         }
 
         return TargetElementContext(snapshot: snapshot, element: element)
+    }
+
+    private func resolveSnapshotContext(
+        for request: TypeRequest,
+        targetContext: TargetElementContext?) async throws -> UISnapshot?
+    {
+        if let targetContext {
+            return targetContext.snapshot
+        }
+        guard request.snapshotId != nil else { return nil }
+        guard let snapshot = await self.getSnapshot(id: request.snapshotId) else {
+            throw TypeToolValidationError("Snapshot not found. Run 'see' or 'inspect_ui' to capture fresh UI state.")
+        }
+        return snapshot
     }
 }

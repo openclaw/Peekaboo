@@ -61,7 +61,7 @@ extension ImageCommand: CommanderSignatureProviding {
                 ),
                 .commandOption(
                     "captureFocus",
-                    help: "Window focus behavior",
+                    help: "Focus behavior: background (default), foreground (activate target), or legacy auto",
                     long: "capture-focus"
                 ),
                 .commandOption(

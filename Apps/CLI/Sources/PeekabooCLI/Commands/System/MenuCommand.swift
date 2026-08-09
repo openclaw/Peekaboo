@@ -127,6 +127,7 @@ extension MenuCommand.ClickSubcommand: CommanderBindableCommand {
         self.target = try values.makeInteractionTargetOptions()
         self.item = values.singleOption("item")
         self.path = values.singleOption("path")
+        self.foreground = values.flag("foreground")
         self.focusOptions = try values.makeFocusOptions()
     }
 }
@@ -173,6 +174,7 @@ extension MenuCommand.ListSubcommand: CommanderBindableCommand {
     mutating func applyCommanderValues(_ values: CommanderBindableValues) throws {
         self.target = try values.makeInteractionTargetOptions()
         self.includeDisabled = values.flag("includeDisabled")
+        self.foreground = values.flag("foreground")
         self.focusOptions = try values.makeFocusOptions()
     }
 }

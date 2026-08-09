@@ -23,7 +23,7 @@ struct PressCommandTests {
     @Test
     func `Press command forwards keys to automation service`() async throws {
         let context = await self.makeContext()
-        let result = try await self.runPress(arguments: ["return", "--json"], context: context)
+        let result = try await self.runPress(arguments: ["return", "--foreground", "--json"], context: context)
 
         #expect(result.exitStatus == 0)
         let calls = await self.automationState(context) { $0.hotkeyCalls }
@@ -42,7 +42,7 @@ struct PressCommandTests {
     @Test
     func `Repeat count multiplies key actions`() async throws {
         let context = await self.makeContext()
-        let result = try await self.runPress(arguments: ["tab", "--count", "3"], context: context)
+        let result = try await self.runPress(arguments: ["tab", "--count", "3", "--foreground"], context: context)
 
         #expect(result.exitStatus == 0)
         let calls = await self.automationState(context) { $0.hotkeyCalls }
@@ -52,7 +52,10 @@ struct PressCommandTests {
     @Test
     func `Press command supports multiple keys in sequence`() async throws {
         let context = await self.makeContext()
-        let result = try await self.runPress(arguments: ["up", "down", "left", "right"], context: context)
+        let result = try await self.runPress(
+            arguments: ["up", "down", "left", "right", "--foreground"],
+            context: context
+        )
 
         #expect(result.exitStatus == 0)
         let calls = await self.automationState(context) { $0.hotkeyCalls }
@@ -62,7 +65,10 @@ struct PressCommandTests {
     @Test
     func `Press command forwards hold duration`() async throws {
         let context = await self.makeContext()
-        let result = try await self.runPress(arguments: ["space", "--hold", "250"], context: context)
+        let result = try await self.runPress(
+            arguments: ["space", "--hold", "250", "--foreground"],
+            context: context
+        )
 
         #expect(result.exitStatus == 0)
         let calls = await self.automationState(context) { $0.hotkeyCalls }
@@ -83,7 +89,10 @@ struct PressCommandTests {
         )
         try await context.snapshots.storeDetectionResult(snapshotId: snapshotId, result: detection)
 
-        let result = try await self.runPress(arguments: ["escape", "--snapshot", snapshotId], context: context)
+        let result = try await self.runPress(
+            arguments: ["escape", "--snapshot", snapshotId, "--foreground"],
+            context: context
+        )
 
         #expect(result.exitStatus == 0)
         let calls = await self.automationState(context) { $0.hotkeyCalls }

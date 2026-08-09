@@ -36,10 +36,15 @@ extension ScrollCommand: CommanderSignatureProviding {
                     help: "Use smooth scrolling with smaller increments",
                     long: "smooth"
                 ),
+                .commandFlag(
+                    "foreground",
+                    help: "Focus the target and allow synthetic wheel events",
+                    long: "foreground"
+                ),
             ],
             optionGroups: [
                 InteractionTargetOptions.commanderSignature(),
-                FocusCommandOptions.commanderSignature(),
+                FocusCommandOptions.commanderSignature(includeAutoFocusControl: false),
             ]
         )
     }

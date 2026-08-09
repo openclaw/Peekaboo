@@ -16,9 +16,8 @@ public struct ScrollTool: MCPTool {
 
     public var description: String {
         """
-        Scrolls the mouse wheel in any direction.
-        Can target specific elements or scroll at current mouse position.
-        Supports smooth scrolling and configurable speed.
+        Scrolls a UI target through Accessibility without interrupting the user by default.
+        Set foreground=true to focus the target and allow synthetic wheel events at the pointer.
         \(PeekabooMCPVersion.banner) using openai/gpt-5.5
         and anthropic/claude-opus-4-8
         """
@@ -40,10 +39,13 @@ public struct ScrollTool: MCPTool {
                     description: "Optional. Number of scroll ticks/lines. Default: 3.",
                     default: 3),
                 "delay": SchemaBuilder.number(
-                    description: "Optional. Delay between scroll ticks in milliseconds. Default: 2.",
-                    default: 2),
+                    description: "Optional. Foreground-only delay between scroll ticks in milliseconds. Default: 0.",
+                    default: 0),
                 "smooth": SchemaBuilder.boolean(
-                    description: "Optional. Use smooth scrolling with smaller increments.",
+                    description: "Optional. Use smooth synthetic scrolling; requires foreground=true.",
+                    default: false),
+                "foreground": SchemaBuilder.boolean(
+                    description: "Optional. Focus the target and allow synthetic wheel events. Default: false.",
                     default: false),
             ],
             required: ["direction"])
@@ -104,13 +106,31 @@ public struct ScrollTool: MCPTool {
             throw ScrollToolValidationError("Amount must be 50 or less to prevent excessive scrolling")
         }
 
+        let foreground = arguments.getBool("foreground") ?? false
+        let elementId = arguments.getString("on")
+        let delay = Int(arguments.getNumber("delay") ?? 0)
+        let smooth = arguments.getBool("smooth") ?? false
+        guard delay >= 0 else {
+            throw ScrollToolValidationError("Delay must be zero or greater")
+        }
+        guard foreground || elementId != nil else {
+            throw ScrollToolValidationError(
+                "Background scroll requires 'on' with an Accessibility-scrollable element; " +
+                    "set foreground=true to scroll at the physical pointer.")
+        }
+        guard foreground || (!smooth && delay == 0) else {
+            throw ScrollToolValidationError(
+                "smooth scrolling and a nonzero delay require foreground=true because they synthesize wheel events.")
+        }
+
         return ScrollToolRequest(
             direction: direction,
-            elementId: arguments.getString("on"),
+            elementId: elementId,
             snapshotId: arguments.getString("snapshot"),
             amount: amount,
-            delay: Int(arguments.getNumber("delay") ?? 2),
-            smooth: arguments.getBool("smooth") ?? false)
+            delay: delay,
+            smooth: smooth,
+            foreground: foreground)
     }
 
     @MainActor
@@ -119,13 +139,17 @@ public struct ScrollTool: MCPTool {
         let startTime = Date()
 
         let target = try await self.resolveTargetDescription(request: request)
+        if request.foreground {
+            try await self.focusTargetIfNeeded(target)
+        }
         let serviceRequest = ScrollRequest(
             direction: request.direction,
             amount: request.amount,
             target: target.elementId,
             smooth: request.smooth,
             delay: request.delay,
-            snapshotId: target.snapshotId)
+            snapshotId: target.snapshotId,
+            foreground: request.foreground)
         try await automation.scroll(serviceRequest)
 
         let invalidatedSnapshotId = await UISnapshotManager.shared.invalidateActiveSnapshot(id: target.snapshotId)
@@ -157,7 +181,9 @@ public struct ScrollTool: MCPTool {
                 elementId: nil,
                 description: "at current mouse position",
                 appName: nil,
-                snapshotId: request.snapshotId)
+                snapshotId: request.snapshotId,
+                windowTitle: nil,
+                windowID: nil)
         }
 
         guard let snapshot = await self.getSnapshot(id: request.snapshotId) else {
@@ -171,11 +197,25 @@ public struct ScrollTool: MCPTool {
 
         let label = element.title ?? element.label ?? "untitled"
         let description = "on \(element.role): \(label)"
+        let screenshotMetadata = await snapshot.screenshotMetadata
         return ScrollTargetDescription(
             elementId: elementId,
             description: description,
             appName: snapshot.applicationName,
-            snapshotId: snapshot.id)
+            snapshotId: snapshot.id,
+            windowTitle: snapshot.windowTitle,
+            windowID: screenshotMetadata?.windowInfo?.windowID)
+    }
+
+    @MainActor
+    private func focusTargetIfNeeded(_ target: ScrollTargetDescription) async throws {
+        if let windowID = target.windowID {
+            try await self.context.windows.focusWindow(target: .windowId(windowID))
+        } else if let appName = target.appName, let windowTitle = target.windowTitle {
+            try await self.context.windows.focusWindow(target: .applicationAndTitle(app: appName, title: windowTitle))
+        } else if let appName = target.appName {
+            try await self.context.windows.focusWindow(target: .application(appName))
+        }
     }
 }
 
@@ -186,6 +226,7 @@ private struct ScrollToolRequest {
     let amount: Int
     let delay: Int
     let smooth: Bool
+    let foreground: Bool
 }
 
 private struct ScrollTargetDescription {
@@ -193,6 +234,8 @@ private struct ScrollTargetDescription {
     let description: String
     let appName: String?
     let snapshotId: String?
+    let windowTitle: String?
+    let windowID: Int?
 }
 
 private struct ScrollToolValidationError: Error {

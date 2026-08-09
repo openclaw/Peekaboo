@@ -159,6 +159,45 @@ import Testing
         #expect(payload.data.targetPID == nil)
     }
 
+    @Test func `background lifecycle hotkeys fail closed with semantic guidance`() async throws {
+        let context = await self.makeContext()
+        let cases = [
+            (keys: "command+w", chord: "Cmd+W", alternative: "peekaboo window close"),
+            (keys: "cmd,q", chord: "Cmd+Q", alternative: "peekaboo app quit"),
+            (keys: "cmd h", chord: "Cmd+H", alternative: "peekaboo app hide"),
+            (keys: "CMD,M", chord: "Cmd+M", alternative: "peekaboo window minimize"),
+        ]
+
+        for testCase in cases {
+            let result = try await self.runHotkey(
+                arguments: [testCase.keys, "--app", "Safari"],
+                context: context
+            )
+
+            #expect(result.exitStatus != 0)
+            let output = self.output(from: result)
+            #expect(output.contains(testCase.chord))
+            #expect(output.contains(testCase.alternative))
+            #expect(output.contains("--foreground"))
+        }
+
+        let targetedCalls = await self.automationState(context) { $0.targetedHotkeyCalls }
+        #expect(targetedCalls.isEmpty)
+    }
+
+    @Test func `explicit foreground allows lifecycle hotkeys`() async throws {
+        let context = await self.makeContext()
+
+        let result = try await self.runHotkey(
+            arguments: ["cmd,w", "--app", "Safari", "--foreground"],
+            context: context
+        )
+
+        #expect(result.exitStatus == 0)
+        #expect(await self.automationState(context) { $0.targetedHotkeyCalls }.isEmpty)
+        #expect(await self.automationState(context) { $0.hotkeyCalls.map(\.keys) } == ["cmd,w"])
+    }
+
     @Test func `background hotkey can target pid`() async throws {
         let context = await self.makeContext()
 

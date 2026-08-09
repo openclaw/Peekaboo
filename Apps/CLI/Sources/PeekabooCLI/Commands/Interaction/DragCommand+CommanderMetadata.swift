@@ -55,9 +55,16 @@ extension DragCommand: CommanderSignatureProviding {
                     long: "profile"
                 ),
             ],
+            flags: [
+                .commandFlag(
+                    "foreground",
+                    help: "Confirm foreground pointer movement and focus the target when specified",
+                    long: "foreground"
+                ),
+            ],
             optionGroups: [
                 InteractionTargetOptions.commanderSignature(),
-                FocusCommandOptions.commanderSignature(),
+                FocusCommandOptions.commanderSignature(includeAutoFocusControl: false),
             ]
         )
     }

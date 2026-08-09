@@ -14,7 +14,7 @@ RuntimeOptionsConfigurable {
     var windowIndex: Int?
     var screenIndex: Int?
     var region: String?
-    var captureFocus: LiveCaptureFocus = .auto
+    var captureFocus: LiveCaptureFocus = .background
     var captureEngine: String?
 
     var durationLimit: Double?

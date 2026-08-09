@@ -20,12 +20,13 @@ extension AppCommand {
               --bundle-id <id>       Launch by bundle identifier instead of name/path
               --open <path-or-url>   Repeatable; pass documents/URLs to the app right after launch
               --wait-until-ready     Poll until the app reports it is fully launched
-              --no-focus             Skip bringing the app to the foreground
+              --foreground           Bring the app to the foreground after launching
 
             EXAMPLES:
               peekaboo app launch "Safari"
               peekaboo app launch "Safari" --open https://example.com --open https://news.ycombinator.com
-              peekaboo app launch "Preview" --open ~/Desktop/report.pdf --no-focus
+              peekaboo app launch "Preview" --open ~/Desktop/report.pdf
+              peekaboo app launch "Safari" --foreground
               peekaboo app launch --bundle-id com.apple.Notes --wait-until-ready
             """
         )
@@ -39,7 +40,10 @@ extension AppCommand {
         @Flag(help: "Wait for the application to be ready")
         var waitUntilReady = false
 
-        @Flag(help: "Do not bring the app to the foreground after launching")
+        @Flag(help: "Bring the app to the foreground after launching")
+        var foreground = false
+
+        @Flag(help: "Deprecated compatibility flag; background launch is now the default")
         var noFocus = false
 
         @Option(
@@ -74,7 +78,7 @@ extension AppCommand {
         }
 
         var shouldFocusAfterLaunch: Bool {
-            !self.noFocus
+            self.foreground
         }
 
         /// Resolve the requested app target, launch it, optionally wait until ready, and emit output.
@@ -83,6 +87,9 @@ extension AppCommand {
             self.prepare(using: runtime)
             do {
                 try self.validateInputs()
+                if self.noFocus {
+                    self.logger.warn("--no-focus is deprecated because app launch is background by default")
+                }
                 self.resolvedRuntime.beginInteractionMutation()
                 let launchedApp = try await launchApplication()
                 await invalidateSnapshotsAfterLaunch()
@@ -102,6 +109,9 @@ extension AppCommand {
         private func validateInputs() throws {
             guard self.app?.isEmpty == false || self.bundleId?.isEmpty == false else {
                 throw PeekabooError.invalidInput("Provide an application name/path or --bundle-id")
+            }
+            guard !(self.foreground && self.noFocus) else {
+                throw PeekabooError.invalidInput("--foreground cannot be combined with deprecated --no-focus")
             }
         }
 
@@ -191,6 +201,7 @@ extension AppCommand.LaunchSubcommand: CommanderBindableCommand {
         app = try values.decodeOptionalPositional(0, label: "app")
         bundleId = values.singleOption("bundleId")
         waitUntilReady = values.flag("waitUntilReady")
+        foreground = values.flag("foreground")
         noFocus = values.flag("noFocus")
         openTargets = values.optionValues("open")
     }

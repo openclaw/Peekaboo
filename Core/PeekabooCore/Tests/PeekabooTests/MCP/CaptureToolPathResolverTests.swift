@@ -55,6 +55,7 @@ struct CaptureToolPathResolverTests {
             width: 30,
             height: 40))
         #expect(try CaptureToolArgumentResolver.diffStrategy(from: nil) == .fast)
+        #expect(try CaptureToolArgumentResolver.captureFocus(from: nil) == .background)
         #expect(try CaptureToolArgumentResolver.captureFocus(from: "foreground") == .foreground)
 
         #expect(throws: PeekabooError.self) {

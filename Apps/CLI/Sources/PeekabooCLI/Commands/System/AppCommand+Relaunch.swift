@@ -28,6 +28,9 @@ extension AppCommand {
 
         @Flag(help: "Wait until the app is ready after launch")
         var waitUntilReady = false
+
+        @Flag(help: "Bring the app to the foreground after relaunching")
+        var foreground = false
         @RuntimeStorage private var runtime: CommandRuntime?
 
         private var resolvedRuntime: CommandRuntime {
@@ -86,7 +89,7 @@ extension AppCommand {
                         launchRequest: ApplicationLaunchRequest(
                             applicationIdentifier: launchIdentifier,
                             applicationBundleIdentifier: appInfo.bundleIdentifier,
-                            activates: true,
+                            activates: self.foreground,
                             waitUntilReady: self.waitUntilReady
                         ),
                         force: self.force,
@@ -96,7 +99,7 @@ extension AppCommand {
                 await InteractionObservationInvalidator.invalidateAfterMutation(
                     targets: self.resolvedRuntime.interactionMutationTargets,
                     logger: self.logger,
-                    reason: "app relaunch focus"
+                    reason: "app relaunch"
                 )
 
                 struct RelaunchResult: Codable {
@@ -154,5 +157,6 @@ extension AppCommand.RelaunchSubcommand: CommanderBindableCommand {
         }
         force = values.flag("force")
         waitUntilReady = values.flag("waitUntilReady")
+        foreground = values.flag("foreground")
     }
 }

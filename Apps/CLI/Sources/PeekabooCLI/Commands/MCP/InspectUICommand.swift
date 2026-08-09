@@ -10,6 +10,7 @@ struct InspectUICommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptions
     var maxDepth: Int?
     var maxElements: Int?
     var maxChildren: Int?
+    var webFocus = false
 
     var runtimeOptions: CommandRuntimeOptions = {
         var options = CommandRuntimeOptions()
@@ -96,6 +97,9 @@ struct InspectUICommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptions
         self.add(self.maxDepth, as: "max_depth", to: &arguments)
         self.add(self.maxElements, as: "max_elements", to: &arguments)
         self.add(self.maxChildren, as: "max_children", to: &arguments)
+        if self.webFocus {
+            arguments["web_focus"] = true
+        }
         return arguments
     }
 
@@ -123,6 +127,13 @@ extension InspectUICommand: CommanderSignatureProviding {
                 .commandOption("maxDepth", help: "Maximum accessibility-tree depth", long: "max-depth"),
                 .commandOption("maxElements", help: "Maximum elements to inspect", long: "max-elements"),
                 .commandOption("maxChildren", help: "Maximum children per node", long: "max-children"),
+            ],
+            flags: [
+                .commandFlag(
+                    "webFocus",
+                    help: "Allow an AXPress web-content focus retry for sparse Chromium/Tauri trees",
+                    long: "web-focus"
+                ),
             ]
         )
     }
@@ -140,5 +151,6 @@ extension InspectUICommand: CommanderBindableCommand {
         self.maxDepth = try values.decodeOption("maxDepth", as: Int.self)
         self.maxElements = try values.decodeOption("maxElements", as: Int.self)
         self.maxChildren = try values.decodeOption("maxChildren", as: Int.self)
+        self.webFocus = values.flag("webFocus")
     }
 }

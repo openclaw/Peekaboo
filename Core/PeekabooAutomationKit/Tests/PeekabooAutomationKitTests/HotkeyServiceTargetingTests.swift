@@ -158,6 +158,49 @@ struct HotkeyServiceTargetingTests {
         }
     }
 
+    @Test func `targeted lifecycle hotkeys fail before posting unverifiable events`() async throws {
+        var postedEventCount = 0
+        let service = HotkeyService(
+            postEventAccessEvaluator: { true },
+            eventPoster: { _, _ in postedEventCount += 1 })
+        let cases = [
+            (keys: "command+w", chord: "Cmd+W", alternative: "peekaboo window close"),
+            (keys: "CMD,Q", chord: "Cmd+Q", alternative: "peekaboo app quit"),
+            (keys: "cmd h", chord: "Cmd+H", alternative: "peekaboo app hide"),
+            (keys: "cmd,m", chord: "Cmd+M", alternative: "peekaboo window minimize"),
+        ]
+
+        for testCase in cases {
+            do {
+                try await service.hotkey(
+                    keys: testCase.keys,
+                    holdDuration: 0,
+                    targetProcessIdentifier: getpid())
+                Issue.record("Expected background \(testCase.chord) to fail closed")
+            } catch {
+                #expect(error.localizedDescription.contains(testCase.chord))
+                #expect(error.localizedDescription.contains(testCase.alternative))
+                #expect(error.localizedDescription.contains("--foreground"))
+            }
+        }
+
+        #expect(postedEventCount == 0)
+    }
+
+    @Test func `targeted policy does not mistake modified app shortcuts for lifecycle commands`() async throws {
+        var postedEvents: [CGEventType] = []
+        let service = HotkeyService(
+            postEventAccessEvaluator: { true },
+            eventPoster: { event, _ in postedEvents.append(event.type) })
+
+        try await service.hotkey(
+            keys: "cmd,shift,h",
+            holdDuration: 0,
+            targetProcessIdentifier: getpid())
+
+        #expect(postedEvents == [.flagsChanged, .flagsChanged, .keyDown, .keyUp, .flagsChanged, .flagsChanged])
+    }
+
     @Test func `targeted hotkey posts key down and key up to target process`() async throws {
         var postedEvents: [PostedKeyboardEvent] = []
         let service = HotkeyService(

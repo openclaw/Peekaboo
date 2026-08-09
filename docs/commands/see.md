@@ -9,6 +9,8 @@ read_when:
 
 `peekaboo see` captures the current macOS UI, extracts accessibility metadata, and (optionally) saves annotated screenshots. CLI and agent flows rely on these UI maps to find fresh element IDs, bounds, labels, and snapshot IDs.
 
+Observation is read-only with respect to focus: targeting a background app does not activate it or move its windows. The same is true of `peekaboo inspect-ui`.
+
 ```bash
 # Capture frontmost window, print JSON, and save an annotated PNG
 peekaboo see --json --annotate --path /tmp/see.png
@@ -34,7 +36,8 @@ peekaboo see --app "Google Chrome" --window-title "Login" --json --path /tmp/chr
 | `--json` | Emit structured metadata (recommended for scripting). |
 | `--menubar` | Capture menu bar popovers via window list + OCR (useful for status-item settings panels). When `--app` is set, the app name is used as an OCR hint for popover selection. |
 | `--timeout-seconds <seconds>` | Increase overall timeout for large/complex windows (defaults to 20s, or 60s with `--analyze`). |
-| `--no-web-focus` | Skip the automatic web-content focus retry (useful if the page reacts badly to synthetic clicks). |
+| `--web-focus` | Opt into an `AXPress` retry on the target `AXWebArea` when a sparse Chromium/Tauri tree hides its content. This can change keyboard focus. |
+| `--no-web-focus` | Deprecated compatibility flag. Web focus is already disabled by default. |
 | `--max-depth <n>` | Override AX traversal depth (`PEEKABOO_AX_MAX_DEPTH` fallback, default 12). |
 | `--max-elements <n>` | Override maximum collected AX elements (`PEEKABOO_AX_MAX_ELEMENTS` fallback, default 1000). |
 | `--max-children <n>` | Override maximum AX children visited per node (`PEEKABOO_AX_MAX_CHILDREN` fallback, default 250). |
@@ -45,15 +48,15 @@ For agent and automation runs, pass `--path` to a known temporary file when usin
 
 When `--json` is used without `--path`, Peekaboo retains the raw image only in managed snapshot storage and returns empty `screenshot_raw` and `screenshot_annotated` fields. Pass `--path` when the caller needs a directly accessible image file.
 
-## Automatic web focus fallback (Nov 2025)
+## Optional web focus fallback
 
-Modern browsers sometimes keep keyboard focus in the omnibox, which means embedded login forms (Instagram, Facebook, etc.) never expose their `AXTextField` nodes to accessibility clients. Starting November 2025:
+Modern browsers sometimes keep keyboard focus in the omnibox, which means embedded forms never expose their `AXTextField` nodes to accessibility clients. Peekaboo does not alter focus during ordinary observation. If a browser-native AX inspection is required and DOM-based browser automation is unavailable, pass `--web-focus` (or MCP `web_focus: true`) to enable this retry:
 
 1. `peekaboo see` performs a normal accessibility traversal.
-2. If **zero** text fields are detected, the command locates the dominant `AXWebArea` (or equivalent) inside the target window and performs a synthetic `AXPress`.
+2. If **zero** text fields are detected and web focus was explicitly enabled, the command locates the dominant `AXWebArea` (or equivalent) inside the target window and performs `AXPress`.
 3. The traversal runs **one more time**. If the web view exposes its inputs after gaining focus, they now appear in the JSON output.
 
-This fallback only runs inside the resolved window (it won’t hop between windows) and logs a debug entry when it fires. If you need to disable it for a specialized flow, run `see` inside a different window or manually focus the desired element first.
+This fallback only runs inside the resolved window (it won’t hop between windows) and logs a debug entry when it fires. Prefer the `browser` tool for Chrome page content because its DOM/accessibility inspection does not need to focus the macOS window.
 
 ## JSON output primer
 
@@ -81,7 +84,7 @@ peekaboo see --app "Google Chrome" --json --path /tmp/chrome-see.png \
 
 - If the CLI reports **blind typing**, pass an explicit `--app`, `--pid`, `--window-id`, or fresh `--snapshot` so `type` can resolve a background target process, or add `--foreground` when the target app requires focused keyboard input.
 - If JSON/text output reports `AX tree truncated`, rerun with larger `--max-depth`, `--max-elements`, or `--max-children` values. For repeated captures, export the matching `PEEKABOO_AX_MAX_*` environment variable before launching Peekaboo.
-- Missing text fields after the fallback usually means the page is shielding its inputs from AX entirely. For Chrome targets, use the `browser` tool (`status` → `connect` → `snapshot`/`fill`/`click`) after enabling Chrome remote debugging; otherwise rely on image-based hit tests.
+- Missing text fields after an explicit `--web-focus` retry usually means the page is shielding its inputs from AX entirely. For Chrome targets, use the `browser` tool (`status` → `connect` → `snapshot`/`fill`/`click`) after enabling Chrome remote debugging; otherwise rely on image-based hit tests.
 - For repeatable local tests, run `RUN_LOCAL_TESTS=true swift test --filter SeeCommandPlaygroundTests` to exercise the Playground fixtures mentioned in `docs/research/interaction-debugging.md`.
 - Rapid repeated `see` calls for the same window reuse a short-lived AX cache (~1.5s); wait a beat if you need a fully fresh traversal.
 

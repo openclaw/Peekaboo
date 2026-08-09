@@ -17,13 +17,15 @@ struct MCPToolSnapshotMutationTests {
         #expect(Self.effect("app", ["action": "launch"]) == .mutation)
         #expect(Self.effect("menu", ["action": "click"]) == .mutation)
         #expect(Self.effect("menu", ["action": "list"]) == .none)
-        #expect(Self.effect("inspect_ui", [:]) == .mutationProducingFreshObservation)
-        #expect(Self.effect("see", [:]) == .mutationProducingFreshObservation)
+        #expect(Self.effect("inspect_ui", [:]) == .freshObservation)
+        #expect(Self.effect("see", [:]) == .freshObservation)
+        #expect(Self.effect("inspect_ui", ["web_focus": true]) == .mutationProducingFreshObservation)
+        #expect(Self.effect("see", ["web_focus": true]) == .mutationProducingFreshObservation)
         #expect(Self.effect("capture", [:]) == .none)
         #expect(Self.effect("capture", ["source": "video"]) == .none)
         #expect(Self.effect("capture", ["capture_focus": "background"]) == .none)
-        #expect(Self.effect("capture", ["capture_focus": "foreground"]) == .none)
-        #expect(Self.effect("image", [:]) == .mutation)
+        #expect(Self.effect("capture", ["capture_focus": "foreground"]) == .mutation)
+        #expect(Self.effect("image", [:]) == .none)
         #expect(Self.effect("image", ["capture_focus": "auto"]) == .mutation)
         #expect(Self.effect("image", ["capture_focus": "background"]) == .none)
         #expect(Self.effect("image", ["capture_focus": "foreground"]) == .mutation)
@@ -107,7 +109,7 @@ struct MCPToolSnapshotMutationTests {
                 responseSnapshotID: snapshotID,
                 createdUISnapshotID: snapshotID,
                 expectsObservationStart: true),
-            arguments: ToolArguments(raw: [:]))
+            arguments: ToolArguments(raw: ["web_focus": true]))
 
         #expect(response.isError)
         #expect(coordinator.completions.map(\.succeeded) == [true, false])
@@ -172,7 +174,7 @@ struct MCPToolSnapshotMutationTests {
             arguments: ToolArguments(raw: [:]))
         #expect(!successfulResponse.isError)
         #expect(await observationLog.events == ["fresh-observation:start", "fresh-observation:end"])
-        #expect(coordinator.completions.map(\.succeeded) == [true, false, false, true])
+        #expect(coordinator.completions.map(\.succeeded) == [true, false, false])
         #expect(await Self.gateIsAvailable(gate))
     }
 
@@ -386,7 +388,7 @@ struct MCPToolSnapshotMutationTests {
                     responseSnapshotID: snapshotID,
                     createdUISnapshotID: snapshotID,
                     expectsObservationStart: true),
-                arguments: ToolArguments(raw: [:]))
+                arguments: ToolArguments(raw: ["web_focus": true]))
         }
 
         await #expect(throws: CancellationError.self) {
@@ -408,7 +410,7 @@ struct MCPToolSnapshotMutationTests {
         let waiting = Task {
             try await context.execute(
                 tool: StubMCPTool(name: "see"),
-                arguments: ToolArguments(raw: [:]))
+                arguments: ToolArguments(raw: ["web_focus": true]))
         }
         try await Task.sleep(for: .milliseconds(10))
         let releasedAt = Date()
@@ -474,7 +476,7 @@ struct MCPToolSnapshotMutationTests {
                 responseSnapshotID: snapshotID,
                 createdUISnapshotID: snapshotID,
                 expectsObservationStart: true),
-            arguments: ToolArguments(raw: [:]))
+            arguments: ToolArguments(raw: ["web_focus": true]))
 
         #expect(await manager.getSnapshot(id: nil)?.id == snapshotID)
         await manager.removeAllSnapshots()
@@ -522,7 +524,7 @@ struct MCPToolSnapshotMutationTests {
                 createdUISnapshotID: snapshotID,
                 expectsObservationStart: true,
                 completionWatermarkStore: store),
-            arguments: ToolArguments(raw: [:]))
+            arguments: ToolArguments(raw: ["web_focus": true]))
 
         #expect(!response.isError)
         #expect(await manager.getSnapshot(id: nil)?.id == snapshotID)
@@ -550,7 +552,7 @@ struct MCPToolSnapshotMutationTests {
                 responseSnapshotID: snapshotID,
                 createdUISnapshotID: snapshotID,
                 expectsObservationStart: true),
-            arguments: ToolArguments(raw: [:]))
+            arguments: ToolArguments(raw: ["web_focus": true]))
 
         #expect(!response.isError)
         #expect(coordinator.prepareCount == 1)
@@ -579,7 +581,7 @@ struct MCPToolSnapshotMutationTests {
                 expectsObservationStart: true,
                 completionWatermarkStore: store,
                 newerWatermarkAfterCompletion: true),
-            arguments: ToolArguments(raw: [:]))
+            arguments: ToolArguments(raw: ["web_focus": true]))
 
         #expect(response.isError)
         #expect(await manager.getSnapshot(id: nil) == nil)
@@ -594,7 +596,7 @@ struct MCPToolSnapshotMutationTests {
         let snapshot = await manager.createSnapshot(at: Date().addingTimeInterval(-60))
         let snapshotID = await snapshot.id
         let context = await MCPToolTestHelpers.makeContext()
-        let arguments = ToolArguments(raw: ["snapshot": snapshotID])
+        let arguments = ToolArguments(raw: ["snapshot": snapshotID, "web_focus": true])
 
         _ = try await context.execute(
             tool: StubMCPTool(name: "see", responseSnapshotID: snapshotID),
@@ -630,12 +632,12 @@ struct MCPToolSnapshotMutationTests {
         #expect(scope.invalidationCutoff(completedAt: completed, succeeded: false) == completed)
     }
 
-    @Test(arguments: ["omitted", "auto", "foreground"])
+    @Test(arguments: ["auto", "foreground"])
     func `Focus-capable image mutation hides snapshots created during execution`(focus: String) async throws {
         let manager = UISnapshotManager.shared
         await manager.removeAllSnapshots()
         let context = await MCPToolTestHelpers.makeContext()
-        let arguments: [String: Any] = focus == "omitted" ? [:] : ["capture_focus": focus]
+        let arguments: [String: Any] = ["capture_focus": focus]
 
         _ = try await context.execute(
             tool: StubMCPTool(name: "image", createsUISnapshot: true),

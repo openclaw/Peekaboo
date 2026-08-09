@@ -14,7 +14,6 @@ struct MenuCommandIntegrationTests {
                 "menu", "list",
                 "--app", context.appInfo.name,
                 "--json",
-                "--no-auto-focus",
             ],
             context: context
         )
@@ -29,10 +28,12 @@ struct MenuCommandIntegrationTests {
         #expect(response.success == true)
         #expect(response.data.menu_structure.first?.title == "File")
         #expect(context.menuService.listMenusRequests == [context.appInfo.name])
+        #expect(context.windowService.focusCalls.isEmpty)
+        #expect(context.applicationService.activateCalls.isEmpty)
     }
 
     @Test
-    func `menu click succeeds after list when auto focus is disabled`() async throws {
+    func `menu click succeeds after background list`() async throws {
         let context = self.makeMenuContext(hasWindows: false)
 
         _ = try await self.runMenuCommand(
@@ -40,7 +41,6 @@ struct MenuCommandIntegrationTests {
                 "menu", "list",
                 "--app", context.appInfo.name,
                 "--json",
-                "--no-auto-focus",
             ],
             context: context
         )
@@ -51,7 +51,6 @@ struct MenuCommandIntegrationTests {
                 "--app", context.appInfo.name,
                 "--path", "File > New",
                 "--json",
-                "--no-auto-focus",
             ],
             context: context
         )
@@ -65,6 +64,8 @@ struct MenuCommandIntegrationTests {
 
         #expect(response.success == true)
         #expect(response.data.menu_path == "File > New")
+        #expect(context.windowService.focusCalls.isEmpty)
+        #expect(context.applicationService.activateCalls.isEmpty)
         #expect(context.menuService.clickPathCalls.count == 1)
         if let call = context.menuService.clickPathCalls.first {
             #expect(call.app == context.appInfo.name)
@@ -141,7 +142,8 @@ struct MenuCommandIntegrationTests {
             services: services,
             appInfo: appInfo,
             menuService: menuService,
-            windowService: windowService
+            windowService: windowService,
+            applicationService: applicationService
         )
     }
 
@@ -188,6 +190,7 @@ struct MenuCommandIntegrationTests {
         let appInfo: ServiceApplicationInfo
         let menuService: StubMenuService
         let windowService: StubWindowService
+        let applicationService: StubApplicationService
     }
 }
 #endif

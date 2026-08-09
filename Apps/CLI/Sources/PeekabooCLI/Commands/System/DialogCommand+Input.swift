@@ -24,6 +24,9 @@ extension DialogCommand {
         @Flag(help: "Clear existing text first")
         var clear = false
 
+        @Flag(help: "Focus the dialog before sending keyboard input")
+        var foreground = false
+
         @OptionGroup var target: InteractionTargetOptions
         @OptionGroup var focusOptions: FocusCommandOptions
         @RuntimeStorage private var runtime: CommandRuntime?
@@ -58,6 +61,9 @@ extension DialogCommand {
 
             do {
                 try self.target.validate()
+                guard self.foreground else {
+                    throw ValidationError("dialog input sends keyboard input and requires --foreground")
+                }
                 if self.focusOptions.autoFocus {
                     self.resolvedRuntime.beginInteractionMutation()
                 }
@@ -104,6 +110,9 @@ extension DialogCommand {
                         + "cleared=\(clearedValue) app='\(appHint ?? "unknown")'"
                 )
 
+            } catch let error as Commander.ValidationError {
+                handleDialogValidationError(error, jsonOutput: self.jsonOutput, logger: self.outputLogger)
+                throw ExitCode(1)
             } catch let error as DialogError {
                 handleDialogServiceError(error, jsonOutput: self.jsonOutput, logger: self.outputLogger)
                 throw ExitCode(1)

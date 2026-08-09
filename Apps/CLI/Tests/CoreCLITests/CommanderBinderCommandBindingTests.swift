@@ -734,7 +734,7 @@ struct CommanderBinderCommandBindingTests {
                 "profile": ["human"],
                 "snapshot": ["sess-1"]
             ],
-            flags: ["smooth"]
+            flags: ["smooth", "foreground"]
         )
         let command = try CommanderCLIBinder.instantiateCommand(ofType: MoveCommand.self, parsedValues: parsed)
         #expect(command.coordinates == "100,200")
@@ -743,6 +743,7 @@ struct CommanderBinderCommandBindingTests {
         #expect(command.profile == "human")
         #expect(command.snapshot == "sess-1")
         #expect(command.smooth == true)
+        #expect(command.foreground)
     }
 
     @Test
@@ -756,7 +757,7 @@ struct CommanderBinderCommandBindingTests {
                 "profile": ["human"],
                 "snapshot": ["sess-1"]
             ],
-            flags: ["smooth"]
+            flags: ["smooth", "foreground"]
         )
         let command = try CommanderCLIBinder.instantiateCommand(ofType: MoveCommand.self, parsedValues: parsed)
         #expect(command.coords == "100,200")
@@ -766,6 +767,7 @@ struct CommanderBinderCommandBindingTests {
         #expect(command.profile == "human")
         #expect(command.snapshot == "sess-1")
         #expect(command.smooth == true)
+        #expect(command.foreground)
     }
 
     @Test
@@ -815,7 +817,7 @@ struct CommanderBinderCommandBindingTests {
                 "profile": ["human"],
                 "snapshot": ["sess-drag"]
             ],
-            flags: ["spaceSwitch"]
+            flags: ["spaceSwitch", "foreground"]
         )
         let command = try CommanderCLIBinder.instantiateCommand(ofType: DragCommand.self, parsedValues: parsed)
         #expect(command.from == "B1")
@@ -826,6 +828,7 @@ struct CommanderBinderCommandBindingTests {
         #expect(command.profile == "human")
         #expect(command.snapshot == "sess-drag")
         #expect(command.focusOptions.spaceSwitch == true)
+        #expect(command.foreground)
     }
 
     @Test
@@ -840,7 +843,7 @@ struct CommanderBinderCommandBindingTests {
                 "profile": ["linear"],
                 "snapshot": ["sess-swipe"]
             ],
-            flags: []
+            flags: ["foreground"]
         )
         let command = try CommanderCLIBinder.instantiateCommand(ofType: SwipeCommand.self, parsedValues: parsed)
         #expect(command.fromCoords == "10,20")
@@ -849,6 +852,7 @@ struct CommanderBinderCommandBindingTests {
         #expect(command.steps == 25)
         #expect(command.profile == "linear")
         #expect(command.snapshot == "sess-swipe")
+        #expect(command.foreground)
     }
 
     @Test

@@ -6,6 +6,13 @@ extension DialogCommand.ClickSubcommand: CommanderSignatureProviding {
             options: [
                 .commandOption("button", help: "Button text to click", long: "button"),
             ],
+            flags: [
+                .commandFlag(
+                    "foreground",
+                    help: "Focus the target and allow foreground click fallback",
+                    long: "foreground"
+                ),
+            ],
 
             optionGroups: [
                 InteractionTargetOptions.commanderSignature(),
@@ -25,6 +32,11 @@ extension DialogCommand.InputSubcommand: CommanderSignatureProviding {
             ],
             flags: [
                 .commandFlag("clear", help: "Clear existing text first", long: "clear"),
+                .commandFlag(
+                    "foreground",
+                    help: "Focus the dialog before sending keyboard input",
+                    long: "foreground"
+                ),
             ],
 
             optionGroups: [
@@ -58,6 +70,11 @@ extension DialogCommand.FileSubcommand: CommanderSignatureProviding {
                     help: "Ensure file dialogs are expanded (Show Details)",
                     long: "ensure-expanded"
                 ),
+                .commandFlag(
+                    "foreground",
+                    help: "Focus the file dialog before keyboard or coordinate interaction",
+                    long: "foreground"
+                ),
             ],
 
             optionGroups: [
@@ -73,6 +90,11 @@ extension DialogCommand.DismissSubcommand: CommanderSignatureProviding {
         CommandSignature(
             flags: [
                 .commandFlag("force", help: "Force dismiss with Escape", long: "force"),
+                .commandFlag(
+                    "foreground",
+                    help: "Focus the target before dismissal; required with --force",
+                    long: "foreground"
+                ),
             ],
 
             optionGroups: [
@@ -95,7 +117,6 @@ extension DialogCommand.ListSubcommand: CommanderSignatureProviding {
             ],
             optionGroups: [
                 InteractionTargetOptions.commanderSignature(),
-                FocusCommandOptions.commanderSignature(),
             ]
         )
     }

@@ -21,7 +21,8 @@ extension DialogService {
     func clickButton(
         in dialog: Element,
         buttonText: String,
-        allowFallbackToDefaultAction: Bool) async throws -> DialogActionResult
+        allowFallbackToDefaultAction: Bool,
+        allowGlobalFallback: Bool = false) async throws -> DialogActionResult
     {
         let buttons = self.collectButtons(from: dialog)
         self.logger.debug("Found \(buttons.count) buttons in dialog")
@@ -52,7 +53,7 @@ extension DialogService {
         }
 
         self.logger.debug("Clicking button: \(resolvedButtonTitle)")
-        try self.pressOrClick(targetButton)
+        try self.pressOrClick(targetButton, allowGlobalFallback: allowGlobalFallback)
 
         var clickDetails: [String: String] = [
             "button": resolvedButtonTitle,

@@ -15,7 +15,7 @@ public struct MoveTool: MCPTool {
         """
         Move the mouse cursor to a specific position or UI element.
         Supports absolute coordinates, UI element targeting, or centering on screen.
-        Can animate movement smoothly over a specified duration.
+        This always changes the shared physical cursor and requires foreground=true.
         \(PeekabooMCPVersion.banner) using openai/gpt-5.5, anthropic/claude-opus-4-8
         """
     }
@@ -49,8 +49,10 @@ public struct MoveTool: MCPTool {
                     description: "Optional. Movement profile. Use 'linear' (default) or 'human' for natural paths.",
                     enum: ["linear", "human"],
                     default: "linear"),
+                "foreground": SchemaBuilder.boolean(
+                    description: "Required. Confirm foreground use of the shared physical cursor."),
             ],
-            required: [])
+            required: ["foreground"])
     }
 
     public init(context: MCPToolContext = .shared) {
@@ -63,6 +65,7 @@ public struct MoveTool: MCPTool {
             let request = try self.parseRequest(arguments: arguments)
             let startTime = Date()
             let target = try await self.resolveMoveTarget(request: request)
+            try await self.focusTargetIfNeeded(target)
             let movement = try await self.performMovement(to: target.location, request: request)
             let executionTime = Date().timeIntervalSince(startTime)
             return self.buildResponse(

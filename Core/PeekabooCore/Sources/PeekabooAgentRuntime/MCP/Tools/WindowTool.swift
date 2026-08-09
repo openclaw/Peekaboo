@@ -59,6 +59,9 @@ public struct WindowTool: MCPTool {
                     description: "Width for resize or set-bounds action"),
                 "height": SchemaBuilder.number(
                     description: "Height for resize or set-bounds action"),
+                "foreground": SchemaBuilder.boolean(
+                    description: "For close only: allow focused/global fallback after AX close fails.",
+                    default: false),
             ],
             required: ["action"])
     }
@@ -86,6 +89,12 @@ public struct WindowTool: MCPTool {
         let y = arguments.getNumber("y")
         let width = arguments.getNumber("width")
         let height = arguments.getNumber("height")
+        let foreground = arguments.getBool("foreground") ?? false
+        if foreground {
+            guard action == .close else {
+                return ToolResponse.error("foreground is only supported for the close action")
+            }
+        }
 
         let inputs = WindowActionInputs(
             app: app,
@@ -95,7 +104,8 @@ public struct WindowTool: MCPTool {
             x: x,
             y: y,
             width: width,
-            height: height)
+            height: height,
+            foreground: foreground)
         let windowService = self.context.windows
         let startTime = Date()
 
@@ -131,6 +141,7 @@ public struct WindowTool: MCPTool {
                 service: service,
                 target: target,
                 appName: inputs.app,
+                allowForegroundFallback: inputs.foreground,
                 startTime: startTime)
 
         case .minimize:
@@ -211,7 +222,7 @@ public struct WindowTool: MCPTool {
     }
 }
 
-private enum WindowAction: String, CaseIterable {
+private enum WindowAction: String, CaseIterable, Equatable {
     case close
     case minimize
     case maximize
@@ -234,6 +245,7 @@ private struct WindowActionInputs {
     let y: Double?
     let width: Double?
     let height: Double?
+    let foreground: Bool
 
     func requirePosition(for action: WindowAction) throws -> CGPoint {
         guard let x, let y else {

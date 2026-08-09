@@ -21,6 +21,7 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
     public let targetedClickUnavailableReason: String?
     public let targetedClickRequiresEventSynthesizingPermission: Bool
     public let supportsExactWindowTargetedClicks: Bool
+    public let supportsTargetedScroll: Bool
     public let supportsInspectAccessibilityTree: Bool
     public let inspectAccessibilityTreeUnavailableReason: String?
 
@@ -36,6 +37,7 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
         targetedClickUnavailableReason: String? = nil,
         targetedClickRequiresEventSynthesizingPermission: Bool = false,
         supportsExactWindowTargetedClicks: Bool = false,
+        supportsTargetedScroll: Bool = false,
         supportsInspectAccessibilityTree: Bool = false,
         inspectAccessibilityTreeUnavailableReason: String? = nil)
     {
@@ -50,6 +52,7 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
         self.targetedClickUnavailableReason = targetedClickUnavailableReason
         self.targetedClickRequiresEventSynthesizingPermission = targetedClickRequiresEventSynthesizingPermission
         self.supportsExactWindowTargetedClicks = supportsExactWindowTargetedClicks
+        self.supportsTargetedScroll = supportsTargetedScroll
         self.supportsInspectAccessibilityTree = supportsInspectAccessibilityTree
         self.inspectAccessibilityTreeUnavailableReason = inspectAccessibilityTreeUnavailableReason
     }
@@ -209,6 +212,10 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
     }
 
     public func scroll(_ request: ScrollRequest) async throws {
+        if !request.foreground, !self.supportsTargetedScroll {
+            throw PeekabooError.serviceUnavailable(
+                "Remote bridge host does not support background-safe targeted scroll; relaunch or update Peekaboo.")
+        }
         do {
             try await self.client.scroll(request)
         } catch let envelope as PeekabooBridgeErrorEnvelope {

@@ -5,12 +5,8 @@
       "stepId": "focus_playground",
       "command": "app",
       "params": {
-        "generic": {
-          "_0": {
-            "name": "Playground",
-            "action": "focus"
-          }
-        }
+        "name": "Playground",
+        "action": "focus"
       },
       "comment": "Ensure Playground is foregrounded before we capture"
     },
@@ -18,13 +14,10 @@
       "stepId": "open_text_fixture",
       "command": "hotkey",
       "params": {
-        "generic": {
-          "_0": {
-            "key": "2",
-            "cmd": "true",
-            "ctrl": "true"
-          }
-        }
+        "key": "2",
+        "cmd": true,
+        "ctrl": true,
+        "foreground": true
       },
       "comment": "Open the dedicated Text Fixture window (⌘⌃2) so element targeting is deterministic"
     },
@@ -32,11 +25,7 @@
       "stepId": "wait_for_fixture",
       "command": "sleep",
       "params": {
-        "generic": {
-          "_0": {
-            "duration": "0.3"
-          }
-        }
+        "duration": 0.3
       },
       "comment": "Give the fixture window time to appear and become frontmost"
     },
@@ -44,13 +33,9 @@
       "stepId": "capture_playground",
       "command": "see",
       "params": {
-        "generic": {
-          "_0": {
-            "mode": "frontmost",
-            "path": ".artifacts/playground-tools/run-script-see.png",
-            "annotate": "true"
-          }
-        }
+        "mode": "frontmost",
+        "path": ".artifacts/playground-tools/run-script-see.png",
+        "annotate": true
       },
       "comment": "Capture annotated UI map for downstream steps"
     },
@@ -58,11 +43,7 @@
       "stepId": "click_focus_basic",
       "command": "click",
       "params": {
-        "generic": {
-          "_0": {
-            "query": "basic-text-field"
-          }
-        }
+        "query": "basic-text-field"
       },
       "comment": "Focus the basic text field directly (Focus Control section may be offscreen)"
     },
@@ -70,13 +51,9 @@
       "stepId": "type_basic_field",
       "command": "type",
       "params": {
-        "generic": {
-          "_0": {
-            "text": "Playground smoke",
-            "field": "basic-text-field",
-            "clear-first": "true"
-          }
-        }
+        "text": "Playground smoke",
+        "field": "basic-text-field",
+        "clearFirst": true
       },
       "comment": "Fill the Basic Text Field to verify typing"
     }

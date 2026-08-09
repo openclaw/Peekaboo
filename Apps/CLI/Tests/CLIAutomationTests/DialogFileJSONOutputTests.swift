@@ -40,7 +40,10 @@ struct DialogFileJSONOutputTests {
 
         let services = TestServicesFactory.makePeekabooServices(dialogs: dialogService)
         let result = try await InProcessCommandRunner.run(
-            ["dialog", "file", "--path", "/tmp", "--name", "out.txt", "--select", "Save", "--json"],
+            [
+                "dialog", "file", "--path", "/tmp", "--name", "out.txt", "--select", "Save",
+                "--foreground", "--json",
+            ],
             services: services
         )
 
@@ -102,6 +105,7 @@ struct DialogFileJSONOutputTests {
                 "--name", "out.txt",
                 "--select", "Save",
                 "--timeout-seconds", "1",
+                "--foreground",
                 "--json",
             ],
             services: services

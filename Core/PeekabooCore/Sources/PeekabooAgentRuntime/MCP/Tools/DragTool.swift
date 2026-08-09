@@ -15,7 +15,7 @@ public struct DragTool: MCPTool {
         """
         Perform drag and drop operations between UI elements or coordinates.
         Supports element queries, specific IDs, or raw coordinates for both start and end points.
-        Includes focus options for handling windows in different spaces.
+        This always changes the shared physical cursor and requires foreground=true.
         \(PeekabooMCPVersion.banner) using openai/gpt-5.5, anthropic/claude-opus-4-8
         """
     }
@@ -48,17 +48,10 @@ public struct DragTool: MCPTool {
                     default: "linear"),
                 "modifiers": SchemaBuilder.string(
                     description: "Optional. Comma-separated modifiers (cmd, shift, alt, ctrl)"),
-                "auto_focus": SchemaBuilder.boolean(
-                    description: "Optional. Auto-focus target window (default: true)",
-                    default: true),
-                "bring_to_current_space": SchemaBuilder.boolean(
-                    description: "Optional. Bring window to current space",
-                    default: false),
-                "space_switch": SchemaBuilder.boolean(
-                    description: "Optional. Allow switching spaces",
-                    default: false),
+                "foreground": SchemaBuilder.boolean(
+                    description: "Required. Confirm foreground use of the shared physical cursor."),
             ],
-            required: [])
+            required: ["foreground"])
     }
 
     public init(context: MCPToolContext = .shared) {
@@ -89,8 +82,7 @@ public struct DragTool: MCPTool {
                 return ToolResponse.error("Start and end points must be different")
             }
 
-            try await self.focusTargetAppIfNeeded(request: request)
-            self.logSpaceIntentIfNeeded(request: request)
+            try await self.focusTargetIfNeeded(request: request, from: fromPoint, to: toPoint)
 
             let distance = hypot(toPoint.point.x - fromPoint.point.x, toPoint.point.y - fromPoint.point.y)
             let movement = request.profile.resolveParameters(

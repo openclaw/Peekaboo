@@ -19,7 +19,7 @@ peekaboo permissions grant
 peekaboo permissions request-screen-recording
 ```
 
-`grant` opens System Settings to the right pane. You need **Screen Recording** (required) and **Accessibility** (recommended). Re-run `permissions status` until both are green. Background keyboard input, coordinate clicks, and synthetic click fallback also need **Event Synthesizing**; element/query clicks can use Accessibility actions alone. See [permissions.md](permissions.md).
+`grant` opens System Settings to the right pane. You need **Screen Recording** (required) and **Accessibility** (recommended). Re-run `permissions status` until both are green. Background keyboard input and foreground synthetic pointer tools need **Event Synthesizing**; background element/query/coordinate clicks use Accessibility. See [permissions.md](permissions.md).
 
 ## 2. Take a screenshot
 
@@ -69,6 +69,8 @@ peekaboo type "github.com/openclaw/Peekaboo" --app Safari --return
 Coordinates also work: `peekaboo click --coords 480,120 --app Safari`. With app/window target flags, click coordinates are target-window-relative; add `--global-coords` for screen coordinates. Add `--foreground` only when the target app requires focused input. See [automation.md](automation.md) for the full input vocabulary.
 
 By default these targeted commands use background delivery: Safari can receive the click and text without becoming frontmost. If the target field ignores background input, rerun the same command with `--foreground` to focus the target first.
+
+Targeted `scroll --on <id>` is also background-safe through Accessibility. Targetless/smooth scroll, `move`, `drag`, and `swipe` use the shared physical cursor and require explicit `--foreground`.
 
 ## 5. Run an agent
 

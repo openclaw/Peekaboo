@@ -17,15 +17,15 @@ struct DialogCommand: ParsableCommand {
           peekaboo dialog click --button "Don't Save"
 
           # Type in a dialog text field
-          peekaboo dialog input --text "password123" --field "Password"
+          peekaboo dialog input --text "password123" --field "Password" --foreground
 
           # Handle file dialogs
-          peekaboo dialog file --path "/Users/me/Documents" --name "report.pdf" --select "Save"
-          peekaboo dialog file --app TextEdit --window-title "Untitled" --path "/tmp" --name "poem.rtf" --select default
+          peekaboo dialog file --path "/Users/me/Documents" --name "report.pdf" --select "Save" --foreground
+          peekaboo dialog file --app TextEdit --window-title "Untitled" --path "/tmp" --name "poem.rtf" --select default --foreground
 
           # Dismiss dialogs
           peekaboo dialog dismiss
-          peekaboo dialog dismiss --force  # Press Escape
+          peekaboo dialog dismiss --force --foreground  # Press Escape
         """,
         subcommands: [
             ClickSubcommand.self,
@@ -72,6 +72,7 @@ extension DialogCommand.InputSubcommand: CommanderBindableCommand {
         self.field = values.singleOption("field")
         self.index = try values.decodeOption("index", as: Int.self)
         self.clear = values.flag("clear")
+        self.foreground = values.flag("foreground")
         try values.fillInteractionTargetOptions(into: &self.target)
         self.focusOptions = try values.makeFocusOptions()
     }
@@ -91,6 +92,7 @@ extension DialogCommand.FileSubcommand: CommanderBindableCommand {
             self.timeoutSeconds = timeoutSeconds
         }
         self.ensureExpanded = values.flag("ensureExpanded")
+        self.foreground = values.flag("foreground")
         try values.fillInteractionTargetOptions(into: &self.target)
         self.focusOptions = try values.makeFocusOptions()
     }
@@ -104,6 +106,7 @@ extension DialogCommand.DismissSubcommand: AsyncRuntimeCommand {}
 extension DialogCommand.DismissSubcommand: CommanderBindableCommand {
     mutating func applyCommanderValues(_ values: CommanderBindableValues) throws {
         self.force = values.flag("force")
+        self.foreground = values.flag("foreground")
         try values.fillInteractionTargetOptions(into: &self.target)
         self.focusOptions = try values.makeFocusOptions()
     }
@@ -120,7 +123,6 @@ extension DialogCommand.ListSubcommand: CommanderBindableCommand {
             self.timeoutSeconds = timeoutSeconds
         }
         try values.fillInteractionTargetOptions(into: &self.target)
-        self.focusOptions = try values.makeFocusOptions()
     }
 }
 
@@ -142,6 +144,7 @@ extension DialogCommand.ClickSubcommand: AsyncRuntimeCommand {}
 extension DialogCommand.ClickSubcommand: CommanderBindableCommand {
     mutating func applyCommanderValues(_ values: CommanderBindableValues) throws {
         self.button = try values.requireOption("button", as: String.self)
+        self.foreground = values.flag("foreground")
         try values.fillInteractionTargetOptions(into: &self.target)
         self.focusOptions = try values.makeFocusOptions()
     }
@@ -195,5 +198,13 @@ func handleDialogServiceError(_ error: DialogError, jsonOutput: Bool, logger: Lo
         outputJSON(response, logger: logger)
     } else {
         fputs("❌ \(error.localizedDescription)\n", stderr)
+    }
+}
+
+func handleDialogValidationError(_ error: Commander.ValidationError, jsonOutput: Bool, logger: Logger) {
+    if jsonOutput {
+        outputError(message: error.localizedDescription, code: .INVALID_INPUT, logger: logger)
+    } else {
+        fputs("Error: \(error.localizedDescription)\n", stderr)
     }
 }

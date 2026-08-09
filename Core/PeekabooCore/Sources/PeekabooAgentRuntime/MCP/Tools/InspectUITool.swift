@@ -19,7 +19,8 @@ public struct InspectUITool: MCPTool {
         buttons, text fields, and control state. No screenshot is captured.
 
         Use this when you only need to read UI text or discover interactive elements and do not
-        need a visual screenshot. For visual layout or when AX text is incomplete, use `see`.
+        need a visual screenshot. Inspection does not focus the target by default. For visual layout
+        or when AX text is incomplete, use `see`.
         """
     }
 
@@ -39,6 +40,9 @@ public struct InspectUITool: MCPTool {
                     description: """
                     Optional. Snapshot ID for UI automation tracking. A new snapshot is created when absent.
                     """),
+                "web_focus": SchemaBuilder.boolean(
+                    description: "Optional. Allow an AXPress retry on sparse Chromium/Tauri web content.",
+                    default: false),
                 "max_depth": SchemaBuilder.number(
                     description: "Optional. Maximum AX traversal depth. Env fallback: PEEKABOO_AX_MAX_DEPTH."),
                 "max_elements": SchemaBuilder.number(
@@ -68,7 +72,10 @@ public struct InspectUITool: MCPTool {
             newlyCreatedSnapshotID = selection.isNew ? snapshot.id : nil
             newlyCreatedSnapshotWasPending = selection.isNew && MCPToolContext.snapshotObservationStartedAt != nil
             let target = try self.parseTarget(request.appTarget)
-            let windowContext = try self.makeWindowContext(for: target, traversalBudget: request.traversalBudget)
+            let windowContext = try self.makeWindowContext(
+                for: target,
+                webFocus: request.webFocus,
+                traversalBudget: request.traversalBudget)
 
             let result = try await self.context.automation.inspectAccessibilityTree(
                 windowContext: windowContext)
@@ -173,18 +180,19 @@ public struct InspectUITool: MCPTool {
 
     private func makeWindowContext(
         for target: ObservationTargetArgument,
+        webFocus: Bool,
         traversalBudget: AXTraversalBudget) throws -> WindowContext
     {
         switch target {
         case .frontmost:
-            return WindowContext(shouldFocusWebContent: true, traversalBudget: traversalBudget)
+            return WindowContext(shouldFocusWebContent: webFocus, traversalBudget: traversalBudget)
         case let .application(identifier, window):
             let selection = try self.windowSelectionFields(window)
             return WindowContext(
                 applicationName: identifier,
                 windowTitle: selection.title,
                 windowID: selection.id,
-                shouldFocusWebContent: true,
+                shouldFocusWebContent: webFocus,
                 traversalBudget: traversalBudget)
         case let .pid(pid, window):
             let selection = try self.windowSelectionFields(window)
@@ -192,7 +200,7 @@ public struct InspectUITool: MCPTool {
                 applicationProcessId: pid,
                 windowTitle: selection.title,
                 windowID: selection.id,
-                shouldFocusWebContent: true,
+                shouldFocusWebContent: webFocus,
                 traversalBudget: traversalBudget)
         case .screen, .menubar:
             throw PeekabooError.invalidInput("inspect_ui cannot inspect screen or menu bar targets. Use `see` instead.")

@@ -106,7 +106,7 @@ struct DragCommandTests {
             "--steps", "5",
             "--modifiers", "cmd,option",
             "--json",
-            "--no-auto-focus",
+            "--foreground",
         ]
         let (result, context) = try await self.runDragCommandWithContext(arguments)
         #expect(result.exitStatus == 0)
@@ -130,7 +130,7 @@ struct DragCommandTests {
             "--to-coords", "300,300",
             "--duration", "500",
             "--json",
-            "--no-auto-focus",
+            "--foreground",
         ]
         let (result, context) = try await self.runDragCommandWithContext(arguments)
         #expect(result.exitStatus == 0)
@@ -164,7 +164,7 @@ struct DragCommandTests {
             "--to-coords", "500,500",
             "--snapshot", snapshotId,
             "--json",
-            "--no-auto-focus",
+            "--foreground",
         ]
 
         let context = await self.makeAutomationContext()
@@ -200,6 +200,7 @@ struct DragCommandTests {
             "--to-coords", "400,400",
             "--modifiers", "cmd,option",
             "--json",
+            "--foreground",
         ]
         let (result, context) = try await self.runDragCommandWithContext(arguments)
         #expect(result.exitStatus == 0)
@@ -235,6 +236,7 @@ struct DragCommandTests {
             "--from-coords", "100,100",
             "--to-app", "Finder",
             "--json",
+            "--foreground",
         ]
 
         let (result, context) = try await self.runDragCommandWithContext(
@@ -257,6 +259,7 @@ struct DragCommandTests {
             "--to-coords", "150,150",
             "--duration", "2000",
             "--json",
+            "--foreground",
         ]
         let (result, context) = try await self.runDragCommandWithContext(arguments)
         #expect(result.exitStatus == 0)
@@ -274,7 +277,7 @@ struct DragCommandTests {
             "--to-coords", "400,200",
             "--profile", "human",
             "--json",
-            "--no-auto-focus",
+            "--foreground",
         ]
         let (result, context) = try await self.runDragCommandWithContext(arguments)
         #expect(result.exitStatus == 0)
@@ -285,6 +288,20 @@ struct DragCommandTests {
         let payloadData = Data(self.output(from: result).utf8)
         let payload = try JSONDecoder().decode(CodableJSONResponse<DragResult>.self, from: payloadData)
         #expect(payload.data.profile == "human")
+    }
+
+    @Test
+    func `Drag requires explicit foreground consent`() async throws {
+        let arguments = [
+            "drag",
+            "--from-coords", "10,20",
+            "--to-coords", "30,40",
+        ]
+        let (result, context) = try await self.runDragCommandWithContext(arguments)
+
+        #expect(result.exitStatus != 0)
+        #expect(self.output(from: result).contains("requires explicit --foreground"))
+        #expect(await self.automationState(context) { $0.dragCalls }.isEmpty)
     }
 }
 

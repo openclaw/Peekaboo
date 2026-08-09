@@ -55,8 +55,11 @@ struct ImageCommand: ApplicationResolvable, ErrorHandlingCommand, OutputFormatta
     @Option(name: .long, help: "Image format: png or jpg")
     var format: PeekabooCore.ImageFormat = .png
 
-    @Option(name: .long, help: "Window focus behavior")
-    var captureFocus: PeekabooCore.CaptureFocus = .auto
+    @Option(
+        name: .long,
+        help: "Focus behavior: background (default), foreground (activate target), or legacy auto"
+    )
+    var captureFocus: PeekabooCore.CaptureFocus = .background
 
     @Option(name: .long, help: "Analyze the captured image with AI")
     var analyze: String?
@@ -102,7 +105,7 @@ struct ImageCommand: ApplicationResolvable, ErrorHandlingCommand, OutputFormatta
             "mode": mode?.rawValue ?? "auto",
             "app": self.app ?? "none",
             "pid": self.pid ?? 0,
-            "hasAnalyzePrompt": self.analyze != nil
+            "hasAnalyzePrompt": self.analyze != nil,
         ]
         self.logger.operationStart("image_command", metadata: startMetadata)
 

@@ -507,6 +507,22 @@ public final class PeekabooBridgeServer {
         if case let .targetedClick(payload) = request {
             try Self.validateTargetedClickAccess(payload, permissions: permissions)
         }
+        switch request {
+        case let .scroll(payload):
+            guard payload.request.foreground else {
+                throw PeekabooBridgeErrorEnvelope(
+                    code: .invalidRequest,
+                    message: "The scroll operation requires foreground=true; use targetedScroll for background AX input")
+            }
+        case let .targetedScroll(payload):
+            guard !payload.request.foreground else {
+                throw PeekabooBridgeErrorEnvelope(
+                    code: .invalidRequest,
+                    message: "The targetedScroll operation requires foreground=false")
+            }
+        default:
+            break
+        }
 
         guard effectiveOps.contains(op) else {
             let missingPermission = op.requiredPermissions

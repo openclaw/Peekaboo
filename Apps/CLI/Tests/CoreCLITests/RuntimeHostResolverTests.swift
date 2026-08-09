@@ -226,7 +226,7 @@ struct RuntimeHostResolverTests {
             requiresValidatedHistoricalDaemon: false
         )
         var options = CommandRuntimeOptions()
-        options.requiresPostEventClickPermission = true
+        options.requiresPostEventPermission = true
         let accessibilityOnly = PeekabooBridgeHandshakeResponse(
             negotiatedVersion: PeekabooBridgeConstants.protocolVersion,
             hostKind: .gui,
@@ -273,7 +273,7 @@ struct RuntimeHostResolverTests {
             requiresValidatedHistoricalDaemon: false
         )
         var options = CommandRuntimeOptions()
-        options.requiresPostEventClickPermission = true
+        options.requiresPostEventPermission = true
         options.requiresLongPressClick = true
 
         func handshake(minor: Int, supportsClick: Bool = true) -> PeekabooBridgeHandshakeResponse {
@@ -454,6 +454,113 @@ struct RuntimeHostResolverTests {
             handshake: unknownPermissions,
             options: Self.captureOptions()
         ) != nil)
+    }
+
+    @Test
+    func `Implicit current-host selection rejects a compatible older protocol without breaking fallback`() async {
+        let candidate = RuntimeHostResolver.ImplicitRemoteCandidate(
+            socketPath: "/tmp/daemon.sock",
+            requireReusableDaemon: true,
+            requiredHostKind: nil,
+            requiresValidatedHistoricalDaemon: false
+        )
+        let olderProtocol = PeekabooBridgeProtocolVersion(
+            major: PeekabooBridgeConstants.protocolVersion.major,
+            minor: PeekabooBridgeConstants.protocolVersion.minor - 1
+        )
+        let handshake = PeekabooBridgeHandshakeResponse(
+            negotiatedVersion: olderProtocol,
+            hostKind: .onDemand,
+            build: "legacy",
+            supportedOperations: [.captureScreen]
+        )
+        let reusableStatus = PeekabooDaemonStatus(
+            running: true,
+            pid: 4242,
+            mode: .manual,
+            bridge: PeekabooDaemonBridgeStatus(
+                socketPath: candidate.socketPath,
+                hostKind: .onDemand,
+                allowedOperations: [.daemonStatus]
+            )
+        )
+
+        #expect(await RuntimeHostResolver.validateRemoteCandidate(
+            candidate,
+            handshake: handshake,
+            options: CommandRuntimeOptions(),
+            requiredProtocolVersion: PeekabooBridgeConstants.protocolVersion,
+            fetchReusableDaemonStatus: { _ in reusableStatus }
+        ) == nil)
+        #expect(await RuntimeHostResolver.validateRemoteCandidate(
+            candidate,
+            handshake: handshake,
+            options: CommandRuntimeOptions(),
+            fetchReusableDaemonStatus: { _ in reusableStatus }
+        ) != nil)
+    }
+
+    @Test
+    func `Exact build preference applies only to stateful implicit standard daemon routing`() {
+        let buildScopedSocketPath = "/tmp/daemon-current.sock"
+        var snapshotProducer = CommandRuntimeOptions()
+        snapshotProducer.requiresScreenCapturePermission = true
+        var snapshotInspection = CommandRuntimeOptions()
+        snapshotInspection.requiresInspectAccessibilityTree = true
+        var snapshotMutation = CommandRuntimeOptions()
+        snapshotMutation.requiresImplicitSnapshotInvalidation = true
+        var longLivedSnapshotRuntime = CommandRuntimeOptions()
+        longLivedSnapshotRuntime.usesPerToolSnapshotInvalidation = true
+        var applicationInventory = snapshotProducer
+        applicationInventory.requiresHostApplicationInventory = true
+        var applicationLaunch = snapshotMutation
+        applicationLaunch.requiresApplicationLaunchOptions = true
+
+        #expect(RuntimeHostResolver.prefersExactBuildScopedHost(
+            options: snapshotProducer,
+            explicitSocket: nil,
+            buildScopedDaemonSocketPath: buildScopedSocketPath
+        ))
+        #expect(RuntimeHostResolver.prefersExactBuildScopedHost(
+            options: snapshotInspection,
+            explicitSocket: nil,
+            buildScopedDaemonSocketPath: buildScopedSocketPath
+        ))
+        #expect(RuntimeHostResolver.prefersExactBuildScopedHost(
+            options: snapshotMutation,
+            explicitSocket: nil,
+            buildScopedDaemonSocketPath: buildScopedSocketPath
+        ))
+        #expect(RuntimeHostResolver.prefersExactBuildScopedHost(
+            options: longLivedSnapshotRuntime,
+            explicitSocket: nil,
+            buildScopedDaemonSocketPath: buildScopedSocketPath
+        ))
+        #expect(!RuntimeHostResolver.prefersExactBuildScopedHost(
+            options: snapshotProducer,
+            explicitSocket: "/tmp/legacy-explicit.sock",
+            buildScopedDaemonSocketPath: buildScopedSocketPath
+        ))
+        #expect(!RuntimeHostResolver.prefersExactBuildScopedHost(
+            options: snapshotProducer,
+            explicitSocket: nil,
+            buildScopedDaemonSocketPath: nil
+        ))
+        #expect(!RuntimeHostResolver.prefersExactBuildScopedHost(
+            options: applicationInventory,
+            explicitSocket: nil,
+            buildScopedDaemonSocketPath: buildScopedSocketPath
+        ))
+        #expect(!RuntimeHostResolver.prefersExactBuildScopedHost(
+            options: applicationLaunch,
+            explicitSocket: nil,
+            buildScopedDaemonSocketPath: buildScopedSocketPath
+        ))
+        #expect(!RuntimeHostResolver.prefersExactBuildScopedHost(
+            options: CommandRuntimeOptions(),
+            explicitSocket: nil,
+            buildScopedDaemonSocketPath: buildScopedSocketPath
+        ))
     }
 
     @Test

@@ -25,10 +25,16 @@ Prefer IDs when you can capture them, labels when you can't, and coordinates onl
 
 Peekaboo has two input delivery modes:
 
-- **Background** (default when a target process is known) posts process-targeted input without activating the app. `click`, `type`, `press`, `hotkey`, and `paste` use this mode when you pass `--app`, `--pid`, `--window-id`, or a snapshot with process metadata.
+- **Background** (default when a target process is known) posts process-targeted input without activating the app. Keyboard commands (`type`, `press`, `hotkey`, and `paste`) require `--app`, `--pid`, or supported snapshot process metadata. A window selector cannot safely identify the focused element inside a multi-window process, so keyboard window targeting requires `--foreground`. Background click can retain its exact window/element target.
 - **Foreground** focuses the target first, then sends normal/global input to the active key window or mouse focus. Add `--foreground` when an app ignores background input, when a text field only accepts key-window input, or when you want focus/Space switching to be part of the action.
 
-Focus flags such as `--space-switch` and `--bring-to-current-space` imply foreground delivery. `--no-auto-focus` is different: it disables Peekaboo's focus attempt, so use it only when the target state is already correct and you want to avoid changing focus. Background element/query clicks can complete through Accessibility alone. Keyboard input, coordinate clicks, and synthetic click fallback require Event Synthesizing for the sender shown by `peekaboo permissions status`; request it with `peekaboo permissions request-event-synthesizing`.
+Focus flags tune foreground focus behavior but do not silently change delivery mode. Add `--foreground` explicitly. `--no-auto-focus` also does not discard a background keyboard PID. Background element/query/coordinate clicks complete through Accessibility alone. Keyboard input and foreground synthetic pointer input require Event Synthesizing for the sender shown by `peekaboo permissions status`; request it with `peekaboo permissions request-event-synthesizing`.
+
+Pointer delivery is deliberately stricter. A targeted `scroll --on <id>` stays in the background and invokes only the element's Accessibility scroll action; it never falls back to the shared cursor. Targetless, smooth, or delayed wheel input requires `--foreground`. `move`, `drag`, and `swipe` always manipulate the shared physical cursor, so they also require explicit `--foreground` consent. Their Space/focus modifiers are only valid with that foreground mode; there is no misleading `--no-auto-focus` escape hatch.
+
+Application menu list/click, dialog list, dialog button click, normal dialog dismissal, and window close also default to background Accessibility actions. Dialog list never focuses. Dialog keyboard/file flows, forced Escape dismissal, coordinate fallback, and window-close Cmd-W fallback require an explicit `--foreground` (or `foreground: true` in MCP) so these global actions cannot interrupt an unrelated foreground app by accident.
+
+Observation follows the same background-first rule. `see`, `inspect-ui`, `image`, and `capture` do not focus targeted apps by default. Web-content focus recovery is opt-in with `see --web-focus`, `inspect-ui --web-focus`, or MCP `web_focus: true`; foreground image/live capture is opt-in with `--capture-focus foreground` or MCP `capture_focus: "foreground"`.
 
 Examples:
 
@@ -50,7 +56,7 @@ peekaboo type "github.com/openclaw/Peekaboo" --app Safari --return --foreground
 | [type](commands/type.md) | typing strings into targeted fields |
 | [press](commands/press.md) | individual key presses (return, escape, arrows, etc.) |
 | [hotkey](commands/hotkey.md) | shortcut combos, including background apps |
-| [scroll](commands/scroll.md) | wheel scrolling at a point or on a target |
+| [scroll](commands/scroll.md) | background AX scrolling on a target, or explicit foreground wheel input |
 | [drag](commands/drag.md) | press, move, release — files, sliders, selections |
 | [swipe](commands/swipe.md) | trackpad-style multi-finger gestures |
 | [move](commands/move.md) | warp the mouse without clicking |
@@ -101,7 +107,7 @@ Three primitives, four lines. The agent does the same thing under the hood — i
 - Always run [`peekaboo see`](commands/see.md) when an element is unreachable. The AX tree refreshes after focus changes; capture again if a click fails.
 - Use [focus](focus.md) and [application-resolving](application-resolving.md) for tricky cases (multiple windows, helper apps, processes that hide on activation).
 - Wrap risky sequences with `peekaboo sleep 0.2` — humans don't fire ten clicks in a single frame, and neither should you.
-- Prefer background delivery for routine app-specific input so automations do not steal focus.
+- Prefer background click, keyboard targeting, and targeted AX scrolling for routine app-specific input.
 - Add `--foreground` only when an app needs a focused key window, Space switch, or foreground mouse event.
 
 ## Going further

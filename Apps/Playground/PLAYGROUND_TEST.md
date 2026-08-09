@@ -120,7 +120,7 @@
   - `.artifacts/playground-tools/run-script-see.png`
   - `.artifacts/playground-tools/20251217-173849-run-playground-smoke-{keyboard,click,text}.log`
 - **Verification**: Execution report shows 6/6 steps succeeded; the fixture hotkey removes TabView flakiness and the Playground logs confirm the click + text update.
-- **Notes**: Script parameters must use the enum coding format (`{"generic":{"_0":{...}}}`) so ProcessService can normalize them.
+- **Notes**: Script parameters use the flat JSON form documented by `peekaboo run` (for example, `{"app":"Playground","foreground":false}`). Legacy `generic._0` wrappers still decode for compatibility.
 
 ### ✅ `sleep` command – timing verification
 - **Command**: `python - <<'PY' … subprocess.run(["pnpm","run","peekaboo","--","sleep","2000"]) …` (see shell history)

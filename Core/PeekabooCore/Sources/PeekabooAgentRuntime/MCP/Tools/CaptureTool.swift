@@ -38,8 +38,9 @@ public struct CaptureTool: MCPTool {
                 "screen_index": SchemaBuilder.number(description: "Optional screen index"),
                 "region": SchemaBuilder.string(description: "x,y,width,height for area mode"),
                 "capture_focus": SchemaBuilder.string(
-                    description: "auto|background|foreground",
-                    enum: ["auto", "background", "foreground"]),
+                    description: "background (default)|foreground (activate target)|auto (legacy)",
+                    enum: ["background", "foreground", "auto"],
+                    default: "background"),
 
                 // Live cadence
                 "duration_seconds": SchemaBuilder.number(description: "Duration seconds (default 60, max 180)"),
@@ -83,6 +84,7 @@ public struct CaptureTool: MCPTool {
     @MainActor
     public func execute(arguments: ToolArguments) async throws -> ToolResponse {
         let request = try await CaptureRequest(arguments: arguments, windows: self.context.windows)
+        try await self.prepareCaptureFocus(request)
         let dependencies = WatchCaptureDependencies(
             screenCapture: self.context.screenCapture,
             screenService: self.context.screens,
@@ -127,5 +129,19 @@ public struct CaptureTool: MCPTool {
             meta: ToolEventSummary.merge(
                 summary: meta,
                 into: CaptureMetaBuilder.buildMeta(from: result)))
+    }
+
+    @MainActor
+    private func prepareCaptureFocus(_ request: CaptureRequest) async throws {
+        guard request.source == .live, request.options.captureFocus != .background else { return }
+
+        if request.options.captureFocus == .foreground, let windowID = request.scope.windowId {
+            try await self.context.windows.focusWindow(target: .windowId(Int(windowID)))
+        } else if let identifier = request.scope.applicationIdentifier {
+            try await self.context.applications.activateApplication(identifier: identifier)
+        } else {
+            return
+        }
+        try await Task.sleep(nanoseconds: 50_000_000)
     }
 }

@@ -89,8 +89,13 @@ extension SeeCommand: CommanderSignatureProviding {
                     long: "menubar"
                 ),
                 .commandFlag(
+                    "webFocus",
+                    help: "Allow an AXPress web-content focus retry for sparse Chromium/Tauri trees",
+                    long: "web-focus"
+                ),
+                .commandFlag(
                     "noWebFocus",
-                    help: "Skip web-content focus fallback when no text fields are detected",
+                    help: "Deprecated no-op; web-content focus retries are disabled by default",
                     long: "no-web-focus"
                 ),
             ]

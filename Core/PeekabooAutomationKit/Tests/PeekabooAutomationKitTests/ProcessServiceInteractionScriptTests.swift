@@ -73,10 +73,14 @@ final class ProcessServiceInteractionScriptTests: XCTestCase {
             ScriptStep(stepId: "hotkey", comment: nil, command: "hotkey", params: .generic([
                 "key": "p",
                 "modifiers": "command,shift",
+                "pid": "4242",
             ])),
             snapshotId: nil)
 
-        XCTAssertEqual(automation.hotkeys, ["cmd,shift,p"])
+        XCTAssertEqual(automation.hotkeys, [])
+        XCTAssertEqual(automation.targetedHotkeys, [
+            RecordingInteractionUIAutomationService.TargetedHotkeyCall(keys: "cmd,shift,p", pid: 4242),
+        ])
     }
 
     func testTypeGenericParametersParseCamelCaseControlFlags() async throws {
@@ -97,17 +101,13 @@ final class ProcessServiceInteractionScriptTests: XCTestCase {
                 "field": "Search",
                 "clearFirst": "true",
                 "pressEnter": "true",
+                "pid": "4242",
             ])),
-            snapshotId: "snapshot-1")
+            snapshotId: nil)
 
-        XCTAssertEqual(automation.typedText, [
-            RecordingInteractionUIAutomationService.TypeCall(
-                text: "hello",
-                target: "Search",
-                clearExisting: true,
-                snapshotId: "snapshot-1"),
-        ])
-        XCTAssertEqual(automation.typeActionCounts, [1])
+        XCTAssertEqual(automation.targetedClickPIDs, [4242])
+        XCTAssertEqual(automation.typeActionCounts, [3])
+        XCTAssertEqual(automation.targetedTypePIDs, [4242])
     }
 
     func testSwipeWithoutExplicitStartUsesPrimaryScreenServiceCenter() async throws {
@@ -128,6 +128,7 @@ final class ProcessServiceInteractionScriptTests: XCTestCase {
                 "direction": "left",
                 "distance": "40",
                 "duration": "0.25",
+                "foreground": "true",
             ])),
             snapshotId: nil)
 
@@ -156,6 +157,7 @@ final class ProcessServiceInteractionScriptTests: XCTestCase {
                 "to-x": "30",
                 "to-y": "40",
                 "modifiers": "command,shift",
+                "foreground": "true",
             ])),
             snapshotId: nil)
 
@@ -165,6 +167,165 @@ final class ProcessServiceInteractionScriptTests: XCTestCase {
                 to: CGPoint(x: 30, y: 40),
                 modifiers: "cmd,shift"),
         ])
+    }
+
+    func testTargetlessHotkeyRequiresExplicitForeground() async throws {
+        let automation = RecordingInteractionUIAutomationService()
+        let processService = self.makeProcessService(automation: automation)
+
+        do {
+            _ = try await processService.executeStep(
+                ScriptStep(
+                    stepId: "hotkey",
+                    comment: nil,
+                    command: "hotkey",
+                    params: .hotkey(.init(key: "p", modifiers: ["command"]))),
+                snapshotId: nil)
+            XCTFail("Expected targetless background hotkey to fail")
+        } catch let PeekabooError.invalidInput(message) {
+            XCTAssertTrue(message.contains("foreground"))
+            XCTAssertTrue(message.contains("foreground: true"))
+        }
+        XCTAssertTrue(automation.hotkeys.isEmpty)
+        XCTAssertTrue(automation.targetedHotkeys.isEmpty)
+    }
+
+    func testExplicitForegroundHotkeyUsesGlobalDelivery() async throws {
+        let automation = RecordingInteractionUIAutomationService()
+        let processService = self.makeProcessService(automation: automation)
+
+        _ = try await processService.executeStep(
+            ScriptStep(
+                stepId: "hotkey",
+                comment: nil,
+                command: "hotkey",
+                params: .hotkey(.init(key: "p", modifiers: ["command"], foreground: true))),
+            snapshotId: nil)
+
+        XCTAssertEqual(automation.hotkeys, ["cmd,p"])
+        XCTAssertTrue(automation.targetedHotkeys.isEmpty)
+    }
+
+    func testBackgroundQueryClickUsesPIDTargetedAPI() async throws {
+        let automation = RecordingInteractionUIAutomationService()
+        let processService = self.makeProcessService(automation: automation)
+
+        _ = try await processService.executeStep(
+            ScriptStep(
+                stepId: "click",
+                comment: nil,
+                command: "click",
+                params: .click(.init(label: "Save", pid: 4242))),
+            snapshotId: "unrelated-inherited-snapshot")
+
+        XCTAssertEqual(automation.targetedClickPIDs, [4242])
+        XCTAssertEqual(automation.globalClickCount, 0)
+    }
+
+    func testBackgroundCoordinateClickUsesPIDTargetedAXRoute() async throws {
+        let automation = RecordingInteractionUIAutomationService()
+        let processService = self.makeProcessService(automation: automation)
+
+        _ = try await processService.executeStep(
+            ScriptStep(
+                stepId: "click",
+                comment: nil,
+                command: "click",
+                params: .click(.init(x: 10, y: 20, pid: 4242))),
+            snapshotId: nil)
+
+        XCTAssertEqual(automation.globalClickCount, 0)
+        XCTAssertEqual(automation.targetedClickPIDs, [4242])
+    }
+
+    func testTargetlessCoordinateClickFailsWithoutGlobalInput() async throws {
+        let automation = RecordingInteractionUIAutomationService()
+        let processService = self.makeProcessService(automation: automation)
+
+        do {
+            _ = try await processService.executeStep(
+                ScriptStep(
+                    stepId: "click",
+                    comment: nil,
+                    command: "click",
+                    params: .click(.init(x: 10, y: 20))),
+                snapshotId: nil)
+            XCTFail("Expected targetless coordinate click to require foreground")
+        } catch let PeekabooError.invalidInput(message) {
+            XCTAssertTrue(message.contains("foreground: true"))
+        }
+
+        XCTAssertEqual(automation.globalClickCount, 0)
+        XCTAssertTrue(automation.targetedClickPIDs.isEmpty)
+    }
+
+    func testBackgroundScrollForwardsActionOnlyDelivery() async throws {
+        let automation = RecordingInteractionUIAutomationService()
+        let snapshotId = "scroll-snapshot"
+        let snapshots = InMemorySnapshotManager(detectionResult: ElementDetectionResult(
+            snapshotId: snapshotId,
+            screenshotPath: "/tmp/scroll.png",
+            elements: DetectedElements(),
+            metadata: DetectionMetadata(
+                detectionTime: 0,
+                elementCount: 0,
+                method: "test",
+                windowContext: WindowContext(
+                    applicationName: "Test",
+                    applicationProcessId: 4242),
+                truncationInfo: nil)))
+        let processService = ProcessService(
+            applicationService: UnusedApplicationService(),
+            screenCaptureService: UnusedScreenCaptureService(),
+            snapshotManager: snapshots,
+            uiAutomationService: automation,
+            windowManagementService: UnusedWindowManagementService(),
+            menuService: UnusedMenuService(),
+            dockService: UnusedDockService(),
+            clipboardService: UnusedClipboardService())
+
+        _ = try await processService.executeStep(
+            ScriptStep(
+                stepId: "scroll",
+                comment: nil,
+                command: "scroll",
+                params: .scroll(.init(direction: "down", target: "Results"))),
+            snapshotId: snapshotId)
+
+        XCTAssertEqual(automation.scrollRequests.count, 1)
+        XCTAssertFalse(automation.scrollRequests[0].foreground)
+        XCTAssertEqual(automation.scrollRequests[0].snapshotId, snapshotId)
+        XCTAssertEqual(automation.scrollRequests[0].target, "Results")
+        XCTAssertEqual(automation.scrollRequests[0].delay, 0)
+    }
+
+    func testForegroundScrollForwardsSyntheticConsent() async throws {
+        let automation = RecordingInteractionUIAutomationService()
+        let processService = self.makeProcessService(automation: automation)
+
+        _ = try await processService.executeStep(
+            ScriptStep(
+                stepId: "scroll",
+                comment: nil,
+                command: "scroll",
+                params: .scroll(.init(direction: "down", foreground: true))),
+            snapshotId: nil)
+
+        XCTAssertEqual(automation.scrollRequests.count, 1)
+        XCTAssertTrue(automation.scrollRequests[0].foreground)
+        XCTAssertNil(automation.scrollRequests[0].target)
+    }
+
+    private func makeProcessService(automation: RecordingInteractionUIAutomationService) -> ProcessService {
+        ProcessService(
+            applicationService: UnusedApplicationService(),
+            screenCaptureService: UnusedScreenCaptureService(),
+            snapshotManager: UnusedSnapshotManager(),
+            uiAutomationService: automation,
+            windowManagementService: UnusedWindowManagementService(),
+            menuService: UnusedMenuService(),
+            dockService: UnusedDockService(),
+            clipboardService: UnusedClipboardService())
     }
 }
 
@@ -282,7 +443,11 @@ private final class StaticScreenService: ScreenServiceProtocol {
 
 @available(macOS 14.0, *)
 @MainActor
-private final class RecordingInteractionUIAutomationService: UIAutomationServiceProtocol {
+private final class RecordingInteractionUIAutomationService:
+    ExactWindowTargetedClickServiceProtocol,
+    TargetedHotkeyServiceProtocol,
+    TargetedTypeServiceProtocol
+{
     struct SwipeCall {
         let from: CGPoint
         let to: CGPoint
@@ -291,9 +456,19 @@ private final class RecordingInteractionUIAutomationService: UIAutomationService
 
     var swipes: [SwipeCall] = []
     var hotkeys: [String] = []
+    var targetedHotkeys: [TargetedHotkeyCall] = []
     var typedText: [TypeCall] = []
     var typeActionCounts: [Int] = []
+    var targetedTypePIDs: [pid_t] = []
+    var globalClickCount = 0
+    var targetedClickPIDs: [pid_t] = []
+    var scrollRequests: [ScrollRequest] = []
     var drags: [DragCall] = []
+
+    struct TargetedHotkeyCall: Equatable {
+        let keys: String
+        let pid: pid_t
+    }
 
     struct TypeCall: Equatable {
         let text: String
@@ -310,6 +485,10 @@ private final class RecordingInteractionUIAutomationService: UIAutomationService
 
     func hotkey(keys: String, holdDuration _: Int) async throws {
         self.hotkeys.append(keys)
+    }
+
+    func hotkey(keys: String, holdDuration _: Int, targetProcessIdentifier: pid_t) async throws {
+        self.targetedHotkeys.append(.init(keys: keys, pid: targetProcessIdentifier))
     }
 
     func type(text: String, target: String?, clearExisting: Bool, typingDelay _: Int, snapshotId: String?)
@@ -331,6 +510,17 @@ private final class RecordingInteractionUIAutomationService: UIAutomationService
         return TypeResult(totalCharacters: 0, keyPresses: actions.count)
     }
 
+    func typeActions(
+        _ actions: [TypeAction],
+        cadence _: TypingCadence,
+        snapshotId _: String?,
+        targetProcessIdentifier: pid_t) async throws -> TypeResult
+    {
+        self.typeActionCounts.append(actions.count)
+        self.targetedTypePIDs.append(targetProcessIdentifier)
+        return TypeResult(totalCharacters: 0, keyPresses: actions.count)
+    }
+
     func swipe(from: CGPoint, to: CGPoint, duration: Int, steps _: Int, profile _: MouseMovementProfile) async throws {
         self.swipes.append(SwipeCall(from: from, to: to, duration: duration))
     }
@@ -342,11 +532,30 @@ private final class RecordingInteractionUIAutomationService: UIAutomationService
     }
 
     func click(target _: ClickTarget, clickType _: ClickType, snapshotId _: String?) async throws {
-        fatalError("unused")
+        self.globalClickCount += 1
     }
 
-    func scroll(_: ScrollRequest) async throws {
-        fatalError("unused")
+    func click(
+        target _: ClickTarget,
+        clickType _: ClickType,
+        snapshotId _: String?,
+        targetProcessIdentifier: pid_t) async throws
+    {
+        self.targetedClickPIDs.append(targetProcessIdentifier)
+    }
+
+    func click(
+        target _: ClickTarget,
+        clickType _: ClickType,
+        snapshotId _: String?,
+        targetProcessIdentifier: pid_t,
+        targetWindowID _: Int) async throws
+    {
+        self.targetedClickPIDs.append(targetProcessIdentifier)
+    }
+
+    func scroll(_ request: ScrollRequest) async throws {
+        self.scrollRequests.append(request)
     }
 
     func hasAccessibilityPermission() async -> Bool {

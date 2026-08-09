@@ -5,6 +5,10 @@ import PeekabooAutomation
 enum MCPInteractionTargetError: LocalizedError {
     case windowIndexRequiresApp
     case invalidWindowId
+    case invalidProcessIdentifier
+    case backgroundTargetRequired
+    case backgroundWindowTargetUnsupported
+    case targetProcessNotFound
 
     var errorDescription: String? {
         switch self {
@@ -12,6 +16,17 @@ enum MCPInteractionTargetError: LocalizedError {
             "window_index requires app (or pid) so the index can be resolved deterministically."
         case .invalidWindowId:
             "window_id must be a positive integer."
+        case .invalidProcessIdentifier:
+            "pid must be a positive integer."
+        case .backgroundTargetRequired:
+            "Background keyboard input requires app or pid targeting. " +
+                "Set foreground=true for intentional global input."
+        case .backgroundWindowTargetUnsupported:
+            "Background keyboard delivery cannot safely target a specific window. " +
+                "Use app/pid without a window selector, or set foreground=true to focus the window first."
+        case .targetProcessNotFound:
+            "Could not resolve a running target process. Check the app/pid, or set foreground=true for intentional " +
+                "global input."
         }
     }
 }
@@ -31,6 +46,10 @@ struct MCPInteractionTarget {
     }
 
     func validate() throws {
+        if let pid, pid <= 0 {
+            throw MCPInteractionTargetError.invalidProcessIdentifier
+        }
+
         if let windowId, windowId <= 0 {
             throw MCPInteractionTargetError.invalidWindowId
         }
@@ -151,6 +170,31 @@ struct MCPInteractionTarget {
             self.windowId != nil ||
             self.windowIndex != nil ||
             !(self.windowTitle?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+    }
+
+    var hasWindowSelector: Bool {
+        self.windowId != nil || self.windowIndex != nil ||
+            !(self.windowTitle?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+    }
+
+    func requireBackgroundProcessIdentifier(
+        applications: any ApplicationServiceProtocol,
+        windows: any WindowManagementServiceProtocol) async throws -> pid_t
+    {
+        try self.validate()
+        guard self.hasTarget else {
+            throw MCPInteractionTargetError.backgroundTargetRequired
+        }
+        guard !self.hasWindowSelector else {
+            throw MCPInteractionTargetError.backgroundWindowTargetUnsupported
+        }
+        guard let processIdentifier = try await self.processIdentifierIfTargeted(
+            applications: applications,
+            windows: windows), processIdentifier > 0
+        else {
+            throw MCPInteractionTargetError.targetProcessNotFound
+        }
+        return processIdentifier
     }
 
     func focusIfRequested(windows: any WindowManagementServiceProtocol, onlyWhenTargeted: Bool) async throws

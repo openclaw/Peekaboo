@@ -19,10 +19,11 @@ extension PeekabooBridgeServer {
         case .desktopObservation:
             try await self.handleDesktopObservationRequest(request)
         case .detectElements, .inspectAccessibilityTree, .click, .type, .typeActions, .targetedTypeActions,
-             .setValue, .performAction, .scroll, .hotkey, .targetedHotkey, .targetedClick,
+             .setValue, .performAction, .scroll, .targetedScroll, .hotkey, .targetedHotkey, .targetedClick,
              .exactWindowTargetedClick, .swipe, .drag, .moveMouse, .waitForElement:
             try await self.handleAutomationRequest(request)
         case .listWindows, .focusWindow, .moveWindow, .resizeWindow, .setWindowBounds, .closeWindow,
+             .backgroundCloseWindow,
              .minimizeWindow, .maximizeWindow, .getFocusedWindow:
             try await self.handleWindowRequest(request)
         case .listApplications, .findApplication, .getFrontmostApplication, .isApplicationRunning,
@@ -37,7 +38,8 @@ extension PeekabooBridgeServer {
         case .listDockItems, .launchDockItem, .rightClickDockItem, .hideDock, .showDock, .isDockHidden,
              .findDockItem:
             try await self.handleDockRequest(request)
-        case .dialogFindActive, .dialogClickButton, .dialogEnterText, .dialogHandleFile, .dialogDismiss,
+        case .dialogFindActive, .dialogClickButton, .backgroundDialogClickButton, .dialogEnterText,
+             .dialogHandleFile, .dialogDismiss,
              .dialogListElements:
             try await self.handleDialogRequest(request)
         case .createSnapshot, .storeDetectionResult, .getDetectionResult, .storeScreenshot,
@@ -226,6 +228,9 @@ extension PeekabooBridgeServer {
         case let .scroll(payload):
             try await self.services.automation.scroll(payload.request)
             return .ok
+        case let .targetedScroll(payload):
+            try await self.services.automation.scroll(payload.request)
+            return .ok
         case let .hotkey(payload):
             try await self.services.automation.hotkey(keys: payload.keys, holdDuration: payload.holdDuration)
             return .ok
@@ -347,7 +352,14 @@ extension PeekabooBridgeServer {
             try await self.services.windows.setWindowBounds(target: payload.target, bounds: payload.bounds)
             return .ok
         case let .closeWindow(payload):
-            try await self.services.windows.closeWindow(target: payload.target)
+            try await self.services.windows.closeWindow(
+                target: payload.target,
+                allowForegroundFallback: true)
+            return .ok
+        case let .backgroundCloseWindow(payload):
+            try await self.services.windows.closeWindow(
+                target: payload.target,
+                allowForegroundFallback: false)
             return .ok
         case let .minimizeWindow(payload):
             try await self.services.windows.minimizeWindow(target: payload.target)

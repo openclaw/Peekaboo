@@ -16,7 +16,11 @@ struct CaptureLiveCommand: ApplicationResolvable, ErrorHandlingCommand, OutputFo
     @Option(name: .long, help: "Window index to capture") var windowIndex: Int?
     @Option(name: .long, help: "Screen index for screen captures") var screenIndex: Int?
     @Option(name: .long, help: "Region to capture as x,y,width,height (global display coordinates)") var region: String?
-    @Option(name: .long, help: "Window focus behavior") var captureFocus: LiveCaptureFocus = .auto
+    @Option(
+        name: .long,
+        help: "Focus behavior: background (default), foreground (activate target), or legacy auto"
+    ) var captureFocus: LiveCaptureFocus =
+        .background
     @Option(
         name: .long,
         help: """

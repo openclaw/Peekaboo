@@ -94,6 +94,10 @@ extension SeeCommand {
                 saveAnnotatedScreenshot: self.annotate && self.allowsAnnotation(for: target),
                 saveSnapshot: true,
                 snapshotID: snapshotID
+            ),
+            timeout: DesktopObservationTimeouts(
+                overall: self.overallTimeoutSeconds,
+                detection: self.overallTimeoutSeconds
             )
         )
     }
@@ -149,7 +153,7 @@ extension SeeCommand {
         default:
             DesktopDetectionOptions(
                 mode: .accessibility,
-                allowWebFocusFallback: !self.noWebFocus,
+                allowWebFocusFallback: self.webFocus,
                 traversalBudget: self.axTraversalBudget()
             )
         }

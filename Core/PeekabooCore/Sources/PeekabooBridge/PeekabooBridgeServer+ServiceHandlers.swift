@@ -130,7 +130,15 @@ extension PeekabooBridgeServer {
             let result = try await self.services.dialogs.clickButton(
                 buttonText: payload.buttonText,
                 windowTitle: payload.windowTitle,
-                appName: payload.appName)
+                appName: payload.appName,
+                allowGlobalFallback: true)
+            return .dialogResult(result)
+        case let .backgroundDialogClickButton(payload):
+            let result = try await self.services.dialogs.clickButton(
+                buttonText: payload.buttonText,
+                windowTitle: payload.windowTitle,
+                appName: payload.appName,
+                allowGlobalFallback: false)
             return .dialogResult(result)
         case let .dialogEnterText(payload):
             let result = try await self.services.dialogs.enterText(

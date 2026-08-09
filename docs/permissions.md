@@ -25,7 +25,7 @@ If you use a Bridge host, grant permissions to the host reported by `peekaboo pe
 - **macOS 15.0+ (Sequoia)** – core automation APIs depend on Sequoia.
 - **Screen Recording (required)** – enables CGWindow capture and multi-app automation.
 - **Accessibility (recommended)** – improves window focus, menu interaction, dialog control, and action-based element/query clicks.
-- **Event Synthesizing (optional)** – enables background keyboard input, coordinate clicks, and synthetic click fallback without activating the target app.
+- **Event Synthesizing (optional)** – enables background keyboard input and explicitly foreground synthetic pointer input (`click --foreground`, targetless/smooth scroll, move, drag, and swipe). Background clicks use Accessibility.
 
 For build and runtime version details, see [platform-support.md](platform-support.md).
 
@@ -46,7 +46,7 @@ For build and runtime version details, see [platform-support.md](platform-suppor
    - Run `peekaboo permissions request-event-synthesizing`.
    - By default this requests access for the selected Peekaboo Bridge host, which is the process that sends background input. Add `--no-remote` to request access for the local CLI process instead.
    - If needed, enable Peekaboo in System Settings → Privacy & Security → Accessibility.
-   - Benefit: process-targeted typing, hotkeys, key presses, paste, coordinate clicks, and click fallback without focus stealing.
+   - Benefit: process-targeted typing, hotkeys, key presses, and paste, plus explicitly foreground synthetic pointer operations.
    - If you prefer focused/global input, pass `--foreground` to the interaction command; foreground mode still benefits from Accessibility for focusing windows.
 
 4. **Check Permissions**

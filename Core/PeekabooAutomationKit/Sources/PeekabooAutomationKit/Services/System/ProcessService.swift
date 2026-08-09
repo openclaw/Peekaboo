@@ -121,8 +121,8 @@ public final class ProcessService: ProcessServiceProtocol {
     }
 
     private nonisolated static func describeScriptDecodingError(_ error: DecodingError, path: String) -> String {
-        let hint = "Tip: Peekaboo script params use Swift enum coding " +
-            "(e.g. `{\"params\":{\"generic\":{\"_0\":{...}}}}`)."
+        let hint = "Tip: use a flat params object " +
+            "(e.g. `{\"params\":{\"app\":\"TextEdit\",\"text\":\"hello\"}}`)."
 
         func formatContext(_ context: DecodingError.Context) -> String {
             let codingPath = context.codingPath.map(\.stringValue).joined(separator: ".")

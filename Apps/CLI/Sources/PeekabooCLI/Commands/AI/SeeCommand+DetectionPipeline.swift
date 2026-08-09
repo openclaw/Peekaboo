@@ -25,7 +25,7 @@ extension SeeCommand {
             windowTitle: captureResult.metadata.windowInfo?.title,
             windowID: captureContext.windowIdOverride ?? captureResult.metadata.windowInfo?.windowID,
             windowBounds: captureContext.captureBounds ?? captureResult.metadata.windowInfo?.bounds,
-            shouldFocusWebContent: self.noWebFocus ? false : true,
+            shouldFocusWebContent: self.webFocus,
             traversalBudget: self.axTraversalBudget()
         )
 
@@ -122,7 +122,7 @@ extension SeeCommand {
         }
 
         self.logger.verbose("Using desktop observation pipeline", category: "Capture", metadata: [
-            "target": self.observationTargetDescription(target)
+            "target": self.observationTargetDescription(target),
         ])
         let mode = self.determineMode()
         self.logger.operationStart("capture_phase", metadata: ["mode": mode.rawValue])
@@ -141,7 +141,7 @@ extension SeeCommand {
         }
 
         self.logger.operationComplete("capture_phase", metadata: [
-            "mode": mode.rawValue
+            "mode": mode.rawValue,
         ])
 
         self.logObservationSpans(observation.timings)

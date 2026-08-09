@@ -153,6 +153,7 @@ extension UIAutomationService {
      */
     public func click(target: ClickTarget, clickType: ClickType, snapshotId: String?) async throws {
         self.logger.debug("Delegating click to ClickService")
+        defer { self.elementDetectionService.invalidateCache() }
         let result = try await self.normalizingSnapshotErrors {
             try await self.clickService.click(target: target, clickType: clickType, snapshotId: snapshotId)
         }
@@ -172,6 +173,7 @@ extension UIAutomationService {
         targetProcessIdentifier: pid_t) async throws
     {
         self.logger.debug("Delegating background click to ClickService")
+        defer { self.elementDetectionService.invalidateCache() }
         let result = try await self.normalizingSnapshotErrors {
             try await self.clickService.click(
                 target: target,
@@ -196,6 +198,7 @@ extension UIAutomationService {
         targetWindowID: Int) async throws
     {
         self.logger.debug("Delegating exact-window background click to ClickService")
+        defer { self.elementDetectionService.invalidateCache() }
         let result = try await self.normalizingSnapshotErrors {
             try await self.clickService.click(
                 target: target,

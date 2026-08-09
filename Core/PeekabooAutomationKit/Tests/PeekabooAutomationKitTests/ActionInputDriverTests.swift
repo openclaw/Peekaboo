@@ -434,6 +434,7 @@ struct ActionInputDriverTests {
                 return
             }
             #expect(message.contains("did not change"))
+            #expect(message.contains("targeted typing"))
             #expect(element.setValues == [.double(0.75)])
         } catch {
             Issue.record("Unexpected error: \(error)")

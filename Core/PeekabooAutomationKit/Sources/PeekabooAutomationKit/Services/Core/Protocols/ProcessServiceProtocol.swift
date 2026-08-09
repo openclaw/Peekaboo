@@ -63,6 +63,105 @@ public struct ScriptStep: Codable, Sendable {
         self.command = command
         self.params = params
     }
+
+    private enum CodingKeys: String, CodingKey {
+        case stepId
+        case comment
+        case command
+        case params
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.stepId = try container.decode(String.self, forKey: .stepId)
+        self.comment = try container.decodeIfPresent(String.self, forKey: .comment)
+        self.command = try container.decode(String.self, forKey: .command)
+
+        guard container.contains(.params), try !(container.decodeNil(forKey: .params)) else {
+            self.params = nil
+            return
+        }
+
+        // Continue accepting the original synthesized enum representation so existing scripts keep working.
+        if let legacy = try? container.decode(ProcessCommandParameters.self, forKey: .params) {
+            self.params = legacy
+            return
+        }
+
+        let flat = try container.decode([String: FlatScriptParameter?].self, forKey: .params)
+        self.params = .generic(flat.compactMapValues { $0?.stringValue })
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(self.stepId, forKey: .stepId)
+        try container.encodeIfPresent(self.comment, forKey: .comment)
+        try container.encode(self.command, forKey: .command)
+
+        guard let params else {
+            try container.encodeNil(forKey: .params)
+            return
+        }
+
+        let paramsEncoder = container.superEncoder(forKey: .params)
+        switch params {
+        case let .click(value): try value.encode(to: paramsEncoder)
+        case let .type(value): try value.encode(to: paramsEncoder)
+        case let .hotkey(value): try value.encode(to: paramsEncoder)
+        case let .scroll(value): try value.encode(to: paramsEncoder)
+        case let .menuClick(value): try value.encode(to: paramsEncoder)
+        case let .dialog(value): try value.encode(to: paramsEncoder)
+        case let .launchApp(value): try value.encode(to: paramsEncoder)
+        case let .findElement(value): try value.encode(to: paramsEncoder)
+        case let .screenshot(value): try value.encode(to: paramsEncoder)
+        case let .focusWindow(value): try value.encode(to: paramsEncoder)
+        case let .resizeWindow(value): try value.encode(to: paramsEncoder)
+        case let .swipe(value): try value.encode(to: paramsEncoder)
+        case let .drag(value): try value.encode(to: paramsEncoder)
+        case let .sleep(value): try value.encode(to: paramsEncoder)
+        case let .dock(value): try value.encode(to: paramsEncoder)
+        case let .clipboard(value): try value.encode(to: paramsEncoder)
+        case let .generic(value): try value.encode(to: paramsEncoder)
+        }
+    }
+}
+
+/// Scalar or string-list values accepted by the stable, flat script parameter schema.
+private enum FlatScriptParameter: Decodable {
+    case string(String)
+    case bool(Bool)
+    case int(Int)
+    case double(Double)
+    case strings([String])
+
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if let value = try? container.decode(String.self) {
+            self = .string(value)
+        } else if let value = try? container.decode(Bool.self) {
+            self = .bool(value)
+        } else if let value = try? container.decode(Int.self) {
+            self = .int(value)
+        } else if let value = try? container.decode(Double.self) {
+            self = .double(value)
+        } else if let value = try? container.decode([String].self) {
+            self = .strings(value)
+        } else {
+            throw DecodingError.dataCorruptedError(
+                in: container,
+                debugDescription: "Script params must be strings, booleans, numbers, or string arrays")
+        }
+    }
+
+    var stringValue: String {
+        switch self {
+        case let .string(value): value
+        case let .bool(value): String(value)
+        case let .int(value): String(value)
+        case let .double(value): String(value)
+        case let .strings(value): value.joined(separator: ",")
+        }
+    }
 }
 
 /// Result of executing a script step

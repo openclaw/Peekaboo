@@ -5,12 +5,8 @@
       "stepId": "focus_playground",
       "command": "app",
       "params": {
-        "generic": {
-          "_0": {
-            "action": "focus",
-            "name": "Playground"
-          }
-        }
+        "action": "focus",
+        "name": "Playground"
       },
       "comment": "Ensure Playground is foregrounded before we open fixture windows."
     },
@@ -18,13 +14,10 @@
       "stepId": "open_click_fixture",
       "command": "hotkey",
       "params": {
-        "generic": {
-          "_0": {
-            "cmd": "true",
-            "ctrl": "true",
-            "key": "1"
-          }
-        }
+        "cmd": true,
+        "ctrl": true,
+        "key": "1",
+        "foreground": true
       },
       "comment": "Open the dedicated Click Fixture window (⌘⌃1)."
     },
@@ -32,11 +25,7 @@
       "stepId": "wait_for_fixture",
       "command": "sleep",
       "params": {
-        "generic": {
-          "_0": {
-            "duration": "0.3"
-          }
-        }
+        "duration": 0.3
       },
       "comment": "Give the fixture window time to appear and become frontmost."
     },
@@ -44,13 +33,9 @@
       "stepId": "see_click_fixture",
       "command": "see",
       "params": {
-        "generic": {
-          "_0": {
-            "annotate": "true",
-            "mode": "frontmost",
-            "path": ".artifacts/playground-tools/run-no-fail-fast-see.png"
-          }
-        }
+        "annotate": true,
+        "mode": "frontmost",
+        "path": ".artifacts/playground-tools/run-no-fail-fast-see.png"
       },
       "comment": "Capture annotated UI map for downstream steps."
     },
@@ -58,11 +43,7 @@
       "stepId": "click_missing",
       "command": "click",
       "params": {
-        "generic": {
-          "_0": {
-            "query": "Definitely Missing"
-          }
-        }
+        "query": "Definitely Missing"
       },
       "comment": "Intentionally fail: this button does not exist."
     },
@@ -70,14 +51,9 @@
       "stepId": "click_single",
       "command": "click",
       "params": {
-        "generic": {
-          "_0": {
-            "query": "Single Click"
-          }
-        }
+        "query": "Single Click"
       },
       "comment": "Should still execute when run uses --no-fail-fast."
     }
   ]
 }
-

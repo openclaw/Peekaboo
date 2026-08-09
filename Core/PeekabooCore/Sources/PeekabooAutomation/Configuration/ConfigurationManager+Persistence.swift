@@ -60,7 +60,7 @@ private enum ConfigurationDefaults {
         "savePath": "~/Desktop/Screenshots",
         "imageFormat": "png",
         "captureMode": "window",
-        "captureFocus": "auto"
+        "captureFocus": "background"
       },
       "logging": {
         "level": "info",

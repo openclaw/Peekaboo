@@ -27,7 +27,7 @@ For `capture video`, `metadata.json` and JSON stdout include `options.video` wit
 
 ## `capture live` flags
 - Targeting: `--mode screen|window|frontmost|area`, `--screen-index`, `--app`, `--pid`, `--window-title`, `--window-index`, `--region x,y,width,height` (global coords)
-- Focus: `--capture-focus auto|background|foreground`
+- Focus: `--capture-focus background|foreground|auto`; background is the default, foreground explicitly activates the target, and auto is the legacy focus-if-needed mode.
 - Cadence: `--duration` (<=180), `--idle-fps`, `--active-fps`, `--threshold`, `--heartbeat-sec`, `--quiet-ms`
 - Caps: `--max-frames` (default 800), `--max-mb`
 - Diff/output: `--highlight-changes`, `--resolution-cap` (default 1440), `--diff-strategy fast|quality`, `--diff-budget-ms`, `--video-out <path>`

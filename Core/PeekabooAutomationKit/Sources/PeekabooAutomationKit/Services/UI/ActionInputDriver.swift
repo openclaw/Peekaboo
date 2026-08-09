@@ -314,7 +314,9 @@ struct ActionInputDriver: ActionInputDriving {
                 }
                 guard element.selectedValue == requested else {
                     throw ActionInputError.failed(
-                        "Accessibility selection did not change to the requested value")
+                        "Accessibility selection did not change to the requested value. " +
+                            "This control may require input events; click or focus it, then use targeted typing, " +
+                            "or retry with explicit foreground delivery.")
                 }
                 return ActionInputResult(
                     actionName: kAXSelectedAttribute as String,
@@ -328,7 +330,9 @@ struct ActionInputDriver: ActionInputDriving {
             }
             guard Self.value(element.value, matches: requested) else {
                 throw ActionInputError.failed(
-                    "Accessibility value did not change to the requested value")
+                    "Accessibility value did not change to the requested value. " +
+                        "This control may require input events; click or focus it, then use targeted typing, " +
+                        "or retry with explicit foreground delivery.")
             }
             return ActionInputResult(
                 actionName: AXActionNames.kAXSetValueAction,

@@ -84,7 +84,8 @@ struct InspectUIToolExecutionTests {
     }
 
     @Test
-    func `failed Inspect UI removes its pending snapshot`() async throws {
+    func `failed read-only Inspect UI removes its snapshot`() async throws {
+        await UISnapshotManager.shared.removeAllSnapshots()
         let automation = await MainActor.run { InspectUITestAutomationService(accessibilityGranted: true) }
         let snapshots = await MainActor.run { InMemorySnapshotManager() }
         let context = await Self.makeContext(automation: automation, snapshots: snapshots)
@@ -95,6 +96,7 @@ struct InspectUIToolExecutionTests {
         #expect(response.isError)
         #expect(try await snapshots.listSnapshots().isEmpty)
         #expect(await UISnapshotManager.shared.getSnapshot(id: nil) == nil)
+        await UISnapshotManager.shared.removeAllSnapshots()
     }
 
     @Test
@@ -109,7 +111,9 @@ struct InspectUIToolExecutionTests {
         let context = await Self.makeContext(automation: automation, snapshots: snapshots)
         let tool = InspectUITool(context: context)
 
-        let response = try await context.execute(tool: tool, arguments: ToolArguments(raw: [:]))
+        let response = try await context.execute(
+            tool: tool,
+            arguments: ToolArguments(raw: ["web_focus": true]))
 
         #expect(response.isError)
         #expect(try await snapshots.listSnapshots().isEmpty)
@@ -318,6 +322,27 @@ struct InspectUIToolExecutionTests {
         #expect(response.isError == false)
         let lastContext = await MainActor.run { automation.lastWindowContext }
         #expect(lastContext?.applicationName == "Safari")
+        #expect(lastContext?.shouldFocusWebContent == false)
+    }
+
+    @Test
+    func `Inspect UI web focus retry is explicit`() async throws {
+        let automation = await MainActor.run {
+            InspectUITestAutomationService(
+                accessibilityGranted: true,
+                detectionResult: Self.emptyDetectionResult(id: "snapshot-inspect-web-focus"))
+        }
+        let context = await Self.makeContext(automation: automation)
+        let tool = InspectUITool(context: context)
+
+        let response = try await tool.execute(arguments: ToolArguments(raw: [
+            "app_target": "Safari",
+            "web_focus": true,
+        ]))
+
+        #expect(response.isError == false)
+        let lastContext = await MainActor.run { automation.lastWindowContext }
+        #expect(lastContext?.shouldFocusWebContent == true)
     }
 
     @Test

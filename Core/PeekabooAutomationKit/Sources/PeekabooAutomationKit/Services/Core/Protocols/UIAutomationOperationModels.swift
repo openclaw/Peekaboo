@@ -67,14 +67,20 @@ public struct ScrollRequest: Sendable, Codable {
     public var smooth: Bool
     public var delay: Int
     public var snapshotId: String?
+    /// Explicit consent to use global synthetic pointer events.
+    ///
+    /// Background scrolls are accessibility-action-only and never move or otherwise reuse the
+    /// physical pointer. Foreground scrolls may synthesize wheel events at the resolved target.
+    public var foreground: Bool
 
     public init(
         direction: PeekabooFoundation.ScrollDirection,
         amount: Int,
         target: String? = nil,
         smooth: Bool = false,
-        delay: Int = 10,
-        snapshotId: String? = nil)
+        delay: Int = 0,
+        snapshotId: String? = nil,
+        foreground: Bool = false)
     {
         self.direction = direction
         self.amount = amount
@@ -82,6 +88,28 @@ public struct ScrollRequest: Sendable, Codable {
         self.smooth = smooth
         self.delay = delay
         self.snapshotId = snapshotId
+        self.foreground = foreground
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case direction
+        case amount
+        case target
+        case smooth
+        case delay
+        case snapshotId
+        case foreground
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.direction = try container.decode(PeekabooFoundation.ScrollDirection.self, forKey: .direction)
+        self.amount = try container.decode(Int.self, forKey: .amount)
+        self.target = try container.decodeIfPresent(String.self, forKey: .target)
+        self.smooth = try container.decodeIfPresent(Bool.self, forKey: .smooth) ?? false
+        self.delay = try container.decodeIfPresent(Int.self, forKey: .delay) ?? 0
+        self.snapshotId = try container.decodeIfPresent(String.self, forKey: .snapshotId)
+        self.foreground = try container.decodeIfPresent(Bool.self, forKey: .foreground) ?? false
     }
 }
 

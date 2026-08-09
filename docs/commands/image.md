@@ -26,7 +26,7 @@ If you need a longer-running, change-aware capture (idle/active FPS, contact she
 | `--path <file>` | Force the output path; if omitted, filenames land in the CWD using sanitized app/window names plus an ISO8601 timestamp. |
 | `--retina` | Store captures at native Retina scale (2x on HiDPI). Omit for the default 1x logical resolution to save space and speed. |
 | `--format png|jpg` | Emit PNG (default) or re-encode to JPEG at ~92% quality. |
-| `--capture-focus auto|background|foreground` | `auto` focuses the target app without switching Spaces, `foreground` brings it forward and pulls it onto the current Space, `background` skips all focus juggling. |
+| `--capture-focus background|foreground|auto` | `background` is the default and never activates the target. `foreground` explicitly brings the target forward. `auto` remains as a legacy focus-if-needed mode. |
 | `--analyze "prompt"` | Send the saved file to the configured AI provider and include `{provider,model,text}` in the output payload. |
 
 ## Implementation notes
@@ -46,8 +46,8 @@ peekaboo image --app Safari --window-title "Release Notes" --format jpg --path /
 # Dump every display and run a quick AI summarization
 peekaboo image --mode screen --analyze "Summarize the key UI differences between the monitors"
 
-# Snapshot only the menu bar icons without stealing focus from the active Space
-peekaboo image --app menubar --capture-focus background
+# Snapshot only the menu bar icons without stealing focus from the active Space (background is the default)
+peekaboo image --app menubar
 
 # Capture a fixed desktop region in global display coordinates
 peekaboo image --mode area --region 100,120,640,360 --path /tmp/region.png

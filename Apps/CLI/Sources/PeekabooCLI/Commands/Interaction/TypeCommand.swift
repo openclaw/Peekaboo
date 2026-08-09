@@ -13,7 +13,7 @@ struct TypeCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConfi
     @Option(name: .customLong("text"), help: "Text to type (alternative to positional argument)")
     var textOption: String?
 
-    @Option(help: "Snapshot ID, or 'latest' (uses latest if not specified)")
+    @Option(help: "Snapshot ID, or 'latest'")
     var snapshot: String?
 
     @Option(help: "Delay between keystrokes in milliseconds")
@@ -114,7 +114,6 @@ struct TypeCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConfi
             let targetPID = try await self.backgroundProcessIdentifier(snapshotId: observation.snapshotId)
             self.resolvedRuntime.beginInteractionMutation()
             if targetPID == nil {
-                self.warnIfFocusUnknown(snapshotId: observation.snapshotId)
                 try await self.focusIfNeeded(snapshotId: observation.focusSnapshotId(for: self.target))
             }
             let typeResult = try await self.executeTypeActions(
@@ -178,7 +177,7 @@ struct TypeCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConfi
         // a potentially unrelated latest snapshot for the keystroke injection path.
         await InteractionObservationContext.resolve(
             explicitSnapshot: self.snapshot,
-            fallbackToLatest: !self.target.hasAnyTarget,
+            fallbackToLatest: false,
             snapshots: self.services.snapshots
         )
     }
@@ -202,16 +201,6 @@ struct TypeCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConfi
                 throw ValidationError("--wpm is only valid when --profile human")
             }
         }
-    }
-
-    private func warnIfFocusUnknown(snapshotId: String?) {
-        guard self.focusOptions.autoFocus, snapshotId == nil, !self.target.hasAnyTarget else { return }
-        self.logger.warn(
-            """
-            Typing without a target (--app/--pid/--window-title/--window-index) or snapshot. \
-            We'll inject keys blindly; run 'peekaboo see' or provide a target if you need focus guarantees.
-            """
-        )
     }
 
     private func focusIfNeeded(snapshotId: String?) async throws {
@@ -240,14 +229,11 @@ struct TypeCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConfi
     }
 
     private func backgroundProcessIdentifier(snapshotId: String?) async throws -> pid_t? {
-        guard !KeyboardDeliverySupport.shouldUseForeground(
-            foreground: self.foreground,
-            focusOptions: self.focusOptions
-        ) else {
+        guard !self.foreground else {
             return nil
         }
 
-        return try await KeyboardDeliverySupport.backgroundProcessIdentifier(
+        return try await KeyboardDeliverySupport.requireBackgroundProcessIdentifier(
             target: self.target,
             snapshotId: snapshotId,
             services: self.services
@@ -353,23 +339,22 @@ extension TypeCommand: ParsableCommand {
                 commandName: "type",
                 abstract: "Type text or send keyboard input",
                 discussion: """
-                    The 'type' command sends keyboard input to a targeted app/window,
-                    snapshot process, or the current focused element. Background delivery
-                    is used by default when a target process is known.
+                    The 'type' command sends keyboard input to a targeted app or snapshot
+                    process. Background delivery is the default and requires a process target.
+                    Use --foreground for intentional global input.
 
                     EXAMPLES:
                       peekaboo type "Hello World" --app TextEdit # Background-target TextEdit
-                      peekaboo type "user@example.com"      # Type email
-                      peekaboo type "text" --delay 0        # Type at maximum speed
-                      peekaboo type "text" --delay 50       # Type slower (50ms between keys)
-                      peekaboo type "text" --wpm 150       # Type like a fast human (150 WPM)
-                      peekaboo type "text" --profile linear # Force deterministic linear cadence
-                      peekaboo type "password" --return     # Type and press return
-                      peekaboo type --tab 3                 # Press tab 3 times
-                      peekaboo type "text" --clear          # Clear field first
-                      peekaboo type "Line 1\nLine 2"        # Type with newline
-                      peekaboo type "Name:\tJohn"           # Type with tab
-                      peekaboo type "Path: C:\\data"       # Type literal backslash
+                      peekaboo type "user@example.com" --foreground
+                      peekaboo type "text" --app TextEdit --delay 0
+                      peekaboo type "text" --app TextEdit --delay 50
+                      peekaboo type "text" --app TextEdit --wpm 150
+                      peekaboo type "password" --app Safari --return
+                      peekaboo type --tab 3 --app Safari
+                      peekaboo type "text" --app TextEdit --clear
+                      peekaboo type "Line 1\nLine 2" --app TextEdit
+                      peekaboo type "Name:\tJohn" --app TextEdit
+                      peekaboo type "Path: C:\\data" --app TextEdit
 
                     SPECIAL KEYS:
                       Use flags for special keys:
@@ -388,9 +373,10 @@ extension TypeCommand: ParsableCommand {
                       \\\\  - Literal backslash
 
                     FOCUS MANAGEMENT:
-                      Provide --app/--pid/window targeting or a snapshot for background delivery.
-                      Use --foreground only when the target requires focused keyboard input.
-                      Without a target, keys are injected into the current focused element.
+                      Provide --app, --pid, or a snapshot for background delivery.
+                      Window selectors require --foreground because process-targeted events
+                      cannot prove which window owns the focused element. Without a target,
+                      --foreground is required for intentional global keyboard input.
 
                     TYPING CADENCE:
                     Linear typing is the default and uses --delay (0ms by default).

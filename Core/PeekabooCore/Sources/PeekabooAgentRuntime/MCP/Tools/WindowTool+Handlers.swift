@@ -10,6 +10,7 @@ extension WindowTool {
         service: any WindowManagementServiceProtocol,
         target: WindowTarget,
         appName: String?,
+        allowForegroundFallback: Bool,
         startTime: Date) async throws -> ToolResponse
     {
         let windows = try await service.listWindows(target: target)
@@ -17,7 +18,9 @@ extension WindowTool {
             return ToolResponse.error("No matching window found to close")
         }
 
-        try await service.closeWindow(target: target)
+        try await service.closeWindow(
+            target: target,
+            allowForegroundFallback: allowForegroundFallback)
 
         let executionTime = Date().timeIntervalSince(startTime)
         let message = self.successMessage(action: "Closed window '\(windowInfo.title)'", duration: executionTime)

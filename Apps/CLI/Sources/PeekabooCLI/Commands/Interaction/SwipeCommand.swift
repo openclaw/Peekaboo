@@ -36,6 +36,9 @@ struct SwipeCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
 
     @OptionGroup var focusOptions: FocusCommandOptions
 
+    @Flag(help: "Confirm foreground pointer movement and focus the target when specified")
+    var foreground = false
+
     @Flag(help: "Use right mouse button for drag")
     var rightButton = false
     @RuntimeStorage private var runtime: CommandRuntime?
@@ -72,6 +75,11 @@ struct SwipeCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
 
         do {
             try self.target.validate()
+            guard self.foreground else {
+                throw ValidationError(
+                    "swipe changes the physical cursor and requires explicit --foreground consent."
+                )
+            }
             // Validate inputs
             guard self.from != nil || self.fromCoords != nil, self.to != nil || self.toCoords != nil else {
                 throw ValidationError(
@@ -249,16 +257,16 @@ extension SwipeCommand: ParsableCommand {
 
                 EXAMPLES:
                   # Swipe between UI elements
-                  peekaboo swipe --from "$SOURCE_ID" --to "$TARGET_ID" --snapshot "$SNAPSHOT_ID"
+                  peekaboo swipe --from "$SOURCE_ID" --to "$TARGET_ID" --snapshot "$SNAPSHOT_ID" --foreground
 
                   # Swipe with coordinates
-                  peekaboo swipe --from-coords 100,200 --to-coords 300,400
+                  peekaboo swipe --from-coords 100,200 --to-coords 300,400 --foreground
 
                   # Mixed mode: element to coordinates
-                  peekaboo swipe --from "$SOURCE_ID" --to-coords 500,300 --duration 1000
+                  peekaboo swipe --from "$SOURCE_ID" --to-coords 500,300 --duration 1000 --foreground
 
                   # Slow swipe for precise gesture
-                  peekaboo swipe --from-coords 50,50 --to-coords 400,400 --duration 2000
+                  peekaboo swipe --from-coords 50,50 --to-coords 400,400 --duration 2000 --foreground
 
                 USAGE:
                   You can specify source and destination using either:
@@ -268,6 +276,8 @@ extension SwipeCommand: ParsableCommand {
 
                   The swipe includes a configurable duration to control the
                   speed of the drag gesture.
+
+                  Swipe always changes the shared physical cursor and requires --foreground.
                 """,
                 version: "2.0.0",
                 showHelpOnEmptyInvocation: true
@@ -295,6 +305,7 @@ extension SwipeCommand: CommanderBindableCommand {
             self.steps = steps
         }
         self.profile = values.singleOption("profile")
+        self.foreground = values.flag("foreground")
         self.rightButton = values.flag("rightButton")
     }
 }

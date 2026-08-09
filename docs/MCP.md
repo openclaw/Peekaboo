@@ -130,6 +130,8 @@ The MCP `image` and `see` tools share target parsing with the desktop observatio
 - pass `menubar` for menu-bar capture;
 - pass `PID:1234`, `PID:1234:2`, `App Name`, `App Name:2`, or `App Name:Window Title` for app/window capture.
 
+Observation and capture do not activate a target by default. `see` and `inspect_ui` only perform the focus-changing `AXWebArea` retry when `web_focus: true` is supplied. `image` and live `capture` use `capture_focus: "background"` by default; pass `capture_focus: "foreground"` when activating the target is intentional. The legacy `auto` value remains accepted for focus-if-needed compatibility.
+
 The MCP `image` tool stores logical 1x captures by default. Pass `scale: "native"` or `retina: true` to request native display pixels. Set `max_dimension` to a positive integer to cap the longest output edge while preserving aspect ratio; inline `format: "data"` captures default to 1500 pixels when no cap is supplied.
 
 ### Capture coordinate context
@@ -146,6 +148,8 @@ The `image` and `see` tools include an additive, versioned `coordinate_context` 
 Consumers should check `version` before interpreting the object. Version `1` uses `logical_space: "global_display_points"` and `origin: "top_left"`. To convert an image-local pixel `(px, py)` to a global logical point, scale it against `delivered_image_size` and add the `logical_bounds` origin; do not assume a fixed Retina factor. The fields are additive, so clients that do not understand them can continue ignoring `_meta`.
 
 The `click` tool accepts screenshot-relative coordinates when they are explicitly bound to a `see` snapshot. Pass `coordinate_space: "image_pixels"` for delivered-raster pixels or `coordinate_space: "normalized"` for values from 0 through 1, plus the snapshot's `reference_id` as `coordinate_reference`. Missing, stale, out-of-bounds, or moved-window references fail without dispatching a click. Bare `coords` retain their existing global logical-point meaning. Screen-wide references are not tied to an application process, so use `foreground: true` (or supply an explicit `pid` for background delivery).
+
+Pointer tools use an explicit interruption policy. `scroll` is background-safe only when `on` identifies an Accessibility-scrollable element; it never falls back to the shared cursor. Set `foreground: true` for targetless, smooth, or delayed scrolling. `move`, `drag`, and `swipe` always manipulate the shared physical cursor, require `foreground: true`, and abort if a requested target cannot be focused. MCP schemas intentionally omit background/auto-focus fields for those global pointer tools.
 
 ```json
 {

@@ -108,7 +108,7 @@ public final class DesktopMutationWatermarkStore: @unchecked Sendable {
     /// without permanently poisoning the monotonic watermark with `Date.distantFuture`.
     public func effectiveWatermark() -> Date? {
         do {
-            return try self.withLock(operation: LOCK_EX) {
+            return try self.withLock(operation: LOCK_EX | LOCK_NB) {
                 let now = Date()
                 let hasPendingMutation = try self.hasPendingMutationUnlocked(
                     recoveredAt: now,

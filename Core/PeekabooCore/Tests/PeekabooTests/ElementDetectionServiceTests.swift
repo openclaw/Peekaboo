@@ -382,6 +382,37 @@ struct ElementDetectionCacheTests {
     }
 
     @Test
+    func `Mutation watermark invalidates cached observation before TTL expires`() {
+        var now = Date(timeIntervalSince1970: 1000)
+        let cache = ElementDetectionCache(ttl: 1.5) { now }
+        let key = ElementDetectionCache.Key(windowID: 7, processID: pid_t(42), allowWebFocus: false)
+
+        cache.store([Self.element(id: "old-value")], for: key)
+        now.addTimeInterval(0.6)
+
+        #expect(
+            cache.elements(
+                for: key,
+                invalidatedThrough: Date(timeIntervalSince1970: 1000.5)) == nil)
+        #expect(cache.elements(for: key) == nil)
+    }
+
+    @Test
+    func `Older mutation watermark preserves a newer cached observation`() {
+        var now = Date(timeIntervalSince1970: 1000)
+        let cache = ElementDetectionCache(ttl: 1.5) { now }
+        let key = ElementDetectionCache.Key(windowID: 7, processID: pid_t(42), allowWebFocus: false)
+
+        cache.store([Self.element(id: "new-value")], for: key)
+        now.addTimeInterval(0.6)
+
+        #expect(
+            cache.elements(
+                for: key,
+                invalidatedThrough: Date(timeIntervalSince1970: 999.9))?.map(\.id) == ["new-value"])
+    }
+
+    @Test
     func `Cache key requires a window id`() {
         let cache = ElementDetectionCache()
 

@@ -2,8 +2,14 @@
 
 ## [3.10.1] - Unreleased
 
+### Added
+- Add a Developer-ID-signed Playground validation harness that continuously detects focus, window, cursor, clipboard, and visualizer leakage during background automation.
+
 ### Changed
 - Remove the obsolete scoped-commit helper now that agent work uses isolated worktrees.
+- Make app launch, open, relaunch, observation, capture, targeted keyboard input, and action-backed scrolling background by default; focus, global keys, synthetic scrolling, and physical pointer gestures now require explicit foreground consent.
+- Route `peekaboo run` through the canonical targeted interaction services with flat agent-friendly JSON parameters while retaining legacy script decoding.
+- Add strict bridge 1.11 capabilities for background scrolling, dialog buttons, and window close so stale hosts fail before unsafe fallback dispatch.
 
 ### Fixed
 - Stop bridge hosts from requiring AppleScript permission for native application activate, hide, unhide, hide-others, and show-all operations.
@@ -12,6 +18,7 @@
 - Suppress desktop-global visualizer overlays for process-targeted background click, type, press, paste, and hotkey delivery.
 - Restore documented app, window, and menu CLI options; unsupported menu-extra item selection and failed app quits now exit nonzero instead of claiming success.
 - Remove the Dock-removal AppleScript path in favor of native accessibility actions.
+- Reject targetless or ambiguous background keyboard, paste, scroll, dialog, and window operations instead of silently falling through to the foreground app or shared cursor.
 
 ## [3.10.0] - 2026-08-02
 

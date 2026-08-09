@@ -8,13 +8,26 @@ import PeekabooFoundation
 @MainActor
 public final class RemoteWindowManagementService: WindowManagementServiceProtocol {
     private let client: PeekabooBridgeClient
+    private let supportsBackgroundClose: Bool
 
-    public init(client: PeekabooBridgeClient) {
+    public init(client: PeekabooBridgeClient, supportsBackgroundClose: Bool = false) {
         self.client = client
+        self.supportsBackgroundClose = supportsBackgroundClose
     }
 
     public func closeWindow(target: WindowTarget) async throws {
         try await self.client.closeWindow(target: target)
+    }
+
+    public func closeWindow(target: WindowTarget, allowForegroundFallback: Bool) async throws {
+        if !allowForegroundFallback, !self.supportsBackgroundClose {
+            throw PeekabooBridgeErrorEnvelope(
+                code: .operationNotSupported,
+                message: "Remote host does not support AX-only background window close; update the host or use --no-remote")
+        }
+        try await self.client.closeWindow(
+            target: target,
+            allowForegroundFallback: allowForegroundFallback)
     }
 
     public func minimizeWindow(target: WindowTarget) async throws {

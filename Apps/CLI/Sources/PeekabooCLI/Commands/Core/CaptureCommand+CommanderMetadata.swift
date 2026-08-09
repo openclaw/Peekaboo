@@ -21,7 +21,11 @@ extension CaptureLiveCommand: CommanderSignatureProviding {
                 .commandOption("windowIndex", help: "Window index to capture", long: "window-index"),
                 .commandOption("screenIndex", help: "Screen index for screen captures", long: "screen-index"),
                 .commandOption("region", help: "Region to capture: x,y,width,height", long: "region"),
-                .commandOption("captureFocus", help: "Window focus behavior", long: "capture-focus"),
+                .commandOption(
+                    "captureFocus",
+                    help: "Focus behavior: background (default), foreground (activate target), or legacy auto",
+                    long: "capture-focus"
+                ),
                 .commandOption(
                     "captureEngine",
                     help: "Capture engine: auto|classic|cg|modern|sckit (defaults to auto)",
@@ -44,10 +48,10 @@ extension CaptureLiveCommand: CommanderSignatureProviding {
                     help: "Minutes before temp sessions auto-clean (default 120)",
                     long: "autoclean-minutes"
                 ),
-                .commandOption("videoOut", help: "Optional MP4 output path", long: "video-out")
+                .commandOption("videoOut", help: "Optional MP4 output path", long: "video-out"),
             ],
             flags: [
-                .commandFlag("highlightChanges", help: "Overlay motion boxes", long: "highlight-changes")
+                .commandFlag("highlightChanges", help: "Overlay motion boxes", long: "highlight-changes"),
             ]
         )
     }
@@ -61,7 +65,7 @@ extension CaptureVideoCommand: CommanderSignatureProviding {
                     label: "input",
                     help: "Input video file",
                     isOptional: false
-                )
+                ),
             ],
             options: [
                 .commandOption("sampleFps", help: "Sample FPS (default 2)", long: "sample-fps"),
@@ -75,10 +79,10 @@ extension CaptureVideoCommand: CommanderSignatureProviding {
                 .commandOption("diffBudgetMs", help: "Diff budget ms", long: "diff-budget-ms"),
                 .commandOption("path", help: "Output directory", long: "path"),
                 .commandOption("autocleanMinutes", help: "Autoclean minutes", long: "autoclean-minutes"),
-                .commandOption("videoOut", help: "Optional MP4 output path", long: "video-out")
+                .commandOption("videoOut", help: "Optional MP4 output path", long: "video-out"),
             ],
             flags: [
-                .commandFlag("noDiff", help: "Keep all sampled frames", long: "no-diff")
+                .commandFlag("noDiff", help: "Keep all sampled frames", long: "no-diff"),
             ]
         )
     }

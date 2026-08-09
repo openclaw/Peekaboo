@@ -5,84 +5,56 @@
       "stepId": "save_original_clipboard",
       "command": "clipboard",
       "params": {
-        "generic": {
-          "_0": {
-            "action": "save",
-            "slot": "original"
-          }
-        }
+        "action": "save",
+        "slot": "original"
       }
     },
     {
       "stepId": "set_clipboard_text",
       "command": "clipboard",
       "params": {
-        "generic": {
-          "_0": {
-            "action": "set",
-            "text": "Peekaboo clipboard smoke"
-          }
-        }
+        "action": "set",
+        "text": "Peekaboo clipboard smoke"
       }
     },
     {
       "stepId": "save_smoke_slot",
       "command": "clipboard",
       "params": {
-        "generic": {
-          "_0": {
-            "action": "save",
-            "slot": "smoke"
-          }
-        }
+        "action": "save",
+        "slot": "smoke"
       }
     },
     {
       "stepId": "overwrite_clipboard_text",
       "command": "clipboard",
       "params": {
-        "generic": {
-          "_0": {
-            "action": "set",
-            "text": "overwritten"
-          }
-        }
+        "action": "set",
+        "text": "overwritten"
       }
     },
     {
       "stepId": "restore_smoke_slot",
       "command": "clipboard",
       "params": {
-        "generic": {
-          "_0": {
-            "action": "restore",
-            "slot": "smoke"
-          }
-        }
+        "action": "restore",
+        "slot": "smoke"
       }
     },
     {
       "stepId": "read_clipboard",
       "command": "clipboard",
       "params": {
-        "generic": {
-          "_0": {
-            "action": "get",
-            "prefer": "public.utf8-plain-text"
-          }
-        }
+        "action": "get",
+        "prefer": "public.utf8-plain-text"
       }
     },
     {
       "stepId": "restore_original_clipboard",
       "command": "clipboard",
       "params": {
-        "generic": {
-          "_0": {
-            "action": "restore",
-            "slot": "original"
-          }
-        }
+        "action": "restore",
+        "slot": "original"
       }
     }
   ]

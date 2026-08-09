@@ -183,13 +183,13 @@ enum MCPToolSnapshotMutationPolicy {
              "paste", "window", "shell":
             .mutation
         case "see":
-            .mutationProducingFreshObservation
+            self.observationEffect(arguments: arguments)
         case "inspect_ui":
-            .mutationProducingFreshObservation
+            self.observationEffect(arguments: arguments)
         case "image":
-            arguments.getString("capture_focus") == "background" ? .none : .mutation
+            self.captureEffect(arguments: arguments)
         case "capture":
-            .none
+            self.captureEffect(arguments: arguments)
         case "app":
             arguments.getString("action") == "list" ? .none : .mutation
         case "menu":
@@ -210,6 +210,17 @@ enum MCPToolSnapshotMutationPolicy {
         default:
             .none
         }
+    }
+
+    private static func captureEffect(arguments: ToolArguments) -> MCPToolSnapshotEffect {
+        switch arguments.getString("capture_focus")?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "auto", "foreground": .mutation
+        default: .none
+        }
+    }
+
+    private static func observationEffect(arguments: ToolArguments) -> MCPToolSnapshotEffect {
+        arguments.getBool("web_focus") == true ? .mutationProducingFreshObservation : .freshObservation
     }
 
     static func scope(

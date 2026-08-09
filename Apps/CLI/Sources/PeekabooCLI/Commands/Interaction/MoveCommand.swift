@@ -26,6 +26,9 @@ struct MoveCommand: ErrorHandlingCommand, OutputFormattable {
     @OptionGroup var target: InteractionTargetOptions
     @OptionGroup var focusOptions: FocusCommandOptions
 
+    @Flag(help: "Confirm foreground cursor movement and focus the target when specified")
+    var foreground = false
+
     @Flag(help: "Move to screen center")
     var center = false
 
@@ -74,6 +77,11 @@ struct MoveCommand: ErrorHandlingCommand, OutputFormattable {
 
     mutating func validate() throws {
         try self.target.validate()
+        guard self.foreground else {
+            throw ValidationError(
+                "move changes the physical cursor and requires explicit --foreground consent."
+            )
+        }
         let targetCount = [
             self.center ? 1 : 0,
             self.resolvedCoordinates == nil ? 0 : 1,

@@ -7,19 +7,21 @@ read_when:
 
 # `peekaboo dialog`
 
-`dialog` wraps `DialogService` so you can programmatically inspect, click, type into, dismiss, or drive file dialogs without re-running `see`. Pass a target (`--app`/`--pid` plus optional `--window-id`/`--window-title`/`--window-index`) whenever possible so Peekaboo can focus the right app/window before interacting.
+`dialog` wraps `DialogService` so you can programmatically inspect, click, type into, dismiss, or drive file dialogs without re-running `see`. Target resolution and AX button presses stay in the background by default. Global keyboard/coordinate paths are never implicit: `input`, `file`, and `dismiss --force` require `--foreground`.
 
 ## Subcommands
 | Name | Purpose | Key options |
 | --- | --- | --- |
-| `click` | Press a dialog button. | `--button <label>` (required), optional `--app`/`--pid`, optional `--window-id`/`--window-title`/`--window-index`. |
-| `input` | Enter text into a dialog field. | `--text`, optional `--field <label>` or `--index <0-based>`, `--clear`, plus `--app`/`--pid`, optional `--window-id`/`--window-title`/`--window-index`. |
-| `file` | Drive NSOpenPanel/NSSavePanel style dialogs. | `--path <dir>`, `--name <filename>`, `--select <button>` (omit / `default` clicks OKButton), `--ensure-expanded`, optional `--app`/`--pid`, optional `--window-id`/`--window-title`/`--window-index`. Save-like actions verify the file exists and return `saved_path`. |
-| `dismiss` | Close the current dialog. | `--force` (sends Esc), optional `--app`/`--pid`, optional `--window-id`/`--window-title`/`--window-index`. |
-| `list` | Print dialog metadata (buttons, text fields, static text) for debugging. | Optional `--app`/`--pid`, optional `--window-id`/`--window-title`/`--window-index`. |
+| `click` | Press a dialog button with AX. | `--button <label>` (required), optional target flags; `--foreground` permits focus and a coordinate fallback if AXPress fails. |
+| `input` | Enter text into a dialog field. | `--foreground` (required), `--text`, optional `--field <label>` or `--index <0-based>`, `--clear`, plus optional target flags. |
+| `file` | Drive NSOpenPanel/NSSavePanel style dialogs. | `--foreground` (required), `--path <dir>`, `--name <filename>`, `--select <button>`, `--ensure-expanded`, plus optional target flags. Save-like actions verify the file exists and return `saved_path`. |
+| `dismiss` | Close the current dialog. | Normal dismissal searches for and AX-presses a cancel/close button in the background. `--force --foreground` explicitly sends global Escape. |
+| `list` | Read dialog metadata (buttons, text fields, static text) without focusing or mutating it. | Optional `--app`/`--pid`, optional `--window-id`/`--window-title`/`--window-index`. |
 
 ## Implementation notes
-- `dialog` subcommands share the same targeting flags as other interaction commands (`--app`/`--pid` plus `--window-id`/`--window-title`/`--window-index`) and use the same focus helpers before interacting.
+- `dialog list` is always read-only/background. `dialog click` is AX-only by default and fails honestly if AXPress is unsupported; `--foreground` explicitly permits focus and coordinate fallback.
+- Remote background button clicks require a Bridge host that advertises the strict AX-only operation; Peekaboo rejects stale hosts before dispatch instead of letting them apply legacy coordinate fallback.
+- `dialog input`, `dialog file`, and forced dismissal use global keyboard or coordinate events and therefore reject calls without `--foreground` (or `foreground: true` over MCP).
 - Button clicks and text entry route through `services.dialogs` helpers, which return dictionaries describing what happened; JSON output exposes those details verbatim (`button`, `field`, `text_length`, etc.).
 - `dialog input` accepts either a field label (`--field`) or an index; when neither is provided it targets the first text field. `--clear` issues a Cmd+A/Delete before typing.
 - `dialog file` can both navigate to a path and fill the filename field, then clicks the action button you specify (`--select Save`, `--select Open`, etc.). Leave `--path` blank to simply confirm the current directory.
@@ -35,16 +37,16 @@ read_when:
 peekaboo dialog click --button "Don't Save" --app TextEdit
 
 # Enter credentials into a password prompt
-peekaboo dialog input --text hunter2 --field "Password" --clear --app Safari
+peekaboo dialog input --text hunter2 --field "Password" --clear --app Safari --foreground
 
 # Choose a file in an open panel and confirm
-peekaboo dialog file --path ~/Downloads --name report.pdf --select Open
+peekaboo dialog file --path ~/Downloads --name report.pdf --select Open --foreground
 
 # Save a file and verify the resulting path exists
-peekaboo dialog file --path /tmp --name poem.rtf --select Save --app TextEdit --json
+peekaboo dialog file --path /tmp --name poem.rtf --select Save --app TextEdit --foreground --json
 
 # Click the default action (OKButton) and include dialog provenance in JSON output
-peekaboo dialog file --path ~/Downloads --name report.pdf --ensure-expanded --app TextEdit --json
+peekaboo dialog file --path ~/Downloads --name report.pdf --ensure-expanded --app TextEdit --foreground --json
 ```
 
 ## Troubleshooting

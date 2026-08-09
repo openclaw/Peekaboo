@@ -94,7 +94,59 @@ enum RuntimeHostResolver {
             hostname: Host.current().name
         )
 
+        // Stateful implicit commands share in-memory snapshots across invocations. Establish
+        // the exact daemon generation for this executable before considering compatible older
+        // hosts; protocol equality alone cannot distinguish two builds that both speak 1.11.
+        let prefersExactBuildScopedHost = self.prefersExactBuildScopedHost(
+            options: options,
+            explicitSocket: explicitSocket,
+            buildScopedDaemonSocketPath: buildScopedDaemonSocketPath
+        )
+
         var permissionRejections: [String] = []
+        if prefersExactBuildScopedHost, let buildScopedDaemonSocketPath {
+            let exactCandidate = ImplicitRemoteCandidate(
+                socketPath: buildScopedDaemonSocketPath,
+                requireReusableDaemon: true,
+                requiredHostKind: .onDemand,
+                requiresValidatedHistoricalDaemon: false
+            )
+            if let resolved = await resolveRemoteServices(
+                candidates: [exactCandidate],
+                identity: identity,
+                options: options,
+                requiredProtocolVersion: PeekabooBridgeConstants.protocolVersion,
+                snapshotInvalidationRemoteSocketPaths: snapshotInvalidationRemoteSocketPaths,
+                permissionRejections: &permissionRejections
+            ) {
+                return resolved
+            }
+
+            let exactHostExists = await DaemonControlClient(socketPath: buildScopedDaemonSocketPath)
+                .fetchStatus() != nil
+            if !exactHostExists,
+               DaemonLaunchPolicy.shouldAutoStartDaemon(options: options, environment: environment),
+               let resolvedDaemonSocket = await DaemonLaunchPolicy.startOnDemandDaemon(
+                   socketPath: buildScopedDaemonSocketPath,
+                   environment: environment
+               ),
+               let resolved = await resolveRemoteServices(
+                   candidates: [ImplicitRemoteCandidate(
+                       socketPath: resolvedDaemonSocket,
+                       requireReusableDaemon: true,
+                       requiredHostKind: .onDemand,
+                       requiresValidatedHistoricalDaemon: false
+                   )],
+                   identity: identity,
+                   options: options,
+                   requiredProtocolVersion: PeekabooBridgeConstants.protocolVersion,
+                   snapshotInvalidationRemoteSocketPaths: snapshotInvalidationRemoteSocketPaths,
+                   permissionRejections: &permissionRejections
+               ) {
+                return resolved
+            }
+        }
+
         if let resolved = await resolveRemoteServices(
             candidates: candidatePlan.candidates,
             identity: identity,
@@ -105,7 +157,8 @@ enum RuntimeHostResolver {
             return resolved
         }
 
-        if DaemonLaunchPolicy.shouldAutoStartDaemon(options: options, environment: environment) {
+        if !prefersExactBuildScopedHost,
+           DaemonLaunchPolicy.shouldAutoStartDaemon(options: options, environment: environment) {
             let rejectedDefaultSocketOccupant =
                 await DaemonControlClient(socketPath: daemonSocketPath).fetchStatus() != nil
             let autoStartSocketPath = DaemonLaunchPolicy.autoStartSocketPath(
@@ -299,6 +352,24 @@ enum RuntimeHostResolver {
         explicitSocket == nil && DaemonLaunchPolicy.shouldMigrateLegacyDaemon(targetSocketPath: daemonSocketPath)
     }
 
+    static func prefersExactBuildScopedHost(
+        options: CommandRuntimeOptions,
+        explicitSocket: String?,
+        buildScopedDaemonSocketPath: String?
+    ) -> Bool {
+        guard explicitSocket == nil,
+              buildScopedDaemonSocketPath != nil,
+              !options.requiresApplicationLaunchOptions,
+              !options.requiresHostApplicationInventory
+        else {
+            return false
+        }
+        return options.requiresScreenCapturePermission ||
+            options.requiresInspectAccessibilityTree ||
+            options.requiresImplicitSnapshotInvalidation ||
+            options.usesPerToolSnapshotInvalidation
+    }
+
     static func inputPolicyRequiresLocal(
         options: CommandRuntimeOptions,
         environment: [String: String],
@@ -323,7 +394,10 @@ enum RuntimeHostResolver {
     ) -> [ImplicitRemoteCandidate] {
         var seenDaemonPaths = Set<String>()
         var daemons: [ImplicitRemoteCandidate] = []
-        for socketPath in [daemonSocketPath, buildScopedDaemonSocketPath].compactMap(\.self) {
+        // Once a build-scoped daemon exists it is the exact binary generation for this CLI.
+        // Probe it before the canonical socket, which may still be occupied by a compatible
+        // older daemon during migration.
+        for socketPath in [buildScopedDaemonSocketPath, daemonSocketPath].compactMap(\.self) {
             guard seenDaemonPaths.insert(NSString(string: socketPath).standardizingPath).inserted else { continue }
             daemons.append(ImplicitRemoteCandidate(
                 socketPath: socketPath,
@@ -364,6 +438,7 @@ enum RuntimeHostResolver {
         candidates: [ImplicitRemoteCandidate],
         identity: PeekabooBridgeClientIdentity,
         options: CommandRuntimeOptions,
+        requiredProtocolVersion: PeekabooBridgeProtocolVersion? = nil,
         snapshotInvalidationRemoteSocketPaths: [String],
         permissionRejections: inout [String]
     )
@@ -376,7 +451,8 @@ enum RuntimeHostResolver {
                 guard let validation = await self.validateRemoteCandidate(
                     candidate,
                     handshake: handshake,
-                    options: options
+                    options: options,
+                    requiredProtocolVersion: requiredProtocolVersion
                 ) else {
                     let missingPermissions = BridgeCapabilityPolicy.explicitlyMissingRemotePermissions(
                         for: handshake,
@@ -416,6 +492,15 @@ enum RuntimeHostResolver {
                         targetedClickAvailability.missingPermissions.contains(.postEvent),
                         supportsExactWindowTargetedClicks:
                         BridgeCapabilityPolicy.supportsExactWindowTargetedClicks(for: handshake),
+                        supportsBackgroundWindowClose: BridgeCapabilityPolicy.supportsOperation(
+                            .backgroundCloseWindow,
+                            for: handshake
+                        ),
+                        supportsBackgroundDialogClick: BridgeCapabilityPolicy.supportsOperation(
+                            .backgroundDialogClickButton,
+                            for: handshake
+                        ),
+                        supportsTargetedScroll: BridgeCapabilityPolicy.supportsTargetedScroll(for: handshake),
                         supportsInspectAccessibilityTree: BridgeCapabilityPolicy.supportsInspectAccessibilityTree(
                             for: handshake
                         ),
@@ -450,10 +535,14 @@ enum RuntimeHostResolver {
         _ candidate: ImplicitRemoteCandidate,
         handshake: PeekabooBridgeHandshakeResponse,
         options: CommandRuntimeOptions,
+        requiredProtocolVersion: PeekabooBridgeProtocolVersion? = nil,
         fetchReusableDaemonStatus: (String) async -> PeekabooDaemonStatus? = { socketPath in
             await DaemonControlClient(socketPath: socketPath).fetchReusableDaemonStatus()
         }
     ) async -> RemoteCandidateValidation? {
+        guard requiredProtocolVersion == nil || handshake.negotiatedVersion == requiredProtocolVersion else {
+            return nil
+        }
         guard candidate.requiredHostKind == nil || handshake.hostKind == candidate.requiredHostKind else {
             return nil
         }

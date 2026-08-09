@@ -54,8 +54,24 @@ struct OpenCommandFlowTests {
         let request = try #require(service.launchRequests.first)
         #expect(request.applicationIdentifier == nil)
         #expect(request.openURLs.map(\.absoluteString) == ["https://example.com"])
-        #expect(request.activates)
+        #expect(!request.activates)
         #expect(!request.waitUntilReady)
+    }
+
+    @Test
+    func `Open command activates only with foreground`() async throws {
+        let app = ServiceApplicationInfo(processIdentifier: 42, bundleIdentifier: "com.apple.Safari", name: "Safari")
+        let service = RecordingApplicationService(applications: [app], launchResponse: app)
+        var command = OpenCommand()
+        command.target = "https://example.com"
+        command.foreground = true
+
+        try await command.run(using: CommandRuntime(
+            configuration: .init(verbose: false, jsonOutput: true, logLevel: nil),
+            services: ServicesWithApplicationStub(applications: service)
+        ))
+
+        #expect(service.launchRequests.first?.activates == true)
     }
 
     @Test
@@ -136,7 +152,7 @@ struct OpenCommandFlowTests {
 @MainActor
 struct AppCommandLaunchFlowTests {
     @Test
-    func `Launch without --open activates through runtime host`() async throws {
+    func `Launch without --open stays background through runtime host`() async throws {
         let service = self.makeLaunchService(name: "Finder", bundleIdentifier: "com.apple.finder")
 
         var command = AppCommand.LaunchSubcommand()
@@ -147,7 +163,19 @@ struct AppCommandLaunchFlowTests {
         let request = try #require(service.launchRequests.first)
         #expect(request.applicationIdentifier == "Finder")
         #expect(request.openURLs.isEmpty)
-        #expect(request.activates)
+        #expect(!request.activates)
+    }
+
+    @Test
+    func `Launch activates only with foreground`() async throws {
+        let service = self.makeLaunchService(name: "Finder", bundleIdentifier: "com.apple.finder")
+        var command = AppCommand.LaunchSubcommand()
+        command.app = "Finder"
+        command.foreground = true
+
+        try await command.run(using: self.makeRuntime(applicationService: service))
+
+        #expect(service.launchRequests.first?.activates == true)
     }
 
     @Test
@@ -380,7 +408,31 @@ struct AppCommandLaunchFlowTests {
         let request = try #require(applicationService.launchRequests.first)
         #expect(request.applicationIdentifier == nil)
         #expect(request.applicationBundleIdentifier == "com.example.app")
-        #expect(request.activates)
+        #expect(!request.activates)
+    }
+
+    @Test
+    func `Relaunch activates only with foreground`() async throws {
+        let application = ServiceApplicationInfo(
+            processIdentifier: 123,
+            bundleIdentifier: "com.example.app",
+            name: "Example"
+        )
+        let applicationService = RecordingApplicationService(
+            applications: [application],
+            launchResponse: application
+        )
+        var command = AppCommand.RelaunchSubcommand()
+        command.app = "Example"
+        command.wait = 0
+        command.foreground = true
+
+        try await command.run(using: CommandRuntime(
+            configuration: .init(verbose: false, jsonOutput: true, logLevel: nil),
+            services: ServicesWithApplicationStub(applications: applicationService)
+        ))
+
+        #expect(applicationService.launchRequests.first?.activates == true)
     }
 
     @Test

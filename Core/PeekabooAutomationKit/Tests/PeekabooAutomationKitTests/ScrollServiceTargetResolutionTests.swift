@@ -1,10 +1,58 @@
+import AppKit
+import ApplicationServices
 @preconcurrency import AXorcist
 import CoreGraphics
 import Foundation
+import enum PeekabooFoundation.PeekabooError
+import enum PeekabooFoundation.ScrollDirection
 import Testing
 @testable import PeekabooAutomationKit
 
 struct ScrollServiceTargetResolutionTests {
+    @Test
+    func `legacy scroll payload decodes as background with zero delay`() throws {
+        let data = Data(#"{"direction":"down","amount":3,"target":"S1","smooth":false}"#.utf8)
+
+        let request = try JSONDecoder().decode(ScrollRequest.self, from: data)
+
+        #expect(!request.foreground)
+        #expect(request.delay == 0)
+    }
+
+    @Test
+    @MainActor
+    func `background targeted scroll uses only Accessibility action`() async throws {
+        let element = DetectedElement(
+            id: "S1",
+            type: .other,
+            label: "List",
+            bounds: .init(x: 20, y: 30, width: 300, height: 400))
+        let detectionResult = ElementDetectionResult(
+            snapshotId: "snapshot",
+            screenshotPath: "/tmp/shot.png",
+            elements: DetectedElements(other: [element]),
+            metadata: DetectionMetadata(detectionTime: 0.01, elementCount: 1, method: "test"))
+        let action = ScrollRecordingActionInputDriver()
+        let synthetic = ScrollRecordingSyntheticInputDriver()
+        let service = ScrollService(
+            snapshotManager: InMemorySnapshotManager(detectionResult: detectionResult),
+            inputPolicy: UIInputPolicy(defaultStrategy: .synthOnly),
+            actionInputDriver: action,
+            syntheticInputDriver: synthetic,
+            automationElementResolver: ScrollFixedAutomationElementResolver())
+
+        let result = try await service.scroll(ScrollRequest(
+            direction: .down,
+            amount: 3,
+            target: "S1",
+            snapshotId: "snapshot"))
+
+        #expect(result.path == .action)
+        #expect(result.strategy == .actionOnly)
+        #expect(action.scrollCalls == [.init(direction: .down, pages: 3)])
+        #expect(synthetic.events.isEmpty)
+    }
+
     @Test
     @MainActor
     func `action-first missing snapshot fails as stale instead of falling back`() async {
@@ -44,7 +92,8 @@ struct ScrollServiceTargetResolutionTests {
                 target: "missing-\(UUID().uuidString)",
                 smooth: false,
                 delay: 2,
-                snapshotId: "missing"))
+                snapshotId: "missing",
+                foreground: true))
             Issue.record("Expected stale element error for missing synthetic snapshot.")
         } catch let error as ActionInputError {
             #expect(error == .staleElement)
@@ -56,7 +105,7 @@ struct ScrollServiceTargetResolutionTests {
 
     @Test
     @MainActor
-    func `action-first unresolved snapshot target falls back to coordinate scroll`() async throws {
+    func `background unresolved snapshot target requires foreground without synthetic fallback`() async throws {
         let element = DetectedElement(
             id: "S1",
             type: .other,
@@ -77,20 +126,20 @@ struct ScrollServiceTargetResolutionTests {
             inputPolicy: UIInputPolicy(defaultStrategy: .actionFirst),
             syntheticInputDriver: synthetic)
 
-        let result = try await service.scroll(ScrollRequest(
-            direction: .down,
-            amount: 1,
-            target: "S1",
-            smooth: false,
-            delay: 0,
-            snapshotId: "snapshot"))
+        do {
+            try await service.scroll(ScrollRequest(
+                direction: .down,
+                amount: 1,
+                target: "S1",
+                smooth: false,
+                delay: 0,
+                snapshotId: "snapshot"))
+            Issue.record("Expected an explicit foreground-required error")
+        } catch let error as PeekabooError {
+            #expect(error.localizedDescription.contains("foreground"))
+        }
 
-        #expect(result.path == .synth)
-        #expect(result.fallbackReason == .missingElement)
-        #expect(synthetic.events == [
-            .move(CGPoint(x: 230, y: 260)),
-            .scroll(deltaX: 0, deltaY: -50, at: CGPoint(x: 230, y: 260)),
-        ])
+        #expect(synthetic.events.isEmpty)
     }
 
     @Test
@@ -101,7 +150,7 @@ struct ScrollServiceTargetResolutionTests {
     }
 
     @Test
-    func `smooth or delayed scroll requires synthetic semantics`() {
+    func `only explicit foreground enables synthetic scroll semantics`() {
         #expect(!ScrollService.requiresSyntheticScrollSemantics(ScrollRequest(
             direction: .down,
             amount: 3,
@@ -115,8 +164,9 @@ struct ScrollServiceTargetResolutionTests {
             target: "S1",
             smooth: true,
             delay: 0,
-            snapshotId: "snapshot")))
-        #expect(ScrollService.requiresSyntheticScrollSemantics(ScrollRequest(
+            snapshotId: "snapshot",
+            foreground: true)))
+        #expect(!ScrollService.requiresSyntheticScrollSemantics(ScrollRequest(
             direction: .down,
             amount: 3,
             target: "S1",
@@ -148,11 +198,68 @@ struct ScrollServiceTargetResolutionTests {
                 delay: 0,
                 snapshotId: nil))
             Issue.record("Expected unsupported action error for targetless action-only scroll.")
-        } catch let error as ActionInputError {
-            #expect(error == .unsupported(.actionUnsupported))
+        } catch let error as PeekabooError {
+            #expect(error.localizedDescription.contains("foreground"))
         } catch {
             Issue.record("Unexpected error: \(error)")
         }
+    }
+}
+
+@MainActor
+private final class ScrollFixedAutomationElementResolver: AutomationElementResolving {
+    private let element = AutomationElement(Element(AXUIElementCreateApplication(getpid())))
+
+    func resolve(detectedElement _: DetectedElement, windowContext _: WindowContext?) -> AutomationElement? {
+        self.element
+    }
+
+    func resolve(query _: String, windowContext _: WindowContext?, requireTextInput _: Bool) -> AutomationElement? {
+        self.element
+    }
+}
+
+@MainActor
+private final class ScrollRecordingActionInputDriver: ActionInputDriving {
+    struct ScrollCall: Equatable {
+        let direction: PeekabooFoundation.ScrollDirection
+        let pages: Int
+    }
+
+    private(set) var scrollCalls: [ScrollCall] = []
+
+    func tryClick(element _: AutomationElement) throws -> ActionInputResult {
+        ActionInputResult()
+    }
+
+    func tryRightClick(element _: any AutomationElementRepresenting) async throws -> ActionInputResult {
+        ActionInputResult()
+    }
+
+    func tryScroll(
+        element _: AutomationElement,
+        direction: PeekabooFoundation.ScrollDirection,
+        pages: Int) throws
+        -> ActionInputResult
+    {
+        self.scrollCalls.append(.init(direction: direction, pages: pages))
+        return ActionInputResult(actionName: "AXScroll", elementRole: "AXScrollArea")
+    }
+
+    func trySetText(element _: AutomationElement, text _: String, replace _: Bool) throws -> ActionInputResult {
+        ActionInputResult()
+    }
+
+    func tryHotkey(application _: NSRunningApplication, keys _: [String]) throws -> ActionInputResult {
+        ActionInputResult()
+    }
+
+    func trySetValue(element _: AutomationElement, value _: UIElementValue) throws -> ActionInputResult {
+        ActionInputResult()
+    }
+
+    func tryPerformAction(element _: AutomationElement, actionName _: String) throws -> ActionInputResult {
+        ActionInputResult()
     }
 }
 

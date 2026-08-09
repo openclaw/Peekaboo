@@ -43,6 +43,9 @@ public final class RemotePeekabooServices: PeekabooServiceProviding {
         targetedClickUnavailableReason: String? = nil,
         targetedClickRequiresEventSynthesizingPermission: Bool = false,
         supportsExactWindowTargetedClicks: Bool = false,
+        supportsBackgroundWindowClose: Bool = false,
+        supportsBackgroundDialogClick: Bool = false,
+        supportsTargetedScroll: Bool = false,
         supportsInspectAccessibilityTree: Bool = false,
         inspectAccessibilityTreeUnavailableReason: String? = nil,
         supportsPostEventPermissionRequest: Bool = false,
@@ -77,6 +80,7 @@ public final class RemotePeekabooServices: PeekabooServiceProviding {
                 targetedClickUnavailableReason: targetedClickUnavailableReason,
                 targetedClickRequiresEventSynthesizingPermission: targetedClickRequiresEventSynthesizingPermission,
                 supportsExactWindowTargetedClicks: supportsExactWindowTargetedClicks,
+                supportsTargetedScroll: supportsTargetedScroll,
                 supportsInspectAccessibilityTree: supportsInspectAccessibilityTree,
                 inspectAccessibilityTreeUnavailableReason: inspectAccessibilityTreeUnavailableReason)
         } else {
@@ -92,10 +96,13 @@ public final class RemotePeekabooServices: PeekabooServiceProviding {
                 targetedClickUnavailableReason: targetedClickUnavailableReason,
                 targetedClickRequiresEventSynthesizingPermission: targetedClickRequiresEventSynthesizingPermission,
                 supportsExactWindowTargetedClicks: supportsExactWindowTargetedClicks,
+                supportsTargetedScroll: supportsTargetedScroll,
                 supportsInspectAccessibilityTree: supportsInspectAccessibilityTree,
                 inspectAccessibilityTreeUnavailableReason: inspectAccessibilityTreeUnavailableReason)
         }
-        self.windows = RemoteWindowManagementService(client: client)
+        self.windows = RemoteWindowManagementService(
+            client: client,
+            supportsBackgroundClose: supportsBackgroundWindowClose)
         let snapshotManager = RemoteSnapshotManager(
             client: client,
             supportsImplicitLatestSnapshotInvalidation: supportsImplicitLatestSnapshotInvalidation,
@@ -116,7 +123,9 @@ public final class RemotePeekabooServices: PeekabooServiceProviding {
         }
         self.menu = menuService
         self.dock = RemoteDockService(client: client)
-        self.dialogs = RemoteDialogService(client: client)
+        self.dialogs = RemoteDialogService(
+            client: client,
+            supportsBackgroundButtonClick: supportsBackgroundDialogClick)
         self.snapshots = snapshotManager
         self.files = FileService()
         self.clipboard = ClipboardService()

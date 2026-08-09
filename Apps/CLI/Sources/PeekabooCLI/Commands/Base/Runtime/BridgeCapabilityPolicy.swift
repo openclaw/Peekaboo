@@ -55,13 +55,33 @@ enum BridgeCapabilityPolicy {
             return false
         }
 
-        if options.requiresPostEventClickPermission,
+        if options.requiresTargetedScroll,
+           !self.supportsTargetedScroll(for: handshake) {
+            return false
+        }
+
+        if options.requiresPostEventPermission,
            handshake.permissions?.postEvent != true {
+            return false
+        }
+
+        if options.requiresAccessibilityPermission,
+           handshake.permissions?.accessibility != true {
             return false
         }
 
         if options.requiresLongPressClick,
            !self.supportsLongPressClicks(for: handshake) {
+            return false
+        }
+
+        if options.requiresBackgroundWindowClose,
+           !self.supportsOperation(.backgroundCloseWindow, for: handshake) {
+            return false
+        }
+
+        if options.requiresBackgroundDialogClick,
+           !self.supportsOperation(.backgroundDialogClickButton, for: handshake) {
             return false
         }
 
@@ -120,7 +140,21 @@ enum BridgeCapabilityPolicy {
         if options.requiresInspectAccessibilityTree {
             operations.append(.inspectAccessibilityTree)
         }
+        if options.requiresBackgroundWindowClose {
+            operations.append(.backgroundCloseWindow)
+        }
+        if options.requiresBackgroundDialogClick {
+            operations.append(.backgroundDialogClickButton)
+        }
         return operations
+    }
+
+    static func supportsOperation(
+        _ operation: PeekabooBridgeOperation,
+        for handshake: PeekabooBridgeHandshakeResponse
+    ) -> Bool {
+        handshake.supportedOperations.contains(operation) &&
+            (handshake.enabledOperations ?? handshake.supportedOperations).contains(operation)
     }
 
     static func supportsTargetedHotkeys(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {
@@ -254,21 +288,16 @@ enum BridgeCapabilityPolicy {
 
         let enabledOperations = handshake.enabledOperations ?? handshake.supportedOperations
         if enabledOperations.contains(.targetedClick) {
-            let missingVariantPermissions: Set<PeekabooBridgePermissionKind> =
-                handshake.permissions?.postEvent == false ? [.postEvent] : []
-            return (true, nil, missingVariantPermissions)
+            return (true, nil, [])
         }
 
         let requestAwarePermissions =
-            handshake.negotiatedVersion >= PeekabooBridgeProtocolVersion(major: 1, minor: 9) &&
-            handshake.permissionTags[PeekabooBridgeOperation.targetedClick.rawValue]?.isEmpty == true
-        if requestAwarePermissions,
-           handshake.permissions?.accessibility == false,
-           handshake.permissions?.postEvent == false {
+            handshake.negotiatedVersion >= PeekabooBridgeProtocolVersion(major: 1, minor: 9)
+        if requestAwarePermissions, handshake.permissions?.accessibility == false {
             return (
                 false,
-                "Remote bridge host background clicks require Accessibility or Event Synthesizing permission",
-                []
+                "Remote bridge host background clicks require Accessibility permission",
+                [.accessibility]
             )
         }
 
@@ -297,6 +326,15 @@ enum BridgeCapabilityPolicy {
         }
         return (handshake.enabledOperations ?? handshake.supportedOperations)
             .contains(.exactWindowTargetedClick)
+    }
+
+    static func supportsTargetedScroll(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {
+        guard handshake.negotiatedVersion >= PeekabooBridgeProtocolVersion(major: 1, minor: 11),
+              handshake.supportedOperations.contains(.targetedScroll)
+        else {
+            return false
+        }
+        return (handshake.enabledOperations ?? handshake.supportedOperations).contains(.targetedScroll)
     }
 
     static func targetedTypeAvailability(for handshake: PeekabooBridgeHandshakeResponse)

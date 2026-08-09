@@ -15,6 +15,9 @@ extension DialogCommand {
         @Flag(help: "Force dismiss with Escape key")
         var force = false
 
+        @Flag(help: "Focus the target before dismissal; required with --force")
+        var foreground = false
+
         @OptionGroup var target: InteractionTargetOptions
         @OptionGroup var focusOptions: FocusCommandOptions
         @RuntimeStorage private var runtime: CommandRuntime?
@@ -49,15 +52,23 @@ extension DialogCommand {
 
             do {
                 try self.target.validate()
-                if self.focusOptions.autoFocus {
-                    self.resolvedRuntime.beginInteractionMutation()
+                guard !self.force || self.foreground else {
+                    throw ValidationError("dialog dismiss --force sends global Escape and requires --foreground")
                 }
-                try await ensureFocused(
-                    snapshotId: nil,
-                    target: self.target,
-                    options: self.focusOptions,
-                    services: self.services
-                )
+                guard self.foreground || !self.focusOptions.hasForegroundFocusOverrides else {
+                    throw ValidationError("Dialog focus options require --foreground")
+                }
+                if self.foreground {
+                    if self.focusOptions.autoFocus {
+                        self.resolvedRuntime.beginInteractionMutation()
+                    }
+                    try await ensureFocused(
+                        snapshotId: nil,
+                        target: self.target,
+                        options: self.focusOptions,
+                        services: self.services
+                    )
+                }
 
                 let resolvedWindowTitle = try await target.resolveWindowTitleOptional(services: self.services)
                 let appHint = try await DialogCommand.resolveDialogAppHint(target: self.target, services: self.services)
@@ -90,6 +101,9 @@ extension DialogCommand {
                         + "app='\(appHint ?? "unknown")'"
                 )
 
+            } catch let error as Commander.ValidationError {
+                handleDialogValidationError(error, jsonOutput: self.jsonOutput, logger: self.outputLogger)
+                throw ExitCode(1)
             } catch let error as DialogError {
                 handleDialogServiceError(error, jsonOutput: self.jsonOutput, logger: self.outputLogger)
                 throw ExitCode(1)
@@ -113,7 +127,6 @@ extension DialogCommand {
         var timeoutSeconds: TimeInterval = 5
 
         @OptionGroup var target: InteractionTargetOptions
-        @OptionGroup var focusOptions: FocusCommandOptions
         @RuntimeStorage private var runtime: CommandRuntime?
 
         private var resolvedRuntime: CommandRuntime {
@@ -146,16 +159,6 @@ extension DialogCommand {
 
             do {
                 try self.target.validate()
-                if self.focusOptions.autoFocus, self.target.hasAnyTarget {
-                    self.resolvedRuntime.beginInteractionMutation()
-                }
-                try await ensureFocused(
-                    snapshotId: nil,
-                    target: self.target,
-                    options: self.focusOptions,
-                    services: self.services
-                )
-
                 let resolvedWindowTitle = try await target.resolveWindowTitleOptional(services: self.services)
                 let appHint = try await DialogCommand.resolveDialogAppHint(target: self.target, services: self.services)
                 let dialogService = self.services.dialogs

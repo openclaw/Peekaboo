@@ -83,6 +83,7 @@ extension UIAutomationService {
         snapshotId: String?) async throws
     {
         self.logger.debug("Delegating type to TypeService")
+        defer { self.elementDetectionService.invalidateCache() }
         // For targeted typing the resolved destination element is
         // authoritative; focus sampling can miss it entirely (the target is
         // focused only mid-flow, and a trailing {return} can move focus away
@@ -114,6 +115,7 @@ extension UIAutomationService {
         snapshotId: String?) async throws -> TypeResult
     {
         self.logger.debug("Delegating typeActions to TypeService")
+        defer { self.elementDetectionService.invalidateCache() }
         let summary = try await self.normalizingSnapshotErrors {
             try await self.typeService.typeActionsTrackingSecureInput(
                 actions,
@@ -135,6 +137,7 @@ extension UIAutomationService {
         targetProcessIdentifier: pid_t) async throws -> TypeResult
     {
         self.logger.debug("Delegating targeted typeActions to TypeService")
+        defer { self.elementDetectionService.invalidateCache() }
         let summary = try await self.normalizingSnapshotErrors {
             try await self.typeService.typeActionsTrackingSecureInput(
                 actions,

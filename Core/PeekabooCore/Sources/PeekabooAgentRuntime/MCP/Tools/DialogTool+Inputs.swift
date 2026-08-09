@@ -1,7 +1,7 @@
 import Foundation
 import TachikomaMCP
 
-enum DialogToolAction: String, CaseIterable {
+enum DialogToolAction: String, CaseIterable, Equatable {
     case list
     case click
     case input
@@ -23,6 +23,7 @@ enum DialogToolInputError: LocalizedError {
     case missing(String)
     case invalid(String, String)
     case missingForAction(action: DialogToolAction, field: String)
+    case foregroundRequired(DialogToolAction)
 
     var errorDescription: String? {
         switch self {
@@ -32,6 +33,8 @@ enum DialogToolInputError: LocalizedError {
             "Invalid \(field): \(value)"
         case let .missingForAction(action, field):
             "Missing required parameter for \(action.rawValue): \(field)"
+        case let .foregroundRequired(action):
+            "Dialog \(action.rawValue) uses global keyboard/coordinate input and requires foreground=true."
         }
     }
 }
@@ -42,6 +45,7 @@ struct DialogToolInputs {
     let windowId: Int?
     let windowTitle: String?
     let windowIndex: Int?
+    let foreground: Bool
 
     let button: String?
     let text: String?
@@ -62,6 +66,7 @@ struct DialogToolInputs {
         self.windowId = arguments.getInt("window_id")
         self.windowTitle = arguments.getString("window_title")
         self.windowIndex = arguments.getInt("window_index")
+        self.foreground = arguments.getBool("foreground") ?? false
 
         self.button = arguments.getString("button")
         self.text = arguments.getString("text")

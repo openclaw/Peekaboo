@@ -16,6 +16,9 @@ extension MenuCommand {
         @Option(help: "Menu path for nested items (e.g., 'File > Export > PDF')")
         var path: String?
 
+        @Flag(help: "Focus the target before using its menu")
+        var foreground = false
+
         @OptionGroup var focusOptions: FocusCommandOptions
         @RuntimeStorage private var runtime: CommandRuntime?
 
@@ -74,21 +77,24 @@ extension MenuCommand {
 
             do {
                 try self.target.validate()
+                try self.validateForegroundOptions()
                 let appIdentifier = try await self.resolveTargetApplicationIdentifier()
-                let windowID = try await self.target.resolveWindowID(services: self.services)
-                if self.focusOptions.autoFocus {
-                    self.resolvedRuntime.beginInteractionMutation()
+                if self.foreground {
+                    let windowID = try await self.target.resolveWindowID(services: self.services)
+                    if self.focusOptions.autoFocus {
+                        self.resolvedRuntime.beginInteractionMutation()
+                    }
+                    try await ensureFocusIgnoringMissingWindows(
+                        request: FocusIgnoringMissingWindowsRequest(
+                            windowID: windowID,
+                            applicationName: appIdentifier,
+                            windowTitle: self.target.windowTitle
+                        ),
+                        options: self.focusOptions,
+                        services: self.services,
+                        logger: self.logger
+                    )
                 }
-                try await ensureFocusIgnoringMissingWindows(
-                    request: FocusIgnoringMissingWindowsRequest(
-                        windowID: windowID,
-                        applicationName: appIdentifier,
-                        windowTitle: self.target.windowTitle
-                    ),
-                    options: self.focusOptions,
-                    services: self.services,
-                    logger: self.logger
-                )
 
                 let canonicalPath: String? = normalizedPath.map(Self.canonicalizeMenuPath)
                 if let canonicalPath {
@@ -125,6 +131,13 @@ extension MenuCommand {
                     print("✓ Clicked menu item: \(clickedPath)")
                 }
 
+            } catch let error as Commander.ValidationError {
+                if self.jsonOutput {
+                    outputError(message: error.localizedDescription, code: .INVALID_INPUT, logger: self.outputLogger)
+                } else {
+                    fputs("Error: \(error.localizedDescription)\n", stderr)
+                }
+                throw ExitCode(1)
             } catch let error as MenuError {
                 MenuErrorOutputSupport.renderMenuError(
                     error,
@@ -161,6 +174,12 @@ extension MenuCommand {
             }
 
             return frontmost.bundleIdentifier ?? frontmost.name
+        }
+
+        private func validateForegroundOptions() throws {
+            guard self.foreground || !self.focusOptions.hasForegroundFocusOverrides else {
+                throw ValidationError("Menu focus options require --foreground")
+            }
         }
     }
 }

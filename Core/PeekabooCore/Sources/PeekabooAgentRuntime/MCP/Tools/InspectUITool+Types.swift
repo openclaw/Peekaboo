@@ -4,11 +4,13 @@ import TachikomaMCP
 struct InspectUIRequest {
     let appTarget: String?
     let snapshotId: String?
+    let webFocus: Bool
     let traversalBudget: AXTraversalBudget
 
     init(arguments: ToolArguments) {
         self.appTarget = arguments.getString("app_target")
         self.snapshotId = arguments.getString("snapshot")
+        self.webFocus = arguments.getBool("web_focus") ?? false
         self.traversalBudget = AXTraversalBudget.resolved(
             maxDepth: Self.positiveInt("max_depth", in: arguments),
             maxElementCount: Self.positiveInt("max_elements", in: arguments),

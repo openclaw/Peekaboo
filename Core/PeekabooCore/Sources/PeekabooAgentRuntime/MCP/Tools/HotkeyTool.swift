@@ -15,7 +15,8 @@ public struct HotkeyTool: MCPTool {
         """
         Presses keyboard shortcuts.
         Simulates one primary key plus optional modifiers, like Cmd+C or Ctrl+Shift+T.
-        If app/pid/window targeting is supplied, sends the hotkey to that process in the background by default.
+        Background hotkeys require app/pid targeting. Set foreground=true for intentional OS-global shortcuts or to
+        focus a specific window first.
         \(PeekabooMCPVersion.banner) using openai/gpt-5.5, anthropic/claude-opus-4-8
         """
     }
@@ -37,12 +38,13 @@ public struct HotkeyTool: MCPTool {
                 "app": SchemaBuilder.string(description: "Optional. Target app name/bundle ID, or 'PID:<n>'."),
                 "pid": SchemaBuilder.number(
                     description: "Optional. Target process ID for background hotkeys."),
-                "window_id": SchemaBuilder.number(description: "Optional. Window ID for background hotkeys."),
-                "window_title": SchemaBuilder.string(description: "Optional. Window title (substring match)."),
+                "window_id": SchemaBuilder.number(description: "Optional. Window ID; requires foreground=true."),
+                "window_title": SchemaBuilder
+                    .string(description: "Optional. Window title (substring match); requires foreground=true."),
                 "window_index": SchemaBuilder
-                    .number(description: "Optional. Window index (0-based); requires app/pid."),
+                    .number(description: "Optional. Window index (0-based); requires app/pid and foreground=true."),
                 "foreground": SchemaBuilder.boolean(
-                    description: "Optional. Send foreground/global hotkey even when a target is supplied.",
+                    description: "Optional. Focus a target or intentionally send an OS-global hotkey.",
                     default: false),
             ],
             required: ["keys"])
@@ -90,10 +92,10 @@ public struct HotkeyTool: MCPTool {
                 windowTitle: arguments.getString("window_title"),
                 windowIndex: arguments.getInt("window_index"),
                 windowId: arguments.getInt("window_id"))
-            let targetPID = foreground ? nil : try await target.processIdentifierIfTargeted(
+            let targetPID = foreground ? nil : try await target.requireBackgroundProcessIdentifier(
                 applications: self.context.applications,
                 windows: self.context.windows)
-            if let targetPID, targetPID > 0 {
+            if let targetPID {
                 guard let hotkeyService = hotkeyService as? any TargetedHotkeyServiceProtocol,
                       hotkeyService.supportsTargetedHotkeys
                 else {

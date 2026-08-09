@@ -10,7 +10,7 @@ struct PeekabooBridgeOperationRoutingTests {
     }
 
     @Test
-    func `bridge mutation policy includes focus and accessibility detection side effects`() {
+    func `bridge mutation policy only gates focus capable observation`() {
         let backgroundCapture = DesktopCaptureOptions(focus: .background)
         let passiveObservation = DesktopObservationRequest(
             target: .screen(index: 0),
@@ -20,6 +20,10 @@ struct PeekabooBridgeOperationRoutingTests {
             target: .screen(index: 0),
             capture: backgroundCapture,
             detection: DesktopDetectionOptions(mode: .accessibility))
+        let webFocusObservation = DesktopObservationRequest(
+            target: .screen(index: 0),
+            capture: backgroundCapture,
+            detection: DesktopDetectionOptions(mode: .accessibility, allowWebFocusFallback: true))
         let foregroundObservation = DesktopObservationRequest(
             target: .screen(index: 0),
             capture: DesktopCaptureOptions(focus: .foreground),
@@ -30,15 +34,18 @@ struct PeekabooBridgeOperationRoutingTests {
             detection: DesktopDetectionOptions(mode: .none))
 
         #expect(!PeekabooBridgeRequest.desktopObservation(passiveObservation).mayMutateDesktop)
-        #expect(PeekabooBridgeRequest.desktopObservation(accessibilityObservation).mayMutateDesktop)
+        #expect(!PeekabooBridgeRequest.desktopObservation(accessibilityObservation).mayMutateDesktop)
+        #expect(PeekabooBridgeRequest.desktopObservation(webFocusObservation).mayMutateDesktop)
         #expect(PeekabooBridgeRequest.desktopObservation(foregroundObservation).mayMutateDesktop)
         #expect(PeekabooBridgeRequest.desktopObservation(openingMenuBarPopover).mayMutateDesktop)
-        #expect(PeekabooBridgeRequest.detectElements(.init(
+        #expect(!PeekabooBridgeRequest.detectElements(.init(
             imageData: Data(),
             snapshotId: nil,
             windowContext: nil)).mayMutateDesktop)
-        #expect(PeekabooBridgeRequest.inspectAccessibilityTree(.init(
+        #expect(!PeekabooBridgeRequest.inspectAccessibilityTree(.init(
             windowContext: nil)).mayMutateDesktop)
+        #expect(PeekabooBridgeRequest.inspectAccessibilityTree(.init(
+            windowContext: WindowContext(shouldFocusWebContent: true))).mayMutateDesktop)
         #expect(!PeekabooBridgeRequest.dialogFindActive(.init(
             windowTitle: nil,
             appName: "Calculator")).mayMutateDesktop)
@@ -168,7 +175,7 @@ struct PeekabooBridgeOperationRoutingTests {
         DesktopObservationRequest(
             target: .screen(index: 0),
             capture: DesktopCaptureOptions(focus: .background),
-            detection: DesktopDetectionOptions(mode: .accessibility),
+            detection: DesktopDetectionOptions(mode: .accessibility, allowWebFocusFallback: true),
             output: DesktopObservationOutputOptions(snapshotID: snapshotID))
     }
 }

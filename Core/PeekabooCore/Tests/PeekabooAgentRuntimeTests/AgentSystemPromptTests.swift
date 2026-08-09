@@ -95,4 +95,18 @@ struct AgentSystemPromptTests {
         #expect(prompt.contains("pixels"))
         #expect(prompt.contains("accessibility text is missing or incomplete"))
     }
+
+    @Test
+    func `generated prompt keeps launch navigation and observation in background`() {
+        guard #available(macOS 14.0, *) else { return }
+        let prompt = AgentSystemPrompt.generate()
+
+        #expect(prompt.contains(#""action": "launch", "name": "Safari", "foreground": false"#))
+        #expect(prompt.contains(#""action": "open", "name": "Safari""#))
+        #expect(prompt.contains(#""background": true"#))
+        #expect(prompt.contains("Observation never focuses the target by default"))
+        #expect(prompt.contains("Only set `web_focus: true`"))
+        #expect(!prompt.contains("capture and focus background apps"))
+        #expect(!prompt.contains("`launch_app` tool"))
+    }
 }

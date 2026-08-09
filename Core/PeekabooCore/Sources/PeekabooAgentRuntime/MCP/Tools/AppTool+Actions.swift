@@ -19,6 +19,8 @@ struct AppToolActions {
         switch action {
         case "launch":
             return try await self.handleLaunch(request: request)
+        case "open":
+            return try await self.handleOpen(request: request)
         case "quit":
             return try await self.handleQuit(request: request)
         case "relaunch":
@@ -34,7 +36,7 @@ struct AppToolActions {
         case "list":
             return try await self.handleList(request: request)
         default:
-            let supported = "launch, quit, relaunch, focus, hide, unhide, switch, list"
+            let supported = "launch, open, quit, relaunch, focus, hide, unhide, switch, list"
             return ToolResponse.error("Unknown action: \(action). Supported actions: \(supported)")
         }
     }

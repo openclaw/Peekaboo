@@ -26,7 +26,7 @@ extension ImageTool {
     }
 
     func captureObservation(for request: ImageRequest) async throws -> DesktopObservationResult {
-        if request.captureFocus == .foreground, let identifier = request.focusIdentifier {
+        if request.captureFocus != .background, let identifier = request.focusIdentifier {
             try await self.context.applications.activateApplication(identifier: identifier)
             try await Task.sleep(nanoseconds: 50_000_000)
         }

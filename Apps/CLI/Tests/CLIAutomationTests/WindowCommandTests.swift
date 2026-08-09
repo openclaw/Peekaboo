@@ -87,6 +87,38 @@ struct WindowCommandTests {
         #expect(output.contains("--app"))
         #expect(output.contains("--window-title"))
         #expect(output.contains("--window-index"))
+        #expect(output.contains("--foreground"))
+    }
+
+    @Test
+    func `window close only enables global fallback explicitly`() async throws {
+        let appName = "Finder"
+        let appInfo = ServiceApplicationInfo(
+            processIdentifier: 1234,
+            bundleIdentifier: "com.apple.finder",
+            name: appName
+        )
+        let window = ServiceWindowInfo(
+            windowID: 1,
+            title: "Finder Window",
+            bounds: CGRect(x: 0, y: 0, width: 800, height: 600),
+            isMainWindow: true,
+            index: 0
+        )
+        let context = await MainActor.run {
+            self.makeWindowContext(appInfo: appInfo, windows: [appName: [window]])
+        }
+
+        _ = try await self.runWindowCommand(
+            ["window", "close", "--app", appName, "--json"],
+            context: context
+        )
+        _ = try await self.runWindowCommand(
+            ["window", "close", "--app", appName, "--foreground", "--json"],
+            context: context
+        )
+
+        #expect(context.windowService.closeFallbackRequests == [false, true])
     }
 
     @Test

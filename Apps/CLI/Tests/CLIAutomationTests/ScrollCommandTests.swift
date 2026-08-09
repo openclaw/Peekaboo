@@ -51,6 +51,7 @@ struct ScrollCommandTests {
                 "--smooth",
                 "--snapshot", snapshotId,
                 "--on", "B1",
+                "--foreground",
                 "--json",
             ],
             context: context
@@ -66,6 +67,7 @@ struct ScrollCommandTests {
         #expect(call.request.smooth == true)
         #expect(call.request.target == "B1")
         #expect(call.request.snapshotId == "snapshot-42")
+        #expect(call.request.foreground)
 
         let payloadData = try #require(self.output(from: result).data(using: .utf8))
         let payload = try JSONDecoder().decode(CodableJSONResponse<ScrollResult>.self, from: payloadData)
@@ -112,7 +114,7 @@ struct ScrollCommandTests {
         }
 
         let result = try await self.runScroll(
-            arguments: ["--direction", "down", "--on", "B1", "--json", "--no-auto-focus"],
+            arguments: ["--direction", "down", "--on", "B1", "--json"],
             context: context
         )
 
@@ -121,13 +123,15 @@ struct ScrollCommandTests {
         let call = try #require(scrollCalls.first)
         #expect(call.request.target == "B1")
         #expect(call.request.snapshotId == "fresh-snapshot")
+        #expect(call.request.delay == 0)
+        #expect(!call.request.foreground)
     }
 
     @Test
     func `Scroll without snapshot still executes`() async throws {
         let context = await self.makeContext()
         let result = try await self.runScroll(
-            arguments: ["--direction", "up", "--amount", "2"],
+            arguments: ["--direction", "up", "--amount", "2", "--foreground"],
             context: context
         )
 
@@ -137,13 +141,14 @@ struct ScrollCommandTests {
         let call = try #require(scrollCalls.first)
         #expect(call.request.snapshotId == nil)
         #expect(call.request.amount == 2)
+        #expect(call.request.foreground)
     }
 
     @Test
     func `Smooth scrolling adjusts total ticks in JSON output`() async throws {
         let context = await self.makeContext()
         let result = try await self.runScroll(
-            arguments: ["--direction", "down", "--amount", "4", "--smooth", "--json"],
+            arguments: ["--direction", "down", "--amount", "4", "--smooth", "--foreground", "--json"],
             context: context
         )
 
@@ -160,7 +165,7 @@ struct ScrollCommandTests {
         }
 
         let result = try await self.runScroll(
-            arguments: ["--direction", "down", "--json"],
+            arguments: ["--direction", "down", "--foreground", "--json"],
             context: context
         )
 
@@ -176,8 +181,31 @@ struct ScrollCommandTests {
     ])
     func `Direction validation accepts common values`(value: String) async throws {
         let context = await self.makeContext()
-        let result = try await self.runScroll(arguments: ["--direction", value], context: context)
+        let result = try await self.runScroll(arguments: ["--direction", value, "--foreground"], context: context)
         #expect(result.exitStatus == 0)
+    }
+
+    @Test
+    func `Targetless background scroll fails closed`() async throws {
+        let context = await self.makeContext()
+        let result = try await self.runScroll(arguments: ["--direction", "down"], context: context)
+
+        #expect(result.exitStatus != 0)
+        #expect(self.output(from: result).contains("Background scroll requires --on"))
+        #expect(await self.automationState(context) { $0.scrollCalls }.isEmpty)
+    }
+
+    @Test
+    func `Smooth background scroll requires foreground`() async throws {
+        let context = await self.makeContext()
+        let result = try await self.runScroll(
+            arguments: ["--direction", "down", "--on", "S1", "--smooth"],
+            context: context
+        )
+
+        #expect(result.exitStatus != 0)
+        #expect(self.output(from: result).contains("require --foreground"))
+        #expect(await self.automationState(context) { $0.scrollCalls }.isEmpty)
     }
 
     // MARK: - Helpers

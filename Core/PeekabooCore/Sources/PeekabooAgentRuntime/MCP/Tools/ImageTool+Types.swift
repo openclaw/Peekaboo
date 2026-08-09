@@ -42,7 +42,7 @@ struct ImageRequest {
         let input = try arguments.decode(ImageInput.self)
         self.path = input.path
         self.question = input.question
-        self.captureFocus = input.captureFocus ?? .auto
+        self.captureFocus = input.captureFocus ?? .background
         self.format = input.format ?? .png
         self.target = try ObservationTargetArgument.parse(input.appTarget)
         self.scale = try Self.captureScale(scale: input.scale, retina: input.retina)
@@ -137,8 +137,8 @@ func buildImageSummary(savedFiles: [MCPSavedFile], captureCount: Int) -> String 
 
 func analyzeImage(at path: String, question: String) async throws -> (text: String, modelUsed: String) {
     let aiService = await MainActor.run { PeekabooAIService() }
-    let result = try await aiService.analyzeImageFile(at: path, question: question)
-    return (text: result, modelUsed: "gpt-5.5")
+    let result = try await aiService.analyzeImageFileDetailed(at: path, question: question)
+    return (text: result.text, modelUsed: result.model)
 }
 
 struct MCPSavedFile {

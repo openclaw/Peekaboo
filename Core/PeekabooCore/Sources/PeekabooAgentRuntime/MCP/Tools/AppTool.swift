@@ -13,10 +13,12 @@ public struct AppTool: MCPTool {
 
     public var description: String {
         """
-        Control applications - launch, quit, relaunch, focus, hide, unhide, switch, and list running apps.
+        Control applications - launch/open in the background, quit, relaunch, focus, hide, unhide, switch, and list.
 
         Always include the `action` field in your JSON payload. Examples:
         - { "action": "launch", "name": "Finder" }
+        - { "action": "open", "name": "Safari", "openTargets": ["https://example.com"] }
+        - { "action": "launch", "name": "Calendar", "foreground": true }
         - { "action": "switch", "to": "Safari" }
         - { "action": "focus", "name": "Google Chrome" }
         - { "action": "quit", "name": "Slack", "force": false }
@@ -28,11 +30,17 @@ public struct AppTool: MCPTool {
             properties: [
                 "action": SchemaBuilder.string(
                     description: "Action to perform",
-                    enum: ["launch", "quit", "relaunch", "focus", "hide", "unhide", "switch", "list"]),
+                    enum: ["launch", "open", "quit", "relaunch", "focus", "hide", "unhide", "switch", "list"]),
                 "name": SchemaBuilder.string(
                     description: "App name/bundle ID/PID (e.g., 'Safari', 'com.apple.Safari', 'PID:663')"),
                 "bundleId": SchemaBuilder.string(
                     description: "Bundle identifier when launching"),
+                "openTargets": SchemaBuilder.array(
+                    items: SchemaBuilder.string(),
+                    description: "URL or file paths to open; required for open, optional for launch"),
+                "foreground": SchemaBuilder.boolean(
+                    description: "Activate the app after launch/open/relaunch (background is the default)",
+                    default: false),
                 "force": SchemaBuilder.boolean(
                     description: "Force quit application",
                     default: false),
@@ -68,6 +76,8 @@ public struct AppTool: MCPTool {
         let request = AppToolRequest(
             name: arguments.getString("name"),
             bundleId: arguments.getString("bundleId"),
+            openTargets: arguments.getStringArray("openTargets") ?? [],
+            foreground: arguments.getBool("foreground") ?? false,
             force: arguments.getBool("force") ?? false,
             wait: arguments.getNumber("wait") ?? 2.0,
             waitUntilReady: arguments.getBool("waitUntilReady") ?? false,
@@ -95,6 +105,8 @@ public struct AppTool: MCPTool {
 struct AppToolRequest {
     let name: String?
     let bundleId: String?
+    let openTargets: [String]
+    let foreground: Bool
     let force: Bool
     let wait: Double
     let waitUntilReady: Bool

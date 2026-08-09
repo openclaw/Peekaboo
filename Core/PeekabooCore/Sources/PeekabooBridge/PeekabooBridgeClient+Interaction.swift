@@ -103,7 +103,8 @@ extension PeekabooBridgeClient {
     }
 
     public func scroll(_ request: ScrollRequest) async throws {
-        try await self.sendExpectOK(.scroll(PeekabooBridgeScrollRequest(request: request)))
+        let payload = PeekabooBridgeScrollRequest(request: request)
+        try await self.sendExpectOK(request.foreground ? .scroll(payload) : .targetedScroll(payload))
     }
 
     public func hotkey(keys: String, holdDuration: Int) async throws {

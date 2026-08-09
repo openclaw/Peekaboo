@@ -340,7 +340,8 @@ struct PeekabooBridgeTargetedClickTests {
         #expect(handshake.enabledOperations?.contains(.targetedClick) == false)
         #expect(handshake.supportedOperations.contains(.exactWindowTargetedClick))
         #expect(handshake.enabledOperations?.contains(.exactWindowTargetedClick) == false)
-        #expect(handshake.permissionTags[PeekabooBridgeOperation.targetedClick.rawValue] == [])
+        #expect(handshake.permissionTags[PeekabooBridgeOperation.targetedClick.rawValue] == [.accessibility])
+        #expect(handshake.permissionTags[PeekabooBridgeOperation.exactWindowTargetedClick.rawValue] == [.accessibility])
         #expect(handshake.supportedOperations.contains(.quitApplication))
         #expect(handshake.enabledOperations?.contains(.quitApplication) == true)
         #expect(handshake.permissionTags[PeekabooBridgeOperation.quitApplication.rawValue] == [])
@@ -690,9 +691,16 @@ struct PeekabooBridgeTargetedClickTests {
     }
 
     @Test
-    func `targeted click defers permission checks to its selected input path`() {
+    func `pointer operations declare their actual permissions`() {
         #expect(PeekabooBridgeOperation.targetedHotkey.requiredPermissions == [.postEvent])
-        #expect(PeekabooBridgeOperation.targetedClick.requiredPermissions.isEmpty)
+        #expect(PeekabooBridgeOperation.targetedClick.requiredPermissions == [.accessibility])
+        #expect(PeekabooBridgeOperation.exactWindowTargetedClick.requiredPermissions == [.accessibility])
+        #expect(PeekabooBridgeOperation.click.requiredPermissions == [.postEvent])
+        #expect(PeekabooBridgeOperation.moveMouse.requiredPermissions == [.postEvent])
+        #expect(PeekabooBridgeOperation.drag.requiredPermissions == [.postEvent])
+        #expect(PeekabooBridgeOperation.swipe.requiredPermissions == [.postEvent])
+        #expect(PeekabooBridgeOperation.scroll.requiredPermissions == [.postEvent])
+        #expect(PeekabooBridgeOperation.targetedScroll.requiredPermissions == [.accessibility])
         #expect(!PeekabooBridgeTargetedClickRequest.requiresPostEventPermission(
             target: .elementId("B1"),
             clickType: .right))
@@ -705,6 +713,74 @@ struct PeekabooBridgeTargetedClickTests {
         #expect(PeekabooBridgeTargetedClickRequest.requiresPostEventPermission(
             target: .elementId("B1"),
             clickType: .double))
+    }
+
+    @Test
+    @MainActor
+    func `scroll bridge permission follows explicit delivery mode`() async throws {
+        let background = PeekabooBridgeRequest.targetedScroll(PeekabooBridgeScrollRequest(request: ScrollRequest(
+            direction: .down,
+            amount: 1,
+            target: "S1")))
+        let foreground = PeekabooBridgeRequest.scroll(PeekabooBridgeScrollRequest(request: ScrollRequest(
+            direction: .down,
+            amount: 1,
+            foreground: true)))
+
+        let postEventOnly = PeekabooBridgeServer(
+            services: StubServices(),
+            hostKind: .gui,
+            allowlistedTeams: [],
+            allowlistedBundles: [],
+            postEventAccessEvaluator: { true },
+            permissionStatusEvaluator: { _ in
+                PermissionsStatus(screenRecording: false, accessibility: false, postEvent: true)
+            })
+        let backgroundResponse = try await self.decode(postEventOnly.decodeAndHandle(
+            JSONEncoder.peekabooBridgeEncoder().encode(background),
+            peer: nil))
+        guard case let .error(backgroundError) = backgroundResponse else {
+            Issue.record("Expected background scroll permission error")
+            return
+        }
+        #expect(backgroundError.permission == .accessibility)
+
+        let accessibilityOnly = PeekabooBridgeServer(
+            services: StubServices(),
+            hostKind: .gui,
+            allowlistedTeams: [],
+            allowlistedBundles: [],
+            postEventAccessEvaluator: { false },
+            permissionStatusEvaluator: { _ in
+                PermissionsStatus(screenRecording: false, accessibility: true, postEvent: false)
+            })
+        let foregroundResponse = try await self.decode(accessibilityOnly.decodeAndHandle(
+            JSONEncoder.peekabooBridgeEncoder().encode(foreground),
+            peer: nil))
+        guard case let .error(foregroundError) = foregroundResponse else {
+            Issue.record("Expected foreground scroll permission error")
+            return
+        }
+        #expect(foregroundError.permission == .postEvent)
+    }
+
+    @Test
+    @MainActor
+    func `remote background scroll rejects stale bridge capability before transport`() async {
+        let remote = RemoteUIAutomationService(
+            client: PeekabooBridgeClient(
+                socketPath: "/tmp/peekaboo-missing-\(UUID().uuidString).sock",
+                requestTimeoutSec: 0.1),
+            supportsTargetedScroll: false)
+
+        do {
+            try await remote.scroll(ScrollRequest(direction: .down, amount: 1, target: "S1"))
+            Issue.record("Expected targeted-scroll capability error")
+        } catch let error as PeekabooError {
+            #expect(error.localizedDescription.contains("background-safe targeted scroll"))
+        } catch {
+            Issue.record("Unexpected transport error: \(error)")
+        }
     }
 
     @Test

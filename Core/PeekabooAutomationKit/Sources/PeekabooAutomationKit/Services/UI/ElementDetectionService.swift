@@ -36,6 +36,7 @@ import PeekabooFoundation
 @MainActor
 public final class ElementDetectionService {
     private let logger = Logger(subsystem: "boo.peekaboo.core", category: "ElementDetectionService")
+    private let snapshotManager: (any SnapshotManagerProtocol)?
     private let windowIdentityService = WindowIdentityService()
     private let windowResolver: ElementDetectionWindowResolver
     private let axTreeCache = ElementDetectionCache()
@@ -44,9 +45,10 @@ public final class ElementDetectionService {
     private let axTreeCollector = AXTreeCollector()
 
     public init(
-        snapshotManager _: (any SnapshotManagerProtocol)? = nil,
+        snapshotManager: (any SnapshotManagerProtocol)? = nil,
         applicationService: ApplicationService? = nil)
     {
+        self.snapshotManager = snapshotManager
         self
             .windowResolver =
             ElementDetectionWindowResolver(applicationService: applicationService ?? ApplicationService())
@@ -82,7 +84,7 @@ public final class ElementDetectionService {
             windowContext?.windowID
 
         var elementIdMap: [String: DetectedElement] = [:]
-        let allowWebFocus = windowContext?.shouldFocusWebContent ?? true
+        let allowWebFocus = windowContext?.shouldFocusWebContent ?? false
         let includeMenuBarElements = windowContext?.includeMenuBarElements ?? true
         let budget = AXTraversalBudget.normalizedForTraversal(windowContext?.traversalBudget)
         let usesDefaultBudget = budget == AXTraversalBudget()
@@ -118,7 +120,14 @@ public final class ElementDetectionService {
                 allowWebFocus: allowWebFocus,
                 includeMenuBarElements: includeMenuBarElements)
             : nil
-        if let cacheKey, let cached = self.axTreeCache.result(for: cacheKey) {
+        // Snapshot storage and the short-lived AX tree use separate caches. Tie them to the same
+        // mutation boundary so a fresh screenshot cannot be paired with pre-mutation element values.
+        let invalidatedThrough = self.snapshotManager?.effectiveImplicitLatestInvalidationWatermark
+        if let cacheKey,
+           let cached = self.axTreeCache.result(
+               for: cacheKey,
+               invalidatedThrough: invalidatedThrough)
+        {
             self.logger.debug("Using cached AX tree for window \(cacheKey.windowID)")
             detectedElements = cached.elements
             usedCache = true
@@ -155,6 +164,10 @@ public final class ElementDetectionService {
             windowContext: resolvedWindowContext,
             isDialog: windowResolution.isDialog,
             truncationInfo: truncationInfo)
+    }
+
+    func invalidateCache() {
+        self.axTreeCache.removeAll()
     }
 }
 

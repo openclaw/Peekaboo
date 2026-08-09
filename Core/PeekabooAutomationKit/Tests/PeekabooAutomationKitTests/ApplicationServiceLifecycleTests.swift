@@ -6,6 +6,11 @@ import Testing
 
 struct ApplicationServiceLifecycleTests {
     @Test
+    func `Launch request defaults to background`() {
+        #expect(ApplicationLaunchRequest(applicationIdentifier: "Finder").activates == false)
+    }
+
+    @Test
     @MainActor
     func `Finder resolves from CoreServices without launching`() throws {
         let url = try ApplicationService().resolveApplicationURL("Finder")

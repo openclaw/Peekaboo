@@ -94,7 +94,8 @@ extension DialogService {
         let clickResult = try await self.clickButton(
             in: dialog,
             buttonText: resolvedActionButton,
-            allowFallbackToDefaultAction: true)
+            allowFallbackToDefaultAction: true,
+            allowGlobalFallback: true)
         details["button_clicked"] = clickResult.details["button"] ?? resolvedActionButton
         if let buttonIdentifier = clickResult.details["button_identifier"] {
             details["button_identifier"] = buttonIdentifier

@@ -61,35 +61,38 @@ public final class ScrollService {
             "smooth: \(request.smooth)"
         self.logger.debug("\(description, privacy: .public)")
         let bundleIdentifier = await self.bundleIdentifier(snapshotId: request.snapshotId)
-        let strategy = self.inputPolicy.strategy(for: .scroll, bundleIdentifier: bundleIdentifier)
+        let strategy: UIInputStrategy = request.foreground ? .synthOnly : .actionOnly
 
         do {
-            let action: (() async throws -> ActionInputResult)? = if Self.requiresSyntheticScrollSemantics(request) {
-                {
-                    throw ActionInputError.unsupported(.actionUnsupported)
-                }
-            } else {
-                {
-                    try await self.performActionScroll(request, strategy: strategy)
-                }
-            }
             let result = try await UIInputDispatcher.run(
                 verb: .scroll,
                 strategy: strategy,
                 bundleIdentifier: bundleIdentifier,
-                action: action,
+                action: {
+                    try await self.performActionScroll(request, strategy: strategy)
+                },
                 synth: {
                     try await self.performSyntheticScroll(request)
                 })
             self.logger.debug("Scroll completed via \(result.path.rawValue, privacy: .public)")
             return result
+        } catch let error as ActionInputError
+            where !request.foreground && error.allowsSynthesisFallback
+        {
+            throw PeekabooError.invalidInput(Self.foregroundRequiredMessage(for: error))
         } catch {
             throw error
         }
     }
 
     nonisolated static func requiresSyntheticScrollSemantics(_ request: ScrollRequest) -> Bool {
-        request.smooth || request.delay > 0
+        request.foreground
+    }
+
+    nonisolated static func foregroundRequiredMessage(for error: ActionInputError? = nil) -> String {
+        let reason = error?.localizedDescription ?? "the requested scroll has no Accessibility scroll action"
+        return "Background scroll is Accessibility-only, but \(reason). " +
+            "Retry with foreground enabled to allow synthetic wheel events."
     }
 
     private func performActionScroll(

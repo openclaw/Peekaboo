@@ -8,6 +8,9 @@ extension WindowCommand {
     @MainActor
     struct CloseSubcommand: ErrorHandlingCommand, OutputFormattable {
         @OptionGroup var windowOptions: WindowIdentificationOptions
+
+        @Flag(help: "Allow focused/global fallback if AX close does not dismiss the window")
+        var foreground = false
         @RuntimeStorage private var runtime: CommandRuntime?
 
         private var resolvedRuntime: CommandRuntime {
@@ -57,7 +60,11 @@ extension WindowCommand {
 
                 // Perform the action
                 self.resolvedRuntime.beginInteractionMutation()
-                try await WindowServiceBridge.closeWindow(windows: self.services.windows, target: target)
+                try await WindowServiceBridge.closeWindow(
+                    windows: self.services.windows,
+                    target: target,
+                    allowForegroundFallback: self.foreground
+                )
                 await invalidateLatestSnapshotAfterWindowMutation(
                     runtime: self.resolvedRuntime,
                     reason: "window close"

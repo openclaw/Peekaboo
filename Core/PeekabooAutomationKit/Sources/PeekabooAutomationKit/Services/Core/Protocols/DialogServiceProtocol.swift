@@ -22,6 +22,14 @@ public protocol DialogServiceProtocol: Sendable {
         windowTitle: String?,
         appName: String?) async throws -> DialogActionResult
 
+    /// Click a dialog button, optionally allowing a foreground screen-coordinate fallback.
+    /// Background callers must leave `allowGlobalFallback` false so the action remains AX-only.
+    func clickButton(
+        buttonText: String,
+        windowTitle: String?,
+        appName: String?,
+        allowGlobalFallback: Bool) async throws -> DialogActionResult
+
     /// Enter text in a dialog field
     /// - Parameters:
     ///   - text: Text to enter
@@ -69,6 +77,19 @@ public protocol DialogServiceProtocol: Sendable {
 }
 
 extension DialogServiceProtocol {
+    public func clickButton(
+        buttonText: String,
+        windowTitle: String?,
+        appName: String?,
+        allowGlobalFallback: Bool) async throws -> DialogActionResult
+    {
+        guard allowGlobalFallback else {
+            throw PeekabooError.operationError(
+                message: "This dialog service does not implement AX-only background button clicks")
+        }
+        return try await self.clickButton(buttonText: buttonText, windowTitle: windowTitle, appName: appName)
+    }
+
     public func findActiveDialog(windowTitle: String?) async throws -> DialogInfo {
         try await self.findActiveDialog(windowTitle: windowTitle, appName: nil)
     }

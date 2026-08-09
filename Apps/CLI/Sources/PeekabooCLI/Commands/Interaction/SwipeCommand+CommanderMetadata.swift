@@ -51,10 +51,15 @@ extension SwipeCommand: CommanderSignatureProviding {
                     help: "Use right mouse button for drag",
                     long: "right-button"
                 ),
+                .commandFlag(
+                    "foreground",
+                    help: "Confirm foreground pointer movement and focus the target when specified",
+                    long: "foreground"
+                ),
             ],
             optionGroups: [
                 InteractionTargetOptions.commanderSignature(),
-                FocusCommandOptions.commanderSignature(),
+                FocusCommandOptions.commanderSignature(includeAutoFocusControl: false),
             ]
         )
     }

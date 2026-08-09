@@ -162,11 +162,14 @@ extension DialogService {
         }
     }
 
-    func pressOrClick(_ element: Element) throws {
+    func pressOrClick(_ element: Element, allowGlobalFallback: Bool = false) throws {
         do {
             try element.performAction(.press)
             return
         } catch {
+            guard allowGlobalFallback else {
+                throw error
+            }
             guard let position = element.position(),
                   let size = element.size(),
                   size.width > 0,

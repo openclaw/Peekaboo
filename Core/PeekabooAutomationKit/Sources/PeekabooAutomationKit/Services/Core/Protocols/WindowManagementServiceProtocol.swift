@@ -1,5 +1,6 @@
 import CoreGraphics
 import Foundation
+import PeekabooFoundation
 
 /// Protocol defining window management operations
 public protocol WindowManagementServiceProtocol: Sendable {
@@ -7,6 +8,10 @@ public protocol WindowManagementServiceProtocol: Sendable {
     /// - Parameters:
     ///   - target: Window targeting options
     func closeWindow(target: WindowTarget) async throws
+
+    /// Close a window, optionally escalating from AX to focused/global input fallbacks.
+    /// Background callers must leave `allowForegroundFallback` false.
+    func closeWindow(target: WindowTarget, allowForegroundFallback: Bool) async throws
 
     /// Minimize a window
     /// - Parameters:
@@ -50,6 +55,16 @@ public protocol WindowManagementServiceProtocol: Sendable {
     /// Get the currently focused window
     /// - Returns: Window information if a window is focused
     func getFocusedWindow() async throws -> ServiceWindowInfo?
+}
+
+extension WindowManagementServiceProtocol {
+    public func closeWindow(target: WindowTarget, allowForegroundFallback: Bool) async throws {
+        guard allowForegroundFallback else {
+            throw PeekabooError.operationError(
+                message: "This window service does not implement AX-only background close")
+        }
+        try await self.closeWindow(target: target)
+    }
 }
 
 /// Options for targeting a window

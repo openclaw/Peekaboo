@@ -508,7 +508,7 @@ struct MCPToolExecutionTests {
     }
 
     @Test
-    func `timed out See tool retains its pending snapshot tombstone`() async throws {
+    func `timed out background See tool removes its snapshot`() async throws {
         await UISnapshotManager.shared.removeAllSnapshots()
         let automation = await MainActor.run {
             MockAutomationService(
@@ -525,7 +525,8 @@ struct MCPToolExecutionTests {
 
         #expect(response.isError)
         #expect(try await snapshots.listSnapshots().isEmpty)
-        #expect(try await snapshots.cleanAllSnapshots() == 1)
+        let remainingSnapshotCount = try await snapshots.cleanAllSnapshots()
+        #expect(remainingSnapshotCount == 0)
         #expect(await UISnapshotManager.shared.getSnapshot(id: nil) == nil)
         await UISnapshotManager.shared.removeAllSnapshots()
     }
@@ -611,27 +612,6 @@ struct MCPToolExecutionTests {
     }
 
     // MARK: - App Tool Tests
-
-    @Test
-    func `App tool launch`() async throws {
-        let mockApps = await MainActor.run { MockApplicationService() }
-        let context = await MCPToolTestHelpers.makeContext(applications: mockApps)
-        let tool = AppTool(context: context)
-        let args = ToolArguments(raw: [
-            "action": "launch",
-            "target": "TextEdit",
-        ])
-
-        let response = try await tool.execute(arguments: args)
-
-        // We can't guarantee TextEdit exists on all test systems
-        // but we can verify the response format
-        if !response.isError {
-            if case let .text(text: output, annotations: _, _meta: _) = response.content.first {
-                #expect(output.contains("Launch") || output.contains("already running"))
-            }
-        }
-    }
 
     @Test
     func `App tool missing action`() async throws {
@@ -912,7 +892,7 @@ struct MCPToolExecutionTests {
 
         #expect(response.isError == false)
         let calls = await MainActor.run { automation.clickCalls }
-        #expect(calls.first?.snapshotId == nil)
+        #expect(calls.first?.snapshotId == explicitSnapshotId)
         let explicitHistory = await UISnapshotManager.shared.getSnapshot(id: explicitSnapshotId)
         let latestHistory = await UISnapshotManager.shared.getSnapshot(id: latestSnapshotId)
         let implicitLatest = await UISnapshotManager.shared.getSnapshot(id: nil)
@@ -1054,6 +1034,7 @@ struct MCPToolExecutionTests {
             "on": "T1",
             "text": "hello",
             "snapshot": snapshotId,
+            "foreground": true,
         ]))
 
         #expect(response.isError == false)
@@ -1076,7 +1057,10 @@ struct MCPToolExecutionTests {
         let snapshotId = await snapshot.id
 
         let tool = TypeTool(context: context)
-        let response = try await tool.execute(arguments: ToolArguments(raw: ["text": "hello"]))
+        let response = try await tool.execute(arguments: ToolArguments(raw: [
+            "text": "hello",
+            "foreground": true,
+        ]))
 
         #expect(response.isError == false)
         let typeSnapshotId = await MainActor.run { automation.lastTypeSnapshotId }
@@ -1103,6 +1087,7 @@ struct MCPToolExecutionTests {
         let response = try await tool.execute(arguments: ToolArguments(raw: [
             "text": "hello",
             "snapshot": explicitSnapshotId,
+            "foreground": true,
         ]))
 
         #expect(response.isError == false)
@@ -1127,7 +1112,10 @@ struct MCPToolExecutionTests {
         let snapshotId = await snapshot.id
 
         let tool = ScrollTool(context: context)
-        let response = try await tool.execute(arguments: ToolArguments(raw: ["direction": "down"]))
+        let response = try await tool.execute(arguments: ToolArguments(raw: [
+            "direction": "down",
+            "foreground": true,
+        ]))
 
         #expect(response.isError == false)
         let requests = await MainActor.run { automation.scrollRequests }
@@ -1154,6 +1142,7 @@ struct MCPToolExecutionTests {
         let response = try await tool.execute(arguments: ToolArguments(raw: [
             "direction": "down",
             "snapshot": explicitSnapshotId,
+            "foreground": true,
         ]))
 
         #expect(response.isError == false)
@@ -1189,7 +1178,10 @@ struct MCPToolExecutionTests {
         let context = await MCPToolTestHelpers.makeContext(automation: automation, screens: screens)
         let tool = MoveTool(context: context)
 
-        let response = try await tool.execute(arguments: ToolArguments(raw: ["center": true]))
+        let response = try await tool.execute(arguments: ToolArguments(raw: [
+            "center": true,
+            "foreground": true,
+        ]))
 
         #expect(response.isError == false)
         #expect(await MainActor.run { automation.lastMoveTarget } == CGPoint(x: 500, y: 500))
@@ -1465,6 +1457,7 @@ enum MCPToolTestHelpers {
         automation: (any UIAutomationServiceProtocol)? = nil,
         screenCapture: (any ScreenCaptureServiceProtocol)? = nil,
         applications: (any ApplicationServiceProtocol)? = nil,
+        windows: (any WindowManagementServiceProtocol)? = nil,
         screens: (any ScreenServiceProtocol)? = nil,
         clipboard: (any ClipboardServiceProtocol)? = nil,
         snapshots: (any SnapshotManagerProtocol)? = nil,
@@ -1478,7 +1471,7 @@ enum MCPToolTestHelpers {
             return MCPToolContext(
                 automation: automation ?? services.automation,
                 menu: services.menu,
-                windows: services.windows,
+                windows: windows ?? services.windows,
                 applications: applications ?? services.applications,
                 dialogs: services.dialogs,
                 dock: services.dock,
@@ -1520,8 +1513,35 @@ enum MCPToolTestHelpers {
 
 // MARK: - Mock Services
 
+final class PointerPolicyWindowService: WindowManagementServiceProtocol, @unchecked Sendable {
+    let window: ServiceWindowInfo
+
+    init(window: ServiceWindowInfo) {
+        self.window = window
+    }
+
+    func closeWindow(target _: WindowTarget) async throws {}
+    func minimizeWindow(target _: WindowTarget) async throws {}
+    func maximizeWindow(target _: WindowTarget) async throws {}
+    func moveWindow(target _: WindowTarget, to _: CGPoint) async throws {}
+    func resizeWindow(target _: WindowTarget, to _: CGSize) async throws {}
+    func setWindowBounds(target _: WindowTarget, bounds _: CGRect) async throws {}
+    func focusWindow(target _: WindowTarget) async throws {}
+
+    func listWindows(target: WindowTarget) async throws -> [ServiceWindowInfo] {
+        if case let .windowId(windowID) = target, windowID == self.window.windowID {
+            return [self.window]
+        }
+        return []
+    }
+
+    func getFocusedWindow() async throws -> ServiceWindowInfo? {
+        self.window
+    }
+}
+
 @MainActor
-class MockAutomationService: TargetedClickServiceProtocol, TargetedHotkeyServiceProtocol,
+class MockAutomationService: ExactWindowTargetedClickServiceProtocol, TargetedHotkeyServiceProtocol,
 TargetedTypeServiceProtocol {
     struct ClickCall {
         let target: ClickTarget
@@ -1534,6 +1554,7 @@ TargetedTypeServiceProtocol {
         let clickType: ClickType
         let snapshotId: String?
         let targetProcessIdentifier: pid_t
+        let targetWindowID: Int?
     }
 
     struct TargetedHotkeyCall {
@@ -1620,7 +1641,23 @@ TargetedTypeServiceProtocol {
             target: target,
             clickType: clickType,
             snapshotId: snapshotId,
-            targetProcessIdentifier: targetProcessIdentifier))
+            targetProcessIdentifier: targetProcessIdentifier,
+            targetWindowID: nil))
+    }
+
+    func click(
+        target: ClickTarget,
+        clickType: ClickType,
+        snapshotId: String?,
+        targetProcessIdentifier: pid_t,
+        targetWindowID: Int) async throws
+    {
+        self.targetedClickCalls.append(TargetedClickCall(
+            target: target,
+            clickType: clickType,
+            snapshotId: snapshotId,
+            targetProcessIdentifier: targetProcessIdentifier,
+            targetWindowID: targetWindowID))
     }
 
     func type(text _: String, target _: String?, clearExisting _: Bool, typingDelay _: Int, snapshotId _: String?) async
@@ -1884,6 +1921,8 @@ private final class MockScreenService: ScreenServiceProtocol {
 @MainActor
 final class MockApplicationService: ApplicationServiceProtocol {
     private(set) var applications: [ServiceApplicationInfo]
+    private(set) var launchRequests: [ApplicationLaunchRequest] = []
+    private(set) var relaunchRequests: [ApplicationRelaunchRequest] = []
     private let windowsByIdentifier: [String: [ServiceWindowInfo]]
 
     init(
@@ -1954,6 +1993,24 @@ final class MockApplicationService: ApplicationServiceProtocol {
         return app
     }
 
+    func launchApplication(request: ApplicationLaunchRequest) async throws -> ServiceApplicationInfo {
+        self.launchRequests.append(request)
+        let identifier = request.applicationBundleIdentifier ?? request.applicationIdentifier ?? "Default Handler"
+        let app = ServiceApplicationInfo(
+            processIdentifier: Int32(self.applications.count + 1),
+            bundleIdentifier: request.applicationBundleIdentifier,
+            name: identifier,
+            isActive: request.activates,
+            isFinishedLaunching: true)
+        self.applications.append(app)
+        return app
+    }
+
+    func relaunchApplication(request: ApplicationRelaunchRequest) async throws -> ServiceApplicationInfo {
+        self.relaunchRequests.append(request)
+        return try await self.launchApplication(request: request.launchRequest)
+    }
+
     func activateApplication(identifier _: String) async throws {}
 
     func quitApplication(identifier _: String, force _: Bool) async throws -> Bool {
@@ -1978,7 +2035,7 @@ struct MCPToolErrorHandlingTests {
             let tool = TypeTool()
 
             // Pass number where string expected
-            let args = ToolArguments(raw: ["text": 12345])
+            let args = ToolArguments(raw: ["text": 12345, "foreground": true])
 
             let response = try await tool.execute(arguments: args)
 
@@ -2054,7 +2111,10 @@ struct MCPToolErrorHandlingTests {
 
         try await MCPToolTestHelpers.withContext(automation: automation) {
             let tool = TypeTool()
-            let response = try await tool.execute(arguments: ToolArguments(raw: ["text": "Hello"]))
+            let response = try await tool.execute(arguments: ToolArguments(raw: [
+                "text": "Hello",
+                "foreground": true,
+            ]))
             #expect(response.isError == false)
         }
 
@@ -2080,6 +2140,7 @@ struct MCPToolErrorHandlingTests {
             let response = try await tool.execute(arguments: ToolArguments(raw: [
                 "text": "Hello",
                 "wpm": 140,
+                "foreground": true,
             ]))
             #expect(response.isError == false)
         }
@@ -2107,6 +2168,7 @@ struct MCPToolErrorHandlingTests {
                 "text": "Ping",
                 "profile": "linear",
                 "delay": 25,
+                "foreground": true,
             ]))
             #expect(response.isError == false)
         }

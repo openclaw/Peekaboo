@@ -61,12 +61,23 @@ enum CommanderCLIBinder {
             commandType,
             parsedValues: parsedValues
         )
-        options.requiresPostEventClickPermission = Self.requiresPostEventClickPermission(
+        options.requiresTargetedScroll = commandType == ScrollCommand.self &&
+            !CommanderBindableValues(parsedValues: parsedValues).flag("foreground")
+        options.requiresPostEventPermission = Self.requiresPostEventPermission(
+            commandType,
+            parsedValues: parsedValues
+        )
+        options.requiresAccessibilityPermission = Self.requiresAccessibilityPermission(
             commandType,
             parsedValues: parsedValues
         )
         options.requiresLongPressClick = commandType == ClickCommand.self &&
             CommanderBindableValues(parsedValues: parsedValues).flag("longPress")
+        let commandValues = CommanderBindableValues(parsedValues: parsedValues)
+        options.requiresBackgroundWindowClose = commandType == WindowCommand.CloseSubcommand.self &&
+            !commandValues.flag("foreground")
+        options.requiresBackgroundDialogClick = commandType == DialogCommand.ClickSubcommand.self &&
+            !commandValues.flag("foreground")
         options.requiresScreenCapturePermission = Self.requiresScreenCapturePermission(commandType)
         options.requestsHostPermissionGrant = Self.isInteractivePermissionRequest(commandType)
         options.usesPerToolSnapshotInvalidation = commandType == AgentCommand.self ||
@@ -82,7 +93,7 @@ enum CommanderCLIBinder {
             .trimmingCharacters(in: .whitespacesAndNewlines),
             !captureEngine.isEmpty {
             options.captureEnginePreference = captureEngine
-            if !options.requiresApplicationLaunchOptions && !options.requiresHostApplicationInventory {
+            if !options.requiresApplicationLaunchOptions, !options.requiresHostApplicationInventory {
                 options.preferRemote = false
             }
         }
@@ -173,7 +184,8 @@ enum CommanderCLIBinder {
             return BrowserCommand.actionMayMutate(parsedValues.positional.first ?? "status")
         }
         if commandType == SeeCommand.self {
-            return true
+            let values = CommanderBindableValues(parsedValues: parsedValues)
+            return values.flag("webFocus")
         }
         if self.isInteractivePermissionRequest(commandType) {
             return true
@@ -279,7 +291,7 @@ enum CommanderCLIBinder {
         let focus = values.singleOption("captureFocus")?
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
-        guard focus != "background" else { return false }
+        guard focus == "auto" || focus == "foreground" else { return false }
 
         let app = values.singleOption("app")?
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -354,21 +366,35 @@ enum CommanderCLIBinder {
         return values.singleOption("coords") != nil && hasProcessTarget && !values.flag("globalCoords")
     }
 
-    private static func requiresPostEventClickPermission(
+    private static func requiresPostEventPermission(
         _ commandType: (any ParsableCommand.Type)?,
         parsedValues: ParsedValues
     ) -> Bool {
-        guard commandType == ClickCommand.self else { return false }
         let values = CommanderBindableValues(parsedValues: parsedValues)
-        if values.flag("longPress") {
+        if commandType == MoveCommand.self || commandType == DragCommand.self || commandType == SwipeCommand.self {
             return true
         }
-        guard self.usesBackgroundClickDelivery(values) else { return false }
-        if values.singleOption("coords") != nil {
-            return true
+        if commandType == ScrollCommand.self {
+            return values.flag("foreground")
         }
-        // ClickCommand resolves conflicting flags as right-click first, then double-click.
-        return values.flag("double") && !values.flag("right")
+        if commandType == ClickCommand.self {
+            return !self.usesBackgroundClickDelivery(values)
+        }
+        return false
+    }
+
+    private static func requiresAccessibilityPermission(
+        _ commandType: (any ParsableCommand.Type)?,
+        parsedValues: ParsedValues
+    ) -> Bool {
+        let values = CommanderBindableValues(parsedValues: parsedValues)
+        if commandType == ScrollCommand.self {
+            return !values.flag("foreground")
+        }
+        if commandType == ClickCommand.self {
+            return self.usesBackgroundClickDelivery(values)
+        }
+        return false
     }
 
     private static func usesBackgroundClickDelivery(_ values: CommanderBindableValues) -> Bool {
@@ -579,7 +605,7 @@ extension CommanderBindableValues {
         options.noAutoFocus = self.flag("noAutoFocus")
         options.spaceSwitch = self.flag("spaceSwitch")
         options.bringToCurrentSpace = self.flag("bringToCurrentSpace")
-        if includeBackgroundDelivery && self.flag("focusBackground") {
+        if includeBackgroundDelivery, self.flag("focusBackground") {
             options.focusBackground = true
         }
         if let timeout: TimeInterval = try decodeOption("focusTimeoutSeconds", as: TimeInterval.self) {

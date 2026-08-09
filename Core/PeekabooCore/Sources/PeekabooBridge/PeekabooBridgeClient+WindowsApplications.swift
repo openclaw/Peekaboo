@@ -33,7 +33,16 @@ extension PeekabooBridgeClient {
     }
 
     public func closeWindow(target: WindowTarget) async throws {
-        try await self.sendExpectOK(.closeWindow(PeekabooBridgeWindowTargetRequest(target: target)))
+        try await self.closeWindow(target: target, allowForegroundFallback: false)
+    }
+
+    public func closeWindow(target: WindowTarget, allowForegroundFallback: Bool) async throws {
+        let request = PeekabooBridgeWindowTargetRequest(target: target)
+        if allowForegroundFallback {
+            try await self.sendExpectOK(.closeWindow(request))
+        } else {
+            try await self.sendExpectOK(.backgroundCloseWindow(request))
+        }
     }
 
     public func minimizeWindow(target: WindowTarget) async throws {

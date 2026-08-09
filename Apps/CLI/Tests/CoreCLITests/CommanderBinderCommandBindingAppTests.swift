@@ -20,6 +20,18 @@ struct CommanderBinderAppConfigTests {
         #expect(command.app == "Visual Studio Code")
         #expect(command.bundleId == "com.microsoft.VSCode")
         #expect(command.waitUntilReady == true)
+        #expect(command.foreground == false)
+        #expect(command.noFocus == false)
+    }
+
+    @Test
+    func `App launch binding with --foreground`() throws {
+        let parsed = ParsedValues(positional: ["Calendar"], options: [:], flags: ["foreground"])
+        let command = try CommanderCLIBinder.instantiateCommand(
+            ofType: AppCommand.LaunchSubcommand.self,
+            parsedValues: parsed
+        )
+        #expect(command.foreground == true)
         #expect(command.noFocus == false)
     }
 
@@ -83,7 +95,7 @@ struct CommanderBinderAppConfigTests {
                 "app": ["Safari"],
                 "bundleId": ["com.apple.Safari"]
             ],
-            flags: ["waitUntilReady", "noFocus"]
+            flags: ["waitUntilReady", "foreground"]
         )
 
         let command = try CommanderCLIBinder.instantiateCommand(ofType: OpenCommand.self, parsedValues: parsed)
@@ -91,7 +103,8 @@ struct CommanderBinderAppConfigTests {
         #expect(command.app == "Safari")
         #expect(command.bundleId == "com.apple.Safari")
         #expect(command.waitUntilReady == true)
-        #expect(command.noFocus == true)
+        #expect(command.foreground == true)
+        #expect(command.noFocus == false)
     }
 
     @Test
@@ -107,6 +120,7 @@ struct CommanderBinderAppConfigTests {
         #expect(command.app == nil)
         #expect(command.bundleId == nil)
         #expect(command.waitUntilReady == false)
+        #expect(command.foreground == false)
         #expect(command.noFocus == false)
     }
 
@@ -170,7 +184,7 @@ struct CommanderBinderAppConfigTests {
                 "pid": ["456"],
                 "wait": ["3.5"]
             ],
-            flags: ["force", "waitUntilReady"]
+            flags: ["force", "waitUntilReady", "foreground"]
         )
         let command = try CommanderCLIBinder.instantiateCommand(
             ofType: AppCommand.RelaunchSubcommand.self,
@@ -181,6 +195,7 @@ struct CommanderBinderAppConfigTests {
         #expect(command.wait == 3.5)
         #expect(command.force == true)
         #expect(command.waitUntilReady == true)
+        #expect(command.foreground == true)
     }
 
     @Test

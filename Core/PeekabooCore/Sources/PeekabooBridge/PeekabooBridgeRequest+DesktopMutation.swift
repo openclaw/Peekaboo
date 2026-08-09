@@ -38,8 +38,14 @@ extension PeekabooBridgeRequest {
                 false
             }
             return request.capture.focus != .background ||
-                request.detection.mode != .none ||
+                (request.detection.mode != .none && request.detection.allowWebFocusFallback) ||
                 mayOpenMenuBarPopover
+        }
+        if case let .detectElements(request) = self {
+            return request.windowContext?.shouldFocusWebContent == true
+        }
+        if case let .inspectAccessibilityTree(request) = self {
+            return request.windowContext?.shouldFocusWebContent == true
         }
         return self.operation.mutatesDesktop
     }
@@ -50,14 +56,13 @@ extension PeekabooBridgeOperation {
         switch self {
         case .requestPostEventPermission,
              .browserExecute,
-             .detectElements,
-             .inspectAccessibilityTree,
              .click,
              .type,
              .typeActions,
              .setValue,
              .performAction,
              .scroll,
+             .targetedScroll,
              .hotkey,
              .targetedHotkey,
              .targetedTypeActions,
@@ -71,6 +76,7 @@ extension PeekabooBridgeOperation {
              .resizeWindow,
              .setWindowBounds,
              .closeWindow,
+             .backgroundCloseWindow,
              .minimizeWindow,
              .maximizeWindow,
              .launchApplication,
@@ -92,6 +98,7 @@ extension PeekabooBridgeOperation {
              .hideDock,
              .showDock,
              .dialogClickButton,
+             .backgroundDialogClickButton,
              .dialogEnterText,
              .dialogHandleFile,
              .dialogDismiss:
@@ -107,6 +114,8 @@ extension PeekabooBridgeOperation {
              .captureFrontmost,
              .captureArea,
              .desktopObservation,
+             .detectElements,
+             .inspectAccessibilityTree,
              .waitForElement,
              .listWindows,
              .getFocusedWindow,

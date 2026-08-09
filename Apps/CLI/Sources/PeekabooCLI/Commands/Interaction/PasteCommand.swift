@@ -416,14 +416,11 @@ struct PasteCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
     }
 
     private func backgroundProcessIdentifier() async throws -> pid_t? {
-        guard !KeyboardDeliverySupport.shouldUseForeground(
-            foreground: self.foreground,
-            focusOptions: self.focusOptions
-        ) else {
+        guard !self.foreground else {
             return nil
         }
 
-        return try await KeyboardDeliverySupport.backgroundProcessIdentifier(
+        return try await KeyboardDeliverySupport.requireBackgroundProcessIdentifier(
             target: self.target,
             snapshotId: nil,
             services: self.services
@@ -455,8 +452,8 @@ extension PasteCommand: ParsableCommand {
                 abstract: "Paste current clipboard or set clipboard, paste, and restore",
                 discussion: """
                     With no payload, paste sends Cmd+V using the current clipboard contents.
-                    Target flags send process-targeted Cmd+V when possible; otherwise it uses
-                    the focused target/global foreground delivery.
+                    Background paste requires --app or --pid. Add --foreground for intentional
+                    paste into the current focus or to focus a selected window first.
 
                     This command reduces drift in automation flows by collapsing:
                       1) clipboard set
@@ -467,10 +464,10 @@ extension PasteCommand: ParsableCommand {
                     binary payloads use background Cmd+V. Add --foreground for focused/global paste.
 
                     EXAMPLES:
-                      peekaboo paste
+                      peekaboo paste --foreground
                       peekaboo paste \"Hello\" --app TextEdit
                       peekaboo paste \"Hello\" --app TextEdit --foreground
-                      peekaboo paste --text \"Hello\" --app TextEdit --window-title \"Untitled\"
+                      peekaboo paste --text \"Hello\" --app TextEdit --window-title \"Untitled\" --foreground
                       peekaboo paste --data-base64 \"$BASE64\" --uti public.rtf --also-text \"fallback\" --app TextEdit
                       peekaboo paste --file-path /tmp/snippet.png --app Notes
                 """,

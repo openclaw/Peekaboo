@@ -12,7 +12,7 @@ read_when:
 ## Subcommands
 | Name | Purpose | Key options |
 | --- | --- | --- |
-| `close` / `minimize` / `maximize` | Perform the respective window chrome action. | Standard window-identification flags. |
+| `close` / `minimize` / `maximize` | Perform the respective window chrome action. | Standard window-identification flags. `close --foreground` permits focused/global fallbacks when AX close does not work. |
 | `focus` | Bring the window forward, optionally hopping Spaces or moving it to the current Space. | Adds `FocusCommandOptions` plus `--verify` to confirm focus. |
 | `move` | Move the window to new coordinates. | `-x <int>` / `-y <int>` specify the new origin. |
 | `resize` | Adjust width/height while keeping the origin. | `-w <int>` / `--height <int>`. |
@@ -21,6 +21,8 @@ read_when:
 
 ## Implementation notes
 - Every action validates that at least an app, PID, or window ID is supplied; optional `--window-title` and `--window-index` disambiguate when multiple windows exist.
+- `close` is AX-only in its default background mode. If AX reports success but the window remains, Peekaboo fails instead of focusing the app or sending Cmd-W to whatever is frontmost. Add `--foreground` only when you explicitly want the focused Cmd-W / close-button click fallbacks.
+- Remote background close requires a Bridge host that advertises the strict close operation. A stale host is rejected before dispatch; update it or use `--no-remote` rather than risking its legacy global fallback.
 - `move`, `resize`, `set-bounds`, and `maximize` read the window frame back after acting; `new_bounds` in the JSON payload always reflects the frame the window actually settled at, not the requested one.
 - `move`, `resize`, and `set-bounds` also verify the achieved frame against the request. macOS accepts geometry requests and then lets the app constrain them (e.g. a SwiftUI `minWidth`/`minHeight`), so the request can be applied only partially or not at all:
   - Partially applied (frame changed but missed the request): the command still succeeds, `requested_bounds` and a `warning` string are included in the JSON payload, and the text output prints the actual frame plus the warning.
@@ -40,6 +42,9 @@ peekaboo window move --app Finder --window-index 1 -x 100 -y 100
 
 # Close a specific window deterministically (window_id from `peekaboo window list --json`)
 peekaboo window close --window-id 12345
+
+# Explicitly allow focus/Cmd-W fallback for a window that ignores AX close
+peekaboo window close --window-id 12345 --foreground
 
 # Resize Safari’s frontmost window to 1200x800
 peekaboo window resize --app Safari -w 1200 --height 800

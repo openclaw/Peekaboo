@@ -11,12 +11,13 @@ struct DragRequest {
     let durationOverride: Int?
     let stepsOverride: Int?
     let modifiers: String?
-    let autoFocus: Bool
-    let bringToCurrentSpace: Bool
-    let spaceSwitch: Bool
     let profile: MovementProfileOption
 
     init(arguments: ToolArguments) throws {
+        guard arguments.getBool("foreground") == true else {
+            throw DragToolError(
+                "drag changes the shared physical cursor and requires foreground=true.")
+        }
         let fromElement = arguments.getString("from")
         let fromCoords = arguments.getString("from_coords")
         let toElement = arguments.getString("to")
@@ -64,9 +65,6 @@ struct DragRequest {
         self.durationOverride = durationOverride
         self.stepsOverride = stepsOverride
         self.modifiers = arguments.getString("modifiers")
-        self.autoFocus = arguments.getBool("auto_focus") ?? true
-        self.bringToCurrentSpace = arguments.getBool("bring_to_current_space") ?? false
-        self.spaceSwitch = arguments.getBool("space_switch") ?? false
         self.profile = profile
     }
 }
@@ -103,6 +101,7 @@ struct DragPointDescription {
     let description: String
     let targetApp: String?
     let windowTitle: String?
+    let windowID: Int?
     let elementRole: String?
     let elementLabel: String?
 
@@ -111,6 +110,7 @@ struct DragPointDescription {
         description: String,
         targetApp: String? = nil,
         windowTitle: String? = nil,
+        windowID: Int? = nil,
         elementRole: String? = nil,
         elementLabel: String? = nil)
     {
@@ -118,6 +118,7 @@ struct DragPointDescription {
         self.description = description
         self.targetApp = targetApp
         self.windowTitle = windowTitle
+        self.windowID = windowID
         self.elementRole = elementRole
         self.elementLabel = elementLabel
     }

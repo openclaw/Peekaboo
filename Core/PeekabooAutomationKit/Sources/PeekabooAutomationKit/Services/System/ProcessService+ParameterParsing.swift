@@ -69,6 +69,10 @@ extension ProcessService {
             y: dict["y"].flatMap { Double($0) },
             label: dict["query"] ?? dict["label"],
             app: dict["app"],
+            pid: self.int32Value(from: dict, keys: ["pid"]),
+            windowId: self.intValue(from: dict, keys: ["windowId", "window-id", "window_id", "window"]),
+            snapshot: dict["snapshot"] ?? dict["snapshotId"] ?? dict["snapshot-id"],
+            foreground: self.boolValue(from: dict, keys: ["foreground"]),
             button: dict["button"] ??
                 (dict["right-click"] == "true" ? "right" :
                     dict["double-click"] == "true" ? "double" : "left"),
@@ -80,6 +84,10 @@ extension ProcessService {
         return .type(ProcessCommandParameters.TypeParameters(
             text: text,
             app: dict["app"],
+            pid: self.int32Value(from: dict, keys: ["pid"]),
+            windowId: self.intValue(from: dict, keys: ["windowId", "window-id", "window_id", "window"]),
+            snapshot: dict["snapshot"] ?? dict["snapshotId"] ?? dict["snapshot-id"],
+            foreground: self.boolValue(from: dict, keys: ["foreground"]),
             field: dict["field"],
             clearFirst: self.boolValue(from: dict, keys: ["clear-first", "clearFirst", "clear_first"]),
             pressEnter: self.boolValue(from: dict, keys: ["press-enter", "pressEnter", "press_enter"])))
@@ -90,6 +98,10 @@ extension ProcessService {
             direction: dict["direction"] ?? "down",
             amount: dict["amount"].flatMap { Int($0) },
             app: dict["app"],
+            pid: self.int32Value(from: dict, keys: ["pid"]),
+            windowId: self.intValue(from: dict, keys: ["windowId", "window-id", "window_id", "window"]),
+            snapshot: dict["snapshot"] ?? dict["snapshotId"] ?? dict["snapshot-id"],
+            foreground: self.boolValue(from: dict, keys: ["foreground"]),
             target: dict["on"] ?? dict["target"])
     }
 
@@ -118,7 +130,11 @@ extension ProcessService {
         return .hotkey(ProcessCommandParameters.HotkeyParameters(
             key: key,
             modifiers: modifiers,
-            app: dict["app"]))
+            app: dict["app"],
+            pid: self.int32Value(from: dict, keys: ["pid"]),
+            windowId: self.intValue(from: dict, keys: ["windowId", "window-id", "window_id", "window"]),
+            snapshot: dict["snapshot"] ?? dict["snapshotId"] ?? dict["snapshot-id"],
+            foreground: self.boolValue(from: dict, keys: ["foreground"])))
     }
 
     private func typedMenuParameters(from dict: [String: String]) -> ProcessCommandParameters? {
@@ -160,7 +176,8 @@ extension ProcessService {
             distance: dict["distance"].flatMap { Double($0) },
             duration: dict["duration"].flatMap { Double($0) },
             fromX: dict["from-x"].flatMap { Double($0) },
-            fromY: dict["from-y"].flatMap { Double($0) })
+            fromY: dict["from-y"].flatMap { Double($0) },
+            foreground: self.boolValue(from: dict, keys: ["foreground"]))
     }
 
     private func typedDragParameters(from dict: [String: String]) -> ProcessCommandParameters? {
@@ -198,7 +215,8 @@ extension ProcessService {
             toX: toX,
             toY: toY,
             duration: dict["duration"].flatMap { Double($0) },
-            modifiers: modifiers.isEmpty ? nil : modifiers))
+            modifiers: modifiers.isEmpty ? nil : modifiers,
+            foreground: self.boolValue(from: dict, keys: ["foreground"])))
     }
 
     private func typedSleepParameters(from dict: [String: String]) -> ProcessCommandParameters.SleepParameters {
@@ -219,6 +237,19 @@ extension ProcessService {
             }
         }
         return nil
+    }
+
+    private func intValue(from dict: [String: String], keys: [String]) -> Int? {
+        for key in keys {
+            if let value = dict[key].flatMap(Int.init) {
+                return value
+            }
+        }
+        return nil
+    }
+
+    private func int32Value(from dict: [String: String], keys: [String]) -> Int32? {
+        self.intValue(from: dict, keys: keys).flatMap(Int32.init(exactly:))
     }
 
     private func typedDockParameters(from dict: [String: String]) -> ProcessCommandParameters.DockParameters {

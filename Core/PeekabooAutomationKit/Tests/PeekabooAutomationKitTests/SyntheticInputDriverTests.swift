@@ -112,7 +112,8 @@ struct SyntheticInputDriverTests {
             target: nil,
             smooth: false,
             delay: 0,
-            snapshotId: nil))
+            snapshotId: nil,
+            foreground: true))
 
         #expect(result.path == UIInputExecutionPath.synth)
         #expect(synthetic.events == [
@@ -123,28 +124,26 @@ struct SyntheticInputDriverTests {
     }
 
     @Test
-    func `action-first scroll preserves wheel tick amount through synthetic fallback`() async throws {
+    func `background scroll never falls back to synthetic pointer input`() async throws {
         let synthetic = RecordingSyntheticInputDriver(currentLocation: CGPoint(x: 20, y: 40))
         let service = ScrollService(
             inputPolicy: UIInputPolicy(defaultStrategy: .actionFirst),
             syntheticInputDriver: synthetic)
 
-        let result = try await service.scroll(ScrollRequest(
-            direction: .down,
-            amount: 3,
-            target: nil,
-            smooth: false,
-            delay: 0,
-            snapshotId: nil))
+        do {
+            try await service.scroll(ScrollRequest(
+                direction: .down,
+                amount: 3,
+                target: nil,
+                smooth: false,
+                delay: 0,
+                snapshotId: nil))
+            Issue.record("Expected background scroll to fail closed")
+        } catch let error as PeekabooError {
+            #expect(error.localizedDescription.contains("foreground"))
+        }
 
-        #expect(result.path == UIInputExecutionPath.synth)
-        #expect(result.fallbackReason == .actionUnsupported)
-        #expect(synthetic.events == [
-            .currentLocation,
-            .scroll(deltaX: 0, deltaY: -50, at: CGPoint(x: 20, y: 40)),
-            .scroll(deltaX: 0, deltaY: -50, at: CGPoint(x: 20, y: 40)),
-            .scroll(deltaX: 0, deltaY: -50, at: CGPoint(x: 20, y: 40)),
-        ])
+        #expect(synthetic.events.isEmpty)
     }
 
     @Test

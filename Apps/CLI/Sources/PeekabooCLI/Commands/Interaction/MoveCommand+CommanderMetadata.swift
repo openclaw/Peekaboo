@@ -14,11 +14,11 @@ extension MoveCommand: ParsableCommand {
                     on UI elements detected by 'see'. Supports instant and smooth movement.
 
                     EXAMPLES:
-                      peekaboo move 100,200                 # Move to coordinates
-                      peekaboo move --to "Submit Button"    # Move to element by text
-                      peekaboo move --on "$ELEMENT_ID"      # ID copied from current output
-                      peekaboo move 500,300 --smooth        # Natural smooth movement
-                      peekaboo move --center                # Move to screen center
+                      peekaboo move 100,200 --foreground
+                      peekaboo move --to "Submit Button" --foreground
+                      peekaboo move --on "$ELEMENT_ID" --foreground
+                      peekaboo move 500,300 --smooth --foreground
+                      peekaboo move --center --foreground
 
                     MOVEMENT MODES:
                       - Instant (default): Immediate cursor positioning
@@ -28,6 +28,9 @@ extension MoveCommand: ParsableCommand {
                     ELEMENT TARGETING:
                       When targeting elements, the cursor moves to the element's center.
                       Use element IDs from 'see' output for precise targeting.
+
+                    FOREGROUND POLICY:
+                      move always changes the shared physical cursor and requires --foreground.
                 """,
 
                 showHelpOnEmptyInvocation: true
@@ -57,6 +60,7 @@ extension MoveCommand: CommanderBindableCommand {
         }
         self.snapshot = values.singleOption("snapshot")
         self.profile = values.singleOption("profile")
+        self.foreground = values.flag("foreground")
         self.focusOptions = try values.makeFocusOptions()
     }
 }
@@ -124,10 +128,15 @@ extension MoveCommand: CommanderSignatureProviding {
                     help: "Use natural smooth movement",
                     long: "smooth"
                 ),
+                .commandFlag(
+                    "foreground",
+                    help: "Confirm foreground cursor movement and focus the target when specified",
+                    long: "foreground"
+                ),
             ],
             optionGroups: [
                 InteractionTargetOptions.commanderSignature(),
-                FocusCommandOptions.commanderSignature(),
+                FocusCommandOptions.commanderSignature(includeAutoFocusControl: false),
             ]
         )
     }

@@ -50,6 +50,9 @@ public struct MenuTool: MCPTool {
                     description: "Simple menu item to click (for non-nested items)"),
                 "title": SchemaBuilder.string(
                     description: "Title of system menu extra (for click-extra action)"),
+                "foreground": SchemaBuilder.boolean(
+                    description: "Focus the target before list/click. Defaults to background AX access.",
+                    default: false),
             ],
             required: ["action"])
     }
@@ -84,6 +87,10 @@ public struct MenuTool: MCPTool {
     private func handleListAction(arguments: ToolArguments) async throws -> ToolResponse {
         guard let app = arguments.getString("app") else {
             return ToolResponse.error("Missing required parameter: app (required for list action)")
+        }
+
+        if arguments.getBool("foreground") == true {
+            try await self.context.windows.focusWindow(target: .application(app))
         }
 
         do {
@@ -153,6 +160,10 @@ public struct MenuTool: MCPTool {
     private func handleClickAction(arguments: ToolArguments) async throws -> ToolResponse {
         guard let app = arguments.getString("app") else {
             return ToolResponse.error("Missing required parameter: app (required for click action)")
+        }
+
+        if arguments.getBool("foreground") == true {
+            try await self.context.windows.focusWindow(target: .application(app))
         }
 
         // Try path first, then item

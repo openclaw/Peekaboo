@@ -80,7 +80,7 @@ enum CaptureToolArgumentResolver {
     }
 
     static func captureFocus(from rawValue: String?) throws -> CaptureFocus {
-        let normalized = self.normalized(rawValue) ?? "auto"
+        let normalized = self.normalized(rawValue) ?? "background"
         guard let focus = CaptureFocus(rawValue: normalized) else {
             throw PeekabooError.invalidInput(
                 "Unsupported capture_focus '\(rawValue ?? "")'. Use auto, background, or foreground.")

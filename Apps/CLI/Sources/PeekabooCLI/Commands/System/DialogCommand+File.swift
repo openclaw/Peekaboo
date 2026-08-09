@@ -25,6 +25,9 @@ extension DialogCommand {
         @Flag(name: .long, help: "Ensure file dialogs are expanded (Show Details) before setting --path")
         var ensureExpanded = false
 
+        @Flag(help: "Focus the file dialog before keyboard or coordinate interaction")
+        var foreground = false
+
         @Option(help: "Maximum time to spend handling the file dialog")
         var timeoutSeconds: TimeInterval = 20
 
@@ -62,6 +65,9 @@ extension DialogCommand {
 
             do {
                 try self.target.validate()
+                guard self.foreground else {
+                    throw ValidationError("dialog file uses keyboard/coordinate interaction and requires --foreground")
+                }
                 if self.focusOptions.autoFocus {
                     self.resolvedRuntime.beginInteractionMutation()
                 }
@@ -121,6 +127,9 @@ extension DialogCommand {
                         + "saved_path_verified=\(savedPathVerified) app='\(appHint ?? "unknown")'"
                 )
 
+            } catch let error as Commander.ValidationError {
+                handleDialogValidationError(error, jsonOutput: self.jsonOutput, logger: self.outputLogger)
+                throw ExitCode(1)
             } catch let error as DialogError {
                 handleDialogServiceError(error, jsonOutput: self.jsonOutput, logger: self.outputLogger)
                 throw ExitCode(1)

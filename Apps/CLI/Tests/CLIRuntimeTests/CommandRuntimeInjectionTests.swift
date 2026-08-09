@@ -212,7 +212,7 @@ struct CommandRuntimeInjectionTests {
     }
 
     @Test
-    func `request-aware targeted click capability preserves AX while flagging synthetic variants`() {
+    func `request-aware targeted click capability reports its Accessibility requirement`() {
         let accessibilityOnly = PeekabooBridgeHandshakeResponse(
             negotiatedVersion: PeekabooBridgeProtocolVersion(major: 1, minor: 9),
             hostKind: .gui,
@@ -242,12 +242,12 @@ struct CommandRuntimeInjectionTests {
 
         let accessibilityAvailability = CommandRuntime.targetedClickAvailability(for: accessibilityOnly)
         #expect(accessibilityAvailability.isEnabled)
-        #expect(accessibilityAvailability.missingPermissions == [.postEvent])
+        #expect(accessibilityAvailability.missingPermissions.isEmpty)
 
         let unavailableAvailability = CommandRuntime.targetedClickAvailability(for: unavailable)
         #expect(!unavailableAvailability.isEnabled)
-        #expect(unavailableAvailability.missingPermissions.isEmpty)
-        #expect(unavailableAvailability.unavailableReason?.contains("Accessibility or Event Synthesizing") == true)
+        #expect(unavailableAvailability.missingPermissions == [.accessibility])
+        #expect(unavailableAvailability.unavailableReason?.contains("Accessibility") == true)
     }
 
     @Test
@@ -626,8 +626,8 @@ struct CommandRuntimeInjectionTests {
         )
 
         #expect(try runtimePaths == [
-            PeekabooBridgeConstants.daemonSocketPath,
             #require(buildScopedPath),
+            PeekabooBridgeConstants.daemonSocketPath,
             PeekabooBridgeConstants.peekabooSocketPath,
         ])
         #expect(try DaemonControlResolver.defaultSocketPaths() == [
@@ -656,8 +656,8 @@ struct CommandRuntimeInjectionTests {
         ))
 
         #expect(runtimePaths == [
-            PeekabooBridgeConstants.daemonSocketPath,
             buildScopedPath,
+            PeekabooBridgeConstants.daemonSocketPath,
             historicalPath,
             PeekabooBridgeConstants.peekabooSocketPath,
         ])
@@ -681,8 +681,8 @@ struct CommandRuntimeInjectionTests {
 
         #expect(runtimePaths == [
             PeekabooBridgeConstants.peekabooSocketPath,
-            PeekabooBridgeConstants.daemonSocketPath,
             buildScopedPath,
+            PeekabooBridgeConstants.daemonSocketPath,
             historicalPath,
         ])
     }

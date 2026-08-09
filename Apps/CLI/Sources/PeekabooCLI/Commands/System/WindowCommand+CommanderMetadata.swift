@@ -8,7 +8,16 @@ private enum WindowCommandSignatures {
 
 extension WindowCommand.CloseSubcommand: CommanderSignatureProviding {
     static func commanderSignature() -> CommandSignature {
-        CommandSignature(optionGroups: [WindowCommandSignatures.windowOptions])
+        CommandSignature(
+            flags: [
+                .commandFlag(
+                    "foreground",
+                    help: "Allow focused/global fallback if AX close does not dismiss the window",
+                    long: "foreground"
+                ),
+            ],
+            optionGroups: [WindowCommandSignatures.windowOptions]
+        )
     }
 }
 

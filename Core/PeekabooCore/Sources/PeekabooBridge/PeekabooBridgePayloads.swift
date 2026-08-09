@@ -129,6 +129,10 @@ public struct PeekabooBridgePerformActionRequest: Codable, Sendable {
 
 public struct PeekabooBridgeScrollRequest: Codable, Sendable {
     public let request: ScrollRequest
+
+    public init(request: ScrollRequest) {
+        self.request = request
+    }
 }
 
 public struct PeekabooBridgeHotkeyRequest: Codable, Sendable {

@@ -64,7 +64,10 @@ struct SeeCommand: ApplicationResolvable, ErrorHandlingCommand, RuntimeOptionsCo
     )
     var captureEngine: String?
 
-    @Flag(help: "Skip web-content focus fallback when no text fields are detected")
+    @Flag(help: "Allow an AXPress web-content focus retry for sparse Chromium/Tauri trees")
+    var webFocus = false
+
+    @Flag(help: "Deprecated no-op; web-content focus retries are disabled by default")
     var noWebFocus = false
 
     @Option(name: .long, help: "Maximum AX traversal depth (env: PEEKABOO_AX_MAX_DEPTH)")
@@ -115,7 +118,7 @@ struct SeeCommand: ApplicationResolvable, ErrorHandlingCommand, RuntimeOptionsCo
         self.runtime = runtime
         let commandStartedAt = Date()
         let logger = self.logger
-        let overallTimeout = TimeInterval(self.timeoutSeconds ?? ((self.analyze == nil) ? 20 : 60))
+        let overallTimeout = self.overallTimeoutSeconds
         let mutationCoordinator = runtime.toolSnapshotMutationCoordinator
         let snapshotManager = runtime.services.snapshots
 
@@ -128,19 +131,24 @@ struct SeeCommand: ApplicationResolvable, ErrorHandlingCommand, RuntimeOptionsCo
         ])
 
         let commandCopy = self
+        let mayFocusWebContent = commandCopy.webFocus
 
         do {
-            runtime.beginInteractionMutation(preservingSnapshotsCreatedAfterBoundary: true)
+            if mayFocusWebContent {
+                runtime.beginInteractionMutation(preservingSnapshotsCreatedAfterBoundary: true)
+            }
             try await CrossProcessOperationGate.withExclusiveOperation(
                 named: CrossProcessOperationGate.desktopObservationName
             ) {
                 let observationStartedAt = Date()
                 let observationDeadline = observationStartedAt.addingTimeInterval(overallTimeout)
-                let scope = MCPToolSnapshotMutationScope(
-                    toolName: "see",
-                    startedAt: observationStartedAt,
-                    effect: .mutationProducingFreshObservation
-                )
+                let scope = mayFocusWebContent
+                    ? MCPToolSnapshotMutationScope(
+                        toolName: "see",
+                        startedAt: observationStartedAt,
+                        effect: .mutationProducingFreshObservation
+                    )
+                    : nil
                 let reservationTimeout = try Self.remainingObservationTimeout(
                     until: observationDeadline,
                     overallTimeout: overallTimeout
@@ -149,7 +157,11 @@ struct SeeCommand: ApplicationResolvable, ErrorHandlingCommand, RuntimeOptionsCo
                     seconds: reservationTimeout,
                     timeoutErrorSeconds: overallTimeout
                 ) {
-                    try await snapshotManager.createSnapshot(pendingAt: observationStartedAt)
+                    if scope != nil {
+                        try await snapshotManager.createSnapshot(pendingAt: observationStartedAt)
+                    } else {
+                        try await snapshotManager.createSnapshot()
+                    }
                 }
                 defer {
                     if snapshotManager.copiesScreenshotArtifactsIntoStorage {
@@ -175,29 +187,31 @@ struct SeeCommand: ApplicationResolvable, ErrorHandlingCommand, RuntimeOptionsCo
                     }
                     observationCompleted = true
 
-                    let publicationTimeout = try Self.remainingObservationTimeout(
-                        until: observationDeadline,
-                        overallTimeout: overallTimeout
-                    )
-                    let published = try await Self.withWallClockTimeout(
-                        seconds: publicationTimeout,
-                        timeoutErrorSeconds: overallTimeout
-                    ) {
-                        await mutationCoordinator.completeMutation(
-                            scope.completed(
-                                at: Date(),
-                                preserving: snapshotID,
-                                confirmedMutationCompletedAt: context.metadata.desktopMutationCompletedAt,
-                                observationPreservationAllowed: context.metadata
-                                    .desktopMutationPreservationAllowed
-                            ),
-                            succeeded: true
+                    if let scope {
+                        let publicationTimeout = try Self.remainingObservationTimeout(
+                            until: observationDeadline,
+                            overallTimeout: overallTimeout
                         )
-                    }
-                    guard published else {
-                        throw PeekabooError.operationError(
-                            message: "Failed to publish the refreshed UI snapshot"
-                        )
+                        let published = try await Self.withWallClockTimeout(
+                            seconds: publicationTimeout,
+                            timeoutErrorSeconds: overallTimeout
+                        ) {
+                            await mutationCoordinator.completeMutation(
+                                scope.completed(
+                                    at: Date(),
+                                    preserving: snapshotID,
+                                    confirmedMutationCompletedAt: context.metadata.desktopMutationCompletedAt,
+                                    observationPreservationAllowed: context.metadata
+                                        .desktopMutationPreservationAllowed
+                                ),
+                                succeeded: true
+                            )
+                        }
+                        guard published else {
+                            throw PeekabooError.operationError(
+                                message: "Failed to publish the refreshed UI snapshot"
+                            )
+                        }
                     }
 
                     try Task.checkCancellation()
@@ -208,13 +222,16 @@ struct SeeCommand: ApplicationResolvable, ErrorHandlingCommand, RuntimeOptionsCo
                         "success": true,
                     ])
                 } catch {
-                    if observationCompleted || !PendingSnapshotCleanupPolicy.shouldPreserveReservation(after: error) {
+                    if scope == nil || observationCompleted || !PendingSnapshotCleanupPolicy
+                        .shouldPreserveReservation(after: error) {
                         try? await self.services.snapshots.cleanSnapshot(snapshotId: snapshotID)
                     }
-                    _ = await mutationCoordinator.completeMutation(
-                        scope.completed(at: Date(), preserving: nil),
-                        succeeded: false
-                    )
+                    if let scope {
+                        _ = await mutationCoordinator.completeMutation(
+                            scope.completed(at: Date(), preserving: nil),
+                            succeeded: false
+                        )
+                    }
                     throw error
                 }
             }
@@ -240,6 +257,13 @@ struct SeeCommand: ApplicationResolvable, ErrorHandlingCommand, RuntimeOptionsCo
             throw CaptureError.detectionTimedOut(overallTimeout)
         }
         return remaining
+    }
+
+    var overallTimeoutSeconds: TimeInterval {
+        Self.detectionTimeoutSeconds(
+            configuredTimeoutSeconds: self.timeoutSeconds,
+            analyze: self.analyze
+        )
     }
 
     private func prepareResult(
@@ -297,7 +321,7 @@ struct SeeCommand: ApplicationResolvable, ErrorHandlingCommand, RuntimeOptionsCo
                 metadata: [
                     "imagePath": captureResult.screenshotPath,
                     "imageSizeBytes": fileSize,
-                    "promptLength": prompt.count
+                    "promptLength": prompt.count,
                 ]
             )
             logger.operationStart("ai_analysis", metadata: ["promptPreview": String(prompt.prefix(80))])
@@ -313,7 +337,7 @@ struct SeeCommand: ApplicationResolvable, ErrorHandlingCommand, RuntimeOptionsCo
                 success: analysisResult != nil,
                 metadata: [
                     "provider": analysisResult?.provider ?? "unknown",
-                    "model": analysisResult?.model ?? "unknown"
+                    "model": analysisResult?.model ?? "unknown",
                 ]
             )
         }
@@ -387,7 +411,7 @@ extension SeeCommand: ParsableCommand {
                     CommandUsageExample(
                         command: "peekaboo see --mode screen --screen-index 0 --analyze 'Summarize the dashboard'",
                         description: "Capture a display and immediately send it to the configured AI provider."
-                    )
+                    ),
                 ],
                 showHelpOnEmptyInvocation: true
             )
@@ -423,6 +447,7 @@ extension SeeCommand: CommanderBindableCommand {
         self.maxDepth = try values.decodeOption("maxDepth", as: Int.self)
         self.maxElements = try values.decodeOption("maxElements", as: Int.self)
         self.maxChildren = try values.decodeOption("maxChildren", as: Int.self)
+        self.webFocus = values.flag("webFocus")
         self.noWebFocus = values.flag("noWebFocus")
         self.menubar = values.flag("menubar")
     }

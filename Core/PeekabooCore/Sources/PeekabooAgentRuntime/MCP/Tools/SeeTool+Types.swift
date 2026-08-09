@@ -6,6 +6,7 @@ struct SeeRequest {
     let path: String?
     let snapshotId: String?
     let annotate: Bool
+    let webFocus: Bool
     let traversalBudget: AXTraversalBudget
 
     init(arguments: ToolArguments) {
@@ -13,6 +14,7 @@ struct SeeRequest {
         self.path = arguments.getString("path")
         self.snapshotId = arguments.getString("snapshot")
         self.annotate = arguments.getBool("annotate") ?? false
+        self.webFocus = arguments.getBool("web_focus") ?? false
         self.traversalBudget = AXTraversalBudget.resolved(
             maxDepth: Self.positiveInt("max_depth", in: arguments),
             maxElementCount: Self.positiveInt("max_elements", in: arguments),

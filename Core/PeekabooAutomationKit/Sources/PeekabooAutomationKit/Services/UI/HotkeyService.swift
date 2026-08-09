@@ -92,6 +92,7 @@ public final class HotkeyService {
         self.logger.debug(
             "Targeted hotkey requested: '\(keys)', hold: \(holdDuration)ms, pid: \(targetProcessIdentifier)")
 
+        try BackgroundHotkeyPolicy.validate(keys: keys)
         let parsedKeys = try self.parsedKeys(keys)
         let application = self.runningApplicationResolver(targetProcessIdentifier)
         let bundleIdentifier = application?.bundleIdentifier

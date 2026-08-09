@@ -19,7 +19,8 @@ struct ScrollServiceTests {
         target: String? = nil,
         smooth: Bool = false,
         delay: Int = 10,
-        snapshotId: String? = nil) -> ScrollRequest
+        snapshotId: String? = nil,
+        foreground: Bool = true) -> ScrollRequest
     {
         ScrollRequest(
             direction: direction,
@@ -27,7 +28,8 @@ struct ScrollServiceTests {
             target: target,
             smooth: smooth,
             delay: delay,
-            snapshotId: snapshotId)
+            snapshotId: snapshotId,
+            foreground: foreground)
     }
 
     @Test

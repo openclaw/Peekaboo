@@ -13,6 +13,9 @@ extension MenuCommand {
         @Flag(help: "Include disabled menu items")
         var includeDisabled = false
 
+        @Flag(help: "Focus the target before listing its menu")
+        var foreground = false
+
         @OptionGroup var focusOptions: FocusCommandOptions
         @RuntimeStorage private var runtime: CommandRuntime?
 
@@ -46,21 +49,26 @@ extension MenuCommand {
 
             do {
                 try self.target.validate()
-                let appIdentifier = try await self.resolveTargetApplicationIdentifier()
-                let windowID = try await self.target.resolveWindowID(services: self.services)
-                if self.focusOptions.autoFocus {
-                    self.resolvedRuntime.beginInteractionMutation()
+                guard self.foreground || !self.focusOptions.hasForegroundFocusOverrides else {
+                    throw ValidationError("Menu focus options require --foreground")
                 }
-                try await ensureFocusIgnoringMissingWindows(
-                    request: FocusIgnoringMissingWindowsRequest(
-                        windowID: windowID,
-                        applicationName: appIdentifier,
-                        windowTitle: self.target.windowTitle
-                    ),
-                    options: self.focusOptions,
-                    services: self.services,
-                    logger: self.logger
-                )
+                let appIdentifier = try await self.resolveTargetApplicationIdentifier()
+                if self.foreground {
+                    let windowID = try await self.target.resolveWindowID(services: self.services)
+                    if self.focusOptions.autoFocus {
+                        self.resolvedRuntime.beginInteractionMutation()
+                    }
+                    try await ensureFocusIgnoringMissingWindows(
+                        request: FocusIgnoringMissingWindowsRequest(
+                            windowID: windowID,
+                            applicationName: appIdentifier,
+                            windowTitle: self.target.windowTitle
+                        ),
+                        options: self.focusOptions,
+                        services: self.services,
+                        logger: self.logger
+                    )
+                }
 
                 let menuStructure = try await MenuServiceBridge.listMenus(
                     menu: self.services.menu,
@@ -84,6 +92,13 @@ extension MenuCommand {
                     }
                 }
 
+            } catch let error as Commander.ValidationError {
+                if self.jsonOutput {
+                    outputError(message: error.localizedDescription, code: .INVALID_INPUT, logger: self.outputLogger)
+                } else {
+                    fputs("Error: \(error.localizedDescription)\n", stderr)
+                }
+                throw ExitCode(1)
             } catch let error as PeekabooError {
                 MenuErrorOutputSupport.renderApplicationError(
                     error,

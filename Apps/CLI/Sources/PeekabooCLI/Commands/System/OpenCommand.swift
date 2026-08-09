@@ -16,14 +16,15 @@ struct OpenCommand: ParsableCommand, OutputFormattable, ErrorHandlingCommand, Ru
 
                 - `--app` / `--bundle-id` to force a handler
                 - `--wait-until-ready` to block until the app reports it has finished launching
-                - `--no-focus` to keep the handler in the background
+                - background delivery by default; `--foreground` activates the handler
                 - `--json` for structured scripting (alias: `--json-output`)
 
                 EXAMPLES:
                   peekaboo open https://example.com --json
                   peekaboo open ~/Documents/report.pdf --app "Preview"
                   peekaboo open myfile.txt --bundle-id com.apple.TextEdit --wait-until-ready
-                  peekaboo open ~/Desktop --app Finder --no-focus
+                  peekaboo open ~/Desktop --app Finder
+                  peekaboo open https://example.com --foreground
                 """,
                 showHelpOnEmptyInvocation: true
             )
@@ -42,7 +43,10 @@ struct OpenCommand: ParsableCommand, OutputFormattable, ErrorHandlingCommand, Ru
     @Flag(help: "Wait until the handling application finishes launching")
     var waitUntilReady = false
 
-    @Flag(name: .customLong("no-focus"), help: "Do not bring the handling application to the foreground")
+    @Flag(help: "Bring the handling application to the foreground")
+    var foreground = false
+
+    @Flag(name: .customLong("no-focus"), help: "Deprecated compatibility flag; background open is now the default")
     var noFocus = false
 
     @RuntimeStorage private var runtime: CommandRuntime?
@@ -72,7 +76,7 @@ struct OpenCommand: ParsableCommand, OutputFormattable, ErrorHandlingCommand, Ru
     }
 
     private var shouldFocus: Bool {
-        !self.noFocus
+        self.foreground
     }
 
     @MainActor
@@ -80,6 +84,12 @@ struct OpenCommand: ParsableCommand, OutputFormattable, ErrorHandlingCommand, Ru
         self.prepare(using: runtime)
 
         do {
+            guard !(self.foreground && self.noFocus) else {
+                throw ValidationError("--foreground cannot be combined with deprecated --no-focus")
+            }
+            if self.noFocus {
+                self.logger.warn("--no-focus is deprecated because open is background by default")
+            }
             let targetURL = try Self.resolveTarget(self.target)
             let handlerIdentifier = self.bundleId == nil
                 ? app.map { ApplicationIdentifierResolver.resolve($0) }
@@ -183,6 +193,7 @@ extension OpenCommand: CommanderBindableCommand {
         self.app = values.singleOption("app")
         self.bundleId = values.singleOption("bundleId")
         self.waitUntilReady = values.flag("waitUntilReady")
+        self.foreground = values.flag("foreground")
         self.noFocus = values.flag("noFocus")
     }
 }

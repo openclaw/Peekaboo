@@ -20,6 +20,7 @@ extension UIAutomationService {
      */
     public func scroll(_ request: ScrollRequest) async throws {
         self.logger.debug("Delegating scroll to ScrollService")
+        defer { self.elementDetectionService.invalidateCache() }
         let result = try await self.normalizingSnapshotErrors {
             try await self.scrollService.scroll(request)
         }
@@ -63,6 +64,7 @@ extension UIAutomationService {
      */
     public func hotkey(keys: String, holdDuration: Int) async throws {
         self.logger.debug("Delegating hotkey to HotkeyService")
+        defer { self.elementDetectionService.invalidateCache() }
         _ = try await self.hotkeyService.hotkey(keys: keys, holdDuration: holdDuration)
 
         await self.visualizeHotkey(keys: keys, targetProcessIdentifier: nil)
@@ -70,6 +72,7 @@ extension UIAutomationService {
 
     public func hotkey(keys: String, holdDuration: Int, targetProcessIdentifier: pid_t) async throws {
         self.logger.debug("Delegating targeted hotkey to HotkeyService")
+        defer { self.elementDetectionService.invalidateCache() }
         _ = try await self.hotkeyService.hotkey(
             keys: keys,
             holdDuration: holdDuration,
@@ -96,6 +99,7 @@ extension UIAutomationService {
         profile: MouseMovementProfile) async throws
     {
         self.logger.debug("Delegating swipe to GestureService")
+        defer { self.elementDetectionService.invalidateCache() }
         try await self.gestureService.swipe(
             from: from,
             to: to,
@@ -108,6 +112,7 @@ extension UIAutomationService {
 
     public func drag(_ request: DragOperationRequest) async throws {
         self.logger.debug("Delegating drag to GestureService")
+        defer { self.elementDetectionService.invalidateCache() }
         try await self.gestureService.drag(request)
     }
 
@@ -118,6 +123,7 @@ extension UIAutomationService {
         profile: MouseMovementProfile) async throws
     {
         self.logger.debug("Delegating moveMouse to GestureService")
+        defer { self.elementDetectionService.invalidateCache() }
 
         let fromPoint = InputDriver.currentLocation() ?? to
         // Dispatch before moving so the overlay follows the real pointer instead of replaying it afterward.

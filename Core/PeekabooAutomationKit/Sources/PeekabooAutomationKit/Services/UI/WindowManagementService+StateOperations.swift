@@ -6,6 +6,10 @@ import PeekabooFoundation
 @MainActor
 extension WindowManagementService {
     public func closeWindow(target: WindowTarget) async throws {
+        try await self.closeWindow(target: target, allowForegroundFallback: false)
+    }
+
+    public func closeWindow(target: WindowTarget, allowForegroundFallback: Bool) async throws {
         let trackedWindowID = try? await self.listWindows(target: target).first?.windowID
         try Task.checkCancellation()
         let trackedAppIdentifier = self.appIdentifierForPresenceTracking(target)
@@ -37,6 +41,12 @@ extension WindowManagementService {
 
         if try await self.windowDisappeared(windowID: trackedWindowID, appIdentifier: trackedAppIdentifier) {
             return
+        }
+
+        guard allowForegroundFallback else {
+            throw OperationError.interactionFailed(
+                action: "close window",
+                reason: "AX close completed but the window remained visible; retry with foreground fallback enabled")
         }
 
         try Task.checkCancellation()

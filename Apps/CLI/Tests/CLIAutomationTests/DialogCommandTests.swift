@@ -121,7 +121,7 @@ struct DialogCommandTests {
 
         let services = self.makeTestServices(dialogs: dialogService)
         let (output, status) = try await runCommand(
-            ["dialog", "dismiss", "--force", "--json"],
+            ["dialog", "dismiss", "--force", "--foreground", "--json"],
             services: services
         )
 
@@ -284,13 +284,68 @@ struct DialogCommandTests {
         #expect(response.data.button == "New Document")
         #expect(dialogService.recordedButtonClicks.count == 1)
         #expect(dialogService.recordedButtonClicks.first?.button == "New Document")
+        #expect(dialogService.clickFallbackRequests == [false])
+    }
+
+    @Test
+    func `dialog click only permits global fallback in foreground mode`() async throws {
+        let elements = DialogElements(
+            dialogInfo: DialogInfo(
+                title: "Alert",
+                role: "AXWindow",
+                subrole: "AXDialog",
+                bounds: .init(x: 0, y: 0, width: 400, height: 300)
+            ),
+            buttons: [DialogButton(title: "OK")]
+        )
+        let dialogService = StubDialogService(elements: elements)
+        dialogService.clickButtonResult = DialogActionResult(
+            success: true,
+            action: .clickButton,
+            details: ["button": "OK", "window": "Alert"]
+        )
+        let services = self.makeTestServices(dialogs: dialogService)
+
+        let result = try await InProcessCommandRunner.run(
+            ["dialog", "click", "--button", "OK", "--foreground", "--json"],
+            services: services
+        )
+
+        #expect(result.exitStatus == 0)
+        #expect(dialogService.clickFallbackRequests == [true])
+    }
+
+    @Test
+    func `dialog input rejects background mode before calling service`() async throws {
+        let elements = DialogElements(
+            dialogInfo: DialogInfo(
+                title: "Alert",
+                role: "AXWindow",
+                subrole: "AXDialog",
+                bounds: .init(x: 0, y: 0, width: 400, height: 300)
+            ),
+            textFields: [DialogTextField(index: 0)]
+        )
+        let dialogService = StubDialogService(elements: elements)
+        dialogService.enterTextResult = DialogActionResult(success: true, action: .enterText)
+        let services = self.makeTestServices(dialogs: dialogService)
+
+        let result = try await InProcessCommandRunner.run(
+            ["dialog", "input", "--text", "Hello", "--json"],
+            services: services
+        )
+        let output = result.stdout.isEmpty ? result.stderr : result.stdout
+
+        #expect(result.exitStatus != 0)
+        #expect(output.contains("requires --foreground"))
+        #expect(dialogService.enterTextCallCount == 0)
     }
 
     @Test
     func `dialog input maps noActiveDialog to NO_ACTIVE_DIALOG`() async throws {
         let services = self.makeTestServices(dialogs: StubDialogService(elements: nil))
         let result = try await InProcessCommandRunner.run(
-            ["dialog", "input", "--text", "Hello", "--json"],
+            ["dialog", "input", "--text", "Hello", "--foreground", "--json"],
             services: services
         )
         let output = result.stdout.isEmpty ? result.stderr : result.stdout
@@ -319,7 +374,7 @@ struct DialogCommandTests {
         let services = self.makeTestServices(dialogs: dialogService)
 
         let result = try await InProcessCommandRunner.run(
-            ["dialog", "input", "--text", "Hello", "--field", "Filename", "--json"],
+            ["dialog", "input", "--text", "Hello", "--field", "Filename", "--foreground", "--json"],
             services: services
         )
         let output = result.stdout.isEmpty ? result.stderr : result.stdout
@@ -348,7 +403,10 @@ struct DialogCommandTests {
         let services = self.makeTestServices(dialogs: dialogService)
 
         let result = try await InProcessCommandRunner.run(
-            ["dialog", "file", "--path", "/tmp", "--name", "test.txt", "--select", "Save", "--json"],
+            [
+                "dialog", "file", "--path", "/tmp", "--name", "test.txt", "--select", "Save",
+                "--foreground", "--json",
+            ],
             services: services
         )
         let output = result.stdout.isEmpty ? result.stderr : result.stdout
@@ -416,7 +474,7 @@ struct DialogCommandTests {
 
         let services = self.makeTestServices(dialogs: InvalidIndexDialogService())
         let result = try await InProcessCommandRunner.run(
-            ["dialog", "input", "--text", "Hello", "--index", "5", "--json"],
+            ["dialog", "input", "--text", "Hello", "--index", "5", "--foreground", "--json"],
             services: services
         )
         let output = result.stdout.isEmpty ? result.stderr : result.stdout
@@ -524,6 +582,7 @@ struct DialogCommandIntegrationTests {
             "dialog", "input",
             "--text", "Test input",
             "--field", "Name",
+            "--foreground",
             "--json",
         ])
 
@@ -539,6 +598,7 @@ struct DialogCommandIntegrationTests {
         let output = try await runAutomationCommand([
             "dialog", "dismiss",
             "--force",
+            "--foreground",
             "--json",
         ])
 
@@ -565,6 +625,7 @@ struct DialogCommandIntegrationTests {
             "--path", "/tmp",
             "--name", "test.txt",
             "--select", "Save",
+            "--foreground",
             "--json",
         ])
 

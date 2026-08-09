@@ -15,7 +15,7 @@ public struct SwipeTool: MCPTool {
         """
         Performs a swipe/drag gesture from one point to another.
         Useful for dragging elements, swiping through content, or gesture-based interactions.
-        Creates smooth movement with configurable duration.
+        This always changes the shared physical cursor and requires foreground=true.
         \(PeekabooMCPVersion.banner) using openai/gpt-5.5, anthropic/claude-opus-4-8
         """
     }
@@ -37,8 +37,10 @@ public struct SwipeTool: MCPTool {
                     description: "Optional. Movement profile. Use 'linear' (default) or 'human'.",
                     enum: ["linear", "human"],
                     default: "linear"),
+                "foreground": SchemaBuilder.boolean(
+                    description: "Required. Confirm foreground use of the shared physical cursor."),
             ],
-            required: ["from", "to"])
+            required: ["from", "to", "foreground"])
     }
 
     public init(context: MCPToolContext = .shared) {
@@ -47,6 +49,10 @@ public struct SwipeTool: MCPTool {
 
     @MainActor
     public func execute(arguments: ToolArguments) async throws -> ToolResponse {
+        guard arguments.getBool("foreground") == true else {
+            return ToolResponse.error(
+                "swipe changes the shared physical cursor and requires foreground=true.")
+        }
         // Parse required parameters
         guard let fromString = arguments.getString("from") else {
             return ToolResponse.error("'from' parameter is required")

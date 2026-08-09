@@ -7,7 +7,7 @@ read_when:
 
 # `peekaboo swipe`
 
-`swipe` drives `AutomationServiceBridge.swipe` to move from one point to another over a fixed duration. You can describe the endpoints via element IDs (from `see`) or raw coordinates, which makes it flexible for both deterministic automation and exploratory scripts.
+`swipe` drives the shared physical cursor from one point to another over a fixed duration. It always affects the foreground desktop and requires explicit `--foreground` consent.
 
 ## Key options
 | Flag | Description |
@@ -15,6 +15,7 @@ read_when:
 | `--from <id>` / `--from-coords x,y` | Source location (ID requires a valid snapshot). |
 | `--to <id>` / `--to-coords x,y` | Destination location (also supports IDs or literal coordinates). |
 | `--snapshot <id>` | Needed whenever you reference IDs so the command can look up bounds. Auto-resolves to the most recent snapshot if omitted. |
+| `--foreground` | Required confirmation that Peekaboo may use the shared physical cursor. |
 | Target flags | `--app <name>`, `--pid <pid>`, `--window-id <id>`, `--window-title <title>`, `--window-index <n>` — focus a specific app/window before swiping. (`--window-title`/`--window-index` require `--app` or `--pid`; `--window-id` does not.) |
 | Focus flags | `FocusCommandOptions` control Space switching + retries. |
 | `--duration <ms>` | Default 500 ms; controls how long the swipe lasts. |
@@ -33,20 +34,20 @@ read_when:
 ## Examples
 ```bash
 # Swipe between two element IDs captured by `see`
-peekaboo swipe --from card_1 --to card_2 --duration 650 --steps 30
+peekaboo swipe --from card_1 --to card_2 --duration 650 --steps 30 --foreground
 
 # Drag from coordinates (x1,y1) to (x2,y2)
-peekaboo swipe --from-coords 120,880 --to-coords 120,200
+peekaboo swipe --from-coords 120,880 --to-coords 120,200 --foreground
 
 # Human-style swipe with adaptive easing
-peekaboo swipe --from-coords 80,640 --to-coords 820,320 --profile human
+peekaboo swipe --from-coords 80,640 --to-coords 820,320 --profile human --foreground
 
 # Mix coordinate → element drag using the most recent snapshot
-peekaboo swipe --from-coords 400,400 --to drawer_toggle
+peekaboo swipe --from-coords 400,400 --to drawer_toggle --foreground
 ```
 
 ## Troubleshooting
-- Verify Screen Recording + Accessibility permissions (`peekaboo permissions status`).
+- Verify Event Synthesizing permission (`peekaboo permissions status`).
 - Confirm your target (app/window/selector) with `peekaboo list`/`peekaboo see` before rerunning.
 - If you see `SNAPSHOT_NOT_FOUND`, regenerate the snapshot with `peekaboo see` (or omit `--snapshot` to use the most recent one).
 - Re-run with `--json` or `--verbose` to surface detailed errors.

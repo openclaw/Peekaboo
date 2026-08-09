@@ -2,20 +2,23 @@ import Foundation
 import MCP
 import os.log
 import PeekabooAutomation
+import PeekabooFoundation
 import TachikomaMCP
 
 @MainActor
 extension AppToolActions {
     func handleLaunch(request: AppToolRequest) async throws -> ToolResponse {
-        let identifier = request.bundleId ?? request.name
-        guard let identifier else {
+        guard request.bundleId != nil || request.name != nil else {
             return ToolResponse.error("Must specify either 'name' or 'bundleId' for launch action")
         }
 
-        let app = try await self.service.launchApplication(identifier: identifier)
-        if request.waitUntilReady {
-            try await Task.sleep(nanoseconds: 1_000_000_000)
-        }
+        let openURLs = try request.openTargets.map(Self.resolveOpenTarget)
+        let app = try await self.service.launchApplication(request: ApplicationLaunchRequest(
+            applicationIdentifier: request.bundleId == nil ? request.name : nil,
+            applicationBundleIdentifier: request.bundleId,
+            openURLs: openURLs,
+            activates: request.foreground,
+            waitUntilReady: request.waitUntilReady))
 
         let timing = self.executionTimeString(since: request.startTime)
         let message = "\(AgentDisplayTokens.Status.success) Launched \(app.name) "
@@ -23,7 +26,43 @@ extension AppToolActions {
         return self.buildResponse(
             message: message,
             app: app,
-            startTime: request.startTime)
+            startTime: request.startTime,
+            extraMeta: [
+                "foreground": .bool(request.foreground),
+                "open_targets": .array(request.openTargets.map(Value.string)),
+                "wait_until_ready": .bool(request.waitUntilReady),
+            ])
+    }
+
+    func handleOpen(request: AppToolRequest) async throws -> ToolResponse {
+        guard !request.openTargets.isEmpty else {
+            return ToolResponse.error("Must specify at least one 'openTargets' URL or file path for open action")
+        }
+        guard request.openTargets.count == 1 || request.name != nil || request.bundleId != nil else {
+            return ToolResponse.error("Opening multiple targets requires 'name' or 'bundleId'")
+        }
+
+        let openURLs = try request.openTargets.map(Self.resolveOpenTarget)
+        let app = try await self.service.launchApplication(request: ApplicationLaunchRequest(
+            applicationIdentifier: request.bundleId == nil ? request.name : nil,
+            applicationBundleIdentifier: request.bundleId,
+            openURLs: openURLs,
+            activates: request.foreground,
+            waitUntilReady: request.waitUntilReady))
+
+        let count = request.openTargets.count
+        let message = "\(AgentDisplayTokens.Status.success) Opened \(count) target\(count == 1 ? "" : "s") "
+            + "with \(app.name) (PID: \(app.processIdentifier)) in "
+            + self.executionTimeString(since: request.startTime)
+        return self.buildResponse(
+            message: message,
+            app: app,
+            startTime: request.startTime,
+            extraMeta: [
+                "foreground": .bool(request.foreground),
+                "open_targets": .array(request.openTargets.map(Value.string)),
+                "wait_until_ready": .bool(request.waitUntilReady),
+            ])
     }
 
     func handleQuit(request: AppToolRequest) async throws -> ToolResponse {
@@ -58,29 +97,17 @@ extension AppToolActions {
         }
 
         let appInfo = try await self.service.findApplication(identifier: identifier)
-        let descriptor = self.identifier(for: appInfo)
-
-        let quitSuccess = try await self.service.quitApplication(identifier: descriptor, force: request.force)
-        if !quitSuccess {
-            return ToolResponse.error("Failed to quit \(appInfo.name). It may have unsaved changes.")
-        }
-
-        let terminated = await self.waitForRunningState(identifier: descriptor, desiredState: false, timeout: 5.0)
-        if !terminated {
-            return ToolResponse.error("App \(appInfo.name) did not terminate within 5 seconds")
-        }
-
-        if request.wait > 0 {
-            try await Task.sleep(nanoseconds: UInt64(request.wait * 1_000_000_000))
-        }
-
-        _ = try await self.service.launchApplication(identifier: descriptor)
-
-        if request.waitUntilReady {
-            _ = await self.waitForRunningState(identifier: descriptor, desiredState: true, timeout: 10.0)
-        }
-
-        let refreshedInfo = try await self.service.findApplication(identifier: descriptor)
+        let descriptor = "PID:\(appInfo.processIdentifier)"
+        let launchIdentifier = appInfo.bundleIdentifier == nil ? (appInfo.bundlePath ?? appInfo.name) : nil
+        let refreshedInfo = try await self.service.relaunchApplication(request: ApplicationRelaunchRequest(
+            targetIdentifier: descriptor,
+            launchRequest: ApplicationLaunchRequest(
+                applicationIdentifier: launchIdentifier,
+                applicationBundleIdentifier: appInfo.bundleIdentifier,
+                activates: request.foreground,
+                waitUntilReady: request.waitUntilReady),
+            force: request.force,
+            waitSeconds: request.wait))
         let timing = self.executionTimeString(since: request.startTime)
         let message = "\(AgentDisplayTokens.Status.success) Relaunched \(refreshedInfo.name) "
             + "(PID: \(refreshedInfo.processIdentifier)) in \(timing)"
@@ -94,6 +121,7 @@ extension AppToolActions {
                 "wait": .double(request.wait),
                 "wait_until_ready": .bool(request.waitUntilReady),
                 "force": .bool(request.force),
+                "foreground": .bool(request.foreground),
             ])
     }
 
@@ -207,5 +235,21 @@ extension AppToolActions {
 
         let finalState = await self.service.isApplicationRunning(identifier: identifier)
         return finalState == desiredState
+    }
+
+    private static func resolveOpenTarget(_ value: String) throws -> URL {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            throw PeekabooError.invalidInput("Open target must not be empty")
+        }
+        if let url = URL(string: trimmed), let scheme = url.scheme, !scheme.isEmpty {
+            return url
+        }
+
+        let expanded = NSString(string: trimmed).expandingTildeInPath
+        let path = expanded.hasPrefix("/")
+            ? expanded
+            : NSString(string: FileManager.default.currentDirectoryPath).appendingPathComponent(expanded)
+        return URL(fileURLWithPath: path)
     }
 }

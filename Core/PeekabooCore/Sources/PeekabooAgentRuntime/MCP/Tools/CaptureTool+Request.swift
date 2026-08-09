@@ -230,7 +230,7 @@ extension CaptureRequest {
             maxFrames: maxFrames,
             maxMegabytes: maxMbAdjusted,
             highlightChanges: constraints.highlight,
-            captureFocus: .auto,
+            captureFocus: .background,
             resolutionCap: constraints.resolutionCap,
             diffStrategy: constraints.diffStrategy,
             diffBudgetMs: constraints.diffBudget)

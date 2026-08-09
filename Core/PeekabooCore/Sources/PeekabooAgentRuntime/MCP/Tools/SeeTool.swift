@@ -23,9 +23,8 @@ public struct SeeTool: MCPTool {
 
         Returns opaque Peekaboo element IDs that can be passed unchanged to interaction commands.
         Do not infer an element's role or type from the shape of its ID. Creates or updates a
-        snapshot that tracks UI state.
-        \(PeekabooMCPVersion.banner) using openai/gpt-5.5
-        and anthropic/claude-opus-4-8.
+        snapshot that tracks UI state. Observation is background-only and does not focus the target
+        unless `web_focus` is explicitly enabled for sparse embedded web content.
         """
     }
 
@@ -54,6 +53,9 @@ public struct SeeTool: MCPTool {
                     description: """
                     Optional. Generate an annotated screenshot with interaction markers and IDs.
                     """,
+                    default: false),
+                "web_focus": SchemaBuilder.boolean(
+                    description: "Optional. Allow an AXPress retry on sparse Chromium/Tauri web content.",
                     default: false),
                 "max_depth": SchemaBuilder.number(
                     description: "Optional. Maximum AX traversal depth. Env fallback: PEEKABOO_AX_MAX_DEPTH."),
@@ -88,6 +90,7 @@ public struct SeeTool: MCPTool {
                 target: target,
                 path: request.path,
                 annotate: request.annotate,
+                webFocus: request.webFocus,
                 traversalBudget: request.traversalBudget,
                 snapshot: snapshot)
             let screenshotPath = try await self.registerObservationScreenshot(
@@ -156,12 +159,16 @@ public struct SeeTool: MCPTool {
         target: ObservationTargetArgument,
         path: String?,
         annotate: Bool,
+        webFocus: Bool,
         traversalBudget: AXTraversalBudget,
         snapshot: UISnapshot) async throws -> DesktopObservationResult
     {
         try await self.context.desktopObservation.observe(DesktopObservationRequest(
             target: target.observationTarget,
-            detection: DesktopDetectionOptions(mode: .accessibility, traversalBudget: traversalBudget),
+            detection: DesktopDetectionOptions(
+                mode: .accessibility,
+                allowWebFocusFallback: webFocus,
+                traversalBudget: traversalBudget),
             output: DesktopObservationOutputOptions(
                 path: path,
                 saveRawScreenshot: true,

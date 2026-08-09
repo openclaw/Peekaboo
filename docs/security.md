@@ -57,8 +57,9 @@ If you disable the `clipboard` tool via allow/deny filters, the injected DESKTOP
   Disable by clearing `PEEKABOO_AI_PROVIDERS`, removing API keys, or adding these names to your deny list when running offline.
 - **Medium risk** – can manipulate apps or data  
   - `capture`: records retained screen/window/region frames, contact sheets, metadata, and optional MP4 files. Disable it when MCP or agent clients should not persist screen contents.
-  - `click`, `type`, `hotkey`, `press`, and `paste`: can trigger actions in foreground apps or send process-targeted events to a background app by default when a target process is known. Use `--foreground` for focused foreground delivery. Background delivery still requires macOS event-posting access and does not prove the target app handled the event.
-  - `scroll`, `swipe`, `drag`, `move`: can trigger pointer actions in foreground apps.
+  - `click`, `type`, `hotkey`, `press`, and `paste`: can trigger actions in foreground apps or target a background app by default when a target process is known. Background clicks use Accessibility; background keyboard delivery requires Event Synthesizing. Use `--foreground` for focused foreground delivery.
+  - `scroll`: targeted background scrolling is Accessibility-only. Targetless, smooth, and delayed scrolling require explicit foreground mode and Event Synthesizing.
+  - `swipe`, `drag`, `move`: manipulate the shared physical cursor, require explicit foreground consent, and need Event Synthesizing.
   - `window`, `app`, `menu_click`, `dock_launch`, `space`: can close apps, move windows, switch spaces.  
   - `permissions`: can prompt/alter macOS permissions flow; disable for locked-down sessions.  
   - `mcp_agent`: can cascade into other tools via MCP.

@@ -15,6 +15,13 @@ extension MenuCommand.ClickSubcommand: CommanderSignatureProviding {
                     long: "path"
                 ),
             ],
+            flags: [
+                .commandFlag(
+                    "foreground",
+                    help: "Focus the target before using its menu",
+                    long: "foreground"
+                ),
+            ],
             optionGroups: [
                 InteractionTargetOptions.commanderSignature(),
                 FocusCommandOptions.commanderSignature(),
@@ -57,6 +64,11 @@ extension MenuCommand.ListSubcommand: CommanderSignatureProviding {
                     "includeDisabled",
                     help: "Include disabled menu items",
                     long: "include-disabled"
+                ),
+                .commandFlag(
+                    "foreground",
+                    help: "Focus the target before listing its menu",
+                    long: "foreground"
                 ),
             ],
             optionGroups: [

@@ -22,7 +22,8 @@ public struct PasteTool: MCPTool {
         - clipboard restore
 
         Targeting:
-        - Provide app/pid/window to paste in the background by default, or set foreground=true to focus first.
+        - Provide app/pid to paste in the background, or set foreground=true for intentional global paste and window
+          targeting.
 
         Payload:
         - text OR filePath/imagePath OR dataBase64+uti (optionally alsoText).
@@ -35,9 +36,11 @@ public struct PasteTool: MCPTool {
                 // Targeting
                 "app": SchemaBuilder.string(description: "Target app name/bundle ID, or 'PID:<n>'."),
                 "pid": SchemaBuilder.number(description: "Target process ID (alternative to app)."),
-                "window_id": SchemaBuilder.number(description: "Window ID (preferred stable selector)."),
-                "window_title": SchemaBuilder.string(description: "Window title (substring match)."),
-                "window_index": SchemaBuilder.number(description: "Window index (0-based); requires app/pid."),
+                "window_id": SchemaBuilder.number(description: "Window ID; requires foreground=true."),
+                "window_title": SchemaBuilder
+                    .string(description: "Window title (substring match); requires foreground=true."),
+                "window_index": SchemaBuilder
+                    .number(description: "Window index (0-based); requires app/pid and foreground=true."),
 
                 // Payload
                 "text": SchemaBuilder.string(description: "Plain text to paste."),
@@ -55,7 +58,7 @@ public struct PasteTool: MCPTool {
                     minimum: 0,
                     default: 150),
                 "foreground": SchemaBuilder.boolean(
-                    description: "Optional. Focus target and send foreground/global Cmd+V.",
+                    description: "Optional. Focus a target or intentionally send foreground/global Cmd+V.",
                     default: false),
             ],
             required: [])
@@ -70,7 +73,6 @@ public struct PasteTool: MCPTool {
         let startTime = Date()
 
         do {
-            let request = try self.makeWriteRequest(arguments: arguments)
             let target = MCPInteractionTarget(
                 app: arguments.getString("app"),
                 pid: arguments.getInt("pid"),
@@ -79,12 +81,13 @@ public struct PasteTool: MCPTool {
                 windowId: arguments.getInt("window_id"))
 
             let foreground = arguments.getBool("foreground") ?? false
-            let targetPID = foreground ? nil : try await target.processIdentifier(
+            let targetPID = foreground ? nil : try await target.requireBackgroundProcessIdentifier(
                 applications: self.context.applications,
                 windows: self.context.windows)
             if targetPID == nil {
                 _ = try await target.focusIfRequested(windows: self.context.windows)
             }
+            let request = try self.makeWriteRequest(arguments: arguments)
 
             let priorClipboard = try? self.context.clipboard.get(prefer: nil)
             let restoreSlot = "paste-\(UUID().uuidString)"

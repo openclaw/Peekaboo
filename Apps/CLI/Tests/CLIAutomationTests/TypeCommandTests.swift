@@ -98,7 +98,7 @@ struct TypeCommandTests {
     @Test
     func `Type execution defaults to linear cadence`() async throws {
         let context = await self.makeContext()
-        let result = try await self.runType(arguments: ["Hello"], context: context)
+        let result = try await self.runType(arguments: ["Hello", "--foreground"], context: context)
 
         #expect(result.exitStatus == 0)
         let call = try #require(await self.automationState(context) { $0.typeActionsCalls.first })
@@ -112,7 +112,7 @@ struct TypeCommandTests {
     @Test
     func `Type execution with WPM opts into human cadence`() async throws {
         let context = await self.makeContext()
-        let result = try await self.runType(arguments: ["Hello", "--wpm", "140"], context: context)
+        let result = try await self.runType(arguments: ["Hello", "--wpm", "140", "--foreground"], context: context)
 
         #expect(result.exitStatus == 0)
         let call = try #require(await self.automationState(context) { $0.typeActionsCalls.first })
@@ -127,7 +127,7 @@ struct TypeCommandTests {
     func `Type execution honors linear profile and delay`() async throws {
         let context = await self.makeContext()
         let result = try await self.runType(
-            arguments: ["Hello", "--profile", "linear", "--delay", "15"],
+            arguments: ["Hello", "--profile", "linear", "--delay", "15", "--foreground"],
             context: context
         )
 
@@ -141,21 +141,23 @@ struct TypeCommandTests {
     }
 
     @Test
-    func `Type execution reuses latest snapshot when target is implicit`() async throws {
+    func `Type execution does not implicitly reuse latest snapshot as a keyboard target`() async throws {
         let context = await self.makeContext()
-        let snapshotId = try await context.snapshots.createSnapshot()
+        _ = try await context.snapshots.createSnapshot()
 
         let result = try await self.runType(arguments: ["Hello", "--no-auto-focus"], context: context)
 
-        #expect(result.exitStatus == 0)
-        let call = try #require(await self.automationState(context) { $0.typeActionsCalls.first })
-        #expect(call.snapshotId == snapshotId)
+        #expect(result.exitStatus != 0)
+        #expect(await self.automationState(context) { $0.typeActionsCalls }.isEmpty)
     }
 
     @Test
     func `Type JSON output separates requested text from executed actions`() async throws {
         let context = await self.makeContext()
-        let result = try await self.runType(arguments: ["Line 1\\nLine 2", "--json"], context: context)
+        let result = try await self.runType(
+            arguments: ["Line 1\\nLine 2", "--foreground", "--json"],
+            context: context
+        )
 
         #expect(result.exitStatus == 0)
         let payload = try ExternalCommandRunner.decodeJSONResponse(
@@ -173,7 +175,16 @@ struct TypeCommandTests {
 
     @Test
     func `Type execution does not reuse latest snapshot with explicit app target`() async throws {
-        let context = await self.makeContext()
+        let applicationService = await MainActor.run {
+            StubApplicationService(applications: [
+                ServiceApplicationInfo(
+                    processIdentifier: 2468,
+                    bundleIdentifier: "com.apple.TextEdit",
+                    name: "TextEdit"
+                ),
+            ])
+        }
+        let context = await self.makeContext(applications: applicationService)
         _ = try await context.snapshots.createSnapshot()
 
         let result = try await self.runType(
@@ -247,7 +258,7 @@ struct TypeCommandTests {
     }
 
     @Test
-    func `Type background delivery validates window selectors`() async throws {
+    func `Type background delivery rejects process-wide collapse of window selectors`() async throws {
         let app = ServiceApplicationInfo(
             processIdentifier: 2468,
             bundleIdentifier: "com.apple.TextEdit",
@@ -269,7 +280,8 @@ struct TypeCommandTests {
         #expect(result.exitStatus == 1)
         let payload = try ExternalCommandRunner.decodeJSONResponse(from: result, as: JSONResponse.self)
         #expect(payload.success == false)
-        #expect(payload.error?.code == ErrorCode.WINDOW_NOT_FOUND.rawValue)
+        #expect(payload.error?.code == ErrorCode.VALIDATION_ERROR.rawValue)
+        #expect(payload.error?.message.contains("cannot safely target a specific window") == true)
         let targetedCalls = await self.automationState(context) { $0.targetedTypeActionsCalls }
         #expect(targetedCalls.isEmpty)
     }

@@ -60,6 +60,7 @@ public enum PeekabooBridgeOperation: String, Codable, Sendable, CaseIterable, Ha
     case setValue
     case performAction
     case scroll
+    case targetedScroll
     case hotkey
     case targetedHotkey
     case targetedClick
@@ -75,6 +76,7 @@ public enum PeekabooBridgeOperation: String, Codable, Sendable, CaseIterable, Ha
     case resizeWindow
     case setWindowBounds
     case closeWindow
+    case backgroundCloseWindow
     case minimizeWindow
     case maximizeWindow
     case getFocusedWindow
@@ -115,6 +117,7 @@ public enum PeekabooBridgeOperation: String, Codable, Sendable, CaseIterable, Ha
     // Dialogs
     case dialogFindActive
     case dialogClickButton
+    case backgroundDialogClickButton
     case dialogEnterText
     case dialogHandleFile
     case dialogDismiss
@@ -172,6 +175,11 @@ public enum PeekabooBridgeOperation: String, Codable, Sendable, CaseIterable, Ha
             compatible.remove(.relaunchApplicationWithOptions)
             compatible.remove(.invalidateImplicitLatestSnapshot)
             compatible.remove(.exactWindowTargetedClick)
+        }
+        if version < PeekabooBridgeProtocolVersion(major: 1, minor: 11) {
+            compatible.remove(.targetedScroll)
+            compatible.remove(.backgroundCloseWindow)
+            compatible.remove(.backgroundDialogClickButton)
         }
         return compatible
     }

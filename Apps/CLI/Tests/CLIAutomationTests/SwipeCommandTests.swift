@@ -40,6 +40,7 @@ struct SwipeCommandTests {
                 "--to-coords", "300,450",
                 "--duration", "1200",
                 "--steps", "40",
+                "--foreground",
                 "--json",
             ],
             context: context
@@ -101,6 +102,7 @@ struct SwipeCommandTests {
             arguments: [
                 "--from", "B1",
                 "--to", "B5",
+                "--foreground",
                 "--json",
             ],
             context: context
@@ -121,6 +123,7 @@ struct SwipeCommandTests {
             arguments: [
                 "--from-coords", "0,0",
                 "--to-coords", "10,10",
+                "--foreground",
                 "--right-button",
             ],
             context: context
@@ -140,6 +143,7 @@ struct SwipeCommandTests {
                 "--from-coords", "50,50",
                 "--to-coords", "450,250",
                 "--profile", "human",
+                "--foreground",
                 "--json",
             ],
             context: context
@@ -153,6 +157,19 @@ struct SwipeCommandTests {
         let payloadData = try #require(self.output(from: result).data(using: .utf8))
         let payload = try JSONDecoder().decode(CodableJSONResponse<SwipeResult>.self, from: payloadData)
         #expect(payload.data.profile == "human")
+    }
+
+    @Test
+    func `Swipe requires explicit foreground consent`() async throws {
+        let context = await self.makeContext()
+        let result = try await self.runSwipe(
+            arguments: ["--from-coords", "10,10", "--to-coords", "20,20"],
+            context: context
+        )
+
+        #expect(result.exitStatus != 0)
+        #expect(self.output(from: result).contains("requires explicit --foreground"))
+        #expect(await self.automationState(context) { $0.swipeCalls }.isEmpty)
     }
 
     // MARK: - Helpers

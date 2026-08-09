@@ -18,7 +18,7 @@ struct HotkeyCommand: ErrorHandlingCommand, OutputFormattable {
     @Option(help: "Delay between key press and release in milliseconds")
     var holdDuration: Int = 50
 
-    @Option(help: "Snapshot ID, or 'latest' (uses latest if not specified)")
+    @Option(help: "Snapshot ID, or 'latest'")
     var snapshot: String?
 
     @Flag(name: .customLong("focus-background"), help: "Send the hotkey to the target process without focusing it")
@@ -71,6 +71,10 @@ struct HotkeyCommand: ErrorHandlingCommand, OutputFormattable {
 
         do {
             try self.target.validate()
+            try KeyboardDeliverySupport.validateForegroundFlags(
+                foreground: self.foreground,
+                focusOptions: self.focusOptions
+            )
             // Parse key names - support both comma-separated and space-separated
             guard let keysString = self.resolvedKeys else {
                 throw ValidationError("No keys specified")
@@ -99,7 +103,6 @@ struct HotkeyCommand: ErrorHandlingCommand, OutputFormattable {
             self.resolvedRuntime.beginInteractionMutation()
 
             if let backgroundPID {
-                try self.validateBackgroundHotkeyOptions(snapshotId: observation.snapshotId)
                 try await AutomationServiceBridge.hotkey(
                     automation: self.services.automation,
                     keys: keysCsv,
@@ -160,21 +163,6 @@ struct HotkeyCommand: ErrorHandlingCommand, OutputFormattable {
         }
     }
 
-    private func validateBackgroundHotkeyOptions(snapshotId: String?) throws {
-        if self.foreground, self.focusOptions.backgroundDeliveryExplicitlyRequested {
-            throw ValidationError("--foreground cannot be combined with --focus-background")
-        }
-
-        if snapshotId != nil {
-            return
-        }
-
-        try KeyboardDeliverySupport.validateForegroundFlags(
-            foreground: self.foreground,
-            focusOptions: self.focusOptions
-        )
-    }
-
     private static func parseKeyNames(_ keysString: String) -> [String] {
         keysString
             .components(separatedBy: CharacterSet(charactersIn: ",+").union(.whitespacesAndNewlines))
@@ -183,9 +171,7 @@ struct HotkeyCommand: ErrorHandlingCommand, OutputFormattable {
     }
 
     private func backgroundProcessIdentifier(snapshotId: String?) async throws -> pid_t? {
-        guard self.focusOptions.focusBackground ||
-            !KeyboardDeliverySupport.shouldUseForeground(foreground: self.foreground, focusOptions: self.focusOptions)
-        else {
+        guard !self.foreground else {
             return nil
         }
 
@@ -193,15 +179,11 @@ struct HotkeyCommand: ErrorHandlingCommand, OutputFormattable {
             throw ValidationError("Background hotkey accepts one process target: use --app or --pid")
         }
 
-        let pid = try await KeyboardDeliverySupport.backgroundProcessIdentifier(
+        return try await KeyboardDeliverySupport.requireBackgroundProcessIdentifier(
             target: self.target,
             snapshotId: snapshotId,
             services: self.services
         )
-        if self.focusOptions.focusBackground, pid == nil {
-            throw ValidationError("--focus-background requires --app or --pid")
-        }
-        return pid
     }
 
     // Error handling is provided by ErrorHandlingCommand protocol
@@ -232,16 +214,12 @@ extension HotkeyCommand: ParsableCommand {
                     multiple keys simultaneously, like Cmd+C for copy or Cmd+Shift+T.
 
                     EXAMPLES:
-                      peekaboo hotkey "cmd,c"               # Copy (comma-separated, positional)
-                      peekaboo hotkey "cmd+c"               # Copy (plus-separated, positional)
-                      peekaboo hotkey "cmd space"           # Spotlight (space-separated, positional)
-                      peekaboo hotkey --keys "cmd,c"          # Copy (comma-separated)
-                      peekaboo hotkey --keys "cmd+c"          # Copy (plus-separated)
-                      peekaboo hotkey --keys "cmd c"          # Copy (space-separated)
-                      peekaboo hotkey --keys "cmd,v"          # Paste
-                      peekaboo hotkey --keys "cmd a"          # Select all
-                      peekaboo hotkey --keys "cmd,shift,t"    # Reopen closed tab
-                      peekaboo hotkey --keys "cmd space"      # Spotlight
+                      peekaboo hotkey "cmd,c" --foreground  # Copy current selection
+                      peekaboo hotkey "cmd+c" --app TextEdit # Background app shortcut
+                      peekaboo hotkey "cmd space" --foreground # Spotlight (intentional global shortcut)
+                      peekaboo hotkey --keys "cmd,c" --foreground
+                      peekaboo hotkey --keys "cmd,v" --app TextEdit
+                      peekaboo hotkey --keys "cmd,shift,t" --app Safari
                       peekaboo hotkey "cmd,l" --app Safari
                       peekaboo hotkey "cmd,l" --app Safari --foreground
 
@@ -252,9 +230,10 @@ extension HotkeyCommand: ParsableCommand {
                       Special: space, return, tab, escape, delete, arrow_up, arrow_down, arrow_left, arrow_right
                       Function: f1-f12
 
-                    Background hotkeys are used by default when --app, --pid, --window-id,
-                    or a snapshot with process metadata is available. Use --foreground
-                    when the target must receive a foreground/global hotkey.
+                    Background hotkeys require --app, --pid, or a snapshot with process metadata.
+                    Use --foreground for intentional OS-global shortcuts and window targeting.
+                    Background Cmd+W/Q/H/M fail closed because event delivery cannot verify lifecycle changes;
+                    use the semantic window/app commands or add --foreground explicitly.
                 """,
 
                 showHelpOnEmptyInvocation: true

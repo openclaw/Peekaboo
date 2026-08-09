@@ -16,12 +16,15 @@ extension DragTool {
                 throw CoordinateParseError(
                     message: "No active snapshot. Run 'see' or 'inspect_ui' first to capture UI state.")
             }
+            let screenshotMetadata = await snapshot.screenshotMetadata
+            let windowID = screenshotMetadata?.windowInfo?.windowID
             if let element = await snapshot.getElement(byId: query) {
                 return DragPointDescription(
                     point: element.dragCenterPoint,
                     description: "element \(query) (\(element.dragHumanDescription))",
                     targetApp: snapshot.applicationName,
                     windowTitle: snapshot.windowTitle,
+                    windowID: windowID,
                     elementRole: element.summaryRole,
                     elementLabel: element.summaryLabel)
             }
@@ -44,6 +47,7 @@ extension DragTool {
                 description: element.dragHumanDescription,
                 targetApp: snapshot.applicationName,
                 windowTitle: snapshot.windowTitle,
+                windowID: windowID,
                 elementRole: element.summaryRole,
                 elementLabel: element.summaryLabel)
         }

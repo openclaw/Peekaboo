@@ -8,6 +8,7 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
         snapshotId: String?) async throws -> ElementActionResult
     {
         self.logger.debug("Set value requested - target: \(target, privacy: .public)")
+        defer { self.elementDetectionService.invalidateCache() }
         let resolved = try await self.resolveActionTarget(target, snapshotId: snapshotId)
         let oldValue = self.safeValueDescription(resolved.element.value)
             ?? resolved.element.selectedValue.map(String.init)
@@ -52,6 +53,7 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
     {
         self.logger.debug(
             "Perform action requested - target: \(target, privacy: .public), action: \(actionName, privacy: .public)")
+        defer { self.elementDetectionService.invalidateCache() }
         guard Self.isValidActionName(actionName) else {
             throw PeekabooError.invalidInput(
                 "Invalid action name '\(actionName)'. Use an accessibility action name such as AXPress.")

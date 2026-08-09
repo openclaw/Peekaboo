@@ -10,7 +10,7 @@ public struct DesktopCaptureOptions: Sendable, Codable, Equatable {
     public init(
         engine: CaptureEnginePreference = .auto,
         scale: CaptureScalePreference = .logical1x,
-        focus: CaptureFocus = .auto,
+        focus: CaptureFocus = .background,
         visualizerMode: CaptureVisualizerMode = .screenshotFlash,
         includeMenuBar: Bool = false)
     {
@@ -163,7 +163,7 @@ public struct DesktopDetectionOptions: Sendable, Codable, Equatable {
 
     public init(
         mode: DetectionMode = .accessibility,
-        allowWebFocusFallback: Bool = true,
+        allowWebFocusFallback: Bool = false,
         includeMenuBarElements: Bool = false,
         preferOCR: Bool = false,
         traversalBudget: AXTraversalBudget = AXTraversalBudget.resolved())
@@ -186,7 +186,7 @@ public struct DesktopDetectionOptions: Sendable, Codable, Equatable {
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.mode = try container.decode(DetectionMode.self, forKey: .mode)
-        self.allowWebFocusFallback = try container.decode(Bool.self, forKey: .allowWebFocusFallback)
+        self.allowWebFocusFallback = try container.decodeIfPresent(Bool.self, forKey: .allowWebFocusFallback) ?? false
         self.includeMenuBarElements = try container.decodeIfPresent(Bool.self, forKey: .includeMenuBarElements) ?? false
         self.preferOCR = try container.decode(Bool.self, forKey: .preferOCR)
         self.traversalBudget = try container.decodeIfPresent(AXTraversalBudget.self, forKey: .traversalBudget)

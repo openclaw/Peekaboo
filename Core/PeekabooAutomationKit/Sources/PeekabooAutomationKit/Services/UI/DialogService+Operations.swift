@@ -35,6 +35,19 @@ extension DialogService {
         windowTitle: String?,
         appName: String?) async throws -> DialogActionResult
     {
+        try await self.clickButton(
+            buttonText: buttonText,
+            windowTitle: windowTitle,
+            appName: appName,
+            allowGlobalFallback: false)
+    }
+
+    public func clickButton(
+        buttonText: String,
+        windowTitle: String?,
+        appName: String?,
+        allowGlobalFallback: Bool) async throws -> DialogActionResult
+    {
         self.logger.info("Clicking button: \(buttonText)")
         if let title = windowTitle {
             self.logger.debug("In window: \(title)")
@@ -44,7 +57,8 @@ extension DialogService {
         return try await self.clickButton(
             in: dialog,
             buttonText: buttonText,
-            allowFallbackToDefaultAction: false)
+            allowFallbackToDefaultAction: false,
+            allowGlobalFallback: allowGlobalFallback)
     }
 
     public func enterText(

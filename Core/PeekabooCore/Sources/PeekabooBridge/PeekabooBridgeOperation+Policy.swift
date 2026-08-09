@@ -7,16 +7,20 @@ extension PeekabooBridgeOperation {
         case .captureScreen, .captureWindow, .captureFrontmost, .captureArea, .detectElements,
              .desktopObservation:
             [.screenRecording]
-        case .targetedHotkey, .targetedTypeActions:
+        case .targetedHotkey, .targetedTypeActions, .click, .scroll, .swipe, .drag, .moveMouse:
             [.postEvent]
         case .inspectAccessibilityTree,
-             .click, .type, .typeActions, .setValue, .performAction, .scroll, .hotkey, .swipe, .drag, .moveMouse,
+             .type, .typeActions, .setValue, .performAction, .hotkey,
              .waitForElement, .listWindows, .focusWindow, .moveWindow, .resizeWindow, .setWindowBounds, .closeWindow,
+             .backgroundCloseWindow,
              .minimizeWindow, .maximizeWindow, .getFocusedWindow, .listMenus, .listFrontmostMenus,
              .clickMenuItem, .clickMenuItemByName, .listMenuExtras, .clickMenuExtra, .menuExtraOpenMenuFrame,
              .listMenuBarItems, .clickMenuBarItemNamed, .clickMenuBarItemIndex, .listDockItems, .launchDockItem,
              .rightClickDockItem, .hideDock, .showDock, .isDockHidden, .findDockItem, .dialogFindActive,
-             .dialogClickButton, .dialogEnterText, .dialogHandleFile, .dialogDismiss, .dialogListElements:
+             .dialogClickButton, .backgroundDialogClickButton, .dialogEnterText, .dialogHandleFile, .dialogDismiss,
+             .dialogListElements:
+            [.accessibility]
+        case .targetedClick, .exactWindowTargetedClick, .targetedScroll:
             [.accessibility]
         case ._appleScriptProbe,
              .permissionsStatus,
@@ -50,9 +54,7 @@ extension PeekabooBridgeOperation {
              .hideApplication,
              .unhideApplication,
              .hideOtherApplications,
-             .showAllApplications,
-             .targetedClick,
-             .exactWindowTargetedClick:
+             .showAllApplications:
             []
         }
     }
@@ -80,6 +82,7 @@ extension PeekabooBridgeOperation {
         .setValue,
         .performAction,
         .scroll,
+        .targetedScroll,
         .hotkey,
         .targetedHotkey,
         .targetedTypeActions,
@@ -95,6 +98,7 @@ extension PeekabooBridgeOperation {
         .resizeWindow,
         .setWindowBounds,
         .closeWindow,
+        .backgroundCloseWindow,
         .minimizeWindow,
         .maximizeWindow,
         .getFocusedWindow,
@@ -130,6 +134,7 @@ extension PeekabooBridgeOperation {
         .findDockItem,
         .dialogFindActive,
         .dialogClickButton,
+        .backgroundDialogClickButton,
         .dialogEnterText,
         .dialogHandleFile,
         .dialogDismiss,

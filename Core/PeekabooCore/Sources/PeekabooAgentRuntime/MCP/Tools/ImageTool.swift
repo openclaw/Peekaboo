@@ -15,10 +15,11 @@ public struct ImageTool: MCPTool {
         """
         Captures macOS screen content and optionally analyzes it.
         Targets include entire displays, the frontmost window, app-specific windows (`app_target`),
-        or the menu bar. Supports background or foreground capture workflows.
+        or the menu bar. Capture is background-only by default; set `capture_focus` to `foreground`
+        to activate the target before capture.
         Output can be written to disk or returned inline as Base64 data (`format: "data"`).
-        When `question` is supplied the capture is analyzed with the configured AI model (GPT-5 by
-        default). Window shadows/frames are excluded automatically.
+        When `question` is supplied the capture is analyzed with the configured AI model.
+        Window shadows/frames are excluded automatically.
         """
     }
 
@@ -35,9 +36,9 @@ public struct ImageTool: MCPTool {
                 "question": SchemaBuilder.string(
                     description: "Optional. If provided, the captured image will be analyzed."),
                 "capture_focus": SchemaBuilder.string(
-                    description: "Optional. Focus behavior.",
+                    description: "Optional. background (default), foreground (activate target), or legacy auto.",
                     enum: ["background", "auto", "foreground"],
-                    default: "auto"),
+                    default: "background"),
                 "scale": SchemaBuilder.string(
                     description: "Optional. Capture scale: logical|1x or native|retina|2x.",
                     enum: ["logical", "1x", "native", "retina", "2x"],

@@ -41,6 +41,7 @@ struct MCPSpecificToolTests {
         #expect(props["snapshot"] != nil)
         #expect(props["app_target"] != nil)
         #expect(props["path"] != nil)
+        #expect(props["web_focus"] != nil)
 
         // Check annotate default value
         if let annotateSchema = props["annotate"],
@@ -50,6 +51,7 @@ struct MCPSpecificToolTests {
         {
             #expect(annotateDefault == false)
         }
+        #expect(Self.booleanDefault(for: "web_focus", in: props) == false)
     }
 
     @Test
@@ -66,8 +68,33 @@ struct MCPSpecificToolTests {
 
         #expect(props["app_target"] != nil)
         #expect(props["snapshot"] != nil)
+        #expect(props["web_focus"] != nil)
         #expect(props["annotate"] == nil)
         #expect(props["path"] == nil)
+        #expect(Self.booleanDefault(for: "web_focus", in: props) == false)
+    }
+
+    @Test
+    func `Image and capture schemas default focus to background`() {
+        let tools: [any MCPTool] = [makeTestTool(ImageTool.init), makeTestTool(CaptureTool.init)]
+        for tool in tools {
+            guard case let .object(schema) = tool.inputSchema,
+                  case let .object(properties)? = schema["properties"],
+                  case let .object(focus)? = properties["capture_focus"],
+                  case let .string(defaultValue)? = focus["default"]
+            else {
+                Issue.record("Expected capture_focus default for \(tool.name)")
+                continue
+            }
+            #expect(defaultValue == "background")
+        }
+    }
+
+    private static func booleanDefault(for key: String, in properties: [String: Value]) -> Bool? {
+        guard case let .object(schema)? = properties[key],
+              case let .bool(value)? = schema["default"]
+        else { return nil }
+        return value
     }
 
     // MARK: - Dialog Tool Tests
@@ -98,6 +125,7 @@ struct MCPSpecificToolTests {
         #expect(props["name"] != nil)
         #expect(props["force"] != nil)
         #expect(props["field_index"] != nil)
+        #expect(props["foreground"] != nil)
 
         // Check action enum values
         if let actionSchema = props["action"],
@@ -109,6 +137,42 @@ struct MCPSpecificToolTests {
             #expect(actions.contains(.string("click")))
             #expect(actions.contains(.string("input")))
         }
+    }
+
+    @Test
+    func `Dialog tool requires foreground for global input paths`() async throws {
+        let tool = makeTestTool(DialogTool.init)
+        let requests: [[String: Any]] = [
+            ["action": "input", "text": "hello"],
+            ["action": "file", "path": "/tmp"],
+            ["action": "dismiss", "force": true],
+        ]
+
+        for request in requests {
+            let response = try await tool.execute(arguments: ToolArguments(raw: request))
+            #expect(response.isError)
+            guard case let .text(text, _, _) = response.content.first else {
+                Issue.record("Expected foreground validation error")
+                continue
+            }
+            #expect(text.contains("requires foreground=true"))
+        }
+    }
+
+    @Test
+    func `Dialog list rejects foreground mode`() async throws {
+        let tool = makeTestTool(DialogTool.init)
+        let response = try await tool.execute(arguments: ToolArguments(raw: [
+            "action": "list",
+            "foreground": true,
+        ]))
+
+        #expect(response.isError)
+        guard case let .text(text, _, _) = response.content.first else {
+            Issue.record("Expected background-only validation error")
+            return
+        }
+        #expect(text.contains("always read-only/background"))
     }
 
     // MARK: - Menu Tool Tests
@@ -128,6 +192,7 @@ struct MCPSpecificToolTests {
         #expect(props["action"] != nil)
         #expect(props["path"] != nil)
         #expect(props["app"] != nil)
+        #expect(props["foreground"] != nil)
 
         // Verify path description includes format examples
         if let pathSchema = props["path"],
@@ -217,13 +282,16 @@ struct MCPSpecificToolTests {
         #expect(props["to"] != nil)
         #expect(props["duration"] != nil)
         #expect(props["modifiers"] != nil)
+        #expect(props["foreground"] != nil)
+        #expect(props["auto_focus"] == nil)
+        #expect(props["bring_to_current_space"] == nil)
+        #expect(props["space_switch"] == nil)
 
         // Required fields
         if let required = schema["required"],
            case let .array(requiredArray) = required
         {
-            #expect(requiredArray.contains(.string("from")))
-            #expect(requiredArray.contains(.string("to")))
+            #expect(requiredArray.contains(.string("foreground")))
         }
     }
 
@@ -247,6 +315,7 @@ struct MCPSpecificToolTests {
         #expect(props["index"] != nil)
         #expect(props["width"] != nil)
         #expect(props["height"] != nil)
+        #expect(props["foreground"] != nil)
 
         // Check action types include all window operations
         if let actionSchema = props["action"],
@@ -278,6 +347,11 @@ struct MCPSpecificToolTests {
 
         #expect(props["to"] != nil)
         #expect(props["coordinates"] != nil)
+        #expect(props["foreground"] != nil)
+
+        if let required = schema["required"], case let .array(requiredArray) = required {
+            #expect(requiredArray.contains(.string("foreground")))
+        }
 
         // Check description mentions coordinates
         if let toSchema = props["to"],
@@ -307,6 +381,7 @@ struct MCPSpecificToolTests {
         #expect(props["to"] != nil)
         #expect(props["duration"] != nil)
         #expect(props["steps"] != nil)
+        #expect(props["foreground"] != nil)
 
         // Swipe tool has from/to required fields
         if let required = schema["required"],
@@ -314,6 +389,49 @@ struct MCPSpecificToolTests {
         {
             #expect(requiredArray.contains(.string("from")))
             #expect(requiredArray.contains(.string("to")))
+            #expect(requiredArray.contains(.string("foreground")))
+        }
+    }
+
+    @Test
+    func `Scroll tool exposes background-safe and foreground modes`() {
+        let tool = makeTestTool(ScrollTool.init)
+
+        guard case let .object(schema) = tool.inputSchema,
+              case let .object(properties)? = schema["properties"]
+        else {
+            Issue.record("Expected object schema with properties")
+            return
+        }
+
+        #expect(properties["on"] != nil)
+        #expect(properties["foreground"] != nil)
+        #expect(properties["smooth"] != nil)
+        #expect(properties["delay"] != nil)
+    }
+
+    @Test
+    func `Physical pointer tools require explicit foreground consent`() async throws {
+        let move = try await makeTestTool(MoveTool.init).execute(arguments: ToolArguments(raw: ["center": true]))
+        let drag = try await makeTestTool(DragTool.init).execute(arguments: ToolArguments(raw: [
+            "from_coords": "10,10",
+            "to_coords": "20,20",
+        ]))
+        let swipe = try await makeTestTool(SwipeTool.init).execute(arguments: ToolArguments(raw: [
+            "from": "10,10",
+            "to": "20,20",
+        ]))
+        let scroll = try await makeTestTool(ScrollTool.init).execute(arguments: ToolArguments(raw: [
+            "direction": "down",
+        ]))
+
+        for response in [move, drag, swipe, scroll] {
+            #expect(response.isError)
+            guard case let .text(text: message, annotations: _, _meta: _) = response.content.first else {
+                Issue.record("Expected text validation error")
+                continue
+            }
+            #expect(message.lowercased().contains("foreground"))
         }
     }
 

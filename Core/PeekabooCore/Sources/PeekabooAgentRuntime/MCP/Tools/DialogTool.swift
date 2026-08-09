@@ -23,14 +23,16 @@ public struct DialogTool: MCPTool {
         - dismiss: close the active dialog
 
         Targeting (recommended for determinism):
-        - Provide app/pid and optionally window_id/window_title/window_index to focus before interacting.
+        - Provide app/pid and optionally window_id/window_title/window_index to resolve the dialog in the background.
+        - Set foreground=true only for keyboard/file interaction or an explicit global fallback.
 
         Examples:
         - Click OK: { "action": "click", "button": "OK", "app": "TextEdit" }
         - Default action: { "action": "click", "button": "default", "app": "TextEdit" }
-        - Input password: { "action": "input", "text": "hunter2", "field": "Password", "clear": true, "app": "Safari" }
+        - Input password: { "action": "input", "text": "hunter2", "field": "Password", "clear": true,
+          "app": "Safari", "foreground": true }
         - Save file (OKButton): { "action": "file", "path": "/tmp", "name": "poem.rtf",
-          "select": "default", "ensure_expanded": true, "app": "TextEdit" }
+          "select": "default", "ensure_expanded": true, "app": "TextEdit", "foreground": true }
         """
     }
 
@@ -47,6 +49,9 @@ public struct DialogTool: MCPTool {
                 "window_id": SchemaBuilder.number(description: "Window ID (preferred stable selector)."),
                 "window_title": SchemaBuilder.string(description: "Window title (substring match)."),
                 "window_index": SchemaBuilder.number(description: "Window index (0-based); requires app/pid."),
+                "foreground": SchemaBuilder.boolean(
+                    description: "Allow focus/global input. Required for input, file, and forced dismiss.",
+                    default: false),
 
                 // click
                 "button": SchemaBuilder.string(description: "Button text to click. Use 'default' to click OKButton."),
@@ -86,6 +91,16 @@ public struct DialogTool: MCPTool {
             let action = try DialogToolAction(arguments: arguments)
             let inputs = DialogToolInputs(arguments: arguments)
 
+            if action == .list, inputs.foreground {
+                throw DialogToolInputError.invalid("foreground", "dialog list is always read-only/background")
+            }
+            if action == .input || action == .file, !inputs.foreground {
+                throw DialogToolInputError.foregroundRequired(action)
+            }
+            if action == .dismiss, inputs.force == true, !inputs.foreground {
+                throw DialogToolInputError.foregroundRequired(action)
+            }
+
             let target = MCPInteractionTarget(
                 app: inputs.app,
                 pid: inputs.pid,
@@ -93,7 +108,7 @@ public struct DialogTool: MCPTool {
                 windowIndex: inputs.windowIndex,
                 windowId: inputs.windowId)
 
-            if inputs.hasAnyTargeting {
+            if inputs.foreground, inputs.hasAnyTargeting {
                 _ = try await target.focusIfRequested(windows: self.context.windows)
             }
 
@@ -138,7 +153,8 @@ public struct DialogTool: MCPTool {
             let result = try await self.context.dialogs.clickButton(
                 buttonText: button,
                 windowTitle: windowTitle,
-                appName: appHint)
+                appName: appHint,
+                allowGlobalFallback: inputs.foreground)
             return self.formatActionResult(
                 context: ActionResultContext(
                     verb: "Clicked",

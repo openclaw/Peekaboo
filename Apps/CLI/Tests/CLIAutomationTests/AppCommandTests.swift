@@ -41,6 +41,7 @@ struct AppCommandTests {
         #expect(output.contains("--bundle-id"))
         #expect(output.contains("--open"))
         #expect(output.contains("--wait-until-ready"))
+        #expect(output.contains("--foreground"))
         #expect(output.contains("--no-focus"))
     }
 
@@ -137,7 +138,6 @@ struct AppCommandIntegrationTests {
                 "app", "launch",
                 "TextEdit",
                 "--wait-until-ready",
-                "--no-focus",
                 "--json",
             ],
             allowedExitCodes: [0, 1]

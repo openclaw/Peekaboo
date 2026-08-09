@@ -149,12 +149,15 @@ extension PeekabooBridgeClient {
     public func dialogClickButton(
         buttonText: String,
         windowTitle: String?,
-        appName: String?) async throws -> DialogActionResult
+        appName: String?,
+        allowGlobalFallback: Bool = false) async throws -> DialogActionResult
     {
-        let response = try await self.send(.dialogClickButton(PeekabooBridgeDialogClickButtonRequest(
+        let request = PeekabooBridgeDialogClickButtonRequest(
             buttonText: buttonText,
             windowTitle: windowTitle,
-            appName: appName)))
+            appName: appName)
+        let response = try await self.send(
+            allowGlobalFallback ? .dialogClickButton(request) : .backgroundDialogClickButton(request))
         switch response {
         case let .dialogResult(result): return result
         case let .error(envelope): throw envelope

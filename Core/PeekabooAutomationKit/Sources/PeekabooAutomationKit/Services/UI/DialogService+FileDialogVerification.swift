@@ -176,7 +176,7 @@ extension DialogService {
         }
 
         do {
-            try self.pressOrClick(replace)
+            try self.pressOrClick(replace, allowGlobalFallback: true)
             return true
         } catch {
             return false

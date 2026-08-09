@@ -26,6 +26,37 @@ read_when:
 - In JSON mode (`--json` / `--json-output` / `-j`), stdout is a single `CodableJSONResponse<ScriptExecutionResult>` payload (top-level `success` tracks overall script success).
 - The command exits non-zero if any step fails (even when `--no-fail-fast` continues execution) so CI can register the run as failed.
 
+## Script format
+
+`params` is a normal flat JSON object. Values may be strings, booleans, numbers, or string arrays; do not use the old synthesized Swift enum shape (`generic._0`). Existing files with that legacy wrapper still decode, but newly encoded scripts and all examples use the stable flat form.
+
+```json
+{
+  "description": "Background TextEdit shortcut",
+  "steps": [
+    {
+      "stepId": "select-all",
+      "command": "hotkey",
+      "params": {
+        "app": "TextEdit",
+        "key": "a",
+        "modifiers": ["command"]
+      }
+    }
+  ]
+}
+```
+
+Interaction steps use background delivery by default. `click`, `type`, `hotkey`, and `scroll` accept the common target fields `app`, `pid`, `windowId`, and `snapshot`; an explicit field overrides the snapshot carried from the preceding `see` step. Process target fields must agree when combined. Set `"foreground": true` only when the action intentionally focuses or drives the current desktop.
+
+Safety is strict:
+
+- Background `click`, `type`, and `hotkey` must resolve a process from `app`, `pid`, `windowId`, or a process-scoped snapshot. They fail instead of silently sending global input.
+- Background clicks use the process-targeted click API. PID/window-targeted coordinates are resolved through background-safe Accessibility hit testing; a coordinate without a process target fails closed. Set `"foreground": true` only when you intentionally want a physical pointer click.
+- Background typing and hotkeys use process-targeted keyboard delivery. A `field` on `type` is clicked through the same delivery route before the typing actions are sent.
+- Background scroll requires both an element `target` and a process-scoped `snapshot`, normally produced by `see`. Targetless scroll, `swipe`, and `drag` affect the physical pointer and require `"foreground": true`.
+- When foreground delivery has an app, PID, window, or snapshot target, `run` focuses that target before dispatching input.
+
 ## Examples
 ```bash
 # Run a script and view the JSON summary inline
@@ -35,7 +66,31 @@ peekaboo run scripts/safari-login.peekaboo.json --json
 peekaboo run ./flows/regression.peekaboo.json --no-fail-fast --output /tmp/regression-results.json
 ```
 
+```json
+{
+  "description": "Observe Safari, then interact without stealing focus",
+  "steps": [
+    {
+      "stepId": "observe",
+      "command": "see",
+      "params": {"app": "Safari", "path": "/tmp/safari.png"}
+    },
+    {
+      "stepId": "click-address",
+      "command": "click",
+      "params": {"query": "Smart Search Field"}
+    },
+    {
+      "stepId": "enter-url",
+      "command": "type",
+      "params": {"text": "https://example.com", "pressEnter": true}
+    }
+  ]
+}
+```
+
 ## Troubleshooting
 - Verify Screen Recording + Accessibility permissions (`peekaboo permissions status`).
 - Confirm your target (app/window/selector) with `peekaboo list`/`peekaboo see` before rerunning.
+- If an input step reports that `foreground: true` is required, either add a process/window/snapshot target for background delivery or opt into foreground delivery intentionally.
 - Re-run with `--json` or `--verbose` to surface detailed errors.

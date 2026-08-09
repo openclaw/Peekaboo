@@ -13,7 +13,7 @@ public struct ApplicationLaunchRequest: Sendable, Codable, Equatable {
         applicationIdentifier: String? = nil,
         applicationBundleIdentifier: String? = nil,
         openURLs: [URL] = [],
-        activates: Bool = true,
+        activates: Bool = false,
         waitUntilReady: Bool = false)
     {
         self.applicationIdentifier = applicationIdentifier

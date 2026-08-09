@@ -131,7 +131,6 @@ struct MenuCommandTests {
             "menu", "click",
             "--app", "Finder",
             "--item", "Open",
-            "--no-auto-focus",
             "--json",
         ]
         let (result, context) = try await self.runMenuCommandWithContext(args)
@@ -146,7 +145,6 @@ struct MenuCommandTests {
             "menu", "click",
             "--app", "Finder",
             "--path", "File > Save",
-            "--no-auto-focus",
             "--json",
         ]
         let (result, context) = try await self.runMenuCommandWithContext(args)

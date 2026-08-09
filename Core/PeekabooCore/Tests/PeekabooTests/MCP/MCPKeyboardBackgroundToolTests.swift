@@ -10,6 +10,182 @@ import UniformTypeIdentifiers
 @Suite(.serialized)
 struct MCPKeyboardBackgroundToolTests {
     @Test
+    func `Keyboard tools reject targetless input instead of injecting globally`() async throws {
+        let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
+        let context = await MCPToolTestHelpers.makeContext(
+            automation: automation,
+            clipboard: MockClipboardService())
+
+        let typeResponse = try await TypeTool(context: context).execute(arguments: ToolArguments(raw: [
+            "text": "hello",
+        ]))
+        let hotkeyResponse = try await HotkeyTool(context: context).execute(arguments: ToolArguments(raw: [
+            "keys": "cmd,space",
+        ]))
+        let pasteResponse = try await PasteTool(context: context).execute(arguments: ToolArguments(raw: [
+            "text": "hello",
+            "restore_delay_ms": 0,
+        ]))
+
+        #expect(typeResponse.isError)
+        #expect(hotkeyResponse.isError)
+        #expect(pasteResponse.isError)
+        #expect(await MainActor.run { automation.lastTypeActions } == nil)
+        #expect(await MainActor.run { automation.lastHotkeyKeys } == nil)
+        #expect(await MainActor.run { automation.targetedTypeActionsCalls.isEmpty })
+        #expect(await MainActor.run { automation.targetedHotkeyCalls.isEmpty })
+    }
+
+    @Test
+    func `Keyboard target resolution failure never falls back to global input`() async throws {
+        let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
+        let applications = await MainActor.run { MockApplicationService(applications: []) }
+        let context = await MCPToolTestHelpers.makeContext(
+            automation: automation,
+            applications: applications,
+            clipboard: MockClipboardService())
+
+        let typeResponse = try await TypeTool(context: context).execute(arguments: ToolArguments(raw: [
+            "app": "Missing",
+            "text": "hello",
+        ]))
+        let hotkeyResponse = try await HotkeyTool(context: context).execute(arguments: ToolArguments(raw: [
+            "app": "Missing",
+            "keys": "cmd,l",
+        ]))
+        let pasteResponse = try await PasteTool(context: context).execute(arguments: ToolArguments(raw: [
+            "app": "Missing",
+            "text": "hello",
+            "restore_delay_ms": 0,
+        ]))
+
+        #expect(typeResponse.isError)
+        #expect(hotkeyResponse.isError)
+        #expect(pasteResponse.isError)
+        #expect(await MainActor.run { automation.lastTypeActions } == nil)
+        #expect(await MainActor.run { automation.lastHotkeyKeys } == nil)
+        #expect(await MainActor.run { automation.targetedTypeActionsCalls.isEmpty })
+        #expect(await MainActor.run { automation.targetedHotkeyCalls.isEmpty })
+    }
+
+    @Test
+    func `Foreground explicitly preserves intentional global keyboard delivery`() async throws {
+        let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
+        let context = await MCPToolTestHelpers.makeContext(
+            automation: automation,
+            clipboard: MockClipboardService())
+
+        let typeResponse = try await TypeTool(context: context).execute(arguments: ToolArguments(raw: [
+            "text": "hello",
+            "foreground": true,
+        ]))
+        let hotkeyResponse = try await HotkeyTool(context: context).execute(arguments: ToolArguments(raw: [
+            "keys": "cmd,space",
+            "foreground": true,
+        ]))
+        let pasteResponse = try await PasteTool(context: context).execute(arguments: ToolArguments(raw: [
+            "text": "hello",
+            "foreground": true,
+            "restore_delay_ms": 0,
+        ]))
+
+        #expect(typeResponse.isError == false)
+        #expect(hotkeyResponse.isError == false)
+        #expect(pasteResponse.isError == false)
+        #expect(await MainActor.run { automation.lastTypeActions } != nil)
+        #expect(await MainActor.run { automation.lastHotkeyKeys } == "cmd,v")
+        #expect(await MainActor.run { automation.targetedTypeActionsCalls.isEmpty })
+        #expect(await MainActor.run { automation.targetedHotkeyCalls.isEmpty })
+    }
+
+    @Test
+    func `Type tool uses snapshot process without requiring an element`() async throws {
+        await UISnapshotManager.shared.removeAllSnapshots()
+        let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
+        let context = await MCPToolTestHelpers.makeContext(automation: automation)
+        let snapshot = await UISnapshotManager.shared.createSnapshot()
+        let snapshotId = await snapshot.id
+        await snapshot.setScreenshot(
+            path: "/tmp/screenshot.png",
+            metadata: CaptureMetadata(
+                size: CGSize(width: 200, height: 100),
+                mode: .window,
+                applicationInfo: ServiceApplicationInfo(
+                    processIdentifier: 444,
+                    bundleIdentifier: "com.example.snapshot",
+                    name: "SnapshotApp")))
+
+        let response = try await TypeTool(context: context).execute(arguments: ToolArguments(raw: [
+            "snapshot": snapshotId,
+            "text": "hello",
+        ]))
+
+        #expect(response.isError == false)
+        let calls = await MainActor.run { automation.targetedTypeActionsCalls }
+        #expect(calls.count == 1)
+        #expect(calls.first?.snapshotId == snapshotId)
+        #expect(calls.first?.targetProcessIdentifier == 444)
+        #expect(await MainActor.run { automation.clickCalls.isEmpty })
+    }
+
+    @Test
+    func `Snapshot without process metadata fails instead of typing globally`() async throws {
+        await UISnapshotManager.shared.removeAllSnapshots()
+        let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
+        let context = await MCPToolTestHelpers.makeContext(automation: automation)
+        let snapshot = await UISnapshotManager.shared.createSnapshot()
+        let snapshotId = await snapshot.id
+
+        let response = try await TypeTool(context: context).execute(arguments: ToolArguments(raw: [
+            "snapshot": snapshotId,
+            "text": "hello",
+        ]))
+
+        #expect(response.isError)
+        #expect(await MainActor.run { automation.lastTypeActions } == nil)
+        #expect(await MainActor.run { automation.targetedTypeActionsCalls.isEmpty })
+    }
+
+    @Test
+    func `Background keyboard tools reject window selectors instead of collapsing to pid`() async throws {
+        let app = ServiceApplicationInfo(
+            processIdentifier: 333,
+            bundleIdentifier: "com.example.editor",
+            name: "Editor")
+        let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
+        let applications = await MainActor.run { MockApplicationService(applications: [app]) }
+        let context = await MCPToolTestHelpers.makeContext(
+            automation: automation,
+            applications: applications,
+            clipboard: MockClipboardService())
+
+        let typeResponse = try await TypeTool(context: context).execute(arguments: ToolArguments(raw: [
+            "app": "Editor",
+            "window_title": "Document",
+            "text": "hello",
+        ]))
+        let hotkeyResponse = try await HotkeyTool(context: context).execute(arguments: ToolArguments(raw: [
+            "app": "Editor",
+            "window_title": "Document",
+            "keys": "cmd,l",
+        ]))
+        let pasteResponse = try await PasteTool(context: context).execute(arguments: ToolArguments(raw: [
+            "app": "Editor",
+            "window_title": "Document",
+            "text": "hello",
+            "restore_delay_ms": 0,
+        ]))
+
+        #expect(typeResponse.isError)
+        #expect(hotkeyResponse.isError)
+        #expect(pasteResponse.isError)
+        #expect(await MainActor.run { automation.lastTypeActions } == nil)
+        #expect(await MainActor.run { automation.lastHotkeyKeys } == nil)
+        #expect(await MainActor.run { automation.targetedTypeActionsCalls.isEmpty })
+        #expect(await MainActor.run { automation.targetedHotkeyCalls.isEmpty })
+    }
+
+    @Test
     func `Type tool uses background click and typing when snapshot process is known`() async throws {
         let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
         let context = await MCPToolTestHelpers.makeContext(automation: automation)

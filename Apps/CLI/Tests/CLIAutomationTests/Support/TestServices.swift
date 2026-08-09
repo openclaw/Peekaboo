@@ -1179,6 +1179,8 @@ final class StubDialogService: DialogServiceProtocol {
     var enterTextResult: DialogActionResult?
 
     private(set) var recordedButtonClicks: [(button: String, window: String?)] = []
+    private(set) var clickFallbackRequests: [Bool] = []
+    private(set) var enterTextCallCount = 0
 
     init(elements: DialogElements? = nil) {
         self.dialogElements = elements
@@ -1202,6 +1204,16 @@ final class StubDialogService: DialogServiceProtocol {
         throw DialogError.buttonNotFound(buttonText)
     }
 
+    func clickButton(
+        buttonText: String,
+        windowTitle: String?,
+        appName: String?,
+        allowGlobalFallback: Bool
+    ) async throws -> DialogActionResult {
+        self.clickFallbackRequests.append(allowGlobalFallback)
+        return try await self.clickButton(buttonText: buttonText, windowTitle: windowTitle, appName: appName)
+    }
+
     func enterText(
         text: String,
         fieldIdentifier: String?,
@@ -1209,6 +1221,7 @@ final class StubDialogService: DialogServiceProtocol {
         windowTitle: String?,
         appName: String?
     ) async throws -> DialogActionResult {
+        self.enterTextCallCount += 1
         guard self.dialogElements != nil else {
             throw DialogError.noActiveDialog
         }
@@ -1262,13 +1275,19 @@ final class StubDialogService: DialogServiceProtocol {
 final class StubWindowService: WindowManagementServiceProtocol {
     var windowsByApp: [String: [ServiceWindowInfo]]
     var focusCalls: [WindowTarget] = []
+    var closeFallbackRequests: [Bool] = []
 
     init(windowsByApp: [String: [ServiceWindowInfo]]) {
         self.windowsByApp = windowsByApp
     }
 
     func closeWindow(target: WindowTarget) async throws {
-        throw TestStubError.unimplemented(#function)
+        try await self.closeWindow(target: target, allowForegroundFallback: false)
+    }
+
+    @MainActor
+    func closeWindow(target _: WindowTarget, allowForegroundFallback: Bool) async throws {
+        self.closeFallbackRequests.append(allowForegroundFallback)
     }
 
     func minimizeWindow(target: WindowTarget) async throws {

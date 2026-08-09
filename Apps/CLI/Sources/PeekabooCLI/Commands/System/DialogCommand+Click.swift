@@ -10,6 +10,9 @@ extension DialogCommand {
         @Option(help: "Button text to click (e.g., 'OK', 'Cancel', 'Save')")
         var button: String
 
+        @Flag(help: "Focus the target and allow foreground click fallback")
+        var foreground = false
+
         @OptionGroup var target: InteractionTargetOptions
         @OptionGroup var focusOptions: FocusCommandOptions
         @RuntimeStorage private var runtime: CommandRuntime?
@@ -44,15 +47,20 @@ extension DialogCommand {
 
             do {
                 try self.target.validate()
-                if self.focusOptions.autoFocus {
-                    self.resolvedRuntime.beginInteractionMutation()
+                guard self.foreground || !self.focusOptions.hasForegroundFocusOverrides else {
+                    throw ValidationError("Dialog focus options require --foreground")
                 }
-                try await ensureFocused(
-                    snapshotId: nil,
-                    target: self.target,
-                    options: self.focusOptions,
-                    services: self.services
-                )
+                if self.foreground {
+                    if self.focusOptions.autoFocus {
+                        self.resolvedRuntime.beginInteractionMutation()
+                    }
+                    try await ensureFocused(
+                        snapshotId: nil,
+                        target: self.target,
+                        options: self.focusOptions,
+                        services: self.services
+                    )
+                }
 
                 let resolvedWindowTitle = try await self.target.resolveWindowTitleOptional(services: self.services)
                 let appHint = try await DialogCommand.resolveDialogAppHint(target: self.target, services: self.services)
@@ -61,7 +69,8 @@ extension DialogCommand {
                 let result = try await self.services.dialogs.clickButton(
                     buttonText: self.button,
                     windowTitle: resolvedWindowTitle,
-                    appName: appHint
+                    appName: appHint,
+                    allowGlobalFallback: self.foreground
                 )
 
                 if self.jsonOutput {
@@ -82,6 +91,9 @@ extension DialogCommand {
                         + "app='\(appHint ?? "unknown")'"
                 )
 
+            } catch let error as Commander.ValidationError {
+                handleDialogValidationError(error, jsonOutput: self.jsonOutput, logger: self.outputLogger)
+                throw ExitCode(1)
             } catch let error as DialogError {
                 handleDialogServiceError(error, jsonOutput: self.jsonOutput, logger: self.outputLogger)
                 throw ExitCode(1)

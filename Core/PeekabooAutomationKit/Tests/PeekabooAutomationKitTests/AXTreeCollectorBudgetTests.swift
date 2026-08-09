@@ -130,6 +130,7 @@ final class AXTreeCollectorBudgetTests: XCTestCase {
         let encoded = try JSONEncoder().encode(options)
         var object = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
         object.removeValue(forKey: "traversalBudget")
+        object.removeValue(forKey: "allowWebFocusFallback")
         let oldPayload = try JSONSerialization.data(withJSONObject: object)
 
         let decoded = try JSONDecoder().decode(DesktopDetectionOptions.self, from: oldPayload)
@@ -140,6 +141,8 @@ final class AXTreeCollectorBudgetTests: XCTestCase {
 
     func testDesktopDetectionDefaultsExcludeApplicationMenuBar() {
         XCTAssertFalse(DesktopDetectionOptions().includeMenuBarElements)
+        XCTAssertFalse(DesktopDetectionOptions().allowWebFocusFallback)
+        XCTAssertEqual(DesktopCaptureOptions().focus, .background)
     }
 
     func testMenuBarCollectionRequiresExplicitRequestAndActiveApplication() {

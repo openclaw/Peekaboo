@@ -217,9 +217,9 @@ struct ImageCaptureLogicTests {
 
     @Test(.tags(.fast))
     func `Capture focus modes`() throws {
-        // Default auto mode
+        // Default background mode
         let defaultCmd = try ImageCommand.parse([])
-        #expect(defaultCmd.captureFocus == .auto)
+        #expect(defaultCmd.captureFocus == .background)
 
         // Explicit background mode
         let backgroundCmd = try ImageCommand.parse(["--capture-focus", "background"])
@@ -444,12 +444,12 @@ struct AdvancedImageCaptureLogicTests {
         ])
         #expect(foregroundWindow.captureFocus == .foreground)
 
-        // Auto focus (default) should work intelligently
+        // Background capture is the default
         let autoCapture = try ImageCommand.parse([
             "--mode", "window",
             "--app", "Finder",
         ])
-        #expect(autoCapture.captureFocus == .auto)
+        #expect(autoCapture.captureFocus == .background)
     }
 
     @Test(.tags(.fast))
@@ -485,7 +485,7 @@ struct AdvancedImageCaptureLogicTests {
                 if scenario.shouldBeReady {
                     // Verify basic readiness
                     #expect(command.format == .png)
-                    #expect(command.captureFocus == .auto)
+                    #expect(command.captureFocus == .background)
                 }
             } catch {
                 if scenario.shouldBeReady {

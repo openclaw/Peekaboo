@@ -2,10 +2,10 @@ import CoreGraphics
 import Foundation
 import PeekabooAutomation
 import PeekabooAutomationKit
-import PeekabooBridge
 import PeekabooCore
 import PeekabooFoundation
 import Testing
+@testable import PeekabooBridge
 
 struct PeekabooBridgeTests {
     private struct BridgeDateEnvelope: Codable {
@@ -14,6 +14,19 @@ struct PeekabooBridgeTests {
 
     private func decode(_ data: Data) throws -> PeekabooBridgeResponse {
         try JSONDecoder.peekabooBridgeDecoder().decode(PeekabooBridgeResponse.self, from: data)
+    }
+
+    @Test
+    func `desktop observation timeout follows the requested overall budget`() {
+        #expect(PeekabooBridgeClient.desktopObservationRequestTimeout(
+            overallTimeout: 20,
+            defaultTimeout: 10) == 25)
+        #expect(PeekabooBridgeClient.desktopObservationRequestTimeout(
+            overallTimeout: 2,
+            defaultTimeout: 10) == 10)
+        #expect(PeekabooBridgeClient.desktopObservationRequestTimeout(
+            overallTimeout: nil,
+            defaultTimeout: 10) == nil)
     }
 
     @Test

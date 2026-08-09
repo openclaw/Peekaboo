@@ -7,6 +7,9 @@ read_when:
 
 # Peekaboo Tool Playground Test Plan
 
+For the strict non-interruption matrix (foreground sentinel, cursor/clipboard/overlay leak detection, and a quarantined
+physical-pointer phase), use [Background computer-use validation](background-computer-use.md).
+
 ## Assignment & Expectations
 - Validate every native Peekaboo tool/CLI command (see the CLI command reference) against the Playground app so future automation runs have deterministic coverage.
 - For each tool run, capture an OSLog transcript with `Apps/Playground/scripts/playground-log.sh --output <file>` so we have durable evidence that the action completed (e.g., `[Click]`, `[Scroll]` entries).

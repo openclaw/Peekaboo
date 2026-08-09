@@ -86,7 +86,7 @@ extension DialogService {
             (title.isEmpty && description.isEmpty)
         guard shouldClick else { return }
 
-        try self.pressOrClick(disclosure)
+        try self.pressOrClick(disclosure, allowGlobalFallback: true)
         try await Task.sleep(nanoseconds: 250_000_000)
     }
 

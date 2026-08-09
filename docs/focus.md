@@ -66,10 +66,10 @@ Foreground interaction commands automatically handle focus:
 # These commands all include automatic focus management:
 peekaboo click "Submit" --foreground
 peekaboo type "Hello world"
-peekaboo scroll --direction down
+peekaboo scroll --direction down --foreground
 peekaboo menu click --app Safari --item "New Tab"
 peekaboo hotkey --keys "cmd,s"
-peekaboo drag --from "$SOURCE_ID" --to "$TARGET_ID"
+peekaboo drag --from "$SOURCE_ID" --to "$TARGET_ID" --foreground
 ```
 
 ### Default Behavior
@@ -83,7 +83,7 @@ By default, Peekaboo will:
 
 ## Focus Options
 
-Interaction commands that use foreground delivery support these focus-related options. `click`, `type`, `hotkey`, `press`, and `paste` default to background delivery when Peekaboo can resolve a target process; pass `--foreground` when you want focus behavior.
+Interaction commands that use foreground delivery support these focus-related options. `click`, `type`, `hotkey`, `press`, and `paste` default to background delivery when Peekaboo can resolve a target process; pass `--foreground` when you want focus behavior. Targeted scroll is background Accessibility-only, while targetless/smooth scroll and all move/drag/swipe operations require explicit foreground mode.
 
 ### `--no-auto-focus`
 Disables automatic focus management (not recommended).
@@ -112,15 +112,15 @@ Use cases:
 - Typing or pasting into a targeted app without activating it
 - Keeping a long-running foreground workflow uninterrupted
 
-Currently, `click`, `type`, `hotkey`, `press`, and `paste` use background delivery by default when `--app`, `--pid`, `--window-id`, or snapshot process metadata identifies a live process. Use `--foreground` for focused foreground input.
+Currently, keyboard commands use background delivery by default when `--app`, `--pid`, or supported snapshot process metadata identifies a live process. Window selectors require `--foreground`; process-targeted keyboard events cannot prove which window owns the process's focused element. Background click can preserve an exact window/element target.
 
-Background delivery is a delivery mode, not a focus mode. It cannot be combined with foreground focus timeout, retry, or Space-switching flags. Element/query clicks first try Accessibility actions. Keyboard input, coordinate clicks, and synthetic click fallback require Event Synthesizing; `peekaboo permissions request-event-synthesizing` requests it for the selected bridge host by default, or for the local CLI with `--no-remote`. macOS does not acknowledge whether a target accepted a process-targeted synthetic event; Peekaboo reports only that it sent the event to a live process after permission preflight.
+Background delivery is a delivery mode, not a focus mode. It cannot be combined with foreground focus timeout, retry, or Space-switching flags. Background element/query/coordinate clicks and targeted scroll use Accessibility. Keyboard delivery and foreground synthetic pointer operations require Event Synthesizing; `peekaboo permissions request-event-synthesizing` requests it for the selected bridge host by default, or for the local CLI with `--no-remote`.
 
 ### `--focus-timeout-seconds <seconds>`
 Sets how long to wait for focus operations (default: 5.0).
 
 ```bash
-peekaboo type "Long text..." --focus-timeout-seconds 10
+peekaboo type "Long text..." --app TextEdit --foreground --focus-timeout-seconds 10
 ```
 
 Use cases:
