@@ -243,6 +243,70 @@ struct WindowStateMutationPolicyTests {
     }
 
     @Test
+    @MainActor
+    func `restore accepts exact same ID reappearance after asynchronous AX state reflection`() async throws {
+        let expected = self.identity.withMinimizedState(true)
+        let restored = self.identity.withMinimizedState(false)
+        let synchronousAXStillReportedMinimized = true
+
+        let result = try await completePinnedMinimizedWindowRestore(
+            expectedIdentity: expected,
+            dispatch: {
+                #expect(synchronousAXStillReportedMinimized)
+                return true
+            },
+            repin: { receipt, bounds in
+                #expect(receipt == expected)
+                #expect(bounds == expected.capturedBounds)
+                return restored
+            })
+
+        #expect(result == restored)
+    }
+
+    @Test
+    @MainActor
+    func `restore rejects ambiguous reappearance ownership generation and bounds`() async {
+        let expected = self.identity.withMinimizedState(true)
+        let ambiguousCandidates = [
+            WindowMutationIdentity(
+                windowID: 925,
+                ownerProcessIdentifier: 42,
+                ownerProcessStartIdentity: 7,
+                capturedBounds: expected.capturedBounds,
+                isMinimized: false),
+            WindowMutationIdentity(
+                windowID: 924,
+                ownerProcessIdentifier: 43,
+                ownerProcessStartIdentity: 7,
+                capturedBounds: expected.capturedBounds,
+                isMinimized: false),
+            WindowMutationIdentity(
+                windowID: 924,
+                ownerProcessIdentifier: 42,
+                ownerProcessStartIdentity: 8,
+                capturedBounds: expected.capturedBounds,
+                isMinimized: false),
+            WindowMutationIdentity(
+                windowID: 924,
+                ownerProcessIdentifier: 42,
+                ownerProcessStartIdentity: 7,
+                capturedBounds: CGRect(x: 50, y: 60, width: 700, height: 500),
+                isMinimized: false),
+            expected,
+        ]
+
+        for candidate in ambiguousCandidates {
+            await #expect(throws: PeekabooError.self) {
+                try await completePinnedMinimizedWindowRestore(
+                    expectedIdentity: expected,
+                    dispatch: { true },
+                    repin: { _, _ in candidate })
+            }
+        }
+    }
+
+    @Test
     func `minimized restoration rejects process generation change`() {
         #expect(!exactMinimizedRestoreCandidateIsValid(
             expectedIdentity: self.identity.withMinimizedState(true),

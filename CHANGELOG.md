@@ -45,6 +45,7 @@
 - Reject queued window mutations when the selected CGWindowID or owner PID generation has disappeared or been recycled, and report minimized windows from live AX state.
 - Bind destructive window mutations to immutable capture-time bounds, reject same-process CGWindowID reuse, repin intended geometry transitions, and refuse Bridge hosts that would ignore the stronger receipt.
 - Keep minimized exact PID/window-ID targets addressable through bounded AX inventory, add native background `window restore` to CLI/MCP/Bridge, and make default minimized close return restore-or-`--foreground` guidance.
+- Let background `window restore` accept a successful native unminimize once the same exact window ID, owner process generation, and original bounds reappear, instead of failing on transient AX readback.
 - Verify minimize from the original AX window when WindowServer hides it, and close minimized exact windows without activating their app.
 - Restore minimized privacy state before returning when a background close cannot be verified.
 - Keep agent JSON output machine-readable and refuse terminal text that impersonates an unexecuted tool call.

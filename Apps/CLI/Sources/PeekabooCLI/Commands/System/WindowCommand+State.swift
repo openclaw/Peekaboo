@@ -191,10 +191,12 @@ extension WindowCommand {
                     reason: "window restore"
                 )
 
-                let refreshedWindow = try await WindowServiceBridge.listWindows(
-                    windows: self.services.windows,
-                    target: exactTarget
-                ).first ?? windowInfo
+                let refreshedWindow = await restoredWindowOutputInfo(original: windowInfo) {
+                    try await WindowServiceBridge.listWindows(
+                        windows: self.services.windows,
+                        target: exactTarget
+                    ).first
+                }
                 logWindowAction(action: "restore", appName: appName, windowInfo: refreshedWindow)
                 let data = createWindowActionResult(
                     action: "restore",
@@ -326,4 +328,14 @@ extension WindowCommand {
             }
         }
     }
+}
+
+@MainActor
+func restoredWindowOutputInfo(
+    original: ServiceWindowInfo,
+    refresh: @MainActor () async throws -> ServiceWindowInfo?
+) async -> ServiceWindowInfo {
+    // The service has already repinned the exact restored window. Public/AX inventory can
+    // still omit it briefly, so a display-only refresh must not turn success into failure.
+    await (try? refresh()) ?? original
 }

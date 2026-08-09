@@ -69,7 +69,7 @@ extension WindowManagementService {
                         wasMinimized: expectedIdentity.isMinimized == true,
                         closeCompleted: false)
                     {
-                        _ = await BoundedBackgroundWindowAX.restoreMinimizedState(expectedIdentity: expectedIdentity)
+                        _ = try? await self.restorePinnedMinimizedWindow(expectedIdentity)
                     }
                     throw error
                 }
@@ -88,8 +88,13 @@ extension WindowManagementService {
             try await withMinimizedWindowFailureRecovery(
                 wasMinimized: expectedIdentity.isMinimized == true,
                 restore: {
-                    let restored = await BoundedBackgroundWindowAX.restoreMinimizedState(
-                        expectedIdentity: expectedIdentity)
+                    let restored: Bool
+                    do {
+                        try await self.restorePinnedMinimizedWindow(expectedIdentity)
+                        restored = true
+                    } catch {
+                        restored = false
+                    }
                     if !restored {
                         let message = "Could not restore minimized state after foreground close failure. " +
                             "windowID=\(trackedWindowID)"
@@ -167,18 +172,7 @@ extension WindowManagementService {
         try await self.operationLaneCoordinator.run(scope: .window(expectedIdentity), access: .write) {
             try self.validatePinnedWindowMutation(target: target, expectedIdentity: expectedIdentity)
             if expectedIdentity.isMinimized == true {
-                guard await BoundedBackgroundWindowAX.restoreMinimizedState(expectedIdentity: expectedIdentity) else {
-                    throw OperationError.interactionFailed(
-                        action: "restore window",
-                        reason: "Window restore operation failed or the exact minimized receipt became ambiguous")
-                }
-                guard let capturedBounds = expectedIdentity.capturedBounds else {
-                    throw PeekabooError.commandFailed(
-                        "Window \(expectedIdentity.windowID) restore receipt lacks capture-time bounds")
-                }
-                _ = try await self.waitForRepinnedWindowMutation(
-                    expectedIdentity,
-                    expectedBounds: capturedBounds)
+                try await self.restorePinnedMinimizedWindow(expectedIdentity)
                 return
             }
             let window = try await self.element(for: target)
@@ -203,6 +197,17 @@ extension WindowManagementService {
                     "Window \(expectedIdentity.windowID) did not reach verified restored state")
             }
         }
+    }
+
+    private func restorePinnedMinimizedWindow(_ expectedIdentity: WindowMutationIdentity) async throws {
+        _ = try await completePinnedMinimizedWindowRestore(
+            expectedIdentity: expectedIdentity,
+            dispatch: {
+                await BoundedBackgroundWindowAX.dispatchMinimizedRestore(expectedIdentity: expectedIdentity)
+            },
+            repin: { identity, expectedBounds in
+                try await self.waitForRepinnedWindowMutation(identity, expectedBounds: expectedBounds)
+            })
     }
 
     public func maximizeWindow(target: WindowTarget) async throws {
@@ -835,6 +840,38 @@ func pinnedWindowRestoreIdentityMatches(
         currentBounds == expectedIdentity.capturedBounds
 }
 
+@MainActor
+func completePinnedMinimizedWindowRestore(
+    expectedIdentity: WindowMutationIdentity,
+    dispatch: @MainActor () async -> Bool,
+    repin: @MainActor (WindowMutationIdentity, CGRect) async throws -> WindowMutationIdentity) async throws
+    -> WindowMutationIdentity
+{
+    guard expectedIdentity.isMinimized == true,
+          let capturedBounds = expectedIdentity.capturedBounds
+    else {
+        throw PeekabooError.commandFailed(
+            "Window \(expectedIdentity.windowID) restore receipt lacks minimized state or capture-time bounds")
+    }
+    guard await dispatch() else {
+        throw OperationError.interactionFailed(
+            action: "restore window",
+            reason: "Window restore operation failed or the exact minimized receipt became ambiguous")
+    }
+
+    let restoredIdentity = try await repin(expectedIdentity, capturedBounds)
+    guard restoredIdentity.windowID == expectedIdentity.windowID,
+          restoredIdentity.ownerProcessIdentifier == expectedIdentity.ownerProcessIdentifier,
+          restoredIdentity.ownerProcessStartIdentity == expectedIdentity.ownerProcessStartIdentity,
+          restoredIdentity.capturedBounds == capturedBounds,
+          restoredIdentity.isMinimized == false
+    else {
+        throw PeekabooError.commandFailed(
+            "Window \(expectedIdentity.windowID) became ambiguous after restore dispatch")
+    }
+    return restoredIdentity
+}
+
 func exactWindowIDForStateMutation(
     target: WindowTarget,
     resolvedWindows: [ServiceWindowInfo]) throws -> Int
@@ -958,10 +995,9 @@ private enum BoundedBackgroundWindowAX {
         }.value
     }
 
-    static func restoreMinimizedState(expectedIdentity: WindowMutationIdentity) async -> Bool {
+    static func dispatchMinimizedRestore(expectedIdentity: WindowMutationIdentity) async -> Bool {
         await Task.detached(priority: .userInitiated) {
             guard expectedIdentity.isMinimized == true,
-                  let capturedBounds = expectedIdentity.capturedBounds,
                   let windowID = CGWindowID(exactly: expectedIdentity.windowID),
                   SystemIdentityResolver.validateWindowMutationOwnerGeneration(expectedIdentity),
                   self.windowServerAllowsExactMinimizedRestore(
@@ -991,20 +1027,12 @@ private enum BoundedBackgroundWindowAX {
                 else {
                     return false
                 }
-                guard AXUIElementSetAttributeValue(
+                // AX state readback can lag a successful write. The caller verifies completion by
+                // repinning the exact WindowServer ID, owner generation, and captured bounds.
+                return AXUIElementSetAttributeValue(
                     childWindow,
                     kAXMinimizedAttribute as CFString,
-                    kCFBooleanFalse) == .success,
-                    SystemIdentityResolver.processStartIdentity(expectedIdentity.ownerProcessIdentifier) ==
-                    expectedIdentity.ownerProcessStartIdentity,
-                    AXWindowIDResolver.copyWindowID(childWindow, into: &candidateID) == .success,
-                    candidateID == windowID,
-                    self.bounds(of: childWindow) == capturedBounds,
-                    self.boolAttribute(kAXMinimizedAttribute as String, of: childWindow) == false
-                else {
-                    return false
-                }
-                return true
+                    kCFBooleanFalse) == .success
             }
         }.value
     }
