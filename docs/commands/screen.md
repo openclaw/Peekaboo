@@ -7,7 +7,7 @@ read_when:
 
 # `peekaboo screen`
 
-`screen list` reports every connected display with its stable display ID, global logical bounds, scale factor, and primary state. Bare `peekaboo screen` defaults to `screen list`; the older `peekaboo list screens` spelling remains supported.
+`screen list` reports every connected display with its stable display ID, global logical bounds, scale factor, and primary state. Bare `peekaboo screen` defaults to `screen list`.
 
 ## Examples
 

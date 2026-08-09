@@ -23,6 +23,11 @@ Action-oriented UI tools include:
 - `set_value` for direct accessibility value mutation on settable fields and controls.
 - `perform_action` for invoking a named accessibility action such as `AXPress`, `AXShowMenu`, or `AXIncrement`.
 
+Inventory is exposed on the nouns: use `app` with `action: "list"` for running applications and `window` with
+`action: "list"` plus `app` for window IDs, bounds, and off-screen state. The former generic `list` tool and its
+duplicate `server_status` view are not exposed. `menu` supports only application-menu `list` and `click` actions;
+status items use the dedicated menubar surface. MCP retains `sleep` because an MCP client may not have shell access.
+
 Call `see` first and pass element IDs through these tools when possible. Element-targeted calls preserve action-first routing; coordinate calls always use the synthetic path.
 The same action tools are available to CLI users as `peekaboo set-value` and `peekaboo perform-action`.
 `set_value` and `perform_action` are exposed only when their resolved input strategy enables action invocation

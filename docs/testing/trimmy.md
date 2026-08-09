@@ -7,7 +7,7 @@ read_when:
 
 # Trimmy Manual Test Plan (with Peekaboo clipboard tool)
 
-Goal: Validate Trimmy’s clipboard flattening via Peekaboo without `peekaboo run`. Use the `peekaboo clipboard` tool for all clipboard interactions.
+Goal: Validate Trimmy’s clipboard flattening with direct `peekaboo clipboard` invocations.
 
 ## Prereqs
 - Peekaboo CLI built at `Apps/CLI/.build/release/peekaboo`.

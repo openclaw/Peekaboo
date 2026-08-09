@@ -56,7 +56,6 @@ physical-pointer phase), use [Background computer-use validation](background-com
 - Current reference baseline (2025-12-17, Click Fixture): `see` p95 ≈ 0.97s, `click` p95 ≈ 0.18s (`.artifacts/playground-tools/20251217-174822-perf-see-click-clickfixture-summary.json`).
 - Additional baselines (2025-12-17):
   - Scroll Fixture (`scroll --on vertical-scroll`, 15 runs): wall p95 ≈ 0.30s, exec p95 ≈ 0.12s (`.artifacts/playground-tools/20251217-224849-scroll-vertical-scroll-fixture-summary.json`).
-  - System menu list-all (3 runs): wall p95 ≈ 0.61s (`.artifacts/playground-tools/20251217-224944-menu-list-all-system-summary.json`).
 
 ## Tool Matrix
 
@@ -66,12 +65,10 @@ physical-pointer phase), use [Background computer-use validation](background-com
 | `see` | Prefer fixture windows (“Click Fixture”, “Scroll Fixture”, etc.) | Capture snapshot metadata via CLI output + optional Playground logs for follow-on actions | `peekaboo see --app Playground --mode window --window-title "Click Fixture"` | Verified – `--window-title` now resolves against ScreenCaptureKit windows and element detection is pinned to the captured `CGWindowID` | `.artifacts/playground-tools/20251217-153107-see-click-for-move.json` |
 | `image` | Playground window (full or element-specific) | Use `Image` artifacts; note timestamp in `LOG_FILE` | `peekaboo image window --app Playground --output /tmp/playground-window.png` | Verified – window + screen captures succeed after capture fallback fix | `.artifacts/playground-tools/20251116-082109-image-window-playground.json`, `.artifacts/playground-tools/20251116-082125-image-screen0.json` |
 | `capture` | `capture live` against Playground (5–10s) + `capture video` ingest smoke | Verify artifacts (`metadata.json`, `contact.png`, frames) + optional MP4 (`--video-out`) | `peekaboo capture live --mode window --app Playground --duration 5 --threshold 0 --json-output` | Verified – live writes contact sheet + metadata; video ingest + `--video-out` covered | `.artifacts/playground-tools/20251217-133751-capture-live.json`, `.artifacts/playground-tools/20251217-180155-capture-video.json`, `.artifacts/playground-tools/20251217-184010-capture-live-videoout.json`, `.artifacts/playground-tools/20251217-184010-capture-video-videoout.json` |
-| `list` | Validate `apps`, `windows`, `screens`, `menubar`, `permissions` while Playground is running | `playground-log` optional (`Window` for focus changes) | `peekaboo list windows --app Playground` etc. | Verified – apps/windows/screens/menubar/permissions captured 2025-11-16 | `.artifacts/playground-tools/20251116-142111-list-apps.json`, `.artifacts/playground-tools/20251116-142111-list-windows-playground.json`, `.artifacts/playground-tools/20251116-142122-list-screens.json`, `.artifacts/playground-tools/20251116-142122-list-menubar.json`, `.artifacts/playground-tools/20251116-142122-list-permissions.json` |
+| noun-based inventory | Validate `app list`, `window list`, `screen list`, `menubar list`, and `permissions status` while Playground is running | `playground-log` optional (`Window` for focus changes) | `peekaboo window list --app Playground` etc. | Verified | Existing inventory artifacts remain historical evidence. |
 | `tools` | Compare CLI output against ToolRegistry | No Playground log required; attach output to notes | `peekaboo tools > $LOG_ROOT/tools.txt` | Verified – native tool listing captured 2025-12-19 | `.artifacts/playground-tools/20251219-001215-tools.txt` |
-| `run` | Execute scripted multi-step flows against Playground fixtures | Logs depend on embedded commands | `peekaboo run docs/testing/fixtures/playground-smoke.peekaboo.json` | Verified – smoke script drives Text Fixture and `type` resolves `basic-text-field` deterministically | `.artifacts/playground-tools/20251217-221643-run-playground-smoke.json`, `.artifacts/playground-tools/20251217-221643-run-playground-smoke-text.log` |
-| `sleep` | Inserted between Playground actions | Observe timestamps in log file | `peekaboo sleep 1500` | Verified – manual timing around CLI pause | `python wrapper measuring peekaboo sleep 2000` |
 | `clean` | Snapshot cache after `see` runs | Inspect `~/.peekaboo/snapshots` & ensure Playground unaffected | `peekaboo clean --snapshot <id>` | Verified – removed snapshot 5408D893… and confirmed re-run reports none | `.peekaboo/snapshots/5408D893-E9CF-4A79-9B9B-D025BF9C80BE (deleted)` |
-| `clipboard` | Clipboard smoke (text/file/image + save/restore) | Verify readback + binary export + restore user clipboard | `peekaboo clipboard --action set --image-path assets/peekaboo.png --json-output` | Verified – CLI set/get (file+image) and cross-invocation save/restore (2025-12-17) | `.artifacts/playground-tools/20251217-192349-clipboard-get-image.json` |
+| `clipboard` | Clipboard smoke (text/file/image + save/restore) | Verify readback + binary export + restore user clipboard | `peekaboo clipboard --action set --file-path assets/peekaboo.png --json-output` | Verified – CLI set/get (file+image) and cross-invocation save/restore (2025-12-17) | `.artifacts/playground-tools/20251217-192349-clipboard-get-image.json` |
 | `config` | Validate config commands while Playground idle | N/A | `peekaboo config show` | Verified – show/validate outputs captured 2025-11-16 | `.artifacts/playground-tools/20251116-051200-config-show-effective.json` |
 | `permissions` | Ensure status/grant flow works with Playground | `playground-log` `App` category (should log when permissions toggled) | `peekaboo permissions status` | Verified – Screen Recording & Accessibility granted | `.artifacts/playground-tools/20251116-051000-permissions-status.json` |
 | `learn` | Dump agent guide | N/A | `peekaboo learn > $LOG_ROOT/learn.txt` | Verified – latest dump saved 2025-11-16 | `.artifacts/playground-tools/20251116-051300-learn.txt` |
@@ -97,7 +94,7 @@ physical-pointer phase), use [Background computer-use validation](background-com
 | `menu` | Playground “Test Menu” | `Menu` | `peekaboo menu click --app boo.peekaboo.playground.debug --path "Test Menu>Submenu>Nested Action A"` | Verified – nested menu click logged (2025-12-18) | `.artifacts/playground-tools/20251218-002308-menu.log` |
 | `menubar` | macOS menu extras (Wi-Fi, Clock) plus Playground status icons | `Menu` (system) | `peekaboo menubar list --json-output` | Verified – list + click captured; logs via Control Center predicate | `.artifacts/playground-tools/20251116-053932-menubar.log` |
 | `app` | Launch/quit/focus Playground + helper apps (TextEdit) | `App` + `Focus` | `peekaboo app list --include-hidden --json-output` | Verified – Playground app list/switch/hide/launch captured 2025-11-16 | `.artifacts/playground-tools/20251116-195420-app.log` |
-| `open` | Open Playground fixtures/documents | `App`/`Focus` | `peekaboo open Apps/Playground/README.md --app TextEdit --json-output` | Verified – TextEdit + browser + no-focus covered 2025-11-16 | `.artifacts/playground-tools/20251116-200220-open.log` |
+| `app launch --open` | Open Playground fixtures/documents | `App`/`Focus` | `peekaboo app launch TextEdit --open Apps/Playground/README.md --json-output` | Covered by app launch validation. | Historical open-command artifacts remain archived. |
 | `dock` | Dock item interactions w/ Playground icon | `App` + `Window` | `peekaboo dock list --json-output` | Verified – right-click + menu selection now captured with `[Dock]` logs | `.artifacts/playground-tools/20251116-205850-dock.log` |
 | `dialog` | Dialogs tab (Save/Open panels + alerts w/ text field) | `Dialog` | `peekaboo dialog list --app Playground` | Verified – use Playground’s built-in dialog fixtures (no TextEdit required) | `.artifacts/playground-tools/20251116-054316-dialog.log` |
 | `visualizer` | Visual feedback overlays while Playground is visible | Visual confirmation (overlays render) + JSON dispatch report | `peekaboo visualizer --json-output` | Verified – dispatch report + manual overlay check | `.artifacts/playground-tools/20251217-204548-visualizer.json` |
@@ -164,26 +161,6 @@ The following subsections spell out the concrete steps, required Playground surf
   2. Compare entries to the Interaction/Window commands listed here; flag gaps.
 - **Verification**: Output includes click/type/etc. with descriptions.
 
-#### `run`
-- **Setup**: Create a sample `.peekaboo.json` (store under `docs/testing/fixtures/` once defined) that performs `see`, `click`, `type`, and `scroll`.
-- **Steps**:
-  1. Start `Keyboard`, `Click`, and `Text` log captures.
-  2. `peekaboo run docs/testing/fixtures/playground-smoke.peekaboo.json --output "$LOG_ROOT/run-playground.json" --json-output`.
-  3. Confirm each embedded step produced matching log entries (the script opens the Text Fixture window via `⌘⌃2` before running `see`/`click`/`type`).
-- **No-fail-fast add-on**:
-  1. Run `peekaboo run docs/testing/fixtures/playground-no-fail-fast.peekaboo.json --no-fail-fast --json-output > "$LOG_ROOT/run-no-fail-fast.json"`.
-  2. Verify the JSON is a *single* payload (no double-printed JSON) and reports `success=false` with `failedSteps=1`.
-  3. Confirm the Playground Click log includes a `Single click` entry even though the script intentionally includes a failing step first.
-- **Notes**: Update fixture when tools change to keep coverage aligned.
-- **2025-12-17 run**: Updated `docs/testing/fixtures/playground-smoke.peekaboo.json` to open the Text Fixture window (hotkey `⌘⌃2`) and reran successfully: `.artifacts/playground-tools/20251217-173849-run-playground-smoke.json` plus matching OSLog evidence in `.artifacts/playground-tools/20251217-173849-run-playground-smoke-{keyboard,click,text}.log`.
-
-#### `sleep`
-- **Steps**:
-  1. Run `date +%s` then `peekaboo sleep 2000` within tmux.
-  2. Immediately issue a `click` command and ensure the log timestamps show ≥2s gap.
-- **Verification**: Playground log lines prove no action fired during sleep window.
-- **2025-11-16 run**: Measured via `python - <<'PY' ... subprocess.run(["pnpm","run","peekaboo","--","sleep","2000"]) ...` → actual pause ≈2.24 s (CLI printed `✅ Paused for 2.0s`). No Playground interaction necessary.
-
 #### `clean`
 - **Steps**:
   1. Generate two snapshots via `see`.
@@ -205,11 +182,10 @@ The following subsections spell out the concrete steps, required Playground surf
 
 #### `clipboard`
 - **Steps**:
-  1. Scripted smoke: `peekaboo run docs/testing/fixtures/clipboard-smoke.peekaboo.json --json-output > "$LOG_ROOT/clipboard-smoke.json"`.
-  2. Cross-invocation save/restore: `peekaboo clipboard --action save --slot original`, then `--action clear`, then `--action restore --slot original`.
-  3. File payload: `peekaboo clipboard --action set --file-path /tmp/peekaboo-clipboard-smoke.txt --json-output`.
-  4. Image payload + export: `peekaboo clipboard --action set --image-path assets/peekaboo.png --also-text "Peekaboo clipboard image smoke" --json-output`, then `peekaboo clipboard --action get --prefer public.png --output /tmp/peekaboo-clipboard-out.png --json-output`.
-- **Pass criteria**: Script succeeds and clipboard is restored.
+  1. Cross-invocation save/restore: `peekaboo clipboard --action save --slot original`, then `--action clear`, then `--action restore --slot original`.
+  2. File payload: `peekaboo clipboard --action set --file-path /tmp/peekaboo-clipboard-smoke.txt --json-output`.
+  3. Image payload + export: `peekaboo clipboard --action set --file-path assets/peekaboo.png --also-text "Peekaboo clipboard image smoke" --json-output`, then `peekaboo clipboard --action get --prefer public.png --output /tmp/peekaboo-clipboard-out.png --json-output`.
+- **Pass criteria**: Clipboard payloads round-trip and the original clipboard is restored.
 - **2025-12-17 CLI evidence**: `.artifacts/playground-tools/20251217-192349-clipboard-{save-original,set-file,get-file-text,set-image,get-image,restore-original}.json` plus exported `/tmp/peekaboo-clipboard-out.png`.
 
 #### `config`
@@ -439,12 +415,11 @@ The following subsections spell out the concrete steps, required Playground surf
   - Re-ran the flow: `.artifacts/playground-tools/20251116-195420-app-list.json`, `...195421-app-switch.json`, `...195422-app-hide.json`, `...195423-app-unhide.json`, `...195424-app-launch-textedit.json`, and `...195425-app-quit-textedit.json` capture the CLI outputs.
   - App log `.artifacts/playground-tools/20251116-195420-app.log` shows the matching `[App] list`, `switch`, `hide`, `unhide`, `launch`, and `quit` entries with bundle IDs + PIDs.
 
-#### `open`
+#### `app launch --open`
 - **Tests**:
-  1. `peekaboo open Apps/Playground/README.md --app TextEdit --json-output > .artifacts/playground-tools/20251116-091415-open-readme-textedit.json`.
-  2. `peekaboo open https://example.com --json-output > .artifacts/playground-tools/20251116-091422-open-example.json`.
-  3. `peekaboo open Apps/Playground/README.md --app TextEdit --no-focus --json-output > .artifacts/playground-tools/20251116-091435-open-readme-textedit-nofocus.json`.
-- **2025-11-16 verification**: Latest run captured `.artifacts/playground-tools/20251116-200220-open.log` with the three `[Open]` entries (TextEdit focus, browser focus, TextEdit `--no-focus`), alongside the corresponding CLI JSON artifacts.
+  1. `peekaboo app launch TextEdit --open Apps/Playground/README.md --json-output`.
+  2. `peekaboo app launch Safari --open https://example.com --json-output`.
+  3. Add `--wait-ready` when the next step depends on LaunchServices startup completion.
 
 #### `dock`
 - **Tests**:

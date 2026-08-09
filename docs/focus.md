@@ -325,7 +325,7 @@ The window may have been closed or minimized:
 
 ```bash
 # Check if window still exists
-peekaboo list windows --app YourApp
+peekaboo window list --app YourApp
 
 # For minimized windows, restore first
 peekaboo window restore --app YourApp
@@ -353,7 +353,7 @@ If automatic focus isn't working:
 peekaboo window focus --app YourApp --verbose
 
 # Check permissions
-peekaboo list permissions
+peekaboo permissions status
 
 # Try without focus (for testing)
 peekaboo click "Button" --foreground --no-auto-focus

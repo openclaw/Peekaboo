@@ -16,11 +16,8 @@ Use `peekaboo <command> --help` for inline flag descriptions; this page links to
 - [`see`](commands/see.md) – Capture annotated UI maps, produce snapshot IDs, and optionally run AI analysis.
 - [`image`](commands/image.md) – Save raw PNG/JPG captures of screens, windows, or menu bar regions; supports `--analyze` prompts.
 - `capture` – Long-running capture. `capture live` (adaptive PNG frames) replaces watch; `capture action` records around a child command; `capture video` ingests a video and samples frames. Outputs frames, contact sheet, metadata, optional MP4.
-- [`list`](commands/list.md) – Subcommands: `apps`, `windows`, `screens`, `menubar`, `permissions`.
 - [`tools`](commands/tools.md) – List the MCP/agent tool catalog; supports `--verbose` and `--json`.
 - [`completions`](commands/completions.md) – Generate shell-native completions for zsh, bash, and fish from Commander metadata.
-- [`run`](commands/run.md) – Execute `.peekaboo.json` scripts (`--output`, `--no-fail-fast`).
-- [`sleep`](commands/sleep.md) – Millisecond pauses between steps.
 - [`clean`](commands/clean.md) – Remove snapshot caches by ID, age, or all at once (`--dry-run` supported).
 - [`config`](commands/config.md) – Subcommands: `init`, `show`, `status`, `edit`, `validate`, `add`, `login`, `set-credential` (legacy), `add-provider`, `list-providers`, `test-provider`, `remove-provider`, `models-provider`.
 - [`daemon`](commands/daemon.md) – Start/stop/status for the headless daemon (live window tracking, in-memory snapshots).
@@ -43,10 +40,9 @@ Use `peekaboo <command> --help` for inline flag descriptions; this page links to
 
 - [`window`](commands/window.md) – Subcommands: `close`, `minimize`, `restore`, `maximize`, `move`, `resize`, `set-bounds`, `focus`, `list`.
 - [`space`](commands/space.md) – `list`, `switch`, `move-window` for Spaces/virtual desktops.
-- [`menu`](commands/menu.md) – `click`, `click-extra`, `list`, `list-all` for application menus + menu extras.
+- [`menu`](commands/menu.md) – `click` and `list` for application menus.
 - [`menubar`](commands/menubar.md) – `list` and `click` status-bar icons by name or index.
-- [`app`](commands/app.md) – `launch`, `quit`, `relaunch`, `hide`, `unhide`, `switch`, `list`; launch and relaunch stay in the background unless `--foreground` is passed, and `launch` accepts repeatable `--open <url|path>` arguments.
-- [`open`](commands/open.md) – Enhanced macOS `open` that stays in the background by default, respects `--app/--bundle-id`, `--wait-until-ready`, explicit `--foreground`, and emits JSON payloads for scripting.
+- [`app`](commands/app.md) – `launch`, `quit`, `relaunch`, `hide`, `unhide`, `switch`, `list`; launch accepts repeatable `--open <url|path>` arguments and `--wait-ready`.
 - [`dock`](commands/dock.md) – `launch`, `right-click`, `hide`, `show`, `list` Dock items.
 - [`dialog`](commands/dialog.md) – `click`, `input`, `file`, `dismiss`, `list` system dialogs.
 - [`visualizer`](commands/visualizer.md) – Run the built-in visual feedback smoke suite (fires screenshot flash, capture HUD, cursor click, menu highlights, etc.) to verify Peekaboo.app overlays.
@@ -58,4 +54,4 @@ Use `peekaboo <command> --help` for inline flag descriptions; this page links to
 - `inspect-ui` – Dedicated CLI wrapper for the `inspect_ui` MCP tool, useful for accessibility-tree text/control inspection without screenshots.
 - [`mcp`](commands/mcp.md) – Run Peekaboo's MCP server; `serve` is the only subcommand and stdio is the implemented transport.
 
-Need structured payloads? Pass `--json` (or `--json-output`) where supported, or orchestrate multiple commands inside `.peekaboo.json` scripts executed via [`peekaboo run`](commands/run.md).
+Need structured payloads? Pass `--json` (or the Commander-provided `--json-output` alias) where supported and compose commands with your shell.

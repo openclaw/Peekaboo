@@ -84,7 +84,7 @@ peekaboo app quit --pid 67890
 peekaboo window focus --app "PID:67890"
 
 # Finding PIDs
-peekaboo list apps  # Shows all PIDs
+peekaboo app list --include-hidden --include-background  # Shows all PIDs
 ```
 
 **Features:**
@@ -180,7 +180,7 @@ Clear error messages help users understand issues:
 
 ```bash
 # Get PID for scripting
-PID=$(peekaboo list apps --json | jq '.applications[] | select(.app_name=="Safari") | .pid')
+PID=$(peekaboo app list --json --include-hidden --include-background | jq '.data.apps[] | select(.name=="Safari") | .pid')
 peekaboo window close --pid $PID
 
 # Or use bundle ID
@@ -202,17 +202,17 @@ The lenient validation ensures the command works if the parameters are consisten
 
 ```bash
 # List all running apps with PIDs
-peekaboo list apps
+peekaboo app list --include-hidden --include-background
 
 # Find specific app
-peekaboo list apps | grep -i safari
+peekaboo app list --include-hidden --include-background | grep -i safari
 ```
 
 ### Window Management
 
 ```bash
 # List windows for an app
-peekaboo list windows --app Safari
+peekaboo window list --app Safari
 
 # Focus specific window
 peekaboo window focus --app Safari --window-title "GitHub"
@@ -235,10 +235,10 @@ peekaboo space move-window --pid 12345 --to 2
 - `"No running application matches 'X'"`
 
 **Solutions:**
-1. Check spelling: `peekaboo list apps`
+1. Check spelling: `peekaboo app list --include-hidden --include-background`
 2. Try partial name: `--app chrome` instead of `--app "Google Chrome"`
 3. Use bundle ID: `--app com.google.Chrome`
-4. Use PID directly: Find with `list apps`, then use `--pid`
+4. Use PID directly: Find it with `peekaboo app list --include-hidden --include-background`, then use `--pid`
 
 ### PID Issues
 
@@ -247,7 +247,7 @@ peekaboo space move-window --pid 12345 --to 2
 - `"Invalid PID format"`
 
 **Solutions:**
-1. Verify PID is current: `peekaboo list apps`
+1. Verify PID is current: `peekaboo app list --include-hidden --include-background`
 2. Check format: `--app "PID:12345"` needs quotes and prefix
 3. Use `--pid 12345` for direct numeric PIDs
 

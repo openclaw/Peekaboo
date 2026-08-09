@@ -56,7 +56,7 @@ The output binary lives under `Apps/CLI/.build/...`. See [building.md](building.
 ```bash
 peekaboo --version
 peekaboo permissions status
-peekaboo list apps
+peekaboo app list
 ```
 
 If any of those error out, jump to [permissions.md](permissions.md).

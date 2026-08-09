@@ -15,7 +15,7 @@ This reduces drift by collapsing multiple CLI steps into one command. Plain text
 | Flag | Description |
 | --- | --- |
 | `[text]` / `--text` | Plain text to paste; omit payload flags to paste the current clipboard. |
-| `--file-path` / `--image-path` | Copy a file or image into the clipboard, then paste. |
+| `--file-path` | Copy a file or image into the clipboard, then paste. |
 | `--data-base64` + `--uti` | Paste raw base64 payload with explicit UTI (e.g. `public.rtf`). |
 | `--also-text` | Optional plain-text companion when pasting binary. |
 | `--restore-delay-ms` | Delay before restoring the previous clipboard (default 150ms). |
@@ -51,11 +51,11 @@ peekaboo paste "Hello" --app TextEdit --foreground
 ```
 
 ## Notes
-- File paths for `--file-path` and `--image-path` accept `~/...`.
+- File paths for `--file-path` accept `~/...`.
 - Successful background text JSON reports delivery mode and target PID. Clipboard-backed background delivery returns `INTERACTION_FAILED` with the explicit retry-unsafe message instead of a success payload.
 - After Cmd+V dispatch begins, cancellation or a delivery error is indeterminate. Peekaboo reports that the target may have pasted and marks retry unsafe; inspect fresh UI state rather than replaying the paste.
 
 ## Troubleshooting
 - Verify Screen Recording + Accessibility permissions (`peekaboo permissions status`). Background paste also requires Event Synthesizing access for the sending process; request it with `peekaboo permissions request-event-synthesizing`.
-- Confirm your target (app/window/selector) with `peekaboo list`/`peekaboo see` before rerunning.
+- Confirm your target with `peekaboo app list`, `peekaboo window list`, or `peekaboo see` before rerunning.
 - Re-run with `--json` or `--verbose` to surface detailed errors.

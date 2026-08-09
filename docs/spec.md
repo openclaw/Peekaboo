@@ -101,7 +101,6 @@ This shared cache is the hand-off mechanism between CLI invocations, custom scri
 Common helpers:
 - `AutomationServiceBridge`: click/type/scroll/sleep wrappers that add waits and error hints.
 - `ensureFocused(...)`: centralizes Space switching, retries, and no-auto-focus overrides.
-- `ProcessServiceBridge`: loads and executes `.peekaboo.json` automation scripts for `peekaboo run`.
 
 ---
 
@@ -141,7 +140,6 @@ Common helpers:
    - `peekaboo permissions status|grant` uses `PermissionHelpers` to inspect/describe Screen Recording, Accessibility, Full Disk Access, etc. All automation commands should fail fast with actionable errors when permissions are missing.
 
 3. **Automation Scripts & Agents**
-   - `.peekaboo.json` scripts (executed via `peekaboo run`) call the same commands internally; results are aggregated into `ScriptExecutionResult` for CI-friendly logging.
    - `peekaboo agent` builds on top of those tools: it plans via GPT‑5/Sonnet, emits progress (Visualizer + stderr), and stores session history so users can resume or inspect steps. Agents always call the public CLI tools, so debugging any failure is as simple as rerunning the emitted sequence manually.
 
 4. **MCP Server**

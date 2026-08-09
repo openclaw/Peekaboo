@@ -15,7 +15,7 @@ read_when:
 
 The MCP server exposes the same primitive as the `capture` tool. MCP arguments use snake_case names such as `duration_seconds`, `active_fps`, `threshold_percent`, `output_dir`, and `video_out`.
 
-A hidden alias `capture watch` maps to `capture live` for backwards compatibility. The old standalone `watch` command/tool is removed.
+`capture live` is the only spelling for live capture.
 
 ## Common Outputs
 - PNG frames (kept frames only)
@@ -72,7 +72,6 @@ peekaboo capture video /path/to/demo.mov --every-ms 500 --no-diff
 ```
 
 ## Design notes
-- Hidden alias: `capture watch` maps to `capture live`; the old standalone `watch` tool was removed.
 - Live defaults: max duration 180s, `--max-frames` 800, resolution cap 1440, diff strategy `fast` unless `--diff-strategy quality` is set.
 - Action capture uses the same live sampler and can stop it early once the child command and post-roll complete.
 - Video ingest uses the same diff/keep logic as live; `--no-diff` keeps every sampled frame. When no motion is detected, you may end up with a single kept frame plus a `noMotion` warning.

@@ -1,13 +1,13 @@
 ---
 summary: 'Troubleshoot menubar listing hangs/timeouts (AXorcist + MenuService fast path).'
 read_when:
-  - 'peekaboo list menubar hangs or times out'
+  - 'peekaboo menubar list hangs or times out'
   - 'debugging Accessibility traversal performance'
 ---
 
 # Menubar listing hangs / timeouts
 
-If `peekaboo list menubar` (or `peekaboo menubar list`) appears to hang, the most common culprit is **unbounded Accessibility (AX) calls** during element traversal.
+If `peekaboo menubar list` appears to hang, the most common culprit is **unbounded Accessibility (AX) calls** during element traversal.
 
 ## What we changed
 

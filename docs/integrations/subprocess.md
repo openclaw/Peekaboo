@@ -119,7 +119,7 @@ These commands work fine without `--no-remote`:
 - `peekaboo click` (uses Accessibility API)
 - `peekaboo type` (uses Accessibility API)
 - `peekaboo hotkey` (uses Accessibility API)
-- `peekaboo list apps` (public API)
+- `peekaboo app list` (public API)
 - `peekaboo permissions` (just reads TCC database)
 
 Only **capture commands** need the workaround:
@@ -156,7 +156,7 @@ Typical timings with CoreGraphics:
 The app might not have visible windows. Check first:
 
 ```bash
-peekaboo list windows --app Safari --json
+peekaboo window list --app Safari --json
 ```
 
 ### Timeout errors

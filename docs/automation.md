@@ -15,7 +15,7 @@ Peekaboo's automation surface is small but covers the whole macOS UI graph. Each
 
 Every input command accepts one of three target shapes:
 
-- **Element ID** — `--on <id>` or `--id <id>` from a fresh `peekaboo see` or `peekaboo inspect-ui` capture; preferred when available. Treat IDs as opaque strings and copy the exact value returned by the capture.
+- **Element ID** — `--on <id>` from a fresh `peekaboo see` or `peekaboo inspect-ui` capture; preferred when available. Treat IDs as opaque strings and copy the exact value returned by the capture.
 - **Label / role / app** — positional query text such as `peekaboo click "Send" --app Mail`; resolved via the AX tree.
 - **Coordinates** — `--coords 480,120`; target-relative when paired with `--app`, `--pid`, or `--window-*`, global otherwise. Add `--global-coords` to force screen coordinates with a target.
 
@@ -62,7 +62,6 @@ peekaboo type "github.com/openclaw/Peekaboo" --app Safari --return --foreground
 | [move](commands/move.md) | warp the mouse without clicking |
 | [set-value](commands/set-value.md) | write to text fields without typing |
 | [perform-action](commands/perform-action.md) | trigger any AX action (`AXPress`, `AXShowMenu`, …) |
-| [sleep](commands/sleep.md) | wait between steps with deterministic timing |
 
 For UX parity with humans (jitter, easing, dwell), see [human-mouse-move.md](human-mouse-move.md) and the input profiles in the command docs.
 
@@ -70,7 +69,7 @@ For UX parity with humans (jitter, easing, dwell), see [human-mouse-move.md](hum
 
 | Surface | Command | Notes |
 | --- | --- | --- |
-| App lifecycle | [app](commands/app.md) | launch, quit, focus, hide |
+| App lifecycle and opening files/URLs | [app](commands/app.md) | launch, quit, focus, hide, `launch --open` |
 | Windows | [window](commands/window.md) | move, resize, focus, minimize, fullscreen |
 | Spaces & Stage Manager | [space](commands/space.md) | enumerate and switch Spaces |
 | Menus | [menu](commands/menu.md) | walk app menus by path |
@@ -78,7 +77,6 @@ For UX parity with humans (jitter, easing, dwell), see [human-mouse-move.md](hum
 | Dialogs | [dialog](commands/dialog.md) | sheets, alerts, save panels |
 | Dock | [dock](commands/dock.md) | inspect/click dock items |
 | Clipboard | [clipboard](commands/clipboard.md) | read/write pasteboard contents |
-| Open files / URLs | [open](commands/open.md) | with focus controls |
 | Visual feedback | [visualizer](visualizer.md) | overlay so a human can follow what the agent is doing |
 
 ## Recipe: click a button by label
@@ -106,7 +104,7 @@ Three primitives, four lines. The agent does the same thing under the hood — i
 
 - Always run [`peekaboo see`](commands/see.md) when an element is unreachable. The AX tree refreshes after focus changes; capture again if a click fails.
 - Use [focus](focus.md) and [application-resolving](application-resolving.md) for tricky cases (multiple windows, helper apps, processes that hide on activation).
-- Wrap risky sequences with `peekaboo sleep 0.2` — humans don't fire ten clicks in a single frame, and neither should you.
+- Use `/bin/sleep` between shell-composed actions when a target genuinely needs settling time.
 - Prefer background click, keyboard targeting, and targeted AX scrolling for routine app-specific input.
 - Add `--foreground` only when an app needs a focused key window, Space switch, or foreground mouse event.
 

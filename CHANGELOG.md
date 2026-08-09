@@ -9,12 +9,19 @@
 - Add native exact-window background pixel right- and double-clicks with per-event owner/generation validation, generation-safe mouse-up cleanup, no cursor movement or activation, and explicit unverifiable-effect reporting.
 
 ### Changed
+- Add `app launch --wait-ready` and repeatable `--open` targets as the surviving launch/open surface (v4 breaking change).
 - Add rich formatter coverage for every current MCP and agent tool, and remove the non-functional agent `--realtime` flag.
 - Enrich shared tool summaries with menu counts, clicked menu paths, screenshot dimensions, app lifecycle names, screen resolutions, and clipboard actions so the agent chat and Mac activity feed regain the detail lost in the formatter unification.
 - Remove the obsolete scoped-commit helper now that agent work uses isolated worktrees.
 - Make app launch, open, relaunch, observation, capture, targeted keyboard input, and action-backed scrolling background by default; focus, global keys, synthetic scrolling, and physical pointer gestures now require explicit foreground consent.
 - Route `peekaboo run` through the canonical targeted interaction services with flat agent-friendly JSON parameters while retaining legacy script decoding.
 - Add strict bridge 1.11 capabilities for background scrolling, dialog buttons, and window close so stale hosts fail before unsafe fallback dispatch.
+
+### Removed
+- Remove the CLI `sleep`, `open`, `run`, `commander`, and root `list` commands; remove `capture watch`, `menu click-extra`, `menu list-all`, and `agent permission` aliases/subtrees (v4 breaking change).
+- Remove CLI flag aliases `--id`, `--image-path`, and `--app-target`; Commander’s submodule-owned `--json-output` alias remains (v4 breaking change).
+- Remove `.peekaboo.json` script loading/execution and its ProcessService command model (v4 breaking change).
+- Remove the MCP `list` tool, MenuTool’s status-item actions, and agent shims `list_apps`, `list_screens`, and `launch_app`; add `window` action `list` (v4 breaking change).
 
 ### Fixed
 - Coordinate concurrent CLI, agent, GUI-bridge, and daemon desktop reads and mutations with generation-scoped cross-process lanes, preserving parallel work across unrelated exact targets while preventing conflicting background operations from overlapping.

@@ -63,7 +63,7 @@ Peekaboo is a macOS automation CLI and agent runtime. Prefer the freshly built r
 
 ```bash
 # AX-only state when a screenshot would add noise.
-peekaboo inspect-ui --app-target Calculator --json > /tmp/peekaboo-calc-ax.json
+peekaboo inspect-ui --app Calculator --json > /tmp/peekaboo-calc-ax.json
 
 # Visual layout plus element IDs and snapshot ID.
 peekaboo see --app Calculator --path /tmp/calc.png --json > /tmp/calc.json
@@ -125,7 +125,7 @@ Calculator is a handy fixture because it exposes descriptions and identifiers.
 BIN="$(swift build --package-path Apps/CLI --show-bin-path)/peekaboo"
 "$BIN" permissions status --json > /tmp/peekaboo-skill-refresh-permissions.json
 "$BIN" tools --json > /tmp/peekaboo-skill-refresh-tools.json
-"$BIN" inspect-ui --app-target Calculator --json > /tmp/peekaboo-skill-refresh-calc-ax.json
+"$BIN" inspect-ui --app Calculator --json > /tmp/peekaboo-skill-refresh-calc-ax.json
 "$BIN" see --app Calculator --path /tmp/peekaboo-skill-refresh-calc.png --json --timeout-seconds 10 > /tmp/calc.json
 ruby -rjson -e 'j=JSON.parse(File.read("/tmp/calc.json")); puts JSON.pretty_generate((j.dig("data","ui_elements")||[]).select{|e| ["Clear","AllClear","One","Two","Add","Equals","StandardInputView"].include?(e["identifier"].to_s)}.map{|e| e.slice("id","label","identifier","description","help","bounds")})'
 
@@ -153,7 +153,7 @@ pnpm run build:cli
 BIN="$(swift build --package-path Apps/CLI --show-bin-path)/peekaboo"; "$BIN" --version
 "$BIN" click --help | rg -- '--foreground|--focus-background|--input-strategy|Opaque element ID'
 "$BIN" see --help | rg -- '--json|--annotate|--app|--no-web-focus'
-"$BIN" inspect-ui --help | rg 'inspect_ui|--app-target|--snapshot|--json'
+"$BIN" inspect-ui --help | rg 'inspect_ui|--app|--snapshot|--json'
 git diff --check -- skills/peekaboo/SKILL.md docs/agent-skill.md docs/commands/see.md docs/automation.md scripts/docs-lint.mjs
 ```
 

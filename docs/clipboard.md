@@ -21,11 +21,11 @@ Peekaboo ships one `clipboard` domain in the CLI and MCP server for text, images
 ## CLI syntax (`peekaboo clipboard …`)
 - `get [--prefer <uti>] [--output <path|->] [--json-output]`
   - Text prints to stdout. Binary data is written with `--output`; `--output -` streams bytes in text mode and returns base64 in JSON mode.
-- `set (--text <string> | --file-path <path> | --image-path <path> | --data-base64 <b64> --uti <uti>) [--also-text <string>] [--allow-large] [--verify]`
+- `set (--text <string> | --file-path <path> | --data-base64 <b64> --uti <uti>) [--also-text <string>] [--allow-large] [--verify]`
 - `clear`
 - `save [--slot <name>]`
 - `restore [--slot <name>]`
-- `load (--file-path <path> | --image-path <path>) [--allow-large] [--verify]`
+- `load --file-path <path> [--allow-large] [--verify]`
 
 The action may be positional or supplied with `--action`, but conflicting values are rejected.
 

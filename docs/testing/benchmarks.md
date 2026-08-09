@@ -69,11 +69,11 @@ Example `menu` benchmark:
 
 ```bash
 pnpm run benchmark:tools \
-  --name menu-list-all-playground \
+  --name menu-list-playground \
   --runs 5 \
   --warmups 1 \
   --bin "$BIN" \
-  -- menu list-all --app boo.peekaboo.playground.debug --json-output
+  -- menu list --app boo.peekaboo.playground.debug --json-output
 ```
 
 ## How to read the summary

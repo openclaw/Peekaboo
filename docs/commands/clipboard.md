@@ -13,7 +13,7 @@ Work with the macOS pasteboard. Supports text, files/images, raw base64 payloads
 | Action | Description |
 | --- | --- |
 | `get` | Read the clipboard. Use `--prefer <uti>` to bias type selection and `--output <path|->` to write binary data. |
-| `set` | Write text (`--text`), file/image (`--file-path`/`--image-path`), or base64 + `--uti`. Optional `--also-text` sets a plain-text companion. Use `--verify` to read back. |
+| `set` | Write text (`--text`), file/image (`--file-path`), or base64 + `--uti`. Optional `--also-text` sets a plain-text companion. Use `--verify` to read back. |
 | `load` | Shortcut for `set` with a file path. |
 | `clear` | Empty the clipboard. |
 | `save` / `restore` | Snapshot and restore clipboard contents. Default slot is `"0"`; use `--slot` to name slots. |
@@ -24,7 +24,7 @@ Work with the macOS pasteboard. Supports text, files/images, raw base64 payloads
 | `action` | Positional action: `get`, `set`, `clear`, `save`, `restore`, `load`. |
 | `--action` | Legacy alias for the positional action. |
 | `--text` | Plain text to set. |
-| `--file-path`, `--image-path` | File or image to copy (UTI inferred from extension). |
+| `--file-path` | File or image to copy (UTI inferred from extension). |
 | `--data-base64` + `--uti` | Raw payload + explicit UTI. |
 | `--prefer <uti>` | Preferred UTI when reading. |
 | `--output <path|->` | Where to write binary data on `get`; `-` streams to stdout. |
@@ -52,7 +52,7 @@ peekaboo clipboard restore --slot original
 
 ## Notes
 - Binary reads without `--output` return a summary; use `--output -` to pipe data.
-- File paths for `--file-path`, `--image-path`, and `--output` accept `~/...`.
+- File paths for `--file-path` and `--output` accept `~/...`.
 - Slot saves are stored in a dedicated named pasteboard so they work across separate `peekaboo clipboard` invocations.
 - `restore` removes the saved slot after applying it to avoid leaving clipboard snapshots around indefinitely.
 - Size guard: writes larger than 10 MB require `--allow-large`; the guard counts all representations plus any `--also-text` companion text.
@@ -61,5 +61,5 @@ peekaboo clipboard restore --slot original
 
 ## Troubleshooting
 - Verify Screen Recording + Accessibility permissions (`peekaboo permissions status`).
-- Confirm your target (app/window/selector) with `peekaboo list`/`peekaboo see` before rerunning.
+- Confirm your target with `peekaboo app list`, `peekaboo window list`, or `peekaboo see` before rerunning.
 - Re-run with `--json` or `--verbose` to surface detailed errors.
