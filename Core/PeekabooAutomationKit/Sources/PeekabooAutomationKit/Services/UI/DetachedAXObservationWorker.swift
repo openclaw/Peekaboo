@@ -116,9 +116,6 @@ enum DetachedAXObservationWorker {
         self.childAttributeNames.count
     }
 
-    @_silgen_name("_AXUIElementGetWindow")
-    private static func copyWindowID(_ element: AXUIElement, _ windowID: inout CGWindowID) -> AXError
-
     static func descriptorReadDisposition(error: AXError, values: [Any]?)
         -> DetachedAXMultiAttributeReadDisposition
     {
@@ -223,7 +220,7 @@ enum DetachedAXObservationWorker {
 
         let result = DetachedAXObservationResult(
             elements: state.elements,
-            windowID: self.windowID(of: window).map(Int.init) ?? request.windowID,
+            windowID: AXWindowIDResolver.windowID(of: window).map(Int.init) ?? request.windowID,
             windowTitle: title,
             windowBounds: bounds,
             isDialog: ["AXDialog", "AXSystemDialog", "AXSheet"].contains(subrole) || self.isFileDialogTitle(title),
@@ -312,7 +309,7 @@ enum DetachedAXObservationWorker {
                 windows: windows,
                 remainingTimeout: { self.remainingMessagingTimeout(until: deadline) },
                 applyTimeout: { AXUIElementSetMessagingTimeout($0, $1) },
-                windowID: { self.windowID(of: $0).map(Int.init) })
+                windowID: { AXWindowIDResolver.windowID(of: $0).map(Int.init) })
             if let exactIndex = DetachedAXExactWindowSelectionPolicy.uniqueExactIndex(
                 windowID: Int(cgWindowID),
                 candidates: candidates)
@@ -640,11 +637,6 @@ enum DetachedAXObservationWorker {
             return nil
         }
         return CGRect(origin: position, size: size)
-    }
-
-    private static func windowID(of element: AXUIElement) -> CGWindowID? {
-        var windowID: CGWindowID = 0
-        return self.copyWindowID(element, &windowID) == .success ? windowID : nil
     }
 
     private static func stringValue(_ value: Any?) -> String? {

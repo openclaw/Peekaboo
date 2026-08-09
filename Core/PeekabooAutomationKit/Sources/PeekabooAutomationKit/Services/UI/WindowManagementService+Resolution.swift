@@ -364,9 +364,6 @@ struct BoundedAXWindowScanReceipt: Sendable, Equatable {
 }
 
 enum BoundedAXWindowIdentityScanner {
-    @_silgen_name("_AXUIElementGetWindow")
-    private static func copyWindowID(_ element: AXUIElement, _ windowID: inout CGWindowID) -> AXError
-
     static func find(
         windowID: Int,
         processIdentifiers: [pid_t],
@@ -465,7 +462,7 @@ enum BoundedAXWindowIdentityScanner {
         ownerProcessStartIdentity: UInt64) -> BoundedAXWindowIdentitySnapshot?
     {
         var candidateID: CGWindowID = 0
-        guard self.copyWindowID(window, &candidateID) == .success,
+        guard AXWindowIDResolver.copyWindowID(window, into: &candidateID) == .success,
               candidateID == requestedID
         else {
             return nil

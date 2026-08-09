@@ -952,9 +952,6 @@ extension CGPoint {
 private enum BoundedBackgroundWindowAX {
     private static let messagingTimeout: Float = 0.75
 
-    @_silgen_name("_AXUIElementGetWindow")
-    private static func copyWindowID(_ element: AXUIElement, _ windowID: inout CGWindowID) -> AXError
-
     static func windowPresence(expectedIdentity: WindowMutationIdentity) async -> PinnedMinimizedWindowAXPresence {
         await Task.detached(priority: .userInitiated) {
             let processStartIdentityBeforeScan = SystemIdentityResolver.processStartIdentity(
@@ -997,7 +994,7 @@ private enum BoundedBackgroundWindowAX {
                 timeout: self.messagingTimeout)
             { childWindow in
                 var candidateID: CGWindowID = 0
-                guard self.copyWindowID(childWindow, &candidateID) == .success,
+                guard AXWindowIDResolver.copyWindowID(childWindow, into: &candidateID) == .success,
                       exactMinimizedRestoreCandidateIsValid(
                           expectedIdentity: expectedIdentity,
                           liveProcessStartIdentity: SystemIdentityResolver.processStartIdentity(
@@ -1016,7 +1013,7 @@ private enum BoundedBackgroundWindowAX {
                     kCFBooleanFalse) == .success,
                     SystemIdentityResolver.processStartIdentity(expectedIdentity.ownerProcessIdentifier) ==
                     expectedIdentity.ownerProcessStartIdentity,
-                    self.copyWindowID(childWindow, &candidateID) == .success,
+                    AXWindowIDResolver.copyWindowID(childWindow, into: &candidateID) == .success,
                     candidateID == windowID,
                     self.bounds(of: childWindow) == capturedBounds,
                     self.boolAttribute(kAXMinimizedAttribute as String, of: childWindow) == false
@@ -1156,7 +1153,8 @@ private enum BoundedBackgroundWindowAX {
                 timeout: self.messagingTimeout)
             { childWindow in
                 var candidateID: CGWindowID = 0
-                return self.copyWindowID(childWindow, &candidateID) == .success && candidateID == windowID
+                return AXWindowIDResolver.copyWindowID(childWindow, into: &candidateID) == .success &&
+                    candidateID == windowID
             }
             if matches {
                 return window
@@ -1199,7 +1197,7 @@ private enum BoundedBackgroundWindowAX {
                 timeout: self.messagingTimeout)
             { childWindow -> (windowID: CGWindowID?, bounds: CGRect?) in
                 var candidateID: CGWindowID = 0
-                guard self.copyWindowID(childWindow, &candidateID) == .success else {
+                guard AXWindowIDResolver.copyWindowID(childWindow, into: &candidateID) == .success else {
                     return (nil, nil)
                 }
                 return (candidateID, candidateID == windowID ? self.bounds(of: childWindow) : nil)

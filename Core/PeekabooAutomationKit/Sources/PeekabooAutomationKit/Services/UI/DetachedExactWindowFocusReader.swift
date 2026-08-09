@@ -36,9 +36,6 @@ struct ExactKeyWindowSnapshot: Sendable, Equatable {
 enum DetachedExactWindowFocusReader {
     private static let messagingTimeout: Float = 0.05
 
-    @_silgen_name("_AXUIElementGetWindow")
-    private static func copyWindowID(_ element: AXUIElement, _ windowID: inout CGWindowID) -> AXError
-
     static func read(processIdentifier: pid_t) -> ExactWindowFocusSnapshot? {
         guard processIdentifier > 0 else { return nil }
         let application = AXUIElementCreateApplication(processIdentifier)
@@ -62,7 +59,7 @@ enum DetachedExactWindowFocusReader {
         }
         return ExactWindowFocusSnapshot(
             processIdentifier: focusedProcessIdentifier,
-            windowID: window.flatMap(self.windowID(of:)).map(Int.init),
+            windowID: window.flatMap(AXWindowIDResolver.windowID(of:)).map(Int.init),
             frame: frame,
             role: self.stringAttribute(kAXRoleAttribute as String, of: focusedElement),
             title: self.stringAttribute(kAXTitleAttribute as String, of: focusedElement),
@@ -90,7 +87,7 @@ enum DetachedExactWindowFocusReader {
             !self.elementArrayAttribute("AXSheets", of: focusedWindow).isEmpty
         return ExactKeyWindowSnapshot(
             processIdentifier: focusedProcessIdentifier,
-            windowID: self.windowID(of: focusedWindow).map(Int.init),
+            windowID: AXWindowIDResolver.windowID(of: focusedWindow).map(Int.init),
             hasSheet: hasSheet)
     }
 
@@ -138,11 +135,6 @@ enum DetachedExactWindowFocusReader {
             return nil
         }
         return CGRect(origin: position, size: size)
-    }
-
-    private static func windowID(of element: AXUIElement) -> CGWindowID? {
-        var windowID: CGWindowID = 0
-        return self.copyWindowID(element, &windowID) == .success ? windowID : nil
     }
 
     private static func pointValue(_ value: CFTypeRef?) -> CGPoint? {
