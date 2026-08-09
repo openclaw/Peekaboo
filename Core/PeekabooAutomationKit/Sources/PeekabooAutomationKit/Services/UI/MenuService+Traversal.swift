@@ -55,9 +55,6 @@ extension MenuService {
         context.menuPath.append(component)
 
         if isLastComponent {
-            if Self.shouldShowMenuNavigation(hasForegroundConsent: false) {
-                _ = await self.feedbackClient.showMenuNavigation(menuPath: context.menuPath)
-            }
             try await self.pressMenuItem(menuItem, action: "click menu item", target: component)
             return currentElement
         }
@@ -79,10 +76,6 @@ extension MenuService {
         }
 
         return submenu
-    }
-
-    static func shouldShowMenuNavigation(hasForegroundConsent: Bool) -> Bool {
-        hasForegroundConsent
     }
 
     private func pressMenuItem(_ element: Element, action: String, target: String) async throws {

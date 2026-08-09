@@ -123,33 +123,6 @@ struct VisualizerOverlaySizingTests {
     }
 
     @Test
-    func `Typing stream always finishes within the overlay window`() {
-        // Callers pass fixed display durations (e.g. 2.0s scaled to 6s), so a
-        // long string at human cadence must compress instead of truncating.
-        let longText = 80
-        let interval = TypeAnimationView.keyInterval(
-            cadence: .human(wordsPerMinute: 140),
-            durationScale: 3.0,
-            keyCount: longText,
-            displayDuration: 6.0)
-
-        #expect(Double(longText) * interval <= 6.0)
-    }
-
-    @Test
-    func `Typing stream keeps cadence pace when it fits`() {
-        // 5 keys at 140 WPM (~0.086s/key) scaled 3x should keep the slow-mo
-        // cadence pace rather than compressing.
-        let interval = TypeAnimationView.keyInterval(
-            cadence: .human(wordsPerMinute: 140),
-            durationScale: 3.0,
-            keyCount: 5,
-            displayDuration: 6.0)
-
-        #expect(abs(interval - (60.0 / 700.0) * 3.0) < 0.001)
-    }
-
-    @Test
     func `Travel window rect covers both endpoints with padding`() {
         let from = CGPoint(x: 500, y: 900)
         let to = CGPoint(x: 200, y: 300)
@@ -172,30 +145,8 @@ struct VisualizerOverlaySizingTests {
     }
 
     @Test
-    func `Pointer tail preserves the live sampled path`() {
-        var samples = [CGPoint(x: 20, y: 40)]
-        samples = PointerTrailSamples.appending(CGPoint(x: 60, y: 40), to: samples)
-        samples = PointerTrailSamples.appending(CGPoint(x: 90, y: 60), to: samples)
-
-        #expect(samples.last == CGPoint(x: 90, y: 60))
-        #expect(samples.contains(CGPoint(x: 60, y: 40)))
-    }
-
-    @Test
-    func `Pointer tail stays short on long moves`() {
-        var samples = [CGPoint.zero]
-        for x in stride(from: 10, through: 2400, by: 10) {
-            samples = PointerTrailSamples.appending(CGPoint(x: x, y: x / 2), to: samples)
-        }
-
-        #expect(PointerTrailSamples.pathLength(samples) <= PointerTrailSamples.maximumLength + 0.001)
-        #expect(samples.count <= PointerTrailSamples.maximumCount)
-        #expect(samples.last == CGPoint(x: 2400, y: 1200))
-    }
-
-    @Test
-    func `Pointer settings preview is natural and lands exactly`() {
-        let path = PointerPreviewPath(
+    func `Agent cursor path is curved and lands exactly`() {
+        let path = AgentCursorPath(
             from: CGPoint(x: 20, y: 40),
             to: CGPoint(x: 1020, y: 640))
 
@@ -206,33 +157,71 @@ struct VisualizerOverlaySizingTests {
     }
 
     @Test
-    func `Pointer duration is not multiplied by visualizer slowdown`() {
+    func `Agent cursor duration is not multiplied by visualizer slowdown`() {
         let coordinator = VisualizerCoordinator()
-        let duration = coordinator.scaledDuration(for: 0.6, minimum: 0.28, applySlowdown: false)
+        let duration = coordinator.scaledDuration(for: 0.6, minimum: 0.12, applySlowdown: false)
 
         #expect(abs(duration - 0.6) < 0.001)
     }
 
     @Test
-    func `Hotkey overlay grows with more keys`() {
-        let compact = VisualizerCoordinator.estimatedHotkeyOverlaySize(for: ["cmd", "k"])
-        let wide = VisualizerCoordinator.estimatedHotkeyOverlaySize(for: ["cmd", "shift", "option", "ctrl", "space"])
+    func `Invisible target suppresses window feedback before enqueue`() async {
+        let coordinator = VisualizerCoordinator(targetWindowVisibility: { _ in false })
+        let target = VisualizerTargetWindow(
+            processIdentifier: 42,
+            windowID: 7,
+            frame: CGRect(x: 100, y: 100, width: 800, height: 600))
 
-        #expect(compact.width >= 400)
-        #expect(compact.height >= 160)
-        #expect(wide.width > compact.width)
-        #expect(wide.height >= compact.height)
+        #expect(await coordinator.showClickFeedback(at: .zero, type: .single, target: target) == false)
+        #expect(await coordinator.showTypingFeedback(
+            keys: ["hidden"],
+            duration: 1,
+            cadence: nil,
+            target: target) == false)
+        #expect(await coordinator.showScrollFeedback(
+            at: .zero,
+            direction: .down,
+            amount: 1,
+            target: target) == false)
+        #expect(await coordinator.showHotkeyDisplay(keys: ["cmd", "k"], duration: 1, target: target) == false)
+
+        let queueStatus = await coordinator.animationQueue.getStatus()
+        #expect(queueStatus.active == 0)
+        #expect(queueStatus.queued == 0)
     }
 
     @Test
-    func `Menu overlay grows with path length`() {
-        let short = VisualizerCoordinator.estimatedMenuOverlaySize(for: ["File", "New"])
-        let long = VisualizerCoordinator.estimatedMenuOverlaySize(for: ["File", "New", "Project", "Swift Package"])
+    func `Input HUD requires a target window`() async {
+        let coordinator = VisualizerCoordinator(targetWindowVisibility: { _ in true })
+        #expect(await coordinator.showTypingFeedback(
+            keys: ["no anchor"],
+            duration: 1,
+            cadence: nil,
+            target: nil) == false)
+        let queueStatus = await coordinator.animationQueue.getStatus()
+        #expect(queueStatus.active == 0)
+        #expect(queueStatus.queued == 0)
+    }
 
-        #expect(short.width >= 600)
-        #expect(long.width > short.width)
-        #expect(short.height > 0)
-        #expect(long.height == short.height)
+    @Test
+    func `Input HUD revalidates the target at presentation time`() async {
+        var evaluations = 0
+        let coordinator = VisualizerCoordinator(targetWindowVisibility: { _ in
+            evaluations += 1
+            return evaluations == 1
+        })
+        let target = VisualizerTargetWindow(
+            processIdentifier: 42,
+            windowID: 7,
+            frame: CGRect(x: 100, y: 100, width: 800, height: 600))
+
+        #expect(await coordinator.showTypingFeedback(
+            keys: ["private"],
+            duration: 1,
+            cadence: nil,
+            target: target) == false)
+        #expect(evaluations == 2)
+        #expect(coordinator.overlayManager.activeReplaceKeys.isEmpty)
     }
 }
 
@@ -244,18 +233,7 @@ private final class StubVisualizerSettings: VisualizerSettingsProviding {
     var visualizerAnimationSpeed = 1.0
     var visualizerEffectIntensity = 1.0
 
-    var screenshotFlashEnabled = true
-    var clickAnimationEnabled = true
-    var typeAnimationEnabled = true
-    var scrollAnimationEnabled = true
-    var mouseTrailEnabled = true
-    var swipePathEnabled = true
-    var hotkeyOverlayEnabled = true
-    var appLifecycleEnabled = true
-    var windowOperationEnabled = true
-    var menuNavigationEnabled = true
-    var dialogInteractionEnabled = true
-    var spaceTransitionEnabled = true
-    var annotatedScreenshotEnabled = true
-    var watchCaptureHUDEnabled = true
+    var agentCursorEnabled = true
+    var inputHUDEnabled = true
+    var captureIndicatorsEnabled = true
 }

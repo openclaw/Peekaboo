@@ -95,6 +95,7 @@ extension UIAutomationService {
             } else {
                 TypeService.focusedElementIsSecureField()
             }
+            let visualizerTarget = await self.visualizerTargetWindow(snapshotId: snapshotId)
             _ = try await self.normalizingSnapshotErrors {
                 try await self.typeService.type(
                     text: text,
@@ -107,7 +108,8 @@ extension UIAutomationService {
             await self.visualizeTyping(
                 keys: Array(text).map { String($0) },
                 cadence: .fixed(milliseconds: typingDelay),
-                typedIntoSecureField: secureBeforeTyping)
+                typedIntoSecureField: secureBeforeTyping,
+                visualizerTarget: visualizerTarget)
         }
     }
 
@@ -119,6 +121,7 @@ extension UIAutomationService {
         try await self.operationLaneCoordinator.run(scope: .global, access: .write) {
             self.logger.debug("Delegating typeActions to TypeService")
             defer { self.elementDetectionService.invalidateCache() }
+            let visualizerTarget = await self.visualizerTargetWindow(snapshotId: snapshotId)
             let summary = try await self.normalizingSnapshotErrors {
                 try await self.typeService.typeActionsTrackingSecureInput(
                     actions,
@@ -129,7 +132,8 @@ extension UIAutomationService {
             await self.visualizeTypeActions(
                 actions,
                 cadence: cadence,
-                typedIntoSecureField: summary.typedIntoSecureField)
+                typedIntoSecureField: summary.typedIntoSecureField,
+                visualizerTarget: visualizerTarget)
             return summary.result
         }
     }
@@ -223,21 +227,24 @@ extension UIAutomationService {
         _ actions: [TypeAction],
         cadence: TypingCadence,
         typedIntoSecureField: Bool = false,
-        targetProcessIdentifier: pid_t? = nil) async
+        targetProcessIdentifier: pid_t? = nil,
+        visualizerTarget: VisualizerTargetWindow? = nil) async
     {
         let keys = self.keySequence(from: actions)
         await self.visualizeTyping(
             keys: keys,
             cadence: cadence,
             typedIntoSecureField: typedIntoSecureField,
-            targetProcessIdentifier: targetProcessIdentifier)
+            targetProcessIdentifier: targetProcessIdentifier,
+            visualizerTarget: visualizerTarget)
     }
 
     func visualizeTyping(
         keys: [String],
         cadence: TypingCadence,
         typedIntoSecureField: Bool = false,
-        targetProcessIdentifier: pid_t? = nil) async
+        targetProcessIdentifier: pid_t? = nil,
+        visualizerTarget: VisualizerTargetWindow? = nil) async
     {
         guard !keys.isEmpty else { return }
         // Targeted typing (including press and background text paste) is intentionally invisible.
@@ -252,7 +259,8 @@ extension UIAutomationService {
             keys: keys,
             duration: 2.0,
             cadence: cadence,
-            masksTypedText: masksTypedText)
+            masksTypedText: masksTypedText,
+            target: visualizerTarget ?? VisualizerTargetWindowResolver.frontmostWindow())
     }
 
     private func keySequence(from actions: [TypeAction]) -> [String] {

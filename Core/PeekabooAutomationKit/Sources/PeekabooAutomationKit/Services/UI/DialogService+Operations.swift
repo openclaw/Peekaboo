@@ -86,11 +86,6 @@ extension DialogService {
             let dialog = try await self.resolveDialogElement(windowTitle: windowTitle, appName: appName)
             let targetField = try self.textField(in: dialog, identifier: fieldIdentifier)
 
-            await self.highlightDialogElement(
-                element: .textField,
-                bounds: self.elementBounds(for: targetField),
-                action: .enterText)
-
             self.focusTextField(targetField)
             try self.clearFieldIfNeeded(targetField, shouldClear: clearExisting)
             try self.typeTextValue(text, delay: 10000)

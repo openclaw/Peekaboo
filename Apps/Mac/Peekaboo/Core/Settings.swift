@@ -238,100 +238,21 @@ final class PeekabooSettings {
         }
     }
 
-    /// Individual animation toggles
-    var screenshotFlashEnabled: Bool = true {
+    var agentCursorEnabled: Bool = true {
         didSet {
             self.save()
             self.updateConfigFile()
         }
     }
 
-    var clickAnimationEnabled: Bool = true {
+    var inputHUDEnabled: Bool = true {
         didSet {
             self.save()
             self.updateConfigFile()
         }
     }
 
-    var typeAnimationEnabled: Bool = true {
-        didSet {
-            self.save()
-            self.updateConfigFile()
-        }
-    }
-
-    var scrollAnimationEnabled: Bool = true {
-        didSet {
-            self.save()
-            self.updateConfigFile()
-        }
-    }
-
-    var mouseTrailEnabled: Bool = true {
-        didSet {
-            self.save()
-            self.updateConfigFile()
-        }
-    }
-
-    var swipePathEnabled: Bool = true {
-        didSet {
-            self.save()
-            self.updateConfigFile()
-        }
-    }
-
-    var hotkeyOverlayEnabled: Bool = true {
-        didSet {
-            self.save()
-            self.updateConfigFile()
-        }
-    }
-
-    var appLifecycleEnabled: Bool = true {
-        didSet {
-            self.save()
-            self.updateConfigFile()
-        }
-    }
-
-    var windowOperationEnabled: Bool = true {
-        didSet {
-            self.save()
-            self.updateConfigFile()
-        }
-    }
-
-    var watchCaptureHUDEnabled: Bool = true {
-        didSet {
-            self.save()
-            self.updateConfigFile()
-        }
-    }
-
-    var menuNavigationEnabled: Bool = true {
-        didSet {
-            self.save()
-            self.updateConfigFile()
-        }
-    }
-
-    var dialogInteractionEnabled: Bool = true {
-        didSet {
-            self.save()
-            self.updateConfigFile()
-        }
-    }
-
-    var spaceTransitionEnabled: Bool = true {
-        didSet {
-            self.save()
-            self.updateConfigFile()
-        }
-    }
-
-    /// Easter eggs
-    var ghostEasterEggEnabled: Bool = true {
+    var captureIndicatorsEnabled: Bool = true {
         didSet {
             self.save()
             self.updateConfigFile()
@@ -341,13 +262,6 @@ final class PeekabooSettings {
     /// Accessibility element bounding boxes during `see`. Off by default —
     /// a box per detected control clutters the screen.
     var elementDetectionEnabled: Bool = false {
-        didSet {
-            self.save()
-            self.updateConfigFile()
-        }
-    }
-
-    var annotatedScreenshotEnabled: Bool = true {
         didSet {
             self.save()
             self.updateConfigFile()
@@ -517,31 +431,17 @@ extension PeekabooSettings {
     }
 
     private func loadAnimationPreferences() {
-        for key in PeekabooSettings.animationKeys {
-            let namespacedKey = self.namespaced(key)
-            if self.userDefaults.object(forKey: namespacedKey) == nil {
-                self.userDefaults.set(true, forKey: namespacedKey)
-            }
-        }
-
-        self.screenshotFlashEnabled = self.userDefaults.bool(forKey: self.namespaced("screenshotFlashEnabled"))
-        self.clickAnimationEnabled = self.userDefaults.bool(forKey: self.namespaced("clickAnimationEnabled"))
-        self.typeAnimationEnabled = self.userDefaults.bool(forKey: self.namespaced("typeAnimationEnabled"))
-        self.scrollAnimationEnabled = self.userDefaults.bool(forKey: self.namespaced("scrollAnimationEnabled"))
-        self.mouseTrailEnabled = self.userDefaults.bool(forKey: self.namespaced("mouseTrailEnabled"))
-        self.swipePathEnabled = self.userDefaults.bool(forKey: self.namespaced("swipePathEnabled"))
-        self.hotkeyOverlayEnabled = self.userDefaults.bool(forKey: self.namespaced("hotkeyOverlayEnabled"))
-        self.appLifecycleEnabled = self.userDefaults.bool(forKey: self.namespaced("appLifecycleEnabled"))
-        self.windowOperationEnabled = self.userDefaults.bool(forKey: self.namespaced("windowOperationEnabled"))
-        self.watchCaptureHUDEnabled = self.valueOrDefault(key: "watchCaptureHUDEnabled", defaultValue: true)
-        self.menuNavigationEnabled = self.userDefaults.bool(forKey: self.namespaced("menuNavigationEnabled"))
-        self.dialogInteractionEnabled = self.userDefaults.bool(forKey: self.namespaced("dialogInteractionEnabled"))
-        self.spaceTransitionEnabled = self.userDefaults.bool(forKey: self.namespaced("spaceTransitionEnabled"))
-        self.ghostEasterEggEnabled = self.userDefaults.bool(forKey: self.namespaced("ghostEasterEggEnabled"))
-        // Not in `animationKeys`: that list force-sets absent keys to true,
-        // and element boxes must stay off until the user opts in.
+        self.agentCursorEnabled = self.migratedVisualizerToggle(
+            key: "agentCursorEnabled",
+            legacyKeys: ["clickAnimationEnabled", "mouseTrailEnabled", "swipePathEnabled"])
+        self.inputHUDEnabled = self.migratedVisualizerToggle(
+            key: "inputHUDEnabled",
+            legacyKeys: ["typeAnimationEnabled", "hotkeyOverlayEnabled", "scrollAnimationEnabled"])
+        self.captureIndicatorsEnabled = self.migratedVisualizerToggle(
+            key: "captureIndicatorsEnabled",
+            legacyKeys: ["screenshotFlashEnabled", "watchCaptureHUDEnabled"])
+        // Element boxes stay off until the user explicitly opts in.
         self.elementDetectionEnabled = self.valueOrDefault(key: "elementDetectionEnabled", defaultValue: false)
-        self.annotatedScreenshotEnabled = self.valueOrDefault(key: "annotatedScreenshotEnabled", defaultValue: true)
     }
 
     private func save() {
@@ -580,23 +480,10 @@ extension PeekabooSettings {
         self.userDefaults.set(self.visualizerEffectIntensity, forKey: "\(self.keyPrefix)visualizerEffectIntensity")
         self.userDefaults.set(self.visualizerSoundEnabled, forKey: "\(self.keyPrefix)visualizerSoundEnabled")
 
-        // Save individual animation toggles
-        self.userDefaults.set(self.screenshotFlashEnabled, forKey: "\(self.keyPrefix)screenshotFlashEnabled")
-        self.userDefaults.set(self.clickAnimationEnabled, forKey: "\(self.keyPrefix)clickAnimationEnabled")
-        self.userDefaults.set(self.typeAnimationEnabled, forKey: "\(self.keyPrefix)typeAnimationEnabled")
-        self.userDefaults.set(self.scrollAnimationEnabled, forKey: "\(self.keyPrefix)scrollAnimationEnabled")
-        self.userDefaults.set(self.mouseTrailEnabled, forKey: "\(self.keyPrefix)mouseTrailEnabled")
-        self.userDefaults.set(self.swipePathEnabled, forKey: "\(self.keyPrefix)swipePathEnabled")
-        self.userDefaults.set(self.hotkeyOverlayEnabled, forKey: "\(self.keyPrefix)hotkeyOverlayEnabled")
-        self.userDefaults.set(self.appLifecycleEnabled, forKey: "\(self.keyPrefix)appLifecycleEnabled")
-        self.userDefaults.set(self.windowOperationEnabled, forKey: "\(self.keyPrefix)windowOperationEnabled")
-        self.userDefaults.set(self.watchCaptureHUDEnabled, forKey: "\(self.keyPrefix)watchCaptureHUDEnabled")
-        self.userDefaults.set(self.menuNavigationEnabled, forKey: "\(self.keyPrefix)menuNavigationEnabled")
-        self.userDefaults.set(self.dialogInteractionEnabled, forKey: "\(self.keyPrefix)dialogInteractionEnabled")
-        self.userDefaults.set(self.spaceTransitionEnabled, forKey: "\(self.keyPrefix)spaceTransitionEnabled")
-        self.userDefaults.set(self.ghostEasterEggEnabled, forKey: "\(self.keyPrefix)ghostEasterEggEnabled")
+        self.userDefaults.set(self.agentCursorEnabled, forKey: "\(self.keyPrefix)agentCursorEnabled")
+        self.userDefaults.set(self.inputHUDEnabled, forKey: "\(self.keyPrefix)inputHUDEnabled")
+        self.userDefaults.set(self.captureIndicatorsEnabled, forKey: "\(self.keyPrefix)captureIndicatorsEnabled")
         self.userDefaults.set(self.elementDetectionEnabled, forKey: "\(self.keyPrefix)elementDetectionEnabled")
-        self.userDefaults.set(self.annotatedScreenshotEnabled, forKey: "\(self.keyPrefix)annotatedScreenshotEnabled")
     }
 
     private func loadFromPeekabooConfig() {
@@ -965,6 +852,23 @@ extension PeekabooSettings {
         return self.userDefaults.bool(forKey: namespacedKey)
     }
 
+    private func migratedVisualizerToggle(key: String, legacyKeys: [String]) -> Bool {
+        let namespacedKey = self.namespaced(key)
+        if self.userDefaults.object(forKey: namespacedKey) != nil {
+            return self.userDefaults.bool(forKey: namespacedKey)
+        }
+        let legacyValues = legacyKeys.compactMap { legacyKey -> Bool? in
+            let key = self.namespaced(legacyKey)
+            guard self.userDefaults.object(forKey: key) != nil else { return nil }
+            return self.userDefaults.bool(forKey: key)
+        }
+        // A collapsed group cannot preserve independent legacy choices. Keep
+        // any explicit opt-out instead of silently re-enabling that feedback.
+        let migrated = legacyValues.allSatisfy(\.self)
+        self.userDefaults.set(migrated, forKey: namespacedKey)
+        return migrated
+    }
+
     private func ensureTrueFlag(markerKey: String, value: inout Bool) {
         let namespacedKey = self.namespaced(markerKey)
         if !self.userDefaults.bool(forKey: namespacedKey) {
@@ -1177,12 +1081,4 @@ extension PeekabooSettings {
             false
         }
     }
-
-    private static let animationKeys: [String] = [
-        "screenshotFlashEnabled", "clickAnimationEnabled", "typeAnimationEnabled",
-        "scrollAnimationEnabled", "mouseTrailEnabled", "swipePathEnabled",
-        "hotkeyOverlayEnabled", "appLifecycleEnabled", "windowOperationEnabled",
-        "watchCaptureHUDEnabled", "menuNavigationEnabled", "dialogInteractionEnabled", "spaceTransitionEnabled",
-        "ghostEasterEggEnabled",
-    ]
 }

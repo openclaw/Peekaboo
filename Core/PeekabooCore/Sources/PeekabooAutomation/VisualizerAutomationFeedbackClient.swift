@@ -17,94 +17,77 @@ public final class VisualizerAutomationFeedbackClient: AutomationFeedbackClient 
         self.client.connect()
     }
 
-    public func showClickFeedback(at point: CGPoint, type: ClickType) async -> Bool {
-        await self.client.showClickFeedback(at: self.appKitPoint(point), type: type)
+    public func showClickFeedback(
+        at point: CGPoint,
+        type: ClickType,
+        target: VisualizerTargetWindow?) async -> Bool
+    {
+        await self.client.showClickFeedback(
+            at: self.appKitPoint(point),
+            type: type,
+            target: self.appKitTarget(target))
     }
 
     public func showTypingFeedback(
         keys: [String],
         duration: TimeInterval,
         cadence: TypingCadence,
-        masksTypedText: Bool) async -> Bool
+        masksTypedText: Bool,
+        target: VisualizerTargetWindow?) async -> Bool
     {
         await self.client.showTypingFeedback(
             keys: keys,
             duration: duration,
             cadence: cadence,
-            masksTypedText: masksTypedText)
+            masksTypedText: masksTypedText,
+            target: self.appKitTarget(target))
     }
 
-    public func showScrollFeedback(at point: CGPoint, direction: ScrollDirection, amount: Int) async -> Bool {
-        await self.client.showScrollFeedback(at: self.appKitPoint(point), direction: direction, amount: amount)
+    public func showScrollFeedback(
+        at point: CGPoint,
+        direction: ScrollDirection,
+        amount: Int,
+        target: VisualizerTargetWindow?) async -> Bool
+    {
+        await self.client.showScrollFeedback(
+            at: self.appKitPoint(point),
+            direction: direction,
+            amount: amount,
+            target: self.appKitTarget(target))
     }
 
-    public func showHotkeyDisplay(keys: [String], duration: TimeInterval) async -> Bool {
-        await self.client.showHotkeyDisplay(keys: keys, duration: duration)
+    public func showHotkeyDisplay(
+        keys: [String],
+        duration: TimeInterval,
+        target: VisualizerTargetWindow?) async -> Bool
+    {
+        await self.client.showHotkeyDisplay(keys: keys, duration: duration, target: self.appKitTarget(target))
     }
 
-    public func showSwipeGesture(from: CGPoint, to: CGPoint, duration: TimeInterval) async -> Bool {
+    public func showSwipeGesture(
+        from: CGPoint,
+        to: CGPoint,
+        duration: TimeInterval,
+        target: VisualizerTargetWindow?) async -> Bool
+    {
         await self.client.showSwipeGesture(
             from: self.appKitPoint(from),
             to: self.appKitPoint(to),
-            duration: duration)
+            duration: duration,
+            target: self.appKitTarget(target))
     }
 
-    public func showMouseMovement(from: CGPoint, to: CGPoint, duration: TimeInterval) async -> Bool {
+    public func showMouseMovement(
+        from: CGPoint,
+        to: CGPoint,
+        duration: TimeInterval,
+        target: VisualizerTargetWindow?) async -> Bool
+    {
         await self.client.showMouseMovement(
             from: self.appKitPoint(from),
             to: self.appKitPoint(to),
-            duration: duration)
-    }
-
-    public func showWindowOperation(
-        _ kind: WindowOperationKind,
-        windowRect: CGRect,
-        duration: TimeInterval) async -> Bool
-    {
-        let op: WindowOperation = switch kind {
-        case .close: .close
-        case .minimize: .minimize
-        case .maximize: .maximize
-        case .move: .move
-        case .resize: .resize
-        case .setBounds: .setBounds
-        case .focus: .focus
-        }
-        return await self.client.showWindowOperation(
-            op,
-            windowRect: self.appKitRect(windowRect),
-            duration: duration)
-    }
-
-    public func showDialogInteraction(
-        element: DialogElementType,
-        elementRect: CGRect,
-        action: DialogActionType) async -> Bool
-    {
-        await self.client.showDialogInteraction(
-            element: element,
-            elementRect: self.appKitRect(elementRect),
-            action: action)
-    }
-
-    public func showMenuNavigation(menuPath: [String]) async -> Bool {
-        await self.client.showMenuNavigation(menuPath: menuPath)
-    }
-
-    public func showSpaceSwitch(from: Int, to: Int, direction: SpaceSwitchDirection) async -> Bool {
-        let mapped: SpaceDirection = switch direction {
-        case .left: .left
-        case .right: .right
-        }
-        return await self.client.showSpaceSwitch(from: from, to: to, direction: mapped)
-    }
-
-    public func showAppLaunch(appName: String, iconPath: String?) async -> Bool {
-        await self.client.showAppLaunch(appName: appName, iconPath: iconPath)
-    }
-
-    public func showAppQuit(appName: String, iconPath: String?) async -> Bool {
-        await self.client.showAppQuit(appName: appName, iconPath: iconPath)
+            duration: duration,
+            target: self.appKitTarget(target))
     }
 
     public func showScreenshotFlash(in rect: CGRect) async -> Bool {
@@ -131,5 +114,14 @@ public final class VisualizerAutomationFeedbackClient: AutomationFeedbackClient 
         VisualizerScreenGeometry.appKitRect(
             fromGlobalDisplay: rect,
             primaryScreenFrame: self.primaryScreenFrame)
+    }
+
+    private func appKitTarget(_ target: VisualizerTargetWindow?) -> VisualizerTargetWindow? {
+        target.map {
+            VisualizerTargetWindow(
+                processIdentifier: $0.processIdentifier,
+                windowID: $0.windowID,
+                frame: self.appKitRect($0.frame))
+        }
     }
 }

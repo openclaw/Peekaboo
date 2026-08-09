@@ -39,19 +39,6 @@ extension DialogService {
         let resolvedButtonTitle = targetButton.title() ?? buttonText
         let resolvedButtonIdentifier = targetButton.attribute(identifierAttribute)
 
-        let buttonBounds: CGRect = if let position = targetButton.position(), let size = targetButton.size() {
-            CGRect(origin: position, size: size)
-        } else {
-            .zero
-        }
-
-        if Self.shouldShowButtonFeedback(allowGlobalFallback: allowGlobalFallback), buttonBounds != .zero {
-            _ = await self.feedbackClient.showDialogInteraction(
-                element: .button,
-                elementRect: buttonBounds,
-                action: .clickButton)
-        }
-
         self.logger.debug("Clicking button: \(resolvedButtonTitle)")
         try self.pressOrClick(targetButton, allowGlobalFallback: allowGlobalFallback)
 
@@ -70,10 +57,6 @@ extension DialogService {
 
         self.logger.info("\(AgentDisplayTokens.Status.success) Successfully clicked button: \(resolvedButtonTitle)")
         return result
-    }
-
-    static func shouldShowButtonFeedback(allowGlobalFallback: Bool) -> Bool {
-        allowGlobalFallback
     }
 
     func resolveButton(

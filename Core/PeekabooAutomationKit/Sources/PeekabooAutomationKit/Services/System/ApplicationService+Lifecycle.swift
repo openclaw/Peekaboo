@@ -114,13 +114,6 @@ extension ApplicationService {
                 }
                 self.logger.debug("Launching app from URL: \(applicationURL.path)")
 
-                if launch.activates {
-                    let appName = applicationURL.deletingPathExtension().lastPathComponent
-                    let iconPath = applicationURL.appendingPathComponent("Contents/Resources/AppIcon.icns").path
-                    let hasIcon = FileManager.default.fileExists(atPath: iconPath)
-                    _ = await self.feedbackClient.showAppLaunch(appName: appName, iconPath: hasIcon ? iconPath : nil)
-                }
-
                 runningApp = try await self.applicationOpenHandler(applicationURL, launch.openURLs, config)
             } else {
                 let targetURL = launch.openURLs[0]
@@ -432,19 +425,6 @@ extension ApplicationService {
             throw PeekabooError.appNotFound(request.identifier)
         }
 
-        // Try to get app icon path for animation
-        var iconPath: String?
-        if let bundleURL = runningApp.bundleURL {
-            let potentialIconPath = bundleURL.appendingPathComponent("Contents/Resources/AppIcon.icns").path
-            if FileManager.default.fileExists(atPath: potentialIconPath) {
-                iconPath = potentialIconPath
-            }
-        }
-
-        if Self.shouldShowQuitFeedback(hasForegroundConsent: false) {
-            _ = await self.feedbackClient.showAppQuit(appName: app.name, iconPath: iconPath)
-        }
-
         self.logger.debug("Sending \(request.force ? "force terminate" : "terminate") signal to \(app.name)")
         try self.validateApplicationQuitIdentity(expectedIdentity, resolvedApplication: app)
         let success = self.applicationQuitHandler(runningApp, request.force)
@@ -479,10 +459,6 @@ extension ApplicationService {
             throw PeekabooError.commandFailed(
                 "Application PID \(expectedIdentity.processIdentifier) disappeared or changed process generation")
         }
-    }
-
-    static func shouldShowQuitFeedback(hasForegroundConsent: Bool) -> Bool {
-        hasForegroundConsent
     }
 
     public func hideApplication(identifier: String) async throws {

@@ -45,18 +45,6 @@ extension DialogService {
         return CGRect(origin: position, size: size)
     }
 
-    func highlightDialogElement(
-        element: DialogElementType,
-        bounds: CGRect,
-        action: DialogActionType) async
-    {
-        guard bounds != .zero else { return }
-        _ = await self.feedbackClient.showDialogInteraction(
-            element: element,
-            elementRect: bounds,
-            action: action)
-    }
-
     func focusTextField(_ field: Element) {
         let elementDescription = field.briefDescription(option: ValueFormatOption.smart)
         self.logger.debug("Focusing text field: \(elementDescription)")

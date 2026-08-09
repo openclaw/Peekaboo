@@ -89,12 +89,31 @@ public struct VisualizerEvent: Codable, Sendable {
     public enum Payload: Codable, Sendable {
         case screenshotFlash(rect: CGRect)
         case watchCapture(rect: CGRect)
-        case clickFeedback(point: CGPoint, type: ClickType)
-        case typingFeedback(keys: [String], duration: TimeInterval, cadence: TypingCadence? = nil)
-        case scrollFeedback(point: CGPoint, direction: ScrollDirection, amount: Int)
-        case mouseMovement(from: CGPoint, to: CGPoint, duration: TimeInterval)
-        case swipeGesture(from: CGPoint, to: CGPoint, duration: TimeInterval)
-        case hotkeyDisplay(keys: [String], duration: TimeInterval)
+        case clickFeedback(point: CGPoint, type: ClickType, target: VisualizerTargetWindow? = nil)
+        case typingFeedback(
+            keys: [String],
+            duration: TimeInterval,
+            cadence: TypingCadence? = nil,
+            target: VisualizerTargetWindow? = nil)
+        case scrollFeedback(
+            point: CGPoint,
+            direction: ScrollDirection,
+            amount: Int,
+            target: VisualizerTargetWindow? = nil)
+        case mouseMovement(
+            from: CGPoint,
+            to: CGPoint,
+            duration: TimeInterval,
+            target: VisualizerTargetWindow? = nil)
+        case swipeGesture(
+            from: CGPoint,
+            to: CGPoint,
+            duration: TimeInterval,
+            target: VisualizerTargetWindow? = nil)
+        case hotkeyDisplay(
+            keys: [String],
+            duration: TimeInterval,
+            target: VisualizerTargetWindow? = nil)
         case appLaunch(name: String, iconPath: String?)
         case appQuit(name: String, iconPath: String?)
         case windowOperation(operation: WindowOperation, rect: CGRect, duration: TimeInterval)

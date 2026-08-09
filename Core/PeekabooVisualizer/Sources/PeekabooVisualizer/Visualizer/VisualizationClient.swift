@@ -119,15 +119,20 @@ public final class VisualizationClient: @unchecked Sendable {
         self.dispatch(.watchCapture(rect: rect))
     }
 
-    public func showClickFeedback(at point: CGPoint, type: ClickType) async -> Bool {
-        self.dispatch(.clickFeedback(point: point, type: type))
+    public func showClickFeedback(
+        at point: CGPoint,
+        type: ClickType,
+        target: VisualizerTargetWindow? = nil) async -> Bool
+    {
+        self.dispatch(.clickFeedback(point: point, type: type, target: target))
     }
 
     public func showTypingFeedback(
         keys: [String],
         duration: TimeInterval,
         cadence: TypingCadence? = nil,
-        masksTypedText: Bool = false) async -> Bool
+        masksTypedText: Bool = false,
+        target: VisualizerTargetWindow? = nil) async -> Bool
     {
         // Product decision: the caption exists to show the user what is being
         // typed on their own screen, so text is verbatim by default — it
@@ -138,7 +143,7 @@ public final class VisualizationClient: @unchecked Sendable {
         let mask = masksTypedText || ProcessInfo.processInfo
             .environment["PEEKABOO_VISUALIZER_MASK_TYPED_TEXT"] == "true"
         let safeKeys = Self.maskedTypingKeys(keys, mask: mask)
-        return self.dispatch(.typingFeedback(keys: safeKeys, duration: duration, cadence: cadence))
+        return self.dispatch(.typingFeedback(keys: safeKeys, duration: duration, cadence: cadence, target: target))
     }
 
     /// Replaces printable characters with bullets while keeping control-key
@@ -150,52 +155,39 @@ public final class VisualizationClient: @unchecked Sendable {
         }
     }
 
-    public func showScrollFeedback(at point: CGPoint, direction: ScrollDirection, amount: Int) async -> Bool {
-        self.dispatch(.scrollFeedback(point: point, direction: direction, amount: amount))
-    }
-
-    public func showMouseMovement(from: CGPoint, to: CGPoint, duration: TimeInterval) async -> Bool {
-        self.dispatch(.mouseMovement(from: from, to: to, duration: duration))
-    }
-
-    public func showSwipeGesture(from: CGPoint, to: CGPoint, duration: TimeInterval) async -> Bool {
-        self.dispatch(.swipeGesture(from: from, to: to, duration: duration))
-    }
-
-    public func showHotkeyDisplay(keys: [String], duration: TimeInterval = 1.0) async -> Bool {
-        self.dispatch(.hotkeyDisplay(keys: keys, duration: duration))
-    }
-
-    public func showAppLaunch(appName: String, iconPath: String? = nil) async -> Bool {
-        self.dispatch(.appLaunch(name: appName, iconPath: iconPath))
-    }
-
-    public func showAppQuit(appName: String, iconPath: String? = nil) async -> Bool {
-        self.dispatch(.appQuit(name: appName, iconPath: iconPath))
-    }
-
-    public func showWindowOperation(
-        _ operation: WindowOperation,
-        windowRect: CGRect,
-        duration: TimeInterval = 0.5) async -> Bool
+    public func showScrollFeedback(
+        at point: CGPoint,
+        direction: ScrollDirection,
+        amount: Int,
+        target: VisualizerTargetWindow? = nil) async -> Bool
     {
-        self.dispatch(.windowOperation(operation: operation, rect: windowRect, duration: duration))
+        self.dispatch(.scrollFeedback(point: point, direction: direction, amount: amount, target: target))
     }
 
-    public func showMenuNavigation(menuPath: [String]) async -> Bool {
-        self.dispatch(.menuNavigation(path: menuPath))
-    }
-
-    public func showDialogInteraction(
-        element: DialogElementType,
-        elementRect: CGRect,
-        action: DialogActionType) async -> Bool
+    public func showMouseMovement(
+        from: CGPoint,
+        to: CGPoint,
+        duration: TimeInterval,
+        target: VisualizerTargetWindow? = nil) async -> Bool
     {
-        self.dispatch(.dialogInteraction(elementType: element, rect: elementRect, action: action))
+        self.dispatch(.mouseMovement(from: from, to: to, duration: duration, target: target))
     }
 
-    public func showSpaceSwitch(from: Int, to: Int, direction: SpaceDirection) async -> Bool {
-        self.dispatch(.spaceSwitch(from: from, to: to, direction: direction))
+    public func showSwipeGesture(
+        from: CGPoint,
+        to: CGPoint,
+        duration: TimeInterval,
+        target: VisualizerTargetWindow? = nil) async -> Bool
+    {
+        self.dispatch(.swipeGesture(from: from, to: to, duration: duration, target: target))
+    }
+
+    public func showHotkeyDisplay(
+        keys: [String],
+        duration: TimeInterval = 1.0,
+        target: VisualizerTargetWindow? = nil) async -> Bool
+    {
+        self.dispatch(.hotkeyDisplay(keys: keys, duration: duration, target: target))
     }
 
     /// Rects must be AppKit screen coordinates (bottom-left origin).

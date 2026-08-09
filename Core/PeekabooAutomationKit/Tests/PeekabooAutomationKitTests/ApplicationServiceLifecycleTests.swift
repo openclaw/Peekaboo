@@ -7,13 +7,6 @@ import Testing
 struct ApplicationServiceLifecycleTests {
     @Test
     @MainActor
-    func `background quit suppresses global visualizer feedback`() {
-        #expect(!ApplicationService.shouldShowQuitFeedback(hasForegroundConsent: false))
-        #expect(ApplicationService.shouldShowQuitFeedback(hasForegroundConsent: true))
-    }
-
-    @Test
-    @MainActor
     func `quit verification waits until the process is actually terminated`() async throws {
         var checks = 0
         let terminated = try await waitForApplicationTermination(

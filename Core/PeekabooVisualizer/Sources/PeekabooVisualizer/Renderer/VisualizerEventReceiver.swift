@@ -99,33 +99,28 @@ public final class VisualizerEventReceiver {
             await self.coordinator.showScreenshotFlash(in: rect)
         case let .watchCapture(rect):
             await self.coordinator.showWatchCapture(in: rect)
-        case let .clickFeedback(point, type):
-            await self.coordinator.showClickFeedback(at: point, type: type)
-        case let .typingFeedback(keys, duration, cadence):
-            await self.coordinator.showTypingFeedback(keys: keys, duration: duration, cadence: cadence)
-        case let .scrollFeedback(point, direction, amount):
-            await self.coordinator.showScrollFeedback(at: point, direction: direction, amount: amount)
-        case let .mouseMovement(from, to, duration):
-            await self.coordinator.showMouseMovement(from: from, to: to, duration: duration)
-        case let .swipeGesture(from, to, duration):
-            await self.coordinator.showSwipeGesture(from: from, to: to, duration: duration)
-        case let .hotkeyDisplay(keys, duration):
-            await self.coordinator.showHotkeyDisplay(keys: keys, duration: duration)
-        case let .appLaunch(name, iconPath):
-            await self.coordinator.showAppLaunch(appName: name, iconPath: iconPath)
-        case let .appQuit(name, iconPath):
-            await self.coordinator.showAppQuit(appName: name, iconPath: iconPath)
-        case let .windowOperation(operation, rect, duration):
-            await self.coordinator.showWindowOperation(operation, windowRect: rect, duration: duration)
-        case let .menuNavigation(path):
-            await self.coordinator.showMenuNavigation(menuPath: path)
-        case let .dialogInteraction(elementType, rect, action):
-            await self.coordinator.showDialogInteraction(
-                element: elementType,
-                elementRect: rect,
-                action: action)
-        case let .spaceSwitch(from, to, direction):
-            await self.coordinator.showSpaceSwitch(from: from, to: to, direction: direction)
+        case let .clickFeedback(point, type, target):
+            await self.coordinator.showClickFeedback(at: point, type: type, target: target)
+        case let .typingFeedback(keys, duration, cadence, target):
+            await self.coordinator.showTypingFeedback(
+                keys: keys,
+                duration: duration,
+                cadence: cadence,
+                target: target)
+        case let .scrollFeedback(point, direction, amount, target):
+            await self.coordinator.showScrollFeedback(
+                at: point,
+                direction: direction,
+                amount: amount,
+                target: target)
+        case let .mouseMovement(from, to, duration, target):
+            await self.coordinator.showMouseMovement(from: from, to: to, duration: duration, target: target)
+        case let .swipeGesture(from, to, duration, target):
+            await self.coordinator.showSwipeGesture(from: from, to: to, duration: duration, target: target)
+        case let .hotkeyDisplay(keys, duration, target):
+            await self.coordinator.showHotkeyDisplay(keys: keys, duration: duration, target: target)
+        case .appLaunch, .appQuit, .windowOperation, .menuNavigation, .dialogInteraction, .spaceSwitch:
+            true
         case let .elementDetection(elements, duration):
             await self.coordinator.showElementDetection(elements: elements, duration: duration)
         case let .annotatedScreenshot(imageData, elements, windowBounds, duration):

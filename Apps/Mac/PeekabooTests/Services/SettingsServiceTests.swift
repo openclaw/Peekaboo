@@ -8,6 +8,38 @@ import Testing
 @MainActor
 struct PeekabooSettingsTests {
     @Test
+    func `Visualizer defaults to the three v4 feedback groups`() throws {
+        try withIsolatedSettingsEnvironment { _ in
+            let settings = PeekabooSettings()
+
+            #expect(settings.agentCursorEnabled)
+            #expect(settings.inputHUDEnabled)
+            #expect(settings.captureIndicatorsEnabled)
+        }
+    }
+
+    @Test
+    func `Visualizer migrates legacy animation preferences by group`() throws {
+        try withIsolatedSettingsEnvironment { _ in
+            let defaults = UserDefaults.standard
+            for key in ["clickAnimationEnabled", "mouseTrailEnabled", "swipePathEnabled"] {
+                defaults.set(false, forKey: "peekaboo.\(key)")
+            }
+            defaults.set(false, forKey: "peekaboo.typeAnimationEnabled")
+            defaults.set(true, forKey: "peekaboo.hotkeyOverlayEnabled")
+            defaults.set(false, forKey: "peekaboo.scrollAnimationEnabled")
+            defaults.set(false, forKey: "peekaboo.screenshotFlashEnabled")
+            defaults.set(false, forKey: "peekaboo.watchCaptureHUDEnabled")
+
+            let settings = PeekabooSettings()
+
+            #expect(!settings.agentCursorEnabled)
+            #expect(!settings.inputHUDEnabled)
+            #expect(!settings.captureIndicatorsEnabled)
+        }
+    }
+
+    @Test
     func `Default values are set correctly`() throws {
         try withIsolatedSettingsEnvironment { _ in
             let settings = PeekabooSettings()

@@ -2,6 +2,7 @@ import AXorcist
 import Combine
 import PeekabooCore
 import PeekabooUICore
+import PeekabooVisualizer
 import SwiftUI
 import Testing
 
@@ -47,6 +48,26 @@ final class OverlayManagerTests {
         self.manager.setDetailLevel(.all)
         #expect(self.manager.detailLevel == .all)
     }
+
+    @Test
+    func `Visualizer host settings expose the collapsed v4 surface`() {
+        let settings: any VisualizerSettingsProviding = StubVisualizerSettings()
+
+        #expect(settings.visualizerEnabled)
+        #expect(settings.agentCursorEnabled)
+        #expect(settings.inputHUDEnabled)
+        #expect(settings.captureIndicatorsEnabled)
+    }
+}
+
+@MainActor
+private final class StubVisualizerSettings: VisualizerSettingsProviding {
+    var visualizerEnabled = true
+    var visualizerAnimationSpeed = 1.0
+    var visualizerEffectIntensity = 1.0
+    var agentCursorEnabled = true
+    var inputHUDEnabled = true
+    var captureIndicatorsEnabled = true
 }
 
 // MARK: - Mock Delegate

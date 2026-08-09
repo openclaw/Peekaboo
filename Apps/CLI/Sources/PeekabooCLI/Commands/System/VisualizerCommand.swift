@@ -1,3 +1,4 @@
+import AppKit
 import Commander
 import CoreGraphics
 import Foundation
@@ -14,8 +15,8 @@ struct VisualizerCommand: RuntimeBackedCommand, OutputFormattable, ErrorHandling
                 commandName: "visualizer",
                 abstract: "Exercise Peekaboo visual feedback animations",
                 discussion: """
-                Runs a lightweight smoke sequence that fires every visualizer event so you can verify
-                Peekaboo.app is rendering overlays.
+                Runs a lightweight smoke sequence for the agent cursor, app-anchored input HUD,
+                and capture indicators.
                 """,
                 showHelpOnEmptyInvocation: false
             )
@@ -71,21 +72,11 @@ private struct VisualizerSmokeSequence {
     let screens: any ScreenServiceProtocol
 
     private static let stepNames = [
-        "Screenshot flash",
-        "Watch capture HUD",
-        "Cursor click",
-        "Typing indicator",
-        "Scroll indicator",
-        "Mouse movement trail",
-        "Swipe gesture",
-        "Hotkey heads-up display",
-        "Window move overlay",
-        "App launch icon bounce",
-        "App quit animation",
-        "Menu breadcrumb highlight",
-        "Dialog interaction highlight",
-        "Space switch indicator",
-        "Element detection overlay"
+        "Agent cursor movement",
+        "Click pulse",
+        "Window-anchored input HUD",
+        "Capture border",
+        "Live capture indicator",
     ]
 
     struct StepReport: Codable {
@@ -117,87 +108,37 @@ private struct VisualizerSmokeSequence {
         let screenFrame = VisualizerSmokeLayout.screenFrame(using: self.screens)
         let primaryRect = screenFrame.insetBy(dx: screenFrame.width * 0.25, dy: screenFrame.height * 0.25)
         let point = CGPoint(x: primaryRect.midX, y: primaryRect.midY)
+        let target = VisualizerSmokeLayout.activeTargetWindow()
 
         var steps: [StepReport] = []
 
-        try await steps.append(self.step("Screenshot flash") {
-            await client.showScreenshotFlash(in: primaryRect)
-        })
-
-        try await steps.append(self.step("Watch capture HUD") {
-            await client.showWatchCapture(in: primaryRect)
-        })
-
-        try await steps.append(self.step("Cursor click") {
-            await client.showClickFeedback(at: point, type: .single)
-        })
-
-        try await steps.append(self.step("Typing indicator") {
-            await client.showTypingFeedback(
-                keys: ["H", "i", "!"],
-                duration: 1.5,
-                cadence: .human(wordsPerMinute: 60)
-            )
-        })
-
-        try await steps.append(self.step("Scroll indicator") {
-            await client.showScrollFeedback(at: point, direction: .down, amount: 3)
-        })
-
-        try await steps.append(self.step("Mouse movement trail") {
+        try await steps.append(self.step("Agent cursor movement") {
             await client.showMouseMovement(
-                from: point,
-                to: CGPoint(x: point.x + 180, y: point.y + 120),
+                from: CGPoint(x: point.x - 120, y: point.y - 50),
+                to: CGPoint(x: point.x + 120, y: point.y + 50),
                 duration: 0.8
             )
         })
 
-        try await steps.append(self.step("Swipe gesture") {
-            await client.showSwipeGesture(
-                from: CGPoint(x: point.x - 120, y: point.y),
-                to: CGPoint(x: point.x + 120, y: point.y),
-                duration: 0.6
+        try await steps.append(self.step("Click pulse") {
+            await client.showClickFeedback(at: point, type: .single, target: target)
+        })
+
+        try await steps.append(self.step("Window-anchored input HUD") {
+            guard let target else { return false }
+            return await client.showHotkeyDisplay(
+                keys: ["Cmd", "Shift", "T"],
+                duration: 1.2,
+                target: target
             )
         })
 
-        try await steps.append(self.step("Hotkey heads-up display") {
-            await client.showHotkeyDisplay(keys: ["Cmd", "Shift", "T"], duration: 1.2)
+        try await steps.append(self.step("Capture border") {
+            await client.showScreenshotFlash(in: target?.frame ?? primaryRect)
         })
 
-        try await steps.append(self.step("Window move overlay") {
-            await client.showWindowOperation(.move, windowRect: primaryRect, duration: 0.7)
-        })
-
-        try await steps.append(self.step("App launch icon bounce") {
-            await client.showAppLaunch(appName: "Visualizer Smoke Test", iconPath: nil)
-        })
-
-        try await steps.append(self.step("App quit animation") {
-            await client.showAppQuit(appName: "Visualizer Smoke Test", iconPath: nil)
-        })
-
-        try await steps.append(self.step("Menu breadcrumb highlight") {
-            await client.showMenuNavigation(menuPath: ["File", "New", "Window"])
-        })
-
-        try await steps.append(self.step("Dialog interaction highlight") {
-            await client.showDialogInteraction(
-                element: .button,
-                elementRect: CGRect(origin: point, size: CGSize(width: 160, height: 40)),
-                action: .clickButton
-            )
-        })
-
-        try await steps.append(self.step("Space switch indicator") {
-            await client.showSpaceSwitch(from: 1, to: 2, direction: .right)
-        })
-
-        try await steps.append(self.step("Element detection overlay") {
-            let sampleElements: [String: CGRect] = [
-                "B1": CGRect(x: primaryRect.minX + 20, y: primaryRect.minY + 20, width: 140, height: 44),
-                "T1": CGRect(x: primaryRect.midX - 80, y: primaryRect.midY, width: 200, height: 40)
-            ]
-            return await client.showElementDetection(elements: sampleElements)
+        try await steps.append(self.step("Live capture indicator") {
+            await client.showWatchCapture(in: target?.frame ?? primaryRect)
         })
 
         let failedSteps = steps.filter { !$0.dispatched }.map(\.name)
@@ -226,6 +167,34 @@ enum VisualizerSmokeLayout {
     @MainActor
     static func screenFrame(using screens: any ScreenServiceProtocol) -> CGRect {
         screens.primaryScreen?.frame ?? screens.listScreens().first?.frame ?? self.fallbackFrame
+    }
+
+    @MainActor
+    static func activeTargetWindow() -> VisualizerTargetWindow? {
+        guard let app = NSWorkspace.shared.frontmostApplication,
+              let windows = CGWindowListCopyWindowInfo(
+                  [.optionOnScreenOnly, .excludeDesktopElements],
+                  kCGNullWindowID
+              ) as? [[String: Any]],
+              let info = windows.first(where: {
+                  ($0[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == app.processIdentifier &&
+                      ($0[kCGWindowLayer as String] as? NSNumber)?.intValue == 0 &&
+                      (($0[kCGWindowAlpha as String] as? NSNumber)?.doubleValue ?? 1) > 0
+              }),
+              let number = info[kCGWindowNumber as String] as? NSNumber,
+              let bounds = info[kCGWindowBounds as String] as? [String: Any],
+              let frame = CGRect(dictionaryRepresentation: bounds as CFDictionary)
+        else {
+            return nil
+        }
+        return VisualizerTargetWindow(
+            processIdentifier: app.processIdentifier,
+            windowID: number.uint32Value,
+            frame: VisualizerScreenGeometry.appKitRect(
+                fromGlobalDisplay: frame,
+                primaryScreenFrame: NSScreen.screens.first?.frame
+            )
+        )
     }
 }
 

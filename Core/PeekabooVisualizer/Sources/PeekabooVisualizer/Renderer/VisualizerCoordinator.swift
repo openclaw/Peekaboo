@@ -35,23 +35,13 @@ public final class VisualizerCoordinator {
 
     /// Settings reference
     weak var settings: (any VisualizerSettingsProviding)?
+    private let visibleTargetResolver: (VisualizerTargetWindow) -> VisualizerTargetWindow?
 
     enum AnimationBaseline {
-        static let screenshotFlash: TimeInterval = 0.35
-        static let clickCursor: TimeInterval = 1.15
-        static let typingOverlay: TimeInterval = 1.2
-        static let scrollIndicator: TimeInterval = 0.6
-        static let mouseTrail: TimeInterval = 0.28
-        static let swipePath: TimeInterval = 0.9
-        static let hotkeyOverlay: TimeInterval = 1.2
-        static let windowOperation: TimeInterval = 0.85
-        static let appLaunch: TimeInterval = 1.8
-        static let appQuit: TimeInterval = 1.5
-        static let menuNavigation: TimeInterval = 1.0
-        static let dialogInteraction: TimeInterval = 1.0
+        static let agentCursor: TimeInterval = 0.12
+        static let inputHUD: TimeInterval = 0.8
         static let annotatedScreenshot: TimeInterval = 1.2
         static let elementHighlight: TimeInterval = 1.0
-        static let spaceTransition: TimeInterval = 1.0
     }
 
     /// Minimum gaps between repeats of the same feedback kind. Agents fire
@@ -60,24 +50,21 @@ public final class VisualizerCoordinator {
     enum FeedbackThrottle {
         static let screenshotFlash: TimeInterval = 1.2
         static let scroll: TimeInterval = 0.3
-        static let mouseTrail: TimeInterval = 0.18
+        static let agentCursor: TimeInterval = 0.06
         static let elementDetection: TimeInterval = 1.0
         /// Instant pointer hops should not be replayed as a delayed animation.
         static let minimumPointerDuration: TimeInterval = 0.05
-        /// Mouse moves shorter than this aren't worth a cursor trail.
-        static let minimumTrailDistance: CGFloat = 80
+        /// Tiny cursor moves are indistinguishable from pointer jitter.
+        static let minimumCursorDistance: CGFloat = 3
     }
 
     /// Replace-keys for overlays that should exist at most once: a new event
     /// of the same kind crossfades into the previous one instead of stacking.
     enum OverlaySlot {
-        static let typing = "typing"
-        static let hotkey = "hotkey"
-        static let menu = "menu"
-        static let space = "space"
-        static let appLifecycle = "appLifecycle"
+        static let inputHUD = "inputHUD"
         static let watchHUD = "watchHUD"
         static let pointer = "pointer"
+        static let click = "click"
         static let annotatedScreenshot = "annotatedScreenshot"
         static let elementSheetPrefix = "elements-screen-"
 
@@ -88,16 +75,7 @@ public final class VisualizerCoordinator {
 
     enum OverlayPadding {
         static let watchHUD: CGFloat = 16
-        static let click: CGFloat = 32
-        static let typing: CGFloat = 32
-        static let scroll: CGFloat = 24
-        static let mouseTrail: CGFloat = 16
-        static let swipe: CGFloat = 24
-        static let hotkeyGlow: CGFloat = 96
-        static let appLifecycle: CGFloat = 48
-        static let windowOperation: CGFloat = 48
-        static let menuGlow: CGFloat = 64
-        static let dialog: CGFloat = 80
+        static let agentCursor: CGFloat = 36
         static let elementHighlight: CGFloat = 32
         static let annotatedScreenshot: CGFloat = 64
     }
@@ -149,40 +127,6 @@ public final class VisualizerCoordinator {
         return Dictionary(uniqueKeysWithValues: Array(smallest))
     }
 
-    private static func keyWidthForHotkeyOverlay(_ key: String) -> CGFloat {
-        switch key.lowercased() {
-        case "space":
-            120
-        case "shift", "return", "enter", "delete", "backspace":
-            80
-        case "cmd", "command", "ctrl", "control", "option", "alt":
-            60
-        default:
-            40
-        }
-    }
-
-    static func estimatedHotkeyOverlaySize(for keys: [String]) -> CGSize {
-        let keyWidths = keys.map { self.keyWidthForHotkeyOverlay($0) }
-        let keysWidth = keyWidths.reduce(0, +) + CGFloat(max(0, keys.count - 1)) * 8
-        // Key container: internal padding(.horizontal: 20) + border/glow breathing room.
-        let baseWidth = keysWidth + 40
-        let width = max(400, min(960, baseWidth + self.OverlayPadding.hotkeyGlow * 2))
-        // Key height: 40 + padding(.vertical: 20) + glow breathing room.
-        let baseHeight: CGFloat = 80
-        let height = max(160, min(420, baseHeight + self.OverlayPadding.hotkeyGlow * 2))
-        return CGSize(width: width, height: height)
-    }
-
-    static func estimatedMenuOverlaySize(for menuPath: [String]) -> CGSize {
-        // Rough heuristic: each segment needs room for title + padding + arrows.
-        let segmentWidth: CGFloat = 220
-        let baseWidth = max(600, CGFloat(menuPath.count) * segmentWidth)
-        let width = min(1100, baseWidth + self.OverlayPadding.menuGlow * 2)
-        let height: CGFloat = 140 + self.OverlayPadding.menuGlow * 2
-        return CGSize(width: width, height: height)
-    }
-
     var animationSpeedScale: Double {
         max(0.1, min(2.0, self.settings?.visualizerAnimationSpeed ?? Self.defaultVisualizerAnimationSpeed))
     }
@@ -191,23 +135,23 @@ public final class VisualizerCoordinator {
         self.animationSpeedScale * Self.animationSlowdownFactor
     }
 
-    /// Screenshot counter for easter egg (persisted)
-    var screenshotCount: Int {
-        get { UserDefaults.standard.integer(forKey: "PeekabooScreenshotCount") }
-        set { UserDefaults.standard.set(newValue, forKey: "PeekabooScreenshotCount") }
-    }
-
     var lastWatchHUDDate = Date.distantPast
     var watchHUDSequence = 0
     var lastScreenshotFlashDate = Date.distantPast
     var lastScrollDate = Date.distantPast
-    var lastMouseTrailDate = Date.distantPast
+    var lastAgentCursorDate = Date.distantPast
     var lastElementDetectionDate = Date.distantPast
 
     // MARK: - Initialization
 
     public init() {
-        // Overlay manager is created internally
+        self.visibleTargetResolver = TargetWindowVisibilityEvaluator.visibleTarget
+    }
+
+    init(targetWindowVisibility: @escaping (VisualizerTargetWindow) -> Bool) {
+        self.visibleTargetResolver = { target in
+            targetWindowVisibility(target) ? target : nil
+        }
     }
 
     // MARK: - Helpers
@@ -246,6 +190,10 @@ public final class VisualizerCoordinator {
     /// Check if visualizer is enabled
     public func isEnabled() -> Bool {
         self.settings?.visualizerEnabled ?? true
+    }
+
+    func visibleTargetWindow(_ target: VisualizerTargetWindow) -> VisualizerTargetWindow? {
+        self.visibleTargetResolver(target)
     }
 
     /// Check if running on battery power

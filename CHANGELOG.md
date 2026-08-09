@@ -10,6 +10,7 @@
 
 ### Changed
 - Add `app launch --wait-ready` and repeatable `--open` targets as the surviving launch/open surface (v4 breaking change).
+- Redesign automation feedback around a natural agent cursor, a quiet target-window input HUD, and capture borders, suppressing window feedback whenever its target is not visibly active.
 - Add rich formatter coverage for every current MCP and agent tool, and remove the non-functional agent `--realtime` flag.
 - Enrich shared tool summaries with menu counts, clicked menu paths, screenshot dimensions, app lifecycle names, screen resolutions, and clipboard actions so the agent chat and Mac activity feed regain the detail lost in the formatter unification.
 - Remove the obsolete scoped-commit helper now that agent work uses isolated worktrees.

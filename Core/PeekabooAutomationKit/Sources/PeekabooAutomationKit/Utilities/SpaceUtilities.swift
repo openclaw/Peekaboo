@@ -276,12 +276,6 @@ public final class SpaceManagementService {
     /// Switch to a specific Space
     public func switchToSpace(_ spaceID: CGSSpaceID) async throws {
         // Switch to a specific Space
-        let currentSpace = CGSGetActiveSpace(connection)
-        let direction: SpaceSwitchDirection = spaceID > currentSpace ? .right : .left
-
-        // Show space switch visualization
-        _ = await self.feedbackClient.showSpaceSwitch(from: Int(currentSpace), to: Int(spaceID), direction: direction)
-
         // Use kCGSPackagesMainDisplayIdentifier for the main display
         CGSManagedDisplaySetCurrentSpace(self.connection, kCGSPackagesMainDisplayIdentifier, spaceID)
 

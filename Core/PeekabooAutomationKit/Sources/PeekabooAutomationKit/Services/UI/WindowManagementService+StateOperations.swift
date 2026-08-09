@@ -38,8 +38,6 @@ extension WindowManagementService {
             else {
                 throw PeekabooError.windowNotFound(criteria: "windowId \(trackedWindowID)")
             }
-            let windowBounds = windowServerInfo?.bounds
-
             if minimizedCloseRequiresForegroundFallback(isMinimized: expectedIdentity.isMinimized == true),
                !allowForegroundFallback
             {
@@ -58,12 +56,6 @@ extension WindowManagementService {
                 } catch {
                     throw error
                 }
-            }
-            if Self.shouldShowWindowOperationFeedback(
-                operation: .close,
-                hasForegroundConsent: allowForegroundFallback)
-            {
-                self.showWindowOperation(.close, bounds: windowBounds)
             }
             try Task.checkCancellation()
 
@@ -325,10 +317,6 @@ extension WindowManagementService {
             self.logger.debug("WindowManagementService.focusWindow called with target: \(target)")
 
             let window = try await self.element(for: target)
-            let windowBounds = window.position().map { position in
-                CGRect(origin: position, size: window.size() ?? .zero)
-            }
-
             let success: Bool
             if let windowID = self.windowIdentityService.getWindowID(from: window) {
                 let focusService = FocusManagementService(
@@ -340,8 +328,6 @@ extension WindowManagementService {
                 self.logger.debug("Falling back to AXorcist focus without a CGWindowID")
                 success = window.focusWindow()
             }
-            self.showWindowOperation(.focus, bounds: windowBounds)
-
             guard success else {
                 let windowInfo = self.focusFailureDescription(for: target)
                 self.logger.error("Focus window failed for: \(windowInfo)")
@@ -354,21 +340,6 @@ extension WindowManagementService {
                 throw OperationError.interactionFailed(action: "focus window", reason: reason)
             }
         }
-    }
-
-    func showWindowOperation(_ operation: WindowOperationKind, bounds: CGRect?) {
-        guard let bounds else { return }
-
-        Task {
-            _ = await self.feedbackClient.showWindowOperation(operation, windowRect: bounds, duration: 0.5)
-        }
-    }
-
-    static func shouldShowWindowOperationFeedback(
-        operation: WindowOperationKind,
-        hasForegroundConsent: Bool) -> Bool
-    {
-        operation == .focus || hasForegroundConsent
     }
 
     private func windowDisappeared(windowID: Int, appIdentifier: String?) async throws -> Bool {

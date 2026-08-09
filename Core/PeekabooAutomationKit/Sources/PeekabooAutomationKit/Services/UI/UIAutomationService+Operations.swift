@@ -244,7 +244,10 @@ extension UIAutomationService {
         guard targetProcessIdentifier == nil else { return }
         let fallbackPoint = try await self.getClickPoint(for: target, snapshotId: snapshotId)
         if let clickPoint = Self.visualFeedbackPoint(actionAnchor: actionAnchor, fallbackPoint: fallbackPoint) {
-            _ = await self.feedbackClient.showClickFeedback(at: clickPoint, type: clickType)
+            _ = await self.feedbackClient.showClickFeedback(
+                at: clickPoint,
+                type: clickType,
+                target: self.visualizerTargetWindow(snapshotId: snapshotId))
         }
     }
 

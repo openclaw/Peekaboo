@@ -22,23 +22,31 @@ extension UIAutomationService {
         try await self.operationLaneCoordinator.run(scope: .global, access: .write) {
             self.logger.debug("Delegating scroll to ScrollService")
             defer { self.elementDetectionService.invalidateCache() }
+            let visualizerTarget = await self.visualizerTargetWindow(snapshotId: request.snapshotId)
             let result = try await self.normalizingSnapshotErrors {
                 try await self.scrollService.scroll(request)
             }
 
-            await self.visualizeScroll(request, actionAnchor: result.anchorPoint)
+            await self.visualizeScroll(
+                request,
+                actionAnchor: result.anchorPoint,
+                visualizerTarget: visualizerTarget)
         }
     }
 
-    /// Background scrolls are AX actions scoped to a snapshot element. Do not project them onto
-    /// the user's foreground desktop with a global overlay.
-    func visualizeScroll(_ request: ScrollRequest, actionAnchor: CGPoint?) async {
+    /// Background scrolls are AX actions scoped to a snapshot element and never emit foreground feedback.
+    func visualizeScroll(
+        _ request: ScrollRequest,
+        actionAnchor: CGPoint?,
+        visualizerTarget: VisualizerTargetWindow? = nil) async
+    {
         guard request.foreground else { return }
         let feedbackPoint = actionAnchor ?? InputDriver.currentLocation() ?? .zero
         _ = await self.feedbackClient.showScrollFeedback(
             at: feedbackPoint,
             direction: request.direction,
-            amount: request.amount)
+            amount: request.amount,
+            target: visualizerTarget ?? VisualizerTargetWindowResolver.frontmostWindow())
     }
 
     // MARK: - Hotkey Operations
@@ -75,9 +83,13 @@ extension UIAutomationService {
         try await self.operationLaneCoordinator.run(scope: .global, access: .write) {
             self.logger.debug("Delegating hotkey to HotkeyService")
             defer { self.elementDetectionService.invalidateCache() }
+            let visualizerTarget = VisualizerTargetWindowResolver.frontmostWindow()
             _ = try await self.hotkeyService.hotkey(keys: keys, holdDuration: holdDuration)
 
-            await self.visualizeHotkey(keys: keys, targetProcessIdentifier: nil)
+            await self.visualizeHotkey(
+                keys: keys,
+                targetProcessIdentifier: nil,
+                visualizerTarget: visualizerTarget)
         }
     }
 
@@ -142,12 +154,18 @@ extension UIAutomationService {
         }
     }
 
-    /// PID-routed hotkeys are background operations. Suppress the desktop-global overlay so they
-    /// do not cover or distract the foreground application.
-    func visualizeHotkey(keys: String, targetProcessIdentifier: pid_t?) async {
+    /// PID-routed hotkeys are background operations and never emit foreground feedback.
+    func visualizeHotkey(
+        keys: String,
+        targetProcessIdentifier: pid_t?,
+        visualizerTarget: VisualizerTargetWindow? = nil) async
+    {
         guard targetProcessIdentifier == nil else { return }
         let keyArray = keys.split(separator: ",").map { String($0).trimmingCharacters(in: .whitespaces) }
-        _ = await self.feedbackClient.showHotkeyDisplay(keys: keyArray, duration: 1.0)
+        _ = await self.feedbackClient.showHotkeyDisplay(
+            keys: keyArray,
+            duration: 1.0,
+            target: visualizerTarget ?? VisualizerTargetWindowResolver.frontmostWindow())
     }
 
     // MARK: - Gesture Operations
@@ -162,17 +180,17 @@ extension UIAutomationService {
         try await self.operationLaneCoordinator.run(scope: .global, access: .write) {
             self.logger.debug("Delegating swipe to GestureService")
             defer { self.elementDetectionService.invalidateCache() }
+            _ = await self.feedbackClient.showSwipeGesture(
+                from: from,
+                to: to,
+                duration: TimeInterval(duration) / 1000.0,
+                target: VisualizerTargetWindowResolver.frontmostWindow())
             try await self.gestureService.swipe(
                 from: from,
                 to: to,
                 duration: duration,
                 steps: steps,
                 profile: profile)
-
-            _ = await self.feedbackClient.showSwipeGesture(
-                from: from,
-                to: to,
-                duration: TimeInterval(duration) / 1000.0)
         }
     }
 
@@ -180,6 +198,11 @@ extension UIAutomationService {
         try await self.operationLaneCoordinator.run(scope: .global, access: .write) {
             self.logger.debug("Delegating drag to GestureService")
             defer { self.elementDetectionService.invalidateCache() }
+            _ = await self.feedbackClient.showSwipeGesture(
+                from: request.from,
+                to: request.to,
+                duration: TimeInterval(request.duration) / 1000.0,
+                target: VisualizerTargetWindowResolver.frontmostWindow())
             try await self.gestureService.drag(request)
         }
     }
@@ -199,7 +222,8 @@ extension UIAutomationService {
             _ = await self.feedbackClient.showMouseMovement(
                 from: fromPoint,
                 to: to,
-                duration: TimeInterval(duration) / 1000.0)
+                duration: TimeInterval(duration) / 1000.0,
+                target: VisualizerTargetWindowResolver.frontmostWindow())
             try await self.gestureService.moveMouse(to: to, duration: duration, steps: steps, profile: profile)
         }
     }

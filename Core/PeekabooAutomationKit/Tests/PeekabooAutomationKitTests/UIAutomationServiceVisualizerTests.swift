@@ -28,7 +28,7 @@ struct UIAutomationServiceVisualizerTests {
 
     @Test
     @MainActor
-    func `targeted background interactions suppress global visualizer feedback`() async throws {
+    func `targeted background interactions suppress visualizer feedback`() async throws {
         let feedback = RecordingAutomationFeedbackClient()
         let service = UIAutomationService(feedbackClient: feedback)
 
@@ -61,7 +61,7 @@ struct UIAutomationServiceVisualizerTests {
 
     @Test
     @MainActor
-    func `untargeted foreground interactions preserve global visualizer feedback`() async throws {
+    func `untargeted foreground interactions preserve visualizer feedback`() async throws {
         let feedback = RecordingAutomationFeedbackClient()
         let service = UIAutomationService(feedbackClient: feedback)
 
@@ -86,51 +86,6 @@ struct UIAutomationServiceVisualizerTests {
         #expect(feedback.hotkeyCount == 1)
         #expect(feedback.scrollCount == 1)
     }
-
-    @Test
-    @MainActor
-    func `background dialog and window close actions suppress global feedback`() {
-        #expect(!DialogService.shouldShowButtonFeedback(allowGlobalFallback: false))
-        #expect(!WindowManagementService.shouldShowWindowOperationFeedback(
-            operation: .close,
-            hasForegroundConsent: false))
-        #expect(DialogService.shouldShowButtonFeedback(allowGlobalFallback: true))
-        #expect(WindowManagementService.shouldShowWindowOperationFeedback(
-            operation: .close,
-            hasForegroundConsent: true))
-    }
-
-    @Test
-    @MainActor
-    func `background window state and geometry operations suppress feedback`() {
-        let backgroundOperations: [WindowOperationKind] = [
-            .minimize,
-            .maximize,
-            .move,
-            .resize,
-            .setBounds,
-        ]
-        for operation in backgroundOperations {
-            #expect(!WindowManagementService.shouldShowWindowOperationFeedback(
-                operation: operation,
-                hasForegroundConsent: false))
-            #expect(WindowManagementService.shouldShowWindowOperationFeedback(
-                operation: operation,
-                hasForegroundConsent: true))
-        }
-        #expect(WindowManagementService.shouldShowWindowOperationFeedback(
-            operation: .focus,
-            hasForegroundConsent: false))
-    }
-
-    @Test
-    @MainActor
-    func `background app quit and menu traversal suppress global feedback`() {
-        #expect(!ApplicationService.shouldShowQuitFeedback(hasForegroundConsent: false))
-        #expect(!MenuService.shouldShowMenuNavigation(hasForegroundConsent: false))
-        #expect(ApplicationService.shouldShowQuitFeedback(hasForegroundConsent: true))
-        #expect(MenuService.shouldShowMenuNavigation(hasForegroundConsent: true))
-    }
 }
 
 @MainActor
@@ -140,7 +95,11 @@ private final class RecordingAutomationFeedbackClient: AutomationFeedbackClient 
     private(set) var hotkeyCount = 0
     private(set) var scrollCount = 0
 
-    func showClickFeedback(at _: CGPoint, type _: ClickType) async -> Bool {
+    func showClickFeedback(
+        at _: CGPoint,
+        type _: ClickType,
+        target _: VisualizerTargetWindow?) async -> Bool
+    {
         self.clickCount += 1
         return true
     }
@@ -149,18 +108,28 @@ private final class RecordingAutomationFeedbackClient: AutomationFeedbackClient 
         keys _: [String],
         duration _: TimeInterval,
         cadence _: TypingCadence,
-        masksTypedText _: Bool) async -> Bool
+        masksTypedText _: Bool,
+        target _: VisualizerTargetWindow?) async -> Bool
     {
         self.typingCount += 1
         return true
     }
 
-    func showHotkeyDisplay(keys _: [String], duration _: TimeInterval) async -> Bool {
+    func showHotkeyDisplay(
+        keys _: [String],
+        duration _: TimeInterval,
+        target _: VisualizerTargetWindow?) async -> Bool
+    {
         self.hotkeyCount += 1
         return true
     }
 
-    func showScrollFeedback(at _: CGPoint, direction _: ScrollDirection, amount _: Int) async -> Bool {
+    func showScrollFeedback(
+        at _: CGPoint,
+        direction _: ScrollDirection,
+        amount _: Int,
+        target _: VisualizerTargetWindow?) async -> Bool
+    {
         self.scrollCount += 1
         return true
     }

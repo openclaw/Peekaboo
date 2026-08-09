@@ -15,8 +15,6 @@ extension DockService {
     func launchFromDockImpl(appName: String) async throws {
         let dockElement = try findDockElement(appName: appName)
 
-        _ = await self.feedbackClient.showAppLaunch(appName: appName, iconPath: nil)
-
         do {
             try dockElement.performAction(.press)
         } catch {
