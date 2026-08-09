@@ -33,6 +33,24 @@ extension ToolArguments {
 
 // MARK: - Helper function to convert ToolResponse to AnyAgentToolValue
 
+private func convertToolResponseContent(_ content: MCP.Tool.Content) -> AnyAgentToolValue {
+    switch content {
+    case let .text(text, _, _):
+        return AnyAgentToolValue(string: text)
+    case let .image(data, mimeType, _, _):
+        // For images, return a descriptive string
+        return AnyAgentToolValue(string: "[Image: \(mimeType), size: \(data.count) bytes]")
+    case let .resource(resource, _, _):
+        // For resources, return the text content if available
+        return AnyAgentToolValue(string: resource.text ?? "[Resource: \(resource.uri)]")
+    case let .resourceLink(uri, name, _, _, mimeType, _):
+        let mimeTypeDescription = mimeType.map { ", mimeType: \($0)" } ?? ""
+        return AnyAgentToolValue(string: "[Resource Link: \(name), uri: \(uri)\(mimeTypeDescription)]")
+    case let .audio(data, mimeType, _, _):
+        return AnyAgentToolValue(string: "[Audio: \(mimeType), size: \(data.count) bytes]")
+    }
+}
+
 @preconcurrency
 func convertToolResponseToAgentToolResult(_ response: ToolResponse) -> AnyAgentToolValue {
     // If there's an error, return error message
@@ -47,28 +65,12 @@ func convertToolResponseToAgentToolResult(_ response: ToolResponse) -> AnyAgentT
         return AnyAgentToolValue(string: "Error: \(errorMessage)")
     }
 
-    let contentValue: AnyAgentToolValue
-
-    // Convert the first content item to a result
-    if let firstContent = response.content.first {
-        switch firstContent {
-        case let .text(text, _, _):
-            contentValue = AnyAgentToolValue(string: text)
-        case let .image(data, mimeType, _, _):
-            // For images, return a descriptive string
-            contentValue = AnyAgentToolValue(string: "[Image: \(mimeType), size: \(data.count) bytes]")
-        case let .resource(resource, _, _):
-            // For resources, return the text content if available
-            contentValue = AnyAgentToolValue(string: resource.text ?? "[Resource: \(resource.uri)]")
-        case let .resourceLink(uri, name, _, _, mimeType, _):
-            let mimeTypeDescription = mimeType.map { ", mimeType: \($0)" } ?? ""
-            contentValue = AnyAgentToolValue(string: "[Resource Link: \(name), uri: \(uri)\(mimeTypeDescription)]")
-        case let .audio(data, mimeType, _, _):
-            contentValue = AnyAgentToolValue(string: "[Audio: \(mimeType), size: \(data.count) bytes]")
-        }
+    let contentValue: AnyAgentToolValue = if response.content.isEmpty {
+        AnyAgentToolValue(string: "Success")
+    } else if response.content.count == 1 {
+        convertToolResponseContent(response.content[0])
     } else {
-        // No content
-        contentValue = AnyAgentToolValue(string: "Success")
+        AnyAgentToolValue(array: response.content.map { convertToolResponseContent($0) })
     }
 
     guard let meta = response.meta else {
