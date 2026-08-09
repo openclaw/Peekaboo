@@ -116,7 +116,7 @@ public enum ToolRegistry {
             category: .system,
             abstract: "Read/write the macOS clipboard (text, images, files) with save/restore slots.",
             discussion: """
-            Use `action: set` with text, filePath/imagePath, or base64+uti to write the clipboard.
+            Use `action: set` with text, file_path, or data_base64+uti to write the clipboard.
             Use `action: get` to read it (optionally prefer a UTI or write binary to outputPath).
             `save`/`restore` keep user content safe while automating; `clear` empties the pasteboard.
             """,

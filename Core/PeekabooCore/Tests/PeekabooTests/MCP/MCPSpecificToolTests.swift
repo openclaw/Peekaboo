@@ -22,6 +22,27 @@ private func makeTestTool<T>(_ builder: () -> T) -> T {
 
 @MainActor
 struct MCPSpecificToolTests {
+    @Test
+    func `Clipboard schema uses snake case payload names and excludes load`() {
+        let tool = makeTestTool(ClipboardTool.init)
+        guard case let .object(schema) = tool.inputSchema,
+              case let .object(properties)? = schema["properties"],
+              case let .object(action)? = properties["action"],
+              case let .array(actions)? = action["enum"]
+        else {
+            Issue.record("Expected clipboard schema properties and action enum")
+            return
+        }
+
+        #expect(properties["file_path"] != nil)
+        #expect(properties["data_base64"] != nil)
+        #expect(properties["filePath"] == nil)
+        #expect(properties["imagePath"] == nil)
+        #expect(properties["dataBase64"] == nil)
+        #expect(!actions.contains(.string("load")))
+        #expect(actions == ["get", "set", "clear", "save", "restore"].map(Value.string))
+    }
+
     // MARK: - See Tool Tests
 
     @Test

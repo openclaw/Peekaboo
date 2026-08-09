@@ -271,7 +271,7 @@ enum MCPToolSnapshotMutationPolicy {
 
     private static func clipboardEffect(arguments: ToolArguments) -> MCPToolSnapshotEffect {
         switch arguments.getString("action") {
-        case "set", "clear", "restore", "load":
+        case "set", "clear", "restore":
             .mutation
         default:
             .none

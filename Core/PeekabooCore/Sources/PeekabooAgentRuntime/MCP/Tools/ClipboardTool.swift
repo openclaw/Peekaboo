@@ -15,12 +15,11 @@ public struct ClipboardTool: MCPTool {
 
     public var description: String {
         """
-        Work with the macOS clipboard (pasteboard). Actions: get, set, clear, save, restore, load.
+        Work with the macOS clipboard (pasteboard). Actions: get, set, clear, save, restore.
         - get: read the clipboard; optionally prefer a UTI and/or write binary data to a file.
         - set: write text, file, image, or base64+UTI data to the clipboard (optionally also set plain text).
         - clear: empty the clipboard.
         - save/restore: snapshot and restore clipboard contents to/from a named slot (default slot \"0\").
-        - load: convenience alias for set when loading from a file path.
         """
     }
 
@@ -29,12 +28,11 @@ public struct ClipboardTool: MCPTool {
             properties: [
                 "action": SchemaBuilder.string(
                     description: "Action to perform",
-                    enum: ["get", "set", "clear", "save", "restore", "load"]),
+                    enum: ["get", "set", "clear", "save", "restore"]),
                 "text": SchemaBuilder.string(description: "Plain text to set on the clipboard"),
-                "filePath": SchemaBuilder.string(description: "Path to a file to copy (binary or text)"),
-                "imagePath": SchemaBuilder.string(description: "Path to an image file to copy"),
-                "dataBase64": SchemaBuilder.string(description: "Base64-encoded data to copy"),
-                "uti": SchemaBuilder.string(description: "Uniform Type Identifier for dataBase64 or to force type"),
+                "file_path": SchemaBuilder.string(description: "Path to a file to copy (binary or text)"),
+                "data_base64": SchemaBuilder.string(description: "Base64-encoded data to copy"),
+                "uti": SchemaBuilder.string(description: "Uniform Type Identifier for data_base64 or to force type"),
                 "prefer": SchemaBuilder.string(description: "Preferred UTI when reading clipboard"),
                 "outputPath": SchemaBuilder
                     .string(description: "When reading, path to write binary data. Use '-' for stdout."),
@@ -63,8 +61,6 @@ public struct ClipboardTool: MCPTool {
                 return try self.handleSave(arguments: arguments)
             case "restore":
                 return try self.handleRestore(arguments: arguments)
-            case "load":
-                return try self.handleLoad(arguments: arguments)
             default:
                 return ToolResponse.error("Invalid action: \(action)")
             }
@@ -113,12 +109,6 @@ public struct ClipboardTool: MCPTool {
     }
 
     @MainActor
-    private func handleLoad(arguments: ToolArguments) throws -> ToolResponse {
-        // Alias for set; validation occurs in makeWriteRequest.
-        try self.handleSet(arguments: arguments)
-    }
-
-    @MainActor
     private func handleClear() -> ToolResponse {
         self.context.clipboard.clear()
         return ToolResponse.text("Cleared clipboard.")
@@ -150,7 +140,7 @@ public struct ClipboardTool: MCPTool {
                 allowLarge: arguments.getBool("allowLarge") ?? false)
         }
 
-        if let filePath = arguments.getString("filePath") ?? arguments.getString("imagePath") {
+        if let filePath = arguments.getString("file_path") {
             let url = ClipboardPathResolver.fileURL(from: filePath)
             let data = try Data(contentsOf: url)
             let uti = UTType(filenameExtension: url.pathExtension) ?? .data
@@ -161,7 +151,7 @@ public struct ClipboardTool: MCPTool {
                 allowLarge: arguments.getBool("allowLarge") ?? false)
         }
 
-        if let b64 = arguments.getString("dataBase64"), let utiId = arguments.getString("uti") {
+        if let b64 = arguments.getString("data_base64"), let utiId = arguments.getString("uti") {
             return try ClipboardPayloadBuilder.base64Request(
                 base64: b64,
                 utiIdentifier: utiId,
@@ -170,7 +160,7 @@ public struct ClipboardTool: MCPTool {
         }
 
         throw ClipboardServiceError.writeFailed(
-            "Provide text, filePath/imagePath, or dataBase64+uti to set the clipboard.")
+            "Provide text, file_path, or data_base64+uti to set the clipboard.")
     }
 
     private func meta(result: ClipboardReadResult, filePath: String?, extra: [String: Value] = [:]) -> Value {
