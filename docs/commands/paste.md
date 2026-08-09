@@ -56,6 +56,6 @@ peekaboo paste "Hello" --app TextEdit --foreground
 - After Cmd+V dispatch begins, cancellation or a delivery error is indeterminate. Peekaboo reports that the target may have pasted and marks retry unsafe; inspect fresh UI state rather than replaying the paste.
 
 ## Troubleshooting
-- Verify Screen Recording + Accessibility permissions (`peekaboo permissions status`). Background paste also requires Event Synthesizing access for the sending process; request it with `peekaboo permissions request-event-synthesizing`.
+- Verify Screen Recording + Accessibility permissions (`peekaboo permissions status`). Background paste also requires Event Synthesizing access for the sending process; request it with `peekaboo permissions request event-synthesizing`.
 - Confirm your target with `peekaboo app list`, `peekaboo window list`, or `peekaboo see` before rerunning.
 - Re-run with `--json` or `--verbose` to surface detailed errors.

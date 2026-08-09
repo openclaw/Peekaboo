@@ -10,13 +10,13 @@ read_when:
 Peekaboo ships one `clipboard` domain in the CLI and MCP server for text, images, files, and raw pasteboard data. Both surfaces call the shared `ClipboardService` in `PeekabooAutomationKit`.
 
 ## User-facing behaviors
-- Actions: `get`, `set`, `clear`, `save`, `restore`, `load`.
+- CLI subcommands and MCP actions: `get`, `set`, `clear`, `save`, `restore`.
 - Text: read and write UTF-8 text; `--also-text` adds a plain-text companion to binary data.
 - Files and images: infer the UTI from the file extension and write the file bytes to the pasteboard.
 - Raw data: accept base64 plus an explicit UTI.
 - Slots: `save` and `restore` snapshot all available pasteboard representations. The default slot is `0`; named slots use dedicated macOS pasteboards so separate CLI invocations can restore them.
 - Size guard: block writes over 10 MB unless `--allow-large` is set. The limit includes all representations and companion text.
-- Verification: CLI `set` and `load` support `--verify`, which reads each supported representation back and compares it with the requested payload.
+- Verification: CLI `set` supports `--verify`, which reads each supported representation back and compares it with the requested payload.
 
 ## CLI syntax (`peekaboo clipboard …`)
 - `get [--prefer <uti>] [--output <path|->] [--json-output]`
@@ -25,17 +25,14 @@ Peekaboo ships one `clipboard` domain in the CLI and MCP server for text, images
 - `clear`
 - `save [--slot <name>]`
 - `restore [--slot <name>]`
-- `load --file-path <path> [--allow-large] [--verify]`
-
-The action may be positional or supplied with `--action`, but conflicting values are rejected.
 
 ## MCP schema
 - Tool name: `clipboard`
-- Required parameter: `action` with `get | set | clear | save | restore | load`.
-- Optional parameters: `text`, `filePath`, `imagePath`, `dataBase64`, `uti`, `prefer`, `outputPath`, `slot`, `alsoText`, and `allowLarge`.
+- Required parameter: `action` with `get | set | clear | save | restore`.
+- Optional parameters: `text`, `file_path`, `data_base64`, `uti`, `prefer`, `outputPath`, `slot`, `alsoText`, and `allowLarge`.
 - Results use normal MCP text responses plus metadata such as `uti`, `size`, `textPreview`, `filePath`, and `slot` when available.
 
-The MCP surface does not expose the CLI-only `--verify` readback option. `load` is an alias for setting data from `filePath` or `imagePath`.
+The MCP surface does not expose the CLI-only `--verify` readback option.
 
 ## Implementation
 - `ClipboardService` wraps `NSPasteboard`, applies the size limit, and owns slot save/restore.

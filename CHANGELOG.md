@@ -7,8 +7,10 @@
 - Show recently automated app icons beside Peekaboo in the menu bar, with a settings toggle.
 - Add distinct background app instances and exact WindowServer readiness/ID receipts to app launch and open workflows.
 - Add native exact-window background pixel right- and double-clicks with per-event owner/generation validation, generation-safe mouse-up cleanup, no cursor movement or activation, and explicit unverifiable-effect reporting.
+- Add `app focus` and positional app targets across quit, relaunch, hide, unhide, and switch while rejecting conflicting positional/flag targets (v4 breaking change).
 
 ### Changed
+- Convert clipboard and menubar actions, agent modes, permission requests, and flat config provider/credential operations into real nested subcommands (v4 breaking change).
 - Add `app launch --wait-ready` and repeatable `--open` targets as the surviving launch/open surface (v4 breaking change).
 - Redesign automation feedback around a natural agent cursor, a quiet target-window input HUD, and capture borders, suppressing window feedback whenever its target is not visibly active.
 - Add rich formatter coverage for every current MCP and agent tool, and remove the non-functional agent `--realtime` flag.
@@ -19,6 +21,7 @@
 - Add strict bridge 1.11 capabilities for background scrolling, dialog buttons, and window close so stale hosts fail before unsafe fallback dispatch.
 
 ### Removed
+- Remove clipboard `-a`/`--action`, the duplicate clipboard `load` action, flat config provider/credential spellings, agent mode flags, and the three compound permission-request command names; ClipboardTool payload parameters are now `file_path` and `data_base64` with no image-path alias (v4 breaking change).
 - Remove the CLI `sleep`, `open`, `run`, `commander`, and root `list` commands; remove `capture watch`, `menu click-extra`, `menu list-all`, and `agent permission` aliases/subtrees (v4 breaking change).
 - Remove CLI flag aliases `--id`, `--image-path`, and `--app-target`; Commander’s submodule-owned `--json-output` alias remains (v4 breaking change).
 - Remove `.peekaboo.json` script loading/execution and its ProcessService command model (v4 breaking change).

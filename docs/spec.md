@@ -117,7 +117,7 @@ Common helpers:
 
 ### 7.1 `peekaboo agent`
 - Lives under `Apps/CLI/Sources/PeekabooCLI/Commands/AI/AgentCommand.swift`.
-- Supports natural-language tasks, `--dry-run`, `--max-steps`, `--resume` / `--resume-session`, `--list-sessions`, `--no-cache`, and audio options.
+- Supports `agent run`, `agent resume [session-id]`, `agent sessions`, `agent chat`, `--dry-run`, `--max-steps`, `--no-cache`, and audio options.
 - Output modes (`minimal`, `compact`, `enhanced`, `quiet`, `verbose`) adapt to terminal capabilities via `TerminalDetector`.
 - Uses Tachikoma to call GPT-5.5, Claude Fable 5/Opus 4.8, or Gemini 3.1. Session metadata is stored via `AgentSessionInfo` for resume flows.
 

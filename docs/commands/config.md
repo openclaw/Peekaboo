@@ -16,24 +16,23 @@ read_when:
 | `show` | Print either the raw file or the fully merged “effective” view (config + env + credentials); human `--effective` also live-validates providers. | `--effective` switches to the merged view; `--timeout` (sec) bounds validation; JSON mode emits a standard `{ success, data }` object with no appended text. |
 | `edit` | Opens the config in `$EDITOR` (or the `--editor` you pass) and validates the result after you quit. | `--editor` overrides the detected editor. |
 | `validate` | Parses the config without writing anything and surfaces syntax/errors. | None. |
-| `add` | Store a provider credential and validate it immediately. | `add openai|anthropic|grok|gemini|openrouter <secret>`; `--timeout` (sec, default 30). |
 | `status` | Display provider credential readiness. | `--timeout` (sec, default 30). |
 | `login` | Run an OAuth flow (no API key stored) for supported providers. | `login openai` (ChatGPT/Codex), `login anthropic` (Claude Pro/Max). |
-| `set-credential` | Legacy alias for `add <key> <value>`. | Positional `<key> <value>` pair. |
-| `add-provider` | Append or replace a custom AI provider entry. | Positional `<provider-id>` plus `--type openai|anthropic`, `--name`, `--base-url`, `--api-key`, `--headers key:value,…`, `--description`, `--force`, `--dry-run`. |
-| `list-providers` | Dump built-in + custom providers plus whether they’re enabled. | `--json` follows the same schema that the runtime loads. |
-| `test-provider` | Fires a quick `/models` request (or Anthropic equivalent) against the provider definition to make sure credentials/base URL are valid. | Positional `<provider-id>`. |
-| `remove-provider` | Delete a custom provider entry. | Positional `<provider-id>` plus optional `--force` and `--dry-run`. |
-| `models-provider` | List configured models offline, or query an OpenAI-compatible provider with `--discover`. | Positional `<provider-id>` plus optional `--discover` and `--save`. |
+| `credential set` | Validate and store a known provider credential, or store a raw credential key. | `credential set openai <secret>` validates; `credential set OPENAI_API_KEY <value>` stores raw. `--timeout` bounds validation. |
+| `provider add` | Append or replace a custom AI provider entry. | Positional `<provider-id>` plus `--type openai|anthropic`, `--name`, `--base-url`, `--api-key`, `--headers key:value,…`, `--description`, `--force`, `--dry-run`. |
+| `provider list` | Dump configured custom providers plus whether they’re enabled. | `--json` follows the same schema that the runtime loads. |
+| `provider test` | Test the configured endpoint and credentials. | Positional `<provider-id>`. |
+| `provider remove` | Delete a custom provider entry. | Positional `<provider-id>` plus optional `--force` and `--dry-run`. |
+| `provider models` | List configured models offline, or query an OpenAI-compatible provider with `--discover`. | Positional `<provider-id>` plus optional `--discover` and `--save`. |
 
 ## Implementation notes
 - The underlying auth/config plumbing lives in the shared Tachikoma library and the `tachikoma config` CLI; Peekaboo sets `TachikomaConfiguration.profileDirectoryName = ".peekaboo"` so both tools read/write the same `~/.peekaboo/credentials` without copying environment variables.
 - Configuration files are JSON-with-comments: the loader strips `//` / `/* */` comments and interpolates `${VAR}` placeholders before merging with credentials and environment variables (same logic the CLI uses on startup).
-- `add`/`login`/`set-credential` write through `ConfigurationManager.shared`, so they use macOS file permissions + atomic temp-file renames; partial writes won’t corrupt the store even if the process crashes.
+- `credential set` and `login` write through the shared configuration/auth managers, using macOS file permissions and atomic temp-file renames.
 - Provider readiness in human `init`/`show --effective` output is live-validated with per-provider pings (OpenAI/Codex, Anthropic, Grok/xai, Gemini, OpenRouter). Timeouts default to 30s and are caller overridable. JSON mode skips appended readiness text so stdout remains parseable.
 - Provider management commands share the same validation helpers: IDs must match `^[A-Za-z0-9-_]+$`, and provider types are limited to `.openai` or `.anthropic`. Headers passed via `--headers KEY:VALUE,…` are parsed into a `[String:String]` dictionary before being serialized back to disk.
-- `test-provider` contacts the actual endpoint (respecting proxy, TLS, and custom headers). `models-provider` reads configured models without a network request unless `--discover` is passed; discovery queries an OpenAI-compatible provider's remote model list and reports endpoint errors or timeouts.
-- `models-provider --save` preserves existing model capabilities and saves newly discovered models with `supportsTools: false`; enable tool calling in `config.json` only after verifying the endpoint supports it.
+- `provider test` contacts the actual endpoint (respecting proxy, TLS, and custom headers). `provider models` reads configured models without a network request unless `--discover` is passed.
+- `provider models --save` preserves existing model capabilities and saves newly discovered models with `supportsTools: false`; enable tool calling in `config.json` only after verifying the endpoint supports it.
 - All subcommands are `RuntimeOptionsConfigurable`, so global `--json` or `--verbose` flags work uniformly (handy when you script config changes).
 
 ## Examples
@@ -43,29 +42,29 @@ peekaboo config init --force
 peekaboo config show --effective
 
 # Add and validate an OpenRouter key
-peekaboo config add openrouter sk-or-v1-...
+peekaboo config credential set openrouter sk-or-v1-...
 peekaboo agent --model openrouter/xiaomi/mimo-v2.5-pro "summarize this window"
 
 # Add and validate keys (stores even if validation fails; warns on failure)
-peekaboo config add openai sk-live-...
-peekaboo config add anthropic sk-ant-...
-peekaboo config add grok xai-...
-peekaboo config add gemini ya29...
-peekaboo config add openrouter sk-or-v1-...
+peekaboo config credential set openai sk-live-...
+peekaboo config credential set anthropic sk-ant-...
+peekaboo config credential set grok xai-...
+peekaboo config credential set gemini ya29...
+peekaboo config credential set openrouter sk-or-v1-...
 
 # OAuth logins (no API key stored)
 peekaboo config login openai
 peekaboo config login anthropic
 
 # Manage a custom OpenAI-compatible endpoint
-peekaboo config add-provider local-ollama \
+peekaboo config provider add local-ollama \
   --type openai \
   --name "Local Ollama" \
   --base-url "http://localhost:11434/v1" \
   --api-key "dummy-key"
-peekaboo config test-provider local-ollama
-peekaboo config models-provider local-ollama --discover --save
-peekaboo config remove-provider local-ollama --force
+peekaboo config provider test local-ollama
+peekaboo config provider models local-ollama --discover --save
+peekaboo config provider remove local-ollama --force
 ```
 
 ## Troubleshooting

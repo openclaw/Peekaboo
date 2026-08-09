@@ -33,7 +33,7 @@ These flows avoid storing API keys and instead keep refresh/access tokens in `~/
 ## Validating connectivity
 
 - `peekaboo config show --timeout 30` pings each configured provider and reports status (`ready (validated)`, `stored (validation failed: <reason>)`, `missing`).
-- `peekaboo config add <provider> <secret>` validates immediately; failures are stored but warned.
+- `peekaboo config credential set <provider> <secret>` validates immediately; failures are stored but warned.
 
 ## Revoking access
 

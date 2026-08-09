@@ -114,7 +114,7 @@ Use cases:
 
 Currently, keyboard commands use background delivery by default when `--app`, `--pid`, or supported snapshot process metadata identifies a live process. Window selectors require `--foreground`; process-targeted keyboard events cannot prove which window owns the process's focused element. Background click can preserve an exact window/element target.
 
-Background delivery is a delivery mode, not a focus mode. It cannot be combined with foreground focus timeout, retry, or Space-switching flags. Background element/query/coordinate clicks and targeted scroll use Accessibility. Keyboard delivery and foreground synthetic pointer operations require Event Synthesizing; `peekaboo permissions request-event-synthesizing` requests it for the selected bridge host by default, or for the local CLI with `--no-remote`.
+Background delivery is a delivery mode, not a focus mode. It cannot be combined with foreground focus timeout, retry, or Space-switching flags. Background element/query/coordinate clicks and targeted scroll use Accessibility. Keyboard delivery and foreground synthetic pointer operations require Event Synthesizing; `peekaboo permissions request event-synthesizing` requests it for the selected bridge host by default, or for the local CLI with `--no-remote`.
 
 ### `--focus-timeout-seconds <seconds>`
 Sets how long to wait for focus operations (default: 5.0).

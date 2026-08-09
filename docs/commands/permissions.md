@@ -14,9 +14,7 @@ read_when:
 | --- | --- |
 | `status` (default) | Fetches the current permission set and prints each entry (`granted`, `denied`, etc.). Honors `--json` so agents can block proactively. Add `--all-sources` to compare Bridge and local CLI permissions side by side. |
 | `grant` | Reuses the same snapshot but focuses on remediation: when in text mode it prints the exact System Settings pane/location for each missing entitlement. |
-| `request-screen-recording` | Triggers the macOS Screen Recording prompt for the local Peekaboo process. If macOS has already recorded a denial or stale entry, it prints the manual System Settings path instead. |
-| `request-accessibility` | Triggers the macOS Accessibility prompt for the local Peekaboo process. |
-| `request-event-synthesizing` | Triggers the macOS Event Synthesizing prompt needed by background keyboard input and foreground synthetic pointer operations. Background element/query/coordinate clicks use Accessibility. With the default remote runtime it requests the permission for the selected bridge host; use `--no-remote` to request it for the local CLI process. |
+| `request <kind>` | Request `accessibility`, `screen-recording`, or `event-synthesizing`. Screen Recording and Accessibility target the local process; Event Synthesizing follows runtime routing unless `--no-remote` is used. |
 
 ## Implementation notes
 - All subcommands conform to `RuntimeOptionsConfigurable`, so they inherit global `--json`/`--verbose` flags even when invoked from compound commands like `peekaboo learn`.
@@ -39,13 +37,13 @@ peekaboo permissions status --all-sources
 peekaboo permissions grant
 
 # Request Screen Recording for the local Peekaboo binary
-peekaboo permissions request-screen-recording
+peekaboo permissions request screen-recording
 
 # Request Accessibility for the local Peekaboo binary
-peekaboo permissions request-accessibility
+peekaboo permissions request accessibility
 
 # Request Event Synthesizing for background input
-peekaboo permissions request-event-synthesizing
+peekaboo permissions request event-synthesizing
 ```
 
 ## Troubleshooting
@@ -57,6 +55,6 @@ peekaboo permissions request-event-synthesizing
   Aqua GUI session and already has permission. SSH, LaunchAgent, Codex, and other background launchd sessions can
   still return wallpaper-only pixels despite TCC grants, so prefer Bridge there.
 - Treat `image --capture-engine` as a local-debug override: it disables Bridge selection for that capture command.
-- If capture returns a blank desktop, wallpaper, or no windows while `permissions status` reports Screen Recording as denied, run `peekaboo permissions request-screen-recording` and then restart the affected Peekaboo process. Homebrew upgrades can move the CLI to a new Cellar path, so confirm the enabled System Settings row belongs to the current binary.
+- If capture returns a blank desktop, wallpaper, or no windows while `permissions status` reports Screen Recording as denied, run `peekaboo permissions request screen-recording` and then restart the affected Peekaboo process. Homebrew upgrades can move the CLI to a new Cellar path, so confirm the enabled System Settings row belongs to the current binary.
 - Confirm your target with `peekaboo app list`, `peekaboo window list`, or `peekaboo see` before rerunning.
 - Re-run with `--json` or `--verbose` to surface detailed errors.

@@ -19,9 +19,9 @@ Use `peekaboo <command> --help` for inline flag descriptions; this page links to
 - [`tools`](commands/tools.md) – List the MCP/agent tool catalog; supports `--verbose` and `--json`.
 - [`completions`](commands/completions.md) – Generate shell-native completions for zsh, bash, and fish from Commander metadata.
 - [`clean`](commands/clean.md) – Remove snapshot caches by ID, age, or all at once (`--dry-run` supported).
-- [`config`](commands/config.md) – Subcommands: `init`, `show`, `status`, `edit`, `validate`, `add`, `login`, `set-credential` (legacy), `add-provider`, `list-providers`, `test-provider`, `remove-provider`, `models-provider`.
+- [`config`](commands/config.md) – `init`, `show`, `edit`, `validate`, `status`, `login`, plus `provider add|remove|list|test|models` and `credential set`.
 - [`daemon`](commands/daemon.md) – Start/stop/status for the headless daemon (live window tracking, in-memory snapshots).
-- [`permissions`](commands/permissions.md) – `status` (default), `grant`, and Event Synthesizing request helpers.
+- [`permissions`](commands/permissions.md) – `status` (default), `grant`, and `request accessibility|screen-recording|event-synthesizing`.
 - [`learn`](commands/learn.md) – Print the complete agent guide (system prompt, tool catalog, Commander signatures).
 
 ## Interaction
@@ -42,14 +42,14 @@ Use `peekaboo <command> --help` for inline flag descriptions; this page links to
 - [`space`](commands/space.md) – `list`, `switch`, `move-window` for Spaces/virtual desktops.
 - [`menu`](commands/menu.md) – `click` and `list` for application menus.
 - [`menubar`](commands/menubar.md) – `list` and `click` status-bar icons by name or index.
-- [`app`](commands/app.md) – `launch`, `quit`, `relaunch`, `hide`, `unhide`, `switch`, `list`; launch accepts repeatable `--open <url|path>` arguments and `--wait-ready`.
+- [`app`](commands/app.md) – `launch`, `quit`, `relaunch`, `hide`, `unhide`, `switch`, `focus`, `list`; lifecycle targets accept a positional app or their named flag.
 - [`dock`](commands/dock.md) – `launch`, `right-click`, `hide`, `show`, `list` Dock items.
 - [`dialog`](commands/dialog.md) – `click`, `input`, `file`, `dismiss`, `list` system dialogs.
 - [`visualizer`](commands/visualizer.md) – Run the built-in visual feedback smoke suite (fires screenshot flash, capture HUD, cursor click, menu highlights, etc.) to verify Peekaboo.app overlays.
 
 ## Automation & Integrations
 
-- [`agent`](commands/agent.md) – Natural-language automation with dry-run planning, resume, audio modes, and model overrides.
+- [`agent`](commands/agent.md) – `run` (default), `resume`, `sessions`, and `chat`, with dry-run planning, audio modes, and model overrides.
 - [`browser`](browser-mcp.md) – Dedicated CLI wrapper for the browser MCP tool: Chrome page status/connect/navigation/snapshot/click/fill/type/console/network/screenshot/trace.
 - `inspect-ui` – Dedicated CLI wrapper for the `inspect_ui` MCP tool, useful for accessibility-tree text/control inspection without screenshots.
 - [`mcp`](commands/mcp.md) – Run Peekaboo's MCP server; `serve` is the only subcommand and stdio is the implemented transport.

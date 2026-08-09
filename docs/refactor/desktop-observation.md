@@ -265,7 +265,7 @@ Landed:
 - `peekaboo capture video` is split out of the primary capture command file.
 - `peekaboo agent permission` status and request flows are split into focused companion files.
 - `peekaboo agent permission ...` now resolves as nested permission subcommands before the agent free-form task argument.
-- Interactive `peekaboo agent --chat` TUI code now keeps chat shell, input/loader components, and event translation in focused files.
+- Interactive `peekaboo agent chat` TUI code now keeps chat shell, input/loader components, and event translation in focused files.
 
 Current status:
 

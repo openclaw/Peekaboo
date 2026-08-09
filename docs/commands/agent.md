@@ -9,23 +9,23 @@ read_when:
 
 `agent` hands a natural-language task to `PeekabooAgentService`, which in turn orchestrates the full toolset (see, click, type, menu, etc.). The command handles session caching, terminal capability detection, progress spinners, and audio capture so you can run the exact same agent loop the macOS app uses.
 
-## Key options
-| Flag | Description |
+## Subcommands and options
+| Command or flag | Description |
 | --- | --- |
-| `[task]` | Optional free-form task description. Required unless you pass `--resume`/`--resume-session`. |
-| `--chat` | Force the interactive chat loop even when stdin/stdout are not TTYs. |
+| `run [task]` | Run a task. `run` is the default, so `peekaboo agent "task"` remains valid. |
+| `resume [session-id]` | Resume the most recent session, or the specified session, in chat mode. |
+| `sessions` | Print cached sessions; accepts only the global `--json` output switch. |
+| `chat [initial-prompt]` | Start the interactive chat loop. |
 | `--dry-run` | Validate and echo the task without calling a model, invoking tools, or creating a session. |
 | `--max-steps <n>` | Cap model turns to `1...100` (default: 100). One turn may contain multiple tool calls. |
 | `--model gpt-5.6|gpt-5.5|claude-fable-5|claude-sonnet-5|gemini-3-flash|minimax|minimax-cn/<model>|openrouter/<provider>/<model>|ollama/<model>|lmstudio/<model>` | Override the default model (`gpt-5.5`). Input is validated against supported hosted providers and local model providers. |
-| `--resume` / `--resume-session <id>` | Continue the most recent session or a specific session ID. |
-| `--list-sessions` | Print cached sessions (id, task, timestamps, message count) instead of running anything. |
 | `--no-cache` | Run ephemerally without saving a resumable session. Cannot be combined with resume/list flags. |
 | `--quiet` / `--simple` / `--no-color` / `--debug-terminal` | Control output mode; the command auto-detects terminal capabilities when you don’t override it. |
 | `--audio` / `--audio-file <path>` | Use microphone input or pipe audio from disk. |
 
 ## Implementation notes
 - The command resolves output “modes” (`minimal`, `compact`, `enhanced`, `quiet`, `verbose`) using terminal detection heuristics; `--simple` and `--no-color` force minimal mode, while `--quiet` suppresses progress output entirely.
-- Session metadata lives inside `agentService` (PeekabooCore). `--resume` grabs the most recent session, `--list-sessions` prints the cached list, and `--no-cache` keeps the run in memory without writing an initial, final, failed, or cancelled checkpoint.
+- Session metadata lives inside `agentService` (PeekabooCore). `agent resume` grabs the most recent session, `agent sessions` prints the cached list, and `--no-cache` keeps a run in memory.
 - Agent execution stays in the caller process by default. Pass the global `--bridge-socket <path>` option to route its tools through one specific Bridge host; `--no-remote` keeps the run strictly caller-local.
 - All agent executions run under `CommandRuntime.makeDefault()`, so environment variables, credentials, and logging levels match the top-level CLI state.
 - `--dry-run` is a zero-provider task preview: it echoes the task without model reasoning, tool calls, or a resumable session.
@@ -63,14 +63,14 @@ the legacy boolean, and report `retry_safe: false` so clients do not replay a mu
 
 Peekaboo now ships a dependency-free interactive chat loop described in detail in `docs/agent-chat.md`. Key behaviors:
 
-- Running `peekaboo agent` without a task automatically enters chat mode when stdout is a TTY. A taskless `--resume` / `--resume-session` also enters chat so piped prompts can continue the saved session; other non-interactive invocations print the chat help menu instead of hanging.
-- `--chat` forces the loop even when piped or redirected, making it easy for other agents to seed prompts programmatically.
+- Running `peekaboo agent` without a task automatically enters chat mode when stdout is a TTY. `agent resume [session-id]` also enters chat so piped prompts can continue the saved session.
+- `agent chat` forces the loop even when piped or redirected, making it easy for other agents to seed prompts programmatically.
 - `/help` is available inside the loop at any time and is printed the moment the loop starts. `/help` is also mentioned in the initial “Type /help…” banner so operators know what to do.
 - Pressing `Esc` during an active turn cancels the run immediately and brings you back to the prompt; Ctrl+C still works as a fallback.
-- Chat sessions reuse context via the same agent session cache. Supplying `--resume` / `--resume-session <id>` before `--chat` hooks the loop into an existing conversation.
+- Chat sessions reuse context via the same agent session cache; use `agent resume [session-id]` to hook the loop into an existing conversation.
 - Ctrl+C cancels the current turn; pressing it again (while idle) exits the loop. Ctrl+D exits when idle.
 
-For automation flows that cannot attach to a TTY, pass both `--chat` and standard input (e.g., echoing prompts line-by-line). Automatic taskless session resumes also consume standard input and exit nonzero when a resumed turn fails; explicit `--chat` keeps the loop alive. Without `--chat` or a taskless resume, a non-interactive invocation simply prints the chat help instructions and exits so jobs don’t hang.
+For automation flows that cannot attach to a TTY, use `agent chat` with standard input. Session resumes also consume standard input and exit nonzero when a resumed turn fails; explicit `agent chat` keeps the loop alive.
 
 ## Examples
 ```bash
@@ -92,8 +92,11 @@ peekaboo agent "Check the current window" --model openrouter/xiaomi/mimo-v2.5-pr
 # Dry-run the same task without executing any tools
 peekaboo agent "Install the nightly build" --dry-run
 
-# Resume the last session with a one-shot continuation and quiet output
-peekaboo agent --resume "Continue the task" --quiet
+# Resume the most recent session
+peekaboo agent resume
+
+# List cached sessions as JSON
+peekaboo agent sessions --json
 ```
 
 ## Troubleshooting

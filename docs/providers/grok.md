@@ -619,7 +619,7 @@ Once implemented, Grok can be used like this:
 
 ```bash
 # Set API key
-./peekaboo config set-credential X_AI_API_KEY xai-...
+./peekaboo config credential set X_AI_API_KEY xai-...
 
 # Use Grok 4.3 (default)
 ./peekaboo agent "analyze this code" --model grok-4.3

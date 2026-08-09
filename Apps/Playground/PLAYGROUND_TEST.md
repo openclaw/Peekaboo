@@ -20,7 +20,7 @@
   - Drag: `peekaboo drag --from elem_8 --to elem_21 --snapshot <id> --duration 500 --steps 20` logged Item A dragging, hover over zones, and drop in zone3.
   - Swipe: `peekaboo swipe --from elem_112 --to elem_116 --snapshot <id> --duration 500 --steps 18` logged `Swipe right`.
   - Dialog: opened the Dialog Fixture with `peekaboo hotkey --keys "cmd,ctrl,8"`, clicked `Show Alert`, `peekaboo dialog list --app boo.peekaboo.playground.debug --json`, then `peekaboo dialog click --button OK --app boo.peekaboo.playground.debug --json`. Logs confirmed alert dismissal.
-  - Clipboard: `peekaboo clipboard --action save --slot codex-live-verify`, set/get/verify text, then `restore` returned the prior clipboard payload.
+  - Clipboard: `peekaboo clipboard save --slot codex-live-verify`, set/get/verify text, then `restore` returned the prior clipboard payload.
 - **Performance sample**:
   - `Apps/Playground/scripts/peekaboo-perf.sh --name list-windows-playground --runs 8 --log-root .artifacts/live-verify/perf --bin ./Apps/CLI/.build/debug/peekaboo -- list windows --app boo.peekaboo.playground.debug --json-output`: mean wall `0.232s`, p95 `0.275s`, no failures.
   - `Apps/Playground/scripts/peekaboo-perf.sh --name see-click-fixture --runs 6 --log-root .artifacts/live-verify/perf --bin ./Apps/CLI/.build/debug/peekaboo -- see --app boo.peekaboo.playground.debug --window-title "Click Fixture" --json-output`: mean wall `1.165s`, p95 `1.254s`, no failures.
@@ -104,11 +104,11 @@
   - Commander binder now maps `--file-path`/`--image-path`/`--data-base64`/`--also-text` correctly for `peekaboo clipboard`.
   - `clipboard save/restore` now persists across separate CLI invocations in local mode by storing the slot in a dedicated named pasteboard; `restore` clears the slot afterward.
 - **Commands**:
-  1. `polter peekaboo -- clipboard --action save --slot original --json-output`
-  2. `polter peekaboo -- clipboard --action set --file-path /tmp/peekaboo-clipboard-smoke.txt --json-output`
-  3. `polter peekaboo -- clipboard --action set --image-path assets/peekaboo.png --also-text "Peekaboo clipboard image smoke" --json-output`
-  4. `polter peekaboo -- clipboard --action get --prefer public.png --output /tmp/peekaboo-clipboard-out.png --json-output`
-  5. `polter peekaboo -- clipboard --action restore --slot original --json-output`
+  1. `polter peekaboo -- clipboard save --slot original --json`
+  2. `polter peekaboo -- clipboard set --file-path /tmp/peekaboo-clipboard-smoke.txt --json`
+  3. `polter peekaboo -- clipboard set --file-path assets/peekaboo.png --also-text "Peekaboo clipboard image smoke" --json`
+  4. `polter peekaboo -- clipboard get --prefer public.png --output /tmp/peekaboo-clipboard-out.png --json`
+  5. `polter peekaboo -- clipboard restore --slot original --json`
 - **Artifacts**: `.artifacts/playground-tools/20251217-192349-clipboard-{save-original,set-file,get-file-text,set-image,get-image,restore-original}.json`
 - **Result**: Exported `/tmp/peekaboo-clipboard-out.png` is non-empty, and the final restore returns the user clipboard to its pre-test state.
 
@@ -560,7 +560,7 @@
 
 ### ✅ `agent` command – list + sample tasks
 - **Commands**:
-  1. `polter peekaboo -- agent --list-sessions --json-output > .artifacts/playground-tools/20251116-091814-agent-list.json`
+  1. `polter peekaboo -- agent sessions --json > .artifacts/playground-tools/20251116-091814-agent-list.json`
   2. `polter peekaboo -- agent "Say hi" --max-steps 1 --json-output > .artifacts/playground-tools/20251116-091820-agent-hi.json`
   3. `polter peekaboo -- agent "Summarize the Playground UI" --dry-run --max-steps 2 --json-output > .artifacts/playground-tools/20251116-091831-agent-toolbar.json`
 - **Verification**: `.artifacts/playground-tools/20251116-091839-agent.log` shows `[Agent]` entries for both tasks (model, duration, dry-run flag). Outputs confirm the CLI returns structured responses and respects `--dry-run` / `--max-steps`.

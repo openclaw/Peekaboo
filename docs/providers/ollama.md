@@ -65,13 +65,13 @@ Ollama also exposes an OpenAI-compatible endpoint at `/v1`. Use that route only 
 or when a custom-provider workflow requires it:
 
 ```bash
-peekaboo config add-provider ollama-openai \
+peekaboo config provider add ollama-openai \
   --type openai \
   --name "Ollama via OpenAI compatibility" \
   --base-url "http://localhost:11434/v1" \
   --api-key "dummy-key"
 
-peekaboo config models-provider ollama-openai --discover --save
+peekaboo config provider models ollama-openai --discover --save
 ```
 
 Newly discovered custom-provider models are saved with `supportsTools: false`. After verifying that the selected

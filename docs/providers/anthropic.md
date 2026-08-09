@@ -31,7 +31,7 @@ peekaboo agent --model claude-sonnet-5 "inspect this app and summarize its workf
 ## Credentials
 
 ```bash
-peekaboo config add anthropic sk-ant-...
+peekaboo config credential set anthropic sk-ant-...
 # or
 peekaboo config login anthropic
 ```

@@ -440,7 +440,7 @@ Configuration locations:
   - Uses JSONC format with comment support
 
 **Parameter Observations**:
-- Clear subcommands (init, show, edit, validate, set-credential)
+- Clear subcommands (`init`, `show`, `edit`, `validate`, `credential set`)
 - Proper separation of config and credentials
 - Environment variable expansion support
 
@@ -478,8 +478,8 @@ Uses OpenAI Chat Completions API to break down and execute complex automation ta
   - **Note**: Model configuration warning appears when PEEKABOO_AI_PROVIDERS differs from config.json
 
 **Key Features**:
-- Resume sessions with --resume or --resume-session
-- List available sessions with --list-sessions
+- Resume sessions with `agent resume [session-id]`
+- List available sessions with `agent sessions`
 - Dry-run mode for testing
 - Max steps limit for safety
 

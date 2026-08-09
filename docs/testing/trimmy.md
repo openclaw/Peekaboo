@@ -18,8 +18,8 @@ Goal: Validate Trimmy’s clipboard flattening with direct `peekaboo clipboard` 
 
 ## Manual Steps
 1) Auto-Trim ON (baseline)  
-   - `peekaboo clipboard --action set --text "ls \\\n | wc -l\n"`  
-   - Wait ~0.3s; `peekaboo clipboard --action get` → expect `ls | wc -l`.
+   - `peekaboo clipboard set --text "ls \\\n | wc -l\n"`
+   - Wait ~0.3s; `peekaboo clipboard get` → expect `ls | wc -l`.
 
 2) Auto-Trim OFF path  
    - `peekaboo menubar click --index <idx>` → `peekaboo click "Auto-Trim"` (toggle off).  
@@ -50,19 +50,19 @@ Goal: Validate Trimmy’s clipboard flattening with direct `peekaboo clipboard` 
    - Frontmost TextEdit: `open -a TextEdit`.  
    - Seed multi-line command.  
    - Menubar click → “Paste Trimmed to TextEdit”; verify via `osascript -e 'tell app "TextEdit" to get text of document 1'`.  
-   - Menubar click → “Paste Original …”; verify untrimmed text and clipboard restored (`peekaboo clipboard --action get` matches original).
+   - Menubar click → “Paste Original …”; verify untrimmed text and clipboard restored (`peekaboo clipboard get` matches original).
 
 9) Clipboard slots  
-   - `peekaboo clipboard --action save --slot original`  
-   - `peekaboo clipboard --action set --text "temp"`  
-   - `peekaboo clipboard --action restore --slot original`; `get` should match saved content.
+   - `peekaboo clipboard save --slot original`
+   - `peekaboo clipboard set --text "temp"`
+   - `peekaboo clipboard restore --slot original`; `get` should match saved content.
 
 ## Debug Log Template
 Append per-run notes here:
 ```
 [YYYY-MM-DD HH:MM] Step: <name>
 Commands:
-  peekaboo clipboard --action set --text "..."
+  peekaboo clipboard set --text "..."
 Observed:
   clipboard get -> "<value>"
   UI state: Auto-Trim <on/off>, Aggressiveness <Low/Normal/High>

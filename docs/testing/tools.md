@@ -68,7 +68,7 @@ physical-pointer phase), use [Background computer-use validation](background-com
 | noun-based inventory | Validate `app list`, `window list`, `screen list`, `menubar list`, and `permissions status` while Playground is running | `playground-log` optional (`Window` for focus changes) | `peekaboo window list --app Playground` etc. | Verified | Existing inventory artifacts remain historical evidence. |
 | `tools` | Compare CLI output against ToolRegistry | No Playground log required; attach output to notes | `peekaboo tools > $LOG_ROOT/tools.txt` | Verified – native tool listing captured 2025-12-19 | `.artifacts/playground-tools/20251219-001215-tools.txt` |
 | `clean` | Snapshot cache after `see` runs | Inspect `~/.peekaboo/snapshots` & ensure Playground unaffected | `peekaboo clean --snapshot <id>` | Verified – removed snapshot 5408D893… and confirmed re-run reports none | `.peekaboo/snapshots/5408D893-E9CF-4A79-9B9B-D025BF9C80BE (deleted)` |
-| `clipboard` | Clipboard smoke (text/file/image + save/restore) | Verify readback + binary export + restore user clipboard | `peekaboo clipboard --action set --file-path assets/peekaboo.png --json-output` | Verified – CLI set/get (file+image) and cross-invocation save/restore (2025-12-17) | `.artifacts/playground-tools/20251217-192349-clipboard-get-image.json` |
+| `clipboard` | Clipboard smoke (text/file/image + save/restore) | Verify readback + binary export + restore user clipboard | `peekaboo clipboard set --file-path assets/peekaboo.png --json` | Verified – CLI set/get (file+image) and cross-invocation save/restore (2025-12-17) | `.artifacts/playground-tools/20251217-192349-clipboard-get-image.json` |
 | `config` | Validate config commands while Playground idle | N/A | `peekaboo config show` | Verified – show/validate outputs captured 2025-11-16 | `.artifacts/playground-tools/20251116-051200-config-show-effective.json` |
 | `permissions` | Ensure status/grant flow works with Playground | `playground-log` `App` category (should log when permissions toggled) | `peekaboo permissions status` | Verified – Screen Recording & Accessibility granted | `.artifacts/playground-tools/20251116-051000-permissions-status.json` |
 | `learn` | Dump agent guide | N/A | `peekaboo learn > $LOG_ROOT/learn.txt` | Verified – latest dump saved 2025-11-16 | `.artifacts/playground-tools/20251116-051300-learn.txt` |
@@ -182,14 +182,14 @@ The following subsections spell out the concrete steps, required Playground surf
 
 #### `clipboard`
 - **Steps**:
-  1. Cross-invocation save/restore: `peekaboo clipboard --action save --slot original`, then `--action clear`, then `--action restore --slot original`.
-  2. File payload: `peekaboo clipboard --action set --file-path /tmp/peekaboo-clipboard-smoke.txt --json-output`.
-  3. Image payload + export: `peekaboo clipboard --action set --file-path assets/peekaboo.png --also-text "Peekaboo clipboard image smoke" --json-output`, then `peekaboo clipboard --action get --prefer public.png --output /tmp/peekaboo-clipboard-out.png --json-output`.
+  1. Cross-invocation save/restore: `peekaboo clipboard save --slot original`, then `clipboard clear`, then `clipboard restore --slot original`.
+  2. File payload: `peekaboo clipboard set --file-path /tmp/peekaboo-clipboard-smoke.txt --json`.
+  3. Image payload + export: `peekaboo clipboard set --file-path assets/peekaboo.png --also-text "Peekaboo clipboard image smoke" --json`, then `peekaboo clipboard get --prefer public.png --output /tmp/peekaboo-clipboard-out.png --json`.
 - **Pass criteria**: Clipboard payloads round-trip and the original clipboard is restored.
 - **2025-12-17 CLI evidence**: `.artifacts/playground-tools/20251217-192349-clipboard-{save-original,set-file,get-file-text,set-image,get-image,restore-original}.json` plus exported `/tmp/peekaboo-clipboard-out.png`.
 
 #### `config`
-- **Focus**: `config show`, `config validate`, `config models-provider`.
+- **Focus**: `config show`, `config validate`, `config provider models`.
 - **Steps**:
   1. Snapshot `~/.peekaboo/config.json` (read-only).
   2. Run `peekaboo config validate --verbose`.
@@ -461,7 +461,7 @@ The following subsections spell out the concrete steps, required Playground surf
 #### `agent`
 - **Scope**: Playground-specific instructions to exercise multiple tools automatically.
 - **Tests**:
-  1. `peekaboo agent --model gpt-5.5 --list-sessions --json-output > .artifacts/playground-tools/20251117-010912-agent-list.json`.
+  1. `peekaboo agent sessions --json > .artifacts/playground-tools/20251117-010912-agent-list.json`.
   2. `peekaboo agent "Say hi to the Playground app." --model gpt-5.5 --max-steps 2 --json-output > .artifacts/playground-tools/20251117-010919-agent-hi.json`.
   3. `peekaboo agent "Switch to Playground and press the Single Click button once." --model gpt-5.5 --max-steps 4 --json-output > .artifacts/playground-tools/20251117-010935-agent-single-click.json`.
   4. For long interactive runs, use tmux: `tmux new-session -- bash -lc 'peekaboo agent "Click the Single Click button in Playground." --model gpt-5.5 --max-steps 6 --no-cache | tee .artifacts/playground-tools/20251117-011500-agent-single-click.log'`.

@@ -56,7 +56,7 @@ peekaboo hotkey "shift tab" --foreground
 ```
 
 ## Troubleshooting
-- Verify Screen Recording + Accessibility permissions (`peekaboo permissions status`). Background hotkeys also require Event Synthesizing access for the process that sends the event; request it with `peekaboo permissions request-event-synthesizing`. When Peekaboo is using a remote bridge host, that command requests access for the bridge host. Use `--no-remote` only when you want to grant the local CLI process.
+- Verify Screen Recording + Accessibility permissions (`peekaboo permissions status`). Background hotkeys also require Event Synthesizing access for the process that sends the event; request it with `peekaboo permissions request event-synthesizing`. When Peekaboo is using a remote bridge host, that command requests access for the bridge host. Use `--no-remote` only when you want to grant the local CLI process.
 - Confirm your target (app/window/selector) with `peekaboo list`/`peekaboo see` before rerunning.
 - If you see `SNAPSHOT_NOT_FOUND`, regenerate the snapshot with `peekaboo see`.
 - Re-run with `--json` or `--verbose` to surface detailed errors.

@@ -277,10 +277,10 @@ Investigate `MenuService.clickMenuPath` once `menu list` is fixed; ensure both s
 - **Expected**: It should surface a structured `.WINDOW_NOT_FOUND` error (matching the rest of the CLI) so agents can fall back to `window list` or `app focus`.
 - **Impact**: Automations have to pattern-match brittle strings to detect “window missing” vs. actual internal failures.
 
-## `agent --list-sessions` used to crash due to eager MCP init
-- **Command**: `polter peekaboo agent --list-sessions --json-output`
+## `agent sessions` used to crash due to eager MCP init
+- **Command**: `polter peekaboo agent sessions --json`
 - **Observed (before fix)**: Launching the CLI triggered the Peekaboo SwiftUI app to start, which then broke inside `NSHostingView` layout (SIGTRAP). The root cause was that we bootstrapped Tachikoma MCP (spawning the GUI) even when the user only wanted metadata.
-- **Resolution — Nov 12, 2025**: The CLI now handles `--list-sessions` before touching MCP/logging setup, so it queries the agent service without launching the app or requiring credentials. Repeat runs return JSON instantly.
+- **Resolution — Nov 12, 2025**: The CLI handles `agent sessions` before touching MCP/logging setup, so it queries the agent service without launching the app or requiring credentials. Repeat runs return JSON instantly.
 
 ## `clean --dry-run` returned INTERNAL_SWIFT_ERROR on validation failure
 - **Command**: `polter peekaboo clean --dry-run --json-output`

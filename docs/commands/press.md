@@ -49,7 +49,7 @@ peekaboo press return --app TextEdit
 ```
 
 ## Troubleshooting
-- Verify Screen Recording + Accessibility permissions (`peekaboo permissions status`). Background key presses also require Event Synthesizing access for the sending process; request it with `peekaboo permissions request-event-synthesizing`.
+- Verify Screen Recording + Accessibility permissions (`peekaboo permissions status`). Background key presses also require Event Synthesizing access for the sending process; request it with `peekaboo permissions request event-synthesizing`.
 - Confirm your target (app/window/selector) with `peekaboo list`/`peekaboo see` before rerunning.
 - If you see `SNAPSHOT_NOT_FOUND`, regenerate the snapshot with `peekaboo see`.
 - Re-run with `--json` or `--verbose` to surface detailed errors.

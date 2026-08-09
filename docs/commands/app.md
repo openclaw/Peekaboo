@@ -7,16 +7,17 @@ read_when:
 
 # `peekaboo app`
 
-`app` bundles every app-management primitive Peekaboo exposes: launching, quitting, hiding, relaunching, switching focus, and listing processes. Commands run through the selected Peekaboo runtime host so they share its macOS session, LaunchServices, and AX view instead of the caller's sandbox.
+`app` bundles every app-management primitive Peekaboo exposes: launching, quitting, hiding, relaunching, switching/focusing, and listing processes. Commands run through the selected Peekaboo runtime host so they share its macOS session, LaunchServices, and AX view instead of the caller's sandbox.
 
 ## Subcommands
 | Name | Purpose | Key flags |
 | --- | --- | --- |
 | `launch` | Start an app by name/path/bundle ID in the background, optionally opening documents. | `--bundle-id`, `--open <path|url>` (repeatable), `--new-instance`, `--wait-ready`, `--wait-for-window`, `--foreground`. |
-| `quit` | Quit one app or *all* regular apps (with optional exclusions). | `--app <name>`, `--pid`, `--expected-process-start-identity`, `--all`, `--except "Finder,Terminal"`, `--force`. |
-| `relaunch` | Quit + relaunch the same app in the background in one step. | Positional `<app>` or `--pid`, `--wait <seconds>` between quit/launch, `--force`, `--wait-until-ready`, `--foreground`. |
-| `hide` / `unhide` | Toggle app visibility. | Accept the same targeting flags as `launch`/`quit`. |
-| `switch` | Activate a specific app (`--to`) or cycle Cmd+Tab style (`--cycle`). | `--to <name|bundle|PID:1234>`, `--cycle`, `--verify` (only with `--to`). |
+| `quit` | Quit one app or *all* regular apps (with optional exclusions). | Positional `<app>` or `--app`, `--pid`, `--expected-process-start-identity`, `--all`, `--except "Finder,Terminal"`, `--force`. |
+| `relaunch` | Quit + relaunch the same app in the background in one step. | Positional `<app>` or `--app`, or `--pid`; `--wait`, `--force`, `--wait-until-ready`, `--foreground`. |
+| `hide` / `unhide` | Toggle app visibility. | Positional `<app>` or `--app`, or `--pid`. |
+| `switch` | Activate a specific app or cycle Cmd+Tab style. | Positional `<app>` or `--to`, `--cycle`, `--verify` (only with an app target). |
+| `focus` | Activate and focus an app through the same service path as the MCP app tool. | Positional `<app>` or `--app`, or `--pid`. |
 | `list` | App-management view of running apps, filtering hidden/background apps by default. | `--include-hidden`, `--include-background`. |
 
 ## Implementation notes
@@ -27,7 +28,8 @@ read_when:
 - Quit mode supports `--all` plus `--except`, automatically ignoring core system processes (`Finder`, `Dock`, `SystemUIServer`, `WindowServer`). Controlled cleanup can pair `--pid` with `--expected-process-start-identity`; Peekaboo atomically rejects a recycled PID instead of terminating its replacement. When quits fail, the command prints hints about unsaved changes and suggests `--force`.
 - Hide/unhide uses `NSRunningApplication.hide()` / `.unhide()` and surfaces JSON output with per-app success data.
 - `switch --cycle` synthesizes Cmd+Tab events using `CGEvent` so it behaves like the real keyboard shortcut; `switch --to` activates the exact PID resolved via AX.
-- `switch --verify` confirms the requested app is frontmost after activation (only supported with `--to`).
+- `switch --verify` confirms the requested app is frontmost after activation (not supported with `--cycle`).
+- Supplying both the positional app and its named flag is accepted only when the values match; conflicting values fail before dispatch.
 - `relaunch` sends the initially selected PID/process-generation receipt, quit, termination polling (up to 5 s), the requested delay, and launch as one daemon-held transaction, so even a short daemon idle timeout cannot strand the app closed. The host rejects PID reuse before quit. It refuses to relaunch its own daemon, launches via bundle ID or bundle path, stays backgrounded unless `--foreground` is set, can wait for `isFinishedLaunching`, and returns the new process generation for race-free follow-up cleanup.
 - `app list` filters hidden/background apps unless `--include-hidden` or `--include-background` is passed and emits its established `data.apps` payload.
 
@@ -45,6 +47,9 @@ peekaboo app launch "Safari" --foreground
 # Quit everything but Finder and Terminal
 peekaboo app quit --all --except "Finder,Terminal"
 
+# Quit one app positionally
+peekaboo app quit TextEdit
+
 # Atomically quit only the saved process generation
 peekaboo app quit --pid 1234 --expected-process-start-identity 987654321 --force
 
@@ -52,7 +57,10 @@ peekaboo app quit --pid 1234 --expected-process-start-identity 987654321 --force
 peekaboo app switch --cycle
 
 # Switch and verify the app is frontmost
-peekaboo app switch --to Safari --verify
+peekaboo app switch Safari --verify
+
+# Focus an app without a separate launch
+peekaboo app focus Safari
 ```
 
 ## Troubleshooting

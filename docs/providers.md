@@ -36,13 +36,13 @@ Other Tachikoma-supported providers also work — see the [Tachikoma docs](https
 Credentials live in `~/.peekaboo/credentials`, encrypted at rest with the macOS Keychain when available. Set them once via the CLI:
 
 ```bash
-peekaboo config set-credential OPENAI_API_KEY <key>
-peekaboo config set-credential ANTHROPIC_API_KEY <key>
-peekaboo config set-credential GEMINI_API_KEY <key>
-peekaboo config set-credential MINIMAX_API_KEY <key>
-peekaboo config set-credential MINIMAX_CN_API_KEY <key>
-peekaboo config set-credential MOONSHOT_API_KEY <key>
-peekaboo config set-credential OPENROUTER_API_KEY <key>
+peekaboo config credential set OPENAI_API_KEY <key>
+peekaboo config credential set ANTHROPIC_API_KEY <key>
+peekaboo config credential set GEMINI_API_KEY <key>
+peekaboo config credential set MINIMAX_API_KEY <key>
+peekaboo config credential set MINIMAX_CN_API_KEY <key>
+peekaboo config credential set MOONSHOT_API_KEY <key>
+peekaboo config credential set OPENROUTER_API_KEY <key>
 ```
 
 Environment variables override the stored values, which is handy in CI:

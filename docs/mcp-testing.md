@@ -88,7 +88,7 @@ PEEKABOO_AI_PROVIDERS="ollama/<model>" npx @modelcontextprotocol/inspector "$PEE
 Credential storage uses the normal CLI:
 
 ```bash
-"$PEEKABOO_BIN" config set-credential ANTHROPIC_API_KEY <value>
+"$PEEKABOO_BIN" config credential set ANTHROPIC_API_KEY <value>
 ```
 
 Do not paste live credential values into test logs or committed fixtures.

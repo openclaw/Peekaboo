@@ -9,8 +9,8 @@ read_when:
 
 `menubar` is a lightweight helper for macOS status items (a.k.a. menu bar extras). It talks directly to `MenuServiceBridge` so you can list every icon with its index or click one by title/index. Use the `menu` command for traditional application menus; this command is strictly for the right-hand side of the menu bar.
 
-## Actions
-| Positional action | Description |
+## Subcommands
+| Subcommand | Description |
 | --- | --- |
 | `list` | Prints every visible status item with its index. `--json` emits the same data plus bundle IDs and AX identifiers. |
 | `click` | Clicks an item by name (case-insensitive fuzzy match) or via `--index <n>`. |
@@ -24,7 +24,7 @@ read_when:
 | Global flags | `--json` returns structured payloads; `--verbose` adds descriptions when listing. |
 
 ## Implementation notes
-- The command name is `menubar` (no hyphen). Commander enforces `list`/`click` as the only valid actions.
+- The command name is `menubar` (no hyphen). `list` and `click` are real Commander subcommands.
 - Listing uses `MenuServiceBridge.listMenuBarItems`, and verbose mode prints extra diagnostics (owner name, hidden state). JSON mode always includes the raw title, bundle ID, owner name, identifier, visibility, and description.
 - Clicking resolves either `--index` or item text (case-insensitive). When an item isn’t found, text mode prints troubleshooting hints; JSON mode surfaces `MENU_ITEM_NOT_FOUND`.
 - `--verify` waits briefly for a popover owned by the same PID, checks for a focused-window change for the owning app, then falls back to any visible owner window (layer 0). OCR verification is on by default (set `PEEKABOO_MENUBAR_OCR_VERIFY=0` to disable) and now requires the popover text to include the target title/owner; AX menu checks remain opt-in via `PEEKABOO_MENUBAR_AX_VERIFY=1` (OCR requires Screen Recording permission).

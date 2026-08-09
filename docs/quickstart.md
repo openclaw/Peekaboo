@@ -16,7 +16,7 @@ This page assumes you've already followed [install.md](install.md). If `peekaboo
 ```bash
 peekaboo permissions status
 peekaboo permissions grant
-peekaboo permissions request-screen-recording
+peekaboo permissions request screen-recording
 ```
 
 `grant` opens System Settings to the right pane. You need **Screen Recording** (required) and **Accessibility** (recommended). Re-run `permissions status` until both are green. Background keyboard input and foreground synthetic pointer tools need **Event Synthesizing**; background element/query/coordinate clicks use Accessibility. See [permissions.md](permissions.md).
@@ -82,7 +82,7 @@ peekaboo agent "Open Safari, go to github.com, and search for Peekaboo"
 
 Default background work stays overlay-free so Peekaboo does not interrupt the foreground desktop. Run
 `peekaboo visualizer` when you explicitly want to exercise the overlay catalog. Continue a saved run with
-`peekaboo agent --resume-session <session-id> "<continuation>"`. See [commands/agent.md](commands/agent.md) for provider switching and session management.
+`peekaboo agent resume <session-id>`. See [commands/agent.md](commands/agent.md) for provider switching and session management.
 
 ## 6. (Optional) Wire up MCP
 

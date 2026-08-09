@@ -14,26 +14,26 @@ This document captures the initial design for a dependency-free interactive chat
 - `peekaboo agent "<task>"` keeps the existing single-shot behavior.
 - Running `peekaboo agent` **without** a task drops you into chat mode automatically when stdout is an interactive TTY.
 - In non-interactive environments the command prints the chat help menu and exits, except a taskless
-  `--resume` / `--resume-session`, which consumes piped prompts for the saved session.
-- `--chat` always forces the interactive loop (even when piped) and doubles as the discoverable/explicit switch for documentation and tooling.
-  - If you pass a task alongside `--chat`, that text becomes the first turn before the prompt reappears.
+  `agent resume [session-id]`, which consumes piped prompts for the saved session.
+- `agent chat` always forces the interactive loop (even when piped) and doubles as the discoverable/explicit mode for documentation and tooling.
+  - If you pass an initial prompt after `agent chat`, that text becomes the first turn before the prompt reappears.
 
 ## Command Surface
 
-- Introduce a `--chat` flag on `peekaboo agent`.
+- Expose chat as `peekaboo agent chat`.
 - When present, the command enters an interactive loop instead of executing once and exiting.
-- All existing options (`--model`, `--max-steps`, `--resume-session`, `--no-cache`, etc.) still apply at launch; their values remain in effect for the entire chat session.
+- Shared execution options (`--model`, `--max-steps`, `--queue-mode`, etc.) still apply at launch; their values remain in effect for the entire chat session.
 
 ## Session Lifecycle
 
-1. Starting the chat loop either resumes an explicit session (`--resume-session <id>`), resumes the most recent session when `--resume` is supplied, or creates a fresh one.
+1. `agent resume <id>` resumes an explicit session, `agent resume` resumes the most recent session, and `agent chat` creates a fresh one.
 2. The resolved session ID is reused for every turn so the agent maintains context.
 3. Exiting the loop leaves the session in the cache so the standard `agent` command can resume it later.
 
 ## Control Flow
 
 ```text
-peekaboo agent --chat
+peekaboo agent chat
 → print header (model, session ID, exit instructions)
 loop {
     prompt with `chat> `
@@ -53,12 +53,12 @@ loop {
 
 - Display a simple ASCII prompt: `chat> `.
 - After each turn, optionally print a one-line summary (model, duration, tool count) before reprinting the prompt. This avoids repeating the full banner every time.
-- `Type /help …` banner plus the help menu are shown automatically the moment interactive mode starts, even before the first task (or immediately after running the optional seeded task supplied with `--chat`).
+- `Type /help …` banner plus the help menu are shown automatically the moment interactive mode starts, even before the first task (or immediately after the optional `agent chat` initial prompt).
 - Reuse the existing output-mode machinery so enhanced/compact/minimal renderings continue to work automatically.
 
 ## Error Handling
 
-- Failed executions (missing credentials, tool errors, etc.) bubble through the current `displayResult` / error printers so behavior matches the one-shot command. An automatic taskless piped resume exits nonzero after a failed turn; an explicit interactive `--chat` loop stays alive.
+- Failed executions (missing credentials, tool errors, etc.) bubble through the current `displayResult` / error printers so behavior matches the one-shot command. An automatic taskless piped resume exits nonzero after a failed turn; an explicit `agent chat` loop stays alive.
 - If the agent reports a fatal error, the loop stays alive unless the error indicates initialization failure (e.g., no provider configured), in which case we exit immediately.
 
 ## Exit Semantics
@@ -66,7 +66,7 @@ loop {
 - Ctrl+C while idle → exit the loop cleanly.
 - Ctrl+C while running → cancel the active task and return to the prompt (press again to exit entirely if desired).
 - Ctrl+D (EOF) → exit after the current prompt.
-- Non-interactive invocations without `--chat` print the help text once and exit, except taskless session resumes,
+- Non-interactive `agent run` invocations without a task print the help text once and exit, except taskless session resumes,
   which read piped prompts and exit nonzero after a failed turn.
 
 ## Future Enhancements (Out of Scope for Minimal Version)

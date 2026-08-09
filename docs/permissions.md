@@ -33,7 +33,7 @@ For build and runtime version details, see [platform-support.md](platform-suppor
 
 1. **Screen Recording**
    - System Settings → Privacy & Security → Screen & System Audio Recording.
-   - Run `peekaboo permissions request-screen-recording` to trigger the prompt when macOS allows one.
+   - Run `peekaboo permissions request screen-recording` to trigger the prompt when macOS allows one.
    - Enable Terminal, your editor, or whatever shell runs `peekaboo`.
    - If you installed with Homebrew, make sure the enabled entry points at the current Peekaboo binary; upgrades can move it to a new Cellar version path.
    - Benefit: fast CGWindow enumeration and background captures.
@@ -43,7 +43,7 @@ For build and runtime version details, see [platform-support.md](platform-suppor
    - Enable the same terminals/IDEs so Peekaboo can send clicks/keystrokes reliably.
 
 3. **Event Synthesizing**
-   - Run `peekaboo permissions request-event-synthesizing`.
+   - Run `peekaboo permissions request event-synthesizing`.
    - By default this requests access for the selected Peekaboo Bridge host, which is the process that sends background input. Add `--no-remote` to request access for the local CLI process instead.
    - If needed, enable Peekaboo in System Settings → Privacy & Security → Accessibility.
    - Benefit: process-targeted typing, hotkeys, key presses, and paste, plus explicitly foreground synthetic pointer operations.
