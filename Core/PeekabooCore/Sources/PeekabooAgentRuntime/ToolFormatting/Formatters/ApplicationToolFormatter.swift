@@ -13,6 +13,16 @@ public class ApplicationToolFormatter: BaseToolFormatter {
             self.formatListAppsResult(result)
         case .launchApp:
             self.formatLaunchAppResult(result)
+        case .quitApp:
+            self.formatLifecycleResult(result, verb: "Quit")
+        case .focusApp:
+            self.formatLifecycleResult(result, verb: "Focused")
+        case .hideApp:
+            self.formatLifecycleResult(result, verb: "Hid")
+        case .unhideApp:
+            self.formatLifecycleResult(result, verb: "Showed")
+        case .switchApp:
+            self.formatLifecycleResult(result, verb: "Switched to")
         case .focusWindow:
             self.formatFocusWindowResult(result)
         case .listWindows:
@@ -22,6 +32,16 @@ public class ApplicationToolFormatter: BaseToolFormatter {
         default:
             super.formatResultSummary(result: result)
         }
+    }
+
+    private func formatLifecycleResult(_ result: [String: Any], verb: String) -> String {
+        guard let app = ToolResultExtractor.string("app", from: result) ??
+            ToolResultExtractor.string("appName", from: result) ??
+            ToolResultExtractor.string("application", from: result)
+        else {
+            return ""
+        }
+        return "→ \(verb) \(app)"
     }
 
     private func formatListAppsResult(_ result: [String: Any]) -> String {

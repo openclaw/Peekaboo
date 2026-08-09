@@ -16,6 +16,8 @@ public class VisionToolFormatter: BaseToolFormatter {
             self.formatScreenshotResult(result)
         case .windowCapture:
             self.formatWindowCaptureResult(result)
+        case .analyze:
+            self.formatAnalyzeResult(result)
         default:
             super.formatResultSummary(result: result)
         }
@@ -92,8 +94,14 @@ public class VisionToolFormatter: BaseToolFormatter {
         var details: [String] = []
 
         // Dimensions
+        let size = ToolResultExtractor.dictionary("size", from: result)
         if let width = ToolResultExtractor.int("width", from: result),
            let height = ToolResultExtractor.int("height", from: result)
+        {
+            details.append("\(width)×\(height)px")
+        } else if let size,
+                  let width = ToolResultExtractor.int("width", from: size),
+                  let height = ToolResultExtractor.int("height", from: size)
         {
             details.append("\(width)×\(height)px")
         }
@@ -101,7 +109,7 @@ public class VisionToolFormatter: BaseToolFormatter {
         // File size
         if let size = ToolResultExtractor.int("fileSize", from: result) {
             details.append(self.formatFileSize(size))
-        } else if let sizeStr = ToolResultExtractor.string("size", from: result) {
+        } else if size == nil, let sizeStr = ToolResultExtractor.string("size", from: result) {
             details.append(sizeStr)
         }
 
@@ -125,6 +133,16 @@ public class VisionToolFormatter: BaseToolFormatter {
         }
 
         return parts.joined(separator: " ")
+    }
+
+    private func formatAnalyzeResult(_ result: [String: Any]) -> String {
+        guard let analysis = ToolResultExtractor.string("analysis", from: result) ??
+            ToolResultExtractor.string("text", from: result) ??
+            ToolResultExtractor.string("result", from: result)
+        else {
+            return ""
+        }
+        return "→ \"\(self.truncate(analysis, maxLength: 60))\""
     }
 
     private func formatWindowCaptureResult(_ result: [String: Any]) -> String {
@@ -221,7 +239,9 @@ public class VisionToolFormatter: BaseToolFormatter {
     }
 
     private func extractCaptureContext(from result: [String: Any]) -> String {
-        if let app = ToolResultExtractor.string("app", from: result), app != "entire screen" {
+        if let description = ToolResultExtractor.string("description", from: result) {
+            return self.truncate(description, maxLength: 60)
+        } else if let app = ToolResultExtractor.string("app", from: result), app != "entire screen" {
             return app
         } else if let mode = ToolResultExtractor.string("mode", from: result) {
             if mode == "window" {
@@ -246,7 +266,13 @@ public class VisionToolFormatter: BaseToolFormatter {
         // Element breakdown
         if let elements: [[String: Any]] = ToolResultExtractor.array("elements", from: result) {
             let typeCount = Dictionary(grouping: elements) { element in
-                (element["type"] as? String) ?? "unknown"
+                guard let type = (element["type"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+                      !type.isEmpty,
+                      type.lowercased() != "unknown"
+                else {
+                    return "element"
+                }
+                return type
             }.mapValues { $0.count }
 
             // Sort by count and take top 3
@@ -283,7 +309,13 @@ public class VisionToolFormatter: BaseToolFormatter {
         guard !counts.isEmpty else { return nil }
 
         let formatted = counts.map { type, count in
-            type == "total" ? "\(count) elements" : "\(count) \(type)"
+            if type == "total" {
+                return "\(count) element\(count == 1 ? "" : "s")"
+            }
+            if type == "element" {
+                return "\(count) element\(count == 1 ? "" : "s")"
+            }
+            return "\(count) \(type)"
         }.joined(separator: ", ")
 
         return "[\(formatted)]"

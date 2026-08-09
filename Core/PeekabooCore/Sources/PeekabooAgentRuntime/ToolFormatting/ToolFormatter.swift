@@ -81,7 +81,7 @@ open class BaseToolFormatter: ToolFormatter {
     open func formatResultSummary(result: [String: Any]) -> String {
         // Default: check for common patterns
         if let count = ToolResultExtractor.int("count", from: result) {
-            return "→ \(count) items"
+            return "→ \(count) item\(count == 1 ? "" : "s")"
         }
         return ""
     }

@@ -7,6 +7,7 @@
 - Show recently automated app icons beside Peekaboo in the menu bar, with a settings toggle.
 
 ### Changed
+- Enrich shared tool summaries with menu counts, clicked menu paths, screenshot dimensions, app lifecycle names, screen resolutions, and clipboard actions so the agent chat and Mac activity feed regain the detail lost in the formatter unification.
 - Remove the obsolete scoped-commit helper now that agent work uses isolated worktrees.
 - Make app launch, open, relaunch, observation, capture, targeted keyboard input, and action-backed scrolling background by default; focus, global keys, synthetic scrolling, and physical pointer gestures now require explicit foreground consent.
 - Route `peekaboo run` through the canonical targeted interaction services with flat agent-friendly JSON parameters while retaining legacy script decoding.

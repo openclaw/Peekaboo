@@ -28,9 +28,19 @@ public class ElementToolFormatter: BaseToolFormatter {
             self.formatListElementsResult(result)
         case .focused:
             self.formatFocusedElementResult(result)
+        case .inspectUI:
+            self.formatInspectUIResult(result)
         default:
             super.formatResultSummary(result: result)
         }
+    }
+
+    private func formatInspectUIResult(_ result: [String: Any]) -> String {
+        let count = ToolResultExtractor.int("count", from: result) ??
+            ToolResultExtractor.int("elementCount", from: result) ??
+            (ToolResultExtractor.array("elements", from: result) as [[String: Any]]?)?.count
+        guard let count else { return "" }
+        return "→ \(count) element\(count == 1 ? "" : "s")"
     }
 
     // MARK: - Find Element Formatting

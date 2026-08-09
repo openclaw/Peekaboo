@@ -142,35 +142,68 @@ extension WindowToolFormatter {
             parts.append("→ \(count) screen\(count == 1 ? "" : "s")")
 
             // Main screen
-            if let mainScreen = screens.first(where: { ($0["isMain"] as? Bool) == true }) {
+            if let mainScreen = screens.first(where: {
+                ($0["isMain"] as? Bool) == true || ($0["isPrimary"] as? Bool) == true
+            }) {
                 if let name = mainScreen["name"] as? String {
                     parts.append("Main: \(name)")
                 }
 
-                if let width = mainScreen["width"] as? Int,
-                   let height = mainScreen["height"] as? Int
-                {
-                    parts.append("(\(width)×\(height))")
+                if let resolution = self.screenResolution(mainScreen) {
+                    parts.append("(\(resolution))")
                 }
+            } else if screens.count == 1, let screen = screens.first,
+                      let resolution = self.screenResolution(screen)
+            {
+                parts.append("(\(resolution))")
             }
 
             // External screens
-            let externalCount = screens.count(where: { ($0["isBuiltin"] as? Bool) != true })
+            let externalCount = screens.count(where: { ($0["isBuiltin"] as? Bool) == false })
             if externalCount > 0 {
                 parts.append("• \(externalCount) external")
             }
 
             // Total resolution
-            if screens.count > 1 {
-                let totalWidth = screens.compactMap { $0["width"] as? Int }.reduce(0, +)
-                let totalHeight = screens.compactMap { $0["height"] as? Int }.max() ?? 0
-                parts.append("• Total: \(totalWidth)×\(totalHeight)")
+            let resolutions = screens.compactMap(self.screenDimensions)
+            if screens.count > 1, resolutions.count == screens.count {
+                let totalWidth = resolutions.map(\.width).reduce(0, +)
+                let totalHeight = resolutions.map(\.height).max() ?? 0
+                if totalWidth > 0, totalHeight > 0 {
+                    parts.append("• Total: \(totalWidth)×\(totalHeight)")
+                }
             }
         } else if let count = ToolResultExtractor.int("count", from: result) {
             parts.append("→ \(count) screen\(count == 1 ? "" : "s")")
         }
 
         return parts.isEmpty ? "→ listed" : parts.joined(separator: " ")
+    }
+
+    private func screenResolution(_ screen: [String: Any]) -> String? {
+        if let dimensions = self.screenDimensions(screen) {
+            return "\(dimensions.width)×\(dimensions.height)"
+        }
+        guard let resolution = screen["resolution"] as? String else { return nil }
+        let normalized = resolution.replacingOccurrences(of: " ", with: "")
+            .replacingOccurrences(of: "x", with: "×")
+            .replacingOccurrences(of: "X", with: "×")
+        return normalized.isEmpty ? nil : normalized
+    }
+
+    private func screenDimensions(_ screen: [String: Any]) -> (width: Int, height: Int)? {
+        if let width = ToolResultExtractor.int("width", from: screen),
+           let height = ToolResultExtractor.int("height", from: screen)
+        {
+            return (width, height)
+        }
+        guard let resolution = ToolResultExtractor.dictionary("resolution", from: screen),
+              let width = ToolResultExtractor.int("width", from: resolution),
+              let height = ToolResultExtractor.int("height", from: resolution)
+        else {
+            return nil
+        }
+        return (width, height)
     }
 
     private func appendWindowCountDescription(
@@ -198,7 +231,10 @@ extension WindowToolFormatter {
                 .prefix(3)
                 .joined(separator: ", ")
             parts.append("[\(appSummary)]")
-        } else if let app = appGroups.keys.first {
+        } else if let app = appGroups.keys.first,
+                  !app.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  app.caseInsensitiveCompare("Unknown") != .orderedSame
+        {
             parts.append("for \(app)")
         }
     }
@@ -265,7 +301,9 @@ extension WindowToolFormatter {
         into parts: inout [String])
     {
         if let app = ToolResultExtractor.string("app", from: result) ??
-            ToolResultExtractor.string("appName", from: result)
+            ToolResultExtractor.string("appName", from: result),
+            !app.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            app.caseInsensitiveCompare("Unknown") != .orderedSame
         {
             if !parts.joined(separator: " ").contains(app) {
                 parts.append("for \(app)")

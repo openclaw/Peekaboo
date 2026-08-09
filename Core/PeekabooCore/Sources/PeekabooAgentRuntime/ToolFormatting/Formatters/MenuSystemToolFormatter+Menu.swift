@@ -19,6 +19,10 @@ extension MenuSystemToolFormatter {
             parts.append("\"\(path)\"")
         } else if let item = ToolResultExtractor.string("menuItem", from: result) {
             parts.append("\"\(item)\"")
+        } else if let clicked = ToolResultExtractor.string("clicked", from: result) {
+            parts.append("\"\(clicked)\"")
+        } else if let path = ToolResultExtractor.string("path", from: result) {
+            parts.append("\"\(self.normalizedMenuPath(path))\"")
         }
 
         if let app = ToolResultExtractor.string("app", from: result) {
@@ -52,9 +56,31 @@ extension MenuSystemToolFormatter {
     }
 
     func formatListMenuItemsResult(_ result: [String: Any]) -> String {
+        let items: [[String: Any]]? = ToolResultExtractor.array("items", from: result)
+        if items == nil, ToolResultExtractor.int("count", from: result) == nil {
+            let menuCount: Int? = if let menus: [[String: Any]] = ToolResultExtractor.array("menus", from: result) {
+                menus.count
+            } else {
+                ToolResultExtractor.int("menuCount", from: result)
+            }
+
+            guard let menuCount else { return "" }
+
+            var summary = "→ \(menuCount) menu\(menuCount == 1 ? "" : "s")"
+            if let app = ToolResultExtractor.string("app", from: result) ??
+                ToolResultExtractor.string("appName", from: result)
+            {
+                summary += " for \(app)"
+            }
+            if let totalItems = ToolResultExtractor.int("totalItems", from: result) {
+                summary += " (\(totalItems) item\(totalItems == 1 ? "" : "s"))"
+            }
+            return summary
+        }
+
         var parts: [String] = []
 
-        if let items: [[String: Any]] = ToolResultExtractor.array("items", from: result) {
+        if let items {
             let count = items.count
             parts.append("→ \(count) menu item\(count == 1 ? "" : "s")")
         } else if let count = ToolResultExtractor.int("count", from: result) {
@@ -65,11 +91,13 @@ extension MenuSystemToolFormatter {
             parts.append("in \(menu) menu")
         }
 
-        if let app = ToolResultExtractor.string("app", from: result) {
+        if let app = ToolResultExtractor.string("app", from: result) ??
+            ToolResultExtractor.string("appName", from: result)
+        {
             parts.append("for \(app)")
         }
 
-        if let items: [[String: Any]] = ToolResultExtractor.array("items", from: result) {
+        if let items {
             let details = self.menuItemDetails(items)
             if !details.isEmpty {
                 parts.append("[\(details.joined(separator: ", "))]")

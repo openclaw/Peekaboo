@@ -12,6 +12,11 @@ extension WindowToolFormatter {
             let count = spaces.count
             parts.append("→ \(count) space\(count == 1 ? "" : "s")")
 
+            let spacesWithWindows = spaces.count(where: { ($0["hasWindows"] as? Bool) == true })
+            if spacesWithWindows > 0 {
+                parts.append("(\(spacesWithWindows) with windows)")
+            }
+
             // Current space
             if let currentSpace = spaces.first(where: { ($0["isCurrent"] as? Bool) == true }) {
                 if let index = currentSpace["index"] as? Int {

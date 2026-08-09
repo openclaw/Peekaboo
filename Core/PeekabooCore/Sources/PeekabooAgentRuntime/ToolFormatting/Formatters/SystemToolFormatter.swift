@@ -76,6 +76,8 @@ public class SystemToolFormatter: BaseToolFormatter {
             self.formatCopyResult(result)
         case .pasteFromClipboard:
             self.formatPasteResult(result)
+        case .clipboard:
+            self.formatClipboardResult(result)
         default:
             super.formatResultSummary(result: result)
         }
@@ -204,6 +206,37 @@ public class SystemToolFormatter: BaseToolFormatter {
     }
 
     // MARK: - Clipboard Formatting
+
+    private func formatClipboardResult(_ result: [String: Any]) -> String {
+        let action = ToolResultExtractor.string("action", from: result)?.lowercased()
+        switch action {
+        case "set", "write", "load":
+            return "→ Copied to clipboard"
+        case "clear":
+            return "→ Clipboard cleared"
+        case "get", "read":
+            guard let content = self.clipboardContent(from: result) else { return "" }
+            return "→ \"\(self.truncate(content, maxLength: 40))\""
+        default:
+            break
+        }
+
+        guard let response = ToolResultExtractor.string("result", from: result) else { return "" }
+        if response.hasPrefix("Set clipboard") {
+            return "→ Copied to clipboard"
+        }
+        if response.hasPrefix("Cleared clipboard") {
+            return "→ Clipboard cleared"
+        }
+        return "→ \"\(self.truncate(response, maxLength: 40))\""
+    }
+
+    private func clipboardContent(from result: [String: Any]) -> String? {
+        ToolResultExtractor.string("content", from: result) ??
+            ToolResultExtractor.string("text", from: result) ??
+            ToolResultExtractor.string("textPreview", from: result) ??
+            ToolResultExtractor.string("result", from: result)
+    }
 
     private func formatCopyResult(_ result: [String: Any]) -> String {
         var parts: [String] = []
