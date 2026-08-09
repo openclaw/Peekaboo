@@ -195,7 +195,7 @@ public actor PeekabooMCPServer {
 
         switch transport {
         case .stdio:
-            serverTransport = StdioTransport()
+            serverTransport = EOFDrainingTransport(wrapping: StdioTransport())
 
         case .http:
             // Note: HTTP transport would need custom implementation

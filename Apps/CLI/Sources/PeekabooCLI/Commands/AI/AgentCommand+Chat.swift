@@ -328,7 +328,8 @@ extension AgentCommand {
             dryRun: self.dryRun,
             queueMode: queueMode,
             eventDelegate: delegate,
-            verbose: self.verbose
+            verbose: self.verbose,
+            persistSession: !self.noCache
         )
     }
 
@@ -461,7 +462,12 @@ extension AgentCommand {
     }
 
     func stepLimitSessionId(from error: any Error) -> String? {
-        (error as? PeekabooAgentService.AgentStepLimitExceededError)?.sessionId
+        guard let stepLimitError = error as? PeekabooAgentService.AgentStepLimitExceededError,
+              stepLimitError.sessionWasPersisted
+        else {
+            return nil
+        }
+        return stepLimitError.sessionId
     }
 
     func shouldFailTasklessResumeTurn(capabilities: TerminalCapabilities) -> Bool {

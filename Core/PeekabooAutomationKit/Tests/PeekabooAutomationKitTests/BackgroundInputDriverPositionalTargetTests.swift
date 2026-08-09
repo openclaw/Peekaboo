@@ -6,9 +6,8 @@ import PeekabooFoundation
 import Testing
 @testable import PeekabooAutomationKit
 
-/// Background positional clicks are delivered through accessibility actions (pid-routed mouse
-/// events land at the window corner on modern macOS). These tests pin the candidate resolution
-/// that picks the press/show-menu/focus target for a hit-tested point.
+/// Single left positional clicks use accessibility actions. Pixel right- and double-clicks use
+/// exact-window routed events and are covered separately by `WindowRoutedPointerDriverTests`.
 struct BackgroundInputDriverPositionalTargetTests {
     @Test
     @MainActor
@@ -310,8 +309,8 @@ struct BackgroundInputDriverPositionalTargetTests {
     }
 
     @Test
-    func `background double and middle click messages point to foreground`() {
-        #expect(BackgroundInputDriver.doubleClickUnsupportedMessage.contains("--foreground"))
+    func `unproven route and middle click messages point to foreground`() {
+        #expect(BackgroundInputDriver.unprovenWindowRouteMessage.contains("--foreground"))
         #expect(BackgroundInputDriver.middleClickUnsupportedMessage.contains("--foreground"))
     }
 

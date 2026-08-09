@@ -38,13 +38,33 @@ struct AgentCommandStepLimitTests {
         #expect(try command.validatedMaxStepCount() == 100)
     }
 
+    @Test(arguments: ["--resume", "--resume-session", "--list-sessions"])
+    func `Agent rejects session lookup flags when caching is disabled`(_ option: String) throws {
+        let arguments = if option == "--resume-session" {
+            ["--no-cache", option, "session-id"]
+        } else {
+            ["--no-cache", option]
+        }
+        let command = try AgentCommand.parse(arguments)
+
+        #expect(throws: PeekabooError.self) {
+            try command.validateSessionOptions()
+        }
+    }
+
     @Test
     func `Chat recovers the saved session from step exhaustion`() throws {
         let command = try AgentCommand.parse([])
         let sessionId = UUID().uuidString
         let error = PeekabooAgentService.AgentStepLimitExceededError(maxSteps: 1, sessionId: sessionId)
+        let ephemeralError = PeekabooAgentService.AgentStepLimitExceededError(
+            maxSteps: 1,
+            sessionId: "ephemeral",
+            sessionWasPersisted: false
+        )
 
         #expect(command.stepLimitSessionId(from: error) == sessionId)
+        #expect(command.stepLimitSessionId(from: ephemeralError) == nil)
         #expect(command.stepLimitSessionId(from: PeekabooError.commandFailed("other")) == nil)
     }
 }

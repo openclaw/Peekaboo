@@ -16,32 +16,34 @@ read_when:
 | `--on <id>` / `--id <id>` | Target an opaque Peekaboo element ID copied exactly from current `see` or `inspect-ui` output. |
 | `--coords x,y` | Click coordinates. With target flags, coordinates are relative to the resolved target window; without target flags, they are global screen coordinates. |
 | `--global-coords` | Treat `--coords` as global screen coordinates even when target flags are supplied. |
-| `--snapshot <id>` | Reuse a prior snapshot; defaults to `services.snapshots.getMostRecentSnapshot()` when omitted. |
+| `--snapshot <id>` | Reuse a prior snapshot; defaults to the latest snapshot for element/query clicks. Background coordinate clicks require an explicit nonempty snapshot from a fresh exact-window `see`. |
 | Target flags | `--app <name>`, `--pid <pid>`, `--window-id <id>`, `--window-title <title>`, `--window-index <n>` — resolve the app/window that should receive the click. In background mode this does not focus the app; with `--foreground` it focuses before clicking. (`--window-title`/`--window-index` require `--app` or `--pid`; `--window-id` does not.) |
 | `--wait-for <ms>` | Millisecond timeout while waiting for the element to appear (default 5000). |
-| `--double` / `--right` | Perform double-click or secondary-click instead of the default single click. `--double` requires `--foreground`; background delivery cannot position a double-click and fails with a clear error. |
+| `--double` / `--right` | Perform double-click or secondary-click instead of the default single click. Background pixel delivery requires a provable exact PID/window route; `--foreground` remains available for shared-pointer behavior. |
 | `--long-press` | Send mouse-down, hold stationary for 1.2 seconds, then mouse-up. Long press implies foreground delivery and cannot be combined with `--double`, `--right`, or `--focus-background`. |
-| `--foreground` | Focus target and send a foreground mouse click. Focus flags also imply foreground delivery. |
+| `--foreground` | Focus target and send a foreground mouse click. Focus flags require this explicit mode. |
 | Focus flags | `--no-auto-focus`, `--focus-timeout-seconds`, `--focus-retry-count`, `--space-switch`, `--bring-to-current-space` (foreground mode only; see `FocusCommandOptions`). |
 | `--focus-background` | Legacy alias for the default background delivery. Use `--app`, `--pid`, `--window-id`, or a snapshot with process metadata. |
 
 ## Delivery modes
-- **Background** is the default when Peekaboo can resolve a target process from target flags or snapshot metadata. Every background click is delivered through accessibility actions and never activates or focuses the app: element/query clicks invoke the matching AX action on the cached element; coordinate clicks hit-test the AX element at the point (`AXUIElementCopyElementAtPosition`), then press (or show the menu on) the pressable element at that point — the hit result itself if it is pressable, otherwise a pressable descendant, otherwise a pressable ancestor. Pressability is checked with `AXUIElementCopyActionNames` (the actions API), not the `AXActionNames` attribute, so SwiftUI buttons that expose no action attribute are still pressed. Positioned process-targeted mouse events are never used — macOS delivers them at the window's top-left corner regardless of the requested point, so that path was removed.
-- Background clicks fail with an actionable error instead of guessing: if no pressable AX element exists at the target point (an empty spot, a custom-drawn view, or an element exposing no press action), or the click type cannot be delivered via accessibility (`--double`, middle-click), the command reports the limitation and suggests `--foreground`. A reported background success means the AX action was actually invoked at the resolved target.
+- **Background** is the default when Peekaboo can resolve a target process from target flags or snapshot metadata. Single clicks prefer accessibility actions and never activate or focus the app: element/query clicks invoke the matching AX action on the cached element; coordinate clicks hit-test the AX element at the point (`AXUIElementCopyElementAtPosition`), then press the actionable hit, descendant, or ancestor. Pressability is checked with the Accessibility actions API, so SwiftUI buttons that expose no action attribute are still pressed.
+- Background right- and double-clicks can use native PID/window-routed CGEvents. Each event carries screen and window-local coordinates, exact PID/window routing fields, and a process-generation receipt revalidated before every event. The route never warps the physical cursor, activates an app, or falls back to desktop-global injection. Because macOS does not acknowledge application-level handling of these events, JSON reports `verified: false` and `effect: "unverifiable"` after a complete dispatch. Missing, moved, wrong-owner, or generation-changed targets are refused. If the route changes after mouse-down, Peekaboo noncancellably releases mouse-up only to the original live process generation before reporting the click effect as indeterminate; a recycled PID is never targeted for cleanup.
+- Cancellation before routed dispatch remains an ordinary cancellation. Once any routed click event has been emitted, cancellation returns a retry-unsafe indeterminate error with the known emitted-unit count; observe the target before deciding whether to retry.
+- Background clicks fail with an actionable error instead of guessing. A single left click with no pressable AX element, a routed pointer click without an exact provable window, and middle-click all fail before unsafe fallback and suggest `--foreground` where appropriate.
 - A background `AXPress` that does not complete within the delivery grace period is a failure, not success. Generic layout/web containers are never accepted as press targets even if an app advertises `AXPress` on them.
 - **Foreground** (`--foreground`) focuses the target first (via `ensureFocused`, hopping Spaces if needed) and then synthesizes a real mouse click at the resolved screen point — element and query targets are resolved to their adjusted center and clicked with genuine mouse events, so double- and right-click semantics match hardware clicks. If the target app is still not frontmost after the focus step, the command fails rather than clicking into whichever app is in front.
 - Long press (`--long-press`) uses the foreground path and emits a stationary mouse-down/1.2-second hold/mouse-up sequence. It does not synthesize drag or micro-move events, because those can cancel native long-press recognizers.
-- Background coordinate clicks need `--app`, `--pid`, or `--window-id` so Peekaboo knows which process/window owns the coordinate. Without a target, use global coordinates with foreground delivery.
+- Background coordinate clicks require `--snapshot` from a fresh exact-window `see`. The captured PID, window ID, process generation, and bounds are matched against any `--app`/`--pid`/window selector and revalidated immediately before dispatch. PID-only/app-only coordinates, empty snapshots, same-ID replacement windows, and moved bounds are refused before mutation. Without a capture reference, use explicit `--foreground` global coordinates.
 - Right-click (`--right`) issues `AXShowMenu` without waiting for the context menu to close: a successfully opened menu runs a nested tracking runloop in the target app, so the command reports success once the menu is up instead of timing out behind it.
 
 ## Implementation notes
 - Validation makes sure you only provide one targeting strategy (ID/query vs. `--coords`) and that coordinate strings parse cleanly into doubles. Target-relative coordinate clicks fail if the point is outside the resolved window.
-- When no `--snapshot` is provided, the command grabs the most recent snapshot ID (if any) before waiting for elements. Coordinate clicks skip snapshot usage entirely to avoid stale caches, but targeted coordinate clicks resolve the target window before synthesizing the final screen point.
+- When no `--snapshot` is provided, element/query clicks may use the most recent snapshot. Foreground global coordinates remain snapshot-free. Background coordinates never infer ownership at dispatch time: they resolve through the explicit capture snapshot and pass its exact receipt through the automation/Bridge boundary.
 - Background element/query clicks re-resolve cached elements in the target process and exact snapshot window, then invoke their AX action; when the element cannot be re-resolved, the adjusted snapshot point is hit-tested and the AX element found there is pressed. Mismatched process/window selectors and unverifiable window snapshots are rejected. Run `peekaboo see` first when you need fresh element IDs or target metadata.
 - Foreground element-based clicks call `AutomationServiceBridge.waitForElement` with the supplied timeout so you don’t have to insert manual sleeps. Helpful hints are printed when timeouts expire.
 - `--foreground` enforces focus just before the click by `ensureFocused`; it will hop Spaces if necessary unless you pass `--no-auto-focus`. The element's screen point is then clicked with real synthetic mouse events, and the command verifies the target app is frontmost before dispatching so the click cannot land in another app.
-- Background clicks (including coordinate clicks) require Accessibility permission; Event Synthesizing permission is only needed for foreground synthetic clicks and background typing/hotkeys. Exact-window pinning still rejects vanished/reused windows and points outside current bounds before any AX action runs.
-- JSON output reports `clickedElement`, input coordinates, resolved screen coordinates, coordinate space, target window metadata, wait time, execution time, and `targetPoint` diagnostics. Element/query `targetPoint` includes the original snapshot midpoint, the final resolved point, the snapshot ID, and whether a moved-window adjustment was applied.
+- Background AX clicks require Accessibility permission; routed background right/double clicks also require Event Synthesizing permission. Exact-window pinning rejects vanished/reused windows and points outside current bounds before native dispatch.
+- JSON output reports `clickedElement`, input coordinates, resolved screen coordinates, coordinate space, target window metadata, wait time, execution time, `verified`/`effect` for routed pointer delivery, and `targetPoint` diagnostics. Element/query `targetPoint` includes the original snapshot midpoint, the final resolved point, the snapshot ID, and whether a moved-window adjustment was applied.
 
 ## Examples
 ```bash
@@ -51,8 +53,8 @@ peekaboo click --on "$ELEMENT_ID"
 # Fuzzy search + extra wait for a slow dialog using foreground delivery
 peekaboo click "Allow" --foreground --wait-for 8000 --space-switch
 
-# Issue a right-click at global screen coordinates
-peekaboo click --coords 1024,88 --right --foreground --no-auto-focus
+# Issue a background right-click in an exact window without moving the cursor
+peekaboo click --window-id 59620 --coords 420,180 --right
 
 # Trigger a SwiftUI long-press gesture
 peekaboo click --coords 640,420 --long-press
@@ -63,8 +65,9 @@ peekaboo click --app Safari --coords 20,40
 # Force global screen coordinates while still focusing a target first
 peekaboo click --window-id 59620 --coords 1024,88 --global-coords --foreground
 
-# Click Safari coordinates without activating Safari
-peekaboo click --coords 420,180 --app Safari --global-coords
+# Click captured Safari coordinates without activating Safari
+peekaboo see --app Safari --json
+peekaboo click --coords 420,180 --app Safari --global-coords --snapshot "$SNAPSHOT_ID"
 
 # Browser fallback when web content has no actionable accessibility descendants
 peekaboo screen list --json

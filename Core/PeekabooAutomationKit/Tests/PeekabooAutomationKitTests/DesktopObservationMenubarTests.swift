@@ -569,7 +569,7 @@ private final class MenuBarRecordingOCRRecognizer: OCRRecognizing {
         self.text = text
     }
 
-    func recognizeText(in _: Data) throws -> OCRTextResult {
+    func recognizeText(in _: Data, timeoutSeconds _: TimeInterval) async throws -> OCRTextResult {
         OCRTextResult(
             observations: [
                 OCRTextObservation(

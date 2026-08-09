@@ -26,6 +26,8 @@ extension ProcessCommandParameters {
     public struct ScreenshotParameters: Codable, Sendable {
         public let path: String
         public let app: String?
+        public let pid: Int32?
+        public let windowId: Int?
         public let window: String?
         public let display: Int?
         public let mode: String?
@@ -34,6 +36,8 @@ extension ProcessCommandParameters {
         public init(
             path: String,
             app: String? = nil,
+            pid: Int32? = nil,
+            windowId: Int? = nil,
             window: String? = nil,
             display: Int? = nil,
             mode: String? = nil,
@@ -41,6 +45,8 @@ extension ProcessCommandParameters {
         {
             self.path = path
             self.app = app
+            self.pid = pid
+            self.windowId = windowId
             self.window = window
             self.display = display
             self.mode = mode

@@ -73,7 +73,7 @@ public final class DesktopMutationWatermarkStore: @unchecked Sendable {
         self.watermarkURL = directoryURL.appendingPathComponent(Self.watermarkFileName, isDirectory: false)
         self.lockURL = directoryURL.appendingPathComponent(Self.lockFileName, isDirectory: false)
         self.pendingDirectoryURL = directoryURL.appendingPathComponent(Self.pendingDirectoryName, isDirectory: true)
-        self.processStartIdentityProvider = Self.processStartIdentity
+        self.processStartIdentityProvider = SystemIdentityResolver.processStartIdentity
         self.pendingRecordRemover = { try FileManager.default.removeItem(at: $0) }
     }
 
@@ -179,34 +179,65 @@ public final class DesktopMutationWatermarkStore: @unchecked Sendable {
         try self.beginMutation(at: startedAt, ownerProcessIdentifier: getpid())
     }
 
+    /// Waits for the cross-process barrier without blocking an actor executor and stops promptly when its task is
+    /// cancelled. Bridge requests use this before dispatch so a disconnected client cannot remain queued in `flock`.
+    public func beginMutationCancellable(at startedAt: Date = Date()) async throws -> PendingMutation {
+        let descriptor = try self.openLockDescriptor()
+        defer { close(descriptor) }
+
+        while flock(descriptor, LOCK_EX | LOCK_NB) != 0 {
+            let code = errno
+            guard code == EWOULDBLOCK || code == EAGAIN || code == EINTR else {
+                throw self.lockError(code: code)
+            }
+            try Task.checkCancellation()
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        defer { _ = flock(descriptor, LOCK_UN) }
+
+        try Task.checkCancellation()
+        return try self.beginMutationUnlocked(
+            at: startedAt,
+            ownerProcessIdentifier: getpid())
+    }
+
     func beginMutation(
         at startedAt: Date,
         ownerProcessIdentifier: pid_t) throws -> PendingMutation
     {
         try self.withLock(operation: LOCK_EX) {
-            try FileManager.default.createDirectory(
-                at: self.pendingDirectoryURL,
-                withIntermediateDirectories: true,
-                attributes: [.posixPermissions: NSNumber(value: S_IRWXU)])
-            let mutation = PendingMutation(
-                id: UUID(),
-                startedAt: startedAt,
-                completionGenerationAtStart: self.readCompletionGenerationUnlocked())
-            let record = PendingMutationRecord(
-                version: Self.currentVersion,
-                ownerProcessIdentifier: ownerProcessIdentifier,
-                ownerProcessStartIdentity: self.processStartIdentityProvider(ownerProcessIdentifier),
-                startedAtReferenceDateSeconds: startedAt.timeIntervalSinceReferenceDate,
-                resolution: nil)
-            let url = self.pendingMutationURL(for: mutation)
-            do {
-                try self.writePendingRecordUnlocked(record, to: url)
-            } catch {
-                try? self.pendingRecordRemover(url)
-                throw error
-            }
-            return mutation
+            try self.beginMutationUnlocked(
+                at: startedAt,
+                ownerProcessIdentifier: ownerProcessIdentifier)
         }
+    }
+
+    private func beginMutationUnlocked(
+        at startedAt: Date,
+        ownerProcessIdentifier: pid_t) throws -> PendingMutation
+    {
+        try FileManager.default.createDirectory(
+            at: self.pendingDirectoryURL,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: NSNumber(value: S_IRWXU)])
+        let mutation = PendingMutation(
+            id: UUID(),
+            startedAt: startedAt,
+            completionGenerationAtStart: self.readCompletionGenerationUnlocked())
+        let record = PendingMutationRecord(
+            version: Self.currentVersion,
+            ownerProcessIdentifier: ownerProcessIdentifier,
+            ownerProcessStartIdentity: self.processStartIdentityProvider(ownerProcessIdentifier),
+            startedAtReferenceDateSeconds: startedAt.timeIntervalSinceReferenceDate,
+            resolution: nil)
+        let url = self.pendingMutationURL(for: mutation)
+        do {
+            try self.writePendingRecordUnlocked(record, to: url)
+        } catch {
+            try? self.pendingRecordRemover(url)
+            throw error
+        }
+        return mutation
     }
 
     /// Publishes the host-observed completion boundary before removing its pending barrier.
@@ -497,23 +528,18 @@ public final class DesktopMutationWatermarkStore: @unchecked Sendable {
         return currentIdentity == recordedIdentity
     }
 
-    private static func processStartIdentity(_ processIdentifier: pid_t) -> UInt64? {
-        guard processIdentifier > 0 else { return nil }
-        var info = proc_bsdinfo()
-        let expectedSize = Int32(MemoryLayout<proc_bsdinfo>.stride)
-        guard proc_pidinfo(
-            processIdentifier,
-            PROC_PIDTBSDINFO,
-            0,
-            &info,
-            expectedSize) == expectedSize
-        else { return nil }
-        let seconds = UInt64(info.pbi_start_tvsec)
-        let microseconds = UInt64(info.pbi_start_tvusec)
-        return seconds.multipliedReportingOverflow(by: 1_000_000).partialValue &+ microseconds
+    private func withLock<T>(operation: Int32, _ body: () throws -> T) throws -> T {
+        let descriptor = try self.openLockDescriptor()
+        defer { close(descriptor) }
+
+        guard flock(descriptor, operation) == 0 else {
+            throw self.lockError(code: errno)
+        }
+        defer { _ = flock(descriptor, LOCK_UN) }
+        return try body()
     }
 
-    private func withLock<T>(operation: Int32, _ body: () throws -> T) throws -> T {
+    private func openLockDescriptor() throws -> Int32 {
         try FileManager.default.createDirectory(
             at: self.directoryURL,
             withIntermediateDirectories: true,
@@ -523,20 +549,15 @@ public final class DesktopMutationWatermarkStore: @unchecked Sendable {
             O_CREAT | O_RDWR | O_CLOEXEC | O_NOFOLLOW,
             S_IRUSR | S_IWUSR)
         guard descriptor >= 0 else {
-            throw NSError(
-                domain: NSPOSIXErrorDomain,
-                code: Int(errno),
-                userInfo: [NSFilePathErrorKey: self.lockURL.path])
+            throw self.lockError(code: errno)
         }
-        defer { close(descriptor) }
+        return descriptor
+    }
 
-        guard flock(descriptor, operation) == 0 else {
-            throw NSError(
-                domain: NSPOSIXErrorDomain,
-                code: Int(errno),
-                userInfo: [NSFilePathErrorKey: self.lockURL.path])
-        }
-        defer { _ = flock(descriptor, LOCK_UN) }
-        return try body()
+    private func lockError(code: Int32) -> NSError {
+        NSError(
+            domain: NSPOSIXErrorDomain,
+            code: Int(code),
+            userInfo: [NSFilePathErrorKey: self.lockURL.path])
     }
 }

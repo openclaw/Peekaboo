@@ -86,7 +86,11 @@ extension SeeCommand {
 
             self.logger.verbose("No menu bar popover detected; capturing menu bar area", category: "Capture")
             let rect = try self.menuBarRect()
-            let result = try await self.services.screenCapture.captureArea(rect)
+            let result = try await self.services.screenCapture.captureArea(
+                rect,
+                visualizerMode: .none,
+                scale: .logical1x
+            )
             return CaptureContext(
                 captureResult: result,
                 captureBounds: rect,

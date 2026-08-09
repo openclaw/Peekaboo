@@ -311,6 +311,180 @@ struct RuntimeHostResolverTests {
         ) == nil)
     }
 
+    @Test
+    func `Candidate validation skips legacy hosts for mutations but preserves read-only compatibility`() async throws {
+        let candidate = RuntimeHostResolver.ImplicitRemoteCandidate(
+            socketPath: "/tmp/bridge.sock",
+            requireReusableDaemon: false,
+            requiredHostKind: nil,
+            requiresValidatedHistoricalDaemon: false
+        )
+        let operations: [PeekabooBridgeOperation] = [
+            .captureScreen,
+            .listWindows,
+            .moveWindow,
+            .invalidateImplicitLatestSnapshot,
+        ]
+        func handshake(minor: Int) -> PeekabooBridgeHandshakeResponse {
+            PeekabooBridgeHandshakeResponse(
+                negotiatedVersion: PeekabooBridgeProtocolVersion(major: 1, minor: minor),
+                hostKind: .gui,
+                build: nil,
+                supportedOperations: operations,
+                enabledOperations: operations
+            )
+        }
+
+        let parsed = ParsedValues(positional: [], options: [:], flags: [])
+        let mutationOptions = try CommanderCLIBinder.makeRuntimeOptions(
+            from: parsed,
+            commandType: WindowCommand.MoveSubcommand.self
+        )
+        let listingOptions = try CommanderCLIBinder.makeRuntimeOptions(
+            from: parsed,
+            commandType: WindowCommand.WindowListSubcommand.self
+        )
+
+        #expect(await RuntimeHostResolver.validateRemoteCandidate(
+            candidate,
+            handshake: handshake(minor: 17),
+            options: mutationOptions
+        ) == nil)
+        #expect(await RuntimeHostResolver.validateRemoteCandidate(
+            candidate,
+            handshake: handshake(minor: 18),
+            options: mutationOptions
+        ) != nil)
+        #expect(await RuntimeHostResolver.validateRemoteCandidate(
+            candidate,
+            handshake: handshake(minor: 15),
+            options: listingOptions
+        ) != nil)
+    }
+
+    @Test
+    func `Window restore requires supported and enabled protocol 1_18 operation`() async throws {
+        let candidate = RuntimeHostResolver.ImplicitRemoteCandidate(
+            socketPath: "/tmp/bridge.sock",
+            requireReusableDaemon: false,
+            requiredHostKind: nil,
+            requiresValidatedHistoricalDaemon: false
+        )
+        let required: [PeekabooBridgeOperation] = [
+            .captureScreen,
+            .listWindows,
+            .restoreWindow,
+            .invalidateImplicitLatestSnapshot,
+        ]
+        let options = try CommanderCLIBinder.makeRuntimeOptions(
+            from: ParsedValues(positional: [], options: [:], flags: []),
+            commandType: WindowCommand.RestoreSubcommand.self
+        )
+        func handshake(
+            supported: [PeekabooBridgeOperation],
+            enabled: [PeekabooBridgeOperation]
+        ) -> PeekabooBridgeHandshakeResponse {
+            PeekabooBridgeHandshakeResponse(
+                negotiatedVersion: .init(major: 1, minor: 18),
+                hostKind: .gui,
+                build: nil,
+                supportedOperations: supported,
+                enabledOperations: enabled
+            )
+        }
+
+        #expect(await RuntimeHostResolver.validateRemoteCandidate(
+            candidate,
+            handshake: handshake(
+                supported: required.filter { $0 != .restoreWindow },
+                enabled: required.filter { $0 != .restoreWindow }
+            ),
+            options: options
+        ) == nil)
+        #expect(await RuntimeHostResolver.validateRemoteCandidate(
+            candidate,
+            handshake: handshake(
+                supported: required,
+                enabled: required.filter { $0 != .restoreWindow }
+            ),
+            options: options
+        ) == nil)
+        #expect(await RuntimeHostResolver.validateRemoteCandidate(
+            candidate,
+            handshake: handshake(supported: required, enabled: required),
+            options: options
+        ) != nil)
+    }
+
+    @Test
+    func `Quit target shapes reject legacy hosts and require enabled pinned quit support`() async throws {
+        let candidate = RuntimeHostResolver.ImplicitRemoteCandidate(
+            socketPath: "/tmp/daemon.sock",
+            requireReusableDaemon: true,
+            requiredHostKind: .onDemand,
+            requiresValidatedHistoricalDaemon: false
+        )
+        let operations: [PeekabooBridgeOperation] = [
+            .captureScreen,
+            .quitApplication,
+            .invalidateImplicitLatestSnapshot,
+        ]
+        func handshake(minor: Int, enabledOperations: [PeekabooBridgeOperation]? = nil)
+        -> PeekabooBridgeHandshakeResponse {
+            PeekabooBridgeHandshakeResponse(
+                negotiatedVersion: PeekabooBridgeProtocolVersion(major: 1, minor: minor),
+                hostKind: .onDemand,
+                build: nil,
+                supportedOperations: operations,
+                enabledOperations: enabledOperations ?? operations
+            )
+        }
+        let reusableStatus = PeekabooDaemonStatus(
+            running: true,
+            pid: 4242,
+            mode: .manual,
+            bridge: PeekabooDaemonBridgeStatus(
+                socketPath: candidate.socketPath,
+                hostKind: .onDemand,
+                allowedOperations: operations
+            )
+        )
+        let targetShapes = [
+            ParsedValues(positional: [], options: ["app": ["TextEdit"]], flags: []),
+            ParsedValues(positional: [], options: ["pid": ["123"]], flags: []),
+            ParsedValues(positional: [], options: [:], flags: ["all"]),
+        ]
+
+        for parsed in targetShapes {
+            let options = try CommanderCLIBinder.makeRuntimeOptions(
+                from: parsed,
+                commandType: AppCommand.QuitSubcommand.self
+            )
+            #expect(options.requiresProcessGenerationPinnedApplicationQuit)
+            #expect(await RuntimeHostResolver.validateRemoteCandidate(
+                candidate,
+                handshake: handshake(minor: 15),
+                options: options,
+                fetchReusableDaemonStatus: { _ in reusableStatus }
+            ) == nil)
+            #expect(await RuntimeHostResolver.validateRemoteCandidate(
+                candidate,
+                handshake: handshake(minor: 16),
+                options: options,
+                fetchReusableDaemonStatus: { _ in reusableStatus }
+            ) != nil)
+            #expect(await RuntimeHostResolver.validateRemoteCandidate(
+                candidate,
+                handshake: handshake(
+                    minor: 16,
+                    enabledOperations: [.captureScreen, .invalidateImplicitLatestSnapshot]
+                ),
+                options: options,
+                fetchReusableDaemonStatus: { _ in reusableStatus }
+            ) == nil)
+        }
+    }
+
     private static func captureOptions() -> CommandRuntimeOptions {
         var options = CommandRuntimeOptions()
         options.requiresScreenCapturePermission = true

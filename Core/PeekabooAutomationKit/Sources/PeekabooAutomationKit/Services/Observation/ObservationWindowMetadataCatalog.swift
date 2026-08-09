@@ -1,87 +1,73 @@
 import CoreGraphics
 import Foundation
 
-struct ObservationWindowMetadata {
-    let app: ApplicationIdentity?
-    let window: WindowIdentity?
-    let bounds: CGRect?
-    let context: WindowContext
+public struct ExactWindowObservationMetadata: Sendable, Equatable {
+    public let ownerProcessIdentifier: Int32
+    public let ownerProcessStartIdentity: UInt64
+    public let title: String
+    public let bounds: CGRect
+    public let applicationName: String?
+
+    public init(
+        ownerProcessIdentifier: Int32,
+        ownerProcessStartIdentity: UInt64,
+        title: String,
+        bounds: CGRect,
+        applicationName: String? = nil)
+    {
+        self.ownerProcessIdentifier = ownerProcessIdentifier
+        self.ownerProcessStartIdentity = ownerProcessStartIdentity
+        self.title = title
+        self.bounds = bounds
+        self.applicationName = applicationName
+    }
 }
 
-enum ObservationWindowMetadataCatalog {
-    static func currentWindow(windowID: CGWindowID) -> ObservationWindowMetadata? {
-        let windowInfo = CGWindowListCopyWindowInfo([.optionIncludingWindow], windowID) as? [[String: Any]]
-        guard let info = windowInfo?.first else {
-            return nil
-        }
+public protocol ExactWindowMetadataProviding: Sendable {
+    func metadata(for windowID: CGWindowID) -> ExactWindowObservationMetadata?
+    func windows(for processIdentifier: Int32) -> [SystemWindowIdentity]
+    func processStartIdentity(for processIdentifier: Int32) -> UInt64?
+}
 
-        return self.metadata(windowID: windowID, windowInfo: info)
+extension ExactWindowMetadataProviding {
+    public func windows(for _: Int32) -> [SystemWindowIdentity] {
+        []
     }
 
-    static func metadata(windowID: CGWindowID, windowInfo: [String: Any]) -> ObservationWindowMetadata {
-        let title = windowInfo[kCGWindowName as String] as? String ?? ""
-        let bounds = self.bounds(from: windowInfo)
-        let pid = self.pid(from: windowInfo[kCGWindowOwnerPID as String])
-        let appName = windowInfo[kCGWindowOwnerName as String] as? String ?? "Unknown"
-        let app = pid.map {
-            ApplicationIdentity(
-                processIdentifier: $0,
-                bundleIdentifier: nil,
-                name: appName)
-        }
-        let window = bounds.map {
-            WindowIdentity(
-                windowID: Int(windowID),
-                title: title,
-                bounds: $0,
-                index: 0)
-        }
-        let context = WindowContext(
-            applicationName: app?.name,
-            applicationBundleId: app?.bundleIdentifier,
-            applicationProcessId: app?.processIdentifier,
-            windowTitle: window?.title,
-            windowID: Int(windowID),
-            windowBounds: window?.bounds)
-
-        return ObservationWindowMetadata(
-            app: app,
-            window: window,
-            bounds: bounds,
-            context: context)
+    public func processStartIdentity(for _: Int32) -> UInt64? {
+        nil
     }
+}
 
-    private static func bounds(from windowInfo: [String: Any]) -> CGRect? {
-        guard
-            let boundsDict = windowInfo[kCGWindowBounds as String] as? [String: Any],
-            let x = self.cgFloat(from: boundsDict["X"]),
-            let y = self.cgFloat(from: boundsDict["Y"]),
-            let width = self.cgFloat(from: boundsDict["Width"]),
-            let height = self.cgFloat(from: boundsDict["Height"])
+public struct SystemExactWindowMetadataProvider: ExactWindowMetadataProviding {
+    public init() {}
+
+    public func metadata(for windowID: CGWindowID) -> ExactWindowObservationMetadata? {
+        guard let identity = SystemIdentityResolver.windowIdentity(windowID),
+              let processStartIdentity = SystemIdentityResolver.processStartIdentity(
+                  identity.ownerProcessIdentifier),
+              SystemIdentityResolver.windowMutationIdentity(
+                  windowID: windowID,
+                  expectedOwnerProcessIdentifier: identity.ownerProcessIdentifier,
+                  expectedOwnerProcessStartIdentity: processStartIdentity,
+                  expectedBounds: identity.bounds,
+                  isMinimized: !identity.isOnScreen) != nil
         else {
             return nil
         }
-
-        return CGRect(x: x, y: y, width: width, height: height)
+        return ExactWindowObservationMetadata(
+            ownerProcessIdentifier: identity.ownerProcessIdentifier,
+            ownerProcessStartIdentity: processStartIdentity,
+            title: identity.title,
+            bounds: identity.bounds,
+            applicationName: identity.applicationName)
     }
 
-    private static func pid(from value: Any?) -> Int32? {
-        if let number = value as? NSNumber {
-            return number.int32Value
-        }
-        if let intValue = value as? Int {
-            return Int32(intValue)
-        }
-        if let int32Value = value as? Int32 {
-            return int32Value
-        }
-        return nil
+    public func windows(for processIdentifier: Int32) -> [SystemWindowIdentity] {
+        SystemIdentityResolver.windowIdentities(ownerProcessIdentifier: processIdentifier)
     }
 
-    private static func cgFloat(from value: Any?) -> CGFloat? {
-        if let number = value as? NSNumber {
-            return CGFloat(number.doubleValue)
-        }
-        return value as? CGFloat
+    public func processStartIdentity(for processIdentifier: Int32) -> UInt64? {
+        SystemIdentityResolver.processStartIdentity(processIdentifier)
     }
 }

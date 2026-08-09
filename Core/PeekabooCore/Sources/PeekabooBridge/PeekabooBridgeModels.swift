@@ -51,18 +51,21 @@ public enum PeekabooBridgeOperation: String, Codable, Sendable, CaseIterable, Ha
     case captureArea
     case detectElements
     case inspectAccessibilityTree
+    case getFocusedElement
     case desktopObservation
     // Input & automation
     case click
     case type
     case typeActions
     case targetedTypeActions
+    case exactWindowTargetedTypeActions
     case setValue
     case performAction
     case scroll
     case targetedScroll
     case hotkey
     case targetedHotkey
+    case exactWindowTargetedHotkey
     case targetedClick
     case exactWindowTargetedClick
     case swipe
@@ -78,6 +81,7 @@ public enum PeekabooBridgeOperation: String, Codable, Sendable, CaseIterable, Ha
     case closeWindow
     case backgroundCloseWindow
     case minimizeWindow
+    case restoreWindow
     case maximizeWindow
     case getFocusedWindow
     // Applications
@@ -180,6 +184,31 @@ public enum PeekabooBridgeOperation: String, Codable, Sendable, CaseIterable, Ha
             compatible.remove(.targetedScroll)
             compatible.remove(.backgroundCloseWindow)
             compatible.remove(.backgroundDialogClickButton)
+        }
+        if version < PeekabooBridgeProtocolVersion(major: 1, minor: 14) {
+            compatible.remove(.getFocusedElement)
+        }
+        if version < PeekabooBridgeConstants.processGenerationPinnedApplicationQuitVersion {
+            compatible.remove(.quitApplication)
+        }
+        // 1.18 adds immutable capture-time bounds to destructive window receipts. Older hosts
+        // would ignore that evidence, so new clients must not negotiate these operations down.
+        if version < PeekabooBridgeProtocolVersion(major: 1, minor: 18) {
+            compatible.subtract([
+                .moveWindow,
+                .resizeWindow,
+                .setWindowBounds,
+                .closeWindow,
+                .backgroundCloseWindow,
+                .minimizeWindow,
+                .restoreWindow,
+                .maximizeWindow,
+            ])
+        }
+        if version < PeekabooBridgeProtocolVersion(major: 1, minor: 17) {
+            compatible.remove(.exactWindowTargetedClick)
+            compatible.remove(.exactWindowTargetedTypeActions)
+            compatible.remove(.exactWindowTargetedHotkey)
         }
         return compatible
     }

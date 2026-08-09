@@ -2,6 +2,33 @@ import AppKit
 @preconcurrency import AXorcist
 import CoreGraphics
 
+@_spi(Testing) public enum AXAttributeReadCompletenessPolicy {
+    @_spi(Testing) public static func embeddedError(in value: Any) -> AXError? {
+        let cfValue = value as CFTypeRef
+        guard CFGetTypeID(cfValue) == AXValueGetTypeID() else { return nil }
+        let axValue = unsafeDowncast(cfValue, to: AXValue.self)
+        guard AXValueGetType(axValue) == .axError else { return nil }
+        var error = AXError.success
+        return AXValueGetValue(axValue, .axError, &error) ? error : .failure
+    }
+
+    @_spi(Testing) public static func hasIncompleteErrorValue(in values: [Any]) -> Bool {
+        values.contains { value in
+            guard let error = self.embeddedError(in: value) else { return false }
+            return self.isIncomplete(error: error)
+        }
+    }
+
+    @_spi(Testing) public static func isIncomplete(error: AXError) -> Bool {
+        switch error {
+        case .success, .noValue, .attributeUnsupported, .parameterizedAttributeUnsupported, .notImplemented:
+            false
+        default:
+            true
+        }
+    }
+}
+
 /// Reads the small descriptor surface element detection needs from AX elements.
 @_spi(Testing) public enum AXDescriptorReader {
     @_spi(Testing) public struct Descriptor: Equatable {
@@ -14,8 +41,32 @@ import CoreGraphics
         public let help: String?
         public let roleDescription: String?
         public let identifier: String?
-        public let isEnabled: Bool
+        public let isEnabled: Bool?
+        public let isSelected: Bool?
         public let placeholder: String?
+    }
+
+    @_spi(Testing) public enum ReadResult: Equatable {
+        case descriptor(Descriptor)
+        case absent
+        case incomplete
+    }
+
+    @_spi(Testing) public enum BatchReadDisposition: Equatable {
+        case values
+        case fallbackRequired
+        case incomplete
+    }
+
+    enum SingleAttributeReadDisposition: Equatable {
+        case value
+        case sparse
+        case incomplete
+    }
+
+    struct SingleAttributeRead {
+        let error: AXError
+        let value: Any?
     }
 
     private struct AttributeValues {
@@ -30,7 +81,14 @@ import CoreGraphics
         let roleDescription: String?
         let identifier: String?
         let isEnabled: Bool?
+        let isSelected: Bool?
         let placeholder: String?
+    }
+
+    private enum AttributeReadResult {
+        case values(AttributeValues)
+        case fallbackRequired
+        case failed
     }
 
     private static let descriptorAttributeNames: [String] = [
@@ -45,19 +103,116 @@ import CoreGraphics
         AttributeName.roleDescription,
         AttributeName.identifier,
         AttributeName.enabled,
+        AttributeName.selected,
         AttributeName.placeholderValue,
     ]
 
+    @_spi(Testing) public static var descriptorAttributeCount: Int {
+        self.descriptorAttributeNames.count
+    }
+
     @MainActor
     static func describe(_ element: Element) -> Descriptor? {
-        guard let attributes = self.copyAttributes(for: element) else {
+        guard case let .descriptor(descriptor) = self.read(element) else { return nil }
+        return descriptor
+    }
+
+    @MainActor
+    static func read(_ element: Element) -> ReadResult {
+        let attributes: AttributeValues
+        switch self.copyAttributes(for: element) {
+        case let .values(values):
+            attributes = values
+        case .fallbackRequired:
             return self.describeWithSingleAttributeReads(element)
+        case .failed:
+            return .incomplete
         }
 
-        let frame = CGRect(origin: attributes.position ?? .zero, size: attributes.size ?? .zero)
-        guard self.isUsefulFrame(frame) else { return nil }
+        return self.readResult(from: attributes)
+    }
 
-        return Descriptor(
+    @MainActor
+    private static func describeWithSingleAttributeReads(_ element: Element) -> ReadResult {
+        self.describeWithSingleAttributeReads { name in
+            var value: CFTypeRef?
+            let error = AXUIElementCopyAttributeValue(
+                element.underlyingElement,
+                name as CFString,
+                &value)
+            return SingleAttributeRead(error: error, value: value)
+        }
+    }
+
+    static func describeWithSingleAttributeReads(
+        copyAttribute: (String) -> SingleAttributeRead) -> ReadResult
+    {
+        var valueByName: [String: Any] = [:]
+        for name in self.descriptorAttributeNames {
+            let read = copyAttribute(name)
+            switch self.singleAttributeReadDisposition(error: read.error, value: read.value) {
+            case .value:
+                guard let value = read.value else { return .incomplete }
+                valueByName[name] = value
+            case .sparse:
+                continue
+            case .incomplete:
+                return .incomplete
+            }
+        }
+        return self.readResult(from: self.attributeValues(from: valueByName))
+    }
+
+    @MainActor
+    private static func copyAttributes(for element: Element) -> AttributeReadResult {
+        var rawValues: CFArray?
+        let error = AXUIElementCopyMultipleAttributeValues(
+            element.underlyingElement,
+            self.descriptorAttributeNames as CFArray,
+            [],
+            &rawValues)
+        let values = rawValues as? [Any]
+        switch self.batchReadDisposition(error: error, values: values) {
+        case .fallbackRequired:
+            return .fallbackRequired
+        case .incomplete:
+            return .failed
+        case .values:
+            break
+        }
+        guard let values else { return .failed }
+
+        let valueByName = Dictionary(uniqueKeysWithValues: zip(self.descriptorAttributeNames, values))
+        // Expected sparse attributes arrive as AXError-valued AXValues. Hard AX errors were rejected by
+        // batchReadDisposition; the typed readers below treat only the remaining sparse entries as nil.
+        return .values(self.attributeValues(from: valueByName))
+    }
+
+    private static func attributeValues(from valueByName: [String: Any]) -> AttributeValues {
+        let role = self.stringValue(valueByName[AttributeName.role])
+        let selected = self.boolValue(valueByName[AttributeName.selected])
+            ?? self.booleanSelectionValue(role: role, rawValue: valueByName[AttributeName.value])
+        return AttributeValues(
+            position: self.cgPointValue(valueByName[AttributeName.position]),
+            size: self.cgSizeValue(valueByName[AttributeName.size]),
+            role: role,
+            title: self.stringValue(valueByName[AttributeName.title]),
+            label: self.stringValue(valueByName["AXLabel"]),
+            value: self.stringValue(valueByName[AttributeName.value]),
+            description: self.stringValue(valueByName[AttributeName.description]),
+            help: self.stringValue(valueByName[AttributeName.help]),
+            roleDescription: self.stringValue(valueByName[AttributeName.roleDescription]),
+            identifier: self.stringValue(valueByName[AttributeName.identifier]),
+            isEnabled: self.boolValue(valueByName[AttributeName.enabled]),
+            isSelected: selected,
+            placeholder: self.stringValue(valueByName[AttributeName.placeholderValue]))
+    }
+
+    private static func readResult(from attributes: AttributeValues) -> ReadResult {
+        let frame = CGRect(origin: attributes.position ?? .zero, size: attributes.size ?? .zero)
+        guard self.isUsefulFrame(frame) else { return .absent }
+
+        return .descriptor(Descriptor(
             frame: frame,
             role: attributes.role ?? "Unknown",
             title: attributes.title,
@@ -67,60 +222,68 @@ import CoreGraphics
             help: attributes.help,
             roleDescription: attributes.roleDescription,
             identifier: attributes.identifier,
-            isEnabled: attributes.isEnabled ?? false,
-            placeholder: attributes.placeholder)
+            isEnabled: attributes.isEnabled,
+            isSelected: attributes.isSelected,
+            placeholder: attributes.placeholder))
     }
 
-    @MainActor
-    private static func describeWithSingleAttributeReads(_ element: Element) -> Descriptor? {
-        let frame = element.frame() ?? .zero
-        guard self.isUsefulFrame(frame) else { return nil }
-
-        return Descriptor(
-            frame: frame,
-            role: element.role() ?? "Unknown",
-            title: element.title(),
-            label: element.label(),
-            value: element.stringValue(),
-            description: element.descriptionText(),
-            help: element.help(),
-            roleDescription: element.roleDescription(),
-            identifier: element.identifier(),
-            isEnabled: element.isEnabled() ?? false,
-            placeholder: element.placeholderValue())
+    private static func booleanSelectionValue(role: String?, rawValue: Any?) -> Bool? {
+        guard self.isBooleanSelectionRole(role) else { return nil }
+        return self.boolValue(rawValue)
     }
 
-    @MainActor
-    private static func copyAttributes(for element: Element) -> AttributeValues? {
-        var rawValues: CFArray?
-        let error = AXUIElementCopyMultipleAttributeValues(
-            element.underlyingElement,
-            self.descriptorAttributeNames as CFArray,
-            [],
-            &rawValues)
-        guard error == .success,
-              let values = rawValues as? [Any],
-              values.count == self.descriptorAttributeNames.count
-        else {
-            return nil
+    private static func isBooleanSelectionRole(_ role: String?) -> Bool {
+        switch role?.lowercased() {
+        case "axcheckbox", "axradiobutton", "axswitch":
+            true
+        default:
+            false
+        }
+    }
+
+    @_spi(Testing) public static func shouldFallbackToSingleAttributeReads(
+        error: AXError,
+        hasExpectedValueShape: Bool) -> Bool
+    {
+        if error == .success {
+            return !hasExpectedValueShape
         }
 
-        let valueByName = Dictionary(uniqueKeysWithValues: zip(self.descriptorAttributeNames, values))
-        // `AXUIElementCopyMultipleAttributeValues` turns missing attributes into AXError-valued
-        // AXValues. The typed readers below treat those as nil while keeping this pass to one AX round-trip.
-        return AttributeValues(
-            position: self.cgPointValue(valueByName[AttributeName.position]),
-            size: self.cgSizeValue(valueByName[AttributeName.size]),
-            role: self.stringValue(valueByName[AttributeName.role]),
-            title: self.stringValue(valueByName[AttributeName.title]),
-            label: self.stringValue(valueByName["AXLabel"]),
-            value: self.stringValue(valueByName[AttributeName.value]),
-            description: self.stringValue(valueByName[AttributeName.description]),
-            help: self.stringValue(valueByName[AttributeName.help]),
-            roleDescription: self.stringValue(valueByName[AttributeName.roleDescription]),
-            identifier: self.stringValue(valueByName[AttributeName.identifier]),
-            isEnabled: self.boolValue(valueByName[AttributeName.enabled]),
-            placeholder: self.stringValue(valueByName[AttributeName.placeholderValue]))
+        switch error {
+        case .attributeUnsupported, .parameterizedAttributeUnsupported, .notImplemented:
+            return true
+        default:
+            return false
+        }
+    }
+
+    @_spi(Testing) public static func batchReadDisposition(
+        error: AXError,
+        values: [Any]?) -> BatchReadDisposition
+    {
+        let hasExpectedValueShape = values?.count == self.descriptorAttributeNames.count
+        if self.shouldFallbackToSingleAttributeReads(
+            error: error,
+            hasExpectedValueShape: hasExpectedValueShape)
+        {
+            return .fallbackRequired
+        }
+        guard error == .success, let values else { return .incomplete }
+        return AXAttributeReadCompletenessPolicy.hasIncompleteErrorValue(in: values) ? .incomplete : .values
+    }
+
+    static func singleAttributeReadDisposition(
+        error: AXError,
+        value: Any?) -> SingleAttributeReadDisposition
+    {
+        if error == .success {
+            guard let value else { return .incomplete }
+            guard let embeddedError = AXAttributeReadCompletenessPolicy.embeddedError(in: value) else {
+                return .value
+            }
+            return AXAttributeReadCompletenessPolicy.isIncomplete(error: embeddedError) ? .incomplete : .sparse
+        }
+        return AXAttributeReadCompletenessPolicy.isIncomplete(error: error) ? .incomplete : .sparse
     }
 
     @_spi(Testing) public static func stringValue(_ value: Any?) -> String? {
@@ -175,5 +338,6 @@ private enum AttributeName {
     static let roleDescription = "AXRoleDescription"
     static let identifier = "AXIdentifier"
     static let enabled = "AXEnabled"
+    static let selected = "AXSelected"
     static let placeholderValue = "AXPlaceholderValue"
 }

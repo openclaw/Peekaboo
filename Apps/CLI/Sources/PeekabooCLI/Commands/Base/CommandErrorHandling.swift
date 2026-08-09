@@ -70,6 +70,8 @@ extension ErrorHandlingCommand {
         switch error {
         case .targetNotFound:
             .WINDOW_NOT_FOUND
+        case .ambiguousWindowTitle:
+            .INVALID_ARGUMENT
         case .unsupportedTarget:
             .VALIDATION_ERROR
         }

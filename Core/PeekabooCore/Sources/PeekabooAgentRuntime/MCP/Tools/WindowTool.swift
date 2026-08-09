@@ -2,6 +2,7 @@ import Foundation
 import MCP
 import os.log
 import PeekabooAutomation
+import PeekabooFoundation
 import TachikomaMCP
 
 /// MCP tool for manipulating application windows
@@ -13,11 +14,12 @@ public struct WindowTool: MCPTool {
 
     public var description: String {
         """
-        Manipulate application windows - close, minimize, maximize, move, resize, and focus.
+        Manipulate application windows - close, minimize, restore, maximize, move, resize, and focus.
 
         Actions:
         - close: Close a window
         - minimize: Minimize a window
+        - restore: Restore a minimized window without activating or focusing its application
         - maximize: Maximize a window
         - move: Move a window to specific coordinates (requires x, y)
         - resize: Resize a window to specific dimensions (requires width, height)
@@ -31,6 +33,7 @@ public struct WindowTool: MCPTool {
         JSON Examples (ALWAYS include `action`):
         - { "action": "focus", "app": "Google Chrome" }
         - { "action": "move", "app": "TextEdit", "x": 100, "y": 100 }
+        - { "action": "restore", "app": "PID:1234", "window_id": 5678 }
         - { "action": "set-bounds", "app": "Terminal", "x": 0, "y": 0, "width": 1280, "height": 720 }
         - { "action": "close", "app": "Safari", "title": "Grindr Web" }
         \(PeekabooMCPVersion.banner) using openai/gpt-5.5, anthropic/claude-opus-4-8
@@ -42,7 +45,7 @@ public struct WindowTool: MCPTool {
             properties: [
                 "action": SchemaBuilder.string(
                     description: "The action to perform on the window",
-                    enum: ["close", "minimize", "maximize", "move", "resize", "set-bounds", "focus"]),
+                    enum: ["close", "minimize", "restore", "maximize", "move", "resize", "set-bounds", "focus"]),
                 "app": SchemaBuilder.string(
                     description: "Target application name, bundle ID, or process ID"),
                 "title": SchemaBuilder.string(
@@ -129,11 +132,22 @@ public struct WindowTool: MCPTool {
         service: any WindowManagementServiceProtocol,
         startTime: Date) async throws -> ToolResponse
     {
-        let target = try self.createWindowTarget(
+        let rawTarget = try self.createWindowTarget(
             app: inputs.app,
             title: inputs.title,
             index: inputs.index,
             windowId: inputs.windowId)
+        let expectedOwnerIdentity: ApplicationProcessIdentity?
+        if inputs.windowId != nil, let app = inputs.app {
+            let application = try await self.context.applications.findApplication(identifier: app)
+            guard let identity = application.processIdentity else {
+                throw PeekabooError.commandFailed("The selected application did not include a process receipt")
+            }
+            expectedOwnerIdentity = identity
+        } else {
+            expectedOwnerIdentity = nil
+        }
+        let target = WindowActionTarget(target: rawTarget, expectedOwnerIdentity: expectedOwnerIdentity)
 
         switch action {
         case .close:
@@ -146,6 +160,13 @@ public struct WindowTool: MCPTool {
 
         case .minimize:
             return try await self.handleMinimize(
+                service: service,
+                target: target,
+                appName: inputs.app,
+                startTime: startTime)
+
+        case .restore:
+            return try await self.handleRestore(
                 service: service,
                 target: target,
                 appName: inputs.app,
@@ -222,9 +243,15 @@ public struct WindowTool: MCPTool {
     }
 }
 
+struct WindowActionTarget {
+    let target: WindowTarget
+    let expectedOwnerIdentity: ApplicationProcessIdentity?
+}
+
 private enum WindowAction: String, CaseIterable, Equatable {
     case close
     case minimize
+    case restore
     case maximize
     case move
     case resize

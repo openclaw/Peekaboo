@@ -39,7 +39,11 @@ import PeekabooFoundation
  */
 @MainActor
 public final class UIAutomationService: TargetedHotkeyServiceProtocol, TargetedTypeServiceProtocol,
-ExactWindowTargetedClickServiceProtocol {
+    ExactWindowTargetedClickServiceProtocol, TargetedFocusedElementServiceProtocol,
+    ExactWindowTargetedKeyboardServiceProtocol
+{
+    public let supportsExactWindowTargetedKeyboard = true
+    public let exactWindowTargetedKeyboardUnavailableReason: String? = nil
     let logger = Logger(subsystem: "boo.peekaboo.core", category: "UIAutomationService")
     let snapshotManager: any SnapshotManagerProtocol
 
@@ -57,6 +61,8 @@ ExactWindowTargetedClickServiceProtocol {
     let actionInputDriver: any ActionInputDriving
     let syntheticInputDriver: any SyntheticInputDriving
     let automationElementResolver: any AutomationElementResolving
+    let exactWindowFocusReader: @Sendable (pid_t) -> ExactWindowFocusSnapshot?
+    let exactWindowIdentityValidator: @Sendable (WindowMutationIdentity, CGRect) -> Bool
 
     // Search constraints to prevent unbounded AX traversals
     var searchLimits: UIAutomationSearchLimits
@@ -127,7 +133,11 @@ ExactWindowTargetedClickServiceProtocol {
         actionInputDriver: any ActionInputDriving,
         syntheticInputDriver: any SyntheticInputDriving = SyntheticInputDriver(),
         automationElementResolver: any AutomationElementResolving,
-        feedbackClient: any AutomationFeedbackClient = NoopAutomationFeedbackClient())
+        feedbackClient: any AutomationFeedbackClient = NoopAutomationFeedbackClient(),
+        exactWindowFocusReader: @escaping @Sendable (pid_t) -> ExactWindowFocusSnapshot? =
+            DetachedExactWindowFocusReader.read,
+        exactWindowIdentityValidator: @escaping @Sendable (WindowMutationIdentity, CGRect) -> Bool =
+            SystemIdentityResolver.validateWindowMutationIdentity)
     {
         let manager = snapshotManager ?? SnapshotManager()
         self.snapshotManager = manager
@@ -141,6 +151,8 @@ ExactWindowTargetedClickServiceProtocol {
         self.syntheticInputDriver = syntheticInputDriver
         self.automationElementResolver = automationElementResolver
         self.feedbackClient = feedbackClient
+        self.exactWindowFocusReader = exactWindowFocusReader
+        self.exactWindowIdentityValidator = exactWindowIdentityValidator
 
         // Initialize specialized services
         self.elementDetectionService = ElementDetectionService(snapshotManager: manager)
@@ -149,7 +161,8 @@ ExactWindowTargetedClickServiceProtocol {
             inputPolicy: inputPolicy,
             actionInputDriver: actionInputDriver,
             syntheticInputDriver: syntheticInputDriver,
-            automationElementResolver: automationElementResolver)
+            automationElementResolver: automationElementResolver,
+            exactWindowIdentityValidator: exactWindowIdentityValidator)
         self.typeService = TypeService(
             snapshotManager: manager,
             clickService: nil,

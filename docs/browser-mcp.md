@@ -34,12 +34,16 @@ Peekaboo does not approve that prompt automatically. The browser tool reports in
 Peekaboo starts Chrome DevTools MCP with:
 
 ```bash
-npx -y chrome-devtools-mcp@latest \
+npx -y chrome-devtools-mcp@1.6.0 \
   --auto-connect \
   --channel=<stable|beta|dev|canary> \
+  --experimentalPageIdRouting \
   --no-usage-statistics \
   --no-performance-crux
 ```
+
+Peekaboo pins the verified Chrome DevTools MCP version because direct page-ID routing is an experimental upstream
+contract. Upgrade the pin only after its page-scoped tool schemas and routing behavior have been revalidated.
 
 For deterministic local tests or custom Chrome endpoints:
 
@@ -55,8 +59,12 @@ Browser MCP state is owned by `BrowserMCPService` through `BrowserMCPSessionMana
 
 - In a local MCP process, the browser tool uses the `BrowserMCPService` from `MCPToolContext`.
 - In daemon-backed mode, `RemotePeekabooServices` forwards browser status/connect/execute calls over the Bridge socket.
-- The daemon owns the `chrome-devtools-mcp` child process, selected page state, and snapshot UID state.
+- The daemon owns the `chrome-devtools-mcp` child process and per-page snapshot UID state.
 - Browser page actions auto-connect through the same session manager. If a call names a different Chrome channel than the active session, the manager reconnects to that channel before forwarding the action.
+- Peekaboo enables Chrome DevTools MCP's page-ID routing. Every page-scoped action requires `page_id` and is
+  routed directly to that page instead of relying on the process-global selected page. The upstream MCP server
+  serializes calls with its FIFO tool mutex, so concurrent agents cannot redirect one another between selection
+  and execution.
 - This lets separate `peekaboo mcp serve` stdio sessions reuse the same browser connection.
 
 Use `peekaboo daemon status` to see browser connection state, tool count, and detected Chrome channels.
@@ -85,7 +93,16 @@ Common actions:
 
 Advanced escape hatch:
 
-- `call` with `mcp_tool` and `mcp_args_json` forwards a raw Chrome DevTools MCP call.
+- `call` with `mcp_tool` and `mcp_args_json` forwards a raw tool from the audited, pinned Chrome DevTools MCP
+  v1.6.0 catalog. Page-targeted raw tools require the wrapper's top-level `page_id`; Peekaboo validates and injects
+  it as upstream `pageId`, overriding any nested value in `mcp_args_json`. Truly global tools such as `list_pages`
+  do not require `page_id`. `trigger_extension_action` is audited but blocked because upstream still resolves its
+  shared selected page internally; Peekaboo will not forward it until upstream supports explicit `pageId` routing.
+  Unknown raw tool names fail closed until the routing contract is audited and updated.
+
+Start page work with `list_pages` or `new_page`, retain the returned page ID, and include it in every later
+page-scoped action. `select_page` and `new_page` stay in the background by default. Use `bring_to_front: true` or
+`background: false` only when foreground interaction is intentional.
 
 ## Examples
 
@@ -93,10 +110,11 @@ CLI:
 
 ```bash
 peekaboo browser status --json
-peekaboo browser connect --channel chrome
-peekaboo browser navigate --url https://example.com
-peekaboo browser snapshot --path /tmp/page.txt
-peekaboo browser network --resource-type xhr --page-size 20 --json
+peekaboo browser connect --channel stable
+peekaboo browser new-page --url https://example.com
+peekaboo browser navigate --page-id 2 --url https://example.com/docs
+peekaboo browser snapshot --page-id 2 --path /tmp/page.txt
+peekaboo browser network --page-id 2 --resource-type xhr --page-size 20 --json
 ```
 
 MCP JSON:
@@ -110,17 +128,17 @@ MCP JSON:
 ```
 
 ```json
-{ "action": "snapshot" }
+{ "action": "snapshot", "page_id": 2 }
 ```
 
 ```json
-{ "action": "fill", "uid": "1_7", "value": "peter@example.com", "include_snapshot": true }
+{ "action": "fill", "page_id": 2, "uid": "1_7", "value": "peter@example.com", "include_snapshot": true }
 ```
 
 ```json
-{ "action": "network", "page_size": 20, "resource_types": ["xhr", "fetch"] }
+{ "action": "network", "page_id": 2, "page_size": 20, "resource_types": ["xhr", "fetch"] }
 ```
 
 ```json
-{ "action": "performance_trace", "trace_action": "start", "reload": true, "auto_stop": true }
+{ "action": "performance_trace", "page_id": 2, "trace_action": "start", "reload": true, "auto_stop": true }
 ```

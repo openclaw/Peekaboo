@@ -8,7 +8,8 @@ enum BridgeCapabilityPolicy {
         for handshake: PeekabooBridgeHandshakeResponse,
         options: CommandRuntimeOptions
     ) -> Bool {
-        guard handshake.supportedOperations.contains(.captureScreen) else {
+        if options.requiresScreenCapturePermission || options.requiresSilentCapture,
+           !self.supportsOperation(.captureScreen, for: handshake) {
             return false
         }
 
@@ -19,6 +20,14 @@ enum BridgeCapabilityPolicy {
         // not blocked by a missing Screen Recording grant. Hosts that omit the permission report
         // entirely stay eligible for backward compatibility.
         guard self.explicitlyMissingRemotePermissions(for: handshake, options: options).isEmpty else {
+            return false
+        }
+
+        if options.requiresSilentCapture, !self.supportsSilentCapture(for: handshake) {
+            return false
+        }
+
+        if !self.supportsInteractionRequirements(for: handshake, options: options) {
             return false
         }
 
@@ -38,6 +47,16 @@ enum BridgeCapabilityPolicy {
             return false
         }
 
+        if options.requiresNewApplicationInstanceLaunch,
+           !self.supportsNewApplicationInstanceLaunch(for: handshake) {
+            return false
+        }
+
+        if options.requiresApplicationWindowReadiness,
+           !self.supportsApplicationWindowReadiness(for: handshake) {
+            return false
+        }
+
         if options.requiresApplicationRelaunch, !self.supportsApplicationRelaunch(for: handshake) {
             return false
         }
@@ -46,42 +65,12 @@ enum BridgeCapabilityPolicy {
             return false
         }
 
+        if options.requiresProcessGenerationPinnedApplicationQuit,
+           !self.supportsProcessGenerationPinnedApplicationQuit(for: handshake) {
+            return false
+        }
+
         if options.requiresHostApplicationInventory, !self.supportsHostApplicationInventory(for: handshake) {
-            return false
-        }
-
-        if options.requiresExactWindowTargetedClicks,
-           !self.supportsExactWindowTargetedClicks(for: handshake) {
-            return false
-        }
-
-        if options.requiresTargetedScroll,
-           !self.supportsTargetedScroll(for: handshake) {
-            return false
-        }
-
-        if options.requiresPostEventPermission,
-           handshake.permissions?.postEvent != true {
-            return false
-        }
-
-        if options.requiresAccessibilityPermission,
-           handshake.permissions?.accessibility != true {
-            return false
-        }
-
-        if options.requiresLongPressClick,
-           !self.supportsLongPressClicks(for: handshake) {
-            return false
-        }
-
-        if options.requiresBackgroundWindowClose,
-           !self.supportsOperation(.backgroundCloseWindow, for: handshake) {
-            return false
-        }
-
-        if options.requiresBackgroundDialogClick,
-           !self.supportsOperation(.backgroundDialogClickButton, for: handshake) {
             return false
         }
 
@@ -90,6 +79,50 @@ enum BridgeCapabilityPolicy {
             return false
         }
 
+        return true
+    }
+
+    private static func supportsInteractionRequirements(
+        for handshake: PeekabooBridgeHandshakeResponse,
+        options: CommandRuntimeOptions
+    ) -> Bool {
+        if options.requiresTargetedFocusedElement, !self.supportsTargetedFocusedElement(for: handshake) {
+            return false
+        }
+        if options.requiresExactWindowTargetedKeyboard,
+           !self.supportsExactWindowTargetedKeyboard(for: handshake) {
+            return false
+        }
+        if options.requiresPinnedWindowMutations, !self.supportsPinnedWindowMutations(for: handshake) {
+            return false
+        }
+        if options.requiresWindowRestore, !self.supportsOperation(.restoreWindow, for: handshake) {
+            return false
+        }
+        if options.requiresExactWindowTargetedClicks,
+           !self.supportsExactWindowTargetedClicks(for: handshake) {
+            return false
+        }
+        if options.requiresTargetedScroll, !self.supportsTargetedScroll(for: handshake) {
+            return false
+        }
+        if options.requiresPostEventPermission, handshake.permissions?.postEvent != true {
+            return false
+        }
+        if options.requiresAccessibilityPermission, handshake.permissions?.accessibility != true {
+            return false
+        }
+        if options.requiresLongPressClick, !self.supportsLongPressClicks(for: handshake) {
+            return false
+        }
+        if options.requiresBackgroundWindowClose,
+           !self.supportsOperation(.backgroundCloseWindow, for: handshake) {
+            return false
+        }
+        if options.requiresBackgroundDialogClick,
+           !self.supportsOperation(.backgroundDialogClickButton, for: handshake) {
+            return false
+        }
         return true
     }
 
@@ -143,8 +176,17 @@ enum BridgeCapabilityPolicy {
         if options.requiresBackgroundWindowClose {
             operations.append(.backgroundCloseWindow)
         }
+        if options.requiresWindowRestore {
+            operations.append(.restoreWindow)
+        }
         if options.requiresBackgroundDialogClick {
             operations.append(.backgroundDialogClickButton)
+        }
+        if options.requiresTargetedFocusedElement {
+            operations.append(.getFocusedElement)
+        }
+        if options.requiresExactWindowTargetedKeyboard {
+            operations.append(contentsOf: [.exactWindowTargetedTypeActions, .exactWindowTargetedHotkey])
         }
         return operations
     }
@@ -183,9 +225,19 @@ enum BridgeCapabilityPolicy {
             handshake.supportedOperations.contains(.launchApplicationWithOptions)
     }
 
+    static func supportsNewApplicationInstanceLaunch(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {
+        handshake.negotiatedVersion >= PeekabooBridgeProtocolVersion(major: 1, minor: 13) &&
+            handshake.supportedOperations.contains(.launchApplicationWithOptions)
+    }
+
+    static func supportsApplicationWindowReadiness(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {
+        handshake.negotiatedVersion >= PeekabooBridgeProtocolVersion(major: 1, minor: 13) &&
+            handshake.supportedOperations.contains(.launchApplicationWithOptions)
+    }
+
     static func supportsApplicationRelaunch(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {
         guard handshake.hostKind == .onDemand,
-              handshake.negotiatedVersion >= PeekabooBridgeProtocolVersion(major: 1, minor: 9),
+              handshake.negotiatedVersion >= PeekabooBridgeProtocolVersion(major: 1, minor: 18),
               handshake.supportedOperations.contains(.relaunchApplicationWithOptions)
         else {
             return false
@@ -226,6 +278,33 @@ enum BridgeCapabilityPolicy {
     static func supportsDesktopObservation(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {
         handshake.negotiatedVersion >= PeekabooBridgeProtocolVersion(major: 1, minor: 5) &&
             handshake.supportedOperations.contains(.desktopObservation)
+    }
+
+    static func supportsSilentCapture(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {
+        handshake.negotiatedVersion >= PeekabooBridgeProtocolVersion(major: 1, minor: 12) &&
+            handshake.supportedOperations.contains(.captureScreen)
+    }
+
+    static func supportsTargetedFocusedElement(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {
+        handshake.negotiatedVersion >= PeekabooBridgeProtocolVersion(major: 1, minor: 14) &&
+            self.supportsOperation(.getFocusedElement, for: handshake)
+    }
+
+    static func supportsExactWindowTargetedKeyboard(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {
+        handshake.negotiatedVersion >= PeekabooBridgeProtocolVersion(major: 1, minor: 17) &&
+            self.supportsOperation(.exactWindowTargetedTypeActions, for: handshake) &&
+            self.supportsOperation(.exactWindowTargetedHotkey, for: handshake)
+    }
+
+    static func supportsPinnedWindowMutations(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {
+        handshake.negotiatedVersion >= PeekabooBridgeProtocolVersion(major: 1, minor: 18)
+    }
+
+    static func supportsProcessGenerationPinnedApplicationQuit(
+        for handshake: PeekabooBridgeHandshakeResponse
+    ) -> Bool {
+        handshake.negotiatedVersion >= PeekabooBridgeConstants.processGenerationPinnedApplicationQuitVersion &&
+            self.supportsOperation(.quitApplication, for: handshake)
     }
 
     static func supportsInspectAccessibilityTree(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {
@@ -319,7 +398,7 @@ enum BridgeCapabilityPolicy {
     }
 
     static func supportsExactWindowTargetedClicks(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {
-        guard handshake.negotiatedVersion >= PeekabooBridgeProtocolVersion(major: 1, minor: 9),
+        guard handshake.negotiatedVersion >= PeekabooBridgeProtocolVersion(major: 1, minor: 17),
               handshake.supportedOperations.contains(.exactWindowTargetedClick)
         else {
             return false

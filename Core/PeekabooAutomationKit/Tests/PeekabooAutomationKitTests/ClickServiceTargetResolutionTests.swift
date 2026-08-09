@@ -71,7 +71,8 @@ struct ClickServiceTargetResolutionTests {
         let service = ClickService(
             snapshotManager: InMemorySnapshotManager(detectionResult: detectionResult),
             inputPolicy: UIInputPolicy(defaultStrategy: .actionFirst),
-            syntheticInputDriver: synthetic)
+            syntheticInputDriver: synthetic,
+            automationElementResolver: ClickMissingAutomationElementResolver())
 
         let result = try await service.click(target: .elementId("C1"), clickType: .right, snapshotId: "snapshot")
 
@@ -84,61 +85,49 @@ struct ClickServiceTargetResolutionTests {
 
     @Test
     @MainActor
-    func `background click delivers synthetic click to target process`() async throws {
+    func `background coordinate click refuses PID only routing`() async {
         let synthetic = ClickRecordingSyntheticInputDriver()
         let service = ClickService(
             snapshotManager: InMemorySnapshotManager(),
             inputPolicy: UIInputPolicy(defaultStrategy: .actionFirst),
             syntheticInputDriver: synthetic)
 
-        let result = try await service.click(
-            target: .coordinates(CGPoint(x: 10, y: 20)),
-            clickType: .single,
-            snapshotId: nil,
-            targetProcessIdentifier: 12345)
-
-        #expect(result.path == .synth)
-        #expect(result.strategy == .actionFirst)
-        #expect(result.fallbackReason == .missingElement)
-        #expect(synthetic.events == [
-            .targetedClick(
-                point: CGPoint(x: 10, y: 20),
-                button: .left,
-                count: 1,
-                targetProcessIdentifier: 12345,
-                targetWindowID: nil),
-        ])
-    }
-
-    @Test
-    @MainActor
-    func `background double click fails fast instead of reporting background success`() async {
-        let synthetic = ClickRecordingSyntheticInputDriver()
-        let service = ClickService(
-            snapshotManager: InMemorySnapshotManager(),
-            inputPolicy: UIInputPolicy(defaultStrategy: .actionFirst),
-            syntheticInputDriver: synthetic)
-
-        do {
+        await #expect(throws: PeekabooError.self) {
             _ = try await service.click(
                 target: .coordinates(CGPoint(x: 10, y: 20)),
-                clickType: .double,
+                clickType: .single,
                 snapshotId: nil,
                 targetProcessIdentifier: 12345)
-            Issue.record("Expected background double-click to be rejected")
-        } catch let PeekabooError.serviceUnavailable(message) {
-            #expect(message.contains("--foreground"))
-            #expect(message.contains("double-click"))
-        } catch {
-            Issue.record("Unexpected error: \(error)")
         }
         #expect(synthetic.events.isEmpty)
     }
 
     @Test
     @MainActor
-    func `background element double click is rejected before AX or synthesis run`() async {
+    func `background coordinate double click refuses PID only routing`() async {
+        let synthetic = ClickRecordingSyntheticInputDriver()
+        let service = ClickService(
+            snapshotManager: InMemorySnapshotManager(),
+            inputPolicy: UIInputPolicy(defaultStrategy: .actionFirst),
+            syntheticInputDriver: synthetic)
+
+        await #expect(throws: PeekabooError.self) {
+            _ = try await service.click(
+                target: .coordinates(CGPoint(x: 10, y: 20)),
+                clickType: .double,
+                snapshotId: nil,
+                targetProcessIdentifier: 12345)
+        }
+        #expect(synthetic.events.isEmpty)
+    }
+
+    @Test
+    @MainActor
+    func `background element double click falls back from AX to exact synthetic routing`() async throws {
         let pid = getpid()
+        let tracker = ClickWindowTracker(bounds: .zero)
+        WindowMovementTracking.provider = tracker
+        defer { WindowMovementTracking.provider = nil }
         let element = DetectedElement(
             id: "B1",
             type: .button,
@@ -152,7 +141,7 @@ struct ClickServiceTargetResolutionTests {
                 detectionTime: 0.01,
                 elementCount: 1,
                 method: "test",
-                windowContext: WindowContext(applicationProcessId: pid, windowID: 42)))
+                windowContext: Self.exactWindowContext(processIdentifier: pid)))
         let action = ClickSuccessfulActionInputDriver()
         let synthetic = ClickRecordingSyntheticInputDriver()
         let service = ClickService(
@@ -160,22 +149,26 @@ struct ClickServiceTargetResolutionTests {
             inputPolicy: UIInputPolicy(defaultStrategy: .actionFirst),
             actionInputDriver: action,
             syntheticInputDriver: synthetic,
-            automationElementResolver: ClickFixedAutomationElementResolver())
+            automationElementResolver: ClickFixedAutomationElementResolver(),
+            exactWindowIdentityValidator: { _, _ in true })
 
-        do {
-            _ = try await service.click(
-                target: .elementId("B1"),
-                clickType: .double,
-                snapshotId: "snapshot",
-                targetProcessIdentifier: pid)
-            Issue.record("Expected background double-click to be rejected")
-        } catch let PeekabooError.serviceUnavailable(message) {
-            #expect(message.contains("--foreground"))
-        } catch {
-            Issue.record("Unexpected error: \(error)")
-        }
+        let result = try await service.click(
+            target: .elementId("B1"),
+            clickType: .double,
+            snapshotId: "snapshot",
+            targetProcessIdentifier: pid)
+
+        #expect(result.path == .synth)
+        #expect(result.fallbackReason == .actionUnsupported)
         #expect(action.performedActionNames.isEmpty)
-        #expect(synthetic.events.isEmpty)
+        #expect(synthetic.events == [
+            .targetedClick(
+                point: CGPoint(x: 70, y: 50),
+                button: .left,
+                count: 2,
+                targetProcessIdentifier: pid,
+                targetWindowID: 42),
+        ])
     }
 
     @Test
@@ -202,12 +195,13 @@ struct ClickServiceTargetResolutionTests {
                 detectionTime: 0.01,
                 elementCount: 1,
                 method: "test",
-                windowContext: WindowContext(applicationProcessId: pid, windowID: 42)))
+                windowContext: Self.exactWindowContext(processIdentifier: pid)))
         let synthetic = ClickRecordingSyntheticInputDriver()
         let service = ClickService(
             snapshotManager: InMemorySnapshotManager(detectionResult: detectionResult),
             inputPolicy: UIInputPolicy(defaultStrategy: .actionFirst),
-            syntheticInputDriver: synthetic)
+            syntheticInputDriver: synthetic,
+            exactWindowIdentityValidator: { _, _ in true })
 
         let result = try await service.click(
             target: .elementId("B1"),
@@ -248,7 +242,7 @@ struct ClickServiceTargetResolutionTests {
                 detectionTime: 0.01,
                 elementCount: 1,
                 method: "test",
-                windowContext: WindowContext(applicationProcessId: pid, windowID: 42)))
+                windowContext: Self.exactWindowContext(processIdentifier: pid)))
         let action = ClickSuccessfulActionInputDriver()
         let synthetic = ClickRecordingSyntheticInputDriver()
         let resolver = ClickFixedAutomationElementResolver()
@@ -257,7 +251,8 @@ struct ClickServiceTargetResolutionTests {
             inputPolicy: UIInputPolicy(defaultStrategy: .actionFirst),
             actionInputDriver: action,
             syntheticInputDriver: synthetic,
-            automationElementResolver: resolver)
+            automationElementResolver: resolver,
+            exactWindowIdentityValidator: { _, _ in true })
 
         let result = try await service.click(
             target: .elementId("B1"),
@@ -293,7 +288,7 @@ struct ClickServiceTargetResolutionTests {
                 detectionTime: 0.01,
                 elementCount: 1,
                 method: "test",
-                windowContext: WindowContext(applicationProcessId: pid, windowID: 42)))
+                windowContext: Self.exactWindowContext(processIdentifier: pid)))
         let action = ClickSuccessfulActionInputDriver()
         let synthetic = ClickRecordingSyntheticInputDriver()
         let resolver = ClickFixedAutomationElementResolver()
@@ -302,7 +297,8 @@ struct ClickServiceTargetResolutionTests {
             inputPolicy: UIInputPolicy(defaultStrategy: .actionFirst),
             actionInputDriver: action,
             syntheticInputDriver: synthetic,
-            automationElementResolver: resolver)
+            automationElementResolver: resolver,
+            exactWindowIdentityValidator: { _, _ in true })
 
         let result = try await service.click(
             target: .elementId("B1"),
@@ -337,7 +333,7 @@ struct ClickServiceTargetResolutionTests {
                 detectionTime: 0.01,
                 elementCount: 1,
                 method: "test",
-                windowContext: WindowContext(applicationProcessId: pid, windowID: 42)))
+                windowContext: Self.exactWindowContext(processIdentifier: pid)))
         let synthetic = ClickRecordingSyntheticInputDriver(
             targetedClickError: PeekabooError.permissionDeniedEventSynthesizing)
         let resolver = ClickFixedAutomationElementResolver()
@@ -346,7 +342,8 @@ struct ClickServiceTargetResolutionTests {
             inputPolicy: UIInputPolicy(defaultStrategy: .actionFirst),
             actionInputDriver: ClickFailingActionInputDriver(error: .permissionDenied),
             syntheticInputDriver: synthetic,
-            automationElementResolver: resolver)
+            automationElementResolver: resolver,
+            exactWindowIdentityValidator: { _, _ in true })
 
         do {
             _ = try await service.click(
@@ -467,16 +464,15 @@ struct ClickServiceTargetResolutionTests {
                 detectionTime: 0.01,
                 elementCount: 1,
                 method: "test",
-                windowContext: WindowContext(
-                    applicationProcessId: pid,
-                    windowID: 42)))
+                windowContext: Self.exactWindowContext(processIdentifier: pid)))
         let action = ClickSuccessfulActionInputDriver()
         let resolver = ClickFixedAutomationElementResolver()
         let service = ClickService(
             snapshotManager: InMemorySnapshotManager(detectionResult: detectionResult),
             inputPolicy: UIInputPolicy(defaultStrategy: .actionFirst),
             actionInputDriver: action,
-            automationElementResolver: resolver)
+            automationElementResolver: resolver,
+            exactWindowIdentityValidator: { _, _ in true })
 
         let result = try await service.click(
             target: .query("Live Button"),
@@ -507,16 +503,15 @@ struct ClickServiceTargetResolutionTests {
                 detectionTime: 0.01,
                 elementCount: 1,
                 method: "test",
-                windowContext: WindowContext(
-                    applicationProcessId: pid,
-                    windowID: 42)))
+                windowContext: Self.exactWindowContext(processIdentifier: pid)))
         let synthetic = ClickRecordingSyntheticInputDriver()
         let resolver = ClickFixedAutomationElementResolver(resolveQueries: false)
         let service = ClickService(
             snapshotManager: InMemorySnapshotManager(detectionResult: detectionResult),
             inputPolicy: UIInputPolicy(defaultStrategy: .actionFirst),
             syntheticInputDriver: synthetic,
-            automationElementResolver: resolver)
+            automationElementResolver: resolver,
+            exactWindowIdentityValidator: { _, _ in true })
 
         await #expect(throws: (any Error).self) {
             try await service.click(
@@ -600,7 +595,8 @@ struct ClickServiceTargetResolutionTests {
                 windowContext: WindowContext(
                     applicationProcessId: pid,
                     windowID: 42,
-                    windowBounds: CGRect(x: 100, y: 100, width: 300, height: 300))))
+                    windowBounds: CGRect(x: 100, y: 100, width: 300, height: 300),
+                    windowMutationIdentity: Self.windowIdentity(processIdentifier: pid))))
         let resolver = ClickFixedAutomationElementResolver()
         let synthetic = ClickRecordingSyntheticInputDriver()
         let service = ClickService(
@@ -608,7 +604,8 @@ struct ClickServiceTargetResolutionTests {
             inputPolicy: UIInputPolicy(defaultStrategy: .actionFirst),
             actionInputDriver: ClickSuccessfulActionInputDriver(),
             syntheticInputDriver: synthetic,
-            automationElementResolver: resolver)
+            automationElementResolver: resolver,
+            exactWindowIdentityValidator: { _, _ in true })
 
         let result = try await service.click(
             target: .elementId("B1"),
@@ -644,14 +641,15 @@ struct ClickServiceTargetResolutionTests {
                 detectionTime: 0.01,
                 elementCount: 1,
                 method: "test",
-                windowContext: WindowContext(applicationProcessId: pid, windowID: 42)))
+                windowContext: Self.exactWindowContext(processIdentifier: pid)))
         let synthetic = ClickRecordingSyntheticInputDriver()
         let service = ClickService(
             snapshotManager: InMemorySnapshotManager(detectionResult: detectionResult),
             inputPolicy: UIInputPolicy(defaultStrategy: .actionFirst),
             actionInputDriver: ClickFailingActionInputDriver(error: .permissionDenied),
             syntheticInputDriver: synthetic,
-            automationElementResolver: ClickFixedAutomationElementResolver())
+            automationElementResolver: ClickFixedAutomationElementResolver(),
+            exactWindowIdentityValidator: { _, _ in true })
 
         let result = try await service.click(
             target: .elementId("B1"),
@@ -754,12 +752,13 @@ struct ClickServiceTargetResolutionTests {
                 detectionTime: 0.01,
                 elementCount: 1,
                 method: "test",
-                windowContext: WindowContext(applicationProcessId: pid, windowID: 42)))
+                windowContext: Self.exactWindowContext(processIdentifier: pid)))
         let service = ClickService(
             snapshotManager: InMemorySnapshotManager(detectionResult: detectionResult),
             inputPolicy: UIInputPolicy(defaultStrategy: .actionOnly),
             actionInputDriver: ClickFailingActionInputDriver(error: .permissionDenied),
-            automationElementResolver: ClickFixedAutomationElementResolver())
+            automationElementResolver: ClickFixedAutomationElementResolver(),
+            exactWindowIdentityValidator: { _, _ in true })
 
         do {
             try await service.click(
@@ -1007,6 +1006,24 @@ struct ClickServiceTargetResolutionTests {
 
         #expect(ClickService.resolveTargetElement(query: "basic-text-field", in: detectionResult)?.id == "T_LOW")
     }
+
+    private static func exactWindowContext(
+        processIdentifier: pid_t,
+        bounds: CGRect = .zero) -> WindowContext
+    {
+        WindowContext(
+            applicationProcessId: processIdentifier,
+            windowID: 42,
+            windowBounds: bounds,
+            windowMutationIdentity: self.windowIdentity(processIdentifier: processIdentifier))
+    }
+
+    private static func windowIdentity(processIdentifier: pid_t) -> WindowMutationIdentity {
+        WindowMutationIdentity(
+            windowID: 42,
+            ownerProcessIdentifier: processIdentifier,
+            ownerProcessStartIdentity: 1)
+    }
 }
 
 @MainActor
@@ -1126,6 +1143,17 @@ private final class ClickFixedAutomationElementResolver: AutomationElementResolv
         self.queryWindowIDs.append(windowContext?.windowID)
         self.queryTargetProcessIdentifiers.append(targetProcessIdentifier)
         return self.resolveQueries ? self.element : nil
+    }
+}
+
+@MainActor
+private struct ClickMissingAutomationElementResolver: AutomationElementResolving {
+    func resolve(detectedElement _: DetectedElement, windowContext _: WindowContext?) -> AutomationElement? {
+        nil
+    }
+
+    func resolve(query _: String, windowContext _: WindowContext?, requireTextInput _: Bool) -> AutomationElement? {
+        nil
     }
 }
 

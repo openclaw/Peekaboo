@@ -221,8 +221,22 @@ struct TargetedInteractionDefaultDeliveryTests {
         let automation = StubAutomationService()
         let applications = StubApplicationService(applications: [app])
         let clipboard = StubClipboardService()
+        let windowBounds = CGRect(x: 0, y: 0, width: 800, height: 600)
+        let windowIdentity = WindowMutationIdentity(
+            windowID: 314,
+            ownerProcessIdentifier: app.processIdentifier,
+            ownerProcessStartIdentity: 7,
+            capturedBounds: windowBounds
+        )
+        let window = ServiceWindowInfo(
+            windowID: windowIdentity.windowID,
+            title: "Document",
+            bounds: windowBounds,
+            mutationIdentity: windowIdentity
+        )
         let services = TestServicesFactory.makePeekabooServices(
             applications: applications,
+            windows: StubWindowService(windowsByApp: [app.name: [window]]),
             clipboard: clipboard,
             automation: automation
         )
@@ -231,7 +245,11 @@ struct TargetedInteractionDefaultDeliveryTests {
         try await self.assertPressDefaultsToBackground(services: services, automation: automation)
         try await self.assertHotkeyDefaultsToBackground(services: services, automation: automation)
         try await self.assertPasteDefaultsToBackground(services: services, automation: automation)
-        try await self.assertClickDefaultsToBackground(services: services, automation: automation)
+        try await self.assertClickDefaultsToBackground(
+            services: services,
+            automation: automation,
+            targetWindow: window
+        )
         #expect(applications.activateCalls.isEmpty)
     }
 
@@ -324,16 +342,45 @@ struct TargetedInteractionDefaultDeliveryTests {
 
     private func assertClickDefaultsToBackground(
         services: PeekabooServices,
-        automation: StubAutomationService
+        automation: StubAutomationService,
+        targetWindow: ServiceWindowInfo
     ) async throws {
+        let snapshotId = try await services.snapshots.createSnapshot()
+        try await services.snapshots.storeDetectionResult(
+            snapshotId: snapshotId,
+            result: ElementDetectionResult(
+                snapshotId: snapshotId,
+                screenshotPath: "/tmp/screenshot.png",
+                elements: DetectedElements(),
+                metadata: DetectionMetadata(
+                    detectionTime: 0,
+                    elementCount: 0,
+                    method: "stub",
+                    windowContext: WindowContext(
+                        applicationName: "TextEdit",
+                        applicationBundleId: "com.apple.TextEdit",
+                        applicationProcessId: 2468,
+                        windowTitle: targetWindow.title,
+                        windowID: targetWindow.windowID,
+                        windowBounds: targetWindow.bounds,
+                        windowMutationIdentity: targetWindow.mutationIdentity
+                    )
+                )
+            )
+        )
         let result = try await InProcessCommandRunner.run(
-            ["click", "--coords", "10,20", "--app", "TextEdit", "--global-coords", "--json", "--no-remote"],
+            [
+                "click", "--coords", "10,20", "--snapshot", snapshotId,
+                "--app", "TextEdit", "--global-coords", "--json", "--no-remote",
+            ],
             services: services
         )
 
         #expect(result.exitStatus == 0)
         let call = try #require(automation.targetedClickCalls.last)
         #expect(call.targetProcessIdentifier == 2468)
+        #expect(call.targetWindowID == targetWindow.windowID)
+        #expect(call.snapshotId == snapshotId)
         if case let .coordinates(point) = call.target {
             #expect(point == CGPoint(x: 10, y: 20))
         } else {

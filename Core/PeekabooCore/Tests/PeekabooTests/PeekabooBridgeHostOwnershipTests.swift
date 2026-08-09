@@ -1,9 +1,9 @@
 import Darwin
 import Foundation
-import PeekabooBridge
 import PeekabooCore
 import PeekabooFoundation
 import Testing
+@testable import PeekabooBridge
 
 @Suite(.serialized)
 struct PeekabooBridgeHostOwnershipTests {
@@ -380,23 +380,30 @@ struct PeekabooBridgeHostOwnershipTests {
     }
 
     @Test
-    func `host stop drains accepted connections through their deadline`() async throws {
+    func `host stop disconnects accepted connections without waiting for their deadline`() async throws {
         let socketPath = Self.socketPath()
         defer { Self.removeSocketArtifacts(socketPath) }
 
-        let host = await Self.makeHost(socketPath: socketPath, requestTimeoutSec: 0.3)
+        let host = await Self.makeHost(socketPath: socketPath, requestTimeoutSec: 2)
         try await host.startChecked()
 
         let client = socket(AF_UNIX, SOCK_STREAM, 0)
         #expect(client >= 0)
         defer { close(client) }
         #expect(Self.connect(fd: client, path: socketPath) == 0)
-        try await Task.sleep(nanoseconds: 50_000_000)
+        for _ in 0..<100 {
+            if await host.activeConnectionCountForTesting() == 1 {
+                break
+            }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        #expect(await host.activeConnectionCountForTesting() == 1)
 
         let start = Date()
         await host.stop()
 
-        #expect(Date().timeIntervalSince(start) >= 0.15)
+        #expect(Date().timeIntervalSince(start) < 0.5)
+        #expect(await host.activeConnectionCountForTesting() == 0)
     }
 
     private static func makeHost(

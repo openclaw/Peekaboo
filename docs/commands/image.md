@@ -20,6 +20,7 @@ If you need a longer-running, change-aware capture (idle/active FPS, contact she
 | Flag | Description |
 | --- | --- |
 | `--app`, `--pid`, `--window-title`, `--window-index` | Resolve a window target; accepts bundle IDs, `PID:1234`, or friendly names. |
+| `--window-id <id>` | Capture one exact WindowServer window. Pair it with `--app` or `--pid` to require that owner. It cannot be combined with `--window-title` or `--window-index`. |
 | `--mode screen|window|frontmost|multi|area` | Override the auto mode picker (defaults to `window` when a target is given, `area` when `--region` is set, otherwise `frontmost`). `multi` grabs every window for the target app or, if no app is set, every display. |
 | `--screen-index <n>` | Limit screen captures to a single 0-based display. |
 | `--region x,y,width,height` | Capture an explicit desktop region when using `--mode area`; coordinates are global display points. |

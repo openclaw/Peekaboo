@@ -3292,5 +3292,8 @@ struct ModelSelectionEdgeCasesTests {
 
         #expect(result.metadata.modelName == defaultModel.description)
         #expect(result.content.contains("Dry run completed"))
+        #expect(result.sessionId == nil)
+        #expect(result.metadata.context["dry_run"] == "true")
+        #expect(result.metadata.context["session_persistence"] == "disabled")
     }
 }

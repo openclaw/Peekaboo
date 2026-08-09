@@ -20,6 +20,12 @@ extension AppCommand {
         @Option(name: .long, help: "Target application by process ID")
         var pid: Int32?
 
+        @Option(
+            name: .long,
+            help: "Require this process-start identity (cleanup safety; requires --pid)"
+        )
+        var expectedProcessStartIdentity: Int64?
+
         @Flag(help: "Quit all applications")
         var all = false
 
@@ -37,50 +43,8 @@ extension AppCommand {
             let logger = self.logger
 
             do {
-                if self.all {
-                    if self.app != nil || self.pid != nil {
-                        throw ValidationError("Cannot combine --all with --app or --pid")
-                    }
-                } else {
-                    if let except = self.except,
-                       !except.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        throw ValidationError("--except requires --all")
-                    }
-                    if self.app != nil && self.pid != nil {
-                        throw ValidationError("Cannot combine --app with --pid")
-                    }
-                    if self.app == nil && self.pid == nil {
-                        throw ValidationError("Either --app, --pid, or --all must be specified")
-                    }
-                }
-
-                var quitApps: [AppQuitTarget] = []
-
-                if self.all {
-                    // Get all apps except system/excluded ones
-                    let excluded = Set((except ?? "").split(separator: ",")
-                        .map { String($0).trimmingCharacters(in: .whitespaces) }
-                    )
-                    let systemApps = Set(["Finder", "Dock", "SystemUIServer", "WindowServer"])
-
-                    let runningApps = try await self.services.applications.listApplications().data.applications
-                    for runningApp in runningApps {
-                        guard runningApp.activationPolicy ?? .regular == .regular,
-                              !systemApps.contains(runningApp.name),
-                              !excluded.contains(runningApp.name) else { continue }
-
-                        quitApps.append(AppQuitTarget(appInfo: runningApp))
-                    }
-                } else if let appName = app {
-                    // Find specific app
-                    let appInfo = try await resolveApplication(appName, services: self.services)
-                    quitApps.append(AppQuitTarget(appInfo: appInfo))
-                } else if let pid = self.pid {
-                    let appInfo = try await self.services.applications.findApplication(identifier: "PID:\(pid)")
-                    quitApps.append(AppQuitTarget(appInfo: appInfo))
-                } else {
-                    throw ValidationError("Either --app, --pid, or --all must be specified")
-                }
+                try self.validateArguments()
+                let quitApps = try await self.resolveQuitTargets()
 
                 // Quit the apps
                 struct AppQuitInfo: Codable {
@@ -97,10 +61,12 @@ extension AppCommand {
                         )
                     }
                     self.resolvedRuntime.beginInteractionMutation()
-                    let success = await (try? self.services.applications.quitApplication(
-                        identifier: target.identifier,
-                        force: self.force
-                    )) ?? false
+                    let success = await (try? self.services.applications
+                        .quitApplication(request: ApplicationQuitRequest(
+                            identifier: target.identifier,
+                            force: self.force,
+                            expectedIdentity: target.expectedIdentity
+                        ))) ?? false
                     results.append(AppQuitInfo(
                         app_name: target.name,
                         pid: target.pid,
@@ -184,6 +150,63 @@ extension AppCommand {
                 throw ExitCode(1)
             }
         }
+
+        private func validateArguments() throws {
+            if self.all {
+                guard self.app == nil, self.pid == nil, self.expectedProcessStartIdentity == nil else {
+                    throw ValidationError(
+                        "Cannot combine --all with --app, --pid, or --expected-process-start-identity"
+                    )
+                }
+                return
+            }
+            if let except = self.except,
+               !except.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                throw ValidationError("--except requires --all")
+            }
+            if self.app != nil, self.pid != nil {
+                throw ValidationError("Cannot combine --app with --pid")
+            }
+            if self.expectedProcessStartIdentity != nil, self.pid == nil {
+                throw ValidationError("--expected-process-start-identity requires --pid")
+            }
+            if let expectedProcessStartIdentity = self.expectedProcessStartIdentity,
+               expectedProcessStartIdentity <= 0 {
+                throw ValidationError("--expected-process-start-identity must be greater than zero")
+            }
+            if self.app == nil, self.pid == nil {
+                throw ValidationError("Either --app, --pid, or --all must be specified")
+            }
+        }
+
+        private func resolveQuitTargets() async throws -> [AppQuitTarget] {
+            if self.all {
+                let excluded = Set((self.except ?? "").split(separator: ",")
+                    .map { String($0).trimmingCharacters(in: .whitespaces) })
+                let systemApps = Set(["Finder", "Dock", "SystemUIServer", "WindowServer"])
+                return try await self.services.applications.listApplications().data.applications.compactMap { app in
+                    guard app.activationPolicy ?? .regular == .regular,
+                          !systemApps.contains(app.name),
+                          !excluded.contains(app.name) else { return nil }
+                    return try AppQuitTarget(appInfo: app)
+                }
+            }
+            if let appName = self.app {
+                let appInfo = try await resolveApplication(appName, services: self.services)
+                return try [AppQuitTarget(appInfo: appInfo)]
+            }
+            guard let pid = self.pid else {
+                throw ValidationError("Either --app, --pid, or --all must be specified")
+            }
+            if let processStartIdentity = self.expectedProcessStartIdentity {
+                return [AppQuitTarget(
+                    processIdentifier: pid,
+                    processStartIdentity: UInt64(processStartIdentity)
+                )]
+            }
+            let appInfo = try await self.services.applications.findApplication(identifier: "PID:\(pid)")
+            return try [AppQuitTarget(appInfo: appInfo)]
+        }
     }
 }
 
@@ -191,11 +214,28 @@ private struct AppQuitTarget {
     let name: String
     let pid: Int32
     let identifier: String
+    let expectedIdentity: ApplicationProcessIdentity
 
-    init(appInfo: ServiceApplicationInfo) {
+    init(appInfo: ServiceApplicationInfo) throws {
+        guard let processIdentity = appInfo.processIdentity else {
+            throw PeekabooError.commandFailed(
+                "Application selection did not include a stable process-generation identity for \(appInfo.name)"
+            )
+        }
         self.name = appInfo.name
         self.pid = appInfo.processIdentifier
         self.identifier = "PID:\(appInfo.processIdentifier)"
+        self.expectedIdentity = processIdentity
+    }
+
+    init(processIdentifier: Int32, processStartIdentity: UInt64) {
+        self.name = "PID \(processIdentifier)"
+        self.pid = processIdentifier
+        self.identifier = "PID:\(processIdentifier)"
+        self.expectedIdentity = ApplicationProcessIdentity(
+            processIdentifier: processIdentifier,
+            processStartIdentity: processStartIdentity
+        )
     }
 }
 
@@ -208,6 +248,10 @@ extension AppCommand.QuitSubcommand: CommanderBindableCommand {
     mutating func applyCommanderValues(_ values: CommanderBindableValues) throws {
         self.app = values.singleOption("app")
         self.pid = try values.decodeOption("pid", as: Int32.self)
+        self.expectedProcessStartIdentity = try values.decodeOption(
+            "expectedProcessStartIdentity",
+            as: Int64.self
+        )
         self.all = values.flag("all")
         self.except = values.singleOption("except")
         self.force = values.flag("force")

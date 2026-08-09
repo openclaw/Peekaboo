@@ -139,6 +139,86 @@ extension UIAutomationServiceProtocol {
     }
 }
 
+/// Optional capability for querying the focused element of a specific background application.
+/// A system-wide focus query reports the user's foreground app and is not a valid substitute.
+@MainActor
+public protocol TargetedFocusedElementServiceProtocol: UIAutomationServiceProtocol {
+    func getFocusedElement(targetProcessIdentifier: pid_t) async -> UIFocusInfo?
+}
+
+/// Atomically validates an exact background window's focused element and dispatches keyboard input.
+@MainActor
+public protocol ExactWindowTargetedKeyboardServiceProtocol: UIAutomationServiceProtocol {
+    var supportsExactWindowTargetedKeyboard: Bool { get }
+    var exactWindowTargetedKeyboardUnavailableReason: String? { get }
+
+    func typeActions(
+        _ actions: [TypeAction],
+        cadence: TypingCadence,
+        snapshotId: String?,
+        expectedWindowIdentity: WindowMutationIdentity,
+        expectedWindowBounds: CGRect) async throws -> TypeResult
+
+    func hotkey(
+        keys: String,
+        holdDuration: Int,
+        expectedWindowIdentity: WindowMutationIdentity,
+        expectedWindowBounds: CGRect) async throws
+
+    func typeActions(
+        _ actions: [TypeAction],
+        cadence: TypingCadence,
+        snapshotId: String?,
+        target: ExactWindowKeyboardTarget) async throws -> TypeResult
+
+    func hotkey(
+        keys: String,
+        holdDuration: Int,
+        target: ExactWindowKeyboardTarget) async throws
+}
+
+extension ExactWindowTargetedKeyboardServiceProtocol {
+    public func typeActions(
+        _: [TypeAction],
+        cadence _: TypingCadence,
+        snapshotId _: String?,
+        expectedWindowIdentity _: WindowMutationIdentity,
+        expectedWindowBounds _: CGRect) async throws -> TypeResult
+    {
+        throw PeekabooError.serviceUnavailable(
+            "Exact-window typing requires process-generation identity support")
+    }
+
+    public func hotkey(
+        keys _: String,
+        holdDuration _: Int,
+        expectedWindowIdentity _: WindowMutationIdentity,
+        expectedWindowBounds _: CGRect) async throws
+    {
+        throw PeekabooError.serviceUnavailable(
+            "Exact-window hotkeys require process-generation identity support")
+    }
+
+    public func typeActions(
+        _: [TypeAction],
+        cadence _: TypingCadence,
+        snapshotId _: String?,
+        target _: ExactWindowKeyboardTarget) async throws -> TypeResult
+    {
+        throw PeekabooError.serviceUnavailable(
+            "Exact-window typing requires clicked-destination identity support")
+    }
+
+    public func hotkey(
+        keys _: String,
+        holdDuration _: Int,
+        target _: ExactWindowKeyboardTarget) async throws
+    {
+        throw PeekabooError.serviceUnavailable(
+            "Exact-window hotkeys require clicked-destination identity support")
+    }
+}
+
 /// Optional capability for automation services that can override the transport timeout used for element detection.
 @MainActor
 public protocol DetectElementsRequestTimeoutAdjusting: UIAutomationServiceProtocol {
@@ -224,13 +304,24 @@ public protocol ExactWindowTargetedClickServiceProtocol: TargetedClickServicePro
         target: ClickTarget,
         clickType: ClickType,
         snapshotId: String?,
-        targetProcessIdentifier: pid_t,
-        targetWindowID: Int) async throws
+        expectedWindowIdentity: WindowMutationIdentity,
+        expectedWindowBounds: CGRect) async throws
 }
 
 extension ExactWindowTargetedClickServiceProtocol {
     public var supportsExactWindowTargetedClicks: Bool {
         true
+    }
+
+    public func click(
+        target _: ClickTarget,
+        clickType _: ClickType,
+        snapshotId _: String?,
+        expectedWindowIdentity _: WindowMutationIdentity,
+        expectedWindowBounds _: CGRect) async throws
+    {
+        throw PeekabooError.serviceUnavailable(
+            "Exact-window clicks require process-generation identity support")
     }
 }
 

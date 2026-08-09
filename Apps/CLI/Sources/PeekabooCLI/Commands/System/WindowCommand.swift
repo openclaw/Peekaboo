@@ -12,7 +12,7 @@ struct WindowCommand: ParsableCommand {
 
         DESCRIPTION:
           Provides window manipulation capabilities including closing, minimizing,
-          maximizing, moving, resizing, and focusing windows.
+          restoring, maximizing, moving, resizing, and focusing windows.
 
         EXAMPLES:
           # Close a window
@@ -20,8 +20,9 @@ struct WindowCommand: ParsableCommand {
           peekaboo window close --app Safari --window-title "GitHub"
           peekaboo window close --window-id 12345
 
-          # Minimize/maximize windows
+          # Minimize/restore/maximize windows
           peekaboo window minimize --app Finder
+          peekaboo window restore --app Finder --window-id 12345
           peekaboo window maximize --app Terminal
 
           # Move and resize windows
@@ -40,7 +41,8 @@ struct WindowCommand: ParsableCommand {
         SUBCOMMANDS:
           close         Close a window
           minimize      Minimize a window to the Dock
-          maximize      Maximize a window (full screen)
+          restore       Restore a minimized window without activation or focus
+          maximize      Fill the target screen's visible bounds without entering full screen
           move          Move a window to a new position
           resize        Resize a window
           set-bounds    Set window position and size in one operation
@@ -54,6 +56,7 @@ struct WindowCommand: ParsableCommand {
         subcommands: [
             CloseSubcommand.self,
             MinimizeSubcommand.self,
+            RestoreSubcommand.self,
             MaximizeSubcommand.self,
             MoveSubcommand.self,
             ResizeSubcommand.self,

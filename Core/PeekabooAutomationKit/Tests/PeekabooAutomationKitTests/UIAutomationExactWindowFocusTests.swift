@@ -1,0 +1,163 @@
+import CoreGraphics
+import Foundation
+import PeekabooFoundation
+import XCTest
+@testable import PeekabooAutomationKit
+
+@MainActor
+final class UIAutomationExactWindowFocusTests: XCTestCase {
+    func testUnresponsiveFocusedChildReaderDoesNotBlockMainActorPastDeadline() async throws {
+        let started = LockedBoolean()
+        let release = DispatchSemaphore(value: 0)
+        let service = UIAutomationService(
+            actionInputDriver: ActionInputDriver(),
+            automationElementResolver: AutomationElementResolver(),
+            exactWindowFocusReader: { _ in
+                started.setTrue()
+                release.wait()
+                return nil
+            })
+        defer { release.signal() }
+
+        let validation = Task { @MainActor in
+            try await service.requireExactWindowKeyboardFocus(
+                expectedWindowIdentity: WindowMutationIdentity(
+                    windowID: 42,
+                    ownerProcessIdentifier: 930_001,
+                    ownerProcessStartIdentity: 1),
+                expectedWindowBounds: CGRect(x: 0, y: 0, width: 100, height: 100))
+        }
+        for _ in 0..<100 where !started.value {
+            try await Task.sleep(for: .milliseconds(2))
+        }
+        XCTAssertTrue(started.value)
+
+        let heartbeat = expectation(description: "main actor remained responsive")
+        Task { @MainActor in heartbeat.fulfill() }
+        await fulfillment(of: [heartbeat], timeout: 0.1)
+
+        let start = ContinuousClock.now
+        do {
+            try await validation.value
+            XCTFail("Expected exact-window validation timeout")
+        } catch let PeekabooError.invalidInput(message) {
+            XCTAssertTrue(message.contains("target"))
+        }
+        XCTAssertLessThan(Self.seconds(start.duration(to: .now)), 0.5)
+    }
+
+    func testSamePIDAndWindowIDReuseWithSameBoundsDispatchesNoKeyboardEvents() async throws {
+        let bounds = CGRect(x: 10, y: 20, width: 800, height: 600)
+        let staleIdentity = WindowMutationIdentity(
+            windowID: 42,
+            ownerProcessIdentifier: 930_002,
+            ownerProcessStartIdentity: 111)
+        let sequence = LockedStrings()
+        let automation = UIAutomationService(
+            actionInputDriver: ActionInputDriver(),
+            automationElementResolver: AutomationElementResolver(),
+            exactWindowFocusReader: { processIdentifier in
+                sequence.append("focus")
+                return ExactWindowFocusSnapshot(
+                    processIdentifier: processIdentifier,
+                    windowID: 42,
+                    frame: CGRect(x: 100, y: 100, width: 20, height: 20))
+            },
+            exactWindowIdentityValidator: { identity, expectedBounds in
+                sequence.append("identity")
+                return identity == staleIdentity && expectedBounds == bounds
+                    ? false // Same numeric PID/window/bounds, different process generation.
+                    : true
+            })
+        var postedEventCount = 0
+        let hotkey = HotkeyService(
+            inputPolicy: UIInputPolicy(defaultStrategy: .synthOnly),
+            postEventAccessEvaluator: { true },
+            eventPoster: { _, _ in postedEventCount += 1 })
+
+        do {
+            _ = try await hotkey.hotkey(
+                keys: "cmd,a",
+                holdDuration: 0,
+                targetProcessIdentifier: staleIdentity.ownerProcessIdentifier,
+                deliveryValidator: {
+                    try await automation.requireExactWindowKeyboardFocus(
+                        expectedWindowIdentity: staleIdentity,
+                        expectedWindowBounds: bounds)
+                })
+            XCTFail("Expected reused process generation to fail closed")
+        } catch let PeekabooError.invalidInput(message) {
+            XCTAssertTrue(message.contains("target"))
+        }
+
+        XCTAssertEqual(sequence.values, ["focus", "identity"])
+        XCTAssertEqual(postedEventCount, 0)
+    }
+
+    func testSameWindowSiblingFocusDoesNotMatchClickedDestination() async throws {
+        let windowIdentity = WindowMutationIdentity(
+            windowID: 42,
+            ownerProcessIdentifier: 930_003,
+            ownerProcessStartIdentity: 1)
+        let service = UIAutomationService(
+            actionInputDriver: ActionInputDriver(),
+            automationElementResolver: AutomationElementResolver(),
+            exactWindowFocusReader: { processIdentifier in
+                ExactWindowFocusSnapshot(
+                    processIdentifier: processIdentifier,
+                    windowID: 42,
+                    frame: CGRect(x: 300, y: 100, width: 200, height: 30),
+                    role: "AXTextField",
+                    title: "Sibling",
+                    identifier: "sibling")
+            },
+            exactWindowIdentityValidator: { _, _ in true })
+
+        do {
+            try await service.requireExactWindowKeyboardFocus(
+                expectedWindowIdentity: windowIdentity,
+                expectedWindowBounds: CGRect(x: 0, y: 0, width: 800, height: 600),
+                expectedFocusedElement: FocusedElementIdentity(
+                    processIdentifier: windowIdentity.ownerProcessIdentifier,
+                    windowID: windowIdentity.windowID,
+                    role: "AXTextField",
+                    title: "Clicked",
+                    identifier: "clicked",
+                    frame: CGRect(x: 50, y: 100, width: 200, height: 30)))
+            XCTFail("Expected sibling focus to fail the clicked-destination proof")
+        } catch let PeekabooError.invalidInput(message) {
+            XCTAssertTrue(message.contains("target"))
+        }
+    }
+
+    private static func seconds(_ duration: Duration) -> TimeInterval {
+        let components = duration.components
+        return Double(components.seconds) + Double(components.attoseconds) / 1_000_000_000_000_000_000
+    }
+}
+
+private final class LockedStrings: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storedValues: [String] = []
+
+    var values: [String] {
+        self.lock.withLock { self.storedValues }
+    }
+
+    func append(_ value: String) {
+        self.lock.withLock { self.storedValues.append(value) }
+    }
+}
+
+private final class LockedBoolean: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storedValue = false
+
+    var value: Bool {
+        self.lock.withLock { self.storedValue }
+    }
+
+    func setTrue() {
+        self.lock.withLock { self.storedValue = true }
+    }
+}

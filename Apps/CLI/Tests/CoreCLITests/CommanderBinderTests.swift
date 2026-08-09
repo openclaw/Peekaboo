@@ -171,6 +171,50 @@ struct CommanderBinderTests {
     }
 
     @Test
+    func `New application instance launch requires bridge protocol 1_13`() {
+        let supportedOperations: [PeekabooBridgeOperation] = [.captureScreen, .launchApplicationWithOptions]
+        let current = PeekabooBridgeHandshakeResponse(
+            negotiatedVersion: .init(major: 1, minor: 13),
+            hostKind: .gui,
+            build: nil,
+            supportedOperations: supportedOperations
+        )
+        let old = PeekabooBridgeHandshakeResponse(
+            negotiatedVersion: .init(major: 1, minor: 12),
+            hostKind: .gui,
+            build: nil,
+            supportedOperations: supportedOperations
+        )
+        var options = CommandRuntimeOptions()
+        options.requiresApplicationLaunchOptions = true
+        options.requiresNewApplicationInstanceLaunch = true
+        options.requiresApplicationWindowReadiness = true
+
+        #expect(CommandRuntime.supportsRemoteRequirements(for: current, options: options))
+        #expect(!CommandRuntime.supportsRemoteRequirements(for: old, options: options))
+    }
+
+    @Test
+    func `window-instance-pinned mutations require bridge protocol 1_18`() {
+        let operations: [PeekabooBridgeOperation] = [.moveWindow, .closeWindow, .maximizeWindow]
+        let legacy = PeekabooBridgeHandshakeResponse(
+            negotiatedVersion: .init(major: 1, minor: 17),
+            hostKind: .onDemand,
+            build: nil,
+            supportedOperations: operations
+        )
+        let current = PeekabooBridgeHandshakeResponse(
+            negotiatedVersion: .init(major: 1, minor: 18),
+            hostKind: .onDemand,
+            build: nil,
+            supportedOperations: operations
+        )
+
+        #expect(!BridgeCapabilityPolicy.supportsPinnedWindowMutations(for: legacy))
+        #expect(BridgeCapabilityPolicy.supportsPinnedWindowMutations(for: current))
+    }
+
+    @Test
     func `Launch commands require a bridge host with launch options`() throws {
         let parsed = ParsedValues(positional: [], options: [:], flags: [])
         let commandTypes: [any ParsableCommand.Type] = [
@@ -212,6 +256,7 @@ struct CommanderBinderTests {
             WindowCommand.FocusSubcommand.self,
             WindowCommand.CloseSubcommand.self,
             WindowCommand.MinimizeSubcommand.self,
+            WindowCommand.RestoreSubcommand.self,
             WindowCommand.MaximizeSubcommand.self,
             WindowCommand.MoveSubcommand.self,
             WindowCommand.ResizeSubcommand.self,
@@ -444,7 +489,7 @@ struct CommanderBinderTests {
     @Test
     func `Capture commands require invalidation only when their focus policy may mutate the desktop`() throws {
         let oldBridge = PeekabooBridgeHandshakeResponse(
-            negotiatedVersion: .init(major: 1, minor: 8),
+            negotiatedVersion: .init(major: 1, minor: 12),
             hostKind: .onDemand,
             build: nil,
             supportedOperations: [.captureScreen]
@@ -754,7 +799,7 @@ extension CommanderBinderTests {
             enabledOperations: [.captureScreen, .scroll, .invalidateImplicitLatestSnapshot]
         )
         let current = PeekabooBridgeHandshakeResponse(
-            negotiatedVersion: .init(major: 1, minor: 11),
+            negotiatedVersion: .init(major: 1, minor: 12),
             hostKind: .onDemand,
             build: nil,
             supportedOperations: [.captureScreen, .scroll, .targetedScroll, .invalidateImplicitLatestSnapshot],
@@ -825,19 +870,25 @@ extension CommanderBinderTests {
             .exactWindowTargetedClick,
         ]
         let capable = PeekabooBridgeHandshakeResponse(
-            negotiatedVersion: .init(major: 1, minor: 9),
+            negotiatedVersion: .init(major: 1, minor: 17),
+            hostKind: .onDemand,
+            build: nil,
+            supportedOperations: operations
+        )
+        let preCompletionValidation = PeekabooBridgeHandshakeResponse(
+            negotiatedVersion: .init(major: 1, minor: 16),
             hostKind: .onDemand,
             build: nil,
             supportedOperations: operations
         )
         let missing = PeekabooBridgeHandshakeResponse(
-            negotiatedVersion: .init(major: 1, minor: 9),
+            negotiatedVersion: .init(major: 1, minor: 17),
             hostKind: .onDemand,
             build: nil,
             supportedOperations: [.captureScreen]
         )
         let disabled = PeekabooBridgeHandshakeResponse(
-            negotiatedVersion: .init(major: 1, minor: 9),
+            negotiatedVersion: .init(major: 1, minor: 17),
             hostKind: .onDemand,
             build: nil,
             supportedOperations: operations,
@@ -847,6 +898,7 @@ extension CommanderBinderTests {
         exactOptions.requiresExactWindowTargetedClicks = true
 
         #expect(CommandRuntime.supportsRemoteRequirements(for: capable, options: exactOptions))
+        #expect(!CommandRuntime.supportsRemoteRequirements(for: preCompletionValidation, options: exactOptions))
         #expect(!CommandRuntime.supportsRemoteRequirements(for: missing, options: exactOptions))
         #expect(!CommandRuntime.supportsRemoteRequirements(for: disabled, options: exactOptions))
     }
@@ -859,20 +911,20 @@ extension CommanderBinderTests {
             .relaunchApplicationWithOptions,
         ]
         let capable = PeekabooBridgeHandshakeResponse(
-            negotiatedVersion: .init(major: 1, minor: 9),
+            negotiatedVersion: .init(major: 1, minor: 18),
             hostKind: .onDemand,
             build: nil,
             supportedOperations: operations
         )
         let relaunchDisabled = PeekabooBridgeHandshakeResponse(
-            negotiatedVersion: .init(major: 1, minor: 9),
+            negotiatedVersion: .init(major: 1, minor: 18),
             hostKind: .onDemand,
             build: nil,
             supportedOperations: operations,
             enabledOperations: operations.filter { $0 != .relaunchApplicationWithOptions }
         )
         let guiHost = PeekabooBridgeHandshakeResponse(
-            negotiatedVersion: .init(major: 1, minor: 9),
+            negotiatedVersion: .init(major: 1, minor: 18),
             hostKind: .gui,
             build: nil,
             supportedOperations: operations
@@ -933,146 +985,6 @@ extension CommanderBinderTests {
         #expect(options.preferRemote)
         #expect(environmentOptions.captureEnginePreference == "legacy")
         #expect(environmentOptions.preferRemote)
-    }
-
-    @Test
-    func `Remote requirements skip stale bridge hosts for launch commands`() {
-        let current = PeekabooBridgeHandshakeResponse(
-            negotiatedVersion: .init(major: 1, minor: 9),
-            hostKind: .gui,
-            build: nil,
-            supportedOperations: [.captureScreen, .launchApplicationWithOptions]
-        )
-        let stale = PeekabooBridgeHandshakeResponse(
-            negotiatedVersion: .init(major: 1, minor: 8),
-            hostKind: .gui,
-            build: nil,
-            supportedOperations: [.captureScreen, .launchApplication]
-        )
-        var options = CommandRuntimeOptions()
-        options.requiresApplicationLaunchOptions = true
-
-        #expect(CommandRuntime.supportsRemoteRequirements(for: current, options: options))
-        #expect(!CommandRuntime.supportsRemoteRequirements(for: stale, options: options))
-    }
-
-    @Test
-    @MainActor
-    func `Launch commands prefer GUI host before reusable daemon`() {
-        var options = CommandRuntimeOptions()
-        options.requiresApplicationLaunchOptions = true
-
-        let candidates = RuntimeHostResolver.implicitRemoteCandidates(
-            options: options,
-            daemonSocketPath: "/tmp/peekaboo-daemon.sock",
-            buildScopedDaemonSocketPath: "/tmp/peekaboo-daemon-current.sock"
-        )
-
-        #expect(candidates.map(\.socketPath) == [
-            PeekabooBridgeConstants.peekabooSocketPath,
-            "/tmp/peekaboo-daemon-current.sock",
-            "/tmp/peekaboo-daemon.sock",
-        ])
-        #expect(candidates.first?.requiredHostKind == .gui)
-        #expect(candidates.last?.requireReusableDaemon == true)
-    }
-
-    @Test
-    @MainActor
-    func `Relaunch commands use only a reusable daemon host`() {
-        var options = CommandRuntimeOptions()
-        options.requiresApplicationLaunchOptions = true
-        options.requiresApplicationRelaunch = true
-
-        let candidates = RuntimeHostResolver.implicitRemoteCandidates(
-            options: options,
-            daemonSocketPath: "/tmp/peekaboo-daemon.sock"
-        )
-
-        #expect(candidates.map(\.socketPath) == ["/tmp/peekaboo-daemon.sock"])
-        #expect(candidates.first?.requireReusableDaemon == true)
-    }
-
-    @Test
-    @MainActor
-    func `Quit commands use only a reusable daemon host`() throws {
-        let options = try CommanderCLIBinder.makeRuntimeOptions(
-            from: ParsedValues(positional: [], options: [:], flags: []),
-            commandType: AppCommand.QuitSubcommand.self
-        )
-
-        #expect(options.requiresSurvivingApplicationHost)
-        #expect(!options.requiresApplicationRelaunch)
-        let candidates = RuntimeHostResolver.implicitRemoteCandidates(
-            options: options,
-            daemonSocketPath: "/tmp/peekaboo-daemon.sock"
-        )
-        #expect(candidates.map(\.socketPath) == ["/tmp/peekaboo-daemon.sock"])
-        #expect(candidates.first?.requireReusableDaemon == true)
-
-        let operations: [PeekabooBridgeOperation] = [
-            .captureScreen,
-            .invalidateImplicitLatestSnapshot,
-        ]
-        let daemonHost = PeekabooBridgeHandshakeResponse(
-            negotiatedVersion: .init(major: 1, minor: 9),
-            hostKind: .onDemand,
-            build: nil,
-            supportedOperations: operations
-        )
-        let guiHost = PeekabooBridgeHandshakeResponse(
-            negotiatedVersion: .init(major: 1, minor: 9),
-            hostKind: .gui,
-            build: nil,
-            supportedOperations: operations
-        )
-        #expect(CommandRuntime.supportsRemoteRequirements(for: daemonHost, options: options))
-        #expect(!CommandRuntime.supportsRemoteRequirements(for: guiHost, options: options))
-    }
-
-    @Test
-    @MainActor
-    func `Application inventory prefers GUI host before reusable daemon`() {
-        var options = CommandRuntimeOptions()
-        options.requiresHostApplicationInventory = true
-
-        let candidates = RuntimeHostResolver.implicitRemoteCandidates(
-            options: options,
-            daemonSocketPath: "/tmp/peekaboo-daemon.sock",
-            buildScopedDaemonSocketPath: "/tmp/peekaboo-daemon-current.sock"
-        )
-
-        #expect(candidates.map(\.socketPath) == [
-            PeekabooBridgeConstants.peekabooSocketPath,
-            "/tmp/peekaboo-daemon-current.sock",
-            "/tmp/peekaboo-daemon.sock",
-        ])
-        #expect(candidates.first?.requiredHostKind == .gui)
-        #expect(candidates.last?.requireReusableDaemon == true)
-    }
-
-    @Test
-    func `Remote routing intent survives launch host fallback but respects isolation`() {
-        var launchOptions = CommandRuntimeOptions()
-        launchOptions.requiresApplicationLaunchOptions = true
-
-        #expect(RuntimeHostResolver.remoteRoutingAllowed(
-            options: launchOptions,
-            environment: ["PEEKABOO_INPUT_STRATEGY": "synthOnly"],
-            configurationInput: nil
-        ))
-        #expect(!RuntimeHostResolver.remoteRoutingAllowed(
-            options: launchOptions,
-            environment: ["PEEKABOO_NO_REMOTE": "1"],
-            configurationInput: nil
-        ))
-
-        launchOptions.preferRemote = false
-        #expect(!RuntimeHostResolver.remoteRoutingAllowed(
-            options: launchOptions,
-            environment: [:],
-            configurationInput: nil
-        ))
     }
 
     @Test
@@ -1217,6 +1129,42 @@ extension CommanderBinderTests {
         #expect(options.preferRemote == false)
         #expect(options.usesPerToolSnapshotInvalidation)
         #expect(!options.requiresImplicitSnapshotInvalidation)
+    }
+
+    @Test
+    func `Agent runtime honors explicit bridge socket`() throws {
+        let parsed = ParsedValues(
+            positional: [],
+            options: ["bridge-socket": ["/tmp/agent-host.sock"]],
+            flags: []
+        )
+        let options = try CommanderCLIBinder.makeRuntimeOptions(from: parsed, commandType: AgentCommand.self)
+
+        #expect(options.preferRemote)
+        #expect(options.bridgeSocketPath == "/tmp/agent-host.sock")
+    }
+
+    @Test
+    func `Agent runtime honors bridge socket environment override`() throws {
+        let options = try CommanderCLIBinder.makeRuntimeOptions(
+            from: ParsedValues(positional: [], options: [:], flags: []),
+            commandType: AgentCommand.self,
+            environment: ["PEEKABOO_BRIDGE_SOCKET": "/tmp/agent-host.sock"]
+        )
+
+        #expect(options.preferRemote)
+    }
+
+    @Test
+    func `Agent no remote flag wins over bridge socket environment override`() throws {
+        let options = try CommanderCLIBinder.makeRuntimeOptions(
+            from: ParsedValues(positional: [], options: [:], flags: ["no-remote"]),
+            commandType: AgentCommand.self,
+            environment: ["PEEKABOO_BRIDGE_SOCKET": "/tmp/agent-host.sock"]
+        )
+
+        #expect(!options.preferRemote)
+        #expect(options.remoteIsolationRequested)
     }
 
     @Test
@@ -1498,5 +1446,156 @@ extension CommanderBinderTests {
             let options = try CommanderCLIBinder.makeRuntimeOptions(from: parsed, commandType: commandType)
             #expect(!options.requiresScreenCapturePermission, "Unexpected capture gating for \(commandType)")
         }
+    }
+
+    @Test
+    func `Commands with implicit silent observation reject pre-1_12 bridge hosts`() throws {
+        let parsed = ParsedValues(positional: [], options: [:], flags: [])
+        let silentCommands: [(any ParsableCommand.Type, ParsedValues)] = [
+            (ImageCommand.self, parsed),
+            (SeeCommand.self, parsed),
+            (CaptureLiveCommand.self, parsed),
+            (CaptureWatchAlias.self, parsed),
+            (CaptureActionCommand.self, parsed),
+            (AgentCommand.self, parsed),
+            (MCPCommand.Serve.self, parsed),
+            (ClickCommand.self, ParsedValues(
+                positional: [],
+                options: ["on": ["B1"]],
+                flags: ["foreground"]
+            )),
+            (ScrollCommand.self, ParsedValues(
+                positional: [],
+                options: ["on": ["S1"]],
+                flags: []
+            )),
+            (SwipeCommand.self, ParsedValues(
+                positional: [],
+                options: ["from": ["B1"], "to": ["B2"]],
+                flags: ["foreground"]
+            )),
+            (MoveCommand.self, ParsedValues(
+                positional: [],
+                options: ["on": ["B1"]],
+                flags: ["foreground"]
+            )),
+            (DragCommand.self, ParsedValues(
+                positional: [],
+                options: ["from": ["B1"], "to": ["B2"]],
+                flags: ["foreground"]
+            )),
+        ]
+        let legacy = PeekabooBridgeHandshakeResponse(
+            negotiatedVersion: .init(major: 1, minor: 11),
+            hostKind: .onDemand,
+            build: nil,
+            supportedOperations: [.captureScreen]
+        )
+        let current = PeekabooBridgeHandshakeResponse(
+            negotiatedVersion: .init(major: 1, minor: 12),
+            hostKind: .onDemand,
+            build: nil,
+            supportedOperations: [.captureScreen]
+        )
+
+        for (commandType, commandValues) in silentCommands {
+            let options = try CommanderCLIBinder.makeRuntimeOptions(from: commandValues, commandType: commandType)
+            #expect(options.requiresSilentCapture, "Expected silent-capture gating for \(commandType)")
+        }
+
+        let legacyVisualizerOnly = try [
+            CommanderCLIBinder.makeRuntimeOptions(
+                from: ParsedValues(
+                    positional: [],
+                    options: ["captureFocus": ["foreground"]],
+                    flags: []
+                ),
+                commandType: ImageCommand.self
+            ),
+            CommanderCLIBinder.makeRuntimeOptions(
+                from: ParsedValues(positional: [], options: ["on": ["B1"]], flags: []),
+                commandType: ClickCommand.self
+            ),
+            CommanderCLIBinder.makeRuntimeOptions(
+                from: ParsedValues(positional: [], options: [:], flags: ["foreground"]),
+                commandType: ScrollCommand.self
+            ),
+        ]
+        #expect(legacyVisualizerOnly.allSatisfy { !$0.requiresSilentCapture })
+
+        var silentOptions = CommandRuntimeOptions()
+        silentOptions.requiresSilentCapture = true
+        #expect(!CommandRuntime.supportsRemoteRequirements(for: legacy, options: silentOptions))
+        #expect(CommandRuntime.supportsRemoteRequirements(for: current, options: silentOptions))
+    }
+
+    @Test
+    func `Run requires PID scoped focus only for window scoped keyboard scripts`() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekaboo-run-capability-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let safePath = directory.appendingPathComponent("safe.peekaboo.json")
+        let riskyPath = directory.appendingPathComponent("risky.peekaboo.json")
+        try Data(#"{"steps":[{"stepId":"sleep","command":"sleep","params":{"duration":1}}]}"#.utf8)
+            .write(to: safePath)
+        let riskyScript = """
+        {"steps":[{"stepId":"see","command":"see","params":{"app":"TextEdit"}},\
+        {"stepId":"type","command":"type","params":{"text":"hello","field":"Body"}}]}
+        """
+        try Data(riskyScript.utf8).write(to: riskyPath)
+
+        let safeOptions = try CommanderCLIBinder.makeRuntimeOptions(
+            from: ParsedValues(positional: [safePath.path], options: [:], flags: []),
+            commandType: RunCommand.self
+        )
+        let riskyOptions = try CommanderCLIBinder.makeRuntimeOptions(
+            from: ParsedValues(positional: [riskyPath.path], options: [:], flags: []),
+            commandType: RunCommand.self
+        )
+        let legacy = PeekabooBridgeHandshakeResponse(
+            negotiatedVersion: .init(major: 1, minor: 11),
+            hostKind: .onDemand,
+            build: nil,
+            supportedOperations: [.captureScreen, .invalidateImplicitLatestSnapshot]
+        )
+        let previous = PeekabooBridgeHandshakeResponse(
+            negotiatedVersion: .init(major: 1, minor: 14),
+            hostKind: .onDemand,
+            build: nil,
+            supportedOperations: [.captureScreen, .getFocusedElement, .invalidateImplicitLatestSnapshot]
+        )
+        let current = PeekabooBridgeHandshakeResponse(
+            negotiatedVersion: .init(major: 1, minor: 17),
+            hostKind: .onDemand,
+            build: nil,
+            supportedOperations: [
+                .captureScreen,
+                .getFocusedElement,
+                .invalidateImplicitLatestSnapshot,
+                .exactWindowTargetedTypeActions,
+                .exactWindowTargetedHotkey,
+            ]
+        )
+        let preFocusedDestinationBinding = PeekabooBridgeHandshakeResponse(
+            negotiatedVersion: .init(major: 1, minor: 16),
+            hostKind: .onDemand,
+            build: nil,
+            supportedOperations: current.supportedOperations
+        )
+
+        #expect(!safeOptions.requiresExactWindowTargetedKeyboard)
+        #expect(!safeOptions.requiresSilentCapture)
+        #expect(riskyOptions.requiresExactWindowTargetedKeyboard)
+        #expect(riskyOptions.requiresSilentCapture)
+        #expect(CommandRuntime.supportsRemoteRequirements(for: legacy, options: safeOptions))
+        #expect(!CommandRuntime.supportsRemoteRequirements(for: legacy, options: riskyOptions))
+        #expect(CommandRuntime.supportsRemoteRequirements(for: previous, options: safeOptions))
+        #expect(!CommandRuntime.supportsRemoteRequirements(for: previous, options: riskyOptions))
+        #expect(!CommandRuntime.supportsRemoteRequirements(
+            for: preFocusedDestinationBinding,
+            options: riskyOptions
+        ))
+        #expect(CommandRuntime.supportsRemoteRequirements(for: current, options: riskyOptions))
     }
 }

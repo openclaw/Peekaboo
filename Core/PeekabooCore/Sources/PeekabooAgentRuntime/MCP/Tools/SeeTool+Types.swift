@@ -1,8 +1,11 @@
+import Foundation
+import MCP
 import PeekabooAutomationKit
 import TachikomaMCP
 
 struct SeeRequest {
     let appTarget: String?
+    let windowIDValue: Value?
     let path: String?
     let snapshotId: String?
     let annotate: Bool
@@ -11,6 +14,7 @@ struct SeeRequest {
 
     init(arguments: ToolArguments) {
         self.appTarget = arguments.getString("app_target")
+        self.windowIDValue = arguments.getValue(for: "window_id")
         self.path = arguments.getString("path")
         self.snapshotId = arguments.getString("snapshot")
         self.annotate = arguments.getBool("annotate") ?? false
@@ -32,7 +36,66 @@ struct SeeRequest {
 struct ScreenshotOutput {
     let screenshotPath: String
     let annotatedPath: String?
-    let annotate: Bool
+    let imageData: Data
+}
+
+struct SeeCaptureArtifact {
+    let observationPath: String
+    let rawOutputPath: String
+    let annotatedOutputPath: String
+    private let cleanupDirectory: URL?
+
+    init(requestedPath: String?) throws {
+        let hasExplicitPath = requestedPath?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        let defaultFileName = "peekaboo-observation-\(UUID().uuidString).png"
+        let rawOutputURL = ObservationOutputPathResolver.resolve(
+            path: hasExplicitPath ? requestedPath : nil,
+            format: .png,
+            defaultFileName: defaultFileName)
+
+        self.rawOutputPath = rawOutputURL.path
+        self.annotatedOutputPath = ObservationOutputWriter.annotatedScreenshotPath(
+            forRawScreenshotPath: rawOutputURL.path)
+
+        if hasExplicitPath {
+            let directory = FileManager.default.temporaryDirectory
+                .appendingPathComponent("peekaboo-see-response-\(UUID().uuidString)", isDirectory: true)
+            try FileManager.default.createDirectory(
+                at: directory,
+                withIntermediateDirectories: false,
+                attributes: [.posixPermissions: 0o700])
+            self.observationPath = directory.appendingPathComponent("capture.png").path
+            self.cleanupDirectory = directory
+        } else {
+            self.observationPath = rawOutputURL.path
+            self.cleanupDirectory = nil
+        }
+    }
+
+    func publish(rawData: Data, annotatedData: Data?) throws -> (rawPath: String, annotatedPath: String?) {
+        if self.cleanupDirectory != nil {
+            let rawURL = URL(fileURLWithPath: self.rawOutputPath)
+            try FileManager.default.createDirectory(
+                at: rawURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true)
+            try rawData.write(to: rawURL, options: .atomic)
+            if let annotatedData {
+                try annotatedData.write(
+                    to: URL(fileURLWithPath: self.annotatedOutputPath),
+                    options: .atomic)
+            }
+        }
+        return (self.rawOutputPath, annotatedData == nil ? nil : self.annotatedOutputPath)
+    }
+
+    func cleanup() {
+        guard let cleanupDirectory else { return }
+        try? FileManager.default.removeItem(at: cleanupDirectory)
+    }
+
+    var observationAnnotatedPath: String {
+        ObservationOutputWriter.annotatedScreenshotPath(forRawScreenshotPath: self.observationPath)
+    }
 }
 
 @MainActor

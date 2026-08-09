@@ -87,6 +87,105 @@ final class DesktopObservationServiceTests: XCTestCase {
         XCTAssertEqual(automation.detectCalls, 0)
     }
 
+    func testReusedPIDAndWindowIDFailBeforeCapture() async throws {
+        let oldApplication = ServiceApplicationInfo(
+            processIdentifier: 123,
+            processStartIdentity: 100,
+            bundleIdentifier: "com.example.fixture",
+            name: "Fixture",
+            windowCount: 1)
+        let oldWindow = Self.window(
+            id: 42,
+            title: "Original",
+            bounds: CGRect(x: 100, y: 100, width: 400, height: 300))
+        let applications = RecordingApplicationService(applications: [oldApplication], windows: [oldWindow])
+        let capture = RecordingScreenCaptureService(
+            result: Self.captureResult(app: oldApplication, window: oldWindow))
+        let service = DesktopObservationService(
+            screenCapture: capture,
+            automation: RecordingUIAutomationService(),
+            applications: applications,
+            exactWindowMetadataProvider: ReusedExactWindowMetadataProvider())
+
+        do {
+            _ = try await service.observe(DesktopObservationRequest(
+                target: .pid(123, window: .id(42)),
+                detection: DesktopDetectionOptions(mode: .none)))
+            XCTFail("Expected reused PID/window ID to fail before capture")
+        } catch is DesktopObservationError {
+            // Expected.
+        }
+
+        XCTAssertTrue(capture.operations.isEmpty)
+    }
+
+    func testGenerationlessRemoteExactObservationStaysReadOnly() async throws {
+        let legacyApplication = ServiceApplicationInfo(
+            processIdentifier: 123,
+            bundleIdentifier: "com.example.fixture",
+            name: "Fixture",
+            windowCount: 1)
+        let legacyWindow = Self.window(
+            id: 42,
+            title: "Legacy",
+            bounds: CGRect(x: 100, y: 100, width: 400, height: 300))
+        let applications = RecordingApplicationService(
+            applications: [legacyApplication],
+            windows: [legacyWindow])
+        let capture = RecordingScreenCaptureService(
+            result: Self.captureResult(app: legacyApplication, window: legacyWindow))
+        let automation = RecordingUIAutomationService()
+        let service = DesktopObservationService(
+            screenCapture: capture,
+            automation: automation,
+            applications: applications)
+
+        let result = try await service.observe(DesktopObservationRequest(
+            target: .pid(123, window: .id(42)),
+            detection: DesktopDetectionOptions(mode: .accessibility)))
+
+        XCTAssertEqual(capture.operations, [.windowID(42, .logical1x, .auto)])
+        XCTAssertNil(result.target.detectionContext?.windowMutationIdentity)
+        XCTAssertNil(automation.lastWindowContext?.windowMutationIdentity)
+    }
+
+    func testCaptureWithoutReceiptDropsPreCaptureActionIdentity() async throws {
+        let application = ServiceApplicationInfo(
+            processIdentifier: 123,
+            processStartIdentity: 700,
+            bundleIdentifier: "com.example.fixture",
+            name: "Fixture",
+            windowCount: 1)
+        let window = Self.window(
+            id: 42,
+            title: "Captured",
+            bounds: CGRect(x: 100, y: 100, width: 400, height: 300))
+        let applications = RecordingApplicationService(applications: [application], windows: [window])
+        let replacementApplication = ServiceApplicationInfo(
+            processIdentifier: 123,
+            processStartIdentity: 800,
+            bundleIdentifier: "com.example.replacement",
+            name: "Replacement",
+            windowCount: 1)
+        let capture = RecordingScreenCaptureService(
+            result: Self.captureResult(app: replacementApplication, window: window))
+        let automation = RecordingUIAutomationService()
+        let service = DesktopObservationService(
+            screenCapture: capture,
+            automation: automation,
+            applications: applications,
+            exactWindowMetadataProvider: StableExactWindowMetadataProvider())
+
+        let result = try await service.observe(DesktopObservationRequest(
+            target: .pid(123, window: .id(42)),
+            detection: DesktopDetectionOptions(mode: .accessibility)))
+
+        XCTAssertEqual(capture.operations, [.windowID(42, .logical1x, .auto)])
+        XCTAssertEqual(result.target.app?.processStartIdentity, 800)
+        XCTAssertNil(result.target.detectionContext?.windowMutationIdentity)
+        XCTAssertNil(automation.lastWindowContext?.windowMutationIdentity)
+    }
+
     func testObservationNormalizesCapturedWindowMetadataToResolvedTarget() async throws {
         let app = Self.app()
         let resolvedWindow = Self.window(
@@ -98,7 +197,12 @@ final class DesktopObservationServiceTests: XCTestCase {
             id: 42,
             title: "Document",
             bounds: CGRect(x: 100, y: 100, width: 400, height: 300),
-            index: 5)
+            index: 5,
+            mutationIdentity: WindowMutationIdentity(
+                windowID: 42,
+                ownerProcessIdentifier: app.processIdentifier,
+                ownerProcessStartIdentity: 700,
+                isMinimized: false))
         let applications = RecordingApplicationService(applications: [app], windows: [resolvedWindow])
         let capture = RecordingScreenCaptureService(
             result: Self.captureResult(app: app, window: capturedWindow))
@@ -114,6 +218,8 @@ final class DesktopObservationServiceTests: XCTestCase {
         XCTAssertEqual(result.capture.metadata.windowInfo?.windowID, 42)
         XCTAssertEqual(result.capture.metadata.windowInfo?.index, 0)
         XCTAssertEqual(result.capture.metadata.windowInfo?.title, "Document")
+        XCTAssertEqual(result.capture.metadata.windowInfo?.mutationIdentity, capturedWindow.mutationIdentity)
+        XCTAssertEqual(result.target.detectionContext?.windowMutationIdentity, capturedWindow.mutationIdentity)
     }
 
     func testObservationWithDetectionPassesWindowContextAndWebFocusPolicy() async throws {
@@ -133,7 +239,8 @@ final class DesktopObservationServiceTests: XCTestCase {
                 mode: .accessibility,
                 allowWebFocusFallback: false,
                 includeMenuBarElements: false),
-            output: DesktopObservationOutputOptions(snapshotID: "snapshot-1")))
+            output: DesktopObservationOutputOptions(snapshotID: "snapshot-1"),
+            timeout: DesktopObservationTimeouts(detection: 0.75)))
 
         XCTAssertNotNil(result.elements)
         XCTAssertEqual(automation.detectCalls, 1)
@@ -144,6 +251,7 @@ final class DesktopObservationServiceTests: XCTestCase {
         XCTAssertEqual(automation.lastWindowContext?.windowID, 77)
         XCTAssertEqual(automation.lastWindowContext?.shouldFocusWebContent, false)
         XCTAssertEqual(automation.lastWindowContext?.includeMenuBarElements, false)
+        XCTAssertEqual(automation.lastWindowContext?.accessibilityTimeoutSeconds, 0.75)
         XCTAssertEqual(result.timings.spans.map(\.name), [
             "state.snapshot",
             "target.resolve",
@@ -476,6 +584,200 @@ final class DesktopObservationServiceTests: XCTestCase {
         XCTAssertLessThan(Date().timeIntervalSince(startedAt), 0.25)
     }
 
+    func testObservationOverallTimeoutIsEnforcedLocally() async throws {
+        let app = Self.app()
+        let window = Self.window(
+            id: 104,
+            title: "Overall timeout",
+            bounds: CGRect(x: 100, y: 100, width: 500, height: 400))
+        let service = DesktopObservationService(
+            screenCapture: RecordingScreenCaptureService(result: Self.captureResult(app: app, window: window)),
+            automation: RecordingUIAutomationService(delay: 0.5, ignoresCancellation: true),
+            applications: RecordingApplicationService(applications: [app], windows: [window]))
+        let startedAt = ContinuousClock.now
+
+        do {
+            _ = try await service.observe(DesktopObservationRequest(
+                target: .app(identifier: "Fixture", window: .automatic),
+                detection: DesktopDetectionOptions(mode: .accessibility),
+                timeout: DesktopObservationTimeouts(overall: 0.02)))
+            XCTFail("Expected overall observation timeout")
+        } catch let CaptureError.detectionTimedOut(seconds) {
+            XCTAssertEqual(seconds, 0.02, accuracy: 0.001)
+        }
+        XCTAssertLessThan(startedAt.duration(to: .now), .milliseconds(250))
+    }
+
+    func testOCRDeadlineReturnsExplicitIncompleteEvidenceWithoutBlockingMainActor() async throws {
+        let app = Self.app()
+        let window = Self.window(
+            id: 105,
+            title: "OCR timeout",
+            bounds: CGRect(x: 100, y: 100, width: 500, height: 400))
+        let ocr = NoncooperativeOCRRecognizer()
+        defer { ocr.release() }
+        let service = DesktopObservationService(
+            screenCapture: RecordingScreenCaptureService(result: Self.captureResult(app: app, window: window)),
+            automation: RecordingUIAutomationService(),
+            applications: RecordingApplicationService(applications: [app], windows: [window]),
+            ocrRecognizer: ocr)
+        let heartbeat = expectation(description: "main actor remained responsive")
+        Task { @MainActor in heartbeat.fulfill() }
+
+        let result = try await service.observe(DesktopObservationRequest(
+            target: .app(identifier: "Fixture", window: .automatic),
+            detection: DesktopDetectionOptions(mode: .none, preferOCR: true),
+            timeout: DesktopObservationTimeouts(ocr: 0.02)))
+
+        await fulfillment(of: [heartbeat], timeout: 0.2)
+        XCTAssertEqual(ocr.receivedTimeout, 0.02, accuracy: 0.001)
+        XCTAssertEqual(result.ocr?.isComplete, false)
+        XCTAssertEqual(result.ocr?.deadlineReached, true)
+        XCTAssertEqual(result.elements?.metadata.truncationInfo?.deadlineReached, true)
+        XCTAssertTrue(result.diagnostics.warnings
+            .contains(where: { $0.contains("missing text does not prove absence") }))
+    }
+
+    func testReadOnlySlowDetectionDoesNotBlockAnotherObservationCapture() async throws {
+        let app = Self.app()
+        let window = Self.window(
+            id: 101,
+            title: "Concurrent",
+            bounds: CGRect(x: 100, y: 100, width: 500, height: 400))
+        let detectionStarted = expectation(description: "first observation started AX detection")
+        let allowDetectionToFinish = ObservationDetectionSuspension {
+            detectionStarted.fulfill()
+        }
+        let firstService = DesktopObservationService(
+            screenCapture: RecordingScreenCaptureService(result: Self.captureResult(app: app, window: window)),
+            automation: RecordingUIAutomationService(detectionSuspension: allowDetectionToFinish),
+            applications: RecordingApplicationService(applications: [app], windows: [window]))
+        let secondCaptureStarted = expectation(description: "second observation reached capture")
+        let secondService = DesktopObservationService(
+            screenCapture: RecordingScreenCaptureService(
+                result: Self.captureResult(app: app, window: window),
+                onCapture: { secondCaptureStarted.fulfill() }),
+            automation: RecordingUIAutomationService(),
+            applications: RecordingApplicationService(applications: [app], windows: [window]))
+        defer { allowDetectionToFinish.release() }
+
+        let firstObservation = Task {
+            try await firstService.observe(DesktopObservationRequest(
+                target: .app(identifier: "Fixture", window: .automatic),
+                detection: DesktopDetectionOptions(mode: .accessibility)))
+        }
+        await fulfillment(of: [detectionStarted], timeout: 2)
+
+        let secondObservation = Task {
+            try await secondService.observe(DesktopObservationRequest(
+                target: .app(identifier: "Fixture", window: .automatic),
+                detection: DesktopDetectionOptions(mode: .none)))
+        }
+        await fulfillment(of: [secondCaptureStarted], timeout: 2)
+
+        allowDetectionToFinish.release()
+        _ = try await firstObservation.value
+        _ = try await secondObservation.value
+    }
+
+    func testWebFocusDetectionBlocksAnotherObservationCapture() async throws {
+        let app = Self.app()
+        let window = Self.window(
+            id: 102,
+            title: "Web Focus",
+            bounds: CGRect(x: 100, y: 100, width: 500, height: 400))
+        let detectionStarted = expectation(description: "first observation started web-focus detection")
+        let allowDetectionToFinish = ObservationDetectionSuspension {
+            detectionStarted.fulfill()
+        }
+        let firstService = DesktopObservationService(
+            screenCapture: RecordingScreenCaptureService(result: Self.captureResult(app: app, window: window)),
+            automation: RecordingUIAutomationService(detectionSuspension: allowDetectionToFinish),
+            applications: RecordingApplicationService(applications: [app], windows: [window]))
+        let captureBeforeRelease = expectation(description: "second capture stayed behind web-focus detection")
+        captureBeforeRelease.isInverted = true
+        let captureAfterRelease = expectation(description: "second capture ran after web-focus detection")
+        let secondService = DesktopObservationService(
+            screenCapture: RecordingScreenCaptureService(
+                result: Self.captureResult(app: app, window: window),
+                onCapture: {
+                    if allowDetectionToFinish.isReleased {
+                        captureAfterRelease.fulfill()
+                    } else {
+                        captureBeforeRelease.fulfill()
+                    }
+                }),
+            automation: RecordingUIAutomationService(),
+            applications: RecordingApplicationService(applications: [app], windows: [window]))
+        defer { allowDetectionToFinish.release() }
+
+        let firstObservation = Task {
+            try await firstService.observe(DesktopObservationRequest(
+                target: .app(identifier: "Fixture", window: .automatic),
+                detection: DesktopDetectionOptions(
+                    mode: .accessibility,
+                    allowWebFocusFallback: true)))
+        }
+        await fulfillment(of: [detectionStarted], timeout: 2)
+
+        let secondObservation = Task {
+            try await secondService.observe(DesktopObservationRequest(
+                target: .app(identifier: "Fixture", window: .automatic),
+                detection: DesktopDetectionOptions(mode: .none)))
+        }
+        await fulfillment(of: [captureBeforeRelease], timeout: 0.2)
+
+        allowDetectionToFinish.release()
+        await fulfillment(of: [captureAfterRelease], timeout: 2)
+        _ = try await firstObservation.value
+        _ = try await secondObservation.value
+    }
+
+    func testServiceOwnedCaptureTransactionDoesNotAcquireCallerGate() async throws {
+        let app = Self.app()
+        let window = Self.window(
+            id: 103,
+            title: "Remote capture",
+            bounds: CGRect(x: 100, y: 100, width: 500, height: 400))
+        let localDetectionStarted = expectation(description: "local observation holds the caller transaction gate")
+        let allowLocalDetectionToFinish = ObservationDetectionSuspension {
+            localDetectionStarted.fulfill()
+        }
+        let localService = DesktopObservationService(
+            screenCapture: RecordingScreenCaptureService(result: Self.captureResult(app: app, window: window)),
+            automation: RecordingUIAutomationService(detectionSuspension: allowLocalDetectionToFinish),
+            applications: RecordingApplicationService(applications: [app], windows: [window]))
+        let remoteCaptureStarted = expectation(description: "service-owned capture skips the caller transaction gate")
+        let remoteService = DesktopObservationService(
+            screenCapture: RecordingScreenCaptureService(
+                result: Self.captureResult(app: app, window: window),
+                captureTransactionGateOwner: .service,
+                onCapture: { remoteCaptureStarted.fulfill() }),
+            automation: RecordingUIAutomationService(),
+            applications: RecordingApplicationService(applications: [app], windows: [window]))
+        defer { allowLocalDetectionToFinish.release() }
+
+        let localObservation = Task {
+            try await localService.observe(DesktopObservationRequest(
+                target: .app(identifier: "Fixture", window: .automatic),
+                detection: DesktopDetectionOptions(
+                    mode: .accessibility,
+                    allowWebFocusFallback: true)))
+        }
+        await fulfillment(of: [localDetectionStarted], timeout: 2)
+
+        let remoteObservation = Task {
+            try await remoteService.observe(DesktopObservationRequest(
+                target: .app(identifier: "Fixture", window: .automatic),
+                detection: DesktopDetectionOptions(mode: .none)))
+        }
+        await fulfillment(of: [remoteCaptureStarted], timeout: 2)
+
+        allowLocalDetectionToFinish.release()
+        _ = try await localObservation.value
+        _ = try await remoteObservation.value
+    }
+
     private static func app() -> ServiceApplicationInfo {
         ServiceApplicationInfo(
             processIdentifier: 123,
@@ -490,7 +792,8 @@ final class DesktopObservationServiceTests: XCTestCase {
         bounds: CGRect,
         isMinimized: Bool = false,
         isMainWindow: Bool = false,
-        index: Int = 0) -> ServiceWindowInfo
+        index: Int = 0,
+        mutationIdentity: WindowMutationIdentity? = nil) -> ServiceWindowInfo
     {
         ServiceWindowInfo(
             windowID: id,
@@ -504,7 +807,8 @@ final class DesktopObservationServiceTests: XCTestCase {
             layer: 0,
             isOnScreen: true,
             sharingState: .readOnly,
-            isExcludedFromWindowsMenu: false)
+            isExcludedFromWindowsMenu: false,
+            mutationIdentity: mutationIdentity)
     }
 
     private static func captureResult(
@@ -535,6 +839,38 @@ final class DesktopObservationServiceTests: XCTestCase {
             throw DesktopObservationError.targetNotFound("test image")
         }
         return png
+    }
+}
+
+private struct ReusedExactWindowMetadataProvider: ExactWindowMetadataProviding {
+    func metadata(for windowID: CGWindowID) -> ExactWindowObservationMetadata? {
+        guard windowID == 42 else { return nil }
+        return ExactWindowObservationMetadata(
+            ownerProcessIdentifier: 123,
+            ownerProcessStartIdentity: 200,
+            title: "Replacement",
+            bounds: CGRect(x: 100, y: 100, width: 400, height: 300),
+            applicationName: "Fixture")
+    }
+
+    func processStartIdentity(for _: Int32) -> UInt64? {
+        200
+    }
+}
+
+private struct StableExactWindowMetadataProvider: ExactWindowMetadataProviding {
+    func metadata(for windowID: CGWindowID) -> ExactWindowObservationMetadata? {
+        guard windowID == 42 else { return nil }
+        return ExactWindowObservationMetadata(
+            ownerProcessIdentifier: 123,
+            ownerProcessStartIdentity: 700,
+            title: "Captured",
+            bounds: CGRect(x: 100, y: 100, width: 400, height: 300),
+            applicationName: "Fixture")
+    }
+
+    func processStartIdentity(for _: Int32) -> UInt64? {
+        700
     }
 }
 
@@ -615,11 +951,19 @@ EngineAwareScreenCaptureServiceProtocol {
     }
 
     private let result: CaptureResult
+    let captureTransactionGateOwner: CaptureTransactionGateOwner
+    private let onCapture: @MainActor () -> Void
     private var engine: CaptureEnginePreference = .auto
     var operations: [Operation] = []
 
-    init(result: CaptureResult) {
+    init(
+        result: CaptureResult,
+        captureTransactionGateOwner: CaptureTransactionGateOwner = .caller,
+        onCapture: @escaping @MainActor () -> Void = {})
+    {
         self.result = result
+        self.captureTransactionGateOwner = captureTransactionGateOwner
+        self.onCapture = onCapture
     }
 
     func withCaptureEngine<T: Sendable>(
@@ -638,6 +982,7 @@ EngineAwareScreenCaptureServiceProtocol {
         scale: CaptureScalePreference) async throws -> CaptureResult
     {
         self.operations.append(.screen(displayIndex, scale, self.engine))
+        self.onCapture()
         return self.result
     }
 
@@ -648,6 +993,7 @@ EngineAwareScreenCaptureServiceProtocol {
         scale: CaptureScalePreference) async throws -> CaptureResult
     {
         self.operations.append(.window(appIdentifier, windowIndex, scale, self.engine))
+        self.onCapture()
         return self.result
     }
 
@@ -657,6 +1003,7 @@ EngineAwareScreenCaptureServiceProtocol {
         scale: CaptureScalePreference) async throws -> CaptureResult
     {
         self.operations.append(.windowID(Int(windowID), scale, self.engine))
+        self.onCapture()
         return self.result
     }
 
@@ -665,6 +1012,7 @@ EngineAwareScreenCaptureServiceProtocol {
         scale: CaptureScalePreference) async throws -> CaptureResult
     {
         self.operations.append(.frontmost(scale, self.engine))
+        self.onCapture()
         return self.result
     }
 
@@ -674,6 +1022,7 @@ EngineAwareScreenCaptureServiceProtocol {
         scale: CaptureScalePreference) async throws -> CaptureResult
     {
         self.operations.append(.area(rect, scale, self.engine))
+        self.onCapture()
         return self.result
     }
 
@@ -687,6 +1036,7 @@ private final class RecordingUIAutomationService: UIAutomationServiceProtocol {
     private let delay: TimeInterval
     private let ignoresCancellation: Bool
     private let elements: DetectedElements
+    private let detectionSuspension: ObservationDetectionSuspension?
     var detectCalls = 0
     var lastSnapshotID: String?
     var lastWindowContext: WindowContext?
@@ -694,11 +1044,13 @@ private final class RecordingUIAutomationService: UIAutomationServiceProtocol {
     init(
         delay: TimeInterval = 0,
         ignoresCancellation: Bool = false,
-        elements: DetectedElements = DetectedElements())
+        elements: DetectedElements = DetectedElements(),
+        detectionSuspension: ObservationDetectionSuspension? = nil)
     {
         self.delay = delay
         self.ignoresCancellation = ignoresCancellation
         self.elements = elements
+        self.detectionSuspension = detectionSuspension
     }
 
     func detectElements(
@@ -706,6 +1058,7 @@ private final class RecordingUIAutomationService: UIAutomationServiceProtocol {
         snapshotId: String?,
         windowContext: WindowContext?) async throws -> ElementDetectionResult
     {
+        await self.detectionSuspension?.wait()
         if self.delay > 0 {
             if self.ignoresCancellation {
                 await withCheckedContinuation { continuation in
@@ -768,7 +1121,31 @@ private final class RecordingUIAutomationService: UIAutomationServiceProtocol {
 }
 
 @MainActor
-private final class RecordingOCRRecognizer: OCRRecognizing {
+private final class ObservationDetectionSuspension {
+    private let onStart: @MainActor () -> Void
+    private var continuation: CheckedContinuation<Void, Never>?
+    private(set) var isReleased = false
+
+    init(onStart: @escaping @MainActor () -> Void) {
+        self.onStart = onStart
+    }
+
+    func wait() async {
+        self.onStart()
+        await withCheckedContinuation { continuation in
+            self.continuation = continuation
+        }
+    }
+
+    func release() {
+        self.isReleased = true
+        self.continuation?.resume()
+        self.continuation = nil
+    }
+}
+
+private final class RecordingOCRRecognizer: OCRRecognizing, @unchecked Sendable {
+    private let lock = NSLock()
     private let result: OCRTextResult
     var recognizeCalls = 0
 
@@ -776,8 +1153,35 @@ private final class RecordingOCRRecognizer: OCRRecognizing {
         self.result = result
     }
 
-    func recognizeText(in _: Data) throws -> OCRTextResult {
-        self.recognizeCalls += 1
+    func recognizeText(in _: Data, timeoutSeconds _: TimeInterval) async throws -> OCRTextResult {
+        self.lock.withLock { self.recognizeCalls += 1 }
         return self.result
+    }
+}
+
+private final class NoncooperativeOCRRecognizer: OCRRecognizing, @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Void, Never>?
+    private var timeout: TimeInterval = 0
+
+    var receivedTimeout: TimeInterval {
+        self.lock.withLock { self.timeout }
+    }
+
+    func recognizeText(in _: Data, timeoutSeconds: TimeInterval) async throws -> OCRTextResult {
+        self.lock.withLock { self.timeout = timeoutSeconds }
+        await withCheckedContinuation { continuation in
+            self.lock.withLock { self.continuation = continuation }
+        }
+        return OCRTextResult(observations: [], imageSize: CGSize(width: 1, height: 1))
+    }
+
+    func release() {
+        let continuation = self.lock.withLock {
+            let continuation = self.continuation
+            self.continuation = nil
+            return continuation
+        }
+        continuation?.resume()
     }
 }

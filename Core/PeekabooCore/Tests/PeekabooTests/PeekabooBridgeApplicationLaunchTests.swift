@@ -21,6 +21,10 @@ struct PeekabooBridgeApplicationLaunchTests {
         #expect(PeekabooBridgeClient.applicationLaunchRequestTimeout(
             defaultTimeoutSec: 45,
             waitUntilReady: true) == 45)
+        #expect(PeekabooBridgeClient.applicationLaunchRequestTimeout(
+            defaultTimeoutSec: 10,
+            waitUntilReady: false,
+            waitForWindow: true) == 30)
         #expect(PeekabooBridgeClient.applicationRelaunchRequestTimeout(
             defaultTimeoutSec: 10,
             waitSeconds: 2,
@@ -113,23 +117,28 @@ struct PeekabooBridgeApplicationLaunchTests {
             applicationIdentifier: "com.example.BackgroundApp",
             openURLs: [#require(URL(string: "https://example.com"))],
             activates: false,
-            waitUntilReady: true)
+            waitUntilReady: true,
+            waitForWindow: true,
+            createsNewInstance: true)
         let requestData = try JSONEncoder.peekabooBridgeEncoder().encode(
             PeekabooBridgeRequest.launchApplicationWithOptions(launchRequest))
 
         let responseData = await server.decodeAndHandle(requestData, peer: nil)
         let response = try self.decode(responseData)
 
-        guard case .application = response else {
+        guard case let .application(application) = response else {
             Issue.record("Expected application response, got \(response)")
             return
         }
+        #expect(application.processIdentity == ApplicationProcessIdentity(
+            processIdentifier: 123,
+            processStartIdentity: 456))
         let requests = await MainActor.run { applicationService.launchRequests }
         #expect(requests == [launchRequest])
     }
 
     @Test
-    func `timed out client leaves host mutation barrier active through actual completion`() async throws {
+    func `disconnected client leaves host mutation barrier active through actual completion`() async throws {
         let testID = String(UUID().uuidString.prefix(8))
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("peekaboo-bridge-mutation-\(testID)", isDirectory: true)
@@ -161,16 +170,24 @@ struct PeekabooBridgeApplicationLaunchTests {
         try await host.startChecked()
         defer { Task { await host.stop() } }
 
-        let client = PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 0.05)
+        let client = PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 30)
         let clientTask = Task {
             try await client.launchApplication(
                 request: ApplicationLaunchRequest(applicationIdentifier: "com.example.Delayed"))
         }
-        await applicationService.waitUntilLaunchStarted()
+        try await applicationService.waitUntilLaunchStarted()
+        clientTask.cancel()
         do {
             _ = try await clientTask.value
-            Issue.record("Expected the client read to time out")
-        } catch {}
+            Issue.record("Expected the disconnected client request to be cancelled")
+        } catch let error as PeekabooBridgeErrorEnvelope {
+            #expect(error.code == .internalError)
+            #expect(error.operationMayHaveCompleted)
+            #expect(error.message.contains("indeterminate"))
+            #expect(error.message.contains("do not retry"))
+            #expect(PendingSnapshotCleanupPolicy.shouldPreserveReservation(after: error))
+        }
+        try await Self.waitForActiveConnectionCount(0, host: host)
 
         let firstPendingRead = try #require(store.effectiveWatermark())
         try await Task.sleep(for: .milliseconds(2))
@@ -180,7 +197,7 @@ struct PeekabooBridgeApplicationLaunchTests {
         #expect(await snapshots.getMostRecentSnapshot() == nil)
 
         await applicationService.releaseLaunch()
-        await applicationService.waitUntilLaunchFinished()
+        try await applicationService.waitUntilLaunchFinished()
         let completionWatermark = try await Self.waitForStableWatermark(store)
         #expect(completionWatermark >= secondPendingRead)
         #expect(await snapshots.getMostRecentSnapshot() == nil)
@@ -212,7 +229,7 @@ struct PeekabooBridgeApplicationLaunchTests {
         let requestData = try JSONEncoder.peekabooBridgeEncoder().encode(
             PeekabooBridgeRequest.launchApplicationWithOptions(request))
         let responseTask = Task { await server.decodeAndHandle(requestData, peer: nil) }
-        await applicationService.waitUntilLaunchStarted()
+        try await applicationService.waitUntilLaunchStarted()
 
         try FileManager.default.moveItem(at: root, to: displacedRoot)
         try Data().write(to: root)
@@ -297,6 +314,20 @@ struct PeekabooBridgeApplicationLaunchTests {
         }
         throw PeekabooError.timeout("Mutation barrier did not settle")
     }
+
+    private static func waitForActiveConnectionCount(
+        _ expectedCount: Int,
+        host: PeekabooBridgeHost) async throws
+    {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(1))
+        while await host.activeConnectionCountForTesting() != expectedCount {
+            guard clock.now < deadline else {
+                throw PeekabooError.timeout("Bridge connection did not reach the expected state")
+            }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+    }
 }
 
 @MainActor
@@ -316,8 +347,6 @@ private final class LaunchRecordingApplicationService: StubApplicationService {
 @MainActor
 private final class BlockingLaunchApplicationService: StubApplicationService {
     private var launchContinuation: CheckedContinuation<Void, Never>?
-    private var startWaiters: [CheckedContinuation<Void, Never>] = []
-    private var finishWaiters: [CheckedContinuation<Void, Never>] = []
     private var launchStarted = false
     private var launchFinished = false
     private var launchCount = 0
@@ -326,23 +355,23 @@ private final class BlockingLaunchApplicationService: StubApplicationService {
         self.launchCount += 1
         if self.launchCount == 1 {
             self.launchStarted = true
-            self.startWaiters.forEach { $0.resume() }
-            self.startWaiters.removeAll()
             await withCheckedContinuation { continuation in
                 self.launchContinuation = continuation
             }
         }
         let application = try await super.launchApplication(request: request)
         self.launchFinished = true
-        self.finishWaiters.forEach { $0.resume() }
-        self.finishWaiters.removeAll()
         return application
     }
 
-    func waitUntilLaunchStarted() async {
-        guard !self.launchStarted else { return }
-        await withCheckedContinuation { continuation in
-            self.startWaiters.append(continuation)
+    func waitUntilLaunchStarted() async throws {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(1))
+        while !self.launchStarted {
+            guard clock.now < deadline else {
+                throw PeekabooError.timeout("Application launch did not start")
+            }
+            try await Task.sleep(for: .milliseconds(5))
         }
     }
 
@@ -351,10 +380,14 @@ private final class BlockingLaunchApplicationService: StubApplicationService {
         self.launchContinuation = nil
     }
 
-    func waitUntilLaunchFinished() async {
-        guard !self.launchFinished else { return }
-        await withCheckedContinuation { continuation in
-            self.finishWaiters.append(continuation)
+    func waitUntilLaunchFinished() async throws {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(1))
+        while !self.launchFinished {
+            guard clock.now < deadline else {
+                throw PeekabooError.timeout("Application launch did not finish")
+            }
+            try await Task.sleep(for: .milliseconds(5))
         }
     }
 }

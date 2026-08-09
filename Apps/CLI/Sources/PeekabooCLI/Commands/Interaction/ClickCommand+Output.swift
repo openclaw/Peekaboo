@@ -15,6 +15,8 @@ struct ClickResult: Codable {
     let screenCoordinates: [String: Double]?
     let targetPoint: InteractionTargetPointDiagnostics?
     let deliveryMode: String?
+    let verified: Bool?
+    let effect: String?
 
     init(
         success: Bool,
@@ -29,7 +31,9 @@ struct ClickResult: Codable {
         inputCoordinates: CGPoint? = nil,
         screenCoordinates: CGPoint? = nil,
         targetPoint: InteractionTargetPointDiagnostics? = nil,
-        deliveryMode: String? = nil
+        deliveryMode: String? = nil,
+        verified: Bool? = nil,
+        effect: String? = nil
     ) {
         self.success = success
         self.clickedElement = clickedElement
@@ -44,5 +48,7 @@ struct ClickResult: Codable {
         self.screenCoordinates = screenCoordinates.map { ["x": $0.x, "y": $0.y] }
         self.targetPoint = targetPoint
         self.deliveryMode = deliveryMode
+        self.verified = verified
+        self.effect = effect
     }
 }

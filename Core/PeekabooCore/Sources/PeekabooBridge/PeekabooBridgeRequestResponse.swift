@@ -19,17 +19,20 @@ public enum PeekabooBridgeRequest: Codable, Sendable {
     case captureArea(PeekabooBridgeCaptureAreaRequest)
     case detectElements(PeekabooBridgeDetectElementsRequest)
     case inspectAccessibilityTree(PeekabooBridgeInspectAccessibilityTreeRequest)
+    case getFocusedElement(PeekabooBridgeFocusedElementRequest)
     case desktopObservation(DesktopObservationRequest)
     case click(PeekabooBridgeClickRequest)
     case type(PeekabooBridgeTypeRequest)
     case typeActions(PeekabooBridgeTypeActionsRequest)
     case targetedTypeActions(PeekabooBridgeTargetedTypeActionsRequest)
+    case exactWindowTargetedTypeActions(PeekabooBridgeExactWindowTypeActionsRequest)
     case setValue(PeekabooBridgeSetValueRequest)
     case performAction(PeekabooBridgePerformActionRequest)
     case scroll(PeekabooBridgeScrollRequest)
     case targetedScroll(PeekabooBridgeScrollRequest)
     case hotkey(PeekabooBridgeHotkeyRequest)
     case targetedHotkey(PeekabooBridgeTargetedHotkeyRequest)
+    case exactWindowTargetedHotkey(PeekabooBridgeExactWindowHotkeyRequest)
     case targetedClick(PeekabooBridgeTargetedClickRequest)
     case swipe(PeekabooBridgeSwipeRequest)
     case drag(PeekabooBridgeDragRequest)
@@ -43,6 +46,7 @@ public enum PeekabooBridgeRequest: Codable, Sendable {
     case closeWindow(PeekabooBridgeWindowTargetRequest)
     case backgroundCloseWindow(PeekabooBridgeWindowTargetRequest)
     case minimizeWindow(PeekabooBridgeWindowTargetRequest)
+    case restoreWindow(PeekabooBridgeWindowTargetRequest)
     case maximizeWindow(PeekabooBridgeWindowTargetRequest)
     case getFocusedWindow
     case listApplications
@@ -115,17 +119,20 @@ extension PeekabooBridgeRequest {
         case .captureArea: .captureArea
         case .detectElements: .detectElements
         case .inspectAccessibilityTree: .inspectAccessibilityTree
+        case .getFocusedElement: .getFocusedElement
         case .desktopObservation: .desktopObservation
         case .click: .click
         case .type: .type
         case .typeActions: .typeActions
         case .targetedTypeActions: .targetedTypeActions
+        case .exactWindowTargetedTypeActions: .exactWindowTargetedTypeActions
         case .setValue: .setValue
         case .performAction: .performAction
         case .scroll: .scroll
         case .targetedScroll: .targetedScroll
         case .hotkey: .hotkey
         case .targetedHotkey: .targetedHotkey
+        case .exactWindowTargetedHotkey: .exactWindowTargetedHotkey
         case let .targetedClick(payload):
             payload.targetWindowID == nil ? .targetedClick : .exactWindowTargetedClick
         case .swipe: .swipe
@@ -140,6 +147,7 @@ extension PeekabooBridgeRequest {
         case .closeWindow: .closeWindow
         case .backgroundCloseWindow: .backgroundCloseWindow
         case .minimizeWindow: .minimizeWindow
+        case .restoreWindow: .restoreWindow
         case .maximizeWindow: .maximizeWindow
         case .getFocusedWindow: .getFocusedWindow
         case .listApplications: .listApplications
@@ -203,6 +211,7 @@ public enum PeekabooBridgeResponse: Codable, Sendable {
     case browserToolResponse(PeekabooBridgeBrowserToolResponse)
     case capture(CaptureResult)
     case elementDetection(ElementDetectionResult)
+    case focusedElement(UIFocusInfo?)
     case desktopObservation(DesktopObservationResult)
     case ok
     case waitResult(WaitForElementResult)

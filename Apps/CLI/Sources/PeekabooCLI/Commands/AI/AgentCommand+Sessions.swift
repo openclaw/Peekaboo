@@ -25,6 +25,15 @@ extension AgentCommand {
         let queueMode: QueueMode
     }
 
+    func validateSessionOptions() throws {
+        guard self.noCache else { return }
+        guard !self.resume, self.resumeSession == nil, !self.listSessions else {
+            throw PeekabooError.invalidInput(
+                "--no-cache cannot be combined with --resume, --resume-session, or --list-sessions."
+            )
+        }
+    }
+
     func handleSessionResumption(
         _ agentService: PeekabooAgentService,
         requestedModel: LanguageModel?,
@@ -149,6 +158,7 @@ extension AgentCommand {
         let sessionData = sessions.map { session in
             [
                 "id": session.id,
+                "task": session.task,
                 "createdAt": ISO8601DateFormatter().string(from: session.created),
                 "updatedAt": ISO8601DateFormatter().string(from: session.lastModified),
                 "messageCount": session.messageCount
@@ -187,7 +197,7 @@ extension AgentCommand {
 
         let resumeHintLine = [
             "\n",
-            "\(TerminalColor.dim)To resume: peekaboo agent --resume <session-id>",
+            "\(TerminalColor.dim)To resume: peekaboo agent --resume-session <session-id>",
             " \"<continuation>\"\(TerminalColor.reset)"
         ].joined()
         print(resumeHintLine)

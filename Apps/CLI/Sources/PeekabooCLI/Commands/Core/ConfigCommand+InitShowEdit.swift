@@ -4,6 +4,25 @@ import PeekabooCore
 import PeekabooFoundation
 import Tachikoma
 
+enum PeekabooConfigMessages {
+    static func initGuidance(path: String) -> [String] {
+        [
+            "[ok] Configuration file created at: \(path)",
+            "",
+            "Next steps (no secrets written yet):",
+            "  peekaboo config add openai sk-...    # API key",
+            "  peekaboo config add anthropic sk-ant-...",
+            "  peekaboo config add grok gsk-...      # aliases: xai",
+            "  peekaboo config add gemini ya29-...",
+            "  peekaboo config login openai          # OAuth, no key stored",
+            "  peekaboo config login anthropic",
+            "",
+            "Use 'peekaboo config show --effective' to see detected env/creds,",
+            "and 'peekaboo config edit' to tweak the JSONC file if needed.",
+        ]
+    }
+}
+
 @available(macOS 14.0, *)
 @MainActor
 extension ConfigCommand {
@@ -55,7 +74,7 @@ extension ConfigCommand {
                 self.io.success(
                     message: "Configuration file created successfully",
                     data: ["path": path],
-                    textLines: TKConfigMessages.initGuidance.map { $0.replacingOccurrences(of: "{path}", with: path) }
+                    textLines: PeekabooConfigMessages.initGuidance(path: path)
                 )
             } catch {
                 self.io.error(

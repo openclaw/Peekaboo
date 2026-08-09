@@ -36,11 +36,6 @@ extension UIAutomationService {
             return nil
         }
 
-        let role = focusedElement.role() ?? "Unknown"
-        let title = focusedElement.title()
-        let value = focusedElement.stringValue()
-        let frame = focusedElement.frame() ?? .zero
-
         let elementPid = focusedElement.pid()
         let resolvedPid: pid_t? = {
             if let elementPid, elementPid > 0 {
@@ -55,17 +50,105 @@ extension UIAutomationService {
             return nil
         }()
 
-        let app = resolvedPid.flatMap { AXApp(pid: $0) }
-        let runningApp = resolvedPid.flatMap { NSRunningApplication(processIdentifier: $0) }
+        return self.focusInfo(for: focusedElement, processIdentifier: resolvedPid)
+    }
 
+    public func getFocusedElement(targetProcessIdentifier: pid_t) async -> UIFocusInfo? {
+        self.focusedElementNow(targetProcessIdentifier: targetProcessIdentifier)
+    }
+
+    private func focusedElementNow(targetProcessIdentifier: pid_t) -> UIFocusInfo? {
+        guard targetProcessIdentifier > 0,
+              let app = AXApp(pid: targetProcessIdentifier)
+        else {
+            return nil
+        }
+
+        app.element.setMessagingTimeout(0.25)
+        defer { app.element.setMessagingTimeout(0) }
+        guard let focusedElement = app.element.focusedUIElement() else { return nil }
+        focusedElement.setMessagingTimeout(0.05)
+        defer { focusedElement.setMessagingTimeout(0) }
+        return self.focusInfo(for: focusedElement, processIdentifier: targetProcessIdentifier)
+    }
+
+    func requireExactWindowKeyboardFocus(
+        expectedWindowIdentity: WindowMutationIdentity,
+        expectedWindowBounds: CGRect,
+        expectedFocusedElement: FocusedElementIdentity? = nil) async throws
+    {
+        let reader = self.exactWindowFocusReader
+        let identityValidator = self.exactWindowIdentityValidator
+        let targetProcessIdentifier = expectedWindowIdentity.ownerProcessIdentifier
+        let focused: ExactWindowFocusSnapshot?
+        do {
+            focused = try await ElementDetectionTimeoutRunner.runDetached(
+                targetProcessIdentifier: targetProcessIdentifier,
+                targetProcessStartIdentity: expectedWindowIdentity.ownerProcessStartIdentity,
+                seconds: 0.2)
+            {
+                reader(targetProcessIdentifier)
+            }
+        } catch {
+            throw self.exactWindowKeyboardFocusChangedError()
+        }
+        guard let focused,
+              focused.processIdentifier == targetProcessIdentifier,
+              focused.windowID == expectedWindowIdentity.windowID,
+              !focused.frame.isEmpty,
+              expectedWindowBounds.contains(CGPoint(x: focused.frame.midX, y: focused.frame.midY)),
+              Self.focusedElementMatches(focused, expected: expectedFocusedElement),
+              identityValidator(expectedWindowIdentity, expectedWindowBounds)
+        else {
+            throw self.exactWindowKeyboardFocusChangedError()
+        }
+    }
+
+    private static func focusedElementMatches(
+        _ focused: ExactWindowFocusSnapshot,
+        expected: FocusedElementIdentity?) -> Bool
+    {
+        guard let expected else { return true }
+        guard focused.processIdentifier == expected.processIdentifier,
+              focused.windowID == expected.windowID,
+              focused.frame == expected.frame,
+              focused.role == expected.role
+        else { return false }
+        if let identifier = expected.identifier, !identifier.isEmpty {
+            return focused.identifier == identifier
+        }
+        if let title = expected.title, !title.isEmpty {
+            return focused.title == title
+        }
+        return true
+    }
+
+    private func exactWindowKeyboardFocusChangedError() -> PeekabooError {
+        PeekabooError.invalidInput(
+            field: "target",
+            reason: "Exact-window keyboard focus changed before dispatch; capture a fresh snapshot or use " +
+                "foreground delivery")
+    }
+
+    private func focusInfo(for element: Element, processIdentifier: pid_t?) -> UIFocusInfo {
+        let app = processIdentifier.flatMap { AXApp(pid: $0) }
+        let runningApp = processIdentifier.flatMap { NSRunningApplication(processIdentifier: $0) }
+        let window = element.attribute(Attribute<Element>(AXAttributeNames.kAXWindowAttribute))
+        window?.setMessagingTimeout(0.05)
+        defer { window?.setMessagingTimeout(0) }
+        let windowID = window.flatMap {
+            WindowIdentityService().getWindowID(from: $0, messagingTimeout: 0.05)
+        }.map(Int.init)
         return UIFocusInfo(
-            role: role,
-            title: title,
-            value: value,
-            frame: frame,
+            role: element.role() ?? "Unknown",
+            title: element.title(),
+            value: element.stringValue(),
+            frame: element.frame() ?? .zero,
             applicationName: app?.localizedName ?? runningApp?.localizedName ?? "Unknown",
             bundleIdentifier: app?.bundleIdentifier ?? runningApp?.bundleIdentifier ?? "Unknown",
-            processId: resolvedPid.map(Int.init) ?? 0)
+            processId: processIdentifier.map(Int.init) ?? 0,
+            windowID: windowID,
+            identifier: element.identifier())
     }
 
     // MARK: - Wait for Element

@@ -21,25 +21,34 @@ extension WindowCommand {
 
             do {
                 try self.windowOptions.validate()
-                let target = try self.windowOptions.createTarget()
                 let appInfo = try await self.windowOptions.resolveApplicationInfoIfNeeded(services: self.services)
 
                 // Get window info before action
                 let windows = try await WindowServiceBridge.listWindows(
                     windows: self.services.windows,
-                    target: self.windowOptions.toWindowTarget()
+                    target: self.windowOptions.toWindowSelectionTarget()
                 )
-                let windowInfo = self.windowOptions.selectWindow(from: windows)
-                let appName = appInfo?.name ?? self.windowOptions.displayName(windowInfo: windowInfo)
-                guard windowInfo != nil else {
-                    throw PeekabooError.windowNotFound(criteria: "No windows found for \(appName)")
+                let selectedWindowInfo = self.windowOptions.selectWindow(from: windows)
+                let appName = appInfo?.name ?? self.windowOptions.displayName(windowInfo: selectedWindowInfo)
+                let windowInfo = try self.windowOptions.requireMutationWindow(
+                    from: windows,
+                    expectedApplication: appInfo,
+                    action: "close",
+                    includeMinimizedFallback: true
+                )
+                let exactTarget = WindowTarget.windowId(windowInfo.windowID)
+                guard let mutationIdentity = windowInfo.mutationIdentity else {
+                    throw PeekabooError.commandFailed(
+                        "Window \(windowInfo.windowID) did not include a process-generation identity"
+                    )
                 }
 
                 // Perform the action
                 self.resolvedRuntime.beginInteractionMutation()
                 try await WindowServiceBridge.closeWindow(
                     windows: self.services.windows,
-                    target: target,
+                    target: exactTarget,
+                    expectedIdentity: mutationIdentity,
                     allowForegroundFallback: self.foreground
                 )
                 await invalidateLatestSnapshotAfterWindowMutation(
@@ -61,7 +70,7 @@ extension WindowCommand {
                 )
 
                 output(data) {
-                    print("Successfully closed window '\(windowInfo?.title ?? "Untitled")' of \(appName)")
+                    print("Successfully closed window '\(windowInfo.title)' of \(appName)")
                 }
 
             } catch {
@@ -84,23 +93,35 @@ extension WindowCommand {
 
             do {
                 try self.windowOptions.validate()
-                let target = try self.windowOptions.createTarget()
                 let appInfo = try await self.windowOptions.resolveApplicationInfoIfNeeded(services: self.services)
 
                 // Get window info before action
                 let windows = try await WindowServiceBridge.listWindows(
                     windows: self.services.windows,
-                    target: self.windowOptions.toWindowTarget()
+                    target: self.windowOptions.toWindowSelectionTarget()
                 )
-                let windowInfo = self.windowOptions.selectWindow(from: windows)
-                let appName = appInfo?.name ?? self.windowOptions.displayName(windowInfo: windowInfo)
-                guard windowInfo != nil else {
-                    throw PeekabooError.windowNotFound(criteria: "No windows found for \(appName)")
+                let selectedWindowInfo = self.windowOptions.selectWindow(from: windows)
+                let appName = appInfo?.name ?? self.windowOptions.displayName(windowInfo: selectedWindowInfo)
+                let windowInfo = try self.windowOptions.requireMutationWindow(
+                    from: windows,
+                    expectedApplication: appInfo,
+                    action: "minimize",
+                    includeMinimizedFallback: true
+                )
+                let exactTarget = WindowTarget.windowId(windowInfo.windowID)
+                guard let mutationIdentity = windowInfo.mutationIdentity else {
+                    throw PeekabooError.commandFailed(
+                        "Window \(windowInfo.windowID) did not include a process-generation identity"
+                    )
                 }
 
                 // Perform the action
                 self.resolvedRuntime.beginInteractionMutation()
-                try await WindowServiceBridge.minimizeWindow(windows: self.services.windows, target: target)
+                try await WindowServiceBridge.minimizeWindow(
+                    windows: self.services.windows,
+                    target: exactTarget,
+                    expectedIdentity: mutationIdentity
+                )
                 await invalidateLatestSnapshotAfterWindowMutation(
                     runtime: self.resolvedRuntime,
                     reason: "window minimize"
@@ -119,9 +140,74 @@ extension WindowCommand {
                 )
 
                 output(data) {
-                    print("Successfully minimized window '\(windowInfo?.title ?? "Untitled")' of \(appName)")
+                    print("Successfully minimized window '\(windowInfo.title)' of \(appName)")
                 }
 
+            } catch {
+                handleError(error)
+                throw ExitCode(1)
+            }
+        }
+    }
+
+    @MainActor
+    struct RestoreSubcommand: ErrorHandlingCommand, OutputFormattable, InjectedRuntimeBackedCommand {
+        @OptionGroup var windowOptions: WindowIdentificationOptions
+        @RuntimeStorage var runtime: CommandRuntime?
+
+        /// Restore a minimized exact window without activating or focusing its application.
+        @MainActor
+        mutating func run(using runtime: CommandRuntime) async throws {
+            self.runtime = runtime
+            self.logger.setJsonOutputMode(self.jsonOutput)
+
+            do {
+                try self.windowOptions.validate()
+                let appInfo = try await self.windowOptions.resolveApplicationInfoIfNeeded(services: self.services)
+                let windows = try await WindowServiceBridge.listWindows(
+                    windows: self.services.windows,
+                    target: self.windowOptions.toWindowSelectionTarget()
+                )
+                let selectedWindowInfo = self.windowOptions.selectWindow(from: windows)
+                let appName = appInfo?.name ?? self.windowOptions.displayName(windowInfo: selectedWindowInfo)
+                let windowInfo = try self.windowOptions.requireMutationWindow(
+                    from: windows,
+                    expectedApplication: appInfo,
+                    action: "restore",
+                    includeMinimizedFallback: true
+                )
+                guard let mutationIdentity = windowInfo.mutationIdentity else {
+                    throw PeekabooError.commandFailed(
+                        "Window \(windowInfo.windowID) did not include a process-generation identity"
+                    )
+                }
+                let exactTarget = WindowTarget.windowId(windowInfo.windowID)
+
+                self.resolvedRuntime.beginInteractionMutation()
+                try await WindowServiceBridge.restoreWindow(
+                    windows: self.services.windows,
+                    target: exactTarget,
+                    expectedIdentity: mutationIdentity
+                )
+                await invalidateLatestSnapshotAfterWindowMutation(
+                    runtime: self.resolvedRuntime,
+                    reason: "window restore"
+                )
+
+                let refreshedWindow = try await WindowServiceBridge.listWindows(
+                    windows: self.services.windows,
+                    target: exactTarget
+                ).first ?? windowInfo
+                logWindowAction(action: "restore", appName: appName, windowInfo: refreshedWindow)
+                let data = createWindowActionResult(
+                    action: "restore",
+                    success: true,
+                    windowInfo: refreshedWindow,
+                    appName: appName
+                )
+                output(data) {
+                    print("Successfully restored window '\(refreshedWindow.title)' of \(appName)")
+                }
             } catch {
                 handleError(error)
                 throw ExitCode(1)
@@ -142,38 +228,45 @@ extension WindowCommand {
 
             do {
                 try self.windowOptions.validate()
-                let target = try self.windowOptions.createTarget()
                 let appInfo = try await self.windowOptions.resolveApplicationInfoIfNeeded(services: self.services)
 
                 // Get window info before action
                 let windows = try await WindowServiceBridge.listWindows(
                     windows: self.services.windows,
-                    target: self.windowOptions.toWindowTarget()
+                    target: self.windowOptions.toWindowSelectionTarget()
                 )
-                let windowInfo = self.windowOptions.selectWindow(from: windows)
-                let appName = appInfo?.name ?? self.windowOptions.displayName(windowInfo: windowInfo)
-                guard windowInfo != nil else {
-                    throw PeekabooError.windowNotFound(criteria: "No windows found for \(appName)")
+                let selectedWindowInfo = self.windowOptions.selectWindow(from: windows)
+                let appName = appInfo?.name ?? self.windowOptions.displayName(windowInfo: selectedWindowInfo)
+                let windowInfo = try self.windowOptions.requireMutationWindow(
+                    from: windows,
+                    expectedApplication: appInfo,
+                    action: "maximize",
+                    includeMinimizedFallback: true
+                )
+                let exactTarget = WindowTarget.windowId(windowInfo.windowID)
+                guard let mutationIdentity = windowInfo.mutationIdentity else {
+                    throw PeekabooError.commandFailed(
+                        "Window \(windowInfo.windowID) did not include a process-generation identity"
+                    )
                 }
 
                 // Quiet per-attempt reader used while polling for the frame to settle. Unlike
                 // `refetchWindowInfo`, it does not log a warning on every poll.
-                let readTarget = try self.windowOptions.toWindowTarget()
+                let readTarget = exactTarget
                 let readWindow: () async -> ServiceWindowInfo? = { [services = self.services] in
                     guard let windows = try? await WindowServiceBridge.listWindows(
                         windows: services.windows,
                         target: readTarget
-                    ) else {
+                    )
+                    else {
                         return nil
                     }
-                    return self.windowOptions.selectWindow(from: windows)
+                    return windows.first
                 }
 
-                // Perform the action. `maximize` presses the animated green zoom button, so the frame
-                // must settle before we read it back. It is also idempotent: a window already occupying
-                // a screen's visible frame (matched on origin and size) is left as-is (see
-                // resolveIdempotentMaximize). Screen frames are flipped into the AX/CG top-left space
-                // that window bounds use.
+                // The service applies bounded exact-window geometry without activating the app or
+                // entering full screen. Poll until WindowServer reports a stable read-back so JSON
+                // never returns an intermediate frame.
                 let primaryDisplayHeight = (NSScreen.screens.first { $0.frame.origin == .zero }
                     ?? NSScreen.main)?.frame.height ?? 0
                 let screenVisibleFramesTopLeft = NSScreen.screens.map {
@@ -183,8 +276,12 @@ extension WindowCommand {
                 let outcome = try await resolveIdempotentMaximize(
                     original: windowInfo,
                     screenVisibleFramesTopLeft: screenVisibleFramesTopLeft,
-                    press: {
-                        try await WindowServiceBridge.maximizeWindow(windows: self.services.windows, target: target)
+                    apply: {
+                        try await WindowServiceBridge.maximizeWindow(
+                            windows: self.services.windows,
+                            target: exactTarget,
+                            expectedIdentity: mutationIdentity
+                        )
                         await invalidateLatestSnapshotAfterWindowMutation(
                             runtime: self.resolvedRuntime,
                             reason: "window maximize"
@@ -216,7 +313,7 @@ extension WindowCommand {
                 )
 
                 output(data) {
-                    let title = finalWindowInfo?.title ?? "Untitled"
+                    let title = finalWindowInfo.title
                     if outcome.alreadyMaximized {
                         print("Window '\(title)' of \(appName) is already maximized")
                     } else {

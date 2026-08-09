@@ -161,6 +161,9 @@ struct TypeCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedComman
 
     mutating func validate() throws {
         try self.target.validate()
+        if self.text != nil, self.textOption != nil {
+            throw ValidationError("Provide text either positionally or with --text, not both")
+        }
         try KeyboardDeliverySupport.validateForegroundFlags(
             foreground: self.foreground,
             focusOptions: self.focusOptions

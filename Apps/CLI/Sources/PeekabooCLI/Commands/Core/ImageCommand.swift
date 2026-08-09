@@ -91,11 +91,7 @@ struct ImageCommand: ApplicationResolvable, ErrorHandlingCommand, OutputFormatta
 
             // ScreenCaptureService performs the authoritative permission check inside each capture path.
             // Avoid preflighting here too; it adds fixed latency to every one-shot screenshot.
-            let captures = try await CrossProcessOperationGate.withExclusiveOperation(
-                named: CrossProcessOperationGate.desktopObservationName
-            ) {
-                try await performCapture()
-            }
+            let captures = try await performCapture()
 
             if streamsImageToStdout {
                 try outputImageToStdout(captures)

@@ -14,6 +14,8 @@ extension AppToolActions {
         var meta: [String: Value] = [
             "app_name": .string(app.name),
             "process_id": .double(Double(app.processIdentifier)),
+            "process_start_identity": app.processStartIdentity
+                .map { .double(Double($0)) } ?? .null,
             "bundle_id": app.bundleIdentifier != nil ? .string(app.bundleIdentifier!) : .null,
             "execution_time": .double(self.executionTime(since: startTime)),
         ]

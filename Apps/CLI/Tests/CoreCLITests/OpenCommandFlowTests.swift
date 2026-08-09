@@ -56,6 +56,32 @@ struct OpenCommandFlowTests {
         #expect(request.openURLs.map(\.absoluteString) == ["https://example.com"])
         #expect(!request.activates)
         #expect(!request.waitUntilReady)
+        #expect(!request.waitForWindow)
+    }
+
+    @Test
+    func `Open command forwards exact-window readiness without foregrounding`() async throws {
+        let app = ServiceApplicationInfo(
+            processIdentifier: 42,
+            bundleIdentifier: "com.apple.Safari",
+            name: "Safari",
+            windowCount: 1,
+            windowIDs: [924],
+            isFinishedLaunching: true
+        )
+        let service = RecordingApplicationService(applications: [app], launchResponse: app)
+        var command = OpenCommand()
+        command.target = "https://example.com"
+        command.waitForWindow = true
+
+        try await command.run(using: CommandRuntime(
+            configuration: .init(verbose: false, jsonOutput: true, logLevel: nil),
+            services: ServicesWithApplicationStub(applications: service)
+        ))
+
+        let request = try #require(service.launchRequests.first)
+        #expect(request.waitForWindow)
+        #expect(!request.activates)
     }
 
     @Test
@@ -176,6 +202,22 @@ struct AppCommandLaunchFlowTests {
         try await command.run(using: self.makeRuntime(applicationService: service))
 
         #expect(service.launchRequests.first?.activates == true)
+    }
+
+    @Test
+    func `Launch forwards new-instance without opting into foreground`() async throws {
+        let service = self.makeLaunchService(name: "TextEdit", bundleIdentifier: "com.apple.TextEdit")
+        var command = AppCommand.LaunchSubcommand()
+        command.app = "TextEdit"
+        command.newInstance = true
+        command.waitForWindow = true
+
+        try await command.run(using: self.makeRuntime(applicationService: service))
+
+        let request = try #require(service.launchRequests.first)
+        #expect(request.createsNewInstance)
+        #expect(request.waitForWindow)
+        #expect(!request.activates)
     }
 
     @Test
@@ -303,6 +345,7 @@ struct AppCommandLaunchFlowTests {
     func `Quit command uses application service target PID`() async throws {
         let application = ServiceApplicationInfo(
             processIdentifier: 123,
+            processStartIdentity: 1001,
             bundleIdentifier: "com.example.notes",
             name: "Notes"
         )
@@ -317,12 +360,20 @@ struct AppCommandLaunchFlowTests {
         try await command.run(using: runtime)
 
         #expect(applicationService.quitCalls == [.init(identifier: "PID:123", force: false)])
+        #expect(applicationService.quitRequests == [ApplicationQuitRequest(
+            identifier: "PID:123",
+            expectedIdentity: ApplicationProcessIdentity(
+                processIdentifier: 123,
+                processStartIdentity: 1001
+            )
+        )])
     }
 
     @Test
     func `Quit rejects the selected daemon before terminating it`() async throws {
         let application = ServiceApplicationInfo(
             processIdentifier: 321,
+            processStartIdentity: 3001,
             bundleIdentifier: "boo.peekaboo.peekaboo",
             name: "Peekaboo daemon"
         )
@@ -341,18 +392,21 @@ struct AppCommandLaunchFlowTests {
         }
         #expect(applicationService.findCalls == ["Peekaboo daemon"])
         #expect(applicationService.quitCalls.isEmpty)
+        #expect(applicationService.quitRequests.isEmpty)
     }
 
     @Test
     func `Quit all keeps accessory apps out of termination set`() async throws {
         let regularApplication = ServiceApplicationInfo(
             processIdentifier: 123,
+            processStartIdentity: 1001,
             bundleIdentifier: "com.example.editor",
             name: "Editor",
             activationPolicy: .regular
         )
         let accessoryApplication = ServiceApplicationInfo(
             processIdentifier: 456,
+            processStartIdentity: 4001,
             bundleIdentifier: "com.example.menu",
             name: "Menu Extra",
             activationPolicy: .accessory
@@ -371,17 +425,26 @@ struct AppCommandLaunchFlowTests {
         try await command.run(using: runtime)
 
         #expect(applicationService.quitCalls == [.init(identifier: "PID:123", force: false)])
+        #expect(applicationService.quitRequests == [ApplicationQuitRequest(
+            identifier: "PID:123",
+            expectedIdentity: ApplicationProcessIdentity(
+                processIdentifier: 123,
+                processStartIdentity: 1001
+            )
+        )])
     }
 
     @Test
     func `Relaunch command quits and launches through runtime host`() async throws {
         let application = ServiceApplicationInfo(
             processIdentifier: 123,
+            processStartIdentity: 1001,
             bundleIdentifier: "com.example.app",
             name: "Example"
         )
         let relaunched = ServiceApplicationInfo(
             processIdentifier: 456,
+            processStartIdentity: 2001,
             bundleIdentifier: "com.example.app",
             name: "Example",
             isActive: true,
@@ -404,6 +467,10 @@ struct AppCommandLaunchFlowTests {
         #expect(applicationService.quitCalls == [.init(identifier: "PID:123", force: false)])
         let relaunchRequest = try #require(applicationService.relaunchRequests.first)
         #expect(relaunchRequest.targetIdentifier == "PID:123")
+        #expect(relaunchRequest.expectedTargetIdentity == ApplicationProcessIdentity(
+            processIdentifier: 123,
+            processStartIdentity: 1001
+        ))
         #expect(relaunchRequest.waitSeconds == 0)
         let request = try #require(applicationService.launchRequests.first)
         #expect(request.applicationIdentifier == nil)
@@ -415,6 +482,7 @@ struct AppCommandLaunchFlowTests {
     func `Relaunch activates only with foreground`() async throws {
         let application = ServiceApplicationInfo(
             processIdentifier: 123,
+            processStartIdentity: 1001,
             bundleIdentifier: "com.example.app",
             name: "Example"
         )
@@ -670,6 +738,7 @@ private final class RecordingApplicationService: ApplicationServiceProtocol {
     private(set) var launchRequests: [ApplicationLaunchRequest] = []
     private(set) var relaunchRequests: [ApplicationRelaunchRequest] = []
     private(set) var quitCalls: [QuitCall] = []
+    private(set) var quitRequests: [ApplicationQuitRequest] = []
     private(set) var findCalls: [String] = []
     private(set) var listCallCount = 0
 
@@ -753,7 +822,15 @@ private final class RecordingApplicationService: ApplicationServiceProtocol {
 
     func relaunchApplication(request: ApplicationRelaunchRequest) async throws -> ServiceApplicationInfo {
         self.relaunchRequests.append(request)
-        guard try await self.quitApplication(identifier: request.targetIdentifier, force: request.force) else {
+        guard request.expectedTargetIdentity != nil else {
+            throw PeekabooError.commandFailed("Relaunch request did not include a process-generation identity")
+        }
+        guard try await self.quitApplication(request: ApplicationQuitRequest(
+            identifier: request.targetIdentifier,
+            force: request.force,
+            expectedIdentity: request.expectedTargetIdentity
+        ))
+        else {
             throw PeekabooError.commandFailed("Application refused to quit")
         }
         return try await self.launchApplication(request: request.launchRequest)
@@ -764,6 +841,18 @@ private final class RecordingApplicationService: ApplicationServiceProtocol {
         let app = try await findApplication(identifier: identifier)
         self.runningPIDs.remove(app.processIdentifier)
         return true
+    }
+
+    func quitApplication(request: ApplicationQuitRequest) async throws -> Bool {
+        self.quitRequests.append(request)
+        guard let expectedIdentity = request.expectedIdentity else {
+            throw PeekabooError.commandFailed("Quit request did not include a process-generation identity")
+        }
+        let app = try await self.findApplication(identifier: request.identifier)
+        guard app.processIdentity == expectedIdentity else {
+            throw PeekabooError.commandFailed("Quit request process generation did not match the selected application")
+        }
+        return try await self.quitApplication(identifier: request.identifier, force: request.force)
     }
 
     func hideApplication(identifier _: String) async throws {}

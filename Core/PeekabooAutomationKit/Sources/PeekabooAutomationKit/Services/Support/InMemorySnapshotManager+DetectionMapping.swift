@@ -40,6 +40,7 @@ extension InMemorySnapshotManager {
         snapshotData.applicationProcessId = context.applicationProcessId ?? snapshotData.applicationProcessId
         snapshotData.windowTitle = context.windowTitle ?? snapshotData.windowTitle
         snapshotData.windowBounds = context.windowBounds ?? snapshotData.windowBounds
+        snapshotData.windowMutationIdentity = context.windowMutationIdentity ?? snapshotData.windowMutationIdentity
         if let windowID = context.windowID {
             snapshotData.windowID = CGWindowID(windowID)
         }
@@ -221,7 +222,8 @@ extension InMemorySnapshotManager {
             snapshotData.applicationProcessId != nil ||
             snapshotData.windowTitle != nil ||
             snapshotData.windowID != nil ||
-            snapshotData.windowBounds != nil
+            snapshotData.windowBounds != nil ||
+            snapshotData.windowMutationIdentity != nil
         else {
             return nil
         }
@@ -232,6 +234,7 @@ extension InMemorySnapshotManager {
             applicationProcessId: snapshotData.applicationProcessId,
             windowTitle: snapshotData.windowTitle,
             windowID: snapshotData.windowID.map(Int.init),
-            windowBounds: snapshotData.windowBounds)
+            windowBounds: snapshotData.windowBounds,
+            windowMutationIdentity: snapshotData.windowMutationIdentity)
     }
 }

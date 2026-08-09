@@ -162,6 +162,49 @@ struct PeekabooAgentStepLimitTests {
         try await agentService.deleteSession(id: sessionId)
     }
 
+    @Test(arguments: [false, true])
+    @MainActor
+    func `Nonpersistent execution leaves no resumable session`(_ streaming: Bool) async throws {
+        let provider = TerminalToolProvider(terminalTool: .done)
+        let configuration = TachikomaConfiguration(loadFromEnvironment: false)
+        configuration.setProviderFactoryOverride { _, _ in provider }
+
+        let previousConfiguration = TachikomaConfiguration.default
+        TachikomaConfiguration.default = configuration
+        defer { TachikomaConfiguration.default = previousConfiguration }
+
+        let delegate = StepLimitEventDelegate()
+        let (agentService, sessionStore) = try self.makeAgentService(defaultModel: .openai(.gpt55))
+        defer { sessionStore.cleanup() }
+
+        let result = try await agentService.executeTask(
+            "Finish without caching this run.",
+            maxSteps: 1,
+            model: .openai(.gpt55),
+            eventDelegate: streaming ? delegate : nil,
+            enhancementOptions: nil,
+            persistSession: false)
+
+        #expect(result.content == TerminalTool.done.expectedReason)
+        #expect(result.sessionId == nil)
+        #expect(sessionStore.manager.listSessions().isEmpty)
+    }
+
+    @Test
+    @MainActor
+    func `Dry run does not report a phantom resumable session`() async throws {
+        let (agentService, sessionStore) = try self.makeAgentService(defaultModel: .openai(.gpt55))
+        defer { sessionStore.cleanup() }
+
+        let result = try await agentService.executeTask(
+            "Describe the plan only.",
+            model: .openai(.gpt55),
+            dryRun: true)
+
+        #expect(result.sessionId == nil)
+        #expect(sessionStore.manager.listSessions().isEmpty)
+    }
+
     @Test(arguments: [FinishReason.length, .error, .cancelled, .other])
     @MainActor
     func `Incomplete tool responses are rejected before execution`(_ finishReason: FinishReason) throws {

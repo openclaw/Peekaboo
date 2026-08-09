@@ -11,6 +11,8 @@ extension ApplicationService {
         let openURLs: [URL]
         let activates: Bool
         let waitUntilReady: Bool
+        let waitForWindow: Bool
+        let createsNewInstance: Bool
         let disablesRunningApplicationSubstitution: Bool
     }
 
@@ -74,12 +76,29 @@ extension ApplicationService {
             openURLs: request.openURLs,
             activates: request.activates,
             waitUntilReady: request.waitUntilReady,
+            waitForWindow: request.waitForWindow,
+            createsNewInstance: request.createsNewInstance,
             disablesRunningApplicationSubstitution: identifier.map(Self.isExplicitApplicationPath) == true)
     }
 
     private func performApplicationLaunch(_ launch: PreparedApplicationLaunch) async throws -> ServiceApplicationInfo {
         let config = NSWorkspace.OpenConfiguration()
         config.activates = launch.activates
+        config.createsNewApplicationInstance = launch.createsNewInstance
+        if launch.createsNewInstance {
+            config.allowsRunningApplicationSubstitution = false
+        }
+
+        // Opening a URL can trigger a second, delayed activation after the handler returns (Safari
+        // is a common example when a page presents a dialog). Keep the same bounded native guard
+        // used for launches, but cover that longer delivery window when documents/URLs are involved.
+        let backgroundActivationGraceDuration: Duration = launch.openURLs.isEmpty
+            ? self.backgroundLaunchActivationGraceDuration
+            : self.backgroundOpenActivationGraceDuration
+        let activationLease = launch.activates ? nil : BackgroundLaunchActivationLease(
+            activationGraceDuration: backgroundActivationGraceDuration)
+        var activationProtectionCompleted = false
+        defer { activationLease?.finish(protectionCompleted: activationProtectionCompleted) }
 
         let runningApp: NSRunningApplication
         if let applicationURL = launch.applicationURL {
@@ -98,20 +117,51 @@ extension ApplicationService {
             runningApp = try await self.applicationOpenHandler(applicationURL, launch.openURLs, config)
         } else {
             let targetURL = launch.openURLs[0]
-            runningApp = try await NSWorkspace.shared.open(targetURL, configuration: config)
+            runningApp = try await self.defaultApplicationOpenHandler(targetURL, config)
         }
+        let launchProcessIdentity = try self.captureLaunchProcessIdentity(runningApp)
+        activationLease?.setTargetProcessIdentifier(runningApp.processIdentifier)
 
         if launch.activates, !runningApp.isActive, !runningApp.activate(options: []) {
             self.logger.warning("Launch succeeded but failed to activate \(runningApp.localizedName ?? "application")")
         }
 
         try await self.waitUntilReadyIfNeeded(runningApp, requested: launch.waitUntilReady)
+        try await self.waitForWindowIfNeeded(runningApp, requested: launch.waitForWindow)
         try await self.waitUntilActiveIfNeeded(runningApp, requested: launch.activates)
+        try await activationLease?.holdThroughInitialActivationWindow()
+        activationProtectionCompleted = true
 
         let launchMessage =
             "Successfully launched: \(runningApp.localizedName ?? "Unknown") (PID: \(runningApp.processIdentifier))"
         self.logger.info("\(launchMessage)")
-        return self.createApplicationInfo(from: runningApp)
+        let application = self.createApplicationInfo(from: runningApp)
+        guard application.processIdentity == launchProcessIdentity else {
+            throw PeekabooError.commandFailed(
+                "Launched application process generation changed before its receipt could be returned")
+        }
+        return application
+    }
+
+    /// Capture the process generation while the exact `NSRunningApplication` selected by
+    /// LaunchServices is still live. The result is retained through readiness and compared with
+    /// the final application snapshot, so a recycled numeric PID can never become a launch receipt.
+    private func captureLaunchProcessIdentity(
+        _ application: NSRunningApplication) throws -> ApplicationProcessIdentity
+    {
+        let processIdentifier = application.processIdentifier
+        guard processIdentifier > 0,
+              !application.isTerminated,
+              let processStartIdentity = self.processStartIdentityProvider(processIdentifier),
+              !application.isTerminated,
+              self.processStartIdentityProvider(processIdentifier) == processStartIdentity
+        else {
+            throw PeekabooError.commandFailed(
+                "Could not capture a stable process-generation identity for the launched application")
+        }
+        return ApplicationProcessIdentity(
+            processIdentifier: processIdentifier,
+            processStartIdentity: processStartIdentity)
     }
 
     public func relaunchApplication(request: ApplicationRelaunchRequest) async throws -> ServiceApplicationInfo {
@@ -121,21 +171,31 @@ extension ApplicationService {
 
         // Resolve every launch prerequisite before mutating the target application.
         let preparedLaunch = try self.prepareApplicationLaunch(request.launchRequest)
+        guard let expectedTargetIdentity = request.expectedTargetIdentity else {
+            throw PeekabooError.commandFailed(
+                "Atomic relaunch requires the initially selected process-generation receipt")
+        }
         let target = try await self.resolveRelaunchTarget(request.targetIdentifier)
+        guard target.processIdentity == expectedTargetIdentity else {
+            throw PeekabooError.commandFailed(
+                "The relaunch target changed process generation after initial selection")
+        }
         if target.processIdentifier == getpid() {
             throw PeekabooError.serviceUnavailable("A runtime host cannot relaunch itself")
         }
         let canonicalTargetIdentifier = "PID:\(target.processIdentifier)"
-
-        guard try await self.quitRelaunchTarget(
+        let quitRequest = ApplicationQuitRequest(
             identifier: canonicalTargetIdentifier,
-            force: request.force)
+            force: request.force,
+            expectedIdentity: expectedTargetIdentity)
+
+        guard try await self.quitRelaunchTarget(quitRequest)
         else {
             throw PeekabooError.commandFailed("Application refused to quit")
         }
 
         let terminationDeadline = Date().addingTimeInterval(5)
-        while await self.isRelaunchTargetRunning(identifier: canonicalTargetIdentifier) {
+        while try await self.isRelaunchTargetRunning(identifier: canonicalTargetIdentifier) {
             guard Date() < terminationDeadline else {
                 throw PeekabooError.timeout("Application did not terminate within 5 seconds")
             }
@@ -155,16 +215,16 @@ extension ApplicationService {
         return try await self.findApplication(identifier: identifier)
     }
 
-    private func quitRelaunchTarget(identifier: String, force: Bool) async throws -> Bool {
+    private func quitRelaunchTarget(_ request: ApplicationQuitRequest) async throws -> Bool {
         if let relaunchQuitHandler = self.relaunchQuitHandler {
-            return try await relaunchQuitHandler(identifier, force)
+            return try await relaunchQuitHandler(request)
         }
-        return try await self.quitApplication(identifier: identifier, force: force)
+        return try await self.quitApplication(request: request)
     }
 
-    private func isRelaunchTargetRunning(identifier: String) async -> Bool {
+    private func isRelaunchTargetRunning(identifier: String) async throws -> Bool {
         if let relaunchRunningHandler = self.relaunchRunningHandler {
-            return await relaunchRunningHandler(identifier)
+            return try await relaunchRunningHandler(identifier)
         }
         return await self.isApplicationRunning(identifier: identifier)
     }
@@ -202,12 +262,60 @@ extension ApplicationService {
 
     private func waitUntilReadyIfNeeded(_ app: NSRunningApplication, requested: Bool) async throws {
         guard requested else { return }
-        let deadline = Date().addingTimeInterval(10)
+        let deadline = Date().addingTimeInterval(self.applicationReadinessTimeout)
         while !app.isFinishedLaunching {
-            guard Date() < deadline else {
-                throw PeekabooError.timeout("Application did not become ready within 10 seconds")
+            try Task.checkCancellation()
+            guard !app.isTerminated else {
+                throw PeekabooError.commandFailed("Application terminated before it finished launching")
             }
-            try await Task.sleep(nanoseconds: 100_000_000)
+            guard Date() < deadline else {
+                throw PeekabooError.timeout(
+                    "Application did not become ready within \(self.applicationReadinessTimeout) seconds")
+            }
+            try await Task.sleep(for: .milliseconds(100))
+        }
+    }
+
+    private func waitForWindowIfNeeded(_ app: NSRunningApplication, requested: Bool) async throws {
+        guard requested else { return }
+        let deadline = Date().addingTimeInterval(self.applicationReadinessTimeout)
+        while !self.applicationReadinessHandler(app) {
+            try Task.checkCancellation()
+            guard !app.isTerminated else {
+                throw PeekabooError.commandFailed("Application terminated before it exposed a window")
+            }
+            guard Date() < deadline else {
+                throw PeekabooError.timeout(
+                    "Application did not expose an automatable window within " +
+                        "\(self.applicationReadinessTimeout) seconds")
+            }
+            try await Task.sleep(for: .milliseconds(100))
+        }
+    }
+
+    static func isReadyForAutomation(_ app: NSRunningApplication) -> Bool {
+        guard app.isFinishedLaunching, !app.isTerminated else { return false }
+
+        // `--wait-for-window` promises a window that subsequent exact capture/automation can
+        // address. AX can expose a window before WindowServer has assigned its public ID; returning
+        // in that interval produced `window_ready: true`, `window_count: 0`. Wait for the exact
+        // WindowServer identity instead of reporting an unusable intermediate AX-only state.
+        return self.hasWindowServerWindow(processIdentifier: app.processIdentifier)
+    }
+
+    private static func hasWindowServerWindow(processIdentifier: pid_t) -> Bool {
+        guard let windows = WindowInfoHelper.getWindows(for: processIdentifier) else {
+            return false
+        }
+
+        return windows.contains { window in
+            guard window[kCGWindowLayer as String] as? Int == 0,
+                  let boundsDictionary = window[kCGWindowBounds as String] as? [String: Any],
+                  let bounds = CGRect(dictionaryRepresentation: boundsDictionary as CFDictionary)
+            else {
+                return false
+            }
+            return bounds.width > 1 && bounds.height > 1
         }
     }
 
@@ -215,7 +323,12 @@ extension ApplicationService {
         guard requested else { return }
         let deadline = Date().addingTimeInterval(2)
         while !app.isActive, Date() < deadline {
+            _ = app.activate(options: [])
             try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        guard app.isActive else {
+            throw PeekabooError.timeout(
+                "Application did not become active within 2 seconds: \(app.localizedName ?? "unknown")")
         }
     }
 
@@ -243,13 +356,35 @@ extension ApplicationService {
     }
 
     public func quitApplication(identifier: String, force: Bool = false) async throws -> Bool {
-        self.logger.info("Quitting application: \(identifier) (force: \(force))")
-        let app = try await findApplication(identifier: identifier)
+        let selectedApplication = try await self.findApplication(identifier: identifier)
+        guard let expectedIdentity = selectedApplication.processIdentity else {
+            throw PeekabooError.commandFailed(
+                "Could not capture a stable process-generation identity for \(selectedApplication.name)")
+        }
+        return try await self.quitApplication(request: ApplicationQuitRequest(
+            identifier: "PID:\(selectedApplication.processIdentifier)",
+            force: force,
+            expectedIdentity: expectedIdentity))
+    }
+
+    public func quitApplication(request: ApplicationQuitRequest) async throws -> Bool {
+        self.logger.info("Quitting application: \(request.identifier) (force: \(request.force))")
+        let app = try await findApplication(identifier: request.identifier)
+        let expectedIdentity: ApplicationProcessIdentity
+        if let requestedIdentity = request.expectedIdentity {
+            expectedIdentity = requestedIdentity
+        } else if let resolvedIdentity = app.processIdentity {
+            expectedIdentity = resolvedIdentity
+        } else {
+            throw PeekabooError.commandFailed(
+                "Could not capture a stable process-generation identity for \(app.name)")
+        }
+        try self.validateApplicationQuitIdentity(expectedIdentity, resolvedApplication: app)
 
         // Create NSRunningApplication
         let runningApp = NSRunningApplication(processIdentifier: app.processIdentifier)
         guard let runningApp else {
-            throw PeekabooError.appNotFound(identifier)
+            throw PeekabooError.appNotFound(request.identifier)
         }
 
         // Try to get app icon path for animation
@@ -261,21 +396,48 @@ extension ApplicationService {
             }
         }
 
-        // Show app quit animation
-        _ = await self.feedbackClient.showAppQuit(appName: app.name, iconPath: iconPath)
-
-        self.logger.debug("Sending \(force ? "force terminate" : "terminate") signal to \(app.name)")
-        let success = force ? runningApp.forceTerminate() : runningApp.terminate()
-
-        // Wait a bit for the termination to complete
-        if success {
-            self.logger.info("Successfully quit: \(app.name)")
-            try await Task.sleep(nanoseconds: 200_000_000) // 0.2 seconds
-        } else {
-            self.logger.error("Failed to quit: \(app.name)")
+        if Self.shouldShowQuitFeedback(hasForegroundConsent: false) {
+            _ = await self.feedbackClient.showAppQuit(appName: app.name, iconPath: iconPath)
         }
 
-        return success
+        self.logger.debug("Sending \(request.force ? "force terminate" : "terminate") signal to \(app.name)")
+        try self.validateApplicationQuitIdentity(expectedIdentity, resolvedApplication: app)
+        let success = self.applicationQuitHandler(runningApp, request.force)
+
+        guard success else {
+            self.logger.error("Failed to quit: \(app.name)")
+            return false
+        }
+
+        let terminated = try await waitForApplicationTermination(timeoutSeconds: 3) {
+            runningApp.isTerminated || NSRunningApplication(processIdentifier: app.processIdentifier) == nil
+        }
+        if terminated {
+            self.logger.info("Successfully quit and verified termination: \(app.name)")
+        } else {
+            let message = "Quit request was accepted but the process remained alive: \(app.name) " +
+                "(PID: \(app.processIdentifier))"
+            self.logger.error("\(message, privacy: .public)")
+        }
+        return terminated
+    }
+
+    private func validateApplicationQuitIdentity(
+        _ expectedIdentity: ApplicationProcessIdentity,
+        resolvedApplication: ServiceApplicationInfo) throws
+    {
+        guard expectedIdentity.processIdentifier == resolvedApplication.processIdentifier,
+              resolvedApplication.processStartIdentity == expectedIdentity.processStartIdentity,
+              self.processStartIdentityProvider(resolvedApplication.processIdentifier) ==
+              expectedIdentity.processStartIdentity
+        else {
+            throw PeekabooError.commandFailed(
+                "Application PID \(expectedIdentity.processIdentifier) disappeared or changed process generation")
+        }
+    }
+
+    static func shouldShowQuitFeedback(hasForegroundConsent: Bool) -> Bool {
+        hasForegroundConsent
     }
 
     public func hideApplication(identifier: String) async throws {
@@ -433,6 +595,203 @@ extension ApplicationService {
     @MainActor
     private func searchApplicationWithSpotlight(_ name: String) -> URL? {
         SpotlightApplicationSearcher(logger: self.logger, name: name).search()
+    }
+}
+
+@MainActor
+func waitForApplicationTermination(
+    timeoutSeconds: TimeInterval,
+    pollInterval: Duration = .milliseconds(100),
+    isTerminated: () async -> Bool) async throws -> Bool
+{
+    try Task.checkCancellation()
+    if await isTerminated() {
+        return true
+    }
+
+    let clock = ContinuousClock()
+    let deadline = clock.now.advanced(by: .seconds(max(0, timeoutSeconds)))
+    while clock.now < deadline {
+        try await Task.sleep(for: pollInterval)
+        try Task.checkCancellation()
+        if await isTerminated() {
+            return true
+        }
+    }
+
+    try Task.checkCancellation()
+    return await isTerminated()
+}
+
+@MainActor
+final class BackgroundLaunchActivationLease {
+    typealias RestorationHandler = @MainActor (NSRunningApplication) -> Void
+    typealias FrontmostProcessIdentifierProvider = @MainActor () -> pid_t?
+    typealias NowProvider = @MainActor () -> ContinuousClock.Instant
+    typealias SleepHandler = @MainActor (_ duration: Duration) async throws -> Void
+
+    private let notificationCenter: NotificationCenter
+    private let restorationHandler: RestorationHandler
+    private let frontmostProcessIdentifierProvider: FrontmostProcessIdentifierProvider
+    private let activationGraceDuration: Duration
+    private let nowProvider: NowProvider
+    private let sleepHandler: SleepHandler
+    private var observer: (any NSObjectProtocol)?
+    private var targetProcessIdentifier: pid_t?
+    private var activatedBeforeTargetResolution: Set<pid_t> = []
+    private var applicationsActivatedBeforeTargetResolution: [NSRunningApplication] = []
+    private var restorationCandidate: NSRunningApplication?
+    private var protectionDeadline: ContinuousClock.Instant?
+    private var protectionHeartbeat: Task<Void, Never>?
+
+    init(
+        workspace: NSWorkspace = .shared,
+        previousApplication: NSRunningApplication? = nil,
+        observeActivations: Bool = true,
+        activationGraceDuration: Duration = .milliseconds(500),
+        nowProvider: @escaping NowProvider = { ContinuousClock.now },
+        sleepHandler: @escaping SleepHandler = { duration in try await Task.sleep(for: duration) },
+        frontmostProcessIdentifierProvider: FrontmostProcessIdentifierProvider? = nil,
+        restorationHandler: @escaping RestorationHandler = { application in
+            _ = application.activate(options: [])
+        })
+    {
+        self.notificationCenter = workspace.notificationCenter
+        self.restorationCandidate = previousApplication ?? workspace.frontmostApplication
+        self.restorationHandler = restorationHandler
+        self.frontmostProcessIdentifierProvider = frontmostProcessIdentifierProvider ?? {
+            workspace.frontmostApplication?.processIdentifier
+        }
+        self.activationGraceDuration = activationGraceDuration
+        self.nowProvider = nowProvider
+        self.sleepHandler = sleepHandler
+
+        if observeActivations {
+            self.observer = self.notificationCenter.addObserver(
+                forName: NSWorkspace.didActivateApplicationNotification,
+                object: nil,
+                queue: .main)
+            { [weak self] notification in
+                let application = notification
+                    .userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+                guard let processIdentifier = application?.processIdentifier else {
+                    return
+                }
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    if let application = NSRunningApplication(processIdentifier: processIdentifier) {
+                        self.handleActivatedApplication(application)
+                    } else {
+                        self.handleActivatedProcessIdentifier(processIdentifier)
+                    }
+                }
+            }
+        }
+    }
+
+    func setTargetProcessIdentifier(_ processIdentifier: pid_t) {
+        self.targetProcessIdentifier = processIdentifier
+        self.protectionDeadline = self.nowProvider().advanced(by: self.activationGraceDuration)
+        if let latestNonTarget = self.applicationsActivatedBeforeTargetResolution.last(where: {
+            $0.processIdentifier != processIdentifier && !$0.isTerminated
+        }) {
+            self.restorationCandidate = latestNonTarget
+        }
+        if self.activatedBeforeTargetResolution.remove(processIdentifier) != nil {
+            self.restoreIfTargetIsFrontmost()
+        }
+    }
+
+    func holdThroughInitialActivationWindow() async throws {
+        guard let protectionDeadline else { return }
+        let now = self.nowProvider()
+        guard now < protectionDeadline else { return }
+        try await self.sleepHandler(now.duration(to: protectionDeadline))
+        self.restoreAtProtectionBoundaryIfTargetIsFrontmost()
+    }
+
+    func handleActivatedProcessIdentifier(_ processIdentifier: pid_t) {
+        guard let targetProcessIdentifier else {
+            self.activatedBeforeTargetResolution.insert(processIdentifier)
+            return
+        }
+        guard self.isProtectionActive else { return }
+        guard processIdentifier == targetProcessIdentifier else { return }
+        self.restoreIfTargetIsFrontmost()
+    }
+
+    func handleActivatedApplication(_ application: NSRunningApplication) {
+        guard let targetProcessIdentifier else {
+            self.activatedBeforeTargetResolution.insert(application.processIdentifier)
+            self.applicationsActivatedBeforeTargetResolution.append(application)
+            return
+        }
+        guard self.isProtectionActive else { return }
+
+        if application.processIdentifier == targetProcessIdentifier {
+            self.restoreIfTargetIsFrontmost()
+        } else if !application.isTerminated {
+            self.restorationCandidate = application
+        }
+    }
+
+    func finish(protectionCompleted: Bool) {
+        guard !protectionCompleted,
+              let protectionDeadline,
+              self.nowProvider() < protectionDeadline
+        else {
+            self.stopObserving()
+            return
+        }
+        guard self.protectionHeartbeat == nil else { return }
+        self.protectionHeartbeat = Task { @MainActor in
+            let now = self.nowProvider()
+            if now < protectionDeadline {
+                try? await self.sleepHandler(now.duration(to: protectionDeadline))
+            }
+            self.restoreAtProtectionBoundaryIfTargetIsFrontmost()
+            self.stopObserving()
+            self.protectionHeartbeat = nil
+        }
+    }
+
+    var hasProtectionHeartbeat: Bool {
+        self.protectionHeartbeat != nil
+    }
+
+    func waitForProtectionHeartbeat() async {
+        await self.protectionHeartbeat?.value
+    }
+
+    private func stopObserving() {
+        guard let observer else { return }
+        self.notificationCenter.removeObserver(observer)
+        self.observer = nil
+    }
+
+    private func restorePreviousApplication() {
+        guard let restorationCandidate,
+              !restorationCandidate.isTerminated,
+              restorationCandidate.processIdentifier != self.targetProcessIdentifier
+        else {
+            return
+        }
+        self.restorationHandler(restorationCandidate)
+    }
+
+    private func restoreIfTargetIsFrontmost() {
+        guard self.isProtectionActive else { return }
+        self.restoreAtProtectionBoundaryIfTargetIsFrontmost()
+    }
+
+    private func restoreAtProtectionBoundaryIfTargetIsFrontmost() {
+        guard self.frontmostProcessIdentifierProvider() == self.targetProcessIdentifier else { return }
+        self.restorePreviousApplication()
+    }
+
+    private var isProtectionActive: Bool {
+        guard let protectionDeadline else { return false }
+        return self.nowProvider() < protectionDeadline
     }
 }
 

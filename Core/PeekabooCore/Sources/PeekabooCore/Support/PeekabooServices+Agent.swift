@@ -206,14 +206,6 @@ extension PeekabooServices {
         logger.warning("   Config file specifies: \(determination.configModel ?? "none")")
         logger.warning("   Environment variable specifies: \(determination.environmentModel ?? "none")")
         logger.warning("   Using environment variable: \(determination.model ?? "none")")
-
-        let warningMessage = """
-        \(AgentDisplayTokens.Status.warning)  Model configuration conflict:
-           Config (~/.peekaboo/config.json) specifies: \(determination.configModel ?? "none")
-           PEEKABOO_AI_PROVIDERS environment variable specifies: \(determination.environmentModel ?? "none")
-           → Using environment variable: \(determination.model ?? "none")
-        """
-        print(warningMessage)
     }
 
     private func determineDefaultModelWithConflict(_ sources: ModelSources) -> ModelDetermination {

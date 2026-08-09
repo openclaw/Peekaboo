@@ -16,11 +16,13 @@ struct WindowCommandBasicTests {
     func `Window command has expected subcommands`() {
         let subcommands = WindowCommand.commandDescription.subcommands
 
-        // We expect 8 subcommands
-        #expect(subcommands.count == 8)
+        // We expect 9 subcommands
+        #expect(subcommands.count == 9)
 
         // Verify subcommand names by checking configuration
-        let subcommandNames = Set(["close", "minimize", "maximize", "move", "resize", "set-bounds", "focus", "list"])
+        let subcommandNames = Set([
+            "close", "minimize", "restore", "maximize", "move", "resize", "set-bounds", "focus", "list",
+        ])
 
         // Each subcommand should have one of these names
         for subcommand in subcommands {

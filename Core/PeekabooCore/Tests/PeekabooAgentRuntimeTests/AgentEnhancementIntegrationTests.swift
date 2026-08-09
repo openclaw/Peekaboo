@@ -241,15 +241,18 @@ struct AgentEnhancementIntegrationTests {
     @Test
     @MainActor
     func `verification capture failure preserves successful tool result`() async throws {
+        let invocations = ToolInvocationCounter()
+        let screenCapture = VerificationFailingScreenCaptureService()
         let service = try PeekabooAgentService(
-            services: CaptureOverrideServices(screenCapture: VerificationFailingScreenCaptureService()),
+            services: CaptureOverrideServices(screenCapture: screenCapture),
             defaultModel: .openai(.gpt55))
         let tool = AgentTool(
             name: "click",
             description: "test click",
             parameters: AgentToolParameters())
         { _ in
-            AnyAgentToolValue(object: [
+            await invocations.recordInvocation()
+            return AnyAgentToolValue(object: [
                 "success": AnyAgentToolValue(bool: true),
                 "clicked": AnyAgentToolValue(bool: true),
             ])
@@ -264,9 +267,12 @@ struct AgentEnhancementIntegrationTests {
         let payload = try #require(try execution.result.toJSON() as? [String: Any])
         #expect(payload["success"] as? Bool == true)
         #expect(payload["clicked"] as? Bool == true)
-        #expect(execution.verification?.success == true)
+        #expect(execution.verification?.success == false)
         #expect(execution.verification?.confidence == 0)
         #expect(execution.verification?.observation.contains("verification was unavailable") == true)
+        let invocationCount = await invocations.invocationCount()
+        #expect(invocationCount == 1)
+        #expect(screenCapture.capturedScreenVisualizerModes == [.none])
     }
 
     @Test
@@ -327,6 +333,41 @@ struct AgentEnhancementIntegrationTests {
 
     @Test
     @MainActor
+    func `verification capture preserves task cancellation over non cancellation failure`() async throws {
+        let screenCapture = VerificationFailingScreenCaptureService(cancelCurrentTaskBeforeFailure: true)
+        let service = try PeekabooAgentService(
+            services: CaptureOverrideServices(screenCapture: screenCapture),
+            defaultModel: .openai(.gpt55))
+        let tool = AgentTool(
+            name: "click",
+            description: "test click",
+            parameters: AgentToolParameters())
+        { _ in
+            AnyAgentToolValue(object: [
+                "success": AnyAgentToolValue(bool: true),
+            ])
+        }
+
+        let executionTask = Task { @MainActor in
+            try await service.executeToolWithVerification(
+                tool,
+                arguments: AgentToolArguments([:]),
+                executionContext: ToolExecutionContext(),
+                options: AgentEnhancementOptions(verifyActions: true))
+        }
+
+        do {
+            _ = try await executionTask.value
+            Issue.record("Expected cancellation to take precedence over capture failure")
+        } catch is CancellationError {
+            // Expected.
+        } catch {
+            Issue.record("Expected cancellation error, got \(error)")
+        }
+    }
+
+    @Test
+    @MainActor
     func `region focused verification parses pointer coordinates`() async throws {
         let screenCapture = RecordingRegionScreenCaptureService()
         let service = try PeekabooAgentService(
@@ -357,7 +398,36 @@ struct AgentEnhancementIntegrationTests {
         #expect(rect.origin.y == 190)
         #expect(rect.width == 20)
         #expect(rect.height == 20)
+        #expect(screenCapture.capturedAreaVisualizerModes == [.none])
         #expect(execution.verification?.observation.contains("verification was unavailable") == true)
+    }
+
+    @Test
+    func `post-dispatch verification never requests automatic replay`() {
+        let verifiedFailure = VerificationResult(
+            success: false,
+            confidence: 0.99,
+            observation: "The UI did not visibly change",
+            suggestion: "Inspect fresh state")
+
+        #expect(!verifiedFailure.shouldRetry)
+    }
+
+    @Test
+    @MainActor
+    func `launch verification expectation preserves background default`() throws {
+        let service = try PeekabooAgentService(services: PeekabooServices(), defaultModel: .openai(.gpt55))
+        let backgroundExpectation = service.actionVerifier.inferExpectedOutcome(for: ActionDescriptor(
+            toolName: "launch_app",
+            arguments: ["name": "Calendar"]))
+        let explicitForegroundExpectation = service.actionVerifier.inferExpectedOutcome(for: ActionDescriptor(
+            toolName: "app",
+            arguments: ["action": "launch", "name": "Calendar", "foreground": "true"]))
+
+        #expect(backgroundExpectation.contains("should not activate"))
+        #expect(backgroundExpectation.contains("frontmost application"))
+        #expect(explicitForegroundExpectation.contains("activated"))
+        #expect(explicitForegroundExpectation.contains("in the foreground"))
     }
 
     private static func text(in message: ModelMessage) -> String {
@@ -460,11 +530,24 @@ private final class CaptureOverrideServices: PeekabooServiceProviding {
 
 @MainActor
 private final class VerificationFailingScreenCaptureService: ScreenCaptureServiceProtocol {
+    private(set) var capturedScreenVisualizerModes: [CaptureVisualizerMode] = []
+    private let cancelCurrentTaskBeforeFailure: Bool
+
+    init(cancelCurrentTaskBeforeFailure: Bool = false) {
+        self.cancelCurrentTaskBeforeFailure = cancelCurrentTaskBeforeFailure
+    }
+
     func captureScreen(
         displayIndex _: Int?,
-        visualizerMode _: CaptureVisualizerMode,
+        visualizerMode: CaptureVisualizerMode,
         scale _: CaptureScalePreference) async throws -> CaptureResult
     {
+        self.capturedScreenVisualizerModes.append(visualizerMode)
+        if self.cancelCurrentTaskBeforeFailure {
+            withUnsafeCurrentTask { task in
+                task?.cancel()
+            }
+        }
         throw VerificationCaptureTestError.captureFailed
     }
 
@@ -509,10 +592,23 @@ private enum VerificationCaptureTestError: Error {
     case captureFailed
 }
 
+private actor ToolInvocationCounter {
+    private var count = 0
+
+    func recordInvocation() {
+        self.count += 1
+    }
+
+    func invocationCount() -> Int {
+        self.count
+    }
+}
+
 @MainActor
 private final class RecordingRegionScreenCaptureService: ScreenCaptureServiceProtocol {
     var capturedArea: CGRect?
     var capturedScreenCount = 0
+    var capturedAreaVisualizerModes: [CaptureVisualizerMode] = []
 
     func captureScreen(
         displayIndex _: Int?,
@@ -549,10 +645,11 @@ private final class RecordingRegionScreenCaptureService: ScreenCaptureServicePro
 
     func captureArea(
         _ rect: CGRect,
-        visualizerMode _: CaptureVisualizerMode,
+        visualizerMode: CaptureVisualizerMode,
         scale _: CaptureScalePreference) async throws -> CaptureResult
     {
         self.capturedArea = rect
+        self.capturedAreaVisualizerModes.append(visualizerMode)
         throw VerificationCaptureTestError.captureFailed
     }
 

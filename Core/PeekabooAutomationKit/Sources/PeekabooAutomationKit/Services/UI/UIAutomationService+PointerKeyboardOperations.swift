@@ -25,7 +25,14 @@ extension UIAutomationService {
             try await self.scrollService.scroll(request)
         }
 
-        let feedbackPoint = result.anchorPoint ?? InputDriver.currentLocation() ?? .zero
+        await self.visualizeScroll(request, actionAnchor: result.anchorPoint)
+    }
+
+    /// Background scrolls are AX actions scoped to a snapshot element. Do not project them onto
+    /// the user's foreground desktop with a global overlay.
+    func visualizeScroll(_ request: ScrollRequest, actionAnchor: CGPoint?) async {
+        guard request.foreground else { return }
+        let feedbackPoint = actionAnchor ?? InputDriver.currentLocation() ?? .zero
         _ = await self.feedbackClient.showScrollFeedback(
             at: feedbackPoint,
             direction: request.direction,
@@ -79,6 +86,44 @@ extension UIAutomationService {
             targetProcessIdentifier: targetProcessIdentifier)
 
         await self.visualizeHotkey(keys: keys, targetProcessIdentifier: targetProcessIdentifier)
+    }
+
+    public func hotkey(
+        keys: String,
+        holdDuration: Int,
+        expectedWindowIdentity: WindowMutationIdentity,
+        expectedWindowBounds: CGRect) async throws
+    {
+        let validator: @MainActor @Sendable () async throws -> Void = {
+            try await self.requireExactWindowKeyboardFocus(
+                expectedWindowIdentity: expectedWindowIdentity,
+                expectedWindowBounds: expectedWindowBounds)
+        }
+        defer { self.elementDetectionService.invalidateCache() }
+        _ = try await self.hotkeyService.hotkey(
+            keys: keys,
+            holdDuration: holdDuration,
+            targetProcessIdentifier: expectedWindowIdentity.ownerProcessIdentifier,
+            deliveryValidator: validator)
+    }
+
+    public func hotkey(
+        keys: String,
+        holdDuration: Int,
+        target: ExactWindowKeyboardTarget) async throws
+    {
+        let validator: @MainActor @Sendable () async throws -> Void = {
+            try await self.requireExactWindowKeyboardFocus(
+                expectedWindowIdentity: target.windowIdentity,
+                expectedWindowBounds: target.windowBounds,
+                expectedFocusedElement: target.focusedElement)
+        }
+        defer { self.elementDetectionService.invalidateCache() }
+        _ = try await self.hotkeyService.hotkey(
+            keys: keys,
+            holdDuration: holdDuration,
+            targetProcessIdentifier: target.windowIdentity.ownerProcessIdentifier,
+            deliveryValidator: validator)
     }
 
     /// PID-routed hotkeys are background operations. Suppress the desktop-global overlay so they

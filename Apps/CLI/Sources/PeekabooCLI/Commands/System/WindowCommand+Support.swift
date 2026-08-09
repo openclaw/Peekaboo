@@ -2,6 +2,7 @@ import Commander
 import CoreGraphics
 import Foundation
 import PeekabooCore
+import PeekabooFoundation
 
 @MainActor
 struct WindowIdentificationOptions: CommanderParsable, ApplicationResolvable {
@@ -48,7 +49,7 @@ struct WindowIdentificationOptions: CommanderParsable, ApplicationResolvable {
         }
 
         // Ensure we have some way to identify the window
-        if self.app == nil && self.pid == nil && self.windowId == nil && !allowMissingTarget {
+        if self.app == nil, self.pid == nil, self.windowId == nil, !allowMissingTarget {
             throw ValidationError("Either --app, --pid, or --window-id must be specified")
         }
 
@@ -74,6 +75,42 @@ struct WindowIdentificationOptions: CommanderParsable, ApplicationResolvable {
             // Default to app's frontmost window
             return .application(appIdentifier)
         }
+    }
+
+    /// Resolve the inventory used to pin an exact mutation receipt. When an owner and exact ID are
+    /// both present, enumerate only that owner; AX-backed inventory retains minimized windows that
+    /// WindowServer omits.
+    func toWindowSelectionTarget() throws -> WindowTarget {
+        if self.windowId != nil, self.app != nil || self.pid != nil {
+            return try .application(self.resolveApplicationIdentifier())
+        }
+        return try self.toWindowTarget()
+    }
+
+    func requireMutationWindow(
+        from windows: [ServiceWindowInfo],
+        expectedApplication: ServiceApplicationInfo?,
+        action: String,
+        includeMinimizedFallback: Bool = false
+    ) throws -> ServiceWindowInfo {
+        let selected = self.selectWindow(from: windows) ?? (includeMinimizedFallback
+            ? windows.first(where: \.isMinimized)
+            : nil)
+        guard let window = selected else {
+            throw PeekabooError.windowNotFound(criteria: "No matching window found to \(action)")
+        }
+        if self.windowId != nil, let expectedApplication {
+            guard let expectedProcessStartIdentity = expectedApplication.processStartIdentity,
+                  let identity = window.mutationIdentity,
+                  identity.ownerProcessIdentifier == expectedApplication.processIdentifier,
+                  identity.ownerProcessStartIdentity == expectedProcessStartIdentity
+            else {
+                throw PeekabooError.windowNotFound(
+                    criteria: "Window \(window.windowID) is not owned by the selected application process"
+                )
+            }
+        }
+        return window
     }
 }
 

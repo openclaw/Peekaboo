@@ -62,7 +62,7 @@ public struct MCPAgentTool: MCPTool {
                     description: "Enable verbose output with full JSON debug information",
                     default: false),
                 "dry_run": SchemaBuilder.boolean(
-                    description: "Dry run - show planned steps without executing",
+                    description: "Validate and echo the task without calling a model or tools",
                     default: false),
                 "max_steps": SchemaBuilder.integer(
                     description: "Maximum model/tool-loop turns before failing " +
@@ -77,7 +77,8 @@ public struct MCPAgentTool: MCPTool {
                     description: "List available sessions",
                     default: false),
                 "noCache": SchemaBuilder.boolean(
-                    description: "Disable session caching (always create new session)",
+                    description: "Run without saving a resumable session; " +
+                        "incompatible with resume/list options",
                     default: false),
             ],
             required: [])
@@ -90,7 +91,18 @@ public struct MCPAgentTool: MCPTool {
     @MainActor
     public func execute(arguments: ToolArguments) async throws -> ToolResponse {
         let input = try arguments.decode(AgentInput.self)
-        self.logger.info("AgentTool executing with task: \(input.task ?? "none"), listSessions: \(input.listSessions)")
+        self.logger.info(
+            "AgentTool executing with task: \(input.task ?? "none"), listSessions: \(input.listSessions)")
+
+        do {
+            try Self.validateSessionOptions(
+                noCache: input.noCache,
+                resume: input.resume,
+                resumeSession: input.resumeSession,
+                listSessions: input.listSessions)
+        } catch let error as AgentToolError {
+            return ToolResponse.error(error.message)
+        }
 
         if input.listSessions {
             return try await self.listSessionsResponse()
@@ -187,22 +199,24 @@ public struct MCPAgentTool: MCPTool {
                 maxSteps: maxSteps)
         }
 
-        if input.dryRun {
-            return try await agent.executeTask(
-                task,
-                maxSteps: maxSteps,
-                model: modelOverride,
-                dryRun: true,
-                eventDelegate: nil)
-        }
-
-        let sessionId = input.noCache ? nil : UUID().uuidString
         return try await agent.executeTask(
             task,
             maxSteps: maxSteps,
-            sessionId: sessionId,
             model: modelOverride,
-            eventDelegate: nil)
+            dryRun: input.dryRun,
+            eventDelegate: nil,
+            persistSession: !input.noCache)
+    }
+
+    static func validateSessionOptions(
+        noCache: Bool,
+        resume: Bool,
+        resumeSession: String?,
+        listSessions: Bool) throws
+    {
+        guard !noCache || !resume && resumeSession == nil && !listSessions else {
+            throw AgentToolError("noCache cannot be combined with resume, resumeSession, or listSessions")
+        }
     }
 
     static func validatedMaxSteps(_ maxSteps: Int?) throws -> Int {
@@ -234,7 +248,9 @@ public struct MCPAgentTool: MCPTool {
         let summary = self.summary(for: result)
 
         if input.quiet {
-            return ToolResponse.text(result.content, meta: ToolEventSummary.merge(summary: summary, into: nil))
+            return ToolResponse.text(
+                result.content,
+                meta: ToolEventSummary.merge(summary: summary, into: Self.executionTraceMetadata(for: result)))
         }
 
         if input.verbose {
@@ -260,7 +276,11 @@ public struct MCPAgentTool: MCPTool {
             output += tokensLine
         }
 
-        let baseMeta = result.sessionId.map { Value.object(["sessionId": .string($0)]) }
+        var baseMetadata = Self.executionTraceMetadataObject(for: result)
+        if let sessionId = result.sessionId {
+            baseMetadata["sessionId"] = .string(sessionId)
+        }
+        let baseMeta = Value.object(baseMetadata)
         return ToolResponse.text(output, meta: ToolEventSummary.merge(summary: summary, into: baseMeta))
     }
 
@@ -282,10 +302,11 @@ public struct MCPAgentTool: MCPTool {
     }
 
     private func verboseMetadata(for result: AgentExecutionResult) -> Value {
-        var metadata: [String: Value] = [
+        var metadata = Self.executionTraceMetadataObject(for: result)
+        metadata.merge([
             "toolCallCount": .int(result.metadata.toolCallCount),
             "modelName": .string(result.metadata.modelName),
-        ]
+        ], uniquingKeysWith: { _, new in new })
 
         if let sessionId = result.sessionId {
             metadata["sessionId"] = .string(sessionId)
@@ -300,6 +321,21 @@ public struct MCPAgentTool: MCPTool {
         }
 
         return .object(metadata)
+    }
+
+    static func executionTraceMetadata(for result: AgentExecutionResult) -> Value {
+        .object(self.executionTraceMetadataObject(for: result))
+    }
+
+    private static func executionTraceMetadataObject(for result: AgentExecutionResult) -> [String: Value] {
+        let trace = result.executionTrace()
+        return [
+            "executionTrace": (try? Value(trace)) ?? .object([
+                "entries": .array([]),
+                "totalCallCount": .int(trace.totalCallCount),
+                "truncated": .bool(true),
+            ]),
+        ]
     }
 }
 

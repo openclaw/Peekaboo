@@ -49,6 +49,7 @@ protocol AutomationElementRepresenting: Sendable {
     func setAutomationSelected(_ selected: Bool) throws
     func stringAttribute(_ name: String) -> String?
     func intAttribute(_ name: String) -> Int?
+    func doubleAttribute(_ name: String) -> Double?
 }
 
 extension AutomationElementRepresenting {
@@ -70,6 +71,10 @@ extension AutomationElementRepresenting {
 
     func setAutomationSelected(_: Bool) throws {
         throw AccessibilitySystemError(.attributeUnsupported)
+    }
+
+    func doubleAttribute(_: String) -> Double? {
+        nil
     }
 }
 
@@ -276,5 +281,21 @@ struct AutomationElement: AutomationElementRepresenting {
     @MainActor
     func intAttribute(_ name: String) -> Int? {
         self.element.attribute(Attribute<Int>(name))
+    }
+
+    @MainActor
+    func doubleAttribute(_ name: String) -> Double? {
+        var value: CFTypeRef?
+        let error = AXUIElementCopyAttributeValue(
+            self.element.underlyingElement,
+            name as CFString,
+            &value)
+        guard error == .success,
+              let number = value as? NSNumber,
+              CFGetTypeID(number) != CFBooleanGetTypeID()
+        else {
+            return nil
+        }
+        return number.doubleValue
     }
 }

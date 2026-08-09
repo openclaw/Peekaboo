@@ -21,14 +21,20 @@ extension PeekabooAgentService {
     public struct AgentStepLimitExceededError: LocalizedError, Sendable {
         public let maxSteps: Int
         public let sessionId: String
+        public let sessionWasPersisted: Bool
 
-        public init(maxSteps: Int, sessionId: String) {
+        public init(maxSteps: Int, sessionId: String, sessionWasPersisted: Bool = true) {
             self.maxSteps = maxSteps
             self.sessionId = sessionId
+            self.sessionWasPersisted = sessionWasPersisted
         }
 
         public var errorDescription: String? {
-            let resumeGuidance = "Session \(self.sessionId) was saved and can be resumed to continue."
+            let resumeGuidance = if self.sessionWasPersisted {
+                "Session \(self.sessionId) was saved and can be resumed to continue."
+            } else {
+                "Session caching was disabled, so this run cannot be resumed."
+            }
             guard self.maxSteps < AgentStepBudget.supportedRange.upperBound else {
                 return "Agent reached the \(self.maxSteps)-step limit after executing tools whose results still " +
                     "require model review. \(resumeGuidance)"
@@ -64,25 +70,32 @@ extension PeekabooAgentService {
         }
     }
 
+    @MainActor
     struct ToolHandlingContext {
         let model: LanguageModel
+        let supportsVision: Bool
         let tools: [AgentTool]
         let eventHandler: EventHandler?
         let sessionId: String
-        let turnBoundary = AgentTurnBoundary()
+        let imageContextID = UUID().uuidString
+        let turnBoundary: AgentTurnBoundary
         let enhancementOptions: AgentEnhancementOptions?
 
         init(
             model: LanguageModel,
+            providerSupportsVision: Bool? = nil,
             tools: [AgentTool],
             eventHandler: EventHandler?,
             sessionId: String,
+            initialMessages: [ModelMessage] = [],
             enhancementOptions: AgentEnhancementOptions? = nil)
         {
             self.model = model
+            self.supportsVision = model.supportsVision && (providerSupportsVision ?? true)
             self.tools = tools
             self.eventHandler = eventHandler
             self.sessionId = sessionId
+            self.turnBoundary = PeekabooAgentService.restoredTurnBoundary(from: initialMessages)
             self.enhancementOptions = enhancementOptions
         }
 
@@ -185,9 +198,11 @@ extension PeekabooAgentService {
         let resolvedConfiguration = TachikomaConfiguration.resolve(.current)
         let toolContext = ToolHandlingContext(
             model: configuration.model,
+            providerSupportsVision: configuration.provider.capabilities.supportsVision,
             tools: configuration.tools,
             eventHandler: configuration.eventHandler,
             sessionId: configuration.sessionId,
+            initialMessages: initialMessages,
             enhancementOptions: configuration.enhancementOptions)
 
         // Queue of pending user messages (set by caller). For now, this is empty
@@ -240,6 +255,7 @@ extension PeekabooAgentService {
                 }
                 throw error
             }
+            state.messages.removeConsumedAgentToolImageContext()
             if let terminalUsage {
                 state.usage = usageAccumulator.record(terminalUsage)
                 onCheckpoint?(self.makeLoopOutcome(state: state, reachedStepLimit: false))
@@ -247,8 +263,6 @@ extension PeekabooAgentService {
             if output.toolCalls.isEmpty {
                 try Task.checkCancellation()
             }
-
-            state.content += output.text
 
             let shouldReplayReasoning = ReasoningReplayTarget(
                 model: configuration.model,
@@ -275,14 +289,23 @@ extension PeekabooAgentService {
                 hasToolCalls: !output.toolCalls.isEmpty)
 
             if output.toolCalls.isEmpty {
-                try self.validateTerminalResponse(text: output.text)
-                self.appendFinalStep(
+                try self.validateTerminalResponse(
                     text: output.text,
-                    to: &state.messages,
-                    steps: &state.steps,
+                    availableToolNames: Set(configuration.tools.map(\.name)))
+                if self.handleTerminalResponse(
+                    output.text,
+                    boundary: toolContext.turnBoundary,
+                    state: &state,
                     stepIndex: stepIndex)
-                break
+                {
+                    break
+                }
+                reachedStepLimit = stepIndex == maxSteps - 1
+                onCheckpoint?(self.makeLoopOutcome(state: state, reachedStepLimit: reachedStepLimit))
+                continue
             }
+
+            state.content += output.text
 
             var cancellationStep: GenerationStep?
             let step: GenerationStep
@@ -307,11 +330,17 @@ extension PeekabooAgentService {
             state.toolCallCount += step.toolResults.count
             onCheckpoint?(self.makeLoopOutcome(state: state, reachedStepLimit: false))
 
-            if let stopReason = self.turnBoundaryStopReason(from: step.toolResults) {
-                state.content = self.contentByAppendingTurnBoundaryReason(
-                    stopReason,
-                    to: state.content)
-                break
+            if let boundarySignal = self.turnBoundarySignal(from: step.toolResults) {
+                switch boundarySignal {
+                case .continueNextStep:
+                    // Force context-aware runs to refresh after a UI mutation before the next model step.
+                    state.desktopContextState.lastFingerprint = nil
+                case let .stopAgent(reason):
+                    state.content = self.contentByAppendingTurnBoundaryReason(reason, to: state.content)
+                }
+                if case .stopAgent = boundarySignal {
+                    break
+                }
             }
 
             if stepIndex == maxSteps - 1 {
@@ -334,7 +363,7 @@ extension PeekabooAgentService {
     {
         StreamingLoopOutcome(
             content: state.content,
-            messages: state.messages,
+            messages: state.messages.removingConsumedAgentToolImageContext(),
             steps: state.steps,
             usage: state.usage,
             toolCallCount: state.toolCallCount,
@@ -385,10 +414,175 @@ extension PeekabooAgentService {
         }
     }
 
-    func validateTerminalResponse(text: String) throws {
-        guard text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        throw TachikomaError.apiError(
-            "Model returned an empty terminal response; refusing to mark the task complete.")
+    func validateTerminalResponse(text: String, availableToolNames: Set<String>) throws {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            throw TachikomaError.apiError(
+                "Model returned an empty terminal response; refusing to mark the task complete.")
+        }
+
+        for candidate in Self.terminalJSONCandidates(from: trimmed) {
+            let serializedCandidates = [candidate, Self.removingJSONComments(from: candidate)]
+            for serialized in serializedCandidates {
+                guard let data = serialized.data(using: .utf8),
+                      let object = try? JSONSerialization.jsonObject(with: data)
+                else {
+                    continue
+                }
+                if Self.containsUnexecutedToolCall(object, availableToolNames: availableToolNames) {
+                    throw TachikomaError.apiError(
+                        "Model returned an unexecuted tool call as terminal text; refusing to mark the task complete.")
+                }
+            }
+        }
+    }
+
+    private static func terminalJSONCandidates(from text: String) -> [String] {
+        var candidates = [text]
+        var searchStart = text.startIndex
+        while let opening = text.range(of: "```", range: searchStart..<text.endIndex),
+              let firstNewline = text[opening.upperBound...].firstIndex(of: "\n"),
+              let closing = text.range(of: "```", range: text.index(after: firstNewline)..<text.endIndex)
+        {
+            let language = text[opening.upperBound..<firstNewline]
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+            if language.isEmpty || language == "json" || language == "jsonc" {
+                candidates.append(
+                    text[text.index(after: firstNewline)..<closing.lowerBound]
+                        .trimmingCharacters(in: .whitespacesAndNewlines))
+            }
+            searchStart = closing.upperBound
+        }
+        for fragment in self.balancedJSONFragments(in: text) where !candidates.contains(fragment) {
+            candidates.append(fragment)
+        }
+        return candidates
+    }
+
+    private static func balancedJSONFragments(in text: String) -> [String] {
+        var fragments: [String] = []
+        var start: String.Index?
+        var stack: [Character] = []
+        var inString = false
+        var escaped = false
+
+        for index in text.indices {
+            let character = text[index]
+            if inString {
+                if escaped {
+                    escaped = false
+                } else if character == "\\" {
+                    escaped = true
+                } else if character == "\"" {
+                    inString = false
+                }
+                continue
+            }
+            if character == "\"", start != nil {
+                inString = true
+                continue
+            }
+            if character == "{" || character == "[" {
+                if start == nil {
+                    start = index
+                }
+                stack.append(character)
+                continue
+            }
+            guard let fragmentStart = start, character == "}" || character == "]" else { continue }
+            let expectedOpening: Character = character == "}" ? "{" : "["
+            guard stack.last == expectedOpening else {
+                start = nil
+                stack.removeAll(keepingCapacity: true)
+                continue
+            }
+            stack.removeLast()
+            if stack.isEmpty {
+                fragments.append(String(text[fragmentStart...index]))
+                start = nil
+            }
+        }
+        return fragments
+    }
+
+    private static func removingJSONComments(from text: String) -> String {
+        var result = ""
+        var index = text.startIndex
+        var inString = false
+        var escaped = false
+        while index < text.endIndex {
+            let character = text[index]
+            let next = text.index(after: index)
+            if inString {
+                result.append(character)
+                if escaped {
+                    escaped = false
+                } else if character == "\\" {
+                    escaped = true
+                } else if character == "\"" {
+                    inString = false
+                }
+                index = next
+                continue
+            }
+            if character == "\"" {
+                inString = true
+                result.append(character)
+                index = next
+                continue
+            }
+            if character == "/", next < text.endIndex {
+                let following = text[next]
+                if following == "/" {
+                    index = text.index(after: next)
+                    while index < text.endIndex, text[index] != "\n" {
+                        index = text.index(after: index)
+                    }
+                    continue
+                }
+                if following == "*" {
+                    index = text.index(after: next)
+                    while index < text.endIndex {
+                        let after = text.index(after: index)
+                        if text[index] == "*", after < text.endIndex, text[after] == "/" {
+                            index = text.index(after: after)
+                            break
+                        }
+                        index = after
+                    }
+                    continue
+                }
+            }
+            result.append(character)
+            index = next
+        }
+        return result
+    }
+
+    private static func containsUnexecutedToolCall(
+        _ value: Any,
+        availableToolNames: Set<String>) -> Bool
+    {
+        if let values = value as? [Any] {
+            return values.contains { self.containsUnexecutedToolCall($0, availableToolNames: availableToolNames) }
+        }
+        guard let object = value as? [String: Any] else { return false }
+
+        if let name = object["name"] as? String,
+           availableToolNames.contains(name),
+           object["arguments"] != nil
+        {
+            return true
+        }
+        if let function = object["function"] as? [String: Any],
+           self.containsUnexecutedToolCall(function, availableToolNames: availableToolNames)
+        {
+            return true
+        }
+        return object.values.contains {
+            self.containsUnexecutedToolCall($0, availableToolNames: availableToolNames)
+        }
     }
 
     func appendFinalStep(
@@ -730,7 +924,7 @@ extension PeekabooAgentService {
                     currentMessages: &currentMessages,
                     options: ToolCallExecutionOptions(
                         stepIndex: stepIndex,
-                        allowSuccessfulToolBoundary: !toolResults.contains { $0.isError }))
+                        allowSuccessfulToolBoundary: !toolResults.contains(where: Self.blocksTerminalBoundary)))
             } catch {
                 guard self.isAgentCancellation(error) else { throw error }
                 await self.appendCancelledToolResults(
@@ -769,12 +963,12 @@ extension PeekabooAgentService {
                 throw CancellationError()
             }
 
-            if let stopReason = self.turnBoundaryStopReason(from: result) {
+            if let boundarySignal = self.turnBoundarySignal(from: result) {
                 let remainingToolCalls = toolCalls.dropFirst(index + 1)
                 for skippedToolCall in remainingToolCalls {
                     let skippedResult = self.makeSkippedToolResult(
                         for: skippedToolCall,
-                        stopReason: stopReason)
+                        boundarySignal: boundarySignal)
                     if emitToolStartEvents {
                         try? await self.sendToolStartEvent(
                             skippedToolCall,
@@ -793,13 +987,26 @@ extension PeekabooAgentService {
             }
         }
 
-        self.logStepCompletion(stepIndex: stepIndex, stepText: stepText, toolCalls: toolCalls)
-
-        return GenerationStep(
+        let step = GenerationStep(
             stepIndex: stepIndex,
             text: stepText,
             toolCalls: toolCalls,
             toolResults: toolResults)
+        return await self.finishToolCallStep(step, context: context, currentMessages: &currentMessages)
+    }
+
+    private func finishToolCallStep(
+        _ step: GenerationStep,
+        context: ToolHandlingContext,
+        currentMessages: inout [ModelMessage]) async -> GenerationStep
+    {
+        await self.appendAgentToolImageContext(
+            toolCalls: step.toolCalls,
+            context: context,
+            stepIndex: step.stepIndex,
+            to: &currentMessages)
+        self.logStepCompletion(stepIndex: step.stepIndex, stepText: step.text, toolCalls: step.toolCalls)
+        return step
     }
 
     // swiftlint:disable:next function_parameter_count
@@ -857,18 +1064,16 @@ extension PeekabooAgentService {
 
     private func makeSkippedToolResult(
         for toolCall: AgentToolCall,
-        stopReason: String) -> AgentToolResult
+        boundarySignal: AgentTurnBoundarySignal) -> AgentToolResult
     {
-        let error = "Tool call skipped because the agent turn ended: \(stopReason)"
+        let reason = boundarySignal.reason
+        let error = "Tool call skipped because the provider step ended: \(reason)"
         let result = AnyAgentToolValue(object: [
             "error": AnyAgentToolValue(string: error),
             "skipped": AnyAgentToolValue(bool: true),
-            "reason": AnyAgentToolValue(string: stopReason),
+            "reason": AnyAgentToolValue(string: reason),
             "success": AnyAgentToolValue(bool: false),
-            "turn_boundary": AnyAgentToolValue(object: [
-                "stop_after_current_step": AnyAgentToolValue(bool: true),
-                "reason": AnyAgentToolValue(string: stopReason),
-            ]),
+            "turn_boundary": self.turnBoundaryValue(boundarySignal),
         ])
         return AgentToolResult(
             toolCallId: toolCall.id,
@@ -909,13 +1114,27 @@ extension PeekabooAgentService {
     {
         let boundaryDecision = context.turnBoundary.record(toolName: toolCall.name, arguments: toolCall.arguments)
 
+        if let skippedResult = self.makeBoundaryRequiredSkippedResult(for: toolCall, decision: boundaryDecision) {
+            await self.sendToolCompletionEvent(
+                name: toolCall.name,
+                payload: self.toolResultPayload(from: skippedResult.result, toolName: toolCall.name),
+                eventHandler: context.eventHandler)
+            currentMessages.append(ModelMessage(role: .tool, content: [.toolResult(skippedResult)]))
+            return skippedResult
+        }
+
         do {
             let executionContext = ToolExecutionContext(
                 messages: currentMessages.sanitizedForToolContext(),
                 model: context.model,
                 settings: self.generationSettings(for: context.model),
                 sessionId: context.sessionId,
-                stepIndex: options.stepIndex)
+                stepIndex: options.stepIndex,
+                metadata: [
+                    "toolCallId": toolCall.id,
+                    "imageContextId": context.imageContextID,
+                    "supportsVision": context.supportsVision ? "true" : "false",
+                ])
             let toolArguments = AgentToolArguments(toolCall.arguments)
             let execution = try await self.executeTool(
                 tool,
@@ -923,22 +1142,33 @@ extension PeekabooAgentService {
                 executionContext: executionContext,
                 options: context.enhancementOptions)
             let result = execution.result
+            if !Self.resultEncodesToolFailure(result) {
+                context.turnBoundary.recordSuccessfulCompletion(
+                    toolName: toolCall.name,
+                    arguments: toolCall.arguments,
+                    result: result)
+            }
             var toolValue = result
             if let verification = execution.verification {
                 toolValue = self.addVerification(verification, to: toolValue)
                 await context.eventHandler?.send(.verificationCompleted(toolName: toolCall.name, result: verification))
             }
             switch boundaryDecision {
-            case let .stopAfterCurrentStep(reason):
-                toolValue = self.addTurnBoundaryStopReason(reason, to: toolValue)
-            case let .stopAfterSuccessfulTool(reason) where options.allowSuccessfulToolBoundary:
-                toolValue = self.addTurnBoundaryStopReason(reason, to: toolValue)
-            case .stopAfterSuccessfulTool:
+            case let .continueNextStep(reason):
+                toolValue = self.addTurnBoundarySignal(.continueNextStep(reason: reason), to: toolValue)
+            case let .stopAgentAfterSuccessfulTool(reason)
+                where options.allowSuccessfulToolBoundary && !Self.resultEncodesToolFailure(result):
+                toolValue = self.addTurnBoundarySignal(.stopAgent(reason: reason), to: toolValue)
+            case .stopAgentAfterSuccessfulTool:
                 break
+            case .skipUntilCompletionEvidence:
+                preconditionFailure("Completion-evidence-required calls return before execution")
+            case .skipUntilPerception:
+                preconditionFailure("Perception-required calls return before execution")
             case .continueTurn:
                 break
             }
-            let toolResult = AgentToolResult.success(toolCallId: toolCall.id, result: toolValue)
+            let toolResult = Self.classifiedToolResult(callID: toolCall.id, value: toolValue, source: result)
             await self.sendToolCompletionEvent(
                 name: toolCall.name,
                 payload: self.toolResultPayload(from: toolValue, toolName: toolCall.name),
@@ -950,8 +1180,8 @@ extension PeekabooAgentService {
                 throw CancellationError()
             }
             var errorValue = AnyAgentToolValue(string: error.localizedDescription)
-            if case let .stopAfterCurrentStep(reason) = boundaryDecision {
-                errorValue = self.addTurnBoundaryStopReason(reason, to: errorValue)
+            if case let .continueNextStep(reason) = boundaryDecision {
+                errorValue = self.addTurnBoundarySignal(.continueNextStep(reason: reason), to: errorValue)
             }
             let errorResult = AgentToolResult(
                 toolCallId: toolCall.id,
@@ -1018,47 +1248,83 @@ extension PeekabooAgentService {
         ]
     }
 
-    private func addTurnBoundaryStopReason(
-        _ reason: String,
+    private func addTurnBoundarySignal(
+        _ signal: AgentTurnBoundarySignal,
         to result: AnyAgentToolValue) -> AnyAgentToolValue
     {
         do {
             let json = try result.toJSON()
             var payload = json as? [String: Any] ?? ["result": json]
-            payload["turn_boundary"] = [
-                "stop_after_current_step": true,
-                "reason": reason,
-            ]
+            payload["turn_boundary"] = try self.turnBoundaryValue(signal).toJSON()
             return try AnyAgentToolValue.fromJSON(payload)
         } catch {
             return AnyAgentToolValue(object: [
                 "result": result,
-                "turn_boundary": AnyAgentToolValue(object: [
-                    "stop_after_current_step": AnyAgentToolValue(bool: true),
-                    "reason": AnyAgentToolValue(string: reason),
-                ]),
+                "turn_boundary": self.turnBoundaryValue(signal),
             ])
         }
     }
 
-    func turnBoundaryStopReason(from toolResults: [AgentToolResult]) -> String? {
+    private func turnBoundaryValue(_ signal: AgentTurnBoundarySignal) -> AnyAgentToolValue {
+        var payload = [
+            "reason": AnyAgentToolValue(string: signal.reason),
+            // Keep the legacy marker so persisted/current result readers retain transcript compatibility.
+            "stop_after_current_step": AnyAgentToolValue(bool: true),
+        ]
+        switch signal {
+        case .continueNextStep:
+            payload["continue_next_step"] = AnyAgentToolValue(bool: true)
+            payload["disposition"] = AnyAgentToolValue(string: "continue_next_step")
+        case .stopAgent:
+            payload["stop_agent"] = AnyAgentToolValue(bool: true)
+            payload["disposition"] = AnyAgentToolValue(string: "stop_agent")
+        }
+        return AnyAgentToolValue(object: payload)
+    }
+
+    func turnBoundarySignal(from toolResults: [AgentToolResult]) -> AgentTurnBoundarySignal? {
         for toolResult in toolResults {
-            if let reason = self.turnBoundaryStopReason(from: toolResult) {
-                return reason
+            if let signal = self.turnBoundarySignal(from: toolResult) {
+                return signal
             }
         }
         return nil
     }
 
-    func turnBoundaryStopReason(from toolResult: AgentToolResult) -> String? {
+    func turnBoundarySignal(from toolResult: AgentToolResult) -> AgentTurnBoundarySignal? {
         guard let json = try? toolResult.result.toJSON(),
               let payload = json as? [String: Any],
               let boundary = payload["turn_boundary"] as? [String: Any],
-              boundary["stop_after_current_step"] as? Bool == true
+              let reason = boundary["reason"] as? String
         else {
             return nil
         }
-        return boundary["reason"] as? String
+
+        if boundary["continue_next_step"] as? Bool == true ||
+            boundary["disposition"] as? String == "continue_next_step"
+        {
+            return .continueNextStep(reason: reason)
+        }
+        if boundary["stop_agent"] as? Bool == true ||
+            boundary["disposition"] as? String == "stop_agent"
+        {
+            return .stopAgent(reason: reason)
+        }
+        // Legacy persisted results only had stop_after_current_step and were terminal.
+        if boundary["stop_after_current_step"] as? Bool == true {
+            return .stopAgent(reason: reason)
+        }
+        return nil
+    }
+
+    func turnBoundaryStopReason(from toolResults: [AgentToolResult]) -> String? {
+        guard case let .stopAgent(reason)? = self.turnBoundarySignal(from: toolResults) else { return nil }
+        return reason
+    }
+
+    func turnBoundaryStopReason(from toolResult: AgentToolResult) -> String? {
+        guard case let .stopAgent(reason)? = self.turnBoundarySignal(from: toolResult) else { return nil }
+        return reason
     }
 
     private func logStepCompletion(

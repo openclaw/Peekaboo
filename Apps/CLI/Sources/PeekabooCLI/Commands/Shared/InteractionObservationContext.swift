@@ -311,7 +311,7 @@ enum InteractionObservationRefresher {
                 capture: DesktopCaptureOptions(
                     engine: .auto,
                     scale: .logical1x,
-                    visualizerMode: .screenshotFlash
+                    visualizerMode: .none
                 ),
                 detection: DesktopDetectionOptions(mode: .accessibility, allowWebFocusFallback: true),
                 output: DesktopObservationOutputOptions(

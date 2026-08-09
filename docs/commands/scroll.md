@@ -24,7 +24,7 @@ read_when:
 
 ## Implementation notes
 - If you pass `--on` without a snapshot, the command automatically looks up `services.snapshots.getMostRecentSnapshot()` so you rarely need to wire IDs manually.
-- Background scrolling is action-only. If the target has no usable Accessibility scroll action, Peekaboo fails with guidance to retry in foreground rather than silently moving the cursor or scrolling another app.
+- Background scrolling is Accessibility-only. Peekaboo first invokes a directional scroll action, then falls back to a settable descendant `AXScrollBar` used by standard AppKit scroll areas. If neither native path is available, it fails with guidance to retry in foreground rather than silently moving the cursor or scrolling another app.
 - Foreground mode verifies focus when a target exists, then uses synthetic wheel events. Focus failure aborts before pointer dispatch.
 - JSON output reports target diagnostics for element scrolls and the current pointer position for explicit foreground targetless scrolls.
 - `ScrollRequest` is handed directly to `AutomationServiceBridge.scroll`, so the CLI benefits from the same smooth/step semantics the agent runtime sees.

@@ -19,13 +19,16 @@ extension AppCommand {
             KEY OPTIONS:
               --bundle-id <id>       Launch by bundle identifier instead of name/path
               --open <path-or-url>   Repeatable; pass documents/URLs to the app right after launch
-              --wait-until-ready     Poll until the app reports it is fully launched
+              --new-instance         Launch a distinct process even if the app is already running
+              --wait-until-ready     Wait until LaunchServices reports startup complete
+              --wait-for-window      Wait for a real AX or WindowServer window
               --foreground           Bring the app to the foreground after launching
 
             EXAMPLES:
               peekaboo app launch "Safari"
               peekaboo app launch "Safari" --open https://example.com --open https://news.ycombinator.com
               peekaboo app launch "Preview" --open ~/Desktop/report.pdf
+              peekaboo app launch "TextEdit" --new-instance --wait-until-ready
               peekaboo app launch "Safari" --foreground
               peekaboo app launch --bundle-id com.apple.Notes --wait-until-ready
             """
@@ -39,6 +42,12 @@ extension AppCommand {
 
         @Flag(help: "Wait for the application to be ready")
         var waitUntilReady = false
+
+        @Flag(help: "Wait for the application to expose an exact WindowServer window")
+        var waitForWindow = false
+
+        @Flag(help: "Launch a distinct process even if the app is already running")
+        var newInstance = false
 
         @Flag(help: "Bring the app to the foreground after launching")
         var foreground = false
@@ -110,15 +119,29 @@ extension AppCommand {
                 let app_name: String
                 let bundle_id: String
                 let pid: Int32
+                let process_start_identity: UInt64?
                 let is_ready: Bool
+                let window_count: Int
+                let window_ready: Bool
+                let window_ids: [Int]?
+                let window_identity: String
+                let new_instance: Bool
             }
 
+            let exactWindowIDs = app.windowIDs
+            let refreshedWindowCount = exactWindowIDs?.count ?? app.windowCount
             let data = LaunchResult(
                 action: "launch",
                 app_name: app.name,
                 bundle_id: app.bundleIdentifier ?? "unknown",
                 pid: app.processIdentifier,
-                is_ready: app.isFinishedLaunching ?? !self.waitUntilReady
+                process_start_identity: app.processStartIdentity,
+                is_ready: app.isFinishedLaunching ?? !self.waitUntilReady,
+                window_count: refreshedWindowCount,
+                window_ready: refreshedWindowCount > 0,
+                window_ids: exactWindowIDs,
+                window_identity: exactWindowIDs == nil ? "unknown" : "exact",
+                new_instance: self.newInstance
             )
             AutomationEventLogger.log(
                 .app,
@@ -140,7 +163,9 @@ extension AppCommand {
                 applicationBundleIdentifier: self.bundleId,
                 openURLs: urls,
                 activates: self.shouldFocusAfterLaunch,
-                waitUntilReady: self.waitUntilReady
+                waitUntilReady: self.waitUntilReady,
+                waitForWindow: self.waitForWindow,
+                createsNewInstance: self.newInstance
             ))
         }
 
@@ -178,6 +203,8 @@ extension AppCommand.LaunchSubcommand: CommanderBindableCommand {
         app = try values.decodeOptionalPositional(0, label: "app")
         bundleId = values.singleOption("bundleId")
         waitUntilReady = values.flag("waitUntilReady")
+        waitForWindow = values.flag("waitForWindow")
+        newInstance = values.flag("newInstance")
         foreground = values.flag("foreground")
         noFocus = values.flag("noFocus")
         openTargets = values.optionValues("open")

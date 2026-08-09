@@ -18,8 +18,15 @@ and keeps Calculator as a controlled foreground sentinel. It then exercises fres
 `see`, `inspect-ui`, `image`, `capture live`, click by ID and query, `type`, `press`, `hotkey`, `paste`, `set-value`,
 `perform-action`, and Accessibility-only targeted scroll. Stale snapshots and unsupported actions—including a target
 without an AX scroll action—must fail nonzero instead of falling back to foreground synthesis.
-Background keyboard requests with a window selector are also rejected because macOS process-targeted key events cannot
-guarantee isolation between multiple windows in one process; the successful keyboard cases intentionally use exact PID.
+The monitored lifecycle phase also launches distinct TextEdit processes with exact window receipts, maximizes and
+closes one exact background window, and rejects any quit success receipt while the other process remains alive. An app
+may refuse graceful quit; that is an honest nonzero result rather than a false success.
+Harness cleanup consumes each controlled PID and process-start identity directly from the launch/relaunch result and
+passes both values in one generation-pinned `app quit` request. A missing receipt fails the harness immediately; it never
+probes a bare post-launch PID to mint cleanup ownership or issues a separate unpinned quit that could hit a recycled process.
+Background keyboard requests with a window selector fail unless Peekaboo can prove a focused element inside that exact
+snapshot window through a named type field or an immediately preceding exact-window click. Process-only cases use the
+exact PID because macOS process-targeted key events cannot otherwise isolate sibling windows.
 The harness invokes the current CLI directly; it does not use AppleScript or a command runner.
 
 Every background case is continuously sampled at 10 ms and fails if the sentinel PID or top window changes, the

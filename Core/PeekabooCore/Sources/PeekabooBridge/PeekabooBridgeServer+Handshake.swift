@@ -132,6 +132,15 @@ extension PeekabooBridgeServer {
             operations.remove(.setValue)
             operations.remove(.performAction)
         }
+        if self.services.automation as? any TargetedFocusedElementServiceProtocol == nil {
+            operations.remove(.getFocusedElement)
+        }
+        if (self.services.automation as? any ExactWindowTargetedKeyboardServiceProtocol)?
+            .supportsExactWindowTargetedKeyboard != true
+        {
+            operations.remove(.exactWindowTargetedTypeActions)
+            operations.remove(.exactWindowTargetedHotkey)
+        }
         if !self.services.snapshots.supportsImplicitLatestSnapshotInvalidation {
             operations.remove(.invalidateImplicitLatestSnapshot)
         }
@@ -140,6 +149,9 @@ extension PeekabooBridgeServer {
         }
         if !self.services.applications.supportsApplicationRelaunch {
             operations.remove(.relaunchApplicationWithOptions)
+        }
+        if !self.services.applications.supportsProcessGenerationPinnedApplicationQuit {
+            operations.remove(.quitApplication)
         }
         return operations
     }

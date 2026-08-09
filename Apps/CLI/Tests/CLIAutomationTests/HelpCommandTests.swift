@@ -89,6 +89,19 @@ struct HelpCommandTests {
     }
 
     @Test
+    func `Runtime validation errors retain their JSON error class`() async throws {
+        let result = try await runPeekaboo(["completions", "nushell", "--json"])
+
+        #expect(result.exitStatus == 1)
+        #expect(result.stderr.isEmpty)
+        let data = try #require(result.stdout.data(using: .utf8))
+        let payload = try JSONDecoder().decode(JSONResponse.self, from: data)
+        #expect(payload.success == false)
+        #expect(payload.error?.code == ErrorCode.VALIDATION_ERROR.rawValue)
+        #expect(payload.error?.message.contains("Unsupported shell 'nushell'") == true)
+    }
+
+    @Test
     func `Subcommand --help flag`() async throws {
         // Test that each subcommand's --help flag works
         let subcommands = ["image", "list", "config", "agent", "see", "click"]
@@ -100,6 +113,17 @@ struct HelpCommandTests {
             #expect(output.contains("Global Runtime Flags"), "\(subcommand) --help should mention global flags")
             #expect(!output.contains("[info] Peekaboo Agent"), "\(subcommand) --help should not invoke agent")
         }
+    }
+
+    @Test
+    func `Lifecycle and maximize help describe exact background contracts`() async throws {
+        let openHelp = try await runPeekaboo(["open", "--help"]).stdout
+        #expect(openHelp.contains("--wait-for-window"))
+        #expect(openHelp.contains("exact WindowServer window"))
+
+        let maximizeHelp = try await runPeekaboo(["window", "maximize", "--help"]).stdout
+        #expect(maximizeHelp.contains("without entering full screen"))
+        #expect(!maximizeHelp.contains("Maximize a window (full screen)"))
     }
 
     // MARK: - Helper Methods

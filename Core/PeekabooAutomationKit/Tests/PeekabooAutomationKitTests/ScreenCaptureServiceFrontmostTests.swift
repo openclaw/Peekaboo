@@ -5,13 +5,10 @@ import XCTest
 
 @MainActor
 final class ScreenCaptureServiceFrontmostTests: XCTestCase {
-    func testExplicitLegacyEngineForcesCoreGraphicsWindowCapture() {
-        let logging = MockLoggingService()
-        let legacyOperator = LegacyScreenCaptureOperator(logger: logging.logger(category: "test"))
-
-        ScreenCaptureService.$captureEnginePreference.withValue(.legacy) {
-            XCTAssertTrue(legacyOperator.shouldUseLegacyCGCapture())
-        }
+    func testExplicitLegacyEngineSelectsOnlyIsolatedLegacyAPI() {
+        let runner = ScreenCaptureFallbackRunner(apis: [.modern, .legacy])
+        XCTAssertEqual(runner.apis(for: .legacy), [.legacy])
+        XCTAssertEqual(runner.apis(for: .modern), [.modern])
     }
 
     func testCaptureFrontmostUsesApplicationResolverIdentity() async throws {

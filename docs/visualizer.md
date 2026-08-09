@@ -153,6 +153,7 @@ All animations share one design system (`VisualizerDesign.swift`): a single viol
 ### Window Operations 🪟
 - **Style**: The window outline plus a glyph badge naming the operation; accent color, red only for close
 - **Close**: Outline contracts and fades. **Minimize**: outline squashes toward the bottom. **Maximize/Focus**: outline expands with a glow pulse. **Move**: outline lifts and settles. **Resize/SetBounds**: corner brackets pulse inward
+- **Background contract**: Production close/minimize/restore/maximize/move/resize/set-bounds calls are silent by default. Focus and explicitly foreground-consented paths may show these effects; `peekaboo visualizer` exercises the full catalog on demand.
 
 ### Menu Navigation 📋
 - **Effect**: The menu path renders as a breadcrumb chip ("File ▸ New ▸ Project"); segments illuminate in traversal order
@@ -161,6 +162,7 @@ All animations share one design system (`VisualizerDesign.swift`): a single viol
 ### Dialog Interactions 💬
 - **Effect**: The target element gets an accent outline with a glyph badge naming the action
 - **Text entry**: A blinking caret at the field's leading edge; click actions pulse once
+- **Background contract**: AX-only dialog actions do not emit a desktop-global overlay. Feedback requires explicit consent for the global fallback path.
 
 ### Space Switching 🚪
 - **Effect**: A macOS-style Spaces indicator chip: one dot per desktop, the active dot hops to the destination, and a "Desktop N" label updates with a direction arrow

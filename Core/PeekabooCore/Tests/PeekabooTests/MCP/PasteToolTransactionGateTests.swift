@@ -1,0 +1,864 @@
+import Darwin
+import Foundation
+import PeekabooAutomationKit
+import PeekabooFoundation
+import TachikomaMCP
+import Testing
+import UniformTypeIdentifiers
+@testable import PeekabooAgentRuntime
+@testable import PeekabooCore
+
+@Suite(.serialized)
+struct PasteToolTransactionGateTests {
+    @Test
+    func `MCP paste re-resolves its process after shared-lock contention`() async throws {
+        let heldFD = try self.holdPasteTransactionLock()
+        var lockHeld = true
+        defer {
+            if lockHeld {
+                flock(heldFD, LOCK_UN)
+            }
+            close(heldFD)
+        }
+
+        let app = ServiceApplicationInfo(
+            processIdentifier: 333,
+            bundleIdentifier: "com.example.editor",
+            name: "Editor")
+        let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
+        let applications = await MainActor.run { MockApplicationService(applications: [app]) }
+        let clipboard = await MainActor.run { TransactionGateClipboardService() }
+        let context = await MCPToolTestHelpers.makeContext(
+            automation: automation,
+            applications: applications,
+            clipboard: clipboard)
+
+        let command = Task { @MainActor in
+            try await PasteTool(context: context).execute(arguments: ToolArguments(raw: [
+                "app": "Editor",
+                "dataBase64": "cGF5bG9hZA==",
+                "uti": "public.data",
+                "restore_delay_ms": 0,
+            ]))
+        }
+
+        try await Task.sleep(for: .milliseconds(75))
+        #expect(await MainActor.run { automation.targetedHotkeyCalls.isEmpty })
+        #expect(await MainActor.run { clipboard.current.textPreview } == "prior")
+        await MainActor.run {
+            applications.replaceApplicationsForTesting([
+                ServiceApplicationInfo(
+                    processIdentifier: 444,
+                    bundleIdentifier: "com.example.editor",
+                    name: "Editor"),
+            ])
+        }
+
+        #expect(flock(heldFD, LOCK_UN) == 0)
+        lockHeld = false
+
+        let response = try await command.value
+        #expect(response.isError)
+        #expect(await MainActor.run { automation.targetedHotkeyCalls.map(\.keys) } == ["cmd,v"])
+        #expect(await MainActor.run { automation.targetedHotkeyCalls.first?.targetProcessIdentifier } == 444)
+        #expect(await MainActor.run { clipboard.current.textPreview } == "prior")
+        #expect(await MainActor.run { clipboard.restoreCallCount } == 1)
+        guard case let .object(meta) = response.meta else {
+            Issue.record("Expected paste metadata")
+            return
+        }
+        #expect(meta["target_pid"] == .int(444))
+        #expect(meta["paste_outcome"] == .string("unverified"))
+        #expect(meta["may_have_pasted"] == .bool(true))
+        #expect(meta["retry_safe"] == .bool(false))
+    }
+
+    @Test
+    func `MCP capability refusal never reads or mutates the clipboard`() async throws {
+        let app = ServiceApplicationInfo(
+            processIdentifier: 333,
+            bundleIdentifier: "com.example.editor",
+            name: "Editor")
+        let automation = await MainActor.run {
+            let service = MockAutomationService(accessibilityGranted: true)
+            service.supportsTargetedHotkeys = false
+            return service
+        }
+        let applications = await MainActor.run { MockApplicationService(applications: [app]) }
+        let clipboard = await MainActor.run { TransactionGateClipboardService() }
+        let context = await MCPToolTestHelpers.makeContext(
+            automation: automation,
+            applications: applications,
+            clipboard: clipboard)
+
+        let response = try await PasteTool(context: context).execute(arguments: ToolArguments(raw: [
+            "app": "Editor",
+            "dataBase64": "cGF5bG9hZA==",
+            "uti": "public.data",
+        ]))
+
+        #expect(response.isError)
+        #expect(await MainActor.run { clipboard.getCallCount } == 0)
+        #expect(await MainActor.run { clipboard.saveCallCount } == 0)
+        #expect(await MainActor.run { clipboard.setCallCount } == 0)
+        #expect(await MainActor.run { clipboard.clearCallCount } == 0)
+        #expect(await MainActor.run { clipboard.restoreCallCount } == 0)
+        #expect(await MainActor.run { clipboard.current.textPreview } == "prior")
+        #expect(await MainActor.run { automation.targetedHotkeyCalls.isEmpty })
+    }
+
+    @Test
+    func `MCP clipboard read failure is not treated as empty`() async throws {
+        let app = ServiceApplicationInfo(
+            processIdentifier: 333,
+            bundleIdentifier: "com.example.editor",
+            name: "Editor")
+        let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
+        let applications = await MainActor.run { MockApplicationService(applications: [app]) }
+        let clipboard = await MainActor.run {
+            let service = TransactionGateClipboardService()
+            service.getError = ClipboardServiceError.writeFailed("simulated read failure")
+            return service
+        }
+        let context = await MCPToolTestHelpers.makeContext(
+            automation: automation,
+            applications: applications,
+            clipboard: clipboard)
+
+        let response = try await PasteTool(context: context).execute(arguments: ToolArguments(raw: [
+            "app": "Editor",
+            "dataBase64": "cGF5bG9hZA==",
+            "uti": "public.data",
+        ]))
+
+        #expect(response.isError)
+        #expect(self.responseText(response).contains("simulated read failure"))
+        #expect(await MainActor.run { clipboard.getCallCount } == 1)
+        #expect(await MainActor.run { clipboard.saveCallCount } == 0)
+        #expect(await MainActor.run { clipboard.setCallCount } == 0)
+        #expect(await MainActor.run { clipboard.clearCallCount } == 0)
+        #expect(await MainActor.run { clipboard.restoreCallCount } == 0)
+        #expect(await MainActor.run { clipboard.current.textPreview } == "prior")
+        #expect(await MainActor.run { automation.targetedHotkeyCalls.isEmpty })
+    }
+
+    @Test
+    func `MCP current clipboard read failure aborts before Cmd V`() async throws {
+        let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
+        let clipboard = await MainActor.run {
+            let service = TransactionGateClipboardService()
+            service.getError = ClipboardServiceError.writeFailed("simulated current read failure")
+            return service
+        }
+        let context = await MCPToolTestHelpers.makeContext(automation: automation, clipboard: clipboard)
+
+        let response = try await PasteTool(context: context).execute(arguments: ToolArguments(raw: [
+            "foreground": true,
+        ]))
+
+        #expect(response.isError)
+        #expect(self.responseText(response).contains("simulated current read failure"))
+        #expect(await MainActor.run { clipboard.getCallCount } == 1)
+        #expect(await MainActor.run { clipboard.setCallCount } == 0)
+        #expect(await MainActor.run { clipboard.clearCallCount } == 0)
+        #expect(await MainActor.run { clipboard.restoreCallCount } == 0)
+        #expect(await MainActor.run { automation.lastHotkeyKeys } == nil)
+        #expect(await MainActor.run { automation.targetedHotkeyCalls.isEmpty })
+    }
+
+    @Test
+    func `MCP cancellation after snapshot but before write never restores or clears`() async throws {
+        let app = ServiceApplicationInfo(
+            processIdentifier: 333,
+            bundleIdentifier: "com.example.editor",
+            name: "Editor")
+        let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
+        let applications = await MainActor.run { MockApplicationService(applications: [app]) }
+        let clipboard = await MainActor.run {
+            let service = TransactionGateClipboardService()
+            service.afterSave = {
+                withUnsafeCurrentTask { task in
+                    task?.cancel()
+                }
+            }
+            return service
+        }
+        let context = await MCPToolTestHelpers.makeContext(
+            automation: automation,
+            applications: applications,
+            clipboard: clipboard)
+        let command = Task { @MainActor in
+            try await PasteTool(context: context).execute(arguments: ToolArguments(raw: [
+                "app": "Editor",
+                "dataBase64": "cGF5bG9hZA==",
+                "uti": "public.data",
+            ]))
+        }
+
+        let response = try await command.value
+
+        #expect(response.isError)
+        #expect(await MainActor.run { clipboard.saveCallCount } == 1)
+        #expect(await MainActor.run { clipboard.setCallCount } == 0)
+        #expect(await MainActor.run { clipboard.clearCallCount } == 0)
+        #expect(await MainActor.run { clipboard.restoreCallCount } == 0)
+        #expect(await MainActor.run { clipboard.current.textPreview } == "prior")
+        #expect(await MainActor.run { automation.targetedHotkeyCalls.isEmpty })
+    }
+
+    @Test
+    func `MCP cancellation during clipboard write restores before dispatch`() async throws {
+        let app = ServiceApplicationInfo(
+            processIdentifier: 333,
+            bundleIdentifier: "com.example.editor",
+            name: "Editor")
+        let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
+        let applications = await MainActor.run { MockApplicationService(applications: [app]) }
+        let clipboard = await MainActor.run {
+            let service = TransactionGateClipboardService()
+            service.afterSet = {
+                withUnsafeCurrentTask { task in
+                    task?.cancel()
+                }
+            }
+            return service
+        }
+        let context = await MCPToolTestHelpers.makeContext(
+            automation: automation,
+            applications: applications,
+            clipboard: clipboard)
+        let command = Task { @MainActor in
+            try await PasteTool(context: context).execute(arguments: ToolArguments(raw: [
+                "app": "Editor",
+                "dataBase64": "cGF5bG9hZA==",
+                "uti": "public.data",
+            ]))
+        }
+
+        let response = try await command.value
+
+        #expect(response.isError)
+        #expect(await MainActor.run { clipboard.setCallCount } == 1)
+        #expect(await MainActor.run { clipboard.restoreCallCount } == 1)
+        #expect(await MainActor.run { clipboard.current.textPreview } == "prior")
+        #expect(await MainActor.run { automation.targetedHotkeyCalls.isEmpty })
+    }
+
+    @Test(arguments: [false, true])
+    func `MCP set failure restores prior clipboard before dispatch`(mutatesBeforeThrow: Bool) async throws {
+        let app = ServiceApplicationInfo(
+            processIdentifier: 333,
+            bundleIdentifier: "com.example.editor",
+            name: "Editor")
+        let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
+        let applications = await MainActor.run { MockApplicationService(applications: [app]) }
+        let clipboard = await MainActor.run {
+            let service = TransactionGateClipboardService()
+            service.setError = ClipboardServiceError.writeFailed("simulated set failure")
+            service.setMutatesBeforeThrow = mutatesBeforeThrow
+            return service
+        }
+        let context = await MCPToolTestHelpers.makeContext(
+            automation: automation,
+            applications: applications,
+            clipboard: clipboard)
+
+        let response = try await PasteTool(context: context).execute(arguments: ToolArguments(raw: [
+            "app": "Editor",
+            "dataBase64": "cGF5bG9hZA==",
+            "uti": "public.data",
+        ]))
+
+        #expect(response.isError)
+        #expect(self.responseText(response).contains("simulated set failure"))
+        #expect(await MainActor.run { clipboard.saveCallCount } == 1)
+        #expect(await MainActor.run { clipboard.setCallCount } == 1)
+        #expect(await MainActor.run { clipboard.clearCallCount } == 0)
+        #expect(await MainActor.run { clipboard.restoreCallCount } == 1)
+        #expect(await MainActor.run { clipboard.current.textPreview } == "prior")
+        #expect(await MainActor.run { automation.targetedHotkeyCalls.isEmpty })
+    }
+
+    @Test
+    func `MCP set and restoration failure reports integrity risk without dispatch`() async throws {
+        let app = ServiceApplicationInfo(
+            processIdentifier: 333,
+            bundleIdentifier: "com.example.editor",
+            name: "Editor")
+        let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
+        let applications = await MainActor.run { MockApplicationService(applications: [app]) }
+        let clipboard = await MainActor.run {
+            let service = TransactionGateClipboardService()
+            service.setError = ClipboardServiceError.writeFailed("simulated partial set failure")
+            service.setMutatesBeforeThrow = true
+            service.restoreError = ClipboardServiceError.writeFailed("simulated restore failure")
+            return service
+        }
+        let context = await MCPToolTestHelpers.makeContext(
+            automation: automation,
+            applications: applications,
+            clipboard: clipboard)
+
+        let response = try await PasteTool(context: context).execute(arguments: ToolArguments(raw: [
+            "app": "Editor",
+            "dataBase64": "cGF5bG9hZA==",
+            "uti": "public.data",
+        ]))
+
+        #expect(response.isError)
+        #expect(self.responseText(response).contains("Paste payload setup failed"))
+        #expect(self.responseText(response).contains("restoring the prior clipboard also failed"))
+        #expect(await MainActor.run { clipboard.setCallCount } == 1)
+        #expect(await MainActor.run { clipboard.restoreCallCount } == 1)
+        #expect(await MainActor.run { automation.targetedHotkeyCalls.isEmpty })
+    }
+
+    @Test
+    func `Cancellation during restore delay waits for consumption before restoring`() async throws {
+        let app = ServiceApplicationInfo(
+            processIdentifier: 333,
+            bundleIdentifier: "com.example.editor",
+            name: "Editor")
+        let delivered = PasteDeliveryLatch()
+        let automation = await MainActor.run {
+            SignalingAutomationService(accessibilityGranted: true, delivered: delivered)
+        }
+        let applications = await MainActor.run { MockApplicationService(applications: [app]) }
+        let clipboard = await MainActor.run { TransactionGateClipboardService() }
+        let context = await MCPToolTestHelpers.makeContext(
+            automation: automation,
+            applications: applications,
+            clipboard: clipboard)
+
+        let command = Task { @MainActor in
+            try await PasteTool(context: context).execute(arguments: ToolArguments(raw: [
+                "app": "Editor",
+                "dataBase64": "cGF5bG9hZA==",
+                "uti": "public.data",
+                "restore_delay_ms": 250,
+            ]))
+        }
+
+        await delivered.wait()
+        let clock = ContinuousClock()
+        let canceledAt = clock.now
+        command.cancel()
+
+        try await Task.sleep(for: .milliseconds(75))
+        #expect(await MainActor.run { clipboard.current.utiIdentifier } == "public.data")
+        #expect(await MainActor.run { clipboard.restoreCallCount } == 0)
+
+        let response = try await command.value
+        #expect(response.isError)
+        #expect(self.responseText(response).contains("may have pasted; do not retry"))
+        #expect(self.responseText(response).contains("indeterminate"))
+        #expect(clock.now - canceledAt >= .milliseconds(150))
+        #expect(clock.now - canceledAt < .seconds(1))
+        #expect(await MainActor.run { clipboard.current.textPreview } == "prior")
+        #expect(await MainActor.run { clipboard.restoreCallCount } == 1)
+    }
+
+    @Test
+    func `Foreground focus occurs after the transaction lock and is revalidated`() async throws {
+        let heldFD = try self.holdPasteTransactionLock()
+        var lockHeld = true
+        defer {
+            if lockHeld {
+                flock(heldFD, LOCK_UN)
+            }
+            close(heldFD)
+        }
+
+        let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
+        let windows = RecordingWindowService()
+        let clipboard = await MainActor.run { TransactionGateClipboardService() }
+        let context = await MCPToolTestHelpers.makeContext(
+            automation: automation,
+            windows: windows,
+            clipboard: clipboard)
+        let command = Task { @MainActor in
+            try await PasteTool(context: context).execute(arguments: ToolArguments(raw: [
+                "app": "Editor",
+                "foreground": true,
+                "dataBase64": "cGF5bG9hZA==",
+                "uti": "public.data",
+                "restore_delay_ms": 0,
+            ]))
+        }
+
+        try await Task.sleep(for: .milliseconds(75))
+        #expect(windows.focusCalls.isEmpty)
+        #expect(await MainActor.run { clipboard.current.textPreview } == "prior")
+        windows.focusError = ExpectedFocusError.targetDisappeared
+
+        #expect(flock(heldFD, LOCK_UN) == 0)
+        lockHeld = false
+
+        let response = try await command.value
+        #expect(response.isError)
+        let focusCalls = windows.focusCalls
+        #expect(focusCalls.count == 1)
+        if case .application("Editor")? = focusCalls.first {} else {
+            Issue.record("Expected the queued foreground target to be revalidated")
+        }
+        #expect(await MainActor.run { automation.lastHotkeyKeys } == nil)
+        #expect(await MainActor.run { clipboard.current.textPreview } == "prior")
+        #expect(await MainActor.run { clipboard.restoreCallCount } == 0)
+    }
+
+    @Test
+    func `Foreground PID paste fails closed when process identity changes while queued`() async throws {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/sleep")
+        process.arguments = ["30"]
+        try process.run()
+        defer {
+            if process.isRunning {
+                process.terminate()
+            }
+        }
+
+        let heldFD = try self.holdPasteTransactionLock()
+        var lockHeld = true
+        defer {
+            if lockHeld {
+                flock(heldFD, LOCK_UN)
+            }
+            close(heldFD)
+        }
+
+        let processIdentifier = process.processIdentifier
+        let app = ServiceApplicationInfo(
+            processIdentifier: processIdentifier,
+            bundleIdentifier: "com.example.pid-target",
+            name: "PID Target")
+        let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
+        let applications = await MainActor.run { MockApplicationService(applications: [app]) }
+        let windows = RecordingWindowService()
+        let clipboard = await MainActor.run { TransactionGateClipboardService() }
+        let context = await MCPToolTestHelpers.makeContext(
+            automation: automation,
+            applications: applications,
+            windows: windows,
+            clipboard: clipboard)
+        let command = Task { @MainActor in
+            try await PasteTool(context: context).execute(arguments: ToolArguments(raw: [
+                "pid": Int(processIdentifier),
+                "foreground": true,
+                "dataBase64": "cGF5bG9hZA==",
+                "uti": "public.data",
+                "restore_delay_ms": 0,
+            ]))
+        }
+
+        try await Task.sleep(for: .milliseconds(75))
+        #expect(await MainActor.run { automation.lastHotkeyKeys } == nil)
+        process.terminate()
+        process.waitUntilExit()
+
+        #expect(flock(heldFD, LOCK_UN) == 0)
+        lockHeld = false
+
+        let response = try await command.value
+        #expect(response.isError)
+        #expect(windows.focusCalls.isEmpty)
+        #expect(await MainActor.run { automation.lastHotkeyKeys } == nil)
+        #expect(await MainActor.run { clipboard.current.textPreview } == "prior")
+        #expect(await MainActor.run { clipboard.restoreCallCount } == 0)
+    }
+
+    @Test
+    func `Throwing dispatch settles before MCP restore and unlock`() async throws {
+        let app = ServiceApplicationInfo(
+            processIdentifier: 333,
+            bundleIdentifier: "com.example.editor",
+            name: "Editor")
+        let delivered = PasteDeliveryLatch()
+        let automation = await MainActor.run {
+            SignalingAutomationService(
+                accessibilityGranted: true,
+                delivered: delivered,
+                errorAfterDelivery: ExpectedPasteToolDispatchError.afterPosting)
+        }
+        let applications = await MainActor.run { MockApplicationService(applications: [app]) }
+        let clipboard = await MainActor.run { TransactionGateClipboardService() }
+        let context = await MCPToolTestHelpers.makeContext(
+            automation: automation,
+            applications: applications,
+            clipboard: clipboard)
+        let command = Task { @MainActor in
+            try await PasteTool(context: context).execute(arguments: ToolArguments(raw: [
+                "app": "Editor",
+                "dataBase64": "cGF5bG9hZA==",
+                "uti": "public.data",
+                "restore_delay_ms": 250,
+            ]))
+        }
+
+        await delivered.wait()
+        let clock = ContinuousClock()
+        let dispatchedAt = clock.now
+        try await Task.sleep(for: .milliseconds(75))
+        #expect(await MainActor.run { clipboard.current.utiIdentifier } == "public.data")
+        #expect(await MainActor.run { clipboard.restoreCallCount } == 0)
+
+        let contenderFD = try self.openPasteTransactionLock()
+        defer { close(contenderFD) }
+        #expect(flock(contenderFD, LOCK_EX | LOCK_NB) != 0)
+
+        let response = try await command.value
+        #expect(response.isError)
+        #expect(self.responseText(response).contains("may have pasted; do not retry"))
+        #expect(self.responseText(response).contains("indeterminate"))
+        #expect(clock.now - dispatchedAt >= .milliseconds(150))
+        #expect(await MainActor.run { clipboard.current.textPreview } == "prior")
+        #expect(await MainActor.run { clipboard.restoreCallCount } == 1)
+        #expect(flock(contenderFD, LOCK_EX | LOCK_NB) == 0)
+        #expect(flock(contenderFD, LOCK_UN) == 0)
+    }
+
+    @Test
+    func `Current clipboard background paste is explicitly unverified`() async throws {
+        let app = ServiceApplicationInfo(
+            processIdentifier: 333,
+            bundleIdentifier: "com.example.editor",
+            name: "Editor")
+        let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
+        let applications = await MainActor.run { MockApplicationService(applications: [app]) }
+        let clipboard = await MainActor.run { TransactionGateClipboardService() }
+        let context = await MCPToolTestHelpers.makeContext(
+            automation: automation,
+            applications: applications,
+            clipboard: clipboard)
+
+        let response = try await PasteTool(context: context).execute(arguments: ToolArguments(raw: [
+            "app": "Editor",
+            "restore_delay_ms": 0,
+        ]))
+
+        #expect(response.isError)
+        #expect(self.responseText(response).contains("Background paste delivery could not be verified"))
+        #expect(self.responseText(response).contains("may have pasted; do not retry"))
+        #expect(await MainActor.run { automation.targetedHotkeyCalls.map(\.keys) } == ["cmd,v"])
+        #expect(await MainActor.run { clipboard.current.textPreview } == "prior")
+        #expect(await MainActor.run { clipboard.restoreCallCount } == 0)
+        guard case let .object(meta) = response.meta else {
+            Issue.record("Expected paste metadata")
+            return
+        }
+        #expect(meta["paste_outcome"] == .string("unverified"))
+        #expect(meta["retry_safe"] == .bool(false))
+    }
+
+    @Test
+    func `Current clipboard foreground paste can report successful dispatch`() async throws {
+        let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
+        let clipboard = await MainActor.run { TransactionGateClipboardService() }
+        let context = await MCPToolTestHelpers.makeContext(automation: automation, clipboard: clipboard)
+
+        let response = try await PasteTool(context: context).execute(arguments: ToolArguments(raw: [
+            "foreground": true,
+            "restore_delay_ms": 0,
+        ]))
+
+        #expect(response.isError == false)
+        #expect(await MainActor.run { automation.lastHotkeyKeys } == "cmd,v")
+        #expect(await MainActor.run { clipboard.current.textPreview } == "prior")
+        #expect(await MainActor.run { clipboard.restoreCallCount } == 0)
+        guard case let .object(meta) = response.meta else {
+            Issue.record("Expected paste metadata")
+            return
+        }
+        #expect(meta["paste_method"] == .string("current_clipboard"))
+        #expect(meta["clipboard_mutated"] == .bool(false))
+    }
+
+    @Test
+    func `Cancelled foreground current clipboard paste settles then reports indeterminate`() async throws {
+        let delivered = PasteDeliveryLatch()
+        let automation = await MainActor.run {
+            SignalingAutomationService(accessibilityGranted: true, delivered: delivered)
+        }
+        let clipboard = await MainActor.run { TransactionGateClipboardService() }
+        let context = await MCPToolTestHelpers.makeContext(automation: automation, clipboard: clipboard)
+        let command = Task { @MainActor in
+            try await PasteTool(context: context).execute(arguments: ToolArguments(raw: [
+                "foreground": true,
+                "restore_delay_ms": 250,
+            ]))
+        }
+
+        await delivered.wait()
+        command.cancel()
+        let response = try await command.value
+
+        #expect(response.isError)
+        #expect(self.responseText(response).contains("indeterminate"))
+        #expect(self.responseText(response).contains("may have pasted; do not retry"))
+        #expect(await MainActor.run { clipboard.current.textPreview } == "prior")
+        #expect(await MainActor.run { clipboard.restoreCallCount } == 0)
+    }
+
+    @Test
+    func `MCP mutation wrapper invalidates snapshots for unverified paste outcomes`() async throws {
+        await UISnapshotManager.shared.removeAllSnapshots()
+        _ = await UISnapshotManager.shared.createSnapshot()
+        let app = ServiceApplicationInfo(
+            processIdentifier: 333,
+            bundleIdentifier: "com.example.editor",
+            name: "Editor")
+        let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
+        let applications = await MainActor.run { MockApplicationService(applications: [app]) }
+        let clipboard = await MainActor.run { TransactionGateClipboardService() }
+        let context = await MCPToolTestHelpers.makeContext(
+            automation: automation,
+            applications: applications,
+            clipboard: clipboard)
+        let arguments = ToolArguments(raw: [
+            "app": "Editor",
+            "restore_delay_ms": 0,
+        ])
+
+        let response = try await context.execute(
+            tool: PasteTool(context: context),
+            arguments: arguments)
+
+        #expect(response.isError)
+        #expect(await UISnapshotManager.shared.getSnapshot(id: nil) == nil)
+    }
+
+    @Test
+    func `Throwing foreground payload dispatch restores then reports indeterminate`() async throws {
+        let delivered = PasteDeliveryLatch()
+        let automation = await MainActor.run {
+            SignalingAutomationService(
+                accessibilityGranted: true,
+                delivered: delivered,
+                errorAfterDelivery: ExpectedPasteToolDispatchError.afterPosting)
+        }
+        let clipboard = await MainActor.run { TransactionGateClipboardService() }
+        let context = await MCPToolTestHelpers.makeContext(automation: automation, clipboard: clipboard)
+
+        let response = try await PasteTool(context: context).execute(arguments: ToolArguments(raw: [
+            "foreground": true,
+            "dataBase64": "cGF5bG9hZA==",
+            "uti": "public.data",
+            "restore_delay_ms": 0,
+        ]))
+
+        #expect(response.isError)
+        #expect(self.responseText(response).contains("indeterminate"))
+        #expect(self.responseText(response).contains("may have pasted; do not retry"))
+        #expect(await MainActor.run { clipboard.current.textPreview } == "prior")
+        #expect(await MainActor.run { clipboard.restoreCallCount } == 1)
+    }
+
+    private func responseText(_ response: ToolResponse) -> String {
+        guard case let .text(text, _, _)? = response.content.first else { return "" }
+        return text
+    }
+
+    private func holdPasteTransactionLock() throws -> Int32 {
+        let fd = try self.openPasteTransactionLock()
+        while flock(fd, LOCK_EX) != 0 {
+            guard errno == EINTR else {
+                let error = POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+                close(fd)
+                throw error
+            }
+        }
+        return fd
+    }
+
+    private func openPasteTransactionLock() throws -> Int32 {
+        let fileManager = FileManager.default
+        let applicationSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? fileManager.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support")
+        let directory = applicationSupport.appendingPathComponent("Peekaboo", isDirectory: true)
+        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        let path = directory.appendingPathComponent("clipboard-paste-transaction.lock").path
+        let fd = open(path, O_CREAT | O_RDWR, S_IRUSR | S_IWUSR)
+        guard fd >= 0 else {
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+        return fd
+    }
+}
+
+private enum ExpectedFocusError: Error {
+    case targetDisappeared
+}
+
+private enum ExpectedPasteToolDispatchError: Error {
+    case afterPosting
+}
+
+private final class RecordingWindowService: WindowManagementServiceProtocol, @unchecked Sendable {
+    private let lock = NSLock()
+    private var storedFocusCalls: [WindowTarget] = []
+    private var storedFocusError: (any Error)?
+
+    var focusCalls: [WindowTarget] {
+        self.lock.withLock { self.storedFocusCalls }
+    }
+
+    var focusError: (any Error)? {
+        get { self.lock.withLock { self.storedFocusError } }
+        set { self.lock.withLock { self.storedFocusError = newValue } }
+    }
+
+    func closeWindow(target _: WindowTarget) async throws {}
+    func minimizeWindow(target _: WindowTarget) async throws {}
+    func maximizeWindow(target _: WindowTarget) async throws {}
+    func moveWindow(target _: WindowTarget, to _: CGPoint) async throws {}
+    func resizeWindow(target _: WindowTarget, to _: CGSize) async throws {}
+    func setWindowBounds(target _: WindowTarget, bounds _: CGRect) async throws {}
+
+    func focusWindow(target: WindowTarget) async throws {
+        let focusError = self.lock.withLock {
+            self.storedFocusCalls.append(target)
+            return self.storedFocusError
+        }
+        if let focusError {
+            throw focusError
+        }
+    }
+
+    func listWindows(target _: WindowTarget) async throws -> [ServiceWindowInfo] {
+        []
+    }
+
+    func getFocusedWindow() async throws -> ServiceWindowInfo? {
+        nil
+    }
+}
+
+private actor PasteDeliveryLatch {
+    private var isOpen = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func open() {
+        self.isOpen = true
+        let waiters = self.waiters
+        self.waiters.removeAll()
+        for waiter in waiters {
+            waiter.resume()
+        }
+    }
+
+    func wait() async {
+        guard !self.isOpen else { return }
+        await withCheckedContinuation { continuation in
+            self.waiters.append(continuation)
+        }
+    }
+}
+
+@MainActor
+private final class SignalingAutomationService: MockAutomationService {
+    private let delivered: PasteDeliveryLatch
+    private let errorAfterDelivery: (any Error)?
+
+    init(
+        accessibilityGranted: Bool,
+        delivered: PasteDeliveryLatch,
+        errorAfterDelivery: (any Error)? = nil)
+    {
+        self.delivered = delivered
+        self.errorAfterDelivery = errorAfterDelivery
+        super.init(accessibilityGranted: accessibilityGranted)
+    }
+
+    override func hotkey(keys: String, holdDuration: Int, targetProcessIdentifier: pid_t) async throws {
+        try await super.hotkey(
+            keys: keys,
+            holdDuration: holdDuration,
+            targetProcessIdentifier: targetProcessIdentifier)
+        await self.delivered.open()
+        if let errorAfterDelivery {
+            throw errorAfterDelivery
+        }
+    }
+
+    override func hotkey(keys: String, holdDuration: Int) async throws {
+        try await super.hotkey(keys: keys, holdDuration: holdDuration)
+        await self.delivered.open()
+        if let errorAfterDelivery {
+            throw errorAfterDelivery
+        }
+    }
+}
+
+@MainActor
+private final class TransactionGateClipboardService: ClipboardServiceProtocol {
+    private(set) var current = ClipboardReadResult(
+        utiIdentifier: UTType.plainText.identifier,
+        data: Data("prior".utf8),
+        textPreview: "prior")
+    private var slots: [String: ClipboardReadResult] = [:]
+    var afterSave: (() -> Void)?
+    var afterSet: (() -> Void)?
+    var getError: (any Error)?
+    var setError: (any Error)?
+    var setMutatesBeforeThrow = false
+    var restoreError: (any Error)?
+    private(set) var getCallCount = 0
+    private(set) var setCallCount = 0
+    private(set) var clearCallCount = 0
+    private(set) var saveCallCount = 0
+    private(set) var restoreCallCount = 0
+
+    func get(prefer _: UTType?) throws -> ClipboardReadResult? {
+        self.getCallCount += 1
+        if let getError {
+            throw getError
+        }
+        return self.current
+    }
+
+    func set(_ request: ClipboardWriteRequest) throws -> ClipboardReadResult {
+        self.setCallCount += 1
+        guard let representation = request.representations.first else {
+            throw ClipboardServiceError.writeFailed("No representations provided")
+        }
+        let result = ClipboardReadResult(
+            utiIdentifier: representation.utiIdentifier,
+            data: representation.data,
+            textPreview: request.alsoText)
+        if let setError {
+            if self.setMutatesBeforeThrow {
+                self.current = result
+            }
+            throw setError
+        }
+        self.current = result
+        self.afterSet?()
+        return result
+    }
+
+    func clear() {
+        self.clearCallCount += 1
+        self.current = ClipboardReadResult(
+            utiIdentifier: UTType.data.identifier,
+            data: Data(),
+            textPreview: nil)
+    }
+
+    func save(slot: String) {
+        self.saveCallCount += 1
+        self.slots[slot] = self.current
+        self.afterSave?()
+    }
+
+    func restore(slot: String) throws -> ClipboardReadResult {
+        self.restoreCallCount += 1
+        if let restoreError {
+            throw restoreError
+        }
+        guard let saved = slots[slot] else {
+            throw ClipboardServiceError.slotNotFound(slot)
+        }
+        self.current = saved
+        return saved
+    }
+}

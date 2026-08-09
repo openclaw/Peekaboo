@@ -13,6 +13,7 @@ extension PeekabooAgentService {
 
     struct SessionContext {
         let id: String
+        let isPersistent: Bool
         let messages: [ModelMessage]
         let createdAt: Date
         let executionStart: Date
@@ -30,7 +31,8 @@ extension PeekabooAgentService {
         task: String,
         model: LanguageModel,
         label: String,
-        logBehavior: SessionLogBehavior) async throws -> SessionContext
+        logBehavior: SessionLogBehavior,
+        persistSession: Bool = true) async throws -> SessionContext
     {
         self.currentModel = model
         let startTime = Date()
@@ -58,16 +60,19 @@ extension PeekabooAgentService {
         self.logSession("\(label): Creating session with ID: \(sessionId)", force: forceLogging)
         self.logSession("\(label): Session messages count: \(messages.count)", force: forceLogging)
 
-        do {
-            try self.sessionManager.saveSession(session)
-            self.logSession("\(label): Successfully saved initial session", force: forceLogging)
-        } catch {
-            print("ERROR (\(label)): Failed to save initial session: \(error)")
-            throw error
+        if persistSession {
+            do {
+                try self.sessionManager.saveSession(session)
+                self.logSession("\(label): Successfully saved initial session", force: forceLogging)
+            } catch {
+                print("ERROR (\(label)): Failed to save initial session: \(error)")
+                throw error
+            }
         }
 
         return SessionContext(
             id: sessionId,
+            isPersistent: persistSession,
             messages: messages,
             createdAt: startTime,
             executionStart: startTime,
@@ -86,6 +91,7 @@ extension PeekabooAgentService {
         usage: Usage?,
         status: String) throws
     {
+        guard context.isPersistent else { return }
         let executionTime = endTime.timeIntervalSince(context.executionStart)
         let totalTokens = context.metadata.totalTokens + (usage?.totalTokens ?? 0)
         let hadPreviousUsage = context.metadata.customData[Self.usageObservedMetadataKey]
@@ -122,7 +128,7 @@ extension PeekabooAgentService {
             modelSelection: modelIdentity.selection,
             modelEndpointIdentity: modelIdentity.endpointIdentity,
             modelProviderIdentity: modelIdentity.providerIdentity,
-            messages: finalMessages,
+            messages: finalMessages.removingConsumedAgentToolImageContext(),
             metadata: updatedMetadata,
             createdAt: context.createdAt,
             updatedAt: endTime)
@@ -135,6 +141,7 @@ extension PeekabooAgentService {
         checkpoint: StreamingLoopOutcome,
         status: String)
     {
+        guard context.isPersistent else { return }
         do {
             try self.saveExecutionSession(
                 context: context,
@@ -193,6 +200,7 @@ extension PeekabooAgentService {
             self.persistedModelIdentity(for: model)
         return SessionContext(
             id: session.id,
+            isPersistent: true,
             messages: updatedMessages,
             createdAt: session.createdAt,
             executionStart: Date(),

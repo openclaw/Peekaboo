@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 import PeekabooFoundation
 
@@ -17,7 +18,8 @@ extension ProcessService {
         let mutationCertificate = try await self.annotateIfNeeded(
             shouldAnnotate: params.annotate ?? true,
             captureResult: captureResult,
-            snapshotId: resolvedSnapshotId)
+            snapshotId: resolvedSnapshotId,
+            params: params)
 
         return StepExecutionResult(
             output: .data([
@@ -42,20 +44,70 @@ extension ProcessService {
         let mode = params.mode ?? "window"
         switch mode {
         case "fullscreen":
-            return try await self.screenCaptureService.captureScreen(displayIndex: nil)
+            return try await self.screenCaptureService.captureScreen(
+                displayIndex: params.display,
+                visualizerMode: .none,
+                scale: .logical1x)
         case "frontmost":
-            return try await self.screenCaptureService.captureFrontmost()
+            return try await self.screenCaptureService.captureFrontmost(
+                visualizerMode: .none,
+                scale: .logical1x)
         case "window":
-            if let appName = params.app {
-                let windowIndex = params.window.flatMap(Int.init)
+            let requestedPID = try await self.requestedProcessIdentifier(params)
+            if let rawWindowID = params.windowId {
+                guard let windowID = CGWindowID(exactly: rawWindowID), windowID != kCGNullWindowID else {
+                    throw PeekabooError.invalidInput(
+                        field: "windowId",
+                        reason: "windowId must be between 1 and \(UInt32.max)")
+                }
+                guard let identity = SystemIdentityResolver.windowIdentity(windowID) else {
+                    throw PeekabooError.windowNotFound(criteria: "window id \(rawWindowID)")
+                }
+                if let requestedPID, identity.ownerProcessIdentifier != requestedPID {
+                    throw PeekabooError.invalidInput(
+                        field: "target",
+                        reason: "see target fields resolve to different processes")
+                }
                 return try await self.screenCaptureService.captureWindow(
-                    appIdentifier: appName,
-                    windowIndex: windowIndex)
+                    windowID: windowID,
+                    visualizerMode: .none,
+                    scale: .logical1x)
             }
-            return try await self.screenCaptureService.captureFrontmost()
+            if let requestedPID {
+                return try await self.screenCaptureService.captureWindow(
+                    appIdentifier: "PID:\(requestedPID)",
+                    windowIndex: params.window.flatMap(Int.init),
+                    visualizerMode: .none,
+                    scale: .logical1x)
+            }
+            return try await self.screenCaptureService.captureFrontmost(
+                visualizerMode: .none,
+                scale: .logical1x)
         default:
-            return try await self.screenCaptureService.captureFrontmost()
+            throw PeekabooError.invalidInput(
+                field: "mode",
+                reason: "Unsupported see mode '\(mode)'; use window, frontmost, or fullscreen")
         }
+    }
+
+    private func requestedProcessIdentifier(
+        _ params: ProcessCommandParameters.ScreenshotParameters) async throws -> pid_t?
+    {
+        if let pid = params.pid, pid <= 0 {
+            throw PeekabooError.invalidInput(field: "pid", reason: "pid must be greater than 0")
+        }
+        let explicitPID = params.pid.map { pid_t($0) }
+        let appPID: pid_t? = if let app = params.app {
+            try await pid_t(self.applicationService.findApplication(identifier: app).processIdentifier)
+        } else {
+            nil
+        }
+        if let explicitPID, let appPID, explicitPID != appPID {
+            throw PeekabooError.invalidInput(
+                field: "target",
+                reason: "see target fields resolve to different processes")
+        }
+        return explicitPID ?? appPID
     }
 
     private func saveScreenshot(
@@ -105,19 +157,33 @@ extension ProcessService {
                 applicationProcessId: appInfo.map { Int32($0.processIdentifier) },
                 applicationName: appInfo?.name,
                 windowTitle: windowInfo?.title,
-                windowBounds: windowInfo?.bounds))
+                windowBounds: windowInfo?.bounds,
+                windowID: windowInfo?.windowID,
+                windowMutationIdentity: DesktopObservationService.windowContext(from: captureResult)?
+                    .windowMutationIdentity))
     }
 
     private func annotateIfNeeded(
         shouldAnnotate: Bool,
         captureResult: CaptureResult,
-        snapshotId: String) async throws -> (completedAt: Date?, preservationAllowed: Bool?)
+        snapshotId: String,
+        params: ProcessCommandParameters.ScreenshotParameters) async throws
+        -> (completedAt: Date?, preservationAllowed: Bool?)
     {
         guard shouldAnnotate else { return (nil, nil) }
+        let captureContext = DesktopObservationService.windowContext(from: captureResult)
+        let windowContext = WindowContext(
+            applicationName: captureContext?.applicationName,
+            applicationBundleId: captureContext?.applicationBundleId,
+            applicationProcessId: captureContext?.applicationProcessId ?? params.pid,
+            windowTitle: captureContext?.windowTitle,
+            windowID: captureContext?.windowID ?? params.windowId,
+            windowBounds: captureContext?.windowBounds,
+            windowMutationIdentity: captureContext?.windowMutationIdentity)
         let detectionResult = try await uiAutomationService.detectElements(
             in: captureResult.imageData,
             snapshotId: snapshotId,
-            windowContext: nil)
+            windowContext: windowContext)
         try await self.snapshotManager.storeDetectionResult(
             snapshotId: snapshotId,
             result: detectionResult)

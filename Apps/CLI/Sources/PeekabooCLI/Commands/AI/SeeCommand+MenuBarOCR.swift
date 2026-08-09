@@ -64,9 +64,15 @@ extension SeeCommand {
         return nil
     }
 
-    func ocrElements(imageData: Data, windowBounds: CGRect?) throws -> [DetectedElement] {
+    func ocrElements(imageData: Data, windowBounds: CGRect?) async throws -> [DetectedElement] {
         guard let windowBounds else { return [] }
-        let result = try OCRService().recognizeText(in: imageData)
+        let result = try await OCRService().recognizeText(
+            in: imageData,
+            timeoutSeconds: OCRService.defaultTimeoutSeconds
+        )
+        guard result.isComplete else {
+            throw OCRServiceError.incomplete(result.warnings.joined(separator: "; "))
+        }
         return ObservationOCRMapper.elements(from: result, windowBounds: windowBounds)
     }
 
@@ -84,7 +90,7 @@ extension SeeCommand {
                 "Selected menu bar popover via AX menu frame",
                 category: "Capture",
                 metadata: [
-                    "rect": "\(match.bounds)"
+                    "rect": "\(match.bounds)",
                 ]
             )
             return MenuBarPopoverCapture(
@@ -100,7 +106,8 @@ extension SeeCommand {
     private func menuBarPopoverOCRSelector() -> ObservationMenuBarPopoverOCRSelector {
         ObservationMenuBarPopoverOCRSelector(
             screenCapture: self.services.screenCapture,
-            screens: self.services.screens.listScreens()
+            screens: self.services.screens.listScreens(),
+            visualizerMode: .none
         )
     }
 }

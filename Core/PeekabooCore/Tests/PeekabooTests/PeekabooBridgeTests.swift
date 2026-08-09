@@ -786,6 +786,47 @@ struct PeekabooBridgeTests {
     }
 
     @Test
+    func `PID scoped focused element round trips through bridge`() async throws {
+        let stub = await MainActor.run { StubServices() }
+        let server = await MainActor.run {
+            PeekabooBridgeServer(
+                services: stub,
+                hostKind: .gui,
+                allowlistedTeams: [],
+                allowlistedBundles: [])
+        }
+        let request = PeekabooBridgeRequest.getFocusedElement(.init(targetProcessIdentifier: 4242))
+        let requestData = try JSONEncoder.peekabooBridgeEncoder().encode(request)
+        let responseData = await server.decodeAndHandle(requestData, peer: nil)
+
+        guard case let .focusedElement(info) = try self.decode(responseData) else {
+            Issue.record("Expected focused-element response")
+            return
+        }
+        #expect(info?.processId == 4242)
+        #expect(info?.frame == CGRect(x: 100, y: 120, width: 300, height: 30))
+        #expect(!PeekabooBridgeOperation.compatible(
+            [.getFocusedElement],
+            with: .init(major: 1, minor: 13)).contains(.getFocusedElement))
+        #expect(PeekabooBridgeOperation.compatible(
+            [.getFocusedElement],
+            with: .init(major: 1, minor: 14)).contains(.getFocusedElement))
+        let atomicKeyboard: Set<PeekabooBridgeOperation> = [
+            .exactWindowTargetedTypeActions,
+            .exactWindowTargetedHotkey,
+        ]
+        #expect(PeekabooBridgeOperation.compatible(
+            atomicKeyboard,
+            with: .init(major: 1, minor: 14)).isEmpty)
+        #expect(PeekabooBridgeOperation.compatible(
+            atomicKeyboard,
+            with: .init(major: 1, minor: 16)).isEmpty)
+        #expect(PeekabooBridgeOperation.compatible(
+            atomicKeyboard,
+            with: .init(major: 1, minor: 17)) == atomicKeyboard)
+    }
+
+    @Test
     func `automation click is forwarded`() async throws {
         let stub = await MainActor.run { StubServices() }
         let server = await MainActor.run {
@@ -1073,6 +1114,120 @@ struct PeekabooBridgeTests {
 
 extension PeekabooBridgeTests {
     @Test
+    func `remote automation queries focus inside target PID`() async throws {
+        let socketPath = "/tmp/peekaboo-focused-element-\(UUID().uuidString).sock"
+        let server = await MainActor.run {
+            PeekabooBridgeServer(
+                services: StubServices(),
+                hostKind: .gui,
+                allowlistedTeams: [],
+                allowlistedBundles: [])
+        }
+        let host = PeekabooBridgeHost(
+            socketPath: socketPath,
+            server: server,
+            allowedTeamIDs: [],
+            requestTimeoutSec: 2)
+        try await host.startChecked()
+        defer { Task { await host.stop() } }
+
+        let client = PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 2)
+        let handshake = try await client.handshake(client: PeekabooBridgeClientIdentity(
+            bundleIdentifier: "dev.peeka.cli",
+            teamIdentifier: "TEAMID",
+            processIdentifier: getpid()))
+        #expect(handshake.supportedOperations.contains(.exactWindowTargetedTypeActions))
+        #expect(handshake.supportedOperations.contains(.exactWindowTargetedHotkey))
+        let remote = await MainActor.run {
+            RemoteUIAutomationService(
+                client: client,
+                supportsExactWindowTargetedKeyboard: true)
+        }
+
+        let focused = await remote.getFocusedElement(targetProcessIdentifier: 4242)
+        let focusedIdentity = try #require(focused.flatMap(FocusedElementIdentity.init))
+        _ = try await remote.typeActions(
+            [.text("atomic")],
+            cadence: .fixed(milliseconds: 0),
+            snapshotId: "snapshot",
+            target: ExactWindowKeyboardTarget(
+                windowIdentity: WindowMutationIdentity(
+                    windowID: 999_999,
+                    ownerProcessIdentifier: 4242,
+                    ownerProcessStartIdentity: 1),
+                windowBounds: CGRect(x: 0, y: 0, width: 800, height: 600),
+                focusedElement: focusedIdentity))
+
+        #expect(focused?.processId == 4242)
+        #expect(focused?.applicationName == "Editor")
+    }
+
+    @Test
+    func `atomic exact window keyboard blocks concurrent retarget request`() async throws {
+        let socketPath = "/tmp/peekaboo-atomic-keyboard-\(UUID().uuidString).sock"
+        let services = await MainActor.run { StubServices() }
+        await MainActor.run {
+            services.automationStub.exactKeyboardDelayNanoseconds = 150_000_000
+            services.automationStub.recordsExactKeyboardEvents = true
+        }
+        let server = await MainActor.run {
+            PeekabooBridgeServer(
+                services: services,
+                hostKind: .gui,
+                allowlistedTeams: [],
+                allowlistedBundles: [],
+                postEventAccessEvaluator: { true })
+        }
+        let host = PeekabooBridgeHost(
+            socketPath: socketPath,
+            server: server,
+            allowedTeamIDs: [],
+            requestTimeoutSec: 2)
+        try await host.startChecked()
+        defer { Task { await host.stop() } }
+
+        let typeClient = PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 2)
+        let clickClient = PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 2)
+        let typeTask = Task {
+            try await typeClient.typeActions(
+                [.text("atomic")],
+                cadence: .fixed(milliseconds: 0),
+                snapshotId: "snapshot",
+                expectedWindowIdentity: WindowMutationIdentity(
+                    windowID: 999_999,
+                    ownerProcessIdentifier: 4242,
+                    ownerProcessStartIdentity: 1),
+                expectedWindowBounds: CGRect(x: 0, y: 0, width: 800, height: 600))
+        }
+
+        for _ in 0..<100 {
+            let started = await MainActor.run {
+                services.automationStub.exactKeyboardEvents.contains("type-start")
+            }
+            if started {
+                break
+            }
+            try await Task.sleep(nanoseconds: 2_000_000)
+        }
+        let clickTask = Task {
+            try await clickClient.click(
+                target: .query("Sibling"),
+                clickType: .single,
+                snapshotId: "snapshot",
+                expectedWindowIdentity: WindowMutationIdentity(
+                    windowID: 888_888,
+                    ownerProcessIdentifier: 4242,
+                    ownerProcessStartIdentity: 1),
+                expectedWindowBounds: CGRect(x: 0, y: 0, width: 800, height: 600))
+        }
+
+        _ = try await typeTask.value
+        try await clickTask.value
+        let events = await MainActor.run { services.automationStub.exactKeyboardEvents }
+        #expect(events == ["type-start", "type-end", "retarget"])
+    }
+
+    @Test
     func `remote targeted hotkey maps revoked post event permission`() async throws {
         let socketPath = "/tmp/peekaboo-bridge-client-\(UUID().uuidString).sock"
         let postEventAccess = MutableBoolBox(true)
@@ -1224,6 +1379,143 @@ extension PeekabooBridgeTests {
             Issue.record("Expected service unavailable error")
         } catch let PeekabooError.serviceUnavailable(message) {
             #expect(message.contains("is not supported by this host"))
+        }
+    }
+
+    @Test
+    func `remote targeted and exact input restore indeterminate delivery errors`() async throws {
+        let socketPath = "/tmp/peekaboo-bridge-input-indeterminate-\(UUID().uuidString).sock"
+        let targetedTypeSourceError = InputDeliveryIndeterminateError(
+            operation: .type,
+            emittedUnitCount: 2,
+            causeDescription: "targeted type destination drifted")
+        let exactTypeSourceError = InputDeliveryIndeterminateError(
+            operation: .type,
+            emittedUnitCount: 3,
+            causeDescription: "exact type destination drifted")
+        let targetedHotkeySourceError = InputDeliveryIndeterminateError(
+            operation: .hotkey,
+            emittedUnitCount: 4,
+            causeDescription: "targeted hotkey destination drifted")
+        let exactHotkeySourceError = InputDeliveryIndeterminateError(
+            operation: .hotkey,
+            emittedUnitCount: 5,
+            causeDescription: "exact hotkey destination drifted")
+        let clickSourceError = InputDeliveryIndeterminateError(
+            operation: .click,
+            emittedUnitCount: 3,
+            causeDescription: "exact click destination drifted")
+        let stub = await MainActor.run { StubServices() }
+        await MainActor.run {
+            stub.automationStub.targetedTypeError = targetedTypeSourceError
+            stub.automationStub.exactTypeError = exactTypeSourceError
+            stub.automationStub.targetedHotkeyError = targetedHotkeySourceError
+            stub.automationStub.exactHotkeyError = exactHotkeySourceError
+            stub.automationStub.targetedClickError = clickSourceError
+        }
+        let server = await MainActor.run {
+            PeekabooBridgeServer(
+                services: stub,
+                hostKind: .gui,
+                allowlistedTeams: [],
+                allowlistedBundles: [],
+                postEventAccessEvaluator: { true })
+        }
+        let host = PeekabooBridgeHost(
+            socketPath: socketPath,
+            server: server,
+            allowedTeamIDs: [],
+            requestTimeoutSec: 2)
+
+        try await host.startChecked()
+        defer { Task { await host.stop() } }
+
+        let remote = await MainActor.run {
+            RemoteUIAutomationService(
+                client: PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 2),
+                supportsTargetedHotkeys: true,
+                supportsTargetedTypeActions: true,
+                supportsTargetedClicks: true,
+                supportsExactWindowTargetedClicks: true,
+                supportsExactWindowTargetedKeyboard: true)
+        }
+        let expectedWindowIdentity = WindowMutationIdentity(
+            windowID: 999_999,
+            ownerProcessIdentifier: 4242,
+            ownerProcessStartIdentity: 1)
+        let expectedWindowBounds = CGRect(x: 0, y: 0, width: 800, height: 600)
+
+        do {
+            try await remote.click(
+                target: .coordinates(CGPoint(x: 10, y: 20)),
+                clickType: .single,
+                snapshotId: "snapshot",
+                expectedWindowIdentity: expectedWindowIdentity,
+                expectedWindowBounds: expectedWindowBounds)
+            Issue.record("Expected exact click outcome to be indeterminate")
+        } catch let error as InputDeliveryIndeterminateError {
+            #expect(error.operation == .click)
+            #expect(error.emittedUnitCount == nil)
+            #expect(error.causeDescription == clickSourceError.localizedDescription)
+        } catch {
+            Issue.record("Expected exact click indeterminate error, got \(error)")
+        }
+
+        do {
+            _ = try await remote.typeActions(
+                [.text("targeted")],
+                cadence: .fixed(milliseconds: 0),
+                snapshotId: "snapshot",
+                targetProcessIdentifier: 4242)
+            Issue.record("Expected targeted type outcome to be indeterminate")
+        } catch let error as InputDeliveryIndeterminateError {
+            #expect(error.operation == .type)
+            #expect(error.emittedUnitCount == nil)
+            #expect(error.causeDescription == targetedTypeSourceError.localizedDescription)
+        } catch {
+            Issue.record("Expected targeted type indeterminate error, got \(error)")
+        }
+
+        do {
+            _ = try await remote.typeActions(
+                [.text("exact")],
+                cadence: .fixed(milliseconds: 0),
+                snapshotId: "snapshot",
+                expectedWindowIdentity: expectedWindowIdentity,
+                expectedWindowBounds: expectedWindowBounds)
+            Issue.record("Expected exact type outcome to be indeterminate")
+        } catch let error as InputDeliveryIndeterminateError {
+            #expect(error.operation == .type)
+            #expect(error.emittedUnitCount == nil)
+            #expect(error.causeDescription == exactTypeSourceError.localizedDescription)
+        } catch {
+            Issue.record("Expected exact type indeterminate error, got \(error)")
+        }
+
+        do {
+            try await remote.hotkey(keys: "cmd,l", holdDuration: 50, targetProcessIdentifier: 4242)
+            Issue.record("Expected targeted hotkey outcome to be indeterminate")
+        } catch let error as InputDeliveryIndeterminateError {
+            #expect(error.operation == .hotkey)
+            #expect(error.emittedUnitCount == nil)
+            #expect(error.causeDescription == targetedHotkeySourceError.localizedDescription)
+        } catch {
+            Issue.record("Expected targeted hotkey indeterminate error, got \(error)")
+        }
+
+        do {
+            try await remote.hotkey(
+                keys: "cmd,l",
+                holdDuration: 50,
+                expectedWindowIdentity: expectedWindowIdentity,
+                expectedWindowBounds: expectedWindowBounds)
+            Issue.record("Expected exact hotkey outcome to be indeterminate")
+        } catch let error as InputDeliveryIndeterminateError {
+            #expect(error.operation == .hotkey)
+            #expect(error.emittedUnitCount == nil)
+            #expect(error.causeDescription == exactHotkeySourceError.localizedDescription)
+        } catch {
+            Issue.record("Expected exact hotkey indeterminate error, got \(error)")
         }
     }
 
@@ -1411,7 +1703,7 @@ final class StubServices: PeekabooBridgeServiceProviding {
     let automationStub = StubAutomationService()
     let automation: any UIAutomationServiceProtocol
     let applications: any ApplicationServiceProtocol
-    let windows: any WindowManagementServiceProtocol = StubWindowService()
+    let windows: any WindowManagementServiceProtocol
     let menu: any MenuServiceProtocol = UnimplementedMenuService()
     let dock: any DockServiceProtocol = UnimplementedDockService()
     let dialogs: any DialogServiceProtocol = UnimplementedDialogService()
@@ -1424,6 +1716,7 @@ final class StubServices: PeekabooBridgeServiceProviding {
 
     init(
         applications: any ApplicationServiceProtocol = StubApplicationService(),
+        windows: any WindowManagementServiceProtocol = StubWindowService(),
         snapshots: any SnapshotManagerProtocol = SnapshotManager(),
         desktopObservation: (any DesktopObservationServiceProtocol)? = nil)
     {
@@ -1431,6 +1724,7 @@ final class StubServices: PeekabooBridgeServiceProviding {
         self.screenCapture = self.screenCaptureStub
         self.automation = self.automationStub
         self.applications = applications
+        self.windows = windows
         self.snapshots = snapshots
         self.desktopObservationStub = desktopObservationStub
         self.desktopObservation = desktopObservation ?? desktopObservationStub
@@ -1587,8 +1881,13 @@ final class StubScreenCaptureService: ScreenCaptureServiceProtocol {
 }
 
 @MainActor
-final class StubAutomationService: TargetedHotkeyServiceProtocol, ExactWindowTargetedClickServiceProtocol,
-ElementActionAutomationServiceProtocol {
+final class StubAutomationService: TargetedHotkeyServiceProtocol, TargetedTypeServiceProtocol,
+    ExactWindowTargetedClickServiceProtocol,
+    ElementActionAutomationServiceProtocol, TargetedFocusedElementServiceProtocol,
+    ExactWindowTargetedKeyboardServiceProtocol
+{
+    let supportsExactWindowTargetedKeyboard = true
+    let exactWindowTargetedKeyboardUnavailableReason: String? = nil
     struct Click { let target: ClickTarget; let type: ClickType }
     struct TargetedHotkey {
         let keys: String
@@ -1615,6 +1914,18 @@ ElementActionAutomationServiceProtocol {
         let snapshotId: String?
     }
 
+    func getFocusedElement(targetProcessIdentifier: pid_t) async -> UIFocusInfo? {
+        UIFocusInfo(
+            role: "AXTextField",
+            title: "Editor",
+            value: nil,
+            frame: CGRect(x: 100, y: 120, width: 300, height: 30),
+            applicationName: "Editor",
+            bundleIdentifier: "com.example.editor",
+            processId: Int(targetProcessIdentifier),
+            windowID: 999_999)
+    }
+
     private(set) var lastClick: Click?
     private(set) var lastProcessTargetedHotkey: TargetedHotkey?
     private(set) var lastProcessTargetedClick: TargetedClick?
@@ -1622,8 +1933,14 @@ ElementActionAutomationServiceProtocol {
     private(set) var lastPerformAction: PerformAction?
     var clickError: (any Error)?
     var elementActionError: (any Error)?
+    var targetedTypeError: (any Error)?
     var targetedHotkeyError: (any Error)?
+    var exactTypeError: (any Error)?
+    var exactHotkeyError: (any Error)?
     var targetedClickError: (any Error)?
+    var exactKeyboardDelayNanoseconds: UInt64 = 0
+    var recordsExactKeyboardEvents = false
+    private(set) var exactKeyboardEvents: [String] = []
 
     func detectElements(in _: Data, snapshotId _: String?, windowContext _: WindowContext?) async throws
         -> ElementDetectionResult
@@ -1668,8 +1985,8 @@ ElementActionAutomationServiceProtocol {
         target: ClickTarget,
         clickType: ClickType,
         snapshotId _: String?,
-        targetProcessIdentifier: pid_t,
-        targetWindowID: Int) async throws
+        expectedWindowIdentity: WindowMutationIdentity,
+        expectedWindowBounds _: CGRect) async throws
     {
         if let targetedClickError {
             throw targetedClickError
@@ -1677,8 +1994,11 @@ ElementActionAutomationServiceProtocol {
         self.lastProcessTargetedClick = TargetedClick(
             target: target,
             type: clickType,
-            targetProcessIdentifier: targetProcessIdentifier,
-            targetWindowID: targetWindowID)
+            targetProcessIdentifier: expectedWindowIdentity.ownerProcessIdentifier,
+            targetWindowID: expectedWindowIdentity.windowID)
+        if self.recordsExactKeyboardEvents {
+            self.exactKeyboardEvents.append("retarget")
+        }
     }
 
     func type(text _: String, target _: String?, clearExisting _: Bool, typingDelay _: Int, snapshotId _: String?) async
@@ -1688,6 +2008,90 @@ ElementActionAutomationServiceProtocol {
         -> TypeResult
     {
         TypeResult(totalCharacters: actions.count, keyPresses: actions.count)
+    }
+
+    func typeActions(
+        _ actions: [TypeAction],
+        cadence _: TypingCadence,
+        snapshotId _: String?,
+        targetProcessIdentifier _: pid_t) async throws -> TypeResult
+    {
+        if let targetedTypeError {
+            throw targetedTypeError
+        }
+        return TypeResult(totalCharacters: actions.count, keyPresses: actions.count)
+    }
+
+    func typeActions(
+        _ actions: [TypeAction],
+        cadence _: TypingCadence,
+        snapshotId _: String?,
+        expectedWindowIdentity: WindowMutationIdentity,
+        expectedWindowBounds _: CGRect) async throws -> TypeResult
+    {
+        if let exactTypeError {
+            throw exactTypeError
+        }
+        guard expectedWindowIdentity.windowID == 999_999 else {
+            throw PeekabooError.invalidInput("exact window mismatch")
+        }
+        self.exactKeyboardEvents.append("type-start")
+        if self.exactKeyboardDelayNanoseconds > 0 {
+            try await Task.sleep(nanoseconds: self.exactKeyboardDelayNanoseconds)
+        }
+        self.exactKeyboardEvents.append("type-end")
+        return TypeResult(totalCharacters: actions.count, keyPresses: actions.count)
+    }
+
+    func hotkey(
+        keys _: String,
+        holdDuration _: Int,
+        expectedWindowIdentity: WindowMutationIdentity,
+        expectedWindowBounds _: CGRect) async throws
+    {
+        if let exactHotkeyError {
+            throw exactHotkeyError
+        }
+        guard expectedWindowIdentity.windowID == 999_999 else {
+            throw PeekabooError.invalidInput("exact window mismatch")
+        }
+        self.exactKeyboardEvents.append("hotkey")
+    }
+
+    func typeActions(
+        _ actions: [TypeAction],
+        cadence: TypingCadence,
+        snapshotId: String?,
+        target: ExactWindowKeyboardTarget) async throws -> TypeResult
+    {
+        guard target.focusedElement.processIdentifier == target.windowIdentity.ownerProcessIdentifier,
+              target.focusedElement.windowID == target.windowIdentity.windowID
+        else {
+            throw PeekabooError.invalidInput("focused destination mismatch")
+        }
+        return try await self.typeActions(
+            actions,
+            cadence: cadence,
+            snapshotId: snapshotId,
+            expectedWindowIdentity: target.windowIdentity,
+            expectedWindowBounds: target.windowBounds)
+    }
+
+    func hotkey(
+        keys: String,
+        holdDuration: Int,
+        target: ExactWindowKeyboardTarget) async throws
+    {
+        guard target.focusedElement.processIdentifier == target.windowIdentity.ownerProcessIdentifier,
+              target.focusedElement.windowID == target.windowIdentity.windowID
+        else {
+            throw PeekabooError.invalidInput("focused destination mismatch")
+        }
+        try await self.hotkey(
+            keys: keys,
+            holdDuration: holdDuration,
+            expectedWindowIdentity: target.windowIdentity,
+            expectedWindowBounds: target.windowBounds)
     }
 
     func setValue(target: String, value: UIElementValue, snapshotId: String?) async throws -> ElementActionResult {

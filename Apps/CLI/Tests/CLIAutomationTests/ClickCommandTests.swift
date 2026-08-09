@@ -67,23 +67,21 @@ struct ClickCommandTests {
     }
 
     @Test
-    func `Click command defaults to background coordinate clicks when pid is supplied`() async throws {
-        let context = await makeContext()
-        let result = try await InProcessCommandRunner.run(
-            ["click", "--coords", "100,200", "--pid", "12345", "--global-coords", "--json"],
-            services: context.services
-        )
+    func `Click command refuses PID only background coordinates without snapshot`() async throws {
+        for snapshotArguments in [[], ["--snapshot", ""]] {
+            let context = await makeContext()
+            let result = try await InProcessCommandRunner.run(
+                ["click", "--coords", "100,200", "--pid", "12345", "--global-coords"] +
+                    snapshotArguments + ["--json"],
+                services: context.services
+            )
 
-        #expect(result.exitStatus == 0)
-        let calls = await automationState(context) { $0.targetedClickCalls }
-        let call = try #require(calls.first)
-        if case let .coordinates(point) = call.target {
-            #expect(point == CGPoint(x: 100, y: 200))
-        } else {
-            Issue.record("Expected coordinates click target")
+            #expect(result.exitStatus == 1)
+            #expect(result.combinedOutput.contains("require --snapshot"))
+            let calls = await automationState(context) { $0.targetedClickCalls }
+            #expect(calls.isEmpty)
+            #expect(context.snapshots.invalidationCutoffs.isEmpty)
         }
-        #expect(call.targetProcessIdentifier == 12345)
-        #expect(call.targetWindowID == nil)
     }
 
     @Test
@@ -91,9 +89,18 @@ struct ClickCommandTests {
         let application = Self.makeApplication()
         let selectedWindow = Self.makeWindow(id: 42, title: "Editor", index: 0)
         let context = await makeContext(application: application, windows: [selectedWindow])
+        let snapshotId = try await storeSnapshot(
+            element: DetectedElement(id: "B1", type: .button, bounds: .zero),
+            windowID: selectedWindow.windowID,
+            windowTitle: selectedWindow.title,
+            in: context.snapshots
+        )
 
         let result = try await InProcessCommandRunner.run(
-            ["click", "--coords", "10,10", "--window-id", "42", "--json"],
+            [
+                "click", "--coords", "10,10", "--window-id", "42",
+                "--snapshot", snapshotId, "--json",
+            ],
             services: context.services
         )
 
@@ -114,9 +121,18 @@ struct ClickCommandTests {
         let application = Self.makeApplication()
         let selectedWindow = Self.makeWindow(id: 42, title: "Editor", index: 0)
         let context = await makeContext(application: application, windows: [selectedWindow])
+        let snapshotId = try await storeSnapshot(
+            element: DetectedElement(id: "B1", type: .button, bounds: .zero),
+            windowID: selectedWindow.windowID,
+            windowTitle: selectedWindow.title,
+            in: context.snapshots
+        )
 
         let result = try await InProcessCommandRunner.run(
-            ["click", "--coords", "100,200", "--window-id", "42", "--global-coords", "--json"],
+            [
+                "click", "--coords", "100,200", "--window-id", "42", "--global-coords",
+                "--snapshot", snapshotId, "--json",
+            ],
             services: context.services
         )
 
@@ -333,6 +349,36 @@ struct ClickCommandTests {
     }
 
     @Test
+    func `Click command rejects exact window selector when snapshot lacks capture receipt`() async throws {
+        let application = Self.makeApplication()
+        let selectedWindow = Self.makeWindow(id: 42, title: "Editor", index: 0)
+        let context = await makeContext(application: application, windows: [selectedWindow])
+        let element = DetectedElement(
+            id: "B1",
+            type: .button,
+            label: "Save",
+            bounds: CGRect(x: 20, y: 30, width: 80, height: 30)
+        )
+        let snapshotId = try await storeSnapshot(
+            element: element,
+            windowID: selectedWindow.windowID,
+            windowTitle: selectedWindow.title,
+            includeMutationIdentity: false,
+            in: context.snapshots
+        )
+
+        let result = try await InProcessCommandRunner.run(
+            ["click", "--on", "B1", "--snapshot", snapshotId, "--window-id", "42", "--json"],
+            services: context.services
+        )
+
+        #expect(result.exitStatus == 1)
+        #expect(result.combinedOutput.contains("no capture-time process-generation receipt"))
+        let calls = await automationState(context) { $0.targetedClickCalls }
+        #expect(calls.isEmpty)
+    }
+
+    @Test
     func `Foreground click accepts legacy snapshot without exact window metadata`() async throws {
         let application = Self.makeApplication()
         let selectedWindow = Self.makeWindow(id: 42, title: "Editor", index: 0)
@@ -427,7 +473,8 @@ struct ClickCommandTests {
 
     @Test
     func `Click command reuses latest snapshot for element lookup with app target`() async throws {
-        let context = await makeContext()
+        let application = Self.makeApplication()
+        let context = await makeContext(application: application)
         let element = DetectedElement(
             id: "B1",
             type: .button,
@@ -435,23 +482,32 @@ struct ClickCommandTests {
             bounds: CGRect(x: 20, y: 30, width: 80, height: 30)
         )
         let snapshotId = try await storeSnapshot(element: element, in: context.snapshots)
-        await MainActor.run {
-            context.automation.setWaitForElementResult(
-                WaitForElementResult(found: true, element: element, waitTime: 0),
-                for: .query("Save")
-            )
-        }
-
         let result = try await InProcessCommandRunner.run(
-            ["click", "Save", "--app", "TextEdit", "--json", "--no-auto-focus"],
+            ["click", "Save", "--app", application.name, "--json"],
             services: context.services
         )
 
         #expect(result.exitStatus == 0)
         let waitCalls = await automationState(context) { $0.waitForElementCalls }
-        let clickCalls = await automationState(context) { $0.clickCalls }
-        #expect(waitCalls.first?.snapshotId == snapshotId)
-        #expect(clickCalls.first?.snapshotId == snapshotId)
+        let foregroundClickCalls = await automationState(context) { $0.clickCalls }
+        let backgroundClickCalls = await automationState(context) { $0.targetedClickCalls }
+        #expect(waitCalls.isEmpty)
+        #expect(foregroundClickCalls.isEmpty)
+        #expect(backgroundClickCalls.first?.snapshotId == snapshotId)
+    }
+
+    @Test
+    func `Click focus options require explicit foreground delivery`() async throws {
+        let context = await makeContext()
+        let result = try await InProcessCommandRunner.run(
+            ["click", "Save", "--app", "TextEdit", "--no-auto-focus", "--json"],
+            services: context.services
+        )
+
+        #expect(result.exitStatus == 1)
+        #expect(result.combinedOutput.contains("Focus options require --foreground for click"))
+        #expect(await self.automationState(context) { $0.clickCalls }.isEmpty)
+        #expect(await self.automationState(context) { $0.targetedClickCalls }.isEmpty)
     }
 
     private func makeContext(
@@ -479,9 +535,19 @@ struct ClickCommandTests {
         element: DetectedElement,
         windowID: Int? = nil,
         windowTitle: String? = nil,
+        includeMutationIdentity: Bool = true,
         in snapshots: StubSnapshotManager
     ) async throws -> String {
         let snapshotId = try await snapshots.createSnapshot()
+        let mutationIdentity: WindowMutationIdentity? = if includeMutationIdentity, let windowID {
+            WindowMutationIdentity(
+                windowID: windowID,
+                ownerProcessIdentifier: 12345,
+                ownerProcessStartIdentity: 7
+            )
+        } else {
+            nil
+        }
         let detection = ElementDetectionResult(
             snapshotId: snapshotId,
             screenshotPath: "/tmp/screenshot.png",
@@ -495,7 +561,9 @@ struct ClickCommandTests {
                     applicationBundleId: "com.example.test",
                     applicationProcessId: 12345,
                     windowTitle: windowTitle,
-                    windowID: windowID
+                    windowID: windowID,
+                    windowBounds: windowID == nil ? nil : CGRect(x: 10, y: 20, width: 400, height: 300),
+                    windowMutationIdentity: mutationIdentity
                 )
             )
         )
@@ -520,7 +588,12 @@ struct ClickCommandTests {
             title: title,
             bounds: CGRect(x: 10, y: 20, width: 400, height: 300),
             isMainWindow: index == 0,
-            index: index
+            index: index,
+            mutationIdentity: WindowMutationIdentity(
+                windowID: id,
+                ownerProcessIdentifier: 12345,
+                ownerProcessStartIdentity: 7
+            )
         )
     }
 

@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 import os.log
 import PeekabooAutomationKit
@@ -35,6 +36,9 @@ public final class PeekabooBridgeServer {
     let postEventAccessEvaluator: @MainActor @Sendable () -> Bool
     let postEventAccessRequester: @MainActor @Sendable () -> Bool
     let permissionStatusEvaluator: @MainActor @Sendable (_ allowAppleScriptLaunch: Bool) -> PermissionsStatus
+    let windowOwnerProcessIdentifierProvider: @Sendable (CGWindowID) -> pid_t?
+    let windowBoundsProvider: @Sendable (CGWindowID) -> CGRect?
+    let processStartIdentityProvider: @Sendable (pid_t) -> UInt64?
     let desktopMutationWatermarkStore: DesktopMutationWatermarkStore?
     let automationActivityObserver: (@Sendable (pid_t) -> Void)?
     private let desktopMutationGate = PeekabooBridgeMutationGate()
@@ -55,6 +59,13 @@ public final class PeekabooBridgeServer {
         postEventAccessRequester: (@MainActor @Sendable () -> Bool)? = nil,
         permissionStatusEvaluator: (@MainActor @Sendable (_ allowAppleScriptLaunch: Bool) -> PermissionsStatus)? = nil,
         automationActivityObserver: (@Sendable (pid_t) -> Void)? = nil,
+        windowOwnerProcessIdentifierProvider: @escaping @Sendable (CGWindowID) -> pid_t? =
+            SystemIdentityResolver.windowOwnerProcessIdentifier,
+        windowBoundsProvider: @escaping @Sendable (CGWindowID) -> CGRect? = {
+            SystemIdentityResolver.windowIdentity($0)?.bounds
+        },
+        processStartIdentityProvider: @escaping @Sendable (pid_t) -> UInt64? =
+            SystemIdentityResolver.processStartIdentity,
         encoder: JSONEncoder = .peekabooBridgeEncoder(),
         decoder: JSONDecoder = .peekabooBridgeDecoder())
     {
@@ -67,6 +78,9 @@ public final class PeekabooBridgeServer {
         self.daemonControl = daemonControl
         self.desktopMutationWatermarkStore = desktopMutationWatermarkStore
         self.automationActivityObserver = automationActivityObserver
+        self.windowOwnerProcessIdentifierProvider = windowOwnerProcessIdentifierProvider
+        self.windowBoundsProvider = windowBoundsProvider
+        self.processStartIdentityProvider = processStartIdentityProvider
         self.postEventAccessEvaluator = postEventAccessEvaluator ?? { [services] in
             services.permissions.checkPostEventPermission()
         }
@@ -92,6 +106,12 @@ public final class PeekabooBridgeServer {
         } catch let envelope as PeekabooBridgeErrorEnvelope {
             self.logger.error("bridge request failed: \(envelope.message, privacy: .public)")
             return PeekabooBridgeResponse.encodeError(envelope, using: self.encoder)
+        } catch is CancellationError {
+            self.logger.debug("bridge request cancelled after its client disconnected")
+            let envelope = PeekabooBridgeErrorEnvelope(
+                code: .timeout,
+                message: "Bridge request was cancelled")
+            return PeekabooBridgeResponse.encodeError(envelope, using: self.encoder)
         } catch {
             self.logger.error("bridge request decoding failed: \(error.localizedDescription, privacy: .public)")
             let envelope = PeekabooBridgeErrorEnvelope(
@@ -107,6 +127,7 @@ public final class PeekabooBridgeServer {
         peer: PeekabooBridgePeer?) async throws -> PeekabooBridgeResponse
     {
         try self.validatePeerAuthorization(peer)
+        try PeekabooBridgeRequestContext.checkRequestIsActive()
 
         let start = Date()
         let pid = peer?.processIdentifier ?? 0
@@ -183,6 +204,13 @@ public final class PeekabooBridgeServer {
            let envelope = bridgeErrorEnvelope(for: error, operation: operation)
         {
             return envelope
+        }
+        if let error = error as? InputDeliveryIndeterminateError {
+            return .init(
+                code: .internalError,
+                message: error.localizedDescription,
+                details: "\(error)",
+                operationMayHaveCompleted: error.operationMayHaveCompleted)
         }
 
         if let error = error as? DockError {
@@ -344,20 +372,56 @@ public final class PeekabooBridgeServer {
         _ request: PeekabooBridgeRequest,
         peer: PeekabooBridgePeer?) async throws -> PeekabooBridgeResponse
     {
-        guard request.mayMutateDesktop, let desktopMutationWatermarkStore else {
+        guard request.mayMutateDesktop else {
             return try await self.handleAuthorized(request, peer: peer)
         }
 
-        await self.desktopMutationGate.acquire()
+        try await self.desktopMutationGate.acquire()
+        guard let desktopMutationWatermarkStore else {
+            do {
+                try PeekabooBridgeRequestContext.checkRequestIsActive()
+                try self.validatePinnedWindowMutation(request)
+                let response = try await self.handleAuthorized(request, peer: peer)
+                await self.desktopMutationGate.release()
+                return response
+            } catch {
+                await self.desktopMutationGate.release()
+                throw error
+            }
+        }
+        do {
+            try PeekabooBridgeRequestContext.checkRequestIsActive()
+            try self.validatePinnedWindowMutation(request)
+        } catch {
+            await self.desktopMutationGate.release()
+            throw error
+        }
         let mutation: DesktopMutationWatermarkStore.PendingMutation
         do {
-            mutation = try desktopMutationWatermarkStore.beginMutation()
+            mutation = try await desktopMutationWatermarkStore.beginMutationCancellable()
         } catch {
             await self.desktopMutationGate.release()
             throw PeekabooBridgeErrorEnvelope(
                 code: .internalError,
                 message: "Could not establish the desktop mutation barrier; operation was not executed",
                 details: error.localizedDescription)
+        }
+
+        do {
+            try PeekabooBridgeRequestContext.checkRequestIsActive()
+            try self.validatePinnedWindowMutation(request)
+        } catch {
+            do {
+                try desktopMutationWatermarkStore.cancelMutation(mutation)
+            } catch {
+                await self.desktopMutationGate.release()
+                throw PeekabooBridgeErrorEnvelope(
+                    code: .internalError,
+                    message: "Could not cancel the desktop mutation barrier; operation was not executed",
+                    details: error.localizedDescription)
+            }
+            await self.desktopMutationGate.release()
+            throw error
         }
 
         let response: PeekabooBridgeResponse?
@@ -392,6 +456,32 @@ public final class PeekabooBridgeServer {
                 message: "Desktop operation returned neither a response nor an error")
         }
         return completedResponse
+    }
+
+    private func validatePinnedWindowMutation(_ request: PeekabooBridgeRequest) throws {
+        guard let pinned = request.pinnedWindowMutation else { return }
+        let identity = pinned.identity
+        guard identity.capturedBounds != nil else {
+            throw PeekabooBridgeErrorEnvelope(
+                code: .invalidRequest,
+                message: "Pinned window mutation receipt requires capture-time bounds")
+        }
+        let resolvedWindowID = CGWindowID(exactly: identity.windowID)
+        let currentOwner = resolvedWindowID.flatMap(self.windowOwnerProcessIdentifierProvider)
+        let currentBounds = resolvedWindowID.flatMap(self.windowBoundsProvider)
+        guard case let .windowId(windowID) = pinned.target,
+              windowID == identity.windowID,
+              resolvedWindowID != nil,
+              let capturedBounds = identity.capturedBounds,
+              self.processStartIdentityProvider(identity.ownerProcessIdentifier) ==
+              identity.ownerProcessStartIdentity,
+              (currentOwner == identity.ownerProcessIdentifier && currentBounds == capturedBounds) ||
+              (currentOwner == nil && currentBounds == nil && identity.isMinimized == true)
+        else {
+            throw PeekabooBridgeErrorEnvelope(
+                code: .invalidRequest,
+                message: "Pinned window target disappeared or changed owner/process generation/bounds")
+        }
     }
 
     private func completeDesktopMutation(
@@ -507,6 +597,12 @@ public final class PeekabooBridgeServer {
                 message: "Operation \(op.rawValue) is not supported by this host")
         }
 
+        if request.requiresPinnedWindowMutationReceipt, request.pinnedWindowMutation == nil {
+            throw PeekabooBridgeErrorEnvelope(
+                code: .invalidRequest,
+                message: "Operation \(op.rawValue) requires a process-generation window mutation receipt")
+        }
+
         if case let .targetedClick(payload) = request {
             try Self.validateTargetedClickAccess(payload, permissions: permissions)
         }
@@ -515,7 +611,8 @@ public final class PeekabooBridgeServer {
             guard payload.request.foreground else {
                 throw PeekabooBridgeErrorEnvelope(
                     code: .invalidRequest,
-                    message: "The scroll operation requires foreground=true; use targetedScroll for background AX input")
+                    message: "The scroll operation requires foreground=true; " +
+                        "use targetedScroll for background AX input")
             }
         case let .targetedScroll(payload):
             guard !payload.request.foreground else {

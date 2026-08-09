@@ -45,7 +45,7 @@ extension DialogService {
             .zero
         }
 
-        if buttonBounds != .zero {
+        if Self.shouldShowButtonFeedback(allowGlobalFallback: allowGlobalFallback), buttonBounds != .zero {
             _ = await self.feedbackClient.showDialogInteraction(
                 element: .button,
                 elementRect: buttonBounds,
@@ -70,6 +70,10 @@ extension DialogService {
 
         self.logger.info("\(AgentDisplayTokens.Status.success) Successfully clicked button: \(resolvedButtonTitle)")
         return result
+    }
+
+    static func shouldShowButtonFeedback(allowGlobalFallback: Bool) -> Bool {
+        allowGlobalFallback
     }
 
     func resolveButton(

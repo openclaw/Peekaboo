@@ -65,6 +65,30 @@ Protocol `1.4` adds browser MCP operations for persistent Chrome DevTools MCP se
 
 Protocol `1.5` adds `desktopObservation`, used by daemon-backed `image` and `see` paths. The host performs target resolution, capture, optional detection, and file writes, then returns lightweight metadata instead of embedding screenshot bytes in the Bridge response.
 
+Protocol `1.12` adds the silent capture visualizer mode. Background `see`, `image`, and live-capture requests use it so a ScreenCaptureKit host does not display screenshot flashes or capture HUD overlays. Capture-capable clients reject older hosts before sending the new enum value.
+
+Protocol `1.13` extends `ApplicationLaunchRequest` with default-false `createsNewInstance` and `waitForWindow` fields. New hosts decode payloads from older clients with both behaviors disabled. Clients requesting either behavior require a negotiated 1.13 host before sending: this prevents an older host from ignoring the unknown field and silently reusing an existing process or returning before a window exists. Ordinary launch requests keep negotiating back to 1.9 and preserve the existing `waitUntilReady` launch-completion contract.
+
+Protocol `1.14` adds a read-only PID-scoped focused-element query, including its owning exact CGWindowID, for diagnostics and non-mutating focus inspection.
+
+Protocol `1.15` introduced the host-side atomic exact-window keyboard transaction, but that initial wire shape is not
+accepted by current clients because it could not carry the final capture receipt and focused-destination evidence.
+PID-only keyboard delivery keeps its existing protocol.
+
+Protocol `1.16` adds process-generation-pinned destructive window mutations and application quit. Window listings return a receipt containing the exact CGWindowID, owner PID, and owner process-start identity. Move, resize, set-bounds, minimize, maximize, and close carry that receipt through the Bridge queue; application discovery similarly returns a PID/process-start receipt that quit requests carry to the host. The host revalidates receipts after mutation admission and the native service revalidates immediately around dispatch/readback or termination. New clients reject older hosts for these mutations instead of letting an old host ignore the receipt. Current hosts do not advertise `quitApplication` to pre-1.16 clients, and reject any direct quit request that omits the receipt.
+
+Protocol `1.17` is the first currently compatible exact-window keyboard capability. One mutation request validates the
+PID-scoped focused element, owning CGWindowID, expected bounds, capture receipt, and optional focused destination on the
+host, then dispatches type or hotkey input while the Bridge mutation gate remains held. Paced typing revalidates before
+every character or key boundary. Exact clicks likewise retain the capture-time receipt through final native dispatch
+and completion validation. New clients reject older hosts for these exact-input operations.
+
+Protocol `1.18` also carries the initially selected application process-generation receipt through atomic relaunch.
+The daemon re-resolves the selector only to verify that exact receipt, then uses the same receipt for quit and fails
+closed if the PID was recycled. Current clients therefore require a 1.18 on-demand host for relaunch.
+
+Protocol `1.18` adds immutable capture-time bounds to destructive window mutation receipts and a native background `restoreWindow` operation. Hosts reject a same-process replacement that reuses the selected CGWindowID with different bounds before move, resize, set-bounds, minimize, restore, maximize, or close dispatch; geometry operations then repin the requested final bounds instead of mistaking the intended transition for replacement. Restore clears only the retained exact AX window's minimized attribute and verifies its receipt without activation or focus. Window mutations are not advertised to older clients, and new clients refuse hosts that would ignore the added receipt evidence or lack restore support.
+
 ## Security
 
 Peekaboo BridgeHost validates callers before processing any request:

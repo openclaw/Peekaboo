@@ -93,6 +93,23 @@ struct SmartCaptureServiceBoundaryTests {
         #expect(capture.captureScreenCount == 3)
         #expect(appResolver.frontmostCallCount == 5)
     }
+
+    @Test
+    func `Region capture forwards silent mode to region and context captures`() async throws {
+        let capture = StubSmartScreenCaptureService()
+        let service = SmartCaptureService(
+            captureService: capture,
+            applicationResolver: StubSmartApplicationResolver(appName: "TestApp"),
+            screenService: StubSmartScreenService())
+
+        _ = try await service.captureAroundPoint(
+            CGPoint(x: 50, y: 50),
+            radius: 20,
+            visualizerMode: .none)
+
+        #expect(capture.capturedAreaVisualizerModes == [.none])
+        #expect(capture.capturedScreenVisualizerModes == [.none])
+    }
 }
 
 @MainActor
@@ -103,13 +120,16 @@ private final class StubSmartScreenCaptureService: ScreenCaptureServiceProtocol 
         color: .systemBlue)
     private(set) var captureScreenCount = 0
     private(set) var capturedAreas: [CGRect] = []
+    private(set) var capturedScreenVisualizerModes: [CaptureVisualizerMode] = []
+    private(set) var capturedAreaVisualizerModes: [CaptureVisualizerMode] = []
 
     func captureScreen(
         displayIndex: Int?,
-        visualizerMode _: CaptureVisualizerMode,
+        visualizerMode: CaptureVisualizerMode,
         scale _: CaptureScalePreference) async throws -> CaptureResult
     {
         self.captureScreenCount += 1
+        self.capturedScreenVisualizerModes.append(visualizerMode)
         return self.result(mode: .screen)
     }
 
@@ -139,10 +159,11 @@ private final class StubSmartScreenCaptureService: ScreenCaptureServiceProtocol 
 
     func captureArea(
         _ rect: CGRect,
-        visualizerMode _: CaptureVisualizerMode,
+        visualizerMode: CaptureVisualizerMode,
         scale _: CaptureScalePreference) async throws -> CaptureResult
     {
         self.capturedAreas.append(rect)
+        self.capturedAreaVisualizerModes.append(visualizerMode)
         return self.result(mode: .area)
     }
 

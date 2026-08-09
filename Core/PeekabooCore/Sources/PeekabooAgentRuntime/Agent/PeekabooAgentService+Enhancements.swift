@@ -99,8 +99,7 @@ extension PeekabooAgentService {
         _ tool: AgentTool,
         arguments: AgentToolArguments,
         executionContext: ToolExecutionContext,
-        options: AgentEnhancementOptions,
-        retryCount: Int = 0) async throws -> (result: AnyAgentToolValue, verification: VerificationResult?)
+        options: AgentEnhancementOptions) async throws -> (result: AnyAgentToolValue, verification: VerificationResult?)
     {
         // Execute the tool
         let result = try await tool.execute(arguments, context: executionContext)
@@ -139,41 +138,33 @@ extension PeekabooAgentService {
         } catch let error as CancellationError {
             throw error
         } catch {
+            try Task.checkCancellation()
             logger.warning("Action verification unavailable after \(tool.name): \(error.localizedDescription)")
             return (
                 result,
                 VerificationResult(
-                    success: true,
+                    success: false,
                     confidence: 0,
                     observation: "Action completed, but verification was unavailable: \(error.localizedDescription)",
                     suggestion: nil))
         }
 
-        if verification.success || verification.confidence < 0.5 {
-            // Action verified or uncertain - proceed
+        if verification.success {
             if isVerbose {
                 logger.info("Action verified: \(tool.name) - \(verification.observation)")
             }
             return (result, verification)
         }
 
+        if verification.confidence < 0.5 {
+            if isVerbose {
+                logger.info("Action verification inconclusive: \(tool.name) - \(verification.observation)")
+            }
+            return (result, verification)
+        }
+
         // Verification failed
         logger.warning("Action verification failed: \(verification.observation)")
-
-        // Check if we should retry
-        if verification.shouldRetry, retryCount < options.maxVerificationRetries {
-            logger.info("Retrying action (attempt \(retryCount + 1)/\(options.maxVerificationRetries))")
-
-            // Small delay before retry
-            try await Task.sleep(nanoseconds: 500_000_000) // 0.5s
-
-            return try await self.executeToolWithVerification(
-                tool,
-                arguments: arguments,
-                executionContext: executionContext,
-                options: options,
-                retryCount: retryCount + 1)
-        }
 
         // Return failure info with the result
         // The caller can decide how to handle this
@@ -190,16 +181,21 @@ extension PeekabooAgentService {
         if let point, options.regionFocusAfterAction {
             return try await self.smartCapture.captureAroundPoint(
                 point,
-                radius: options.regionCaptureRadius)
+                radius: options.regionCaptureRadius,
+                visualizerMode: .none)
         }
 
         if options.smartCapture {
             return try await self.smartCapture.captureIfChanged(
-                threshold: options.changeThreshold)
+                threshold: options.changeThreshold,
+                visualizerMode: .none)
         }
 
         // Fall back to standard capture
-        let captureResult = try await services.screenCapture.captureScreen(displayIndex: nil)
+        let captureResult = try await services.screenCapture.captureScreen(
+            displayIndex: nil,
+            visualizerMode: .none,
+            scale: .logical1x)
         let image = self.cgImage(from: captureResult)
         return SmartCaptureResult(
             image: image,
@@ -240,7 +236,7 @@ extension PeekabooAgentService {
         return nil
     }
 
-    private static func resultEncodesToolFailure(_ result: AnyAgentToolValue) -> Bool {
+    static func resultEncodesToolFailure(_ result: AnyAgentToolValue) -> Bool {
         if let string = result.stringValue {
             return string.hasPrefix("Error:")
         }
@@ -252,7 +248,14 @@ extension PeekabooAgentService {
         if payload["success"] as? Bool == false {
             return true
         }
-        return payload["error"] != nil
+        guard let error = payload["error"] else { return false }
+        if error is NSNull {
+            return false
+        }
+        if let message = error as? String {
+            return !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        return true
     }
 
     private static func parsePoint(_ value: String) -> CGPoint? {

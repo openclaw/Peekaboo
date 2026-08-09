@@ -86,7 +86,11 @@ public final class HotkeyService {
     /// from hardware keyboard input. Some apps only handle shortcuts for their key window and
     /// may ignore targeted events while in the background.
     @discardableResult
-    public func hotkey(keys: String, holdDuration: Int, targetProcessIdentifier: pid_t) async throws
+    public func hotkey(
+        keys: String,
+        holdDuration: Int,
+        targetProcessIdentifier: pid_t,
+        deliveryValidator: (@MainActor @Sendable () async throws -> Void)? = nil) async throws
         -> UIInputExecutionResult
     {
         self.logger.debug(
@@ -101,13 +105,23 @@ public final class HotkeyService {
             strategy: self.inputPolicy.strategy(for: .hotkey, bundleIdentifier: bundleIdentifier),
             bundleIdentifier: bundleIdentifier,
             action: {
+                try await self.validateDelivery(
+                    deliveryValidator,
+                    emittedUnitCount: 0)
                 try Self.validateTargetProcess(targetProcessIdentifier)
                 guard let application else {
                     throw ActionInputError.unsupported(.missingElement)
                 }
-                return try self.actionInputDriver.tryHotkey(application: application, keys: parsedKeys)
+                let actionResult = try self.actionInputDriver.tryHotkey(application: application, keys: parsedKeys)
+                try await self.validateDelivery(
+                    deliveryValidator,
+                    emittedUnitCount: 1)
+                return actionResult
             },
             synth: {
+                try await self.validateDelivery(
+                    deliveryValidator,
+                    emittedUnitCount: 0)
                 try Self.validateTargetProcess(targetProcessIdentifier)
                 let plan = try self.makeHotkeyPlan(parsedKeys)
                 if try BackgroundInputDriver.performFocusedTextHotkey(
@@ -115,17 +129,33 @@ public final class HotkeyService {
                     modifierFlags: plan.modifierFlags,
                     targetProcessIdentifier: targetProcessIdentifier)
                 {
+                    try await self.validateDelivery(
+                        deliveryValidator,
+                        emittedUnitCount: 1)
                     return
                 }
 
                 let holdNanoseconds = try Self.holdNanoseconds(for: holdDuration)
-                try await self.postHotkey(
+                let emittedUnitCount = try await self.postHotkey(
                     plan,
                     holdNanoseconds: holdNanoseconds,
-                    targetProcessIdentifier: targetProcessIdentifier)
+                    targetProcessIdentifier: targetProcessIdentifier,
+                    deliveryValidator: deliveryValidator)
 
-                if holdDuration <= 0 {
-                    try await Task.sleep(nanoseconds: 10_000_000)
+                do {
+                    if holdDuration <= 0 {
+                        try await Task.sleep(nanoseconds: 10_000_000)
+                    }
+                    try await self.validateDelivery(
+                        deliveryValidator,
+                        emittedUnitCount: emittedUnitCount)
+                } catch let error as InputDeliveryIndeterminateError {
+                    throw error
+                } catch {
+                    throw InputDeliveryIndeterminateError(
+                        operation: .hotkey,
+                        emittedUnitCount: emittedUnitCount,
+                        causeDescription: error.localizedDescription)
                 }
             })
 
@@ -166,7 +196,13 @@ public final class HotkeyService {
         }
     }
 
-    private func postHotkey(_ plan: HotkeyPlan, holdNanoseconds: UInt64, targetProcessIdentifier: pid_t) async throws {
+    private func postHotkey(
+        _ plan: HotkeyPlan,
+        holdNanoseconds: UInt64,
+        targetProcessIdentifier: pid_t,
+        deliveryValidator: (@MainActor @Sendable () async throws -> Void)? = nil) async throws
+        -> Int
+    {
         guard self.postEventAccessEvaluator() else {
             throw PeekabooError.permissionDeniedEventSynthesizing
         }
@@ -176,32 +212,83 @@ public final class HotkeyService {
             flags: plan.modifierFlags,
             targetProcessIdentifier: targetProcessIdentifier)
 
-        for event in eventPlan.modifierKeyDownEvents {
-            self.eventPoster(event, targetProcessIdentifier)
-            usleep(1000)
-        }
-
-        self.eventPoster(eventPlan.primaryKeyDownEvent, targetProcessIdentifier)
-        var released = false
+        var pressedModifierKeyCodes: Set<Int64> = []
+        var primaryKeyIsDown = false
+        var emittedUnitCount = 0
         defer {
-            if !released {
+            if primaryKeyIsDown {
                 self.eventPoster(eventPlan.primaryKeyUpEvent, targetProcessIdentifier)
-                for event in eventPlan.modifierKeyUpEvents {
-                    self.eventPoster(event, targetProcessIdentifier)
-                }
+            }
+            for event in eventPlan.modifierKeyUpEvents where pressedModifierKeyCodes.contains(
+                event.getIntegerValueField(.keyboardEventKeycode))
+            {
+                self.eventPoster(event, targetProcessIdentifier)
             }
         }
 
-        if holdNanoseconds > 0 {
-            try await Task.sleep(nanoseconds: holdNanoseconds)
-        }
+        do {
+            // Exact-window targeting must fail before the first event is posted. Validate again after
+            // the modifier sequence because focus can move while those events are being delivered.
+            try await self.validateDelivery(
+                deliveryValidator,
+                emittedUnitCount: emittedUnitCount)
 
-        self.eventPoster(eventPlan.primaryKeyUpEvent, targetProcessIdentifier)
-        for event in eventPlan.modifierKeyUpEvents {
-            usleep(1000)
-            self.eventPoster(event, targetProcessIdentifier)
+            for event in eventPlan.modifierKeyDownEvents {
+                pressedModifierKeyCodes.insert(event.getIntegerValueField(.keyboardEventKeycode))
+                self.eventPoster(event, targetProcessIdentifier)
+                emittedUnitCount += 1
+                usleep(1000)
+            }
+
+            try await self.validateDelivery(
+                deliveryValidator,
+                emittedUnitCount: emittedUnitCount)
+            primaryKeyIsDown = true
+            self.eventPoster(eventPlan.primaryKeyDownEvent, targetProcessIdentifier)
+            emittedUnitCount += 1
+
+            if holdNanoseconds > 0 {
+                try await Task.sleep(nanoseconds: holdNanoseconds)
+            }
+
+            self.eventPoster(eventPlan.primaryKeyUpEvent, targetProcessIdentifier)
+            emittedUnitCount += 1
+            primaryKeyIsDown = false
+            for event in eventPlan.modifierKeyUpEvents {
+                usleep(1000)
+                self.eventPoster(event, targetProcessIdentifier)
+                emittedUnitCount += 1
+                pressedModifierKeyCodes.remove(event.getIntegerValueField(.keyboardEventKeycode))
+            }
+            return emittedUnitCount
+        } catch let error as InputDeliveryIndeterminateError {
+            throw error
+        } catch {
+            guard emittedUnitCount > 0 else { throw error }
+            throw InputDeliveryIndeterminateError(
+                operation: .hotkey,
+                emittedUnitCount: emittedUnitCount,
+                causeDescription: error.localizedDescription)
         }
-        released = true
+    }
+
+    private func validateDelivery(
+        _ deliveryValidator: (@MainActor @Sendable () async throws -> Void)?,
+        emittedUnitCount: Int) async throws
+    {
+        guard let deliveryValidator else { return }
+
+        do {
+            try await deliveryValidator()
+        } catch let error as InputDeliveryIndeterminateError {
+            throw error
+        } catch {
+            guard emittedUnitCount > 0 else { throw error }
+            throw InputDeliveryIndeterminateError(
+                operation: .hotkey,
+                emittedUnitCount: emittedUnitCount,
+                causeDescription: error.localizedDescription)
+        }
     }
 
     private static func holdNanoseconds(for holdDuration: Int) throws -> UInt64 {

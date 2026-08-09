@@ -29,6 +29,16 @@ extension SeeCommand {
         switch self.determineMode() {
         case .window:
             if let windowId {
+                guard self.windowTitle == nil else {
+                    throw ValidationError("--window-id cannot be combined with --window-title")
+                }
+                let selection = WindowSelection.id(CGWindowID(windowId))
+                if let pid = try self.resolveExplicitPIDObservationTarget() {
+                    return .pid(pid, window: selection)
+                }
+                if self.app != nil {
+                    return try .app(identifier: self.resolveApplicationIdentifier(), window: selection)
+                }
                 return .windowID(CGWindowID(windowId))
             }
 
@@ -85,7 +95,7 @@ extension SeeCommand {
             capture: DesktopCaptureOptions(
                 engine: self.observationCaptureEnginePreference,
                 scale: .logical1x,
-                visualizerMode: .screenshotFlash
+                visualizerMode: .none
             ),
             detection: self.observationDetectionOptions(for: target),
             output: DesktopObservationOutputOptions(

@@ -66,8 +66,9 @@ extension ImageCommand {
     }
 
     private func captureWindowById(_ windowId: Int) async throws -> [ImageCapturedFile] {
+        let target = try self.observationTargetForExactWindowCapture(windowId)
         let observation = try await self.captureObservation(
-            target: .windowID(CGWindowID(windowId)),
+            target: target,
             preferredName: "window-\(windowId)",
             index: nil
         )

@@ -9,11 +9,14 @@ extension PeekabooBridgeOperation {
             [.screenRecording]
         case .targetedHotkey, .targetedTypeActions, .click, .scroll, .swipe, .drag, .moveMouse:
             [.postEvent]
+        case .exactWindowTargetedHotkey, .exactWindowTargetedTypeActions:
+            [.postEvent, .accessibility]
         case .inspectAccessibilityTree,
+             .getFocusedElement,
              .type, .typeActions, .setValue, .performAction, .hotkey,
              .waitForElement, .listWindows, .focusWindow, .moveWindow, .resizeWindow, .setWindowBounds, .closeWindow,
              .backgroundCloseWindow,
-             .minimizeWindow, .maximizeWindow, .getFocusedWindow, .listMenus, .listFrontmostMenus,
+             .minimizeWindow, .restoreWindow, .maximizeWindow, .getFocusedWindow, .listMenus, .listFrontmostMenus,
              .clickMenuItem, .clickMenuItemByName, .listMenuExtras, .clickMenuExtra, .menuExtraOpenMenuFrame,
              .listMenuBarItems, .clickMenuBarItemNamed, .clickMenuBarItemIndex, .listDockItems, .launchDockItem,
              .rightClickDockItem, .hideDock, .showDock, .isDockHidden, .findDockItem, .dialogFindActive,
@@ -75,6 +78,7 @@ extension PeekabooBridgeOperation {
         .captureArea,
         .detectElements,
         .inspectAccessibilityTree,
+        .getFocusedElement,
         .desktopObservation,
         .click,
         .type,
@@ -85,7 +89,9 @@ extension PeekabooBridgeOperation {
         .targetedScroll,
         .hotkey,
         .targetedHotkey,
+        .exactWindowTargetedHotkey,
         .targetedTypeActions,
+        .exactWindowTargetedTypeActions,
         .targetedClick,
         .exactWindowTargetedClick,
         .swipe,
@@ -100,6 +106,7 @@ extension PeekabooBridgeOperation {
         .closeWindow,
         .backgroundCloseWindow,
         .minimizeWindow,
+        .restoreWindow,
         .maximizeWindow,
         .getFocusedWindow,
         .listApplications,

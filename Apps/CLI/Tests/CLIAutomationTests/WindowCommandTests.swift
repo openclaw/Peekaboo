@@ -21,12 +21,88 @@ struct WindowCommandTests {
         #expect(output.contains("Manipulate application windows"))
         #expect(output.contains("close"))
         #expect(output.contains("minimize"))
+        #expect(output.contains("restore"))
         #expect(output.contains("maximize"))
         #expect(output.contains("move"))
         #expect(output.contains("resize"))
         #expect(output.contains("set-bounds"))
         #expect(output.contains("focus"))
         #expect(output.contains("list"))
+    }
+
+    @Test
+    func `window restore targets a minimized exact PID window and reports success`() async throws {
+        let appName = "TextEdit"
+        let appInfo = ServiceApplicationInfo(
+            processIdentifier: 42,
+            processStartIdentity: 7,
+            bundleIdentifier: "com.apple.TextEdit",
+            name: appName
+        )
+        let window = ServiceWindowInfo(
+            windowID: 101,
+            title: "Fixture",
+            bounds: CGRect(x: 10, y: 20, width: 640, height: 480),
+            isMinimized: true
+        )
+        let context = await MainActor.run {
+            self.makeWindowContext(appInfo: appInfo, windows: [appName: [window]])
+        }
+
+        let result = try await self.runWindowCommand([
+            "window", "restore",
+            "--pid", "42",
+            "--window-id", "101",
+            "--json",
+        ], context: context)
+        let output = result.stdout.isEmpty ? result.stderr : result.stdout
+        let response = try JSONDecoder().decode(
+            CodableJSONResponse<WindowActionResult>.self,
+            from: Data(output.utf8)
+        )
+
+        #expect(response.data.action == "restore")
+        #expect(response.data.success)
+        #expect(await MainActor.run {
+            context.windowService.windowsByApp[appName]?.first?.isMinimized
+        } == false)
+    }
+
+    @Test
+    func `minimized exact close reports restore or foreground guidance`() async throws {
+        let appName = "TextEdit"
+        let appInfo = ServiceApplicationInfo(
+            processIdentifier: 42,
+            processStartIdentity: 7,
+            bundleIdentifier: "com.apple.TextEdit",
+            name: appName
+        )
+        let window = ServiceWindowInfo(
+            windowID: 101,
+            title: "Fixture",
+            bounds: CGRect(x: 10, y: 20, width: 640, height: 480),
+            isMinimized: true
+        )
+        let context = await MainActor.run {
+            self.makeWindowContext(appInfo: appInfo, windows: [appName: [window]])
+        }
+
+        let result = try await self.runWindowCommand(
+            [
+                "window", "close",
+                "--pid", "42",
+                "--window-id", "101",
+                "--json",
+            ],
+            context: context,
+            allowedExitStatuses: [1]
+        )
+        let output = result.stdout + result.stderr
+
+        #expect(output.localizedCaseInsensitiveContains("restore"))
+        #expect(output.contains("--foreground") || output.localizedCaseInsensitiveContains("foreground fallback"))
+        #expect(!output.contains("WINDOW_NOT_FOUND"))
+        #expect(await MainActor.run { context.windowService.closeFallbackRequests } == [false])
     }
 
     @Test
@@ -276,6 +352,9 @@ struct WindowCommandTests {
         #expect(Int(refreshed.origin.y) == Int(updatedBounds.origin.y))
         #expect(Int(refreshed.size.width) == Int(updatedBounds.size.width))
         #expect(Int(refreshed.size.height) == Int(updatedBounds.size.height))
+        #expect(await MainActor.run { context.windowService.setBoundsCalls.map(\.description) } == [
+            "windowId(101)",
+        ])
     }
 
     @Test
@@ -331,6 +410,9 @@ struct WindowCommandTests {
         #expect(bounds.y == Int(initialBounds.origin.y))
         #expect(bounds.width == Int(updatedSize.width))
         #expect(bounds.height == Int(updatedSize.height))
+        #expect(await MainActor.run { context.windowService.resizeCalls.map(\.description) } == [
+            "windowId(202)",
+        ])
     }
 
     @Test
@@ -385,6 +467,9 @@ struct WindowCommandTests {
         #expect(bounds.y == Int(updatedOrigin.y))
         #expect(bounds.width == Int(initialBounds.width))
         #expect(bounds.height == Int(initialBounds.height))
+        #expect(await MainActor.run { context.windowService.moveCalls.map(\.description) } == [
+            "windowId(303)",
+        ])
     }
 
     /// Helper function to run peekaboo commands

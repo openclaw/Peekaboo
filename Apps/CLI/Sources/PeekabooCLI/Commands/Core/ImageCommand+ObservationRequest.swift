@@ -1,3 +1,4 @@
+import Commander
 import CoreGraphics
 import Foundation
 import PeekabooCore
@@ -20,11 +21,14 @@ extension ImageCommand {
         return .automatic
     }
 
-    func observationApplicationTargetForWindowCapture() throws -> ImageWindowObservationTarget {
+    func observationApplicationTargetForWindowCapture(
+        selection: WindowSelection? = nil
+    ) throws -> ImageWindowObservationTarget {
+        let resolvedSelection = selection ?? self.observationWindowSelection
         if let pid = try self.resolveExplicitPIDObservationTarget() {
             let identifier = "PID:\(pid)"
             return ImageWindowObservationTarget(
-                target: .pid(pid, window: self.observationWindowSelection),
+                target: .pid(pid, window: resolvedSelection),
                 focusIdentifier: identifier,
                 preferredName: identifier
             )
@@ -32,10 +36,21 @@ extension ImageCommand {
 
         let identifier = try self.resolveApplicationIdentifier()
         return ImageWindowObservationTarget(
-            target: .app(identifier: identifier, window: self.observationWindowSelection),
+            target: .app(identifier: identifier, window: resolvedSelection),
             focusIdentifier: identifier,
             preferredName: identifier
         )
+    }
+
+    func observationTargetForExactWindowCapture(_ windowID: Int) throws -> DesktopObservationTargetRequest {
+        guard self.windowTitle == nil, self.windowIndex == nil else {
+            throw ValidationError("--window-id cannot be combined with --window-title or --window-index")
+        }
+        let selection = WindowSelection.id(CGWindowID(windowID))
+        if self.app != nil || self.pid != nil {
+            return try self.observationApplicationTargetForWindowCapture(selection: selection).target
+        }
+        return .windowID(CGWindowID(windowID))
     }
 
     func makeObservationRequest(
@@ -48,7 +63,7 @@ extension ImageCommand {
                 engine: self.observationCaptureEnginePreference,
                 scale: self.captureScale,
                 focus: self.captureFocus,
-                visualizerMode: .screenshotFlash
+                visualizerMode: .resolved(for: self.captureFocus, visibleMode: .screenshotFlash)
             ),
             detection: DesktopDetectionOptions(mode: .none),
             output: DesktopObservationOutputOptions(

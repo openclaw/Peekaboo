@@ -145,6 +145,10 @@ public nonisolated struct WindowContext: Sendable, Codable {
     /// Window bounds in screen coordinates
     public let windowBounds: CGRect?
 
+    /// Process-generation receipt captured with the observed window.
+    /// An exact context without this capture-time receipt is observation-only and must not be used for actions.
+    public let windowMutationIdentity: WindowMutationIdentity?
+
     /// Whether element detection should attempt to focus embedded web content when inputs are missing
     public let shouldFocusWebContent: Bool?
 
@@ -154,6 +158,12 @@ public nonisolated struct WindowContext: Sendable, Codable {
     /// Optional traversal budget to constrain AX tree collection
     public let traversalBudget: AXTraversalBudget?
 
+    /// Whether the caller requires a fresh AX traversal instead of the short-lived tree cache.
+    public let requiresFreshAccessibilityTree: Bool?
+
+    /// Optional caller deadline for the AX traversal itself.
+    public let accessibilityTimeoutSeconds: TimeInterval?
+
     public init(
         applicationName: String? = nil,
         applicationBundleId: String? = nil,
@@ -161,9 +171,12 @@ public nonisolated struct WindowContext: Sendable, Codable {
         windowTitle: String? = nil,
         windowID: Int? = nil,
         windowBounds: CGRect? = nil,
+        windowMutationIdentity: WindowMutationIdentity? = nil,
         shouldFocusWebContent: Bool? = nil,
         includeMenuBarElements: Bool? = nil,
-        traversalBudget: AXTraversalBudget?)
+        traversalBudget: AXTraversalBudget?,
+        requiresFreshAccessibilityTree: Bool = false,
+        accessibilityTimeoutSeconds: TimeInterval? = nil)
     {
         self.applicationName = applicationName
         self.applicationBundleId = applicationBundleId
@@ -171,9 +184,12 @@ public nonisolated struct WindowContext: Sendable, Codable {
         self.windowTitle = windowTitle
         self.windowID = windowID
         self.windowBounds = windowBounds
+        self.windowMutationIdentity = windowMutationIdentity
         self.shouldFocusWebContent = shouldFocusWebContent
         self.includeMenuBarElements = includeMenuBarElements
         self.traversalBudget = traversalBudget
+        self.requiresFreshAccessibilityTree = requiresFreshAccessibilityTree
+        self.accessibilityTimeoutSeconds = accessibilityTimeoutSeconds
     }
 
     public init(
@@ -183,8 +199,11 @@ public nonisolated struct WindowContext: Sendable, Codable {
         windowTitle: String? = nil,
         windowID: Int? = nil,
         windowBounds: CGRect? = nil,
+        windowMutationIdentity: WindowMutationIdentity? = nil,
         shouldFocusWebContent: Bool? = nil,
-        includeMenuBarElements: Bool? = nil)
+        includeMenuBarElements: Bool? = nil,
+        requiresFreshAccessibilityTree: Bool = false,
+        accessibilityTimeoutSeconds: TimeInterval? = nil)
     {
         self.init(
             applicationName: applicationName,
@@ -193,9 +212,12 @@ public nonisolated struct WindowContext: Sendable, Codable {
             windowTitle: windowTitle,
             windowID: windowID,
             windowBounds: windowBounds,
+            windowMutationIdentity: windowMutationIdentity,
             shouldFocusWebContent: shouldFocusWebContent,
             includeMenuBarElements: includeMenuBarElements,
-            traversalBudget: nil)
+            traversalBudget: nil,
+            requiresFreshAccessibilityTree: requiresFreshAccessibilityTree,
+            accessibilityTimeoutSeconds: accessibilityTimeoutSeconds)
     }
 }
 

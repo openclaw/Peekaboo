@@ -6,10 +6,16 @@ import PeekabooFoundation
 class StubApplicationService: ApplicationServiceProtocol {
     let supportsApplicationLaunchOptions: Bool
     let supportsApplicationRelaunch: Bool
+    var supportsProcessGenerationPinnedApplicationQuit: Bool {
+        true
+    }
+
     private(set) var relaunchRequests: [ApplicationRelaunchRequest] = []
+    private(set) var quitRequests: [ApplicationQuitRequest] = []
 
     private let app = ServiceApplicationInfo(
         processIdentifier: 123,
+        processStartIdentity: 456,
         bundleIdentifier: "dev.stub",
         name: "StubApp",
         bundlePath: nil,
@@ -66,6 +72,11 @@ class StubApplicationService: ApplicationServiceProtocol {
     func activateApplication(identifier _: String) async throws {}
     func quitApplication(identifier _: String, force _: Bool) async throws -> Bool {
         true
+    }
+
+    func quitApplication(request: ApplicationQuitRequest) async throws -> Bool {
+        self.quitRequests.append(request)
+        return true
     }
 
     func hideApplication(identifier _: String) async throws {}

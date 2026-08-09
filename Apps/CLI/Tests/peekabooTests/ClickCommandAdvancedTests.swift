@@ -104,7 +104,10 @@ struct ClickCommandAdvancedTests {
             clickLocation: clickLocation,
             waitTime: 1.5,
             executionTime: 2.0,
-            targetApp: "TestApp"
+            targetApp: "TestApp",
+            deliveryMode: "background",
+            verified: false,
+            effect: "unverifiable"
         )
 
         let encoder = JSONEncoder()
@@ -123,6 +126,9 @@ struct ClickCommandAdvancedTests {
 
         let executionTime = json?["executionTime"] as? Double
         #expect(executionTime == 2.0)
+
+        #expect(json?["verified"] as? Bool == false)
+        #expect(json?["effect"] as? String == "unverifiable")
 
         if let location = json?["clickLocation"] as? [String: Double] {
             let x = location["x"]

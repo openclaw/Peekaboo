@@ -191,16 +191,16 @@ struct CommandRuntimeInjectionTests {
     }
 
     @Test
-    func `exact window click support requires protocol 1_9 capability`() {
+    func `exact window click support requires protocol 1_17 capability`() {
         let oldHost = PeekabooBridgeHandshakeResponse(
-            negotiatedVersion: PeekabooBridgeProtocolVersion(major: 1, minor: 8),
+            negotiatedVersion: PeekabooBridgeProtocolVersion(major: 1, minor: 16),
             hostKind: .gui,
             build: nil,
             supportedOperations: [.targetedClick],
             enabledOperations: [.targetedClick]
         )
         let currentHost = PeekabooBridgeHandshakeResponse(
-            negotiatedVersion: PeekabooBridgeProtocolVersion(major: 1, minor: 9),
+            negotiatedVersion: PeekabooBridgeProtocolVersion(major: 1, minor: 17),
             hostKind: .gui,
             build: nil,
             supportedOperations: [.targetedClick, .exactWindowTargetedClick],

@@ -160,6 +160,177 @@ struct ActionInputDriverTests {
         #expect(element.performedActions == ["AXPageDown"])
     }
 
+    @MainActor
+    @Test
+    func `directional scroll mutates a standard descendant scroll bar`() throws {
+        let scrollBar = MockAutomationElement(
+            role: AXRoleNames.kAXScrollBarRole,
+            frame: CGRect(x: 300, y: 0, width: 16, height: 400),
+            value: 0.2,
+            isValueSettable: true)
+        let scrollArea = MockAutomationElement(
+            role: AXRoleNames.kAXScrollAreaRole,
+            children: [scrollBar])
+
+        let result = try ActionInputDriver().tryScrollForTesting(
+            element: scrollArea,
+            direction: .down,
+            pages: 3)
+
+        #expect(result.actionName == "AXSetValue")
+        #expect(result.elementRole == AXRoleNames.kAXScrollBarRole)
+        #expect(scrollBar.setValues == [.double(0.5)])
+    }
+
+    @MainActor
+    @Test
+    func `horizontal scroll selects the horizontal descendant scroll bar`() throws {
+        let vertical = MockAutomationElement(
+            role: AXRoleNames.kAXScrollBarRole,
+            frame: CGRect(x: 300, y: 0, width: 16, height: 400),
+            value: 0.2,
+            isValueSettable: true)
+        let horizontal = MockAutomationElement(
+            role: AXRoleNames.kAXScrollBarRole,
+            frame: CGRect(x: 0, y: 400, width: 300, height: 16),
+            value: 0.7,
+            isValueSettable: true)
+        let scrollArea = MockAutomationElement(
+            role: AXRoleNames.kAXScrollAreaRole,
+            children: [vertical, horizontal])
+
+        _ = try ActionInputDriver().tryScrollForTesting(
+            element: scrollArea,
+            direction: .left,
+            pages: 2)
+
+        #expect(vertical.setValues.isEmpty)
+        guard case let .double(value) = horizontal.setValues.first else {
+            Issue.record("Expected a direct numeric scroll-bar update")
+            return
+        }
+        #expect(abs(value - 0.5) < 1e-9)
+    }
+
+    @MainActor
+    @Test
+    func `scroll chooses the requested area bar before a nested area bar`() throws {
+        let nestedBar = MockAutomationElement(
+            role: AXRoleNames.kAXScrollBarRole,
+            frame: CGRect(x: 280, y: 20, width: 16, height: 120),
+            value: 0.3,
+            isValueSettable: true)
+        let nestedArea = MockAutomationElement(
+            role: AXRoleNames.kAXScrollAreaRole,
+            children: [nestedBar])
+        let targetBar = MockAutomationElement(
+            role: AXRoleNames.kAXScrollBarRole,
+            frame: CGRect(x: 300, y: 0, width: 16, height: 400),
+            value: 0.1,
+            isValueSettable: true)
+        let targetArea = MockAutomationElement(
+            role: AXRoleNames.kAXScrollAreaRole,
+            children: [
+                MockAutomationElement(role: AXRoleNames.kAXGroupRole, children: [nestedArea]),
+                targetBar,
+            ])
+
+        _ = try ActionInputDriver().tryScrollForTesting(
+            element: targetArea,
+            direction: .down,
+            pages: 1)
+
+        #expect(targetBar.setValues == [.double(0.2)])
+        #expect(nestedBar.setValues.isEmpty)
+    }
+
+    @MainActor
+    @Test
+    func `scroll does not borrow a nested area bar when the target has none`() {
+        let nestedBar = MockAutomationElement(
+            role: AXRoleNames.kAXScrollBarRole,
+            frame: CGRect(x: 280, y: 20, width: 16, height: 120),
+            value: 0.3,
+            isValueSettable: true)
+        let targetArea = MockAutomationElement(
+            role: AXRoleNames.kAXScrollAreaRole,
+            children: [
+                MockAutomationElement(
+                    role: AXRoleNames.kAXGroupRole,
+                    children: [MockAutomationElement(
+                        role: AXRoleNames.kAXScrollAreaRole,
+                        children: [nestedBar])]),
+            ])
+
+        do {
+            _ = try ActionInputDriver().tryScrollForTesting(
+                element: targetArea,
+                direction: .down,
+                pages: 1)
+            Issue.record("Expected a target without its own vertical scroll bar to fail")
+        } catch let error as ActionInputError {
+            #expect(error == .unsupported(.actionUnsupported))
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+
+        #expect(nestedBar.setValues.isEmpty)
+    }
+
+    @MainActor
+    @Test
+    func `scroll bar advertised increment action remains action first`() throws {
+        let scrollBar = MockAutomationElement(
+            role: AXRoleNames.kAXScrollBarRole,
+            frame: CGRect(x: 300, y: 0, width: 16, height: 400),
+            value: 0.2,
+            actionNames: [AXActionNames.kAXIncrementAction],
+            isValueSettable: true)
+        let scrollArea = MockAutomationElement(
+            role: AXRoleNames.kAXScrollAreaRole,
+            children: [scrollBar])
+
+        let result = try ActionInputDriver().tryScrollForTesting(
+            element: scrollArea,
+            direction: .down,
+            pages: 2)
+
+        #expect(result.actionName == AXActionNames.kAXIncrementAction)
+        #expect(scrollBar.performedActions == [AXActionNames.kAXIncrementAction, AXActionNames.kAXIncrementAction])
+        #expect(scrollBar.setValues.isEmpty)
+    }
+
+    @MainActor
+    @Test
+    func `targeted scroll never mutates a sibling scroll area`() {
+        let targetArea = MockAutomationElement(role: AXRoleNames.kAXScrollAreaRole)
+        let siblingBar = MockAutomationElement(
+            role: AXRoleNames.kAXScrollBarRole,
+            frame: CGRect(x: 300, y: 0, width: 16, height: 400),
+            value: 0.2,
+            isValueSettable: true)
+        _ = MockAutomationElement(
+            role: AXRoleNames.kAXGroupRole,
+            children: [
+                targetArea,
+                MockAutomationElement(role: AXRoleNames.kAXScrollAreaRole, children: [siblingBar]),
+            ])
+
+        do {
+            _ = try ActionInputDriver().tryScrollForTesting(
+                element: targetArea,
+                direction: .down,
+                pages: 1)
+            Issue.record("Expected the target without a native scroll control to fail")
+        } catch let error as ActionInputError {
+            #expect(error == .unsupported(.actionUnsupported))
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+
+        #expect(siblingBar.setValues.isEmpty)
+    }
+
     @Test
     func `action input errors have user-readable descriptions`() {
         let error = ActionInputError.unsupported(.secureValueNotAllowed)
@@ -669,6 +840,7 @@ private final class MockAutomationElement: AutomationElementRepresenting, @unche
     private let children: [MockAutomationElement]
     private let stringAttributes: [String: String]
     private let intAttributes: [String: Int]
+    private let doubleAttributes: [String: Double]
     private let actionErrors: [String: any Error]
     private let valueSetterDoesNotChange: Bool
     var performedActions: [String] = []
@@ -700,6 +872,7 @@ private final class MockAutomationElement: AutomationElementRepresenting, @unche
         children: [MockAutomationElement] = [],
         stringAttributes: [String: String] = [:],
         intAttributes: [String: Int] = [:],
+        doubleAttributes: [String: Double] = [:],
         actionErrors: [String: any Error] = [:],
         valueSetterDoesNotChange: Bool = false)
     {
@@ -722,6 +895,7 @@ private final class MockAutomationElement: AutomationElementRepresenting, @unche
         self.children = children
         self.stringAttributes = stringAttributes
         self.intAttributes = intAttributes
+        self.doubleAttributes = doubleAttributes
         self.actionErrors = actionErrors
         self.valueSetterDoesNotChange = valueSetterDoesNotChange
     }
@@ -775,5 +949,9 @@ private final class MockAutomationElement: AutomationElementRepresenting, @unche
 
     func intAttribute(_ name: String) -> Int? {
         self.intAttributes[name]
+    }
+
+    func doubleAttribute(_ name: String) -> Double? {
+        self.doubleAttributes[name]
     }
 }

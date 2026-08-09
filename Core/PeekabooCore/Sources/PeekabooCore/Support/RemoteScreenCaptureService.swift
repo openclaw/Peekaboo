@@ -7,6 +7,8 @@ import PeekabooFoundation
 
 @MainActor
 public final class RemoteScreenCaptureService: ScreenCaptureServiceProtocol {
+    public let captureTransactionGateOwner: CaptureTransactionGateOwner = .service
+
     private let client: PeekabooBridgeClient
 
     public init(client: PeekabooBridgeClient) {

@@ -37,7 +37,7 @@ extension ImageTool {
             capture: DesktopCaptureOptions(
                 scale: request.scale,
                 focus: request.captureFocus,
-                visualizerMode: .screenshotFlash),
+                visualizerMode: .resolved(for: request.captureFocus, visibleMode: .screenshotFlash)),
             detection: DesktopDetectionOptions(mode: .none),
             output: DesktopObservationOutputOptions(
                 path: outputPath,

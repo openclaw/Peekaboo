@@ -51,7 +51,8 @@ extension ApplicationService {
                 layer: window.layer,
                 isOnScreen: window.isOnScreen,
                 sharingState: window.sharingState,
-                isExcludedFromWindowsMenu: window.isExcludedFromWindowsMenu)
+                isExcludedFromWindowsMenu: window.isExcludedFromWindowsMenu,
+                mutationIdentity: window.mutationIdentity)
         }
     }
 
@@ -59,21 +60,43 @@ extension ApplicationService {
         from window: Element,
         index: Int,
         isKeyWindow: Bool? = nil,
-        isFrontmost: Bool? = nil) async -> ServiceWindowInfo?
+        isFrontmost: Bool? = nil,
+        expectedProcessIdentity: ApplicationProcessIdentity?) async -> ServiceWindowInfo?
     {
-        guard let title = window.title() else { return nil }
+        guard let title = window.title(),
+              let expectedProcessIdentity,
+              window.pid() == expectedProcessIdentity.processIdentifier
+        else {
+            return nil
+        }
 
         let bounds = self.windowBounds(for: window)
+        let isMinimized = window.isMinimized()
         let screen = self.screenInfo(for: bounds)
-        let windowID = self.resolveWindowID(for: window, title: title, bounds: bounds, fallbackIndex: index)
+        let windowResolution = self.resolveWindowID(for: window, title: title, bounds: bounds, fallbackIndex: index)
+        let windowID = windowResolution.windowID
+        guard windowResolution.isReliable,
+              let mutationIdentity = SystemIdentityResolver.axWindowMutationIdentity(
+                  snapshot: SystemIdentityResolver.WindowMutationSnapshot(
+                      windowID: windowID,
+                      ownerProcessIdentifier: expectedProcessIdentity.processIdentifier,
+                      ownerProcessStartIdentity: expectedProcessIdentity.processStartIdentity,
+                      bounds: bounds,
+                      isMinimized: isMinimized),
+                  processStartIdentityProvider: SystemIdentityResolver.processStartIdentity,
+                  windowIdentityProvider: SystemIdentityResolver.windowIdentity)
+        else {
+            return nil
+        }
         let spaces = self.spaceInfo(for: windowID)
         let level = self.windowLevel(for: windowID)
 
+        let minimized = isMinimized ?? false
         return ServiceWindowInfo(
             windowID: Int(windowID),
             title: title,
             bounds: bounds,
-            isMinimized: window.isMinimized() ?? false,
+            isMinimized: minimized,
             isMainWindow: window.isMain() ?? false,
             isKeyWindow: isKeyWindow,
             isFrontmost: isFrontmost,
@@ -84,9 +107,10 @@ extension ApplicationService {
             spaceName: spaces.spaceName,
             screenIndex: screen.index,
             screenName: screen.name,
-            isOffScreen: screen.index == nil,
+            isOffScreen: minimized || screen.index == nil,
             layer: 0,
-            isOnScreen: true)
+            isOnScreen: !minimized,
+            mutationIdentity: mutationIdentity)
     }
 
     private func windowBounds(for window: Element) -> CGRect {
@@ -101,20 +125,25 @@ extension ApplicationService {
         return (screenInfo?.index, screenInfo?.name)
     }
 
-    private func resolveWindowID(for window: Element, title: String, bounds: CGRect, fallbackIndex: Int) -> CGWindowID {
+    private func resolveWindowID(
+        for window: Element,
+        title: String,
+        bounds: CGRect,
+        fallbackIndex: Int) -> (windowID: CGWindowID, isReliable: Bool)
+    {
         let windowIdentityService = WindowIdentityService()
         if let identifier = windowIdentityService.getWindowID(from: window) {
-            return identifier
+            return (identifier, true)
         }
 
         if let pid = window.pid(), let matched = matchWindowID(pid: pid, title: title, bounds: bounds) {
-            return matched
+            return (matched, true)
         }
 
         let missingIdentifierMessage =
             "Failed to get actual window ID for window '\(title)', using index \(fallbackIndex) as fallback"
         self.logger.warning("\(missingIdentifierMessage)")
-        return CGWindowID(fallbackIndex)
+        return (CGWindowID(fallbackIndex), false)
     }
 
     private func matchWindowID(pid: pid_t, title: String, bounds: CGRect) -> CGWindowID? {

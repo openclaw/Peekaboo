@@ -76,6 +76,8 @@ private func printCommanderError(_ error: CommanderProgramError, jsonOutput: Boo
 private func printGenericError(_ error: any Error, jsonOutput: Bool) {
     let code: ErrorCode = if error is CommanderBindingError {
         .INVALID_ARGUMENT
+    } else if error is Commander.ValidationError {
+        .VALIDATION_ERROR
     } else {
         .UNKNOWN_ERROR
     }

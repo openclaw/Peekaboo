@@ -92,7 +92,7 @@ extension DesktopObservationService {
         let normalizedWindow = ServiceWindowInfo(
             windowID: capturedWindow.windowID,
             title: resolvedWindow.title.isEmpty ? capturedWindow.title : resolvedWindow.title,
-            bounds: resolvedWindow.bounds,
+            bounds: capturedWindow.bounds,
             isMinimized: capturedWindow.isMinimized,
             isMainWindow: capturedWindow.isMainWindow,
             isKeyWindow: capturedWindow.isKeyWindow,
@@ -109,7 +109,8 @@ extension DesktopObservationService {
             layer: capturedWindow.layer,
             isOnScreen: capturedWindow.isOnScreen,
             sharingState: capturedWindow.sharingState,
-            isExcludedFromWindowsMenu: capturedWindow.isExcludedFromWindowsMenu)
+            isExcludedFromWindowsMenu: capturedWindow.isExcludedFromWindowsMenu,
+            mutationIdentity: capturedWindow.mutationIdentity)
         let metadata = CaptureMetadata(
             size: capture.metadata.size,
             mode: capture.metadata.mode,
@@ -125,6 +126,21 @@ extension DesktopObservationService {
             savedPath: capture.savedPath,
             metadata: metadata,
             warning: capture.warning)
+    }
+
+    static func bindingCaptureReceipt(
+        to target: ResolvedObservationTarget,
+        capture: CaptureResult) -> ResolvedObservationTarget
+    {
+        let capturedApplication = capture.metadata.applicationInfo.map(ApplicationIdentity.init)
+        let capturedWindow = capture.metadata.windowInfo.map(WindowIdentity.init)
+        return ResolvedObservationTarget(
+            kind: target.kind,
+            app: capturedApplication ?? target.app,
+            window: capturedWindow ?? target.window,
+            bounds: capturedWindow?.bounds ?? target.bounds,
+            detectionContext: self.windowContext(for: target, capture: capture),
+            captureScaleHint: target.captureScaleHint)
     }
 
     var engineAwareCapture: (any EngineAwareScreenCaptureServiceProtocol)? {

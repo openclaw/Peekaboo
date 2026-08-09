@@ -89,20 +89,63 @@ public final class WindowIdentityService {
 
     // MARK: - CGWindowID Extraction
 
-    func getWindowID(from element: Element) -> CGWindowID? {
-        self.resolver.windowID(from: element)
+    func getWindowID(from element: Element, messagingTimeout: Float = 0.25) -> CGWindowID? {
+        AXChildWindowMessagingTimeout.perform(
+            on: element,
+            timeout: messagingTimeout)
+        { childWindow in
+            self.resolver.windowID(from: childWindow)
+        }
     }
 
     // MARK: - AX Lookup
 
     func findWindow(byID windowID: CGWindowID, in app: NSRunningApplication) -> AXWindowHandle? {
-        guard let element = self.resolver.findWindow(by: windowID, in: app) else { return nil }
-        return AXWindowHandle(app: AXApp(app), element: element)
+        self.findWindow(byID: windowID, in: app, messagingTimeout: 1)
+    }
+
+    /// Resolve an exact WindowServer ID through a process-scoped AX query with a hard messaging timeout.
+    ///
+    /// The generic resolver intentionally has broad fallbacks, but state mutations must not spend the
+    /// process-wide 10-second AX budget (or scan unrelated apps) while holding the Bridge mutation gate.
+    func findWindow(
+        byID windowID: CGWindowID,
+        messagingTimeout: Float) -> AXWindowHandle?
+    {
+        guard let info = self.exactWindowServerInfo(windowID: windowID),
+              let app = NSRunningApplication(processIdentifier: info.ownerPID)
+        else {
+            return nil
+        }
+
+        return self.findWindow(byID: windowID, in: app, messagingTimeout: messagingTimeout)
+    }
+
+    private func findWindow(
+        byID windowID: CGWindowID,
+        in app: NSRunningApplication,
+        messagingTimeout: Float) -> AXWindowHandle?
+    {
+        let appElement = Element(AXUIElementCreateApplication(app.processIdentifier))
+        appElement.setMessagingTimeout(messagingTimeout)
+        defer { appElement.setMessagingTimeout(0) }
+        guard let windows = appElement.windows() else { return nil }
+        for window in windows {
+            let matches = AXChildWindowMessagingTimeout.perform(
+                on: window,
+                timeout: messagingTimeout)
+            { childWindow in
+                self.resolver.windowID(from: childWindow) == windowID
+            }
+            if matches {
+                return AXWindowHandle(app: AXApp(app), element: window)
+            }
+        }
+        return nil
     }
 
     func findWindow(byID windowID: CGWindowID) -> AXWindowHandle? {
-        guard let result = self.resolver.findWindow(by: windowID) else { return nil }
-        return AXWindowHandle(app: AXApp(result.app), element: result.window)
+        self.findWindow(byID: windowID, messagingTimeout: 1)
     }
 
     func focusedWindowID(for app: NSRunningApplication, timeout: TimeInterval) -> CGWindowID? {
@@ -110,16 +153,31 @@ public final class WindowIdentityService {
         let axApp = AXApp(app)
         axApp.element.setMessagingTimeout(Float(timeout))
         defer { axApp.element.setMessagingTimeout(0) }
-        return axApp.focusedWindow().flatMap { self.getWindowID(from: $0) }
+        guard let focusedWindow = axApp.focusedWindow() else { return nil }
+        return AXChildWindowMessagingTimeout.perform(
+            on: focusedWindow,
+            timeout: Float(timeout))
+        { window in
+            self.resolver.windowID(from: window)
+        }
     }
 
     // MARK: - Window Information
 
     public func getWindowInfo(windowID: CGWindowID) -> WindowIdentityInfo? {
-        guard let info = self.resolver.windowInfo(windowID: windowID) else { return nil }
+        guard let info = self.exactWindowServerInfo(windowID: windowID) else { return nil }
 
         // Compute AX identifier lazily.
-        let axIdentifier = self.findWindow(byID: windowID)?.element.identifier()
+        let axIdentifier: String? = if let handle = self.findWindow(byID: windowID, messagingTimeout: 1) {
+            AXChildWindowMessagingTimeout.perform(
+                on: handle.element,
+                timeout: 1)
+            { window in
+                window.identifier()
+            }
+        } else {
+            nil
+        }
 
         return WindowIdentityInfo(
             windowID: info.windowID,
@@ -131,6 +189,11 @@ public final class WindowIdentityService {
             layer: info.layer,
             alpha: info.alpha,
             axIdentifier: axIdentifier)
+    }
+
+    /// Return exact WindowServer metadata without making any Accessibility call.
+    func getWindowServerInfo(windowID: CGWindowID) -> WindowIdentityInfo? {
+        self.exactWindowServerInfo(windowID: windowID)
     }
 
     /// List windows for a running application using CGWindow metadata.
@@ -170,7 +233,7 @@ public final class WindowIdentityService {
     // MARK: - Existence
 
     public func windowExists(windowID: CGWindowID) -> Bool {
-        self.resolver.windowExists(windowID: windowID)
+        self.exactWindowServerInfo(windowID: windowID) != nil
     }
 
     public func isWindowOnScreen(windowID: CGWindowID) -> Bool {
@@ -206,6 +269,36 @@ public final class WindowIdentityService {
 
     private nonisolated static func windowID(from window: [String: Any]) -> CGWindowID? {
         self.intValue(window[kCGWindowNumber as String]).map(CGWindowID.init)
+    }
+
+    nonisolated static func exactWindowDictionary(
+        windowID: CGWindowID,
+        in windowList: [[String: Any]]) -> [String: Any]?
+    {
+        windowList.first(where: { self.windowID(from: $0) == windowID })
+    }
+
+    private func exactWindowServerInfo(windowID: CGWindowID) -> WindowIdentityInfo? {
+        guard let windowList = CGWindowListCopyWindowInfo(
+            [.optionIncludingWindow, .excludeDesktopElements],
+            windowID) as? [[String: Any]],
+            let window = Self.exactWindowDictionary(windowID: windowID, in: windowList),
+            let ownerPID = Self.ownerPID(from: window)
+        else {
+            return nil
+        }
+
+        let application = NSRunningApplication(processIdentifier: ownerPID)
+        return WindowIdentityInfo(
+            windowID: windowID,
+            title: window[kCGWindowName as String] as? String,
+            bounds: Self.bounds(from: window),
+            ownerPID: ownerPID,
+            applicationName: application?.localizedName,
+            bundleIdentifier: application?.bundleIdentifier,
+            layer: Self.intValue(window[kCGWindowLayer as String]) ?? 0,
+            alpha: Self.cgFloatValue(window[kCGWindowAlpha as String]) ?? 1,
+            axIdentifier: nil)
     }
 
     private nonisolated static func ownerPID(from window: [String: Any]) -> pid_t? {

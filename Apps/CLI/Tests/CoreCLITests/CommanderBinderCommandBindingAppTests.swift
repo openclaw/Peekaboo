@@ -11,7 +11,7 @@ struct CommanderBinderAppConfigTests {
             options: [
                 "bundleId": ["com.microsoft.VSCode"]
             ],
-            flags: ["waitUntilReady"]
+            flags: ["waitUntilReady", "waitForWindow", "newInstance"]
         )
         let command = try CommanderCLIBinder.instantiateCommand(
             ofType: AppCommand.LaunchSubcommand.self,
@@ -20,8 +20,46 @@ struct CommanderBinderAppConfigTests {
         #expect(command.app == "Visual Studio Code")
         #expect(command.bundleId == "com.microsoft.VSCode")
         #expect(command.waitUntilReady == true)
+        #expect(command.newInstance == true)
+        #expect(command.waitForWindow == true)
         #expect(command.foreground == false)
         #expect(command.noFocus == false)
+    }
+
+    @Test
+    func `App launch new-instance requires a current bridge host`() throws {
+        let parsed = ParsedValues(
+            positional: ["TextEdit"],
+            options: [:],
+            flags: ["newInstance"]
+        )
+
+        let options = try CommanderCLIBinder.makeRuntimeOptions(
+            from: parsed,
+            commandType: AppCommand.LaunchSubcommand.self
+        )
+
+        #expect(options.requiresApplicationLaunchOptions)
+        #expect(options.requiresNewApplicationInstanceLaunch)
+        #expect(!options.requiresApplicationWindowReadiness)
+    }
+
+    @Test
+    func `Open wait-for-window requires a current bridge host`() throws {
+        let parsed = ParsedValues(
+            positional: ["https://example.com"],
+            options: [:],
+            flags: ["waitForWindow"]
+        )
+
+        let options = try CommanderCLIBinder.makeRuntimeOptions(
+            from: parsed,
+            commandType: OpenCommand.self
+        )
+
+        #expect(options.requiresApplicationLaunchOptions)
+        #expect(options.requiresApplicationWindowReadiness)
+        #expect(!options.requiresNewApplicationInstanceLaunch)
     }
 
     @Test
@@ -95,7 +133,7 @@ struct CommanderBinderAppConfigTests {
                 "app": ["Safari"],
                 "bundleId": ["com.apple.Safari"]
             ],
-            flags: ["waitUntilReady", "foreground"]
+            flags: ["waitUntilReady", "waitForWindow", "foreground"]
         )
 
         let command = try CommanderCLIBinder.instantiateCommand(ofType: OpenCommand.self, parsedValues: parsed)
@@ -103,6 +141,7 @@ struct CommanderBinderAppConfigTests {
         #expect(command.app == "Safari")
         #expect(command.bundleId == "com.apple.Safari")
         #expect(command.waitUntilReady == true)
+        #expect(command.waitForWindow == true)
         #expect(command.foreground == true)
         #expect(command.noFocus == false)
     }
@@ -120,6 +159,7 @@ struct CommanderBinderAppConfigTests {
         #expect(command.app == nil)
         #expect(command.bundleId == nil)
         #expect(command.waitUntilReady == false)
+        #expect(command.waitForWindow == false)
         #expect(command.foreground == false)
         #expect(command.noFocus == false)
     }
@@ -131,6 +171,7 @@ struct CommanderBinderAppConfigTests {
             options: [
                 "app": ["Safari"],
                 "pid": ["123"],
+                "expectedProcessStartIdentity": ["456789"],
                 "except": ["Finder,Terminal"]
             ],
             flags: ["all", "force"]
@@ -141,6 +182,7 @@ struct CommanderBinderAppConfigTests {
         )
         #expect(command.app == "Safari")
         #expect(command.pid == 123)
+        #expect(command.expectedProcessStartIdentity == 456_789)
         #expect(command.all == true)
         #expect(command.except == "Finder,Terminal")
         #expect(command.force == true)

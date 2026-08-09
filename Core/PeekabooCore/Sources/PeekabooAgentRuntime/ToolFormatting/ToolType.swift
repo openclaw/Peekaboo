@@ -89,6 +89,7 @@ public enum ToolType: String, CaseIterable, Sendable {
     case listElements = "list_elements"
     case focused
     case inspectUI = "inspect_ui"
+    case verifyState = "verify_state"
 
     // MARK: - System
 
@@ -133,7 +134,7 @@ public enum ToolType: String, CaseIterable, Sendable {
             .menu
         case .dock, .listDock, .dockClick, .dockLaunch:
             .dock
-        case .list, .findElement, .listElements, .focused, .inspectUI:
+        case .list, .findElement, .listElements, .focused, .inspectUI, .verifyState:
             .element
         case .browser:
             .browser
@@ -220,6 +221,7 @@ public enum ToolType: String, CaseIterable, Sendable {
         case .needMoreInformation: "Need More Information"
         case .needInfo: "Need Information"
         case .inspectUI: "Inspect UI"
+        case .verifyState: "Verify State"
         case .clipboard: "Clipboard"
         case .copyToClipboard: "Copy to Clipboard"
         case .pasteFromClipboard: "Paste from Clipboard"

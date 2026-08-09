@@ -84,6 +84,7 @@ struct AutomationElementResolverTests {
             roleDescription: nil,
             identifier: identifier,
             isEnabled: true,
+            isSelected: nil,
             placeholder: nil)
     }
 

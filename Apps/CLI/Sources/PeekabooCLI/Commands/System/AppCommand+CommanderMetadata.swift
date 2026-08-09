@@ -30,6 +30,16 @@ extension AppCommand.LaunchSubcommand: CommanderSignatureProviding {
                     long: "wait-until-ready"
                 ),
                 .commandFlag(
+                    "newInstance",
+                    help: "Launch a distinct process even if the app is already running",
+                    long: "new-instance"
+                ),
+                .commandFlag(
+                    "waitForWindow",
+                    help: "Wait for the application to expose an exact WindowServer window",
+                    long: "wait-for-window"
+                ),
+                .commandFlag(
                     "foreground",
                     help: "Bring the app to the foreground after launching",
                     long: "foreground"
@@ -57,6 +67,11 @@ extension AppCommand.QuitSubcommand: CommanderSignatureProviding {
                     "pid",
                     help: "Target application by process ID",
                     long: "pid"
+                ),
+                .commandOption(
+                    "expectedProcessStartIdentity",
+                    help: "Require this process-start identity (cleanup safety; requires --pid)",
+                    long: "expected-process-start-identity"
                 ),
                 .commandOption(
                     "except",

@@ -11,7 +11,10 @@ public final class RemoteApplicationService: ApplicationServiceProtocol {
     private let client: PeekabooBridgeClient
     private let localFallback: (any ApplicationServiceProtocol)?
     private let supportsLaunchOptions: Bool
+    private let supportsNewInstanceLaunch: Bool
+    private let supportsWindowReadiness: Bool
     private let supportsRelaunch: Bool
+    private let supportsPinnedQuit: Bool
 
     public var supportsApplicationLaunchOptions: Bool {
         self.supportsLaunchOptions
@@ -21,16 +24,34 @@ public final class RemoteApplicationService: ApplicationServiceProtocol {
         self.supportsRelaunch
     }
 
+    public var supportsNewApplicationInstanceLaunch: Bool {
+        self.supportsNewInstanceLaunch
+    }
+
+    public var supportsApplicationWindowReadiness: Bool {
+        self.supportsWindowReadiness
+    }
+
+    public var supportsProcessGenerationPinnedApplicationQuit: Bool {
+        self.supportsPinnedQuit
+    }
+
     public init(
         client: PeekabooBridgeClient,
         localFallback: (any ApplicationServiceProtocol)? = nil,
         supportsLaunchOptions: Bool = false,
-        supportsRelaunch: Bool = false)
+        supportsNewInstanceLaunch: Bool = false,
+        supportsWindowReadiness: Bool = false,
+        supportsRelaunch: Bool = false,
+        supportsPinnedQuit: Bool = false)
     {
         self.client = client
         self.localFallback = localFallback
         self.supportsLaunchOptions = supportsLaunchOptions
+        self.supportsNewInstanceLaunch = supportsNewInstanceLaunch
+        self.supportsWindowReadiness = supportsWindowReadiness
         self.supportsRelaunch = supportsRelaunch
+        self.supportsPinnedQuit = supportsPinnedQuit
     }
 
     public func listApplications() async throws -> UnifiedToolOutput<ServiceApplicationListData> {
@@ -64,8 +85,8 @@ public final class RemoteApplicationService: ApplicationServiceProtocol {
         try await self.client.getFrontmostApplication()
     }
 
-    public func isApplicationRunning(identifier: String) async -> Bool {
-        await (try? self.client.isApplicationRunning(identifier: identifier)) ?? false
+    public func isApplicationRunning(identifier: String) async throws -> Bool {
+        try await self.client.isApplicationRunning(identifier: identifier)
     }
 
     public func launchApplication(identifier: String) async throws -> ServiceApplicationInfo {
@@ -73,6 +94,7 @@ public final class RemoteApplicationService: ApplicationServiceProtocol {
     }
 
     public func launchApplication(request: ApplicationLaunchRequest) async throws -> ServiceApplicationInfo {
+        try self.validateAdvancedLaunchOptions(request)
         if self.supportsLaunchOptions {
             return try await self.client.launchApplication(request: request)
         }
@@ -80,7 +102,9 @@ public final class RemoteApplicationService: ApplicationServiceProtocol {
         if let identifier = request.applicationIdentifier,
            request.openURLs.isEmpty,
            request.activates,
-           !request.waitUntilReady
+           !request.waitUntilReady,
+           !request.waitForWindow,
+           !request.createsNewInstance
         {
             return try await self.client.launchApplication(identifier: identifier)
         }
@@ -96,7 +120,26 @@ public final class RemoteApplicationService: ApplicationServiceProtocol {
                 code: .operationNotSupported,
                 message: "The selected Peekaboo host does not support atomic relaunch; update or relaunch it")
         }
+        guard request.expectedTargetIdentity != nil else {
+            throw PeekabooBridgeErrorEnvelope(
+                code: .operationNotSupported,
+                message: "Atomic remote relaunch requires the initially selected process-generation receipt")
+        }
+        try self.validateAdvancedLaunchOptions(request.launchRequest)
         return try await self.client.relaunchApplication(request: request)
+    }
+
+    private func validateAdvancedLaunchOptions(_ request: ApplicationLaunchRequest) throws {
+        if request.createsNewInstance, !self.supportsNewInstanceLaunch {
+            throw PeekabooBridgeErrorEnvelope(
+                code: .operationNotSupported,
+                message: "The selected Peekaboo host does not support new-instance launch; update or relaunch it")
+        }
+        if request.waitForWindow, !self.supportsWindowReadiness {
+            throw PeekabooBridgeErrorEnvelope(
+                code: .operationNotSupported,
+                message: "The selected Peekaboo host does not support window-ready launch; update or relaunch it")
+        }
     }
 
     public func activateApplication(identifier: String) async throws {
@@ -108,7 +151,24 @@ public final class RemoteApplicationService: ApplicationServiceProtocol {
     }
 
     public func quitApplication(identifier: String, force: Bool) async throws -> Bool {
-        try await self.client.quitApplication(identifier: identifier, force: force)
+        try await self.client.quitApplication(
+            identifier: identifier,
+            force: force,
+            supportsPinnedQuit: self.supportsPinnedQuit)
+    }
+
+    public func quitApplication(request: ApplicationQuitRequest) async throws -> Bool {
+        guard self.supportsPinnedQuit else {
+            throw PeekabooBridgeErrorEnvelope(
+                code: .operationNotSupported,
+                message: "Remote host lacks process-generation-pinned application quit; update the host")
+        }
+        guard request.expectedIdentity != nil else {
+            throw PeekabooBridgeErrorEnvelope(
+                code: .operationNotSupported,
+                message: "Remote application quit requires a process-generation identity; resolve the app again")
+        }
+        return try await self.client.quitApplication(request: request, supportsPinnedQuit: true)
     }
 
     public func hideApplication(identifier: String) async throws {

@@ -1,14 +1,17 @@
+import MCP
 import PeekabooAutomationKit
 import TachikomaMCP
 
 struct InspectUIRequest {
     let appTarget: String?
+    let windowIDValue: Value?
     let snapshotId: String?
     let webFocus: Bool
     let traversalBudget: AXTraversalBudget
 
     init(arguments: ToolArguments) {
         self.appTarget = arguments.getString("app_target")
+        self.windowIDValue = arguments.getValue(for: "window_id")
         self.snapshotId = arguments.getString("snapshot")
         self.webFocus = arguments.getBool("web_focus") ?? false
         self.traversalBudget = AXTraversalBudget.resolved(

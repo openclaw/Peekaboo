@@ -28,6 +28,7 @@ Aliases:
 
 ## Current policy (May 2026)
 - Default: `auto` = try CGWindowList/CoreGraphics first, fallback to ScreenCaptureKit if CG fails.
+- Window `auto` capture treats an abandoned, quarantined, or contended in-process ScreenCaptureKit call as a fallback signal and tries the bounded `/usr/sbin/screencapture` path in an isolated child process. The child is terminated and reaped on timeout, so fallback cannot hang indefinitely. `modern` remains strict and reports the ScreenCaptureKit failure instead of silently changing engines.
 - You can force SC-only via env `PEEKABOO_DISABLE_CGWINDOWLIST=1`.
 - You can force classic/CG via `--capture-engine classic|cg` or `PEEKABOO_CAPTURE_ENGINE=classic`.
 

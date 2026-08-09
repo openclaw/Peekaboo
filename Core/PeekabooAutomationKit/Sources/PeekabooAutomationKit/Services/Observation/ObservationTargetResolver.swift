@@ -13,15 +13,18 @@ public final class ObservationTargetResolver: ObservationTargetResolving {
     private let applications: any ApplicationServiceProtocol
     let menu: (any MenuServiceProtocol)?
     let screens: (any ScreenServiceProtocol)?
+    let exactWindowMetadataProvider: any ExactWindowMetadataProviding
 
     public init(
         applications: any ApplicationServiceProtocol,
         menu: (any MenuServiceProtocol)? = nil,
-        screens: (any ScreenServiceProtocol)? = nil)
+        screens: (any ScreenServiceProtocol)? = nil,
+        exactWindowMetadataProvider: any ExactWindowMetadataProviding = SystemExactWindowMetadataProvider())
     {
         self.applications = applications
         self.menu = menu
         self.screens = screens
+        self.exactWindowMetadataProvider = exactWindowMetadataProvider
     }
 
     public func resolve(
@@ -45,7 +48,7 @@ public final class ObservationTargetResolver: ObservationTargetResolving {
             try await self.resolvePID(pid, selection: selection, snapshot: snapshot)
 
         case let .windowID(windowID):
-            self.resolveWindowID(windowID)
+            try self.resolveWindowID(windowID)
 
         case let .area(rect):
             ResolvedObservationTarget(kind: .area(rect), bounds: rect)
@@ -106,8 +109,78 @@ public final class ObservationTargetResolver: ObservationTargetResolving {
         _ app: ServiceApplicationInfo,
         selection: WindowSelection) async throws -> ResolvedObservationTarget
     {
+        if app.processStartIdentity == nil {
+            return try await self.resolveLegacyReadOnlyApplication(app, selection: selection)
+        }
+
+        if case let .id(windowID) = selection {
+            return try self.resolveExactWindow(windowID, for: app)
+        }
+
+        let usesWindowServerCatalog = switch selection {
+        case .automatic, .title:
+            true
+        case .id, .index:
+            false
+        }
+        if usesWindowServerCatalog {
+            let catalogIdentities = self.exactWindowMetadataProvider.windows(for: app.processIdentifier)
+            if !catalogIdentities.isEmpty {
+                guard let processStartIdentity = app.processStartIdentity,
+                      self.exactWindowMetadataProvider.processStartIdentity(for: app.processIdentifier) ==
+                      processStartIdentity
+                else {
+                    throw DesktopObservationError.targetNotFound(
+                        "live process generation for PID \(app.processIdentifier)")
+                }
+            }
+            let processStartIdentity = app.processStartIdentity
+            let catalogWindows = catalogIdentities
+                .filter {
+                    $0.ownerProcessIdentifier == app.processIdentifier &&
+                        $0.ownerProcessStartIdentity == processStartIdentity
+                }
+                .enumerated()
+                .map { index, identity in Self.serviceWindowInfo(identity, index: index) }
+            let hasRequestedTitle: Bool = switch selection {
+            case .automatic:
+                true
+            case let .title(title):
+                catalogWindows.contains { $0.title.localizedCaseInsensitiveContains(title) }
+            case .id, .index:
+                false
+            }
+            if !catalogWindows.isEmpty, hasRequestedTitle {
+                let resolved = try self.resolveApplication(app, selection: selection, windows: catalogWindows)
+                guard let selectedWindowID = resolved.window?.windowID,
+                      let exactWindowID = CGWindowID(exactly: selectedWindowID)
+                else {
+                    return resolved
+                }
+                return try self.resolveExactWindow(exactWindowID, for: app)
+            }
+        }
+
         let lookupIdentifier = app.bundleIdentifier ?? app.name
         let windows = try await self.applications.listWindows(for: lookupIdentifier, timeout: 2).data.windows
+        return try self.resolveApplication(app, selection: selection, windows: windows)
+    }
+
+    private func resolveLegacyReadOnlyApplication(
+        _ app: ServiceApplicationInfo,
+        selection: WindowSelection) async throws -> ResolvedObservationTarget
+    {
+        let lookupIdentifier = app.bundleIdentifier ?? app.name
+        let windows = try await self.applications.listWindows(for: lookupIdentifier, timeout: 2).data.windows
+            .map(Self.readOnlyWindowInfo)
+        return try self.resolveApplication(app, selection: selection, windows: windows)
+    }
+
+    private func resolveApplication(
+        _ app: ServiceApplicationInfo,
+        selection: WindowSelection,
+        windows: [ServiceWindowInfo]) throws -> ResolvedObservationTarget
+    {
         let selectedWindow = try self.selectWindow(from: windows, selection: selection)
         if selection == .automatic, selectedWindow == nil, !windows.isEmpty {
             throw DesktopObservationError.targetNotFound(
@@ -120,13 +193,107 @@ public final class ObservationTargetResolver: ObservationTargetResolving {
             applicationProcessId: app.processIdentifier,
             windowTitle: selectedWindow?.title,
             windowID: selectedWindow?.windowID,
-            windowBounds: selectedWindow?.bounds)
+            windowBounds: selectedWindow?.bounds,
+            windowMutationIdentity: selectedWindow?.mutationIdentity)
 
         return ResolvedObservationTarget(
             kind: selectedWindow.map { .windowID(CGWindowID($0.windowID)) } ?? .appWindow,
             app: ApplicationIdentity(app),
             window: selectedWindow.map(WindowIdentity.init),
             bounds: selectedWindow?.bounds,
+            detectionContext: context)
+    }
+
+    nonisolated static func serviceWindowInfo(
+        _ identity: SystemWindowIdentity,
+        index: Int) -> ServiceWindowInfo
+    {
+        ServiceWindowInfo(
+            windowID: Int(identity.windowID),
+            title: identity.title,
+            bounds: identity.bounds,
+            isMinimized: !identity.isOnScreen,
+            isMainWindow: false,
+            windowLevel: identity.layer,
+            alpha: identity.alpha,
+            index: index,
+            isOffScreen: !identity.isOnScreen,
+            layer: identity.layer,
+            isOnScreen: identity.isOnScreen,
+            sharingState: identity.sharingState,
+            isExcludedFromWindowsMenu: false,
+            mutationIdentity: identity.ownerProcessStartIdentity.map {
+                WindowMutationIdentity(
+                    windowID: Int(identity.windowID),
+                    ownerProcessIdentifier: identity.ownerProcessIdentifier,
+                    ownerProcessStartIdentity: $0,
+                    capturedBounds: identity.bounds,
+                    isMinimized: !identity.isOnScreen)
+            })
+    }
+
+    private nonisolated static func readOnlyWindowInfo(_ window: ServiceWindowInfo) -> ServiceWindowInfo {
+        ServiceWindowInfo(
+            windowID: window.windowID,
+            title: window.title,
+            bounds: window.bounds,
+            isMinimized: window.isMinimized,
+            isMainWindow: window.isMainWindow,
+            isKeyWindow: window.isKeyWindow,
+            isFrontmost: window.isFrontmost,
+            subrole: window.subrole,
+            windowLevel: window.windowLevel,
+            alpha: window.alpha,
+            index: window.index,
+            spaceID: window.spaceID,
+            spaceName: window.spaceName,
+            screenIndex: window.screenIndex,
+            screenName: window.screenName,
+            isOffScreen: window.isOffScreen,
+            layer: window.layer,
+            isOnScreen: window.isOnScreen,
+            sharingState: window.sharingState,
+            isExcludedFromWindowsMenu: window.isExcludedFromWindowsMenu,
+            mutationIdentity: nil)
+    }
+
+    private func resolveExactWindow(
+        _ windowID: CGWindowID,
+        for app: ServiceApplicationInfo) throws -> ResolvedObservationTarget
+    {
+        guard let metadata = self.exactWindowMetadataProvider.metadata(for: windowID),
+              let processStartIdentity = app.processStartIdentity,
+              metadata.ownerProcessIdentifier == app.processIdentifier,
+              metadata.ownerProcessStartIdentity == processStartIdentity,
+              self.exactWindowMetadataProvider.processStartIdentity(for: app.processIdentifier) ==
+              processStartIdentity
+        else {
+            throw DesktopObservationError.targetNotFound(
+                "window id \(windowID) owned by PID \(app.processIdentifier)")
+        }
+
+        let window = WindowIdentity(
+            windowID: Int(windowID),
+            title: metadata.title,
+            bounds: metadata.bounds,
+            index: 0)
+        let context = WindowContext(
+            applicationName: app.name,
+            applicationBundleId: app.bundleIdentifier,
+            applicationProcessId: app.processIdentifier,
+            windowTitle: window.title,
+            windowID: window.windowID,
+            windowBounds: window.bounds,
+            windowMutationIdentity: WindowMutationIdentity(
+                windowID: window.windowID,
+                ownerProcessIdentifier: metadata.ownerProcessIdentifier,
+                ownerProcessStartIdentity: metadata.ownerProcessStartIdentity,
+                capturedBounds: window.bounds))
+        return ResolvedObservationTarget(
+            kind: .windowID(windowID),
+            app: ApplicationIdentity(app),
+            window: window,
+            bounds: window.bounds,
             detectionContext: context)
     }
 
@@ -166,6 +333,7 @@ public final class ObservationTargetResolver: ObservationTargetResolving {
     private static func serviceApplicationInfo(from identity: ApplicationIdentity) -> ServiceApplicationInfo {
         ServiceApplicationInfo(
             processIdentifier: identity.processIdentifier,
+            processStartIdentity: identity.processStartIdentity,
             bundleIdentifier: identity.bundleIdentifier,
             name: identity.name,
             windowCount: 0)

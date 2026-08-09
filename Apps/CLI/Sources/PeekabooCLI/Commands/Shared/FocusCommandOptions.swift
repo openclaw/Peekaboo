@@ -4,7 +4,7 @@ import PeekabooCore
 
 /// CLI-facing wrapper that maps command-line flags to core focus options.
 struct FocusCommandOptions: CommanderParsable, FocusOptionsProtocol {
-    @Flag(name: .long, help: "Disable automatic focus before interaction (not recommended)")
+    @Flag(name: .long, help: "Disable automatic foreground focus (requires --foreground)")
     var noAutoFocus = false
 
     @Option(name: .long, help: "Timeout for focus operations in seconds")

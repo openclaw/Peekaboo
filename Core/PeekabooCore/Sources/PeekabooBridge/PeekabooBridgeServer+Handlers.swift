@@ -18,13 +18,15 @@ extension PeekabooBridgeServer {
             try await self.handleCaptureRequest(request)
         case .desktopObservation:
             try await self.handleDesktopObservationRequest(request)
-        case .detectElements, .inspectAccessibilityTree, .click, .type, .typeActions, .targetedTypeActions,
-             .setValue, .performAction, .scroll, .targetedScroll, .hotkey, .targetedHotkey, .targetedClick,
+        case .detectElements, .inspectAccessibilityTree, .getFocusedElement, .click, .type, .typeActions,
+             .targetedTypeActions, .exactWindowTargetedTypeActions,
+             .setValue, .performAction, .scroll, .targetedScroll, .hotkey, .targetedHotkey,
+             .exactWindowTargetedHotkey, .targetedClick,
              .exactWindowTargetedClick, .swipe, .drag, .moveMouse, .waitForElement:
             try await self.handleAutomationRequest(request)
         case .listWindows, .focusWindow, .moveWindow, .resizeWindow, .setWindowBounds, .closeWindow,
              .backgroundCloseWindow,
-             .minimizeWindow, .maximizeWindow, .getFocusedWindow:
+             .minimizeWindow, .restoreWindow, .maximizeWindow, .getFocusedWindow:
             try await self.handleWindowRequest(request)
         case .listApplications, .findApplication, .getFrontmostApplication, .isApplicationRunning,
              .launchApplication, .launchApplicationWithOptions, .relaunchApplicationWithOptions,
@@ -181,6 +183,15 @@ extension PeekabooBridgeServer {
             let result = try await self.services.automation.inspectAccessibilityTree(
                 windowContext: payload.windowContext)
             return .elementDetection(result)
+        case let .getFocusedElement(payload):
+            guard let automation = self.services.automation as? any TargetedFocusedElementServiceProtocol else {
+                throw PeekabooBridgeErrorEnvelope(
+                    code: .operationNotSupported,
+                    message: "PID-scoped focused-element queries are not supported by this bridge host")
+            }
+            let focusedElement = await automation.getFocusedElement(
+                targetProcessIdentifier: pid_t(payload.targetProcessIdentifier))
+            return .focusedElement(focusedElement)
         case let .click(payload):
             try await self.services.automation.click(
                 target: payload.target,
@@ -201,7 +212,8 @@ extension PeekabooBridgeServer {
                 cadence: payload.cadence,
                 snapshotId: payload.snapshotId)
             return .typeResult(result)
-        case .targetedTypeActions, .targetedHotkey, .targetedClick:
+        case .targetedTypeActions, .exactWindowTargetedTypeActions, .targetedHotkey,
+             .exactWindowTargetedHotkey, .targetedClick:
             return try await self.handleTargetedAutomationRequest(request)
         case let .setValue(payload):
             guard let automation = self.services.automation as? any ElementActionAutomationServiceProtocol else {
@@ -284,6 +296,33 @@ extension PeekabooBridgeServer {
                 snapshotId: payload.snapshotId,
                 targetProcessIdentifier: pid_t(payload.targetProcessIdentifier))
             return .typeResult(result)
+        case let .exactWindowTargetedTypeActions(payload):
+            guard let service = self.services.automation as? any ExactWindowTargetedKeyboardServiceProtocol,
+                  service.supportsExactWindowTargetedKeyboard
+            else {
+                throw PeekabooBridgeErrorEnvelope(
+                    code: .operationNotSupported,
+                    message: "Atomic exact-window background typing is not supported by this bridge host")
+            }
+            self.automationActivityObserver?(pid_t(payload.expectedWindowIdentity.ownerProcessIdentifier))
+            let result = if let expectedFocusedElement = payload.expectedFocusedElement {
+                try await service.typeActions(
+                    payload.actions,
+                    cadence: payload.cadence,
+                    snapshotId: payload.snapshotId,
+                    target: ExactWindowKeyboardTarget(
+                        windowIdentity: payload.expectedWindowIdentity,
+                        windowBounds: payload.expectedWindowBounds,
+                        focusedElement: expectedFocusedElement))
+            } else {
+                try await service.typeActions(
+                    payload.actions,
+                    cadence: payload.cadence,
+                    snapshotId: payload.snapshotId,
+                    expectedWindowIdentity: payload.expectedWindowIdentity,
+                    expectedWindowBounds: payload.expectedWindowBounds)
+            }
+            return .typeResult(result)
         case let .targetedHotkey(payload):
             guard
                 let targetedHotkeyService = self.services.automation as? any TargetedHotkeyServiceProtocol,
@@ -300,6 +339,31 @@ extension PeekabooBridgeServer {
                 holdDuration: payload.holdDuration,
                 targetProcessIdentifier: pid_t(payload.targetProcessIdentifier))
             return .ok
+        case let .exactWindowTargetedHotkey(payload):
+            guard let service = self.services.automation as? any ExactWindowTargetedKeyboardServiceProtocol,
+                  service.supportsExactWindowTargetedKeyboard
+            else {
+                throw PeekabooBridgeErrorEnvelope(
+                    code: .operationNotSupported,
+                    message: "Atomic exact-window background hotkeys are not supported by this bridge host")
+            }
+            self.automationActivityObserver?(pid_t(payload.expectedWindowIdentity.ownerProcessIdentifier))
+            if let expectedFocusedElement = payload.expectedFocusedElement {
+                try await service.hotkey(
+                    keys: payload.keys,
+                    holdDuration: payload.holdDuration,
+                    target: ExactWindowKeyboardTarget(
+                        windowIdentity: payload.expectedWindowIdentity,
+                        windowBounds: payload.expectedWindowBounds,
+                        focusedElement: expectedFocusedElement))
+            } else {
+                try await service.hotkey(
+                    keys: payload.keys,
+                    holdDuration: payload.holdDuration,
+                    expectedWindowIdentity: payload.expectedWindowIdentity,
+                    expectedWindowBounds: payload.expectedWindowBounds)
+            }
+            return .ok
         case let .targetedClick(payload):
             guard
                 let targetedClickService = self.services.automation as? any TargetedClickServiceProtocol,
@@ -310,6 +374,13 @@ extension PeekabooBridgeServer {
                     message: "Background clicks are not supported by this bridge host")
             }
 
+            if case .coordinates = payload.target, payload.targetWindowID == nil {
+                throw PeekabooBridgeErrorEnvelope(
+                    code: .invalidRequest,
+                    message: "Background coordinate clicks require an exact capture-time window identity and bounds; " +
+                        "PID-only coordinates are refused")
+            }
+
             if let targetWindowID = payload.targetWindowID {
                 guard let exactWindowService = targetedClickService as? any ExactWindowTargetedClickServiceProtocol
                 else {
@@ -317,13 +388,22 @@ extension PeekabooBridgeServer {
                         code: .operationNotSupported,
                         message: "Exact-window background clicks are not supported by this bridge host")
                 }
+                guard let expectedIdentity = payload.expectedWindowIdentity,
+                      let expectedBounds = payload.expectedWindowBounds,
+                      expectedIdentity.windowID == targetWindowID,
+                      expectedIdentity.ownerProcessIdentifier == payload.targetProcessIdentifier
+                else {
+                    throw PeekabooBridgeErrorEnvelope(
+                        code: .invalidRequest,
+                        message: "Exact-window click requires a matching process-generation identity and bounds")
+                }
                 self.automationActivityObserver?(pid_t(payload.targetProcessIdentifier))
                 try await exactWindowService.click(
                     target: payload.target,
                     clickType: payload.clickType,
                     snapshotId: payload.snapshotId,
-                    targetProcessIdentifier: pid_t(payload.targetProcessIdentifier),
-                    targetWindowID: targetWindowID)
+                    expectedWindowIdentity: expectedIdentity,
+                    expectedWindowBounds: expectedBounds)
             } else {
                 self.automationActivityObserver?(pid_t(payload.targetProcessIdentifier))
                 try await targetedClickService.click(
@@ -347,29 +427,61 @@ extension PeekabooBridgeServer {
             try await self.services.windows.focusWindow(target: payload.target)
             return .ok
         case let .moveWindow(payload):
-            try await self.services.windows.moveWindow(target: payload.target, to: payload.position)
+            let identity = try Self.requireWindowMutationReceipt(payload.expectedIdentity, operation: .moveWindow)
+            try await self.services.windows.moveWindow(
+                target: payload.target,
+                expectedIdentity: identity,
+                to: payload.position)
             return .ok
         case let .resizeWindow(payload):
-            try await self.services.windows.resizeWindow(target: payload.target, to: payload.size)
+            let identity = try Self.requireWindowMutationReceipt(payload.expectedIdentity, operation: .resizeWindow)
+            try await self.services.windows.resizeWindow(
+                target: payload.target,
+                expectedIdentity: identity,
+                to: payload.size)
             return .ok
         case let .setWindowBounds(payload):
-            try await self.services.windows.setWindowBounds(target: payload.target, bounds: payload.bounds)
+            let identity = try Self.requireWindowMutationReceipt(
+                payload.expectedIdentity,
+                operation: .setWindowBounds)
+            try await self.services.windows.setWindowBounds(
+                target: payload.target,
+                expectedIdentity: identity,
+                bounds: payload.bounds)
             return .ok
         case let .closeWindow(payload):
+            let identity = try Self.requireWindowMutationReceipt(payload.expectedIdentity, operation: .closeWindow)
             try await self.services.windows.closeWindow(
                 target: payload.target,
+                expectedIdentity: identity,
                 allowForegroundFallback: true)
             return .ok
         case let .backgroundCloseWindow(payload):
+            let identity = try Self.requireWindowMutationReceipt(
+                payload.expectedIdentity,
+                operation: .backgroundCloseWindow)
             try await self.services.windows.closeWindow(
                 target: payload.target,
+                expectedIdentity: identity,
                 allowForegroundFallback: false)
             return .ok
         case let .minimizeWindow(payload):
-            try await self.services.windows.minimizeWindow(target: payload.target)
+            let identity = try Self.requireWindowMutationReceipt(payload.expectedIdentity, operation: .minimizeWindow)
+            try await self.services.windows.minimizeWindow(
+                target: payload.target,
+                expectedIdentity: identity)
+            return .ok
+        case let .restoreWindow(payload):
+            let identity = try Self.requireWindowMutationReceipt(payload.expectedIdentity, operation: .restoreWindow)
+            try await self.services.windows.restoreWindow(
+                target: payload.target,
+                expectedIdentity: identity)
             return .ok
         case let .maximizeWindow(payload):
-            try await self.services.windows.maximizeWindow(target: payload.target)
+            let identity = try Self.requireWindowMutationReceipt(payload.expectedIdentity, operation: .maximizeWindow)
+            try await self.services.windows.maximizeWindow(
+                target: payload.target,
+                expectedIdentity: identity)
             return .ok
         case .getFocusedWindow:
             let window = try await self.services.windows.getFocusedWindow()
@@ -377,5 +489,18 @@ extension PeekabooBridgeServer {
         default:
             throw Self.invalidRequest(for: request)
         }
+    }
+
+    private static func requireWindowMutationReceipt(
+        _ identity: WindowMutationIdentity?,
+        operation: PeekabooBridgeOperation) throws -> WindowMutationIdentity
+    {
+        guard let identity, identity.capturedBounds != nil else {
+            throw PeekabooBridgeErrorEnvelope(
+                code: .invalidRequest,
+                message: "Operation \(operation.rawValue) requires a process-generation window mutation " +
+                    "receipt with capture-time bounds")
+        }
+        return identity
     }
 }

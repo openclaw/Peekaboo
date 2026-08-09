@@ -26,6 +26,12 @@ import PeekabooFoundation
         if truncationInfo?.maxChildrenPerNodeReached == true {
             warnings.append("ax_truncated_children")
         }
+        if truncationInfo?.deadlineReached == true {
+            warnings.append("ax_truncated_deadline")
+        }
+        if truncationInfo?.incompleteAccessibilityRead == true {
+            warnings.append("ax_incomplete_read")
+        }
 
         return ElementDetectionResult(
             snapshotId: snapshotId,

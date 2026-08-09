@@ -97,13 +97,36 @@ struct AgentSystemPromptTests {
     }
 
     @Test
+    func `generated prompt forbids claims from withheld or incomplete observation evidence`() {
+        guard #available(macOS 14.0, *) else { return }
+        let prompt = AgentSystemPrompt.generate()
+
+        #expect(prompt.contains("not delivered, do not describe"))
+        #expect(prompt.contains("missing text or elements do not prove absence"))
+        #expect(prompt.contains("report that the state is unverified"))
+        #expect(prompt.contains("two-phase contract"))
+        #expect(prompt.contains("first structurally valid"))
+        #expect(prompt.contains("Repeat the exact same target and predicates"))
+    }
+
+    @Test
+    func `generated prompt limits each response to one desktop mutation`() {
+        guard #available(macOS 14.0, *) else { return }
+        let prompt = AgentSystemPrompt.generate()
+
+        #expect(prompt.contains("at most one desktop-mutating tool call in each model response"))
+        #expect(prompt.contains("skips later mutations until a fresh successful `see`"))
+        #expect(prompt.contains("You may batch read-only"))
+    }
+
+    @Test
     func `generated prompt keeps launch navigation and observation in background`() {
         guard #available(macOS 14.0, *) else { return }
         let prompt = AgentSystemPrompt.generate()
 
         #expect(prompt.contains(#""action": "launch", "name": "Safari", "foreground": false"#))
         #expect(prompt.contains(#""action": "open", "name": "Safari""#))
-        #expect(prompt.contains(#""background": true"#))
+        #expect(prompt.contains("`new_page` and `select_page` stay in the background by default"))
         #expect(prompt.contains("Observation never focuses the target by default"))
         #expect(prompt.contains("Only set `web_focus: true`"))
         #expect(!prompt.contains("capture and focus background apps"))

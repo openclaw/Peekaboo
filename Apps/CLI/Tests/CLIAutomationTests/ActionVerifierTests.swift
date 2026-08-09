@@ -76,7 +76,7 @@ struct VerificationResultTests {
     }
 
     @Test
-    func `Failed verification with high confidence triggers retry`() {
+    func `Failed verification with high confidence does not replay dispatched action`() {
         let result = VerificationResult(
             success: false,
             confidence: 0.85,
@@ -85,7 +85,7 @@ struct VerificationResultTests {
         )
 
         #expect(result.success == false)
-        #expect(result.shouldRetry == true)
+        #expect(result.shouldRetry == false)
     }
 
     @Test
@@ -102,7 +102,7 @@ struct VerificationResultTests {
     }
 
     @Test
-    func `Retry threshold is at 0.6 confidence`() {
+    func `Failed verification never requests automatic replay`() {
         let atThreshold = VerificationResult(
             success: false,
             confidence: 0.6,
@@ -117,7 +117,7 @@ struct VerificationResultTests {
             observation: "Above threshold",
             suggestion: nil
         )
-        #expect(aboveThreshold.shouldRetry == true)
+        #expect(aboveThreshold.shouldRetry == false)
     }
 }
 

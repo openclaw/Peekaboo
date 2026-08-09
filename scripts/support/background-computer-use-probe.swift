@@ -32,6 +32,11 @@ private struct AppIdentity: Codable {
     let isActive: Bool
 }
 
+private struct ProcessIdentity: Codable {
+    let pid: Int32
+    let startIdentity: UInt64
+}
+
 private enum ProbeError: Error, CustomStringConvertible {
     case invalidArguments(String)
     case noMouseEvent
@@ -142,6 +147,18 @@ private func sample(includeClipboardDigest: Bool = true) throws -> SystemSample 
         clipboardChangeCount: pasteboard.changeCount,
         clipboardDigest: includeClipboardDigest ? clipboardDigest(pasteboard) : "",
         peekabooWindowIDs: peekabooWindowIDs(windows: windows))
+}
+
+private func processStartIdentity(pid: Int32) -> UInt64? {
+    guard pid > 0 else { return nil }
+    var info = proc_bsdinfo()
+    let expectedSize = Int32(MemoryLayout<proc_bsdinfo>.stride)
+    guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, expectedSize) == expectedSize else {
+        return nil
+    }
+    let seconds = UInt64(info.pbi_start_tvsec)
+    let microseconds = UInt64(info.pbi_start_tvusec)
+    return seconds.multipliedReportingOverflow(by: 1_000_000).partialValue &+ microseconds
 }
 
 private func violations(
@@ -298,7 +315,11 @@ private func runSelfTest() throws {
         throw ProbeError.invalidArguments("clipboard mutation allowance was ignored")
     }
 
-    try writeJSON(SelfTestResult(success: true, tests: 3), to: nil)
+    guard processStartIdentity(pid: getpid()) != nil else {
+        throw ProbeError.invalidArguments("process generation lookup failed for the probe")
+    }
+
+    try writeJSON(SelfTestResult(success: true, tests: 4), to: nil)
 }
 
 private func findApp(arguments: [String]) throws {
@@ -318,6 +339,18 @@ private func findApp(arguments: [String]) throws {
         to: argument("--output", in: arguments))
 }
 
+private func writeProcessIdentity(arguments: [String]) throws {
+    guard let value = argument("--pid", in: arguments),
+          let pid = Int32(value),
+          let startIdentity = processStartIdentity(pid: pid)
+    else {
+        throw ProbeError.invalidArguments("process-identity requires a live positive --pid")
+    }
+    try writeJSON(
+        ProcessIdentity(pid: pid, startIdentity: startIdentity),
+        to: argument("--output", in: arguments))
+}
+
 private struct SelfTestResult: Encodable {
     let success: Bool
     let tests: Int
@@ -326,7 +359,7 @@ private struct SelfTestResult: Encodable {
 do {
     let arguments = Array(CommandLine.arguments.dropFirst())
     guard let mode = arguments.first else {
-        throw ProbeError.invalidArguments("expected sample, watch, find-app, or self-test")
+        throw ProbeError.invalidArguments("expected sample, watch, find-app, process-identity, or self-test")
     }
     switch mode {
     case "sample":
@@ -335,6 +368,8 @@ do {
         try runWatch(arguments: arguments)
     case "find-app":
         try findApp(arguments: arguments)
+    case "process-identity":
+        try writeProcessIdentity(arguments: arguments)
     case "self-test":
         try runSelfTest()
     default:

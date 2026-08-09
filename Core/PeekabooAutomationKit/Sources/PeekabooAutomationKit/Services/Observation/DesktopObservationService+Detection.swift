@@ -13,7 +13,7 @@ extension DesktopObservationService {
             return nil
         }
 
-        var context = target.detectionContext ?? Self.windowContext(from: capture)
+        var context = Self.windowContext(for: target, capture: capture)
         context = WindowContext(
             applicationName: context?.applicationName,
             applicationBundleId: context?.applicationBundleId,
@@ -21,9 +21,12 @@ extension DesktopObservationService {
             windowTitle: context?.windowTitle,
             windowID: context?.windowID,
             windowBounds: context?.windowBounds,
+            windowMutationIdentity: context?.windowMutationIdentity,
             shouldFocusWebContent: request.detection.allowWebFocusFallback,
             includeMenuBarElements: request.detection.includeMenuBarElements,
-            traversalBudget: request.detection.traversalBudget)
+            traversalBudget: request.detection.traversalBudget,
+            requiresFreshAccessibilityTree: context?.requiresFreshAccessibilityTree ?? false,
+            accessibilityTimeoutSeconds: request.timeout.detection)
 
         return try await tracer.span("detection.ax") {
             try await self.detectElements(
@@ -44,7 +47,19 @@ extension DesktopObservationService {
         }
 
         return try await tracer.span("detection.ocr") {
-            try self.ocrRecognizer.recognizeText(in: capture.imageData)
+            let timeout = request.timeout.ocr ?? request.timeout.detection ?? OCRService.defaultTimeoutSeconds
+            do {
+                let recognizer = self.ocrRecognizer
+                let imageData = capture.imageData
+                return try await OCRExecutionRunner.runAsync(seconds: timeout) {
+                    try await recognizer.recognizeText(in: imageData, timeoutSeconds: timeout)
+                }
+            } catch let CaptureError.detectionTimedOut(seconds) {
+                return OCRTextResult.incomplete(
+                    imageSize: capture.metadata.size,
+                    deadlineReached: true,
+                    reason: "OCR incomplete: deadline reached after \(seconds)s; missing text does not prove absence")
+            }
         }
     }
 
@@ -57,7 +72,7 @@ extension DesktopObservationService {
     {
         guard let ocr else { return detection }
 
-        let context = target.detectionContext ?? Self.windowContext(from: capture)
+        let context = Self.windowContext(for: target, capture: capture)
         guard let ocrDetection = self.ocrDetectionResult(
             from: ocr,
             capture: capture,
@@ -72,6 +87,7 @@ extension DesktopObservationService {
         }
 
         return ObservationOCRMapper.merge(
+            ocrResult: ocr,
             ocrElements: ocrDetection.elements.other,
             into: detection)
     }
@@ -90,6 +106,7 @@ extension DesktopObservationService {
             windowTitle: context?.windowTitle,
             windowID: context?.windowID,
             windowBounds: windowBounds,
+            windowMutationIdentity: context?.windowMutationIdentity,
             shouldFocusWebContent: context?.shouldFocusWebContent)
 
         return ObservationOCRMapper.detectionResult(
@@ -133,13 +150,48 @@ extension DesktopObservationService {
             return nil
         }
 
+        let windowID = capture.metadata.windowInfo?.windowID
+        let windowBounds = capture.metadata.windowInfo?.bounds
+        let capturedIdentity = capture.metadata.windowInfo?.mutationIdentity
+        let mutationIdentity: WindowMutationIdentity? = if let capturedIdentity,
+                                                           let windowID,
+                                                           capturedIdentity.windowID == windowID,
+                                                           capture.metadata.applicationInfo?.processIdentifier == nil ||
+                                                           capture.metadata.applicationInfo?.processIdentifier ==
+                                                           capturedIdentity.ownerProcessIdentifier
+        {
+            capturedIdentity
+        } else {
+            nil
+        }
+        let processIdentifier = capture.metadata.applicationInfo?.processIdentifier ??
+            mutationIdentity?.ownerProcessIdentifier
         return WindowContext(
             applicationName: capture.metadata.applicationInfo?.name,
             applicationBundleId: capture.metadata.applicationInfo?.bundleIdentifier,
-            applicationProcessId: capture.metadata.applicationInfo?.processIdentifier,
+            applicationProcessId: processIdentifier,
             windowTitle: capture.metadata.windowInfo?.title,
-            windowID: capture.metadata.windowInfo?.windowID,
-            windowBounds: capture.metadata.windowInfo?.bounds)
+            windowID: windowID,
+            windowBounds: windowBounds,
+            windowMutationIdentity: mutationIdentity)
+    }
+
+    static func windowContext(
+        for target: ResolvedObservationTarget,
+        capture: CaptureResult) -> WindowContext?
+    {
+        let targetContext = target.detectionContext
+        let captureContext = self.windowContext(from: capture)
+        guard targetContext != nil || captureContext != nil else { return nil }
+        return WindowContext(
+            applicationName: targetContext?.applicationName ?? captureContext?.applicationName,
+            applicationBundleId: targetContext?.applicationBundleId ?? captureContext?.applicationBundleId,
+            applicationProcessId: targetContext?.applicationProcessId ?? captureContext?.applicationProcessId,
+            windowTitle: targetContext?.windowTitle ?? captureContext?.windowTitle,
+            windowID: captureContext?.windowID ?? targetContext?.windowID,
+            windowBounds: captureContext?.windowBounds ?? targetContext?.windowBounds,
+            windowMutationIdentity: captureContext?.windowMutationIdentity,
+            requiresFreshAccessibilityTree: targetContext?.requiresFreshAccessibilityTree ?? false)
     }
 
     static func captureBounds(from capture: CaptureResult) -> CGRect {

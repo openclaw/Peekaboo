@@ -41,8 +41,50 @@ struct AppCommandTests {
         #expect(output.contains("--bundle-id"))
         #expect(output.contains("--open"))
         #expect(output.contains("--wait-until-ready"))
+        #expect(output.contains("--wait-for-window"))
+        #expect(output.contains("--new-instance"))
         #expect(output.contains("--foreground"))
         #expect(output.contains("--no-focus"))
+    }
+
+    @Test
+    func `App launch JSON returns the launch-bound process receipt`() async throws {
+        let output = try await runAppCommand(["app", "launch", "TextEdit", "--json"])
+        let object = try #require(JSONSerialization.jsonObject(with: Data(output.utf8)) as? [String: Any])
+        let data = try #require(object["data"] as? [String: Any])
+
+        #expect((data["pid"] as? NSNumber)?.int32Value == 202)
+        #expect((data["process_start_identity"] as? NSNumber)?.uint64Value == 2002)
+    }
+
+    @Test
+    func `App launch remains compatible when an older host omits the process receipt`() async throws {
+        let (output, _) = try await runAppCommandWithService(
+            ["app", "launch", "TextEdit", "--json"]
+        ) { service in
+            service.launchResults["TextEdit"] = ServiceApplicationInfo(
+                processIdentifier: 303,
+                bundleIdentifier: "com.apple.TextEdit",
+                name: "TextEdit"
+            )
+        }
+        let object = try #require(JSONSerialization.jsonObject(with: Data(output.utf8)) as? [String: Any])
+        let data = try #require(object["data"] as? [String: Any])
+
+        #expect((data["pid"] as? NSNumber)?.int32Value == 303)
+        #expect(data["process_start_identity"] == nil || data["process_start_identity"] is NSNull)
+    }
+
+    @Test
+    func `App relaunch JSON returns the new launch-bound process receipt`() async throws {
+        let output = try await runAppCommand([
+            "app", "relaunch", "TextEdit", "--wait", "0", "--json",
+        ])
+        let object = try #require(JSONSerialization.jsonObject(with: Data(output.utf8)) as? [String: Any])
+        let data = try #require(object["data"] as? [String: Any])
+
+        #expect((data["new_pid"] as? NSNumber)?.int32Value == 202)
+        #expect((data["new_process_start_identity"] as? NSNumber)?.uint64Value == 2002)
     }
 
     @Test
@@ -73,6 +115,65 @@ struct AppCommandTests {
             JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [String: Any]
         )
         #expect(object["success"] as? Bool == false)
+    }
+
+    @Test
+    func `App quit saved receipt rejects wrong process generation without termination`() async throws {
+        let context = await MainActor.run { makeAppCommandContext() }
+        let result = try await InProcessCommandRunner.run(
+            [
+                "app", "quit",
+                "--pid", "202",
+                "--expected-process-start-identity", "9999",
+                "--force",
+                "--json",
+            ],
+            services: context.services
+        )
+
+        #expect(result.exitStatus != 0)
+        let requests = await appServiceState(context.applicationService) { $0.quitRequests }
+        #expect(requests == [ApplicationQuitRequest(
+            identifier: "PID:202",
+            force: true,
+            expectedIdentity: ApplicationProcessIdentity(
+                processIdentifier: 202,
+                processStartIdentity: 9999
+            )
+        )])
+        #expect(await appServiceState(context.applicationService) { $0.terminationCount } == 0)
+    }
+
+    @Test
+    func `App quit saved receipt requires PID selector`() async throws {
+        await #expect(throws: (any Error).self) {
+            _ = try await runAppCommand([
+                "app", "quit",
+                "--app", "TextEdit",
+                "--expected-process-start-identity", "2002",
+            ])
+        }
+    }
+
+    @Test
+    func `App quit rejects selected application without process generation`() async throws {
+        let context = await MainActor.run { makeAppCommandContext() }
+        await MainActor.run {
+            context.applicationService.applications = [ServiceApplicationInfo(
+                processIdentifier: 202,
+                bundleIdentifier: "com.apple.TextEdit",
+                name: "TextEdit"
+            )]
+        }
+
+        let result = try await InProcessCommandRunner.run(
+            ["app", "quit", "--pid", "202", "--json"],
+            services: context.services
+        )
+
+        #expect(result.exitStatus != 0)
+        #expect(await appServiceState(context.applicationService) { $0.quitRequests }.isEmpty)
+        #expect(await appServiceState(context.applicationService) { $0.terminationCount } == 0)
     }
 
     @Test
@@ -291,6 +392,7 @@ extension AppCommandTests {
         [
             ServiceApplicationInfo(
                 processIdentifier: 101,
+                processStartIdentity: 1001,
                 bundleIdentifier: "com.apple.finder",
                 name: "Finder",
                 bundlePath: "/System/Library/CoreServices/Finder.app",
@@ -300,6 +402,7 @@ extension AppCommandTests {
             ),
             ServiceApplicationInfo(
                 processIdentifier: 202,
+                processStartIdentity: 2002,
                 bundleIdentifier: "com.apple.TextEdit",
                 name: "TextEdit",
                 bundlePath: "/System/Applications/TextEdit.app",

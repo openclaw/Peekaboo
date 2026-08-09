@@ -209,10 +209,9 @@ func windowFramesMatch(_ lhs: CGRect, _ rhs: CGRect, tolerance: CGFloat) -> Bool
 
 /// Poll a window's frame until it is stable across two consecutive reads or the attempt budget is spent.
 ///
-/// Animated window operations (notably `maximize`, which presses the green zoom button) report an
-/// intermediate frame if read immediately, so callers that need the *settled* frame must wait for the
-/// animation to finish. Synchronous AX geometry setters (`resize`/`move`/`set-bounds`) do not animate
-/// and therefore do not need this.
+/// WindowServer can report intermediate geometry immediately after a maximize request, so callers
+/// that need the *settled* frame wait for two matching reads. Synchronous move/resize/set-bounds
+/// commands use their separate request-versus-achieved verifier.
 @MainActor
 func settleWindowFrame(
     tolerance: CGFloat = 1.0,
@@ -303,16 +302,11 @@ struct MaximizeOutcome {
     let stabilized: Bool
 }
 
-/// Maximize a window idempotently.
+/// Maximize a window idempotently and return a settled WindowServer frame.
 ///
-/// AppKit's green zoom button is a toggle: pressing it on an already-maximized window would restore
-/// the smaller user frame. So if the window already occupies a screen's visible frame (matched on
-/// origin and size), this no-ops and reports the current frame. Otherwise it presses zoom and waits
-/// for the animated frame to settle before reporting, so `new_bounds` is the settled frame rather
-/// than a mid-animation one.
-///
-/// `press` performs the underlying (animated) maximize; `read` returns the current frame. Both are
-/// injected so the flow can be exercised without a live window server.
+/// If the window already occupies a screen's visible frame, the redundant AX geometry request is
+/// skipped. Otherwise `apply` performs the bounded, background-safe service mutation and `read`
+/// observes the exact window until its frame settles.
 @MainActor
 func resolveIdempotentMaximize(
     original: ServiceWindowInfo?,
@@ -321,10 +315,10 @@ func resolveIdempotentMaximize(
     screenMatchTolerance: CGFloat = 4.0,
     maxAttempts: Int = 24,
     pollInterval: Duration = .milliseconds(50),
-    press: () async throws -> Void,
+    apply: () async throws -> Void,
     read: () async -> ServiceWindowInfo?
 ) async throws -> MaximizeOutcome {
-    // Idempotency: an already-maximized window stays maximized; pressing the toggle would shrink it.
+    // Idempotency: an already-maximized window does not need another AX mutation.
     if let originalBounds = original?.bounds,
        windowMatchesAnyScreen(
            bounds: originalBounds,
@@ -334,7 +328,7 @@ func resolveIdempotentMaximize(
         return MaximizeOutcome(info: original, alreadyMaximized: true, stabilized: true)
     }
 
-    try await press()
+    try await apply()
     let settled = await settleWindowFrame(
         tolerance: tolerance,
         maxAttempts: maxAttempts,

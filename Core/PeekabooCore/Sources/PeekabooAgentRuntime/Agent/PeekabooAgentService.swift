@@ -277,7 +277,8 @@ public final class PeekabooAgentService: AgentServiceProtocol {
         queueMode: QueueMode = .oneAtATime,
         eventDelegate: (any AgentEventDelegate)? = nil,
         verbose: Bool = false,
-        enhancementOptions: AgentEnhancementOptions? = .default) async throws -> AgentExecutionResult
+        enhancementOptions: AgentEnhancementOptions? = .default,
+        persistSession: Bool = true) async throws -> AgentExecutionResult
     {
         let maxSteps = try AgentStepBudget.validate(maxSteps)
         // Store the verbose flag for this execution
@@ -295,7 +296,7 @@ public final class PeekabooAgentService: AgentServiceProtocol {
             return AgentExecutionResult(
                 content: "Dry run completed. Task would be: \(task)",
                 messages: [],
-                sessionId: sessionId ?? UUID().uuidString,
+                sessionId: nil,
                 usage: nil,
                 metadata: AgentMetadata(
                     executionTime: 0,
@@ -341,7 +342,8 @@ public final class PeekabooAgentService: AgentServiceProtocol {
                     task: task,
                     model: selectedModel,
                     label: "streaming",
-                    logBehavior: .always)
+                    logBehavior: .always,
+                    persistSession: persistSession)
 
                 let result = if selectedModel.supportsStreaming {
                     try await self.executeWithStreaming(
@@ -382,7 +384,8 @@ public final class PeekabooAgentService: AgentServiceProtocol {
                 task: task,
                 model: selectedModel,
                 label: "(non-streaming)",
-                logBehavior: .verboseOnly)
+                logBehavior: .verboseOnly,
+                persistSession: persistSession)
             return try await self.executeWithoutStreaming(
                 context: sessionContext,
                 model: selectedModel,

@@ -1,17 +1,16 @@
 import Foundation
+import ImageIO
 import MCP
 import PeekabooAutomation
 import Tachikoma
 import TachikomaMCP
+import UniformTypeIdentifiers
 
 // MARK: - Type Conversion Extensions
 
-// MARK: ToolArguments Extension
-
 extension ToolArguments {
-    /// Initialize from AgentToolArguments
+    /// Initialize from AgentToolArguments.
     init(from arguments: AgentToolArguments) {
-        // Convert AgentToolArguments to [String: Any]
         var dict: [String: Any] = [:]
         for key in arguments.keys {
             guard let value = arguments[key], let json = try? value.toJSON() else { continue }
@@ -20,78 +19,543 @@ extension ToolArguments {
         self.init(raw: dict)
     }
 
-    /// Initialize from dictionary
+    /// Initialize from dictionary.
     init(from dict: [String: Any]) {
         self.init(raw: dict)
     }
 }
 
-// MARK: - Extension implementations moved to TypedValueBridge.swift
+// MARK: - MCP response bridge
 
-// All Value and AnyAgentToolValue conversion extensions are now centralized in TypedValueBridge
-// to eliminate code duplication and use the unified TypedValue system
+struct AgentToolMCPBridgeResult: Sendable {
+    let value: AnyAgentToolValue
+    let images: [ModelMessage.ContentPart.ImageContent]
+}
 
-// MARK: - Helper function to convert ToolResponse to AnyAgentToolValue
+enum AgentToolMCPBridge {
+    static let incompleteVisualEvidenceMarker =
+        "Peekaboo evidence status: screenshot unavailable and accessibility incomplete."
 
-private func convertToolResponseContent(_ content: MCP.Tool.Content) -> AnyAgentToolValue {
-    switch content {
-    case let .text(text, _, _):
-        return AnyAgentToolValue(string: text)
-    case let .image(data, mimeType, _, _):
-        // For images, return a descriptive string
-        return AnyAgentToolValue(string: "[Image: \(mimeType), size: \(data.count) bytes]")
-    case let .resource(resource, _, _):
-        // For resources, return the text content if available
-        return AnyAgentToolValue(string: resource.text ?? "[Resource: \(resource.uri)]")
-    case let .resourceLink(uri, name, _, _, mimeType, _):
-        let mimeTypeDescription = mimeType.map { ", mimeType: \($0)" } ?? ""
-        return AnyAgentToolValue(string: "[Resource Link: \(name), uri: \(uri)\(mimeTypeDescription)]")
-    case let .audio(data, mimeType, _, _):
-        return AnyAgentToolValue(string: "[Audio: \(mimeType), size: \(data.count) bytes]")
+    static let maxImageDimension = 1600
+    static let maxImageBytes = 4 * 1024 * 1024
+    static let maxImagesPerResponse = 1
+    static let maxImagesPerTurn = 2
+    static let maxSourceDimension = 16384
+    static let maxSourceFrameCount = 32
+    static let maxSourcePixelCount = 64 * 1024 * 1024
+    static let maxSourceTotalPixelCount = 128 * 1024 * 1024
+
+    private static let maxSourceImageBytes = 24 * 1024 * 1024
+    private static let maxTextCharacters = 100_000
+
+    static func convert(
+        _ response: ToolResponse,
+        allowsModelImages: Bool = true) -> AgentToolMCPBridgeResult
+    {
+        if response.isError {
+            return self.convertErrorResponse(response)
+        }
+
+        var preparedImages: [Int: ModelMessage.ContentPart.ImageContent] = [:]
+        if allowsModelImages {
+            for (index, content) in response.content.enumerated() {
+                guard preparedImages.count < Self.maxImagesPerResponse else { break }
+                guard case let .image(data, mimeType, _, _) = content,
+                      let image = Self.makeModelImage(data: data, mimeType: mimeType)
+                else {
+                    continue
+                }
+                preparedImages[index] = image
+            }
+        }
+
+        var values: [AnyAgentToolValue] = []
+        var images: [ModelMessage.ContentPart.ImageContent] = []
+        let hasInlineImage = response.content.contains { content in
+            if case .image = content {
+                return true
+            }
+            return false
+        }
+        let screenshotAttachmentDescription = if !allowsModelImages {
+            "not delivered to this text-only model; do not infer visual state from this result"
+        } else if preparedImages.isEmpty {
+            "inline image unavailable"
+        } else {
+            "inline image attached"
+        }
+
+        for (index, content) in response.content.enumerated() {
+            switch content {
+            case .image:
+                guard let image = preparedImages[index] else {
+                    let reason = if !allowsModelImages {
+                        "agent model does not accept images"
+                    } else if images.count >= Self.maxImagesPerResponse {
+                        "per-response image limit reached"
+                    } else {
+                        "invalid or oversized inline data"
+                    }
+                    values.append(Self.omittedContent(type: "image", reason: reason))
+                    continue
+                }
+                guard images.count < Self.maxImagesPerResponse else {
+                    values.append(Self.omittedContent(type: "image", reason: "per-response image limit reached"))
+                    continue
+                }
+                images.append(image)
+            default:
+                values.append(Self.convertNonImageContent(
+                    content,
+                    screenshotAttachmentDescription: hasInlineImage ? screenshotAttachmentDescription : nil,
+                    hasUndeliveredImage: hasInlineImage && preparedImages.isEmpty))
+            }
+        }
+
+        let value: AnyAgentToolValue = switch values.count {
+        case 0:
+            AnyAgentToolValue(string: images.isEmpty ? "Success" : "Image attached.")
+        case 1:
+            values[0]
+        default:
+            AnyAgentToolValue(array: values)
+        }
+        let valueWithReceipt = Self.attachingVerificationReceipt(from: response, to: value)
+        return AgentToolMCPBridgeResult(
+            value: Self.attachingResponseMetadata(
+                from: response,
+                contentValue: value,
+                receiptValue: valueWithReceipt),
+            images: images)
+    }
+
+    private static func convertErrorResponse(_ response: ToolResponse) -> AgentToolMCPBridgeResult {
+        let messages = response.content.compactMap(Self.errorText)
+        let message = messages.isEmpty ? "Tool execution failed" : messages.joined(separator: "\n")
+        var payload: [String: AnyAgentToolValue] = [
+            "error": AnyAgentToolValue(string: message),
+            "success": AnyAgentToolValue(bool: false),
+        ]
+        if case let .object(metadata)? = response.meta {
+            for key in ["mutation_dispatched", "retry_safe"] {
+                if case let .bool(value)? = metadata[key] {
+                    payload[key] = AnyAgentToolValue(bool: value)
+                }
+            }
+        }
+        return AgentToolMCPBridgeResult(value: AnyAgentToolValue(object: payload), images: [])
+    }
+
+    private static func attachingResponseMetadata(
+        from response: ToolResponse,
+        contentValue: AnyAgentToolValue,
+        receiptValue: AnyAgentToolValue) -> AnyAgentToolValue
+    {
+        guard let metadata = response.meta else { return receiptValue }
+
+        var payload: [String: AnyAgentToolValue] = [
+            "result": contentValue,
+            "meta": TypedValueBridge.anyAgentValue(from: metadata),
+        ]
+        if let text = contentValue.stringValue {
+            payload["text"] = AnyAgentToolValue(string: text)
+        }
+        if let receipt = receiptValue.objectValue?["verification_receipt"] {
+            payload["content"] = contentValue
+            payload["verification_receipt"] = receipt
+        }
+        return AnyAgentToolValue(object: payload)
+    }
+
+    private static func convertNonImageContent(
+        _ content: MCP.Tool.Content,
+        screenshotAttachmentDescription: String?,
+        hasUndeliveredImage: Bool) -> AnyAgentToolValue
+    {
+        switch content {
+        case let .text(text, _, _):
+            var safeText = screenshotAttachmentDescription.map {
+                Self.redactScreenshotPath(in: text, attachmentDescription: $0)
+            } ?? text
+            if hasUndeliveredImage, Self.hasIncompleteAccessibilityEvidence(safeText) {
+                safeText += "\n\(Self.incompleteVisualEvidenceMarker) Missing text or elements do not prove " +
+                    "absence. Use verify_state for an exact native postcondition or report the state as unverified."
+            }
+            return AnyAgentToolValue(string: Self.boundedText(safeText))
+        case let .resource(resource, _, _):
+            var object: [String: AnyAgentToolValue] = [
+                "type": AnyAgentToolValue(string: "resource"),
+                "uri": AnyAgentToolValue(string: Self.safeResourceURI(resource.uri)),
+            ]
+            if let mimeType = resource.mimeType {
+                object["mime_type"] = AnyAgentToolValue(string: Self.boundedText(mimeType))
+            }
+            if let text = resource.text {
+                object["text"] = AnyAgentToolValue(string: Self.boundedText(text))
+            }
+            if let blob = resource.blob {
+                object["blob_omitted"] = AnyAgentToolValue(bool: true)
+                object["encoded_byte_count"] = AnyAgentToolValue(int: blob.utf8.count)
+            }
+            return AnyAgentToolValue(object: object)
+        case let .resourceLink(uri, name, title, description, mimeType, _):
+            var object: [String: AnyAgentToolValue] = [
+                "type": AnyAgentToolValue(string: "resource_link"),
+                "uri": AnyAgentToolValue(string: Self.safeResourceURI(uri)),
+                "name": AnyAgentToolValue(string: Self.boundedText(name)),
+            ]
+            if let title {
+                object["title"] = AnyAgentToolValue(string: Self.boundedText(title))
+            }
+            if let description {
+                object["description"] = AnyAgentToolValue(string: Self.boundedText(description))
+            }
+            if let mimeType {
+                object["mime_type"] = AnyAgentToolValue(string: Self.boundedText(mimeType))
+            }
+            return AnyAgentToolValue(object: object)
+        case let .audio(data, mimeType, _, _):
+            return AnyAgentToolValue(object: [
+                "type": AnyAgentToolValue(string: "audio"),
+                "mime_type": AnyAgentToolValue(string: Self.boundedText(mimeType)),
+                "data_omitted": AnyAgentToolValue(bool: true),
+                "encoded_byte_count": AnyAgentToolValue(int: data.utf8.count),
+            ])
+        case .image:
+            preconditionFailure("Image content is handled separately")
+        }
+    }
+
+    private static func hasIncompleteAccessibilityEvidence(_ text: String) -> Bool {
+        let normalized = text.lowercased()
+        return normalized.contains("warning: ax tree incomplete") ||
+            normalized.contains("warning: ax tree truncated")
+    }
+
+    private static func errorText(_ content: MCP.Tool.Content) -> String? {
+        switch content {
+        case let .text(text, _, _):
+            Self.boundedText(text)
+        case let .resource(resource, _, _) where resource.text != nil:
+            resource.text.map(Self.boundedText)
+        default:
+            nil
+        }
+    }
+
+    private static func makeModelImage(
+        data encodedData: String,
+        mimeType: String) -> ModelMessage.ContentPart.ImageContent?
+    {
+        let normalizedMIMEType = mimeType.lowercased()
+        let supportedMIMETypes = ["image/png", "image/jpeg", "image/gif", "image/webp"]
+        guard supportedMIMETypes.contains(normalizedMIMEType) else { return nil }
+
+        let maxEncodedBytes = ((Self.maxSourceImageBytes + 2) / 3) * 4
+        guard encodedData.utf8.count <= maxEncodedBytes,
+              let sourceData = Data(base64Encoded: encodedData),
+              sourceData.count <= Self.maxSourceImageBytes,
+              !sourceData.isEmpty,
+              let source = CGImageSourceCreateWithData(
+                  sourceData as CFData,
+                  [kCGImageSourceShouldCache: false] as CFDictionary),
+              let sourceType = CGImageSourceGetType(source),
+              let detectedMIMEType = UTType(sourceType as String)?.preferredMIMEType?.lowercased(),
+              supportedMIMETypes.contains(detectedMIMEType),
+              let firstFrame = Self.validatedSourceFrames(source)
+        else {
+            return nil
+        }
+
+        if max(firstFrame.width, firstFrame.height) <= Self.maxImageDimension,
+           sourceData.count <= Self.maxImageBytes
+        {
+            return ModelMessage.ContentPart.ImageContent(data: encodedData, mimeType: detectedMIMEType)
+        }
+
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: Self.maxImageDimension,
+        ]
+        guard let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else {
+            return nil
+        }
+
+        let output = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(
+            output,
+            UTType.jpeg.identifier as CFString,
+            1,
+            nil)
+        else {
+            return nil
+        }
+        CGImageDestinationAddImage(
+            destination,
+            thumbnail,
+            [kCGImageDestinationLossyCompressionQuality: 0.78] as CFDictionary)
+        guard CGImageDestinationFinalize(destination) else { return nil }
+
+        let outputData = output as Data
+        guard outputData.count <= Self.maxImageBytes else { return nil }
+        return ModelMessage.ContentPart.ImageContent(
+            data: outputData.base64EncodedString(),
+            mimeType: "image/jpeg")
+    }
+
+    private static func validatedSourceFrames(_ source: CGImageSource) -> (width: Int, height: Int)? {
+        let frameCount = CGImageSourceGetCount(source)
+        guard frameCount > 0, frameCount <= Self.maxSourceFrameCount else { return nil }
+
+        var dimensions: [(width: UInt64, height: UInt64)] = []
+        dimensions.reserveCapacity(frameCount)
+        for index in 0..<frameCount {
+            guard let properties = CGImageSourceCopyPropertiesAtIndex(source, index, nil) as? [CFString: Any],
+                  let width = (properties[kCGImagePropertyPixelWidth] as? NSNumber)?.uint64Value,
+                  let height = (properties[kCGImagePropertyPixelHeight] as? NSNumber)?.uint64Value
+            else {
+                return nil
+            }
+            dimensions.append((width: width, height: height))
+        }
+
+        guard Self.sourceFrameDimensionsAreSafe(dimensions), let first = dimensions.first else { return nil }
+        return (width: Int(first.width), height: Int(first.height))
+    }
+
+    static func sourceFrameDimensionsAreSafe(
+        _ dimensions: [(width: UInt64, height: UInt64)]) -> Bool
+    {
+        guard !dimensions.isEmpty, dimensions.count <= self.maxSourceFrameCount else { return false }
+        var totalPixels: UInt64 = 0
+
+        for frame in dimensions {
+            guard frame.width > 0,
+                  frame.height > 0,
+                  frame.width <= UInt64(Self.maxSourceDimension),
+                  frame.height <= UInt64(Self.maxSourceDimension)
+            else {
+                return false
+            }
+            let (pixels, pixelOverflow) = frame.width.multipliedReportingOverflow(by: frame.height)
+            guard !pixelOverflow, pixels <= UInt64(Self.maxSourcePixelCount) else { return false }
+            let (updatedTotal, totalOverflow) = totalPixels.addingReportingOverflow(pixels)
+            guard !totalOverflow, updatedTotal <= UInt64(Self.maxSourceTotalPixelCount) else { return false }
+            totalPixels = updatedTotal
+        }
+
+        return true
+    }
+
+    private static func boundedText(_ text: String) -> String {
+        guard text.count > self.maxTextCharacters else { return text }
+        return String(text.prefix(self.maxTextCharacters)) + "\n[Content truncated by Peekaboo agent safety limit]"
+    }
+
+    private static func redactScreenshotPath(in text: String, attachmentDescription: String) -> String {
+        text
+            .components(separatedBy: .newlines)
+            .map { line in
+                line.hasPrefix("Screenshot: ") ? "Screenshot: \(attachmentDescription)" : line
+            }
+            .joined(separator: "\n")
+    }
+
+    private static func safeResourceURI(_ value: String) -> String {
+        guard var components = URLComponents(string: value), let scheme = components.scheme?.lowercased() else {
+            return "<resource>"
+        }
+        guard scheme == "http" || scheme == "https" else {
+            return scheme == "file" ? "<local resource>" : "\(scheme):<resource>"
+        }
+        components.user = nil
+        components.password = nil
+        components.query = nil
+        components.fragment = nil
+        return components.string.map(Self.boundedText) ?? "<resource>"
+    }
+
+    private static func omittedContent(type: String, reason: String) -> AnyAgentToolValue {
+        AnyAgentToolValue(object: [
+            "type": AnyAgentToolValue(string: type),
+            "attached": AnyAgentToolValue(bool: false),
+            "reason": AnyAgentToolValue(string: reason),
+        ])
+    }
+
+    private static func attachingVerificationReceipt(
+        from response: ToolResponse,
+        to value: AnyAgentToolValue) -> AnyAgentToolValue
+    {
+        guard case let .object(metadata)? = response.meta,
+              let status = metadata["status"]?.stringValue,
+              ["satisfied", "unsatisfied", "unknown"].contains(status),
+              case let .array(predicates)? = metadata["predicates"]
+        else {
+            return value
+        }
+
+        var receipt: [String: AnyAgentToolValue] = [
+            "status": AnyAgentToolValue(string: status),
+            "predicates": AnyAgentToolValue(array: predicates.map(Self.agentValue)),
+        ]
+        if let target = metadata["target"] {
+            receipt["target"] = Self.agentValue(target)
+        }
+        for key in ["application", "reason"] {
+            if let string = metadata[key]?.stringValue {
+                receipt[key] = AnyAgentToolValue(string: string)
+            }
+        }
+        for key in ["pid", "window_id", "sample_count", "stable_samples", "required_stable_samples"] {
+            if let int = metadata[key]?.intValue {
+                receipt[key] = AnyAgentToolValue(int: int)
+            }
+        }
+        return AnyAgentToolValue(object: [
+            "content": value,
+            "verification_receipt": AnyAgentToolValue(object: receipt),
+        ])
+    }
+
+    private static func agentValue(_ value: Value) -> AnyAgentToolValue {
+        switch value {
+        case .null:
+            AnyAgentToolValue(null: ())
+        case let .bool(value):
+            AnyAgentToolValue(bool: value)
+        case let .int(value):
+            AnyAgentToolValue(int: value)
+        case let .double(value):
+            AnyAgentToolValue(double: value)
+        case let .string(value):
+            AnyAgentToolValue(string: value)
+        case let .data(mimeType, data):
+            AnyAgentToolValue(object: [
+                "data_omitted": AnyAgentToolValue(bool: true),
+                "mime_type": AnyAgentToolValue(string: mimeType ?? "application/octet-stream"),
+                "byte_count": AnyAgentToolValue(int: data.count),
+            ])
+        case let .array(values):
+            AnyAgentToolValue(array: values.map(Self.agentValue))
+        case let .object(values):
+            AnyAgentToolValue(object: values.mapValues(Self.agentValue))
+        }
     }
 }
 
+actor AgentToolMCPImageStore {
+    struct Key: Hashable, Sendable {
+        let sessionID: String
+        let executionID: String
+        let stepIndex: Int
+        let toolCallID: String
+    }
+
+    static let shared = AgentToolMCPImageStore()
+    private struct Entry {
+        let images: [ModelMessage.ContentPart.ImageContent]
+        let sequence: UInt64
+    }
+
+    private var entries: [Key: Entry] = [:]
+    private var nextSequence: UInt64 = 0
+
+    func store(_ images: [ModelMessage.ContentPart.ImageContent], for key: Key) {
+        guard !images.isEmpty else { return }
+        while self.entries.count >= 8,
+              let oldestKey = self.entries.min(by: { $0.value.sequence < $1.value.sequence })?.key
+        {
+            self.entries.removeValue(forKey: oldestKey)
+        }
+        self.nextSequence &+= 1
+        self.entries[key] = Entry(images: images, sequence: self.nextSequence)
+    }
+
+    func take(for key: Key) -> [ModelMessage.ContentPart.ImageContent] {
+        self.entries.removeValue(forKey: key)?.images ?? []
+    }
+}
+
+@available(macOS 14.0, *)
+extension PeekabooAgentService {
+    func appendAgentToolImageContext(
+        toolCalls: [AgentToolCall],
+        context: ToolHandlingContext,
+        stepIndex: Int,
+        to messages: inout [ModelMessage]) async
+    {
+        var images: [ModelMessage.ContentPart.ImageContent] = []
+        for call in toolCalls {
+            let key = AgentToolMCPImageStore.Key(
+                sessionID: context.sessionId,
+                executionID: context.imageContextID,
+                stepIndex: stepIndex,
+                toolCallID: call.id)
+            let storedImages = await AgentToolMCPImageStore.shared.take(for: key)
+            images.append(contentsOf: storedImages)
+        }
+
+        guard context.supportsVision, !images.isEmpty else { return }
+        messages.removeConsumedAgentToolImageContext()
+        let boundedImages = images.prefix(AgentToolMCPBridge.maxImagesPerTurn)
+        var content: [ModelMessage.ContentPart] = [
+            .text("Visual output from the preceding Peekaboo tool result."),
+        ]
+        content.append(contentsOf: boundedImages.map(ModelMessage.ContentPart.image))
+        messages.append(ModelMessage(
+            role: .user,
+            content: content,
+            metadata: MessageMetadata(customData: [
+                "peekaboo.agent.transient_tool_images": "true",
+            ])))
+    }
+}
+
+extension [ModelMessage] {
+    func removingConsumedAgentToolImageContext() -> [ModelMessage] {
+        self.filter { message in
+            message.metadata?.customData?["peekaboo.agent.transient_tool_images"] != "true"
+        }
+    }
+
+    mutating func removeConsumedAgentToolImageContext() {
+        self = self.removingConsumedAgentToolImageContext()
+    }
+}
+
+// MARK: - Compatibility entry points
+
 @preconcurrency
 func convertToolResponseToAgentToolResult(_ response: ToolResponse) -> AnyAgentToolValue {
-    // If there's an error, return error message
-    if response.isError {
-        let errorMessage = response.content.compactMap { content -> String? in
-            if case let .text(text, _, _) = content {
-                return text
-            }
-            return nil
-        }.joined(separator: "\n")
-
-        return AnyAgentToolValue(string: "Error: \(errorMessage)")
-    }
-
-    let contentValue: AnyAgentToolValue = if response.content.isEmpty {
-        AnyAgentToolValue(string: "Success")
-    } else if response.content.count == 1 {
-        convertToolResponseContent(response.content[0])
-    } else {
-        AnyAgentToolValue(array: response.content.map { convertToolResponseContent($0) })
-    }
-
-    guard let meta = response.meta else {
-        return contentValue
-    }
-
-    var payload: [String: AnyAgentToolValue] = [
-        "result": contentValue,
-        "meta": TypedValueBridge.anyAgentValue(from: meta),
-    ]
-
-    if let text = contentValue.stringValue {
-        payload["text"] = AnyAgentToolValue(string: text)
-    }
-
-    return AnyAgentToolValue(object: payload)
+    AgentToolMCPBridge.convert(response).value
 }
 
 @preconcurrency
 func convertToolResponseToAgentToolResultAsync(_ response: ToolResponse) async -> AnyAgentToolValue {
-    convertToolResponseToAgentToolResult(response)
+    AgentToolMCPBridge.convert(response).value
+}
+
+@preconcurrency
+func convertToolResponseToAgentToolResultAsync(
+    _ response: ToolResponse,
+    executionContext: ToolExecutionContext) async -> AnyAgentToolValue
+{
+    let allowsModelImages = executionContext.metadata["supportsVision"] != "false"
+    let result = AgentToolMCPBridge.convert(response, allowsModelImages: allowsModelImages)
+    if let toolCallID = executionContext.metadata["toolCallId"],
+       let executionID = executionContext.metadata["imageContextId"],
+       !result.images.isEmpty
+    {
+        let key = AgentToolMCPImageStore.Key(
+            sessionID: executionContext.sessionId,
+            executionID: executionID,
+            stepIndex: executionContext.stepIndex,
+            toolCallID: toolCallID)
+        await AgentToolMCPImageStore.shared.store(result.images, for: key)
+    }
+    return result.value
 }
 
 func makeToolArguments(from arguments: AgentToolArguments) -> ToolArguments {

@@ -18,7 +18,11 @@ extension SeeCommand {
 
         if let index = self.screenIndex ?? (self.analyze != nil ? 0 : nil) {
             self.logger.verbose("Capturing specific screen", category: "Capture", metadata: ["screenIndex": index])
-            let result = try await self.services.screenCapture.captureScreen(displayIndex: index)
+            let result = try await self.services.screenCapture.captureScreen(
+                displayIndex: index,
+                visualizerMode: .none,
+                scale: .logical1x
+            )
 
             if !self.jsonOutput, let displayInfo = result.metadata.displayInfo {
                 self.printScreenDisplayInfo(index: index, displayInfo: displayInfo)
@@ -27,7 +31,7 @@ extension SeeCommand {
             self.logger.verbose("Screen capture completed", category: "Capture", metadata: [
                 "mode": "screen-index",
                 "screenIndex": index,
-                "imageBytes": result.imageData.count
+                "imageBytes": result.imageData.count,
             ])
             return result
         }
@@ -70,7 +74,7 @@ extension SeeCommand {
 
         self.logger.verbose("Multi-screen capture completed", category: "Capture", metadata: [
             "count": results.count,
-            "primaryBytes": results.first?.imageData.count ?? 0
+            "primaryBytes": results.first?.imageData.count ?? 0,
         ])
         return results[0]
     }
@@ -86,11 +90,15 @@ extension SeeCommand {
             self.logger.verbose("Capturing display \(display.index)", category: "MultiScreen", metadata: [
                 "displayID": display.displayID,
                 "width": display.frame.width,
-                "height": display.frame.height
+                "height": display.frame.height,
             ])
 
             do {
-                let result = try await self.services.screenCapture.captureScreen(displayIndex: display.index)
+                let result = try await self.services.screenCapture.captureScreen(
+                    displayIndex: display.index,
+                    visualizerMode: .none,
+                    scale: .logical1x
+                )
                 results.append(result)
             } catch {
                 self.logger.error("Failed to capture display \(display.index): \(error)")

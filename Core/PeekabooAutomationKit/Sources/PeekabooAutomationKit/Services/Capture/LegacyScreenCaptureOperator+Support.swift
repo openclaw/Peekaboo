@@ -161,7 +161,8 @@ extension LegacyScreenCaptureOperator {
         windowID: CGWindowID,
         correlationId: String) async throws -> CGImage
     {
-        if Self.privateScreenCaptureKitWindowLookupEnabled() {
+        let allowsPrivateSCKLookup = ScreenCaptureService.captureEnginePreference != .legacy
+        if Self.privateScreenCaptureKitWindowLookupEnabled(), allowsPrivateSCKLookup {
             do {
                 return try await self.captureWindowWithPrivateScreenCaptureKit(
                     windowID: windowID,
@@ -183,20 +184,18 @@ extension LegacyScreenCaptureOperator {
         }
 
         do {
-            return try self.captureWindowWithSystemScreencapture(
+            return try await self.captureWindowWithSystemScreencapture(
                 windowID: windowID,
                 correlationId: correlationId)
         } catch {
-            self.logger.warning(
-                "System screencapture window capture failed, falling back to SCScreenshotManager",
+            self.logger.error(
+                "Isolated system screencapture window capture failed",
                 metadata: [
                     "windowID": String(windowID),
                     "error": String(describing: error),
                 ],
                 correlationId: correlationId)
-            return try await self.captureWindowWithScreenshotManager(
-                windowID: windowID,
-                correlationId: correlationId)
+            throw error
         }
     }
 
@@ -251,22 +250,6 @@ extension LegacyScreenCaptureOperator {
             layer: layer,
             isOnScreen: isOnScreen,
             sharingState: sharingState)
-    }
-
-    func shouldUseLegacyCGCapture() -> Bool {
-        if ScreenCaptureService.captureEnginePreference == .legacy {
-            return true
-        }
-
-        #if os(macOS)
-        if #available(macOS 14.0, *) {
-            let env = ProcessInfo.processInfo.environment["PEEKABOO_ALLOW_LEGACY_CAPTURE"]?.lowercased()
-            return env.map { ["1", "true", "yes"].contains($0) } ?? false
-        }
-        return true
-        #else
-        return false
-        #endif
     }
 
     func scaleFactor(for bounds: CGRect) -> CGFloat {

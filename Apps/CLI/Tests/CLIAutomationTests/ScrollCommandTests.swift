@@ -79,6 +79,7 @@ struct ScrollCommandTests {
 
     @Test
     func `Scroll on element refreshes stale latest snapshot`() async throws {
+        let detectorReturnedSnapshotID = "detector-returned-snapshot"
         let appInfo = ServiceApplicationInfo(
             processIdentifier: 42,
             bundleIdentifier: "com.example.ScrollApp",
@@ -94,14 +95,14 @@ struct ScrollCommandTests {
             let automation = StubAutomationService()
             automation.detectElementsHandler = { _, _, _ in
                 Self.detectionResult(
-                    snapshotId: "fresh-snapshot",
+                    snapshotId: detectorReturnedSnapshotID,
                     element: Self.buttonElement(id: "B1")
                 )
             }
             return automation
         }
         let snapshots = StubSnapshotManager()
-        _ = try await snapshots.createSnapshot()
+        let staleSnapshotID = try await snapshots.createSnapshot()
         let context = await MainActor.run {
             TestServicesFactory.makeAutomationTestContext(
                 automation: automation,
@@ -122,7 +123,14 @@ struct ScrollCommandTests {
         let scrollCalls = await self.automationState(context) { $0.scrollCalls }
         let call = try #require(scrollCalls.first)
         #expect(call.request.target == "B1")
-        #expect(call.request.snapshotId == "fresh-snapshot")
+        let refreshedSnapshotID = try #require(call.request.snapshotId)
+        #expect(refreshedSnapshotID != staleSnapshotID)
+        #expect(refreshedSnapshotID != detectorReturnedSnapshotID)
+        let detectionCalls = await MainActor.run { automation.detectElementsCalls }
+        #expect(detectionCalls.first?.snapshotId == refreshedSnapshotID)
+        let storedResult = try #require(try await snapshots.getDetectionResult(snapshotId: refreshedSnapshotID))
+        #expect(storedResult.snapshotId == refreshedSnapshotID)
+        #expect(storedResult.elements.findById("B1") != nil)
         #expect(call.request.delay == 0)
         #expect(!call.request.foreground)
     }

@@ -2,17 +2,41 @@ import CoreGraphics
 import Foundation
 
 extension ObservationTargetResolver {
-    func resolveWindowID(_ windowID: CGWindowID) -> ResolvedObservationTarget {
-        guard let metadata = ObservationWindowMetadataCatalog.currentWindow(windowID: windowID) else {
-            return ResolvedObservationTarget(kind: .windowID(windowID))
+    func resolveWindowID(_ windowID: CGWindowID) throws -> ResolvedObservationTarget {
+        guard let metadata = self.exactWindowMetadataProvider.metadata(for: windowID),
+              self.exactWindowMetadataProvider.processStartIdentity(for: metadata.ownerProcessIdentifier) ==
+              metadata.ownerProcessStartIdentity
+        else {
+            throw DesktopObservationError.targetNotFound("window id \(windowID)")
         }
 
+        let app = ApplicationIdentity(
+            processIdentifier: metadata.ownerProcessIdentifier,
+            processStartIdentity: metadata.ownerProcessStartIdentity,
+            bundleIdentifier: nil,
+            name: metadata.applicationName ?? "PID:\(metadata.ownerProcessIdentifier)")
+        let window = WindowIdentity(
+            windowID: Int(windowID),
+            title: metadata.title,
+            bounds: metadata.bounds,
+            index: 0)
+        let context = WindowContext(
+            applicationName: app.name,
+            applicationProcessId: app.processIdentifier,
+            windowTitle: window.title,
+            windowID: window.windowID,
+            windowBounds: window.bounds,
+            windowMutationIdentity: WindowMutationIdentity(
+                windowID: window.windowID,
+                ownerProcessIdentifier: metadata.ownerProcessIdentifier,
+                ownerProcessStartIdentity: metadata.ownerProcessStartIdentity,
+                capturedBounds: window.bounds))
         return ResolvedObservationTarget(
             kind: .windowID(windowID),
-            app: metadata.app,
-            window: metadata.window,
-            bounds: metadata.bounds,
-            detectionContext: metadata.context)
+            app: app,
+            window: window,
+            bounds: window.bounds,
+            detectionContext: context)
     }
 
     func selectWindow(
@@ -30,10 +54,7 @@ extension ObservationTargetResolver {
             return window
 
         case let .title(title):
-            guard let window = windows.first(where: { $0.title.localizedCaseInsensitiveContains(title) }) else {
-                throw DesktopObservationError.targetNotFound("window title \(title)")
-            }
-            return window
+            return try Self.window(matchingTitle: title, from: windows)
 
         case let .id(windowID):
             guard let window = windows.first(where: { $0.windowID == Int(windowID) }) else {
@@ -41,6 +62,34 @@ extension ObservationTargetResolver {
             }
             return window
         }
+    }
+
+    static func window(
+        matchingTitle title: String,
+        from windows: [ServiceWindowInfo]) throws -> ServiceWindowInfo
+    {
+        let exactMatches = windows.filter {
+            $0.title.compare(title, options: .caseInsensitive) == .orderedSame
+        }
+        if exactMatches.count == 1, let match = exactMatches.first {
+            return match
+        }
+        if exactMatches.count > 1 {
+            throw DesktopObservationError.ambiguousWindowTitle(
+                title,
+                candidates: Self.windowMatchSummary(exactMatches))
+        }
+
+        let partialMatches = windows.filter { $0.title.localizedCaseInsensitiveContains(title) }
+        guard partialMatches.count == 1, let match = partialMatches.first else {
+            if partialMatches.isEmpty {
+                throw DesktopObservationError.targetNotFound("window title \(title)")
+            }
+            throw DesktopObservationError.ambiguousWindowTitle(
+                title,
+                candidates: Self.windowMatchSummary(partialMatches))
+        }
+        return match
     }
 
     public nonisolated static func bestWindow(from windows: [ServiceWindowInfo]) -> ServiceWindowInfo? {
@@ -127,6 +176,10 @@ extension ObservationTargetResolver {
 
     private nonisolated static func format(_ value: CGFloat) -> String {
         String(format: "%.2f", Double(value))
+    }
+
+    private static func windowMatchSummary(_ windows: [ServiceWindowInfo]) -> String {
+        windows.map { "#\($0.index) id=\($0.windowID) '\($0.title)'" }.joined(separator: ", ")
     }
 
     private nonisolated static func deduplicate(_ windows: [ServiceWindowInfo]) -> [ServiceWindowInfo] {

@@ -53,7 +53,7 @@ extension DockCommand {
             let identifier = dockItem.bundleIdentifier ?? dockItem.title
             let deadline = Date().addingTimeInterval(2.0)
             while Date() < deadline {
-                if await self.services.applications.isApplicationRunning(identifier: identifier) {
+                if try await self.services.applications.isApplicationRunning(identifier: identifier) {
                     return
                 }
                 try await Task.sleep(nanoseconds: 200_000_000)

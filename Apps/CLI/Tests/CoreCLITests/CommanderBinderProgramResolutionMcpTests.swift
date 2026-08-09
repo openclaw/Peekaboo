@@ -118,13 +118,13 @@ struct CommanderBinderMCPWindowTests {
             "peekaboo",
             "app",
             "quit",
-            "--all",
-            "--except", "Finder,Terminal",
+            "--pid", "123",
+            "--expected-process-start-identity", "456789",
             "--force"
         ])
         let values = invocation.parsedValues
-        #expect(values.flags.contains("all"))
-        #expect(values.options["except"] == ["Finder,Terminal"])
+        #expect(values.options["pid"] == ["123"])
+        #expect(values.options["expectedProcessStartIdentity"] == ["456789"])
         #expect(values.flags.contains("force"))
     }
 

@@ -18,7 +18,9 @@ extension AppToolActions {
             applicationBundleIdentifier: request.bundleId,
             openURLs: openURLs,
             activates: request.foreground,
-            waitUntilReady: request.waitUntilReady))
+            waitUntilReady: request.waitUntilReady,
+            waitForWindow: request.waitForWindow,
+            createsNewInstance: request.newInstance))
 
         let timing = self.executionTimeString(since: request.startTime)
         let message = "\(AgentDisplayTokens.Status.success) Launched \(app.name) "
@@ -31,6 +33,12 @@ extension AppToolActions {
                 "foreground": .bool(request.foreground),
                 "open_targets": .array(request.openTargets.map(Value.string)),
                 "wait_until_ready": .bool(request.waitUntilReady),
+                "wait_for_window": .bool(request.waitForWindow),
+                "new_instance": .bool(request.newInstance),
+                "window_count": .double(Double(app.windowIDs?.count ?? app.windowCount)),
+                "window_ready": .bool((app.windowIDs?.count ?? app.windowCount) > 0),
+                "window_ids": app.windowIDs.map { .array($0.map { .double(Double($0)) }) } ?? .null,
+                "window_identity": .string(app.windowIDs == nil ? "unknown" : "exact"),
             ])
     }
 
@@ -48,7 +56,9 @@ extension AppToolActions {
             applicationBundleIdentifier: request.bundleId,
             openURLs: openURLs,
             activates: request.foreground,
-            waitUntilReady: request.waitUntilReady))
+            waitUntilReady: request.waitUntilReady,
+            waitForWindow: request.waitForWindow,
+            createsNewInstance: request.newInstance))
 
         let count = request.openTargets.count
         let message = "\(AgentDisplayTokens.Status.success) Opened \(count) target\(count == 1 ? "" : "s") "
@@ -62,6 +72,12 @@ extension AppToolActions {
                 "foreground": .bool(request.foreground),
                 "open_targets": .array(request.openTargets.map(Value.string)),
                 "wait_until_ready": .bool(request.waitUntilReady),
+                "wait_for_window": .bool(request.waitForWindow),
+                "new_instance": .bool(request.newInstance),
+                "window_count": .double(Double(app.windowIDs?.count ?? app.windowCount)),
+                "window_ready": .bool((app.windowIDs?.count ?? app.windowCount) > 0),
+                "window_ids": app.windowIDs.map { .array($0.map { .double(Double($0)) }) } ?? .null,
+                "window_identity": .string(app.windowIDs == nil ? "unknown" : "exact"),
             ])
     }
 
@@ -75,7 +91,9 @@ extension AppToolActions {
         }
 
         let appInfo = try await self.service.findApplication(identifier: name)
-        let success = try await self.service.quitApplication(identifier: name, force: request.force)
+        let success = try await self.service.quitApplication(request: Self.pinnedQuitRequest(
+            for: appInfo,
+            force: request.force))
 
         guard success else {
             return ToolResponse.error("Failed to quit \(appInfo.name). The application may have refused to quit.")
@@ -97,15 +115,21 @@ extension AppToolActions {
         }
 
         let appInfo = try await self.service.findApplication(identifier: identifier)
+        guard let originalProcessIdentity = appInfo.processIdentity else {
+            throw PeekabooError.serviceUnavailable(
+                "Application discovery did not return a process-generation identity for atomic relaunch")
+        }
         let descriptor = "PID:\(appInfo.processIdentifier)"
         let launchIdentifier = appInfo.bundleIdentifier == nil ? (appInfo.bundlePath ?? appInfo.name) : nil
         let refreshedInfo = try await self.service.relaunchApplication(request: ApplicationRelaunchRequest(
             targetIdentifier: descriptor,
+            expectedTargetIdentity: originalProcessIdentity,
             launchRequest: ApplicationLaunchRequest(
                 applicationIdentifier: launchIdentifier,
                 applicationBundleIdentifier: appInfo.bundleIdentifier,
                 activates: request.foreground,
-                waitUntilReady: request.waitUntilReady),
+                waitUntilReady: request.waitUntilReady,
+                waitForWindow: request.waitForWindow),
             force: request.force,
             waitSeconds: request.wait))
         let timing = self.executionTimeString(since: request.startTime)
@@ -120,6 +144,7 @@ extension AppToolActions {
                 "previous_pid": .double(Double(appInfo.processIdentifier)),
                 "wait": .double(request.wait),
                 "wait_until_ready": .bool(request.waitUntilReady),
+                "wait_for_window": .bool(request.waitForWindow),
                 "force": .bool(request.force),
                 "foreground": .bool(request.foreground),
             ])
@@ -171,9 +196,9 @@ extension AppToolActions {
         var failed = [String]()
         for app in targets {
             do {
-                let success = try await self.service.quitApplication(
-                    identifier: self.identifier(for: app),
-                    force: request.force)
+                let success = try await self.service.quitApplication(request: Self.pinnedQuitRequest(
+                    for: app,
+                    force: request.force))
                 if success {
                     quitCount += 1
                 } else {
@@ -210,16 +235,30 @@ extension AppToolActions {
             meta: ToolEventSummary.merge(summary: summary, into: .object(baseMeta)))
     }
 
+    private static func pinnedQuitRequest(
+        for application: ServiceApplicationInfo,
+        force: Bool) throws -> ApplicationQuitRequest
+    {
+        guard let identity = application.processIdentity else {
+            throw PeekabooError.serviceUnavailable(
+                "Application discovery did not return a process-generation identity; update the runtime host")
+        }
+        return ApplicationQuitRequest(
+            identifier: "PID:\(application.processIdentifier)",
+            force: force,
+            expectedIdentity: identity)
+    }
+
     func waitForRunningState(
         identifier: String,
         desiredState: Bool,
-        timeout: TimeInterval) async -> Bool
+        timeout: TimeInterval) async throws -> Bool
     {
         let interval: TimeInterval = 0.1
         var elapsed: TimeInterval = 0
 
         while elapsed < timeout {
-            let isRunning = await self.service.isApplicationRunning(identifier: identifier)
+            let isRunning = try await self.service.isApplicationRunning(identifier: identifier)
             if isRunning == desiredState {
                 return true
             }
@@ -233,7 +272,7 @@ extension AppToolActions {
             elapsed += interval
         }
 
-        let finalState = await self.service.isApplicationRunning(identifier: identifier)
+        let finalState = try await self.service.isApplicationRunning(identifier: identifier)
         return finalState == desiredState
     }
 

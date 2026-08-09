@@ -107,7 +107,128 @@ swiftc "$ROOT_DIR/scripts/support/background-computer-use-probe.swift" \
     -framework CryptoKit
 "$PROBE_BIN" self-test > "$ARTIFACT_ROOT/probe-self-test.json"
 
+same_process_generation() {
+    local expected_start_identity="$1"
+    local current_start_identity="$2"
+    [[ "$expected_start_identity" =~ ^[0-9]+$ ]] && \
+        [[ "$current_start_identity" == "$expected_start_identity" ]]
+}
+
+refresh_playground_process_receipt() {
+    local pid="$1"
+    local start_identity="$2"
+    [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+    [[ "$start_identity" =~ ^[0-9]+$ ]] || return 1
+    PLAYGROUND_PID="$pid"
+    PLAYGROUND_PROCESS_START_IDENTITY="$start_identity"
+}
+
+read_launch_process_receipt() {
+    local result_file="$1"
+    local receipt
+    LAUNCH_RECEIPT_PID=""
+    LAUNCH_RECEIPT_PROCESS_START_IDENTITY=""
+    [[ -n "$result_file" && -s "$result_file" ]] || return 1
+    receipt="$(jq -er '
+        .data as $data |
+        if ($data | has("pid")) and ($data | has("process_start_identity")) and
+           (($data | has("new_pid")) | not) and (($data | has("new_process_start_identity")) | not)
+        then [$data.pid, $data.process_start_identity]
+        elif ($data | has("new_pid")) and ($data | has("new_process_start_identity")) and
+             (($data | has("pid")) | not) and (($data | has("process_start_identity")) | not)
+        then [$data.new_pid, $data.new_process_start_identity]
+        else empty
+        end as $receipt |
+        $receipt[0] as $pid |
+        $receipt[1] as $identity |
+        select(
+            ($pid | type) == "number" and $pid > 0 and ($pid | floor) == $pid and
+            ($identity | type) == "number" and $identity > 0 and ($identity | floor) == $identity
+        ) |
+        $receipt | @tsv
+    ' "$result_file")" || return 1
+    IFS=$'\t' read -r LAUNCH_RECEIPT_PID LAUNCH_RECEIPT_PROCESS_START_IDENTITY <<< "$receipt"
+    [[ "$LAUNCH_RECEIPT_PID" =~ ^[0-9]+$ ]] && \
+        [[ "$LAUNCH_RECEIPT_PROCESS_START_IDENTITY" =~ ^[0-9]+$ ]]
+}
+
+quit_with_process_receipt() {
+    local pid="$1"
+    local expected_start_identity="$2"
+    local force="$3"
+    [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+    [[ "$expected_start_identity" =~ ^[0-9]+$ ]] || return 1
+    if [[ "$force" == "true" ]]; then
+        pb app quit --pid "$pid" \
+            --expected-process-start-identity "$expected_start_identity" --force --json
+    else
+        pb app quit --pid "$pid" \
+            --expected-process-start-identity "$expected_start_identity" --json
+    fi
+}
+
 if $SELF_TEST_ONLY; then
+    "$PROBE_BIN" process-identity --pid "$$" \
+        --output "$ARTIFACT_ROOT/probe-process-identity.json"
+    jq -e --argjson pid "$$" \
+        '.pid == $pid and (.startIdentity | type) == "number" and .startIdentity > 0' \
+        "$ARTIFACT_ROOT/probe-process-identity.json" >/dev/null
+    same_process_generation 7 7
+    if same_process_generation 7 8 || same_process_generation "" 7; then
+        echo "Process-generation cleanup guard self-test failed." >&2
+        exit 1
+    fi
+    VALID_LAUNCH_RECEIPT="$ARTIFACT_ROOT/valid-launch-receipt.json"
+    VALID_RELAUNCH_RECEIPT="$ARTIFACT_ROOT/valid-relaunch-receipt.json"
+    MISSING_LAUNCH_RECEIPT="$ARTIFACT_ROOT/missing-launch-receipt.json"
+    MISMATCHED_LAUNCH_RECEIPT="$ARTIFACT_ROOT/mismatched-launch-receipt.json"
+    printf '%s\n' \
+        '{"data":{"pid":101,"process_start_identity":8}}' > "$VALID_LAUNCH_RECEIPT"
+    printf '%s\n' \
+        '{"data":{"new_pid":102,"new_process_start_identity":9}}' > "$VALID_RELAUNCH_RECEIPT"
+    printf '%s\n' '{"data":{"pid":103}}' > "$MISSING_LAUNCH_RECEIPT"
+    printf '%s\n' \
+        '{"data":{"pid":104,"new_process_start_identity":10}}' > "$MISMATCHED_LAUNCH_RECEIPT"
+    if ! read_launch_process_receipt "$VALID_LAUNCH_RECEIPT" || \
+       [[ "$LAUNCH_RECEIPT_PID" != 101 || "$LAUNCH_RECEIPT_PROCESS_START_IDENTITY" != 8 ]]; then
+        echo "Launch receipt parsing self-test failed." >&2
+        exit 1
+    fi
+    PLAYGROUND_PID=100
+    PLAYGROUND_PROCESS_START_IDENTITY=7
+    refresh_playground_process_receipt \
+        "$LAUNCH_RECEIPT_PID" "$LAUNCH_RECEIPT_PROCESS_START_IDENTITY"
+    if [[ "$PLAYGROUND_PID" != 101 || "$PLAYGROUND_PROCESS_START_IDENTITY" != 8 ]] || \
+       same_process_generation 7 "$PLAYGROUND_PROCESS_START_IDENTITY" || \
+       ! same_process_generation 8 "$PLAYGROUND_PROCESS_START_IDENTITY"; then
+        echo "Playground relaunch receipt refresh self-test failed." >&2
+        exit 1
+    fi
+    if refresh_playground_process_receipt 102 ""; then
+        echo "Playground relaunch accepted a missing process generation." >&2
+        exit 1
+    fi
+    if ! read_launch_process_receipt "$VALID_RELAUNCH_RECEIPT" || \
+       [[ "$LAUNCH_RECEIPT_PID" != 102 || "$LAUNCH_RECEIPT_PROCESS_START_IDENTITY" != 9 ]] || \
+       read_launch_process_receipt "$MISSING_LAUNCH_RECEIPT" || \
+       read_launch_process_receipt "$MISMATCHED_LAUNCH_RECEIPT"; then
+        echo "Relaunch/missing receipt parsing self-test failed." >&2
+        exit 1
+    fi
+    PB_SELF_TEST_CALLS=()
+    pb() {
+        PB_SELF_TEST_CALLS+=("$*")
+    }
+    quit_with_process_receipt 101 8 true
+    quit_with_process_receipt 102 9 false
+    if [[ "${PB_SELF_TEST_CALLS[0]}" != \
+        "app quit --pid 101 --expected-process-start-identity 8 --force --json" ]] || \
+       [[ "${PB_SELF_TEST_CALLS[1]}" != \
+        "app quit --pid 102 --expected-process-start-identity 9 --json" ]] || \
+       quit_with_process_receipt 103 "" true; then
+        echo "Generation-pinned cleanup command self-test failed." >&2
+        exit 1
+    fi
     echo "Probe self-test passed: $ARTIFACT_ROOT/probe-self-test.json"
     exit 0
 fi
@@ -203,6 +324,28 @@ ORIGINAL_FRONTMOST_PID="$("$PROBE_BIN" sample | jq -r '.frontmostPID // empty')"
 CLIPBOARD_SLOT="background-computer-use-$$"
 MONITOR_PID=""
 PLAYGROUND_PID=""
+PLAYGROUND_PROCESS_START_IDENTITY=""
+LIFECYCLE_PIDS=()
+LIFECYCLE_PROCESS_START_IDENTITIES=()
+
+quit_owned_process() {
+    local pid="$1"
+    local expected_start_identity="$2"
+    local label="$3"
+    local force="$4"
+    if ! kill -0 "$pid" 2>/dev/null; then
+        return 0
+    fi
+
+    if [[ ! "$expected_start_identity" =~ ^[0-9]+$ ]]; then
+        local message="Refusing cleanup for $label PID $pid: process generation changed"
+        echo "$message" >&2
+        printf '%s\n' "$message" >> "$ARTIFACT_ROOT/cleanup-generation-refusals.txt"
+        return 1
+    fi
+
+    quit_with_process_receipt "$pid" "$expected_start_identity" "$force" >/dev/null 2>&1 || true
+}
 
 cleanup() {
     if [[ -n "$MONITOR_PID" ]]; then
@@ -211,8 +354,20 @@ cleanup() {
     fi
     pb clipboard restore --slot "$CLIPBOARD_SLOT" --json >/dev/null 2>&1 || true
     if [[ -n "$PLAYGROUND_PID" ]]; then
-        pb app quit --pid "$PLAYGROUND_PID" --json >/dev/null 2>&1 || true
+        quit_owned_process \
+            "$PLAYGROUND_PID" "$PLAYGROUND_PROCESS_START_IDENTITY" playground false || true
+        if kill -0 "$PLAYGROUND_PID" 2>/dev/null; then
+            quit_owned_process \
+                "$PLAYGROUND_PID" "$PLAYGROUND_PROCESS_START_IDENTITY" playground true || true
+        fi
     fi
+    local lifecycle_index
+    for ((lifecycle_index = 0; lifecycle_index < ${#LIFECYCLE_PIDS[@]}; lifecycle_index++)); do
+        quit_owned_process \
+            "${LIFECYCLE_PIDS[$lifecycle_index]}" \
+            "${LIFECYCLE_PROCESS_START_IDENTITIES[$lifecycle_index]}" \
+            "lifecycle-$lifecycle_index" true || true
+    done
     if [[ -n "$ORIGINAL_FRONTMOST_PID" ]] && kill -0 "$ORIGINAL_FRONTMOST_PID" 2>/dev/null; then
         pb app switch --to "PID:$ORIGINAL_FRONTMOST_PID" --json >/dev/null 2>&1 || true
     fi
@@ -222,24 +377,22 @@ trap cleanup EXIT INT TERM
 pb clipboard save --slot "$CLIPBOARD_SLOT" --json > "$ARTIFACT_ROOT/clipboard-save.json"
 
 if "$PROBE_BIN" find-app --bundle-id "$PLAYGROUND_BUNDLE_ID" >/dev/null 2>&1; then
-    existing_pid="$("$PROBE_BIN" find-app --bundle-id "$PLAYGROUND_BUNDLE_ID" | jq -r '.pid')"
-    pb app quit --pid "$existing_pid" --json > "$ARTIFACT_ROOT/playground-quit-existing.json" || true
+    pb app quit --app "$PLAYGROUND_BUNDLE_ID" --json \
+        > "$ARTIFACT_ROOT/playground-quit-existing.json" || true
 fi
 
 pb app launch "$PLAYGROUND_APP" --wait-until-ready --json \
     > "$ARTIFACT_ROOT/playground-launch.json"
-for _ in $(seq 1 100); do
-    if "$PROBE_BIN" find-app --bundle-id "$PLAYGROUND_BUNDLE_ID" \
-        --output "$ARTIFACT_ROOT/playground-app.json" 2>/dev/null; then
-        break
-    fi
-    sleep 0.05
-done
-if [[ ! -s "$ARTIFACT_ROOT/playground-app.json" ]]; then
-    echo "Playground did not launch." >&2
+if ! read_launch_process_receipt "$ARTIFACT_ROOT/playground-launch.json" || \
+   ! refresh_playground_process_receipt \
+       "$LAUNCH_RECEIPT_PID" "$LAUNCH_RECEIPT_PROCESS_START_IDENTITY"; then
+    echo "Playground launch did not return a process-generation receipt." >&2
     exit 1
 fi
-PLAYGROUND_PID="$(jq -r '.pid' "$ARTIFACT_ROOT/playground-app.json")"
+if ! kill -0 "$PLAYGROUND_PID" 2>/dev/null; then
+    echo "Playground launch receipt names a process that is no longer running." >&2
+    exit 1
+fi
 
 pb app launch --bundle-id "$SENTINEL_BUNDLE_ID" --wait-until-ready --foreground --json \
     > "$ARTIFACT_ROOT/sentinel-launch.json"
@@ -326,7 +479,7 @@ run_case() {
             record_failure "$name command failed (exit $command_exit)"
             failed=true
         fi
-    elif [[ $command_exit -eq 0 ]]; then
+    elif [[ "$expected_exit" == "failure" && $command_exit -eq 0 ]]; then
         record_failure "$name was expected to fail but exited zero"
         failed=true
     fi
@@ -415,6 +568,77 @@ assert_background_delivery() {
         return 1
     fi
 }
+
+read_lifecycle_launch_receipt() {
+    local name="$1"
+    local result_file="$2"
+    if [[ -z "$result_file" || ! -s "$result_file" ]]; then
+        record_failure "$name did not produce a launch receipt"
+        LIFECYCLE_PID=""
+        LIFECYCLE_WINDOW_ID=""
+        LIFECYCLE_PROCESS_START_IDENTITY=""
+        return 1
+    fi
+    if ! read_launch_process_receipt "$result_file"; then
+        record_failure "$name did not return its launch-bound process-generation receipt"
+        LIFECYCLE_PID=""
+        LIFECYCLE_WINDOW_ID=""
+        LIFECYCLE_PROCESS_START_IDENTITY=""
+        return 1
+    fi
+    LIFECYCLE_PID="$LAUNCH_RECEIPT_PID"
+    LIFECYCLE_PROCESS_START_IDENTITY="$LAUNCH_RECEIPT_PROCESS_START_IDENTITY"
+    LIFECYCLE_WINDOW_ID="$(jq -r '.data.window_ids[0] // empty' "$result_file")"
+    if [[ ! "$LIFECYCLE_PID" =~ ^[0-9]+$ ]] || [[ ! "$LIFECYCLE_WINDOW_ID" =~ ^[0-9]+$ ]] || \
+       ! jq -e '
+           .data.window_ready == true and
+           .data.window_identity == "exact" and
+           .data.window_count > 0 and
+           (.data.window_ids | length) == .data.window_count
+       ' "$result_file" >/dev/null; then
+        record_failure "$name did not return a refreshed exact window receipt"
+        LIFECYCLE_PID=""
+        LIFECYCLE_WINDOW_ID=""
+        LIFECYCLE_PROCESS_START_IDENTITY=""
+        return 1
+    fi
+    LIFECYCLE_PIDS+=("$LIFECYCLE_PID")
+    LIFECYCLE_PROCESS_START_IDENTITIES+=("$LIFECYCLE_PROCESS_START_IDENTITY")
+}
+
+LIFECYCLE_PID=""
+LIFECYCLE_WINDOW_ID=""
+LIFECYCLE_PROCESS_START_IDENTITY=""
+run_checked_case lifecycle-launch-maximize-close unchanged success \
+    app launch TextEdit --new-instance --wait-for-window || true
+if read_lifecycle_launch_receipt lifecycle-launch-maximize-close "$LAST_RESULT"; then
+    MAXIMIZE_TEXTEDIT_PID="$LIFECYCLE_PID"
+    MAXIMIZE_TEXTEDIT_WINDOW_ID="$LIFECYCLE_WINDOW_ID"
+    run_checked_case lifecycle-maximize unchanged success \
+        window maximize --window-id "$MAXIMIZE_TEXTEDIT_WINDOW_ID" || true
+    if ! jq -e '.data.success == true and .data.new_bounds.width > 0 and .data.new_bounds.height > 0' \
+        "$LAST_RESULT" >/dev/null; then
+        record_failure "lifecycle-maximize did not return verified settled bounds"
+    fi
+    run_checked_case lifecycle-close unchanged success \
+        window close --window-id "$MAXIMIZE_TEXTEDIT_WINDOW_ID" || true
+fi
+
+LIFECYCLE_PID=""
+LIFECYCLE_WINDOW_ID=""
+LIFECYCLE_PROCESS_START_IDENTITY=""
+run_checked_case lifecycle-launch-quit unchanged success \
+    app launch TextEdit --new-instance --wait-for-window || true
+if read_lifecycle_launch_receipt lifecycle-launch-quit "$LAST_RESULT"; then
+    QUIT_TEXTEDIT_PID="$LIFECYCLE_PID"
+    QUIT_TEXTEDIT_PROCESS_START_IDENTITY="$LIFECYCLE_PROCESS_START_IDENTITY"
+    run_checked_case lifecycle-quit unchanged either \
+        app quit --pid "$QUIT_TEXTEDIT_PID" \
+        --expected-process-start-identity "$QUIT_TEXTEDIT_PROCESS_START_IDENTITY" || true
+    if jq -e '.success == true' "$LAST_RESULT" >/dev/null && kill -0 "$QUIT_TEXTEDIT_PID" 2>/dev/null; then
+        record_failure "lifecycle-quit reported success while PID $QUIT_TEXTEDIT_PID remained alive"
+    fi
+fi
 
 open_fixture() {
     local key="$1"
@@ -601,7 +825,16 @@ if $RUN_FOREGROUND_PHASE; then
     # Relaunching the controlled fixture resets any visual/scroll state from this explicit phase.
     pb app relaunch --pid "$PLAYGROUND_PID" --wait-until-ready --json \
         > "$FOREGROUND_DIR/reset-playground.json"
-    PLAYGROUND_PID="$("$PROBE_BIN" find-app --bundle-id "$PLAYGROUND_BUNDLE_ID" | jq -r '.pid')"
+    if ! read_launch_process_receipt "$FOREGROUND_DIR/reset-playground.json" || \
+       ! refresh_playground_process_receipt \
+           "$LAUNCH_RECEIPT_PID" "$LAUNCH_RECEIPT_PROCESS_START_IDENTITY"; then
+        echo "Playground relaunch did not return a process-generation receipt." >&2
+        exit 1
+    fi
+    if ! kill -0 "$PLAYGROUND_PID" 2>/dev/null; then
+        echo "Playground relaunch receipt names a process that is no longer running." >&2
+        exit 1
+    fi
     pb app switch --to "PID:$SENTINEL_PID" --verify --json \
         > "$FOREGROUND_DIR/restore-sentinel.json"
 fi

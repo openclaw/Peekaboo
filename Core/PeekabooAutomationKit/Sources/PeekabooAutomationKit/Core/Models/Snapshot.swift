@@ -17,6 +17,7 @@ public nonisolated struct UIAutomationSnapshot: Codable, Sendable {
     public var applicationProcessId: Int32?
     public var windowTitle: String?
     public var windowBounds: CGRect?
+    public var windowMutationIdentity: WindowMutationIdentity?
     public var menuBar: MenuBarData?
     public var windowID: CGWindowID?
     public var windowAXIdentifier: String?
@@ -34,6 +35,7 @@ public nonisolated struct UIAutomationSnapshot: Codable, Sendable {
         applicationProcessId: Int32? = nil,
         windowTitle: String? = nil,
         windowBounds: CGRect? = nil,
+        windowMutationIdentity: WindowMutationIdentity? = nil,
         menuBar: MenuBarData? = nil,
         windowID: CGWindowID? = nil,
         windowAXIdentifier: String? = nil,
@@ -50,6 +52,7 @@ public nonisolated struct UIAutomationSnapshot: Codable, Sendable {
         self.applicationProcessId = applicationProcessId
         self.windowTitle = windowTitle
         self.windowBounds = windowBounds
+        self.windowMutationIdentity = windowMutationIdentity
         self.menuBar = menuBar
         self.windowID = windowID
         self.windowAXIdentifier = windowAXIdentifier

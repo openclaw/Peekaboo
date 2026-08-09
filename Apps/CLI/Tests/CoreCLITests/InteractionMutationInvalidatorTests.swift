@@ -354,6 +354,39 @@ struct InteractionMutationInvalidatorTests {
     }
 
     @Test
+    func `Per-tool coordinator cancels pre-dispatch refusal without advancing watermark`() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekaboo-cli-tool-cancel-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = DesktopMutationWatermarkStore(directoryURL: root)
+        let snapshots = InMemorySnapshotManager(desktopMutationWatermarkStore: store)
+        let tracker = InteractionMutationTracker(desktopMutationWatermarkStore: store)
+        let runtime = CommandRuntime(
+            configuration: .init(
+                verbose: false,
+                jsonOutput: false,
+                logLevel: nil,
+                captureEnginePreference: nil,
+                inputStrategy: nil
+            ),
+            services: PeekabooServices(snapshotManager: snapshots),
+            interactionMutationTracker: tracker
+        )
+        let snapshotID = try await snapshots.createSnapshot()
+        let scope = MCPToolSnapshotMutationScope(toolName: "click", effect: .mutation)
+        let coordinator = runtime.toolSnapshotMutationCoordinator
+
+        try coordinator.prepareMutation(scope)
+        #expect(tracker.hasPendingDurableMutation)
+        #expect(await coordinator.cancelMutation(scope))
+
+        #expect(!tracker.hasPendingDurableMutation)
+        #expect(tracker.mutationStartedAt == nil)
+        #expect(store.effectiveWatermark() == nil)
+        #expect(await snapshots.getMostRecentSnapshot() == snapshotID)
+    }
+
+    @Test
     func `Remote ordinary tools retain a caller barrier while remote observations use host certificate`() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("peekaboo-cli-remote-tool-barrier-\(UUID().uuidString)", isDirectory: true)

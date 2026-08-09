@@ -151,6 +151,15 @@ final class InteractionMutationTracker {
         self.preservedSnapshotID = nil
         self.preservedAt = nil
     }
+
+    func cancelUncommittedMutation(sequence: UInt64) {
+        guard self.mutationSequence == sequence else { return }
+        self.mutationStartedAt = nil
+        self.successfulCompletionCutoff = nil
+        self.failedInvalidationCutoff = nil
+        self.preservedSnapshotID = nil
+        self.preservedAt = nil
+    }
 }
 
 @MainActor
@@ -586,12 +595,18 @@ extension CommandRuntime {
 
 @MainActor
 private final class RuntimeMCPToolSnapshotMutationCoordinator: MCPToolSnapshotMutationCoordinating {
+    private struct TrackingReceipt {
+        let sequence: UInt64
+        let ownsBoundary: Bool
+    }
+
     private let targets: InteractionObservationInvalidator.MutationTargets
     private let logger: Logger
     private let mutationTracker: InteractionMutationTracker
     private let hasRemoteSelection: Bool
     private var preparedLocalMutationIDs: Set<UUID> = []
     private var completedPreparedMutationIDs: Set<UUID> = []
+    private var trackingReceipts: [UUID: TrackingReceipt] = [:]
 
     init(
         targets: InteractionObservationInvalidator.MutationTargets,
@@ -606,6 +621,7 @@ private final class RuntimeMCPToolSnapshotMutationCoordinator: MCPToolSnapshotMu
 
     func prepareMutation(_ scope: MCPToolSnapshotMutationScope) throws {
         guard scope.effect != .freshObservation else { return }
+        let ownsBoundary = self.mutationTracker.mutationStartedAt == nil
         let needsCallerBarrier = !self.hasRemoteSelection || scope.effect != .mutationProducingFreshObservation
         if needsCallerBarrier {
             guard try self.mutationTracker.beginDurableMutation(at: scope.startedAt) else {
@@ -618,6 +634,10 @@ private final class RuntimeMCPToolSnapshotMutationCoordinator: MCPToolSnapshotMu
         self.mutationTracker.begin(
             at: scope.startedAt,
             preservingSnapshotsCreatedAfterBoundary: scope.effect == .mutationProducingFreshObservation
+        )
+        self.trackingReceipts[scope.id] = TrackingReceipt(
+            sequence: self.mutationTracker.mutationSequence,
+            ownsBoundary: ownsBoundary
         )
     }
 
@@ -640,6 +660,7 @@ private final class RuntimeMCPToolSnapshotMutationCoordinator: MCPToolSnapshotMu
 
     @discardableResult
     func completeMutation(_ scope: MCPToolSnapshotMutationScope, succeeded: Bool) async -> Bool {
+        self.trackingReceipts.removeValue(forKey: scope.id)
         let completedPreparedMutation = self.completedPreparedMutationIDs.remove(scope.id) != nil
         // `see` must observe publication failure before rendering its fresh snapshot.
         let defersToOuterCommandBarrier = !self.hasRemoteSelection &&
@@ -699,5 +720,20 @@ private final class RuntimeMCPToolSnapshotMutationCoordinator: MCPToolSnapshotMu
             return retried && (!succeeded || effectiveSucceeded)
         }
         return !succeeded || effectiveSucceeded
+    }
+
+    func cancelMutation(_ scope: MCPToolSnapshotMutationScope) async -> Bool {
+        do {
+            if self.preparedLocalMutationIDs.remove(scope.id) != nil {
+                try self.mutationTracker.cancelDurableMutation()
+            }
+        } catch {
+            return false
+        }
+        self.completedPreparedMutationIDs.remove(scope.id)
+        if let receipt = self.trackingReceipts.removeValue(forKey: scope.id), receipt.ownsBoundary {
+            self.mutationTracker.cancelUncommittedMutation(sequence: receipt.sequence)
+        }
+        return true
     }
 }

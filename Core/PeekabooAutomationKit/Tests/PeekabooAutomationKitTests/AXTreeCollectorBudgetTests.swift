@@ -39,6 +39,60 @@ final class AXTreeCollectorBudgetTests: XCTestCase {
         XCTAssertNil(result.truncationInfo, "Default budget should not trigger truncation on a small AX tree")
     }
 
+    func testExpiredDeadlineIsReportedAsTruncationBeforeAXReads() {
+        let application = Element(AXUIElementCreateApplication(getpid()))
+
+        let result = AXTreeCollector().collect(
+            window: application,
+            deadline: Date(timeIntervalSince1970: 0))
+
+        XCTAssertTrue(result.elements.isEmpty)
+        XCTAssertEqual(result.truncationInfo?.deadlineReached, true)
+        XCTAssertTrue(result.truncationInfo?.isTruncated == true)
+    }
+
+    func testDescriptorReadFailureIsReportedAsIncompleteAccessibility() {
+        let element = Element(AXUIElementCreateApplication(getpid()))
+        let collector = AXTreeCollector(descriptorReader: { _ in .incomplete })
+
+        let result = collector.collect(window: element, deadline: Date().addingTimeInterval(1))
+
+        XCTAssertTrue(result.elements.isEmpty)
+        XCTAssertEqual(result.truncationInfo?.incompleteAccessibilityRead, true)
+        XCTAssertTrue(result.truncationInfo?.isTruncated == true)
+    }
+
+    func testWindowContextDecodesPayloadWithoutFreshnessPolicy() throws {
+        let data = Data(#"{"applicationProcessId":42,"windowID":7}"#.utf8)
+
+        let context = try JSONDecoder().decode(WindowContext.self, from: data)
+
+        XCTAssertEqual(context.applicationProcessId, 42)
+        XCTAssertEqual(context.windowID, 7)
+        XCTAssertNil(context.requiresFreshAccessibilityTree)
+        XCTAssertNil(context.accessibilityTimeoutSeconds)
+    }
+
+    func testTruncationInfoDecodesPayloadWithoutDeadlineFlag() throws {
+        let data = Data(
+            #"{"maxDepthReached":false,"maxElementCountReached":true,"maxChildrenPerNodeReached":false}"#.utf8)
+
+        let info = try JSONDecoder().decode(DetectionTruncationInfo.self, from: data)
+
+        XCTAssertTrue(info.maxElementCountReached)
+        XCTAssertFalse(info.deadlineReached)
+        XCTAssertFalse(info.incompleteAccessibilityRead)
+        XCTAssertTrue(info.isTruncated)
+    }
+
+    func testIncompleteAccessibilityReadRoundTripsAsTruncation() throws {
+        let encoded = try JSONEncoder().encode(DetectionTruncationInfo(incompleteAccessibilityRead: true))
+        let info = try JSONDecoder().decode(DetectionTruncationInfo.self, from: encoded)
+
+        XCTAssertTrue(info.incompleteAccessibilityRead)
+        XCTAssertTrue(info.isTruncated)
+    }
+
     func testMaxDepthOneStopsAtRoot() throws {
         guard let window = self.frontmostWindowElement() else {
             throw XCTSkip("No frontmost window available for AX testing")
@@ -260,7 +314,10 @@ final class AXTreeCollectorBudgetTests: XCTestCase {
             label: "OCR",
             bounds: CGRect(x: 2, y: 2, width: 10, height: 10))
 
-        let merged = ObservationOCRMapper.merge(ocrElements: [ocrElement], into: detection)
+        let merged = ObservationOCRMapper.merge(
+            ocrResult: OCRTextResult(observations: [], imageSize: CGSize(width: 10, height: 10)),
+            ocrElements: [ocrElement],
+            into: detection)
 
         XCTAssertEqual(merged.metadata.truncationInfo, truncationInfo)
         XCTAssertTrue(merged.metadata.warnings.contains("ax_truncated_count"))

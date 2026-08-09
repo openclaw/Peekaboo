@@ -716,7 +716,11 @@ enum DaemonLaunchPolicy {
                 if status.pid != processID {
                     await self.terminateLaunchedProcess(process, exitObserver: exitObserver)
                 }
-                return LaunchResult(status: status, processID: processID)
+                let result = LaunchResult(status: status, processID: processID)
+                if result.ownsObservedDaemon {
+                    ManagedAutoDaemonRegistry.store(status: status, socketPath: socketPath)
+                }
+                return result
             }
             if !process.isRunning {
                 throw DaemonLaunchError.exited(

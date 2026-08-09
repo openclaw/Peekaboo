@@ -89,6 +89,32 @@ enum PeekabooBridgeSocketIO {
         }
     }
 
+    /// Checks whether the peer can still receive the response without writing or consuming protocol bytes.
+    ///
+    /// Bridge clients intentionally half-close their write side after sending one request. That makes the server's
+    /// read side report EOF for the entire response wait, so read readiness cannot distinguish a waiting client from
+    /// a fully closed one. Darwin's write-side poll reports `POLLOUT` while the peer can receive and a terminal event
+    /// after its receive side disappears.
+    static func peerCanReceiveResponse(fd: Int32) -> Bool {
+        while true {
+            var descriptor = pollfd(fd: fd, events: Int16(POLLOUT), revents: 0)
+            let result = poll(&descriptor, 1, 0)
+            if result == 0 {
+                // A full send buffer is not a disconnect.
+                return true
+            }
+            if result < 0 {
+                if errno == EINTR {
+                    continue
+                }
+                return false
+            }
+
+            let terminalEvents = Int16(POLLERR | POLLHUP | POLLNVAL)
+            return descriptor.revents & terminalEvents == 0
+        }
+    }
+
     private static func wait(fd: Int32, events: Int16, deadline: Date) throws -> Int16 {
         while true {
             let remaining = deadline.timeIntervalSinceNow

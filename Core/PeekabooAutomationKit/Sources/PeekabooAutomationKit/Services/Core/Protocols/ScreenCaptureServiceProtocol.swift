@@ -2,8 +2,16 @@ import CoreGraphics
 import Foundation
 
 public enum CaptureVisualizerMode: Sendable, Codable, Equatable {
+    case none
     case screenshotFlash
     case watchCapture
+
+    public static func resolved(
+        for focus: CaptureFocus,
+        visibleMode: CaptureVisualizerMode) -> CaptureVisualizerMode
+    {
+        focus == .background ? .none : visibleMode
+    }
 }
 
 /// Preferred output scale for captures
@@ -14,9 +22,22 @@ public enum CaptureScalePreference: Sendable, Codable, Equatable {
     case native
 }
 
+/// Identifies which side of a capture-service boundary owns transaction-level serialization.
+///
+/// A higher-level observation normally holds the caller-side gate across target resolution and capture. A service
+/// that crosses an IPC boundary must instead coordinate on the execution host: holding the same cross-process lock
+/// in the client while asking the host to acquire it would deadlock.
+public enum CaptureTransactionGateOwner: Sendable, Equatable {
+    case caller
+    case service
+}
+
 /// Protocol defining screen capture operations
 @MainActor
 public protocol ScreenCaptureServiceProtocol: Sendable {
+    /// The side responsible for serializing a complete capture transaction.
+    var captureTransactionGateOwner: CaptureTransactionGateOwner { get }
+
     /// Capture the entire screen or a specific display
     /// - Parameter displayIndex: Optional display index (0-based). If nil, captures main display
     /// - Returns: Result containing the captured image and metadata
@@ -73,6 +94,10 @@ public protocol EngineAwareScreenCaptureServiceProtocol: ScreenCaptureServicePro
 }
 
 extension ScreenCaptureServiceProtocol {
+    public var captureTransactionGateOwner: CaptureTransactionGateOwner {
+        .caller
+    }
+
     public func captureScreen(displayIndex: Int?) async throws -> CaptureResult {
         try await self.captureScreen(
             displayIndex: displayIndex,

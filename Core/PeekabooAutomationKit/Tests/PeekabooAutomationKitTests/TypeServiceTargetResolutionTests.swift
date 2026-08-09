@@ -1,10 +1,86 @@
 import CoreGraphics
 import Foundation
-import enum PeekabooFoundation.PeekabooError
+import PeekabooFoundation
 import Testing
 @testable import PeekabooAutomationKit
 
 struct TypeServiceTargetResolutionTests {
+    @Test
+    @MainActor
+    func `exact window delivery revalidates before every targeted character`() async throws {
+        var typed: [Character] = []
+        var validationCount = 0
+        let service = TypeService(
+            randomSource: SystemTypingCadenceRandomSource(),
+            targetedCharacterTyper: { character, _ in typed.append(character) })
+
+        do {
+            _ = try await service.typeActionsTrackingSecureInput(
+                [.text("ab")],
+                cadence: .fixed(milliseconds: 0),
+                snapshotId: nil,
+                targetProcessIdentifier: 4242,
+                deliveryValidator: {
+                    validationCount += 1
+                    if validationCount == 2 {
+                        throw PeekabooError.invalidInput("focus changed")
+                    }
+                })
+            Issue.record("Expected focus revalidation to stop the second character")
+        } catch let error as InputDeliveryIndeterminateError {
+            #expect(error.operation == .type)
+            #expect(error.emittedUnitCount == 1)
+            #expect(error.operationMayHaveCompleted)
+            #expect(!error.retrySafe)
+            #expect(error.localizedDescription.contains("focus changed"))
+        } catch {
+            Issue.record("Expected indeterminate delivery error, got \(error)")
+        }
+
+        #expect(validationCount == 2)
+        #expect(typed == ["a"])
+    }
+
+    @Test
+    @MainActor
+    func `final character drift is retry unsafe instead of exact success`() async throws {
+        var destinationIsValid = true
+        var typed: [Character] = []
+        var validationCount = 0
+        let service = TypeService(
+            randomSource: SystemTypingCadenceRandomSource(),
+            targetedCharacterTyper: { character, _ in
+                typed.append(character)
+                destinationIsValid = false
+            })
+
+        do {
+            _ = try await service.typeActionsTrackingSecureInput(
+                [.text("a")],
+                cadence: .fixed(milliseconds: 0),
+                snapshotId: nil,
+                targetProcessIdentifier: 4242,
+                deliveryValidator: {
+                    validationCount += 1
+                    guard destinationIsValid else {
+                        throw TypeDeliveryTestError.destinationDrifted
+                    }
+                })
+            Issue.record("Expected final character validation to fail")
+        } catch let error as InputDeliveryIndeterminateError {
+            #expect(error.operation == .type)
+            #expect(error.emittedUnitCount == 1)
+            #expect(error.operationMayHaveCompleted)
+            #expect(!error.retrySafe)
+            #expect(error.causeDescription?.contains("destination drifted") == true)
+        } catch {
+            Issue.record("Expected indeterminate delivery error, got \(error)")
+        }
+
+        #expect(validationCount == 2)
+        #expect(typed == ["a"])
+    }
+
     @Test
     @MainActor
     func `action-first missing snapshot fails as stale instead of falling back`() async {
@@ -186,6 +262,14 @@ struct TypeServiceTargetResolutionTests {
             metadata: DetectionMetadata(detectionTime: 0.01, elementCount: 2, method: "test"))
 
         #expect(TypeService.resolveTargetElement(query: "basic-text-field", in: detectionResult)?.id == "T_LOW")
+    }
+}
+
+private enum TypeDeliveryTestError: LocalizedError {
+    case destinationDrifted
+
+    var errorDescription: String? {
+        "destination drifted"
     }
 }
 

@@ -47,6 +47,73 @@ extension PeekabooBridgeClient {
         _ actions: [TypeAction],
         cadence: TypingCadence,
         snapshotId: String?,
+        expectedWindowIdentity: WindowMutationIdentity,
+        expectedWindowBounds: CGRect) async throws -> TypeResult
+    {
+        let payload = PeekabooBridgeExactWindowTypeActionsRequest(
+            actions: actions,
+            cadence: cadence,
+            snapshotId: snapshotId,
+            expectedWindowIdentity: expectedWindowIdentity,
+            expectedWindowBounds: expectedWindowBounds,
+            expectedFocusedElement: nil)
+        let response = try await self.send(.exactWindowTargetedTypeActions(payload))
+        switch response {
+        case let .typeResult(result):
+            return result
+        case let .error(envelope):
+            throw envelope
+        default:
+            throw PeekabooBridgeErrorEnvelope(
+                code: .invalidRequest,
+                message: "Unexpected exactWindowTargetedTypeActions response")
+        }
+    }
+
+    public func typeActions(
+        _ actions: [TypeAction],
+        cadence: TypingCadence,
+        snapshotId: String?,
+        target: ExactWindowKeyboardTarget) async throws -> TypeResult
+    {
+        let payload = PeekabooBridgeExactWindowTypeActionsRequest(
+            actions: actions,
+            cadence: cadence,
+            snapshotId: snapshotId,
+            expectedWindowIdentity: target.windowIdentity,
+            expectedWindowBounds: target.windowBounds,
+            expectedFocusedElement: target.focusedElement)
+        let response = try await self.send(.exactWindowTargetedTypeActions(payload))
+        guard case let .typeResult(result) = response else {
+            if case let .error(envelope) = response {
+                throw envelope
+            }
+            throw PeekabooBridgeErrorEnvelope(
+                code: .invalidRequest,
+                message: "Unexpected exactWindowTargetedTypeActions response")
+        }
+        return result
+    }
+
+    public func getFocusedElement(targetProcessIdentifier: pid_t) async throws -> UIFocusInfo? {
+        let response = try await self.send(.getFocusedElement(.init(
+            targetProcessIdentifier: Int32(targetProcessIdentifier))))
+        switch response {
+        case let .focusedElement(info):
+            return info
+        case let .error(envelope):
+            throw envelope
+        default:
+            throw PeekabooBridgeErrorEnvelope(
+                code: .invalidRequest,
+                message: "Unexpected getFocusedElement response")
+        }
+    }
+
+    public func typeActions(
+        _ actions: [TypeAction],
+        cadence: TypingCadence,
+        snapshotId: String?,
         targetProcessIdentifier: pid_t) async throws -> TypeResult
     {
         let payload = PeekabooBridgeTargetedTypeActionsRequest(
@@ -119,6 +186,33 @@ extension PeekabooBridgeClient {
                 targetProcessIdentifier: Int32(targetProcessIdentifier))))
     }
 
+    public func hotkey(
+        keys: String,
+        holdDuration: Int,
+        expectedWindowIdentity: WindowMutationIdentity,
+        expectedWindowBounds: CGRect) async throws
+    {
+        try await self.sendExpectOK(.exactWindowTargetedHotkey(.init(
+            keys: keys,
+            holdDuration: holdDuration,
+            expectedWindowIdentity: expectedWindowIdentity,
+            expectedWindowBounds: expectedWindowBounds,
+            expectedFocusedElement: nil)))
+    }
+
+    public func hotkey(
+        keys: String,
+        holdDuration: Int,
+        target: ExactWindowKeyboardTarget) async throws
+    {
+        try await self.sendExpectOK(.exactWindowTargetedHotkey(.init(
+            keys: keys,
+            holdDuration: holdDuration,
+            expectedWindowIdentity: target.windowIdentity,
+            expectedWindowBounds: target.windowBounds,
+            expectedFocusedElement: target.focusedElement)))
+    }
+
     public func click(
         target: ClickTarget,
         clickType: ClickType,
@@ -137,16 +231,18 @@ extension PeekabooBridgeClient {
         target: ClickTarget,
         clickType: ClickType,
         snapshotId: String?,
-        targetProcessIdentifier: pid_t,
-        targetWindowID: Int) async throws
+        expectedWindowIdentity: WindowMutationIdentity,
+        expectedWindowBounds: CGRect) async throws
     {
         try await self.sendExpectOK(
             .targetedClick(PeekabooBridgeTargetedClickRequest(
                 target: target,
                 clickType: clickType,
                 snapshotId: snapshotId,
-                targetProcessIdentifier: Int32(targetProcessIdentifier),
-                targetWindowID: targetWindowID)))
+                targetProcessIdentifier: expectedWindowIdentity.ownerProcessIdentifier,
+                targetWindowID: expectedWindowIdentity.windowID,
+                expectedWindowIdentity: expectedWindowIdentity,
+                expectedWindowBounds: expectedWindowBounds)))
     }
 
     public func swipe(

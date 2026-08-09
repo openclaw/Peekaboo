@@ -27,6 +27,12 @@ extension WindowCommand.MinimizeSubcommand: CommanderSignatureProviding {
     }
 }
 
+extension WindowCommand.RestoreSubcommand: CommanderSignatureProviding {
+    static func commanderSignature() -> CommandSignature {
+        CommandSignature(optionGroups: [WindowCommandSignatures.windowOptions])
+    }
+}
+
 extension WindowCommand.MaximizeSubcommand: CommanderSignatureProviding {
     static func commanderSignature() -> CommandSignature {
         CommandSignature(optionGroups: [WindowCommandSignatures.windowOptions])

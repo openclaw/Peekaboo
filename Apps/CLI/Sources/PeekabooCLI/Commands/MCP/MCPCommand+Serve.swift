@@ -28,10 +28,10 @@ extension MCPCommand {
             """
         )
 
-        @Option(help: "Transport type (stdio, http, sse)")
+        @Option(help: "Transport type (stdio; HTTP/SSE are reserved but not implemented)")
         var transport: String = "stdio"
 
-        @Option(help: "Port for HTTP/SSE transport")
+        @Option(help: "Reserved port for future HTTP/SSE transport support")
         var port: Int = 8080
 
         @MainActor
@@ -43,6 +43,17 @@ extension MCPCommand {
                     let message = "Invalid transport '\(self.transport)'. Use stdio, http, or sse."
                     if runtime.configuration.jsonOutput {
                         outputError(message: message, code: .INVALID_ARGUMENT, logger: runtime.logger)
+                    } else {
+                        fputs("Error: \(message)\n", stderr)
+                    }
+                    throw ExitCode.failure
+                }
+
+                guard transportType == .stdio else {
+                    runtime.logger.setJsonOutputMode(runtime.configuration.jsonOutput)
+                    let message = "Transport '\(self.transport)' is not implemented. Use stdio."
+                    if runtime.configuration.jsonOutput {
+                        outputError(message: message, code: .VALIDATION_ERROR, logger: runtime.logger)
                     } else {
                         fputs("Error: \(message)\n", stderr)
                     }

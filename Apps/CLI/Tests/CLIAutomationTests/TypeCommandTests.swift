@@ -1,3 +1,4 @@
+import Commander
 import Foundation
 import PeekabooCore
 import PeekabooFoundation
@@ -23,6 +24,15 @@ struct TypeCommandTests {
 
         #expect(command.text == nil)
         #expect(command.textOption == "Option Text")
+    }
+
+    @Test
+    func `Type command rejects positional and option text together`() throws {
+        var command = try TypeCommand.parse(["Positional", "--text", "Option", "--foreground"])
+
+        #expect(throws: ValidationError.self) {
+            try command.validate()
+        }
     }
 
     @Test

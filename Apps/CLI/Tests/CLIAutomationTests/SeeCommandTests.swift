@@ -9,6 +9,21 @@ import Testing
 @Suite(.serialized, .tags(.safe))
 struct SeeCommandTests {
     @Test
+    func `CLI truncation output includes deadline reached explicitly`() throws {
+        let metadata = DetectionMetadata(
+            detectionTime: 0,
+            elementCount: 0,
+            method: "OCR",
+            truncationInfo: DetectionTruncationInfo(deadlineReached: true)
+        )
+
+        let summary = try #require(SeeTruncationSummary(metadata: metadata))
+
+        #expect(summary.deadline_reached)
+        #expect(summary.warning.contains("deadline"))
+    }
+
+    @Test
     func `See command parses correctly with minimal arguments`() throws {
         let command = try SeeCommand.parse(["--path", "/tmp/test.png"])
         #expect(command.path == "/tmp/test.png")
@@ -371,7 +386,7 @@ struct SeeCommandRuntimeTests {
                 [
                     "see",
                     "--mode", "frontmost",
-                    "--no-web-focus",
+                    "--web-focus",
                     "--path", outputURL.path,
                     "--json",
                 ],
@@ -443,7 +458,7 @@ struct SeeCommandRuntimeTests {
                 [
                     "see",
                     "--mode", "frontmost",
-                    "--no-web-focus",
+                    "--web-focus",
                     "--timeout-seconds", "1",
                     "--path", outputURL.path,
                     "--json",
@@ -503,7 +518,7 @@ struct SeeCommandRuntimeTests {
                 [
                     "see",
                     "--mode", "frontmost",
-                    "--no-web-focus",
+                    "--web-focus",
                     "--timeout-seconds", "1",
                     "--path", outputURL.path,
                 ],
@@ -559,7 +574,7 @@ struct SeeCommandRuntimeTests {
                 [
                     "see",
                     "--mode", "frontmost",
-                    "--no-web-focus",
+                    "--web-focus",
                     "--path", outputURL.path,
                 ],
                 services: context.services
@@ -612,7 +627,7 @@ struct SeeCommandRuntimeTests {
                 [
                     "see",
                     "--mode", "frontmost",
-                    "--no-web-focus",
+                    "--web-focus",
                     "--timeout-seconds", "1",
                     "--path", outputURL.path,
                     "--json",
@@ -637,7 +652,7 @@ struct SeeCommandRuntimeTests {
                     line.contains("operation=see_command") &&
                     line.contains("success=true")
             })
-            #expect(!context.snapshots.detectionResults.isEmpty)
+            #expect(context.snapshots.detectionResults.isEmpty)
             #expect(await context.snapshots.getMostRecentSnapshot() == nil)
             #expect(try await context.snapshots.listSnapshots().isEmpty)
         }
@@ -660,7 +675,7 @@ struct SeeCommandRuntimeTests {
                 "description": "Wingman Grindr Session Helper",
                 "roleDescription": "Pop Up Button",
                 "help": "Pinned extension button",
-                "identifier": "wingman-session-helper"
+                "identifier": "wingman-session-helper",
             ]
         )
 
@@ -768,6 +783,7 @@ struct SeeCommandRuntimeTests {
             #expect(response.success == true)
             #expect(!result.stdout.contains("Captured 1 screen"))
             #expect(!result.stdout.contains("[scrn]"))
+            #expect(screenCapture.captureVisualizerModes == [.none])
         }
     }
 

@@ -54,6 +54,9 @@ struct MoveCommand: ErrorHandlingCommand, OutputFormattable, InjectedRuntimeBack
 
     mutating func validate() throws {
         try self.target.validate()
+        if self.coordinates != nil, self.coords != nil {
+            throw ValidationError("Provide coordinates either positionally or with --coords, not both")
+        }
         guard self.foreground else {
             throw ValidationError(
                 "move changes the physical cursor and requires explicit --foreground consent."

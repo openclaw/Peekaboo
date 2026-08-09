@@ -1,5 +1,6 @@
 import CoreGraphics
 import Foundation
+import MCP
 import PeekabooAutomationKit
 import PeekabooFoundation
 
@@ -49,6 +50,35 @@ enum ObservationTargetArgument: Equatable, CustomStringConvertible {
         case .menubar:
             "menubar"
         }
+    }
+
+    static func parse(_ rawTarget: String?, windowIDValue: Value?) throws -> ObservationTargetArgument {
+        let parsed = try self.parse(rawTarget)
+        guard let exactWindowID = try self.exactWindowID(from: windowIDValue) else { return parsed }
+
+        switch parsed {
+        case let .application(identifier, .automatic):
+            return .application(identifier: identifier, window: .id(exactWindowID))
+        case let .pid(pid, .automatic):
+            return .pid(pid, window: .id(exactWindowID))
+        case .application, .pid:
+            throw PeekabooError.invalidInput(
+                "window_id cannot be combined with an app_target window title or index")
+        case .screen, .frontmost, .menubar:
+            throw PeekabooError.invalidInput(
+                "window_id requires app_target to identify an application or PID so ownership can be verified")
+        }
+    }
+
+    private static func exactWindowID(from value: Value?) throws -> CGWindowID? {
+        guard let value else { return nil }
+        guard case let .int(windowID) = value else {
+            throw PeekabooError.invalidInput("window_id must be an integer")
+        }
+        guard windowID > 0, let exactWindowID = CGWindowID(exactly: windowID) else {
+            throw PeekabooError.invalidInput("window_id must be between 1 and \(UInt32.max)")
+        }
+        return exactWindowID
     }
 
     static func parse(_ rawTarget: String?) throws -> ObservationTargetArgument {

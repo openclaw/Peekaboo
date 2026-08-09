@@ -17,7 +17,8 @@ enum TestChildProcess {
         _ arguments: [String],
         environment extraEnvironment: [String: String] = [:],
         executablePathOverride: String? = nil,
-        workingDirectory: URL? = nil
+        workingDirectory: URL? = nil,
+        standardInput: String? = nil
     ) async throws -> Result {
         let binaryURL = try Self.peekabooBinaryURL()
         var environmentOverrides: [Environment.Key: String?] = [:]
@@ -35,6 +36,27 @@ enum TestChildProcess {
             }
         }
         let environment = Environment.inherit.updating(environmentOverrides)
+
+        if let standardInput {
+            let collected = try await Subprocess.run(
+                .path(FilePath(binaryURL.path)),
+                arguments: Arguments(
+                    executablePathOverride: executablePathOverride,
+                    remainingValues: arguments
+                ),
+                environment: environment,
+                workingDirectory: workingDirectory.map { FilePath($0.path) },
+                input: .string(standardInput, using: UTF8.self),
+                output: .string(limit: .max),
+                error: .string(limit: .max)
+            )
+            return Result(
+                standardOutput: collected.standardOutput ?? "",
+                standardError: collected.standardError ?? "",
+                status: collected.terminationStatus
+            )
+        }
+
         let collected = try await Subprocess.run(
             .path(FilePath(binaryURL.path)),
             arguments: Arguments(

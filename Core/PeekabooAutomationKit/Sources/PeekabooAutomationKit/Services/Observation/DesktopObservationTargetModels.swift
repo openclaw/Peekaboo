@@ -54,11 +54,18 @@ public enum ResolvedObservationKind: Sendable, Codable, Equatable {
 
 public struct ApplicationIdentity: Sendable, Codable, Equatable {
     public let processIdentifier: Int32
+    public let processStartIdentity: UInt64?
     public let bundleIdentifier: String?
     public let name: String
 
-    public init(processIdentifier: Int32, bundleIdentifier: String?, name: String) {
+    public init(
+        processIdentifier: Int32,
+        processStartIdentity: UInt64? = nil,
+        bundleIdentifier: String?,
+        name: String)
+    {
         self.processIdentifier = processIdentifier
+        self.processStartIdentity = processStartIdentity
         self.bundleIdentifier = bundleIdentifier
         self.name = name
     }
@@ -66,6 +73,7 @@ public struct ApplicationIdentity: Sendable, Codable, Equatable {
     init(_ app: ServiceApplicationInfo) {
         self.init(
             processIdentifier: app.processIdentifier,
+            processStartIdentity: app.processStartIdentity,
             bundleIdentifier: app.bundleIdentifier,
             name: app.name)
     }
@@ -186,6 +194,7 @@ public struct ResolvedObservationTarget: Sendable, Codable, Equatable {
             && lhs.detectionContext?.windowTitle == rhs.detectionContext?.windowTitle
             && lhs.detectionContext?.windowID == rhs.detectionContext?.windowID
             && lhs.detectionContext?.windowBounds == rhs.detectionContext?.windowBounds
+            && lhs.detectionContext?.windowMutationIdentity == rhs.detectionContext?.windowMutationIdentity
             && lhs.detectionContext?.shouldFocusWebContent == rhs.detectionContext?.shouldFocusWebContent
     }
 }

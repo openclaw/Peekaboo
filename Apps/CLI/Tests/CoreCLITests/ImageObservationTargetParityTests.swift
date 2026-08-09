@@ -62,6 +62,32 @@ struct ImageObservationTargetParityTests {
         #expect(imageTarget.focusIdentifier == "PID:123")
     }
 
+    @Test(.tags(.fast))
+    func `image exact window preserves owner and rejects conflicting selectors`() throws {
+        let appCommand = try ImageCommand.parse([
+            "--app", "Safari",
+            "--window-id", "42",
+        ])
+        #expect(try appCommand.observationTargetForExactWindowCapture(42) ==
+            .app(identifier: "Safari", window: .id(42)))
+
+        let pidCommand = try ImageCommand.parse([
+            "--pid", "123",
+            "--window-id", "42",
+        ])
+        #expect(try pidCommand.observationTargetForExactWindowCapture(42) ==
+            .pid(123, window: .id(42)))
+
+        let conflicting = try ImageCommand.parse([
+            "--app", "Safari",
+            "--window-id", "42",
+            "--window-index", "1",
+        ])
+        #expect(throws: (any Error).self) {
+            try conflicting.observationTargetForExactWindowCapture(42)
+        }
+    }
+
     @available(macOS 14.0, *)
     @Test(.tags(.fast))
     func `see app PID target maps to pid observation target`() throws {
@@ -73,5 +99,32 @@ struct ImageObservationTargetParityTests {
         let target = try command.observationTargetForCaptureWithDetectionIfPossible()
 
         #expect(target == .pid(123, window: .automatic))
+    }
+
+    @available(macOS 14.0, *)
+    @Test(.tags(.fast))
+    func `see exact window preserves owner and rejects conflicting title`() throws {
+        let appCommand = try SeeCommand.parse([
+            "--app", "Safari",
+            "--window-id", "42",
+        ])
+        #expect(try appCommand.observationTargetForCaptureWithDetectionIfPossible() ==
+            .app(identifier: "Safari", window: .id(42)))
+
+        let pidCommand = try SeeCommand.parse([
+            "--pid", "123",
+            "--window-id", "42",
+        ])
+        #expect(try pidCommand.observationTargetForCaptureWithDetectionIfPossible() ==
+            .pid(123, window: .id(42)))
+
+        let conflicting = try SeeCommand.parse([
+            "--app", "Safari",
+            "--window-id", "42",
+            "--window-title", "Inbox",
+        ])
+        #expect(throws: (any Error).self) {
+            try conflicting.observationTargetForCaptureWithDetectionIfPossible()
+        }
     }
 }

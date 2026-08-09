@@ -2,32 +2,8 @@ import CoreGraphics
 import XCTest
 @testable import PeekabooAutomationKit
 
+@MainActor
 final class ObservationWindowSelectionTests: XCTestCase {
-    func testWindowMetadataCatalogMapsCoreGraphicsWindowInfo() {
-        let metadata = ObservationWindowMetadataCatalog.metadata(
-            windowID: 42,
-            windowInfo: [
-                kCGWindowName as String: "Editor",
-                kCGWindowOwnerName as String: "Code",
-                kCGWindowOwnerPID as String: NSNumber(value: 1234),
-                kCGWindowBounds as String: [
-                    "X": NSNumber(value: 10),
-                    "Y": NSNumber(value: 20),
-                    "Width": NSNumber(value: 800),
-                    "Height": NSNumber(value: 600),
-                ],
-            ])
-
-        XCTAssertEqual(metadata.app?.name, "Code")
-        XCTAssertEqual(metadata.app?.processIdentifier, 1234)
-        XCTAssertEqual(metadata.window?.windowID, 42)
-        XCTAssertEqual(metadata.window?.title, "Editor")
-        XCTAssertEqual(metadata.bounds, CGRect(x: 10, y: 20, width: 800, height: 600))
-        XCTAssertEqual(metadata.context.applicationName, "Code")
-        XCTAssertEqual(metadata.context.windowTitle, "Editor")
-        XCTAssertEqual(metadata.context.windowID, 42)
-    }
-
     func testCaptureCandidatesDropNonShareableWindows() {
         let windows = [
             Self.window(
@@ -103,6 +79,31 @@ final class ObservationWindowSelectionTests: XCTestCase {
         let filtered = ObservationTargetResolver.captureCandidates(from: [first, duplicate])
 
         XCTAssertEqual(filtered.map(\.index), [0])
+    }
+
+    func testTitleSelectionRejectsAmbiguousExactMatches() {
+        let windows = [
+            Self.window(id: 20, title: "Document", bounds: CGRect(x: 0, y: 0, width: 800, height: 600)),
+            Self.window(id: 21, title: "document", bounds: CGRect(x: 20, y: 20, width: 800, height: 600), index: 1),
+        ]
+
+        XCTAssertThrowsError(try ObservationTargetResolver.window(matchingTitle: "Document", from: windows)) {
+            guard case DesktopObservationError.ambiguousWindowTitle = $0 else {
+                return XCTFail("Expected ambiguous title error, got \($0)")
+            }
+        }
+    }
+
+    func testTitleSelectionRejectsAmbiguousPartialMatchesButPrefersUniqueExactMatch() throws {
+        let windows = [
+            Self.window(id: 22, title: "Project Alpha", bounds: CGRect(x: 0, y: 0, width: 800, height: 600)),
+            Self.window(id: 23, title: "Project Beta", bounds: CGRect(x: 20, y: 20, width: 800, height: 600), index: 1),
+        ]
+
+        XCTAssertThrowsError(try ObservationTargetResolver.window(matchingTitle: "Project", from: windows))
+        XCTAssertEqual(
+            try ObservationTargetResolver.window(matchingTitle: "Project Alpha", from: windows).windowID,
+            22)
     }
 
     func testMenuBarBoundsUsesPrimaryScreenVisibleFrameGap() {

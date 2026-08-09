@@ -7,6 +7,12 @@ import PeekabooFoundation
 import Testing
 
 struct PeekabooBridgeTargetedClickTests {
+    private let exactIdentity = WindowMutationIdentity(
+        windowID: 42,
+        ownerProcessIdentifier: 9001,
+        ownerProcessStartIdentity: 1)
+    private let exactBounds = CGRect(x: 0, y: 0, width: 100, height: 100)
+
     private func decode(_ data: Data) throws -> PeekabooBridgeResponse {
         try JSONDecoder.peekabooBridgeDecoder().decode(PeekabooBridgeResponse.self, from: data)
     }
@@ -23,7 +29,9 @@ struct PeekabooBridgeTargetedClickTests {
             clickType: .single,
             snapshotId: "snapshot",
             targetProcessIdentifier: 9001,
-            targetWindowID: 42))
+            targetWindowID: 42,
+            expectedWindowIdentity: self.exactIdentity,
+            expectedWindowBounds: self.exactBounds))
 
         #expect(processRequest.operation == .targetedClick)
         #expect(windowRequest.operation == .exactWindowTargetedClick)
@@ -37,7 +45,9 @@ struct PeekabooBridgeTargetedClickTests {
             clickType: .single,
             snapshotId: "snapshot",
             targetProcessIdentifier: 9001,
-            targetWindowID: 42))
+            targetWindowID: 42,
+            expectedWindowIdentity: self.exactIdentity,
+            expectedWindowBounds: self.exactBounds))
         let requestData = try JSONEncoder.peekabooBridgeEncoder().encode(request)
         let permissions = PermissionsStatus(
             screenRecording: false,
@@ -93,9 +103,9 @@ struct PeekabooBridgeTargetedClickTests {
 
         let request = PeekabooBridgeRequest.targetedClick(
             PeekabooBridgeTargetedClickRequest(
-                target: .coordinates(CGPoint(x: 10, y: 20)),
+                target: .elementId("B1"),
                 clickType: .single,
-                snapshotId: nil,
+                snapshotId: "snapshot",
                 targetProcessIdentifier: 9001))
         let requestData = try JSONEncoder.peekabooBridgeEncoder().encode(request)
         let responseData = await server.decodeAndHandle(requestData, peer: nil)
@@ -107,10 +117,10 @@ struct PeekabooBridgeTargetedClickTests {
         }
 
         let lastClick = services.automationStub.lastProcessTargetedClick
-        if case let .coordinates(point) = lastClick?.target {
-            #expect(point == CGPoint(x: 10, y: 20))
+        if case let .elementId(id) = lastClick?.target {
+            #expect(id == "B1")
         } else {
-            Issue.record("Expected coordinates click, got \(String(describing: lastClick?.target))")
+            Issue.record("Expected element click, got \(String(describing: lastClick?.target))")
         }
         #expect(lastClick?.type == .single)
         #expect(lastClick?.targetProcessIdentifier == 9001)
@@ -139,7 +149,9 @@ struct PeekabooBridgeTargetedClickTests {
             clickType: .single,
             snapshotId: nil,
             targetProcessIdentifier: 9001,
-            targetWindowID: 42))
+            targetWindowID: 42,
+            expectedWindowIdentity: self.exactIdentity,
+            expectedWindowBounds: self.exactBounds))
 
         let responseData = try await server.decodeAndHandle(
             JSONEncoder.peekabooBridgeEncoder().encode(request),
@@ -181,7 +193,9 @@ struct PeekabooBridgeTargetedClickTests {
                 clickType: .single,
                 snapshotId: "snapshot",
                 targetProcessIdentifier: 9001,
-                targetWindowID: 42))
+                targetWindowID: 42,
+                expectedWindowIdentity: self.exactIdentity,
+                expectedWindowBounds: self.exactBounds))
 
             let responseData = try await server.decodeAndHandle(
                 JSONEncoder.peekabooBridgeEncoder().encode(request),
@@ -289,8 +303,7 @@ struct PeekabooBridgeTargetedClickTests {
                 target: .elementId("B1"),
                 clickType: .single,
                 snapshotId: "expired-snapshot",
-                targetProcessIdentifier: getpid(),
-                targetWindowID: 42)
+                targetProcessIdentifier: getpid())
             Issue.record("Expected stale snapshot error")
         } catch let PeekabooError.snapshotStale(reason) {
             #expect(reason.contains("no longer available"))
@@ -472,9 +485,7 @@ struct PeekabooBridgeTargetedClickTests {
 
     @Test
     @MainActor
-    func `accessibility-only host accepts coordinate targeted clicks`() async throws {
-        // Coordinate background clicks are now hit-tested and pressed via accessibility, so
-        // they no longer require Event Synthesizing permission.
+    func `accessibility-only host refuses PID only coordinate targeted clicks`() async throws {
         let services = StubServices()
         let server = PeekabooBridgeServer(
             services: services,
@@ -500,11 +511,13 @@ struct PeekabooBridgeTargetedClickTests {
             peer: nil)
         let response = try self.decode(responseData)
 
-        guard case .ok = response else {
-            Issue.record("Expected ok response, got \(response)")
+        guard case let .error(error) = response else {
+            Issue.record("Expected invalid request response, got \(response)")
             return
         }
-        #expect(services.automationStub.lastProcessTargetedClick?.type == .single)
+        #expect(error.code == .invalidRequest)
+        #expect(error.message.contains("PID-only"))
+        #expect(services.automationStub.lastProcessTargetedClick == nil)
     }
 
     @Test
@@ -680,8 +693,11 @@ struct PeekabooBridgeTargetedClickTests {
                 target: .coordinates(CGPoint(x: 10, y: 20)),
                 clickType: .single,
                 snapshotId: nil,
-                targetProcessIdentifier: 9001,
-                targetWindowID: 42)
+                expectedWindowIdentity: WindowMutationIdentity(
+                    windowID: 42,
+                    ownerProcessIdentifier: 9001,
+                    ownerProcessStartIdentity: 1),
+                expectedWindowBounds: CGRect(x: 0, y: 0, width: 100, height: 100))
             Issue.record("Expected exact-window capability error")
         } catch PeekabooError.serviceUnavailable {
             // Expected before the missing socket is contacted.

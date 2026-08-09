@@ -41,7 +41,7 @@ Use `peekaboo <command> --help` for inline flag descriptions; this page links to
 
 ## Windows, Menus, Apps, Spaces
 
-- [`window`](commands/window.md) – Subcommands: `close`, `minimize`, `maximize`, `move`, `resize`, `set-bounds`, `focus`, `list`.
+- [`window`](commands/window.md) – Subcommands: `close`, `minimize`, `restore`, `maximize`, `move`, `resize`, `set-bounds`, `focus`, `list`.
 - [`space`](commands/space.md) – `list`, `switch`, `move-window` for Spaces/virtual desktops.
 - [`menu`](commands/menu.md) – `click`, `click-extra`, `list`, `list-all` for application menus + menu extras.
 - [`menubar`](commands/menubar.md) – `list` and `click` status-bar icons by name or index.

@@ -71,6 +71,22 @@ struct PeekabooBridgeCapabilityTests {
     }
 
     @Test
+    @MainActor
+    func `production bridge classifier preserves indeterminate input delivery`() {
+        let error = InputDeliveryIndeterminateError(
+            operation: .type,
+            emittedUnitCount: 1,
+            causeDescription: "window focus drifted")
+
+        let envelope = PeekabooBridgeServer.bridgeErrorEnvelope(for: error, operation: .targetedTypeActions)
+
+        #expect(envelope.code == .internalError)
+        #expect(envelope.operationMayHaveCompleted)
+        #expect(envelope.message.contains("do not retry blindly"))
+        #expect(envelope.message.contains("window focus drifted"))
+    }
+
+    @Test
     func `unknown bridge error kinds decode as untyped errors`() throws {
         let data = Data(
             #"{"code":"invalidRequest","message":"Future error","kind":"futureErrorKind","context":"S1"}"#.utf8)
@@ -111,6 +127,9 @@ struct PeekabooBridgeCapabilityTests {
         }
         let request = ApplicationRelaunchRequest(
             targetIdentifier: "PID:123",
+            expectedTargetIdentity: ApplicationProcessIdentity(
+                processIdentifier: 123,
+                processStartIdentity: 456),
             launchRequest: ApplicationLaunchRequest(
                 applicationIdentifier: "dev.stub",
                 activates: true,

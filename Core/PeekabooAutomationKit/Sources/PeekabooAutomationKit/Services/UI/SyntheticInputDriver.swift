@@ -3,6 +3,11 @@ import CoreGraphics
 import Foundation
 import enum PeekabooFoundation.PeekabooError
 
+struct ExactWindowPointerTarget: Sendable {
+    let identity: WindowMutationIdentity
+    let bounds: CGRect
+}
+
 @MainActor
 protocol SyntheticInputDriving: Sendable {
     func click(at point: CGPoint, button: MouseButton, count: Int) throws
@@ -13,6 +18,11 @@ protocol SyntheticInputDriving: Sendable {
         count: Int,
         targetProcessIdentifier: pid_t,
         targetWindowID: CGWindowID?) async throws
+    func click(
+        at point: CGPoint,
+        button: MouseButton,
+        count: Int,
+        target: ExactWindowPointerTarget) async throws
     func move(to point: CGPoint) throws
     func currentLocation() -> CGPoint?
     func pressHold(at point: CGPoint, button: MouseButton, duration: TimeInterval) async throws
@@ -23,6 +33,20 @@ protocol SyntheticInputDriving: Sendable {
 }
 
 extension SyntheticInputDriving {
+    func click(
+        at point: CGPoint,
+        button: MouseButton,
+        count: Int,
+        target: ExactWindowPointerTarget) async throws
+    {
+        try await self.click(
+            at: point,
+            button: button,
+            count: count,
+            targetProcessIdentifier: target.identity.ownerProcessIdentifier,
+            targetWindowID: CGWindowID(target.identity.windowID))
+    }
+
     func click(
         at point: CGPoint,
         button: MouseButton,
@@ -90,12 +114,28 @@ struct SyntheticInputDriver: SyntheticInputDriving {
         targetProcessIdentifier: pid_t,
         targetWindowID: CGWindowID?) async throws
     {
-        try await BackgroundInputDriver.click(
+        _ = try await BackgroundInputDriver.click(
             at: point,
             button: button,
             count: count,
             targetProcessIdentifier: targetProcessIdentifier,
             targetWindowID: targetWindowID)
+    }
+
+    func click(
+        at point: CGPoint,
+        button: MouseButton = .left,
+        count: Int = 1,
+        target: ExactWindowPointerTarget) async throws
+    {
+        _ = try await BackgroundInputDriver.click(
+            at: point,
+            button: button,
+            count: count,
+            targetProcessIdentifier: target.identity.ownerProcessIdentifier,
+            targetWindowID: CGWindowID(target.identity.windowID),
+            expectedWindowIdentity: target.identity,
+            expectedWindowBounds: target.bounds)
     }
 
     func move(to point: CGPoint) throws {

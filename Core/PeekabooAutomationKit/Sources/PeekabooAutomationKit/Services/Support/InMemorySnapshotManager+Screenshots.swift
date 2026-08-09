@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 
 extension InMemorySnapshotManager {
@@ -21,6 +22,8 @@ extension InMemorySnapshotManager {
         entry.snapshotData.applicationProcessId = request.applicationProcessId
         entry.snapshotData.windowTitle = request.windowTitle
         entry.snapshotData.windowBounds = request.windowBounds
+        entry.snapshotData.windowID = request.windowID.flatMap { CGWindowID(exactly: $0) }
+        entry.snapshotData.windowMutationIdentity = request.windowMutationIdentity
         entry.snapshotData.lastUpdateTime = Date()
         self.entries[request.snapshotId] = entry
         self.pruneIfNeeded()

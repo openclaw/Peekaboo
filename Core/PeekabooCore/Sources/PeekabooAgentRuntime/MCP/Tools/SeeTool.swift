@@ -41,6 +41,13 @@ public struct SeeTool: MCPTool {
                     Use 'AppName' (e.g., 'Safari') for all windows of that application.
                     Use 'PID:PROCESS_ID' (e.g., 'PID:663') to target a specific process by its PID.
                     """),
+                "window_id": SchemaBuilder.integer(
+                    description: """
+                    Optional. Exact CoreGraphics window ID. Requires an application or PID app_target; Peekaboo
+                    verifies the window belongs to that owner. Numeric app_target suffixes remain window indexes.
+                    """,
+                    minimum: 1,
+                    maximum: Int(UInt32.max)),
                 "path": SchemaBuilder.string(
                     description: """
                     Optional. Path to save the screenshot. If omitted, a temporary file is used.
@@ -51,7 +58,7 @@ public struct SeeTool: MCPTool {
                     """),
                 "annotate": SchemaBuilder.boolean(
                     description: """
-                    Optional. Generate an annotated screenshot with interaction markers and IDs.
+                    Optional. Add interaction markers and IDs to the returned screenshot.
                     """,
                     default: false),
                 "web_focus": SchemaBuilder.boolean(
@@ -81,38 +88,51 @@ public struct SeeTool: MCPTool {
         var newlyCreatedSnapshotWasPending = false
 
         do {
+            let target = try ObservationTargetArgument.parse(
+                request.appTarget,
+                windowIDValue: request.windowIDValue)
+            let captureArtifact = try SeeCaptureArtifact(requestedPath: request.path)
+            defer { captureArtifact.cleanup() }
+
             let selection = try await self.getOrCreateSnapshot(snapshotId: request.snapshotId)
             let snapshot = selection.snapshot
             newlyCreatedSnapshotID = selection.isNew ? snapshot.id : nil
             newlyCreatedSnapshotWasPending = selection.isNew && MCPToolContext.snapshotObservationStartedAt != nil
-            let target = try ObservationTargetArgument.parse(request.appTarget)
             let observation = try await self.observeDesktop(
                 target: target,
-                path: request.path,
+                path: captureArtifact.observationPath,
                 annotate: request.annotate,
                 webFocus: request.webFocus,
                 traversalBudget: request.traversalBudget,
                 snapshot: snapshot)
-            let screenshotPath = try await self.registerObservationScreenshot(
-                observation,
-                snapshot: snapshot)
             let (elements, detectedElements) = try await self.detectUIElements(
                 observation: observation,
                 snapshot: snapshot)
-            let annotatedPath = try await self.generateAnnotationIfNeeded(
+            _ = try await self.generateAnnotationIfNeeded(
                 annotate: request.annotate,
                 observation: observation,
                 elements: elements,
                 detectedElements: detectedElements,
+                snapshot: snapshot)
+            let responseImages = try self.responseImageData(
+                observation: observation,
+                annotate: request.annotate,
+                captureArtifact: captureArtifact)
+            let publishedPaths = try captureArtifact.publish(
+                rawData: responseImages.raw,
+                annotatedData: responseImages.annotated)
+            await self.registerObservationScreenshot(
+                path: publishedPaths.rawPath,
+                observation: observation,
                 snapshot: snapshot)
 
             return try await self.buildToolResponse(
                 snapshot: snapshot,
                 elements: elements,
                 output: ScreenshotOutput(
-                    screenshotPath: screenshotPath,
-                    annotatedPath: annotatedPath,
-                    annotate: request.annotate),
+                    screenshotPath: publishedPaths.rawPath,
+                    annotatedPath: publishedPaths.annotatedPath,
+                    imageData: responseImages.annotated ?? responseImages.raw),
                 target: target,
                 observation: observation)
         } catch {
@@ -165,6 +185,7 @@ public struct SeeTool: MCPTool {
     {
         try await self.context.desktopObservation.observe(DesktopObservationRequest(
             target: target.observationTarget,
+            capture: DesktopCaptureOptions(visualizerMode: .none),
             detection: DesktopDetectionOptions(
                 mode: .accessibility,
                 allowWebFocusFallback: webFocus,
@@ -178,14 +199,13 @@ public struct SeeTool: MCPTool {
     }
 
     private func registerObservationScreenshot(
-        _ observation: DesktopObservationResult,
-        snapshot: UISnapshot) async throws -> String
+        path: String,
+        observation: DesktopObservationResult,
+        snapshot: UISnapshot) async
     {
-        guard let screenshotPath = observation.files.rawScreenshotPath else {
-            throw OperationError.captureFailed(reason: "Observation did not produce a screenshot path")
-        }
-        await snapshot.setScreenshot(path: screenshotPath, metadata: observation.capture.metadata)
-        return screenshotPath
+        await snapshot.setScreenshot(path: path, metadata: observation.capture.metadata)
+        await snapshot.setTargetMetadata(
+            from: observation.elements?.metadata.windowContext ?? observation.target.detectionContext)
     }
 
     private func generateAnnotationIfNeeded(
@@ -199,11 +219,53 @@ public struct SeeTool: MCPTool {
         guard let annotated = observation.files.annotatedScreenshotPath else {
             throw OperationError.captureFailed(reason: "Observation did not produce an annotated screenshot path")
         }
-        await self.emitAnnotatedScreenshotVisualizer(
-            annotatedPath: annotated,
-            detectedElements: detectedElements,
-            snapshot: snapshot)
+        if Self.shouldEmitAnnotationOverlay(captureFocus: .background) {
+            await self.emitAnnotatedScreenshotVisualizer(
+                annotatedPath: annotated,
+                detectedElements: detectedElements,
+                snapshot: snapshot)
+        }
         return annotated
+    }
+
+    static func shouldEmitAnnotationOverlay(captureFocus: CaptureFocus) -> Bool {
+        captureFocus == .foreground
+    }
+
+    private func responseImageData(
+        observation: DesktopObservationResult,
+        annotate: Bool,
+        captureArtifact: SeeCaptureArtifact) throws -> (raw: Data, annotated: Data?)
+    {
+        guard Self.sameFile(observation.files.rawScreenshotPath, captureArtifact.observationPath) else {
+            throw OperationError.captureFailed(reason: "Observation did not produce a screenshot path")
+        }
+        let rawData = observation.capture.imageData.isEmpty
+            ? try Self.readCaptureArtifact(captureArtifact.observationPath, label: "raw screenshot")
+            : observation.capture.imageData
+        guard annotate else {
+            return (rawData, nil)
+        }
+        guard Self.sameFile(observation.files.annotatedScreenshotPath, captureArtifact.observationAnnotatedPath) else {
+            return (rawData, nil)
+        }
+        return try (
+            rawData,
+            Self.readCaptureArtifact(captureArtifact.observationAnnotatedPath, label: "annotated screenshot"))
+    }
+
+    private static func sameFile(_ reportedPath: String?, _ expectedPath: String) -> Bool {
+        guard let reportedPath else { return false }
+        return URL(fileURLWithPath: reportedPath).standardizedFileURL ==
+            URL(fileURLWithPath: expectedPath).standardizedFileURL
+    }
+
+    private static func readCaptureArtifact(_ path: String, label: String) throws -> Data {
+        do {
+            return try Data(contentsOf: URL(fileURLWithPath: path))
+        } catch {
+            throw OperationError.captureFailed(reason: "Failed to read response-owned \(label)")
+        }
     }
 
     private func detectUIElements(
@@ -242,14 +304,11 @@ public struct SeeTool: MCPTool {
             traversalBudget: observation.elements?.metadata.windowContext?.traversalBudget)
 
         var content: [MCP.Tool.Content] = [.text(text: summaryText, annotations: nil, _meta: nil)]
-        if output.annotate, let annotatedPath = output.annotatedPath {
-            let imageData = try Data(contentsOf: URL(fileURLWithPath: annotatedPath))
-            content.append(.image(
-                data: imageData.base64EncodedString(),
-                mimeType: "image/png",
-                annotations: nil,
-                _meta: nil))
-        }
+        content.append(.image(
+            data: output.imageData.base64EncodedString(),
+            mimeType: "image/png",
+            annotations: nil,
+            _meta: nil))
 
         let baseMeta = self.makeMetadata(
             snapshot: snapshot,

@@ -47,7 +47,8 @@ public final class ActionVerifier {
         } else {
             try await self.smartCapture.captureAfterAction(
                 toolName: action.toolName,
-                targetPoint: action.targetPoint)
+                targetPoint: action.targetPoint,
+                visualizerMode: .none)
         }
 
         guard let screenshot = captureResult.image else {
@@ -68,12 +69,16 @@ public final class ActionVerifier {
         do {
             let response = try await analyzeScreenshot(screenshot, prompt: prompt)
             return self.parseVerificationResponse(response)
+        } catch is CancellationError {
+            throw CancellationError()
         } catch {
+            if Task.isCancelled {
+                throw CancellationError()
+            }
             self.logger.warning("Verification AI call failed: \(error.localizedDescription)")
-            // On AI failure, assume success (don't block on verification errors)
             return VerificationResult(
-                success: true,
-                confidence: 0.5,
+                success: false,
+                confidence: 0,
                 observation: "Could not verify action (AI unavailable)",
                 suggestion: nil)
         }
@@ -126,7 +131,7 @@ public final class ActionVerifier {
 
     // MARK: - Private Helpers
 
-    private func inferExpectedOutcome(for action: ActionDescriptor) -> String {
+    func inferExpectedOutcome(for action: ActionDescriptor) -> String {
         switch action.toolName {
         case "click":
             let element = action.targetElement ?? "element"
@@ -150,11 +155,22 @@ public final class ActionVerifier {
 
         case "launch_app":
             let app = action.arguments["app"] ?? action.arguments["name"] ?? "application"
-            return "The \(app) application should now be visible, focused, and in the foreground"
+            if Self.foregroundRequested(in: action.arguments) {
+                return "The \(app) application should now be running, ready, activated, and in the foreground"
+            }
+            return "The \(app) application should now be running and ready; the launch should not activate it or " +
+                "change the frontmost application"
 
         case "app":
             let actionName = action.arguments["action"] ?? "requested app action"
             let app = action.arguments["app"] ?? action.arguments["name"] ?? action.arguments["to"] ?? "application"
+            if ["launch", "open", "relaunch"].contains(actionName.lowercased()) {
+                if Self.foregroundRequested(in: action.arguments) {
+                    return "The \(app) application should now be running, ready, activated, and in the foreground"
+                }
+                return "The \(app) application should now be running and ready; the \(actionName) action should not " +
+                    "activate it or change the frontmost application"
+            }
             return "The app action '\(actionName)' should have produced the expected visible state for \(app)"
 
         case "menu":
@@ -238,6 +254,12 @@ public final class ActionVerifier {
             "\(key): \(value)"
         }
         return pairs.joined(separator: ", ")
+    }
+
+    private static func foregroundRequested(in arguments: [String: String]) -> Bool {
+        guard let value = arguments["foreground"]?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        else { return false }
+        return ["true", "1", "yes"].contains(value)
     }
 
     private func analyzeScreenshot(_ image: CGImage, prompt: String) async throws -> String {
@@ -365,9 +387,12 @@ public struct VerificationResult: Sendable {
         self.suggestion = suggestion
     }
 
-    /// Whether we should retry based on the result.
+    /// Whether the already-dispatched action should be replayed automatically.
     public var shouldRetry: Bool {
-        !self.success && self.confidence > 0.6
+        // Verification happens after dispatch, so a retry could duplicate a click, submit,
+        // purchase, paste, or other non-idempotent effect. Let the agent inspect fresh state
+        // and choose a recovery action instead of replaying the same mutation automatically.
+        false
     }
 }
 

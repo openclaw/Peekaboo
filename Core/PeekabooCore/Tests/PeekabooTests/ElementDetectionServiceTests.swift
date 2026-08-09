@@ -21,25 +21,21 @@ struct ElementDetectionServiceTests {
     }
 
     @Test
-    func `Detect elements from screenshot`() async throws {
+    func `Detect elements rejects a nonexistent target before AX traversal`() async {
         let snapshotManager = MockSnapshotManager()
         let service = ElementDetectionService(snapshotManager: snapshotManager)
+        let nonexistentProcessIdentifier: Int32 = -1
 
-        // Create mock image data
-        let mockImageData = Data()
-
-        // In a real test, we'd have actual image data. For now, we'll test the API
         do {
-            let result = try await service.detectElements(
-                in: mockImageData,
+            _ = try await service.detectElements(
+                in: Data(),
                 snapshotId: "test-snapshot",
-                windowContext: nil)
-
-            #expect(result.snapshotId == "test-snapshot")
-            #expect(result.metadata.elementCount >= 0)
+                windowContext: WindowContext(applicationProcessId: nonexistentProcessIdentifier))
+            Issue.record("Expected the nonexistent target process to be rejected")
+        } catch let PeekabooError.appNotFound(identifier) {
+            #expect(identifier == "PID:\(nonexistentProcessIdentifier)")
         } catch {
-            // In test environment without a focused window, this might fail
-            // We're mainly testing the API structure
+            Issue.record("Unexpected error: \(error)")
         }
     }
 

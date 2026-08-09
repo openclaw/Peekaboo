@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 import PeekabooAutomationKit
 import PeekabooBridge
@@ -7,7 +8,7 @@ import Testing
 @MainActor
 struct BridgeStrictBackgroundOperationTests {
     @Test
-    func `strict operations require bridge protocol 1 11`() {
+    func `strict operations require their receipt-compatible bridge protocols`() {
         let operations: Set<PeekabooBridgeOperation> = [
             .backgroundCloseWindow,
             .backgroundDialogClickButton,
@@ -16,11 +17,15 @@ struct BridgeStrictBackgroundOperationTests {
         let legacy = PeekabooBridgeOperation.compatible(
             operations,
             with: PeekabooBridgeProtocolVersion(major: 1, minor: 10))
-        let current = PeekabooBridgeOperation.compatible(
+        let backgroundDialog = PeekabooBridgeOperation.compatible(
             operations,
             with: PeekabooBridgeProtocolVersion(major: 1, minor: 11))
+        let current = PeekabooBridgeOperation.compatible(
+            operations,
+            with: PeekabooBridgeProtocolVersion(major: 1, minor: 18))
 
         #expect(legacy.isEmpty)
+        #expect(backgroundDialog == [.backgroundDialogClickButton])
         #expect(current == operations)
     }
 
@@ -32,6 +37,48 @@ struct BridgeStrictBackgroundOperationTests {
         do {
             try await service.closeWindow(target: .windowId(42), allowForegroundFallback: false)
             Issue.record("Expected unsupported background close to fail")
+        } catch let error as PeekabooBridgeErrorEnvelope {
+            #expect(error.code == .operationNotSupported)
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+    }
+
+    @Test
+    func `remote window mutation fails before dispatch without pinned identity support`() async {
+        let client = PeekabooBridgeClient(socketPath: "/nonexistent/peekaboo-test.sock")
+        let service = RemoteWindowManagementService(
+            client: client,
+            supportsBackgroundClose: true,
+            supportsPinnedWindowMutations: false)
+
+        do {
+            try await service.moveWindow(target: .windowId(42), to: .zero)
+            Issue.record("Expected unpinned remote mutation to fail")
+        } catch let error as PeekabooBridgeErrorEnvelope {
+            #expect(error.code == .operationNotSupported)
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+    }
+
+    @Test
+    func `remote restore fails before dispatch when host lacks restore capability`() async {
+        let client = PeekabooBridgeClient(socketPath: "/nonexistent/peekaboo-test.sock")
+        let service = RemoteWindowManagementService(
+            client: client,
+            supportsPinnedWindowMutations: true,
+            supportsWindowRestore: false)
+        let identity = WindowMutationIdentity(
+            windowID: 42,
+            ownerProcessIdentifier: 123,
+            ownerProcessStartIdentity: 1,
+            capturedBounds: CGRect(x: 0, y: 0, width: 100, height: 100),
+            isMinimized: true)
+
+        do {
+            try await service.restoreWindow(target: .windowId(42), expectedIdentity: identity)
+            Issue.record("Expected unsupported remote restore to fail")
         } catch let error as PeekabooBridgeErrorEnvelope {
             #expect(error.code == .operationNotSupported)
         } catch {

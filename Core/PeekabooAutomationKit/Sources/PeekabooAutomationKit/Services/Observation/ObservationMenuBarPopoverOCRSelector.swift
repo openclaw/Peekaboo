@@ -54,7 +54,7 @@ public struct ObservationMenuBarPopoverOCRSelector {
             windowID: windowID,
             visualizerMode: self.visualizerMode,
             scale: self.scale)
-        return try self.match(capture: capture, bounds: bounds, windowID: windowID, hints: hints)
+        return try await self.match(capture: capture, bounds: bounds, windowID: windowID, hints: hints)
     }
 
     public func matchArea(
@@ -68,7 +68,7 @@ public struct ObservationMenuBarPopoverOCRSelector {
             rect,
             visualizerMode: self.visualizerMode,
             scale: self.scale)
-        return try self.match(capture: capture, bounds: rect, windowID: nil, hints: hints)
+        return try await self.match(capture: capture, bounds: rect, windowID: nil, hints: hints)
     }
 
     public func matchFrame(
@@ -84,7 +84,7 @@ public struct ObservationMenuBarPopoverOCRSelector {
             clamped,
             visualizerMode: self.visualizerMode,
             scale: self.scale)
-        return try self.match(capture: capture, bounds: clamped, windowID: nil, hints: hints)
+        return try await self.match(capture: capture, bounds: clamped, windowID: nil, hints: hints)
     }
 
     public static func popoverAreaRect(preferredX: CGFloat, screens: [ScreenInfo]) -> CGRect? {
@@ -115,9 +115,14 @@ public struct ObservationMenuBarPopoverOCRSelector {
         capture: CaptureResult,
         bounds: CGRect,
         windowID: CGWindowID?,
-        hints: [String]) throws -> ObservationMenuBarPopoverOCRMatch?
+        hints: [String]) async throws -> ObservationMenuBarPopoverOCRMatch?
     {
-        let ocr = try self.ocrRecognizer.recognizeText(in: capture.imageData)
+        let ocr = try await self.ocrRecognizer.recognizeText(
+            in: capture.imageData,
+            timeoutSeconds: OCRService.defaultTimeoutSeconds)
+        guard ocr.isComplete else {
+            throw OCRServiceError.incomplete(ocr.warnings.joined(separator: "; "))
+        }
         guard ObservationOCRMapper.matches(ocr, hints: Self.normalizedHints(hints)) else {
             return nil
         }

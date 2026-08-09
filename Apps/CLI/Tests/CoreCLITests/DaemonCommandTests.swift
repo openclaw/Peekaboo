@@ -1,4 +1,6 @@
 import Commander
+import Darwin
+import Foundation
 import PeekabooBridge
 import Testing
 @testable import PeekabooCLI
@@ -328,6 +330,266 @@ struct DaemonCommandTests {
     }
 
     @Test
+    func `historical cleanup stops only managed automatic daemons past their idle deadline`() {
+        let daemonSocketPath = PeekabooBridgeConstants.daemonSocketPath
+        let directory = URL(fileURLWithPath: daemonSocketPath).deletingLastPathComponent()
+        let currentSocketPath = directory.appendingPathComponent("daemon-aaaaaaaaaaaaaaaa.sock").path
+        let eligibleSocketPath = directory.appendingPathComponent("daemon-bbbbbbbbbbbbbbbb.sock").path
+        let notYetIdleSocketPath = directory.appendingPathComponent("daemon-abababababababab.sock").path
+        let manualSocketPath = directory.appendingPathComponent("daemon-cccccccccccccccc.sock").path
+        let busySocketPath = directory.appendingPathComponent("daemon-dddddddddddddddd.sock").path
+        let unknownActivitySocketPath = directory.appendingPathComponent("daemon-eeeeeeeeeeeeeeee.sock").path
+        let unknownPIDSocketPath = directory.appendingPathComponent("daemon-ffffffffffffffff.sock").path
+        let wrongHostSocketPath = directory.appendingPathComponent("daemon-1111111111111111.sock").path
+        let wrongIdentitySocketPath = directory.appendingPathComponent("daemon-2222222222222222.sock").path
+        let unsafeSocketPath = directory.appendingPathComponent("daemon-3333333333333333.sock").path
+        let defaultTarget = Self.target(
+            role: .defaultDaemon,
+            socketPath: daemonSocketPath,
+            mode: .auto,
+            current: true,
+            pid: 1000
+        )
+        let targets = [
+            Self.target(
+                role: .buildScopedDaemon,
+                socketPath: eligibleSocketPath,
+                mode: .auto,
+                current: true,
+                pid: 1001,
+                idleExitAt: Date(timeIntervalSinceReferenceDate: 999)
+            ),
+            Self.target(
+                role: .buildScopedDaemon,
+                socketPath: notYetIdleSocketPath,
+                mode: .auto,
+                current: true,
+                pid: 1010,
+                idleExitAt: Date(timeIntervalSinceReferenceDate: 1001)
+            ),
+            Self.target(
+                role: .buildScopedDaemon,
+                socketPath: currentSocketPath,
+                mode: .auto,
+                current: true,
+                pid: 1002
+            ),
+            Self.target(
+                role: .buildScopedDaemon,
+                socketPath: manualSocketPath,
+                mode: .manual,
+                current: true,
+                pid: 1003
+            ),
+            Self.target(
+                role: .buildScopedDaemon,
+                socketPath: busySocketPath,
+                mode: .auto,
+                current: true,
+                activeRequests: 1,
+                pid: 1004
+            ),
+            Self.target(
+                role: .buildScopedDaemon,
+                socketPath: unknownActivitySocketPath,
+                mode: .auto,
+                current: true,
+                includeActivity: false,
+                pid: 1005
+            ),
+            Self.target(
+                role: .buildScopedDaemon,
+                socketPath: unknownPIDSocketPath,
+                mode: .auto,
+                current: true,
+                pid: nil
+            ),
+            Self.target(
+                role: .buildScopedDaemon,
+                socketPath: wrongHostSocketPath,
+                mode: .auto,
+                current: true,
+                pid: 1007,
+                hostKind: .gui
+            ),
+            Self.target(
+                role: .buildScopedDaemon,
+                socketPath: wrongIdentitySocketPath,
+                mode: .auto,
+                current: true,
+                pid: 1008,
+                reportedSocketPath: eligibleSocketPath
+            ),
+            Self.target(
+                role: .buildScopedDaemon,
+                socketPath: unsafeSocketPath,
+                mode: .auto,
+                current: true,
+                pid: 1009,
+                supportsConditionalStop: false
+            ),
+            defaultTarget,
+        ]
+        let managedRecords: [String: ManagedAutoDaemonRecord] = Dictionary(
+            uniqueKeysWithValues: targets.compactMap { target in
+                guard let processIdentifier = target.status.pid,
+                      let startedAt = target.status.startedAt
+                else {
+                    return nil
+                }
+                let socketPath = target.client.socketPath
+                return (socketPath, ManagedAutoDaemonRecord(
+                    socketPath: socketPath,
+                    processIdentifier: processIdentifier,
+                    startedAt: startedAt
+                ))
+            }
+        )
+
+        #expect(DaemonControlResolver.historicalAutoDaemonStops(
+            targets,
+            daemonSocketPath: daemonSocketPath,
+            currentBuildScopedSocketPath: currentSocketPath,
+            now: Date(timeIntervalSinceReferenceDate: 1000),
+            managedRecord: { managedRecords[$0] }
+        ) == [HistoricalAutoDaemonStop(socketPath: eligibleSocketPath, expectedPID: 1001)])
+    }
+
+    @Test
+    func `historical cleanup never targets explicit or custom daemon sockets`() {
+        let canonicalDirectory = URL(fileURLWithPath: PeekabooBridgeConstants.daemonSocketPath)
+            .deletingLastPathComponent()
+        let unownedBuildShapedSocketPath = canonicalDirectory
+            .appendingPathComponent("daemon-bbbbbbbbbbbbbbbb.sock")
+            .path
+        let explicitSocketPath = "/tmp/peekaboo-explicit/daemon-bbbbbbbbbbbbbbbb.sock"
+        let explicitTarget = Self.target(
+            role: .explicit,
+            socketPath: explicitSocketPath,
+            mode: .auto,
+            current: true,
+            pid: 2001
+        )
+        let customTarget = Self.target(
+            role: .buildScopedDaemon,
+            socketPath: explicitSocketPath,
+            mode: .auto,
+            current: true,
+            pid: 2002
+        )
+        let unownedBuildShapedTarget = Self.target(
+            role: .buildScopedDaemon,
+            socketPath: unownedBuildShapedSocketPath,
+            mode: .auto,
+            current: true,
+            pid: 2003
+        )
+
+        #expect(DaemonControlResolver.historicalAutoDaemonStops(
+            [explicitTarget],
+            daemonSocketPath: PeekabooBridgeConstants.daemonSocketPath,
+            currentBuildScopedSocketPath: nil,
+            managedRecord: { _ in nil }
+        ).isEmpty)
+        #expect(DaemonControlResolver.historicalAutoDaemonStops(
+            [customTarget],
+            daemonSocketPath: "/tmp/peekaboo-explicit/daemon.sock",
+            currentBuildScopedSocketPath: nil,
+            managedRecord: { _ in nil }
+        ).isEmpty)
+        #expect(DaemonControlResolver.historicalAutoDaemonStops(
+            [unownedBuildShapedTarget],
+            daemonSocketPath: PeekabooBridgeConstants.daemonSocketPath,
+            currentBuildScopedSocketPath: nil,
+            managedRecord: { _ in nil }
+        ).isEmpty)
+    }
+
+    @Test
+    func `managed auto records require policy owned build scoped identity`() throws {
+        let daemonSocketPath = PeekabooBridgeConstants.daemonSocketPath
+        let directory = URL(fileURLWithPath: daemonSocketPath).deletingLastPathComponent()
+        let buildScopedSocketPath = directory.appendingPathComponent("daemon-bbbbbbbbbbbbbbbb.sock").path
+        let automatic = Self.target(
+            role: .buildScopedDaemon,
+            socketPath: buildScopedSocketPath,
+            mode: .auto,
+            current: true,
+            pid: 3001
+        )
+        let manual = Self.target(
+            role: .buildScopedDaemon,
+            socketPath: buildScopedSocketPath,
+            mode: .manual,
+            current: true,
+            pid: 3002
+        )
+        let canonical = Self.target(
+            role: .defaultDaemon,
+            socketPath: daemonSocketPath,
+            mode: .auto,
+            current: true,
+            pid: 3003
+        )
+
+        let record = try #require(ManagedAutoDaemonRegistry.makeRecord(
+            status: automatic.status,
+            socketPath: buildScopedSocketPath
+        ))
+        #expect(ManagedAutoDaemonRegistry.matches(
+            record,
+            status: automatic.status,
+            socketPath: buildScopedSocketPath
+        ))
+        #expect(ManagedAutoDaemonRegistry.makeRecord(
+            status: manual.status,
+            socketPath: buildScopedSocketPath
+        ) == nil)
+        #expect(ManagedAutoDaemonRegistry.makeRecord(
+            status: canonical.status,
+            socketPath: daemonSocketPath
+        ) == nil)
+    }
+
+    @Test
+    func `managed auto registry prunes only missing canonical build sockets`() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekaboo-managed-daemon-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let daemonSocketPath = directory.appendingPathComponent("daemon.sock").path
+        let staleSocketPath = directory.appendingPathComponent("daemon-1111111111111111.sock").path
+        let liveSocketPath = directory.appendingPathComponent("daemon-2222222222222222.sock").path
+        let staleRecordPath = "\(staleSocketPath).managed-auto.json"
+        let liveRecordPath = "\(liveSocketPath).managed-auto.json"
+        let unrelatedPath = directory.appendingPathComponent("notes.managed-auto.json").path
+        try JSONEncoder().encode(ManagedAutoDaemonRecord(
+            socketPath: staleSocketPath,
+            processIdentifier: 4001,
+            startedAt: Date(timeIntervalSinceReferenceDate: 100)
+        )).write(to: URL(fileURLWithPath: staleRecordPath))
+        try JSONEncoder().encode(ManagedAutoDaemonRecord(
+            socketPath: liveSocketPath,
+            processIdentifier: 4002,
+            startedAt: Date(timeIntervalSinceReferenceDate: 100)
+        )).write(to: URL(fileURLWithPath: liveRecordPath))
+        try Data("unrelated".utf8).write(to: URL(fileURLWithPath: unrelatedPath))
+        _ = FileManager.default.createFile(atPath: liveSocketPath, contents: Data())
+
+        ManagedAutoDaemonRegistry.pruneStaleRecords(daemonSocketPath: daemonSocketPath)
+        #expect(FileManager.default.fileExists(atPath: staleRecordPath))
+
+        ManagedAutoDaemonRegistry.pruneStaleRecords(
+            daemonSocketPath: daemonSocketPath,
+            canonicalDaemonSocketPath: daemonSocketPath
+        )
+        #expect(!FileManager.default.fileExists(atPath: staleRecordPath))
+        #expect(FileManager.default.fileExists(atPath: liveRecordPath))
+        #expect(FileManager.default.fileExists(atPath: unrelatedPath))
+    }
+
+    @Test
     func `compatible historical daemon wins over incompatible historical candidate`() throws {
         let incompatible = Self.target(
             role: .buildScopedDaemon,
@@ -597,6 +859,10 @@ struct DaemonCommandTests {
         mode: PeekabooDaemonMode,
         current: Bool,
         activeRequests: Int = 0,
+        includeActivity: Bool = true,
+        pid: pid_t? = 4242,
+        startedAt: Date? = Date(timeIntervalSinceReferenceDate: 123),
+        idleExitAt: Date? = nil,
         supportsConditionalStop: Bool = true,
         reportedSocketPath: String? = nil,
         hostKind: PeekabooBridgeHostKind = .onDemand
@@ -610,7 +876,8 @@ struct DaemonCommandTests {
         ]
         let status = PeekabooDaemonStatus(
             running: true,
-            pid: 4242,
+            pid: pid,
+            startedAt: startedAt,
             mode: mode,
             bridge: PeekabooDaemonBridgeStatus(
                 socketPath: reportedSocketPath ?? socketPath,
@@ -618,12 +885,14 @@ struct DaemonCommandTests {
                 allowedOperations: [.daemonStatus, .daemonStop],
                 availableOperationNames: current ? currentNames : nil
             ),
-            activity: PeekabooDaemonActivityStatus(
-                activeRequests: activeRequests,
-                lastActivityAt: nil,
-                idleTimeoutSeconds: mode == .auto ? 300 : nil,
-                idleExitAt: nil
-            ),
+            activity: includeActivity
+                ? PeekabooDaemonActivityStatus(
+                    activeRequests: activeRequests,
+                    lastActivityAt: nil,
+                    idleTimeoutSeconds: mode == .auto ? 300 : nil,
+                    idleExitAt: idleExitAt
+                )
+                : nil,
             supportsConditionalStop: supportsConditionalStop
         )
         return DaemonControlTarget(

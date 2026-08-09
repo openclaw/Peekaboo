@@ -114,103 +114,99 @@ struct SeeCommand: ApplicationResolvable, ErrorHandlingCommand, RuntimeBackedCom
             if mayFocusWebContent {
                 runtime.beginInteractionMutation(preservingSnapshotsCreatedAfterBoundary: true)
             }
-            try await CrossProcessOperationGate.withExclusiveOperation(
-                named: CrossProcessOperationGate.desktopObservationName
+            let observationStartedAt = Date()
+            let observationDeadline = observationStartedAt.addingTimeInterval(overallTimeout)
+            let scope = mayFocusWebContent
+                ? MCPToolSnapshotMutationScope(
+                    toolName: "see",
+                    startedAt: observationStartedAt,
+                    effect: .mutationProducingFreshObservation
+                )
+                : nil
+            let reservationTimeout = try Self.remainingObservationTimeout(
+                until: observationDeadline,
+                overallTimeout: overallTimeout
+            )
+            let snapshotID = try await Self.withWallClockTimeout(
+                seconds: reservationTimeout,
+                timeoutErrorSeconds: overallTimeout
             ) {
-                let observationStartedAt = Date()
-                let observationDeadline = observationStartedAt.addingTimeInterval(overallTimeout)
-                let scope = mayFocusWebContent
-                    ? MCPToolSnapshotMutationScope(
-                        toolName: "see",
-                        startedAt: observationStartedAt,
-                        effect: .mutationProducingFreshObservation
-                    )
-                    : nil
-                let reservationTimeout = try Self.remainingObservationTimeout(
+                if scope != nil {
+                    try await snapshotManager.createSnapshot(pendingAt: observationStartedAt)
+                } else {
+                    try await snapshotManager.createSnapshot()
+                }
+            }
+            defer {
+                if snapshotManager.copiesScreenshotArtifactsIntoStorage {
+                    commandCopy.cleanupTemporaryScreenshotOutput(snapshotID: snapshotID)
+                }
+            }
+            var observationCompleted = false
+            do {
+                let preparationTimeout = try Self.remainingObservationTimeout(
                     until: observationDeadline,
                     overallTimeout: overallTimeout
                 )
-                let snapshotID = try await Self.withWallClockTimeout(
-                    seconds: reservationTimeout,
-                    timeoutErrorSeconds: overallTimeout
+                let context = try await Self.withWallClockTimeout(
+                    seconds: preparationTimeout,
+                    timeoutErrorSeconds: overallTimeout,
+                    interactionMutationTracker: runtime.observationTimeoutMutationTracker
                 ) {
-                    if scope != nil {
-                        try await snapshotManager.createSnapshot(pendingAt: observationStartedAt)
-                    } else {
-                        try await snapshotManager.createSnapshot()
-                    }
+                    try await commandCopy.prepareResult(
+                        startTime: commandStartedAt,
+                        logger: logger,
+                        snapshotID: snapshotID
+                    )
                 }
-                defer {
-                    if snapshotManager.copiesScreenshotArtifactsIntoStorage {
-                        commandCopy.cleanupTemporaryScreenshotOutput(snapshotID: snapshotID)
-                    }
-                }
-                var observationCompleted = false
-                do {
-                    let preparationTimeout = try Self.remainingObservationTimeout(
+                observationCompleted = true
+
+                if let scope {
+                    let publicationTimeout = try Self.remainingObservationTimeout(
                         until: observationDeadline,
                         overallTimeout: overallTimeout
                     )
-                    let context = try await Self.withWallClockTimeout(
-                        seconds: preparationTimeout,
-                        timeoutErrorSeconds: overallTimeout,
-                        interactionMutationTracker: runtime.observationTimeoutMutationTracker
+                    let published = try await Self.withWallClockTimeout(
+                        seconds: publicationTimeout,
+                        timeoutErrorSeconds: overallTimeout
                     ) {
-                        try await commandCopy.prepareResult(
-                            startTime: commandStartedAt,
-                            logger: logger,
-                            snapshotID: snapshotID
+                        await mutationCoordinator.completeMutation(
+                            scope.completed(
+                                at: Date(),
+                                preserving: snapshotID,
+                                confirmedMutationCompletedAt: context.metadata.desktopMutationCompletedAt,
+                                observationPreservationAllowed: context.metadata
+                                    .desktopMutationPreservationAllowed
+                            ),
+                            succeeded: true
                         )
                     }
-                    observationCompleted = true
-
-                    if let scope {
-                        let publicationTimeout = try Self.remainingObservationTimeout(
-                            until: observationDeadline,
-                            overallTimeout: overallTimeout
-                        )
-                        let published = try await Self.withWallClockTimeout(
-                            seconds: publicationTimeout,
-                            timeoutErrorSeconds: overallTimeout
-                        ) {
-                            await mutationCoordinator.completeMutation(
-                                scope.completed(
-                                    at: Date(),
-                                    preserving: snapshotID,
-                                    confirmedMutationCompletedAt: context.metadata.desktopMutationCompletedAt,
-                                    observationPreservationAllowed: context.metadata
-                                        .desktopMutationPreservationAllowed
-                                ),
-                                succeeded: true
-                            )
-                        }
-                        guard published else {
-                            throw PeekabooError.operationError(
-                                message: "Failed to publish the refreshed UI snapshot"
-                            )
-                        }
-                    }
-
-                    try Task.checkCancellation()
-                    try commandCopy.renderResults(context: context)
-                    commandCopy.emitAnnotationStatus(context: context)
-                    logger.operationComplete("see_command", metadata: [
-                        "executionTimeMs": Int(Date().timeIntervalSince(commandStartedAt) * 1000),
-                        "success": true,
-                    ])
-                } catch {
-                    if scope == nil || observationCompleted || !PendingSnapshotCleanupPolicy
-                        .shouldPreserveReservation(after: error) {
-                        try? await self.services.snapshots.cleanSnapshot(snapshotId: snapshotID)
-                    }
-                    if let scope {
-                        _ = await mutationCoordinator.completeMutation(
-                            scope.completed(at: Date(), preserving: nil),
-                            succeeded: false
+                    guard published else {
+                        throw PeekabooError.operationError(
+                            message: "Failed to publish the refreshed UI snapshot"
                         )
                     }
-                    throw error
                 }
+
+                try Task.checkCancellation()
+                try commandCopy.renderResults(context: context)
+                commandCopy.emitAnnotationStatus(context: context)
+                logger.operationComplete("see_command", metadata: [
+                    "executionTimeMs": Int(Date().timeIntervalSince(commandStartedAt) * 1000),
+                    "success": true,
+                ])
+            } catch {
+                if scope == nil || observationCompleted || !PendingSnapshotCleanupPolicy
+                    .shouldPreserveReservation(after: error) {
+                    try? await self.services.snapshots.cleanSnapshot(snapshotId: snapshotID)
+                }
+                if let scope {
+                    _ = await mutationCoordinator.completeMutation(
+                        scope.completed(at: Date(), preserving: nil),
+                        succeeded: false
+                    )
+                }
+                throw error
             }
         } catch {
             logger.operationComplete(

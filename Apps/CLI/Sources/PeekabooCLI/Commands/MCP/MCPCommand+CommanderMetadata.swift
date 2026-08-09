@@ -6,12 +6,12 @@ extension MCPCommand.Serve: CommanderSignatureProviding {
             options: [
                 .commandOption(
                     "transport",
-                    help: "Transport type (stdio, http, sse)",
+                    help: "Transport type (stdio; HTTP/SSE are reserved but not implemented)",
                     long: "transport"
                 ),
                 .commandOption(
                     "port",
-                    help: "Port for HTTP/SSE transport",
+                    help: "Reserved port for future HTTP/SSE transport support",
                     long: "port"
                 ),
             ]

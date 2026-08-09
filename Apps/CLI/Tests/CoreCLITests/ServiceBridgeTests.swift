@@ -150,7 +150,13 @@ struct ServiceBridgeTests {
             clickType: .single,
             snapshotId: nil,
             targetProcessIdentifier: 12345,
-            targetWindowID: 42
+            targetWindowID: 42,
+            expectedWindowIdentity: WindowMutationIdentity(
+                windowID: 42,
+                ownerProcessIdentifier: 12345,
+                ownerProcessStartIdentity: 1
+            ),
+            expectedWindowBounds: CGRect(x: 0, y: 0, width: 100, height: 100)
         )
 
         #expect(automation.targetedClickCalls.first?.targetProcessIdentifier == 12345)
@@ -401,15 +407,15 @@ TargetedTypeServiceProtocol, ExactWindowTargetedClickServiceProtocol {
         target: ClickTarget,
         clickType: ClickType,
         snapshotId: String?,
-        targetProcessIdentifier: pid_t,
-        targetWindowID: Int
+        expectedWindowIdentity: WindowMutationIdentity,
+        expectedWindowBounds _: CGRect
     ) async throws {
         self.targetedClickCalls.append(.init(
             target: target,
             clickType: clickType,
             snapshotId: snapshotId,
-            targetProcessIdentifier: targetProcessIdentifier,
-            targetWindowID: targetWindowID
+            targetProcessIdentifier: expectedWindowIdentity.ownerProcessIdentifier,
+            targetWindowID: expectedWindowIdentity.windowID
         ))
     }
 }

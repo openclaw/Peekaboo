@@ -62,11 +62,11 @@ struct PasteCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedComma
         // or `paste --allow-large` without data must fail validation, not silently
         // paste the current clipboard. An explicitly provided empty positional ("")
         // is also an explicit payload. Only targeting/focus/delivery flags may
-        // combine with the bare-paste path. Keep restoreDelayMs optional so an
-        // explicitly provided default value remains distinguishable from omission.
+        // combine with the bare-paste path. The restore delay is also the
+        // consumption window for a current-clipboard paste, so it is valid there.
         self.text != nil || self.textOption != nil || self.filePath != nil || self.imagePath != nil
             || self.dataBase64 != nil || self.uti != nil || self.alsoText != nil
-            || self.allowLarge || self.restoreDelayMs != nil
+            || self.allowLarge
     }
 
     @MainActor
@@ -81,57 +81,162 @@ struct PasteCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedComma
                 focusOptions: self.focusOptions
             )
 
-            let targetPID = try await self.backgroundProcessIdentifier()
             guard self.hasExplicitPayload else {
-                try await self.pasteCurrentClipboard(targetPID: targetPID)
+                try await self.pasteCurrentClipboard(
+                    expectedPIDIdentity: self.explicitPIDIdentity()
+                )
                 return
             }
 
             let request = try self.makeWriteRequest()
-            if let targetPID,
-               let text = self.resolvedText {
-                try await self.pasteTextInBackground(text, request: request, targetPID: targetPID)
-                return
-            }
-
-            self.resolvedRuntime.beginInteractionMutation()
-            if targetPID == nil {
-                try await ensureFocused(
-                    snapshotId: nil,
-                    target: self.target,
-                    options: self.focusOptions,
-                    services: self.services
-                )
-            }
-
-            let priorClipboard = try? self.services.clipboard.get(prefer: nil)
-            let restoreSlot = "paste-\(UUID().uuidString)"
-
-            if priorClipboard != nil {
-                try self.services.clipboard.save(slot: restoreSlot)
-            }
-
-            var restoreResult: ClipboardReadResult?
-            var restoreErrorDescription: String?
-            var restorePending = true
-
-            defer {
-                if restorePending {
-                    do {
-                        _ = try self.restoreClipboard(
-                            priorClipboardPresent: priorClipboard != nil,
-                            slot: restoreSlot
-                        )
-                    } catch {
-                        self.logger.error(
-                            "Failed to restore clipboard after paste error: \(error.localizedDescription)"
-                        )
-                    }
+            if let text = Self.backgroundPlainText(
+                preferredText: self.resolvedText,
+                request: request
+            ) {
+                let expectedPIDIdentity = try self.explicitPIDIdentity()
+                if let targetPID = try await self.verifiedBackgroundProcessIdentifier(
+                    expectedPIDIdentity: expectedPIDIdentity
+                ) {
+                    try await self.pasteTextInBackground(text, request: request, targetPID: targetPID)
+                    return
                 }
             }
 
-            let setResult = try self.services.clipboard.set(request)
+            let expectedPIDIdentity = try self.explicitPIDIdentity()
+            let outcome = try await self.withInteractionMutationInvalidation {
+                try await ClipboardPasteTransactionGate.withExclusiveTransaction {
+                    let targetPID = try await self.verifiedBackgroundProcessIdentifier(
+                        expectedPIDIdentity: expectedPIDIdentity
+                    )
+                    if targetPID == nil {
+                        try await ensureFocused(
+                            snapshotId: nil,
+                            target: self.target,
+                            options: self.focusOptions,
+                            services: self.services
+                        )
+                    }
+                    return try await self.performClipboardPasteTransaction(request: request, targetPID: targetPID)
+                }
+            }
+            if Task.isCancelled {
+                throw ClipboardPasteOutcomeError(
+                    kind: .indeterminate,
+                    causeDescription: "The caller cancelled after Cmd+V dispatch completed.",
+                    clipboardRestoreAttempted: true,
+                    clipboardRestoreErrorDescription: outcome.restoreErrorDescription
+                )
+            }
 
+            let result = PasteResult(
+                success: true,
+                pastedUti: outcome.setResult.utiIdentifier,
+                pastedSize: outcome.setResult.data.count,
+                pastedTextPreview: outcome.setResult.textPreview,
+                previousClipboardPresent: outcome.previousClipboardPresent,
+                restoredUti: outcome.restoreResult?.utiIdentifier,
+                restoredSize: outcome.restoreResult?.data.count,
+                restoreSucceeded: outcome.restoreErrorDescription == nil,
+                restoreError: outcome.restoreErrorDescription,
+                restoreDelayMs: self.resolvedRestoreDelayMs,
+                deliveryMode: outcome.targetPID == nil ? KeyboardDeliveryMode.foreground.rawValue :
+                    KeyboardDeliveryMode.background.rawValue,
+                targetPID: outcome.targetPID.map(Int.init)
+            )
+
+            self.output(result) {
+                if outcome.restoreErrorDescription != nil {
+                    print("⚠️  Pasted, but clipboard restoration failed. Do not retry the paste; " +
+                        "the previous clipboard contents may be unavailable.")
+                } else {
+                    print("✅ Pasted and restored clipboard")
+                }
+                print("📋 Pasted: \(outcome.setResult.utiIdentifier) (\(outcome.setResult.data.count) bytes)")
+                if let restoreErrorDescription = outcome.restoreErrorDescription {
+                    print("♻️  Restore error: \(restoreErrorDescription)")
+                } else if outcome.previousClipboardPresent {
+                    print("♻️  Restored: \(outcome.restoreResult?.utiIdentifier ?? "unknown")")
+                } else {
+                    print("🧹 Restored: cleared (prior clipboard empty)")
+                }
+                if let targetPID = outcome.targetPID {
+                    print("🎯 Mode: background to PID \(targetPID)")
+                }
+            }
+        } catch let error as ClipboardPasteOutcomeError {
+            self.handleError(error, customCode: .INTERACTION_FAILED)
+            throw ExitCode.failure
+        } catch {
+            self.handleError(error)
+            throw ExitCode.failure
+        }
+    }
+
+    private func performClipboardPasteTransaction(
+        request: ClipboardWriteRequest,
+        targetPID: pid_t?
+    ) async throws -> ClipboardPasteTransactionOutcome {
+        if targetPID != nil {
+            guard let automation = self.services.automation as? any TargetedHotkeyServiceProtocol,
+                  automation.supportsTargetedHotkeys
+            else {
+                throw ValidationError("This automation host does not support background paste delivery.")
+            }
+        }
+
+        try Task.checkCancellation()
+        let priorClipboard = try self.services.clipboard.get(prefer: nil)
+        let restoreSlot = "paste-\(UUID().uuidString)"
+        try Task.checkCancellation()
+        if priorClipboard != nil {
+            try self.services.clipboard.save(slot: restoreSlot)
+        }
+        try Task.checkCancellation()
+
+        var restorePending = false
+        func restoreBeforeDispatchFailure(_ primaryError: any Error) throws -> Never {
+            do {
+                _ = try self.restoreClipboard(
+                    priorClipboardPresent: priorClipboard != nil,
+                    slot: restoreSlot
+                )
+                restorePending = false
+            } catch {
+                restorePending = false
+                throw ClipboardServiceError.writeFailed(
+                    "Paste payload setup failed (\(primaryError.localizedDescription)); " +
+                        "restoring the prior clipboard also failed: \(error.localizedDescription). " +
+                        "The clipboard may have changed; do not retry until its state is inspected."
+                )
+            }
+            throw primaryError
+        }
+        defer {
+            if restorePending {
+                do {
+                    _ = try self.restoreClipboard(
+                        priorClipboardPresent: priorClipboard != nil,
+                        slot: restoreSlot
+                    )
+                } catch {
+                    self.logger.error(
+                        "Failed to restore clipboard after paste error: \(error.localizedDescription)"
+                    )
+                }
+            }
+        }
+
+        restorePending = true
+        let setResult: ClipboardReadResult
+        do {
+            setResult = try self.services.clipboard.set(request)
+            try Task.checkCancellation()
+        } catch {
+            try restoreBeforeDispatchFailure(error)
+        }
+
+        let dispatchErrorDescription: String?
+        do {
             if let targetPID {
                 try await AutomationServiceBridge.hotkey(
                     automation: self.services.automation,
@@ -146,62 +251,52 @@ struct PasteCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedComma
                     holdDuration: 50
                 )
             }
-            await InteractionObservationInvalidator.invalidateAfterMutation(
-                targets: self.resolvedRuntime.interactionMutationTargets,
-                logger: self.logger,
-                reason: "paste"
-            )
-
-            do {
-                restoreResult = try self.restoreClipboard(
-                    priorClipboardPresent: priorClipboard != nil,
-                    slot: restoreSlot
-                )
-            } catch {
-                restoreErrorDescription = error.localizedDescription
-                self.logger.error("Failed to restore clipboard: \(error.localizedDescription)")
-            }
-            restorePending = false
-
-            let result = PasteResult(
-                success: true,
-                pastedUti: setResult.utiIdentifier,
-                pastedSize: setResult.data.count,
-                pastedTextPreview: setResult.textPreview,
-                previousClipboardPresent: priorClipboard != nil,
-                restoredUti: restoreResult?.utiIdentifier,
-                restoredSize: restoreResult?.data.count,
-                restoreSucceeded: restoreErrorDescription == nil,
-                restoreError: restoreErrorDescription,
-                restoreDelayMs: self.resolvedRestoreDelayMs,
-                deliveryMode: targetPID == nil ? KeyboardDeliveryMode.foreground.rawValue :
-                    KeyboardDeliveryMode.background.rawValue,
-                targetPID: targetPID.map(Int.init)
-            )
-
-            self.output(result) {
-                if restoreErrorDescription != nil {
-                    print("⚠️  Pasted, but clipboard restoration failed. Do not retry the paste; " +
-                        "the previous clipboard contents may be unavailable.")
-                } else {
-                    print("✅ Pasted and restored clipboard")
-                }
-                print("📋 Pasted: \(setResult.utiIdentifier) (\(setResult.data.count) bytes)")
-                if let restoreErrorDescription {
-                    print("♻️  Restore error: \(restoreErrorDescription)")
-                } else if priorClipboard != nil {
-                    print("♻️  Restored: \(restoreResult?.utiIdentifier ?? "unknown")")
-                } else {
-                    print("🧹 Restored: cleared (prior clipboard empty)")
-                }
-                if let targetPID {
-                    print("🎯 Mode: background to PID \(targetPID)")
-                }
-            }
+            dispatchErrorDescription = nil
         } catch {
-            self.handleError(error)
-            throw ExitCode.failure
+            dispatchErrorDescription = error.localizedDescription
         }
+
+        let restoreResult: ClipboardReadResult?
+        let restoreErrorDescription: String?
+        do {
+            restoreResult = try await self.restoreClipboardAfterConsumption(
+                priorClipboardPresent: priorClipboard != nil,
+                slot: restoreSlot
+            )
+            restoreErrorDescription = nil
+        } catch {
+            restoreResult = nil
+            restoreErrorDescription = error.localizedDescription
+            self.logger.error("Failed to restore clipboard: \(error.localizedDescription)")
+        }
+        restorePending = false
+
+        if dispatchErrorDescription != nil || Task.isCancelled {
+            throw ClipboardPasteOutcomeError(
+                kind: .indeterminate,
+                causeDescription: dispatchErrorDescription ?? "The caller cancelled after Cmd+V dispatch began.",
+                clipboardRestoreAttempted: true,
+                clipboardRestoreErrorDescription: restoreErrorDescription,
+                targetProcessIdentifier: targetPID
+            )
+        }
+        if targetPID != nil {
+            throw ClipboardPasteOutcomeError(
+                kind: .unverified,
+                causeDescription: "The targeted event API does not acknowledge receiver consumption.",
+                clipboardRestoreAttempted: true,
+                clipboardRestoreErrorDescription: restoreErrorDescription,
+                targetProcessIdentifier: targetPID
+            )
+        }
+
+        return ClipboardPasteTransactionOutcome(
+            setResult: setResult,
+            previousClipboardPresent: priorClipboard != nil,
+            restoreResult: restoreResult,
+            restoreErrorDescription: restoreErrorDescription,
+            targetPID: targetPID
+        )
     }
 
     private func pasteTextInBackground(
@@ -210,21 +305,17 @@ struct PasteCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedComma
         targetPID: pid_t
     ) async throws {
         let setResult = try Self.readResult(for: request)
-        self.resolvedRuntime.beginInteractionMutation()
-        _ = try await AutomationServiceBridge.typeActions(
-            automation: self.services.automation,
-            request: TypeActionsRequest(
-                actions: [.text(text)],
-                cadence: .fixed(milliseconds: 0),
-                snapshotId: nil
-            ),
-            targetProcessIdentifier: targetPID
-        )
-        await InteractionObservationInvalidator.invalidateAfterMutation(
-            targets: self.resolvedRuntime.interactionMutationTargets,
-            logger: self.logger,
-            reason: "paste"
-        )
+        _ = try await self.withInteractionMutationInvalidation {
+            try await AutomationServiceBridge.typeActions(
+                automation: self.services.automation,
+                request: TypeActionsRequest(
+                    actions: [.text(text)],
+                    cadence: .fixed(milliseconds: 0),
+                    snapshotId: nil
+                ),
+                targetProcessIdentifier: targetPID
+            )
+        }
 
         let result = PasteResult(
             success: true,
@@ -252,14 +343,21 @@ struct PasteCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedComma
         priorClipboardPresent: Bool,
         slot: String
     ) throws -> ClipboardReadResult? {
-        if self.resolvedRestoreDelayMs > 0 {
-            usleep(useconds_t(self.resolvedRestoreDelayMs) * 1000)
-        }
         guard priorClipboardPresent else {
             self.services.clipboard.clear()
             return nil
         }
         return try self.services.clipboard.restore(slot: slot)
+    }
+
+    private func restoreClipboardAfterConsumption(
+        priorClipboardPresent: Bool,
+        slot: String
+    ) async throws -> ClipboardReadResult? {
+        await ClipboardPasteTransactionGate.waitForPasteConsumption(
+            milliseconds: self.resolvedRestoreDelayMs
+        )
+        return try self.restoreClipboard(priorClipboardPresent: priorClipboardPresent, slot: slot)
     }
 
     private func makeWriteRequest() throws -> ClipboardWriteRequest {
@@ -299,66 +397,122 @@ struct PasteCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedComma
         throw ValidationError("Provide text, --file-path/--image-path, or --data-base64 with --uti")
     }
 
-    private func pasteCurrentClipboard(targetPID: pid_t?) async throws {
-        let currentClipboard = try? self.services.clipboard.get(prefer: nil)
-        self.resolvedRuntime.beginInteractionMutation()
-        if targetPID == nil {
-            try await ensureFocused(
-                snapshotId: nil,
-                target: self.target,
-                options: self.focusOptions,
-                services: self.services
+    private func pasteCurrentClipboard(expectedPIDIdentity: UInt64?) async throws {
+        let outcome = try await self.withInteractionMutationInvalidation {
+            try await ClipboardPasteTransactionGate.withExclusiveTransaction {
+                let targetPID = try await self.verifiedBackgroundProcessIdentifier(
+                    expectedPIDIdentity: expectedPIDIdentity
+                )
+                if targetPID == nil {
+                    try await ensureFocused(
+                        snapshotId: nil,
+                        target: self.target,
+                        options: self.focusOptions,
+                        services: self.services
+                    )
+                }
+                let currentClipboard = try self.services.clipboard.get(prefer: nil)
+                try Task.checkCancellation()
+                let dispatchErrorDescription: String?
+                do {
+                    if let targetPID {
+                        try await AutomationServiceBridge.hotkey(
+                            automation: self.services.automation,
+                            keys: "cmd,v",
+                            holdDuration: 50,
+                            targetProcessIdentifier: targetPID
+                        )
+                    } else {
+                        try await AutomationServiceBridge.hotkey(
+                            automation: self.services.automation,
+                            keys: "cmd,v",
+                            holdDuration: 50
+                        )
+                    }
+                    dispatchErrorDescription = nil
+                } catch {
+                    dispatchErrorDescription = error.localizedDescription
+                }
+                await ClipboardPasteTransactionGate.waitForPasteConsumption(
+                    milliseconds: self.resolvedRestoreDelayMs
+                )
+                if dispatchErrorDescription != nil || Task.isCancelled {
+                    throw ClipboardPasteOutcomeError(
+                        kind: .indeterminate,
+                        causeDescription: dispatchErrorDescription ??
+                            "The caller cancelled after Cmd+V dispatch began.",
+                        clipboardRestoreAttempted: false,
+                        targetProcessIdentifier: targetPID
+                    )
+                }
+                if targetPID != nil {
+                    throw ClipboardPasteOutcomeError(
+                        kind: .unverified,
+                        causeDescription: "The targeted event API does not acknowledge receiver consumption.",
+                        clipboardRestoreAttempted: false,
+                        targetProcessIdentifier: targetPID
+                    )
+                }
+                return CurrentClipboardPasteOutcome(clipboard: currentClipboard, targetPID: targetPID)
+            }
+        }
+        if Task.isCancelled {
+            throw ClipboardPasteOutcomeError(
+                kind: .indeterminate,
+                causeDescription: "The caller cancelled after Cmd+V dispatch completed.",
+                clipboardRestoreAttempted: false
             )
         }
-
-        if let targetPID {
-            try await AutomationServiceBridge.hotkey(
-                automation: self.services.automation,
-                keys: "cmd,v",
-                holdDuration: 50,
-                targetProcessIdentifier: targetPID
-            )
-        } else {
-            try await AutomationServiceBridge.hotkey(
-                automation: self.services.automation,
-                keys: "cmd,v",
-                holdDuration: 50
-            )
-        }
-
-        await InteractionObservationInvalidator.invalidateAfterMutation(
-            targets: self.resolvedRuntime.interactionMutationTargets,
-            logger: self.logger,
-            reason: "paste"
-        )
 
         let result = PasteResult(
             success: true,
-            pastedUti: currentClipboard?.utiIdentifier ?? "current-clipboard",
-            pastedSize: currentClipboard?.data.count ?? 0,
+            pastedUti: outcome.clipboard?.utiIdentifier ?? "current-clipboard",
+            pastedSize: outcome.clipboard?.data.count ?? 0,
             // Never echo ambient clipboard content into structured output: the
             // user did not supply it to this command, and JSON lands in agent/CI
             // logs. Explicit-payload pastes still report the preview the caller
             // provided themselves.
             pastedTextPreview: nil,
-            previousClipboardPresent: currentClipboard != nil,
+            previousClipboardPresent: outcome.clipboard != nil,
             restoredUti: nil,
             restoredSize: nil,
             restoreSucceeded: true,
             restoreError: nil,
-            restoreDelayMs: 0,
-            deliveryMode: targetPID == nil ? KeyboardDeliveryMode.foreground.rawValue :
+            restoreDelayMs: self.resolvedRestoreDelayMs,
+            deliveryMode: outcome.targetPID == nil ? KeyboardDeliveryMode.foreground.rawValue :
                 KeyboardDeliveryMode.background.rawValue,
-            targetPID: targetPID.map(Int.init)
+            targetPID: outcome.targetPID.map(Int.init)
         )
 
         self.output(result) {
             print("✅ Pasted current clipboard")
-            if let targetPID {
+            if let targetPID = outcome.targetPID {
                 print("🎯 Mode: background to PID \(targetPID)")
             } else {
                 print("🎯 Mode: foreground")
             }
+        }
+    }
+
+    private func withInteractionMutationInvalidation<T: Sendable>(
+        _ operation: @MainActor () async throws -> T
+    ) async throws -> T {
+        self.resolvedRuntime.beginInteractionMutation()
+        do {
+            let result = try await operation()
+            await InteractionObservationInvalidator.invalidateAfterMutation(
+                targets: self.resolvedRuntime.interactionMutationTargets,
+                logger: self.logger,
+                reason: "paste"
+            )
+            return result
+        } catch {
+            await InteractionObservationInvalidator.invalidateAfterMutation(
+                targets: self.resolvedRuntime.interactionMutationTargets,
+                logger: self.logger,
+                reason: "paste"
+            )
+            throw error
         }
     }
 
@@ -384,6 +538,22 @@ struct PasteCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedComma
         )
     }
 
+    private static func backgroundPlainText(
+        preferredText: String?,
+        request: ClipboardWriteRequest
+    ) -> String? {
+        if let preferredText {
+            return preferredText
+        }
+        guard let primary = request.representations.first,
+              primary.utiIdentifier == UTType.plainText.identifier ||
+              primary.utiIdentifier == UTType.utf8PlainText.identifier
+        else {
+            return nil
+        }
+        return String(data: primary.data, encoding: .utf8)
+    }
+
     private static func makePreview(_ text: String) -> String {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         let max = 80
@@ -392,17 +562,62 @@ struct PasteCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedComma
         return "\(head)..."
     }
 
-    private func backgroundProcessIdentifier() async throws -> pid_t? {
-        guard !self.foreground else {
+    private func explicitPIDIdentity() throws -> UInt64? {
+        guard let pid = self.target.pid else { return nil }
+        guard let identity = ClipboardPasteTransactionGate.processStartIdentity(pid_t(pid)) else {
+            throw ValidationError("Could not verify process identity for --pid \(pid).")
+        }
+        return identity
+    }
+
+    private func verifiedBackgroundProcessIdentifier(
+        expectedPIDIdentity: UInt64? = nil
+    ) async throws -> pid_t? {
+        if self.foreground {
+            try self.validateExplicitPIDIdentity(expectedPIDIdentity)
             return nil
         }
 
-        return try await KeyboardDeliverySupport.requireBackgroundProcessIdentifier(
+        let processIdentifier = try await KeyboardDeliverySupport.requireBackgroundProcessIdentifier(
             target: self.target,
             snapshotId: nil,
             services: self.services
         )
+        let applications = try await self.services.applications.listApplications().data.applications
+        guard applications.contains(where: { $0.processIdentifier == processIdentifier }) else {
+            throw ValidationError("Target process PID \(processIdentifier) is no longer running.")
+        }
+        if self.target.pid != nil {
+            guard let expectedPIDIdentity,
+                  ClipboardPasteTransactionGate.processStartIdentity(processIdentifier) == expectedPIDIdentity
+            else {
+                throw ValidationError("Target process PID \(processIdentifier) changed identity while waiting.")
+            }
+        }
+        return processIdentifier
     }
+
+    private func validateExplicitPIDIdentity(_ expectedPIDIdentity: UInt64?) throws {
+        guard let pid = self.target.pid else { return }
+        guard let expectedPIDIdentity,
+              ClipboardPasteTransactionGate.processStartIdentity(pid_t(pid)) == expectedPIDIdentity
+        else {
+            throw ValidationError("Target process PID \(pid) changed identity while waiting.")
+        }
+    }
+}
+
+private struct ClipboardPasteTransactionOutcome: Sendable {
+    let setResult: ClipboardReadResult
+    let previousClipboardPresent: Bool
+    let restoreResult: ClipboardReadResult?
+    let restoreErrorDescription: String?
+    let targetPID: pid_t?
+}
+
+private struct CurrentClipboardPasteOutcome: Sendable {
+    let clipboard: ClipboardReadResult?
+    let targetPID: pid_t?
 }
 
 struct PasteResult: Codable {
@@ -438,7 +653,9 @@ extension PasteCommand: ParsableCommand {
                       3) clipboard restore
                     into one operation when you provide text, a file, an image, or base64 data.
                     Background text delivery is used by default when a target process is known;
-                    binary payloads use background Cmd+V. Add --foreground for focused/global paste.
+                    binary/current-clipboard payloads use targeted Cmd+V. Because macOS does not
+                    acknowledge receiver consumption, those background calls return a may-have-pasted,
+                    do-not-retry error after cleanup. Add --foreground for focused/global paste.
 
                     EXAMPLES:
                       peekaboo paste --foreground

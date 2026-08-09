@@ -40,12 +40,19 @@ enum CommanderCLIBinder {
 
     static func makeRuntimeOptions(
         from parsedValues: ParsedValues,
-        commandType: (any ParsableCommand.Type)? = nil
+        commandType: (any ParsableCommand.Type)? = nil,
+        environment: [String: String] = ProcessInfo.processInfo.environment
     ) throws -> CommandRuntimeOptions {
         var options = CommandRuntimeOptions()
         options.requiresApplicationLaunchOptions = Self.requiresApplicationLaunchOptions(commandType)
+        options.requiresNewApplicationInstanceLaunch = commandType == AppCommand.LaunchSubcommand.self &&
+            CommanderBindableValues(parsedValues: parsedValues).flag("newInstance")
+        options.requiresApplicationWindowReadiness =
+            (commandType == AppCommand.LaunchSubcommand.self || commandType == OpenCommand.self) &&
+            CommanderBindableValues(parsedValues: parsedValues).flag("waitForWindow")
         options.requiresApplicationRelaunch = commandType == AppCommand.RelaunchSubcommand.self
         options.requiresSurvivingApplicationHost = commandType == AppCommand.QuitSubcommand.self
+        options.requiresProcessGenerationPinnedApplicationQuit = commandType == AppCommand.QuitSubcommand.self
         options.requiresHostApplicationInventory = Self.requiresHostApplicationInventory(commandType)
         options.requiresImplicitSnapshotInvalidation = Self.requiresImplicitSnapshotInvalidation(
             commandType,
@@ -78,6 +85,11 @@ enum CommanderCLIBinder {
             !commandValues.flag("foreground")
         options.requiresBackgroundDialogClick = commandType == DialogCommand.ClickSubcommand.self &&
             !commandValues.flag("foreground")
+        options.requiresSilentCapture = Self.requiresSilentCapture(commandType, parsedValues: parsedValues)
+        options.requiresExactWindowTargetedKeyboard = commandType == RunCommand.self &&
+            Self.runScriptMayNeedTargetedFocusedElement(parsedValues)
+        options.requiresPinnedWindowMutations = Self.requiresPinnedWindowMutations(commandType)
+        options.requiresWindowRestore = commandType == WindowCommand.RestoreSubcommand.self
         options.requiresScreenCapturePermission = Self.requiresScreenCapturePermission(commandType)
         options.requestsHostPermissionGrant = Self.isInteractivePermissionRequest(commandType)
         options.usesPerToolSnapshotInvalidation = commandType == AgentCommand.self ||
@@ -114,7 +126,13 @@ enum CommanderCLIBinder {
             options.remoteIsolationRequested = true
         }
         let explicitBridgeSocket = values.singleOption("bridge-socket")?.trimmingCharacters(in: .whitespacesAndNewlines)
-        if commandType == AgentCommand.self && !values.flag("no-remote") {
+        let environmentBridgeSocket = environment["PEEKABOO_BRIDGE_SOCKET"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let hasExplicitBridgeSocket = explicitBridgeSocket?.isEmpty == false ||
+            environmentBridgeSocket?.isEmpty == false
+        if commandType == AgentCommand.self,
+           !values.flag("no-remote"),
+           !hasExplicitBridgeSocket {
             // Agent execution should stay local by default unless explicitly overridden.
             options.preferRemote = false
         }
@@ -149,6 +167,16 @@ enum CommanderCLIBinder {
             commandType == AppCommand.RelaunchSubcommand.self
     }
 
+    private static func requiresPinnedWindowMutations(_ commandType: (any ParsableCommand.Type)?) -> Bool {
+        commandType == WindowCommand.CloseSubcommand.self ||
+            commandType == WindowCommand.MinimizeSubcommand.self ||
+            commandType == WindowCommand.RestoreSubcommand.self ||
+            commandType == WindowCommand.MaximizeSubcommand.self ||
+            commandType == WindowCommand.MoveSubcommand.self ||
+            commandType == WindowCommand.ResizeSubcommand.self ||
+            commandType == WindowCommand.SetBoundsSubcommand.self
+    }
+
     private static func requiresHostApplicationInventory(_ commandType: (any ParsableCommand.Type)?) -> Bool {
         commandType == ListCommand.AppsSubcommand.self ||
             commandType == AppCommand.ListSubcommand.self
@@ -168,6 +196,92 @@ enum CommanderCLIBinder {
             commandType == CaptureWatchAlias.self ||
             commandType == CaptureVideoCommand.self ||
             commandType == CaptureActionCommand.self
+    }
+
+    private static func requiresSilentCapture(
+        _ commandType: (any ParsableCommand.Type)?,
+        parsedValues: ParsedValues
+    ) -> Bool {
+        if commandType == SeeCommand.self ||
+            commandType == AgentCommand.self ||
+            commandType == MCPCommand.Serve.self {
+            return true
+        }
+        if commandType == RunCommand.self {
+            return self.runScriptSteps(parsedValues)?.contains { step in
+                (step["command"] as? String)?.lowercased() == "see"
+            } == true
+        }
+
+        let values = CommanderBindableValues(parsedValues: parsedValues)
+        if commandType == ImageCommand.self ||
+            commandType == CaptureLiveCommand.self ||
+            commandType == CaptureWatchAlias.self ||
+            commandType == CaptureActionCommand.self {
+            let focus = values.singleOption("captureFocus")?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+            return focus == nil || focus == "background"
+        }
+
+        if commandType == ScrollCommand.self {
+            return values.singleOption("on") != nil
+        }
+        if commandType == ClickCommand.self {
+            let hasElementTarget = values.singleOption("on") != nil ||
+                values.singleOption("id") != nil ||
+                values.positionalValue(at: 0)?.isEmpty == false
+            return values.flag("foreground") && hasElementTarget
+        }
+        if commandType == SwipeCommand.self || commandType == DragCommand.self {
+            return values.singleOption("from") != nil || values.singleOption("to") != nil
+        }
+        if commandType == MoveCommand.self {
+            return values.singleOption("to") != nil ||
+                values.singleOption("on") != nil ||
+                values.singleOption("id") != nil
+        }
+        return false
+    }
+
+    private static func runScriptMayNeedTargetedFocusedElement(_ parsedValues: ParsedValues) -> Bool {
+        guard let steps = runScriptSteps(parsedValues) else { return false }
+
+        var hasInheritedObservation = false
+        for step in steps {
+            let command = (step["command"] as? String)?.lowercased() ?? ""
+            let params = step["params"] as? [String: Any] ?? [:]
+            if command == "see" {
+                hasInheritedObservation = true
+                continue
+            }
+            guard command == "type" || command == "hotkey" else { continue }
+            if params["foreground"] as? Bool == true {
+                continue
+            }
+
+            let hasWindowSelector = params["windowId"] != nil ||
+                params["window_id"] != nil ||
+                params["snapshot"] != nil ||
+                params["snapshotId"] != nil
+            let hasProcessOnlyTarget = (params["app"] != nil || params["pid"] != nil) && !hasWindowSelector
+            if hasWindowSelector || (hasInheritedObservation && !hasProcessOnlyTarget) {
+                return true
+            }
+        }
+        return false
+    }
+
+    private static func runScriptSteps(_ parsedValues: ParsedValues) -> [[String: Any]]? {
+        let values = CommanderBindableValues(parsedValues: parsedValues)
+        guard let rawPath = values.positionalValue(at: 0), !rawPath.isEmpty else { return nil }
+        let path = NSString(string: rawPath).expandingTildeInPath
+        guard let data = FileManager.default.contents(atPath: path),
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else {
+            return nil
+        }
+        return root["steps"] as? [[String: Any]]
     }
 
     private static func requiresImplicitSnapshotInvalidation(
@@ -223,6 +337,7 @@ enum CommanderCLIBinder {
             commandType == WindowCommand.FocusSubcommand.self ||
             commandType == WindowCommand.CloseSubcommand.self ||
             commandType == WindowCommand.MinimizeSubcommand.self ||
+            commandType == WindowCommand.RestoreSubcommand.self ||
             commandType == WindowCommand.MaximizeSubcommand.self ||
             commandType == WindowCommand.MoveSubcommand.self ||
             commandType == WindowCommand.ResizeSubcommand.self ||
@@ -404,12 +519,7 @@ enum CommanderCLIBinder {
         if values.flag("longPress") {
             return false
         }
-        return !values.flag("foreground") &&
-            !values.flag("noAutoFocus") &&
-            !values.flag("spaceSwitch") &&
-            !values.flag("bringToCurrentSpace") &&
-            values.singleOption("focusTimeoutSeconds") == nil &&
-            values.singleOption("focusRetryCount") == nil
+        return !values.flag("foreground")
     }
 
     private static func prefersLocalRuntime(_ commandType: (any ParsableCommand.Type)?) -> Bool {

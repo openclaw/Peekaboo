@@ -192,6 +192,11 @@ enum DaemonControlTargetRole: Equatable {
     case legacyDefault
 }
 
+struct HistoricalAutoDaemonStop: Equatable, Sendable {
+    let socketPath: String
+    let expectedPID: pid_t
+}
+
 struct DaemonSocketFileCandidate: Equatable {
     let path: String
     let isSocket: Bool
@@ -320,6 +325,7 @@ enum DaemonControlPlanner {
 
 enum DaemonControlResolver {
     private static let historicalProbeTimeoutSeconds: TimeInterval = 1
+    private static let historicalCleanupTimeoutSeconds: TimeInterval = 0.1
 
     static func defaultSocketPaths() -> [String] {
         let buildScopedPath = DaemonLaunchPolicy.buildScopedDaemonSocketPath(
@@ -414,6 +420,7 @@ enum DaemonControlResolver {
         daemonSocketPath: String,
         currentBuildScopedSocketPath: String?
     ) async -> [DaemonControlTarget] {
+        ManagedAutoDaemonRegistry.pruneStaleRecords(daemonSocketPath: daemonSocketPath)
         var targets: [DaemonControlTarget] = []
         for socketPath in self.discoveredHistoricalBuildScopedSocketPaths(
             daemonSocketPath: daemonSocketPath,
@@ -435,6 +442,85 @@ enum DaemonControlResolver {
             ))
         }
         return targets
+    }
+
+    static func historicalAutoDaemonStops(
+        _ targets: [DaemonControlTarget],
+        daemonSocketPath: String,
+        currentBuildScopedSocketPath: String?,
+        now: Date = Date(),
+        managedRecord: @MainActor @Sendable (String) -> ManagedAutoDaemonRecord? =
+            ManagedAutoDaemonRegistry.load(socketPath:)
+    ) -> [HistoricalAutoDaemonStop] {
+        let canonicalDaemonPath = self.standardizedSocketPath(PeekabooBridgeConstants.daemonSocketPath)
+        guard self.standardizedSocketPath(daemonSocketPath) == canonicalDaemonPath else { return [] }
+
+        let daemonDirectory = self.standardizedSocketPath(
+            URL(fileURLWithPath: daemonSocketPath).deletingLastPathComponent().path
+        )
+        let currentPath = currentBuildScopedSocketPath.map(self.standardizedSocketPath)
+        return targets.compactMap { target in
+            let socketPath = self.standardizedSocketPath(target.client.socketPath)
+            let socketURL = URL(fileURLWithPath: socketPath)
+            guard target.role == .buildScopedDaemon,
+                  target.status.mode == .auto,
+                  target.status.activity?.activeRequests == 0,
+                  target.status.activity?.idleExitAt.map({ $0 <= now }) == true,
+                  let expectedPID = target.status.pid,
+                  expectedPID > 0,
+                  socketPath != currentPath,
+                  self.standardizedSocketPath(socketURL.deletingLastPathComponent().path) == daemonDirectory,
+                  self.isBuildScopedSocketName(socketURL.lastPathComponent),
+                  self.isValidatedHistoricalTarget(status: target.status, socketPath: socketPath),
+                  ManagedAutoDaemonRegistry.matches(
+                      managedRecord(socketPath),
+                      status: target.status,
+                      socketPath: socketPath
+                  )
+            else {
+                return nil
+            }
+            return HistoricalAutoDaemonStop(socketPath: socketPath, expectedPID: expectedPID)
+        }
+    }
+
+    static func stopIdleHistoricalAutoDaemons(
+        _ targets: [DaemonControlTarget],
+        daemonSocketPath: String,
+        currentBuildScopedSocketPath: String?
+    ) async {
+        let stops = self.historicalAutoDaemonStops(
+            targets,
+            daemonSocketPath: daemonSocketPath,
+            currentBuildScopedSocketPath: currentBuildScopedSocketPath
+        )
+        let requestTimeoutSeconds = self.historicalCleanupTimeoutSeconds
+        let stoppedPaths = await withTaskGroup(of: String?.self, returning: [String].self) { group in
+            for stop in stops {
+                group.addTask {
+                    // The daemon atomically rechecks both PID and active requests. A raced request
+                    // or a replacement socket owner therefore turns this into a harmless refusal.
+                    let client = PeekabooBridgeClient(
+                        socketPath: stop.socketPath,
+                        requestTimeoutSec: requestTimeoutSeconds
+                    )
+                    let stopped = try? await client.daemonStop(expectedPID: stop.expectedPID)
+                    return stopped == true ? stop.socketPath : nil
+                }
+            }
+            var stoppedPaths: [String] = []
+            for await socketPath in group {
+                if let socketPath {
+                    stoppedPaths.append(socketPath)
+                }
+            }
+            return stoppedPaths
+        }
+        if !stoppedPaths.isEmpty {
+            // Stop acceptance precedes process exit. Remove ownership proof only after the
+            // corresponding socket is actually gone; otherwise a stalled stop remains retryable.
+            ManagedAutoDaemonRegistry.pruneStaleRecords(daemonSocketPath: daemonSocketPath)
+        }
     }
 
     private static func discoveredHistoricalBuildScopedSocketPaths(

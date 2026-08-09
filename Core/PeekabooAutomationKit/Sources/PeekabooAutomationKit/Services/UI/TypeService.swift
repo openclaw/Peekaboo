@@ -22,6 +22,7 @@ public final class TypeService {
     private let syntheticInputDriver: any SyntheticInputDriving
     private let automationElementResolver: any AutomationElementResolving
     private let focusedElementSecurityProbe: @MainActor (pid_t?) -> Bool
+    private let targetedCharacterTyper: @MainActor (Character, pid_t) throws -> Void
 
     public convenience init(
         snapshotManager: (any SnapshotManagerProtocol)? = nil,
@@ -64,7 +65,9 @@ public final class TypeService {
         syntheticInputDriver: any SyntheticInputDriving = SyntheticInputDriver(),
         automationElementResolver: any AutomationElementResolving = AutomationElementResolver(),
         randomSource: any TypingCadenceRandomSource,
-        focusedElementSecurityProbe: @escaping @MainActor (pid_t?) -> Bool = TypeService.focusedElementIsSecureField)
+        focusedElementSecurityProbe: @escaping @MainActor (pid_t?) -> Bool = TypeService.focusedElementIsSecureField,
+        targetedCharacterTyper: @escaping @MainActor (Character, pid_t) throws -> Void = TypeService
+            .typeTargetedCharacter)
     {
         let manager = snapshotManager ?? SnapshotManager()
         self.snapshotManager = manager
@@ -80,6 +83,7 @@ public final class TypeService {
         self.automationElementResolver = automationElementResolver
         self.cadenceRandom = randomSource
         self.focusedElementSecurityProbe = focusedElementSecurityProbe
+        self.targetedCharacterTyper = targetedCharacterTyper
     }
 
     /// Type text with optional target and settings
@@ -192,7 +196,7 @@ public final class TypeService {
 
         // Clear existing text if requested
         if clearExisting {
-            try await self.clearCurrentField()
+            _ = try await self.clearCurrentField()
         }
 
         // Type the text
@@ -231,7 +235,9 @@ public final class TypeService {
         _ actions: [TypeAction],
         cadence: TypingCadence,
         snapshotId: String?,
-        targetProcessIdentifier: pid_t?) async throws -> TypeActionExecutionSummary
+        targetProcessIdentifier: pid_t?,
+        deliveryValidator: (@MainActor @Sendable () async throws -> Void)? = nil) async throws
+        -> TypeActionExecutionSummary
     {
         var summary: TypeActionExecutionSummary?
         _ = try await UIInputDispatcher.run(
@@ -243,7 +249,8 @@ public final class TypeService {
                     actions,
                     cadence: cadence,
                     snapshotId: snapshotId,
-                    targetProcessIdentifier: targetProcessIdentifier)
+                    targetProcessIdentifier: targetProcessIdentifier,
+                    deliveryValidator: deliveryValidator)
             })
 
         guard let summary else {
@@ -256,54 +263,97 @@ public final class TypeService {
         _ actions: [TypeAction],
         cadence: TypingCadence,
         snapshotId _: String?,
-        targetProcessIdentifier: pid_t?) async throws -> TypeActionExecutionSummary
+        targetProcessIdentifier: pid_t?,
+        deliveryValidator: (@MainActor @Sendable () async throws -> Void)?) async throws
+        -> TypeActionExecutionSummary
     {
         var totalChars = 0
         var keyPresses = 0
+        var emittedUnitCount = 0
         var typedIntoSecureField = false
         var humanContext: HumanTypingContext?
         let fixedDelay = self.fixedDelaySeconds(for: cadence)
 
         self.logger.debug("Processing \(actions.count) type actions with cadence: \(cadence.logDescription)")
 
-        for action in actions {
-            switch action {
-            case let .text(text):
-                if Self.actionTypesSensitiveText(
-                    action,
-                    focusedElementIsSecure: self.focusedElementSecurityProbe(targetProcessIdentifier))
-                {
-                    typedIntoSecureField = true
-                }
-                for character in text {
-                    try await self.typeCharacter(character, targetProcessIdentifier: targetProcessIdentifier)
-                    totalChars += 1
+        do {
+            for action in actions {
+                switch action {
+                case let .text(text):
+                    if Self.actionTypesSensitiveText(
+                        action,
+                        focusedElementIsSecure: self.focusedElementSecurityProbe(targetProcessIdentifier))
+                    {
+                        typedIntoSecureField = true
+                    }
+                    for character in text {
+                        try await self.validateDelivery(
+                            deliveryValidator,
+                            emittedUnitCount: emittedUnitCount)
+                        do {
+                            try await self.typeCharacter(character, targetProcessIdentifier: targetProcessIdentifier)
+                        } catch let error as InputDeliveryIndeterminateError {
+                            throw error
+                        } catch {
+                            throw Self.indeterminateDeliveryError(
+                                from: error,
+                                emittedUnitCount: emittedUnitCount > 0 ? emittedUnitCount : nil)
+                        }
+                        totalChars += 1
+                        keyPresses += 1
+                        emittedUnitCount += 1
+                        try await self.sleepAfterKeystroke(
+                            typedCharacter: character,
+                            cadence: cadence,
+                            fixedDelaySeconds: fixedDelay,
+                            humanContext: &humanContext)
+                    }
+
+                case let .key(key):
+                    try await self.validateDelivery(
+                        deliveryValidator,
+                        emittedUnitCount: emittedUnitCount)
+                    do {
+                        try self.typeSpecialKey(key, targetProcessIdentifier: targetProcessIdentifier)
+                    } catch let error as InputDeliveryIndeterminateError {
+                        throw error
+                    } catch {
+                        throw Self.indeterminateDeliveryError(
+                            from: error,
+                            emittedUnitCount: emittedUnitCount > 0 ? emittedUnitCount : nil)
+                    }
                     keyPresses += 1
+                    emittedUnitCount += 1
                     try await self.sleepAfterKeystroke(
-                        typedCharacter: character,
+                        typedCharacter: nil,
+                        cadence: cadence,
+                        fixedDelaySeconds: fixedDelay,
+                        humanContext: &humanContext)
+
+                case .clear:
+                    emittedUnitCount += try await self.clearCurrentField(
+                        targetProcessIdentifier: targetProcessIdentifier,
+                        deliveryValidator: deliveryValidator,
+                        priorEmittedUnitCount: emittedUnitCount)
+                    keyPresses += 2 // Cmd+A and Delete
+                    try await self.sleepAfterKeystroke(
+                        typedCharacter: nil,
                         cadence: cadence,
                         fixedDelaySeconds: fixedDelay,
                         humanContext: &humanContext)
                 }
-
-            case let .key(key):
-                try self.typeSpecialKey(key, targetProcessIdentifier: targetProcessIdentifier)
-                keyPresses += 1
-                try await self.sleepAfterKeystroke(
-                    typedCharacter: nil,
-                    cadence: cadence,
-                    fixedDelaySeconds: fixedDelay,
-                    humanContext: &humanContext)
-
-            case .clear:
-                try await self.clearCurrentField(targetProcessIdentifier: targetProcessIdentifier)
-                keyPresses += 2 // Cmd+A and Delete
-                try await self.sleepAfterKeystroke(
-                    typedCharacter: nil,
-                    cadence: cadence,
-                    fixedDelaySeconds: fixedDelay,
-                    humanContext: &humanContext)
             }
+
+            try await self.validateDelivery(
+                deliveryValidator,
+                emittedUnitCount: emittedUnitCount)
+        } catch let error as InputDeliveryIndeterminateError {
+            throw error
+        } catch {
+            guard emittedUnitCount > 0 else { throw error }
+            throw Self.indeterminateDeliveryError(
+                from: error,
+                emittedUnitCount: emittedUnitCount)
         }
 
         return TypeActionExecutionSummary(
@@ -400,35 +450,128 @@ public final class TypeService {
 
     // MARK: - Input Helpers
 
-    private func clearCurrentField(targetProcessIdentifier: pid_t? = nil) async throws {
+    private func clearCurrentField(
+        targetProcessIdentifier: pid_t? = nil,
+        deliveryValidator: (@MainActor @Sendable () async throws -> Void)? = nil,
+        priorEmittedUnitCount: Int = 0) async throws -> Int
+    {
         self.logger.debug("Clearing current field")
+        try await self.validateDelivery(
+            deliveryValidator,
+            emittedUnitCount: priorEmittedUnitCount)
 
         if let targetProcessIdentifier {
-            if try BackgroundInputDriver.replaceFocusedText(
-                with: "",
-                targetProcessIdentifier: targetProcessIdentifier)
-            {
-                try await Task.sleep(nanoseconds: 50_000_000) // 50ms
-                return
+            do {
+                if try BackgroundInputDriver.replaceFocusedText(
+                    with: "",
+                    targetProcessIdentifier: targetProcessIdentifier)
+                {
+                    do {
+                        try await Task.sleep(nanoseconds: 50_000_000) // 50ms
+                    } catch {
+                        throw Self.indeterminateDeliveryError(
+                            from: error,
+                            emittedUnitCount: priorEmittedUnitCount + 1)
+                    }
+                    return 1
+                }
+            } catch let error as InputDeliveryIndeterminateError {
+                throw error
+            } catch {
+                throw Self.indeterminateDeliveryError(
+                    from: error,
+                    emittedUnitCount: priorEmittedUnitCount > 0 ? priorEmittedUnitCount : nil)
             }
 
-            try BackgroundInputDriver.tapKey(
-                keyCode: 0x00,
-                modifiers: .maskCommand,
-                targetProcessIdentifier: targetProcessIdentifier)
+            do {
+                try BackgroundInputDriver.tapKey(
+                    keyCode: 0x00,
+                    modifiers: .maskCommand,
+                    targetProcessIdentifier: targetProcessIdentifier)
+            } catch {
+                throw Self.indeterminateDeliveryError(
+                    from: error,
+                    emittedUnitCount: priorEmittedUnitCount > 0 ? priorEmittedUnitCount : nil)
+            }
         } else {
-            try self.syntheticInputDriver.hotkey(keys: ["cmd", "a"], holdDuration: 0.1)
+            do {
+                try self.syntheticInputDriver.hotkey(keys: ["cmd", "a"], holdDuration: 0.1)
+            } catch {
+                throw Self.indeterminateDeliveryError(
+                    from: error,
+                    emittedUnitCount: priorEmittedUnitCount > 0 ? priorEmittedUnitCount : nil)
+            }
         }
-        try await Task.sleep(nanoseconds: 50_000_000) // 50ms
+        do {
+            try await Task.sleep(nanoseconds: 50_000_000) // 50ms
+        } catch {
+            throw Self.indeterminateDeliveryError(
+                from: error,
+                emittedUnitCount: priorEmittedUnitCount + 1)
+        }
 
+        try await self.validateDelivery(
+            deliveryValidator,
+            emittedUnitCount: priorEmittedUnitCount + 1)
         if let targetProcessIdentifier {
-            try BackgroundInputDriver.tapKey(
-                keyCode: TypeServiceSpecialKeyMapping.keyCode(for: .delete),
-                targetProcessIdentifier: targetProcessIdentifier)
+            do {
+                try BackgroundInputDriver.tapKey(
+                    keyCode: TypeServiceSpecialKeyMapping.keyCode(for: .delete),
+                    targetProcessIdentifier: targetProcessIdentifier)
+            } catch {
+                throw Self.indeterminateDeliveryError(
+                    from: error,
+                    emittedUnitCount: priorEmittedUnitCount + 1)
+            }
         } else {
-            try self.syntheticInputDriver.tapKey(.delete, modifiers: [])
+            do {
+                try self.syntheticInputDriver.tapKey(.delete, modifiers: [])
+            } catch {
+                throw Self.indeterminateDeliveryError(
+                    from: error,
+                    emittedUnitCount: priorEmittedUnitCount + 1)
+            }
         }
-        try await Task.sleep(nanoseconds: 50_000_000) // 50ms
+        do {
+            try await Task.sleep(nanoseconds: 50_000_000) // 50ms
+        } catch {
+            throw Self.indeterminateDeliveryError(
+                from: error,
+                emittedUnitCount: priorEmittedUnitCount + 2)
+        }
+        return 2
+    }
+
+    private func validateDelivery(
+        _ deliveryValidator: (@MainActor @Sendable () async throws -> Void)?,
+        emittedUnitCount: Int) async throws
+    {
+        guard let deliveryValidator else { return }
+
+        do {
+            try await deliveryValidator()
+        } catch let error as InputDeliveryIndeterminateError {
+            throw error
+        } catch {
+            guard emittedUnitCount > 0 else { throw error }
+            throw InputDeliveryIndeterminateError(
+                operation: .type,
+                emittedUnitCount: emittedUnitCount,
+                causeDescription: error.localizedDescription)
+        }
+    }
+
+    private static func indeterminateDeliveryError(
+        from error: any Error,
+        emittedUnitCount: Int?) -> InputDeliveryIndeterminateError
+    {
+        if let error = error as? InputDeliveryIndeterminateError {
+            return error
+        }
+        return InputDeliveryIndeterminateError(
+            operation: .type,
+            emittedUnitCount: emittedUnitCount,
+            causeDescription: error.localizedDescription)
     }
 
     private func typeTextWithDelay(_ text: String, delay: TimeInterval) async throws {
@@ -443,15 +586,19 @@ public final class TypeService {
 
     private func typeCharacter(_ char: Character, targetProcessIdentifier: pid_t? = nil) async throws {
         if let targetProcessIdentifier {
-            if try BackgroundInputDriver.insertTextIntoFocusedText(
-                String(char),
-                targetProcessIdentifier: targetProcessIdentifier)
-            {
-                return
-            }
-            try BackgroundInputDriver.typeCharacter(char, targetProcessIdentifier: targetProcessIdentifier)
+            try self.targetedCharacterTyper(char, targetProcessIdentifier)
         } else {
             try self.syntheticInputDriver.type(String(char), delayPerCharacter: 0)
         }
+    }
+
+    private static func typeTargetedCharacter(_ char: Character, targetProcessIdentifier: pid_t) throws {
+        if try BackgroundInputDriver.insertTextIntoFocusedText(
+            String(char),
+            targetProcessIdentifier: targetProcessIdentifier)
+        {
+            return
+        }
+        try BackgroundInputDriver.typeCharacter(char, targetProcessIdentifier: targetProcessIdentifier)
     }
 }

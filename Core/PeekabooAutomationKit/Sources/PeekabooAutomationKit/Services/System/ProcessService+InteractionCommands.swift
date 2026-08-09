@@ -40,7 +40,11 @@ extension ProcessService {
             snapshotId: context.snapshotId)
     }
 
-    func executeTypeCommand(_ step: ScriptStep, snapshotId: String?) async throws -> StepExecutionResult {
+    func executeTypeCommand(
+        _ step: ScriptStep,
+        snapshotId: String?,
+        backgroundKeyboardDestinationProof: BackgroundKeyboardDestinationProof?) async throws -> StepExecutionResult
+    {
         // Extract type parameters - should already be normalized
         guard case let .type(typeParams) = step.params else {
             throw PeekabooError.invalidInput(field: "params", reason: "Invalid parameters for type command")
@@ -48,7 +52,8 @@ extension ProcessService {
 
         let context = try await self.resolveInteractionContext(
             .init(typeParams),
-            inheritedSnapshot: snapshotId)
+            inheritedSnapshot: snapshotId,
+            backgroundKeyboardDestinationProof: backgroundKeyboardDestinationProof)
         let clearFirst = typeParams.clearFirst ?? false
         let pressEnter = typeParams.pressEnter ?? false
         var actions: [TypeAction] = []
@@ -63,10 +68,34 @@ extension ProcessService {
         }
 
         try await self.prepareForegroundIfNeeded(context)
+        var expectedFocusedElement = context.expectedFocusedElement
         if let field = typeParams.field {
             try await self.performClick(target: .query(field), clickType: .single, context: context)
+            if context.requiresFocusedElementProof {
+                guard let processID = context.processId,
+                      let windowID = context.windowId,
+                      let snapshotID = context.snapshotId,
+                      let focused = await self.focusedDestinationIdentity(
+                          after: .query(field),
+                          snapshotID: snapshotID,
+                          processID: processID,
+                          windowID: windowID)
+                else {
+                    throw PeekabooError.invalidInput(
+                        field: "target",
+                        reason: "The background field click did not prove that its destination received focus")
+                }
+                expectedFocusedElement = focused
+            }
         }
-        _ = try await self.performTypeActions(actions, context: context)
+        if context.requiresFocusedElementProof {
+            _ = try await self.performExactWindowTypeActions(
+                actions,
+                context: context,
+                expectedFocusedElement: expectedFocusedElement)
+        } else {
+            _ = try await self.performTypeActions(actions, context: context)
+        }
 
         return StepExecutionResult(
             output: .data([
@@ -205,14 +234,19 @@ extension ProcessService {
             snapshotId: snapshotId)
     }
 
-    func executeHotkeyCommand(_ step: ScriptStep, snapshotId: String?) async throws -> StepExecutionResult {
+    func executeHotkeyCommand(
+        _ step: ScriptStep,
+        snapshotId: String?,
+        backgroundKeyboardDestinationProof: BackgroundKeyboardDestinationProof?) async throws -> StepExecutionResult
+    {
         // Extract hotkey parameters - should already be normalized
         guard case let .hotkey(hotkeyParams) = step.params else {
             throw PeekabooError.invalidInput(field: "params", reason: "Invalid parameters for hotkey command")
         }
         let context = try await self.resolveInteractionContext(
             .init(hotkeyParams),
-            inheritedSnapshot: snapshotId)
+            inheritedSnapshot: snapshotId,
+            backgroundKeyboardDestinationProof: backgroundKeyboardDestinationProof)
 
         let modifiers = hotkeyParams.modifiers.compactMap { mod -> ModifierKey? in
             switch mod.lowercased() {
@@ -229,7 +263,11 @@ extension ProcessService {
             .key
 
         try await self.prepareForegroundIfNeeded(context)
-        try await self.performHotkey(keyCombo, context: context)
+        if context.requiresFocusedElementProof {
+            try await self.performExactWindowHotkey(keyCombo, context: context)
+        } else {
+            try await self.performHotkey(keyCombo, context: context)
+        }
 
         return StepExecutionResult(
             output: .data([
@@ -258,8 +296,12 @@ extension ProcessService {
         let snapshotId: String?
         let processId: pid_t?
         let windowId: Int?
+        let windowBounds: CGRect?
+        let windowIdentity: WindowMutationIdentity?
+        let expectedFocusedElement: FocusedElementIdentity?
         let app: String?
         let foreground: Bool
+        let requiresFocusedElementProof: Bool
 
         var deliveryName: String {
             self.foreground ? "foreground" : "background"
@@ -273,6 +315,8 @@ extension ProcessService {
         let snapshot: String?
         let foreground: Bool?
         let command: String
+        let hasFieldTarget: Bool
+        let requiresSnapshotContext: Bool
 
         init(_ params: ProcessCommandParameters.ClickParameters) {
             self.app = params.app
@@ -281,6 +325,8 @@ extension ProcessService {
             self.snapshot = params.snapshot
             self.foreground = params.foreground
             self.command = "click"
+            self.hasFieldTarget = false
+            self.requiresSnapshotContext = params.windowId != nil
         }
 
         init(_ params: ProcessCommandParameters.TypeParameters) {
@@ -290,6 +336,8 @@ extension ProcessService {
             self.snapshot = params.snapshot
             self.foreground = params.foreground
             self.command = "type"
+            self.hasFieldTarget = params.field?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            self.requiresSnapshotContext = params.windowId != nil || self.hasFieldTarget
         }
 
         init(_ params: ProcessCommandParameters.ScrollParameters) {
@@ -299,6 +347,9 @@ extension ProcessService {
             self.snapshot = params.snapshot
             self.foreground = params.foreground
             self.command = "scroll"
+            self.hasFieldTarget = false
+            self.requiresSnapshotContext = params.windowId != nil ||
+                params.target?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
         }
 
         init(_ params: ProcessCommandParameters.HotkeyParameters) {
@@ -308,12 +359,16 @@ extension ProcessService {
             self.snapshot = params.snapshot
             self.foreground = params.foreground
             self.command = "hotkey"
+            self.hasFieldTarget = false
+            self.requiresSnapshotContext = params.windowId != nil
         }
     }
 
     private func resolveInteractionContext(
         _ request: InteractionTargetRequest,
-        inheritedSnapshot: String?) async throws -> InteractionContext
+        inheritedSnapshot: String?,
+        backgroundKeyboardDestinationProof: BackgroundKeyboardDestinationProof? = nil) async throws
+        -> InteractionContext
     {
         let app = request.app
         let pid = request.pid
@@ -334,23 +389,47 @@ extension ProcessService {
         }
 
         let hasExplicitTarget = app != nil || pid != nil || windowId != nil
-        let effectiveSnapshot = snapshot ?? (hasExplicitTarget ? nil : inheritedSnapshot)
+        let effectiveSnapshot = snapshot ??
+            (hasExplicitTarget && !request.requiresSnapshotContext ? nil : inheritedSnapshot)
         var snapshotPID: pid_t?
         var snapshotWindowID: Int?
+        var snapshotWindowBounds: CGRect?
+        var snapshotWindowIdentity: WindowMutationIdentity?
         if let effectiveSnapshot {
             if let automationSnapshot = try await self.snapshotManager.getUIAutomationSnapshot(
                 snapshotId: effectiveSnapshot)
             {
                 snapshotPID = automationSnapshot.applicationProcessId.map { pid_t($0) }
                 snapshotWindowID = automationSnapshot.windowID.map(Int.init)
+                snapshotWindowBounds = automationSnapshot.windowBounds
+                snapshotWindowIdentity = automationSnapshot.windowMutationIdentity
             } else if let detection = try await self.snapshotManager.getDetectionResult(snapshotId: effectiveSnapshot) {
                 snapshotPID = detection.metadata.windowContext?.applicationProcessId.map { pid_t($0) }
                 snapshotWindowID = detection.metadata.windowContext?.windowID
+                snapshotWindowBounds = detection.metadata.windowContext?.windowBounds
+                snapshotWindowIdentity = detection.metadata.windowContext?.windowMutationIdentity
             } else {
                 throw PeekabooError.snapshotNotFound(effectiveSnapshot)
             }
         }
+        if let windowId, let snapshotWindowID, windowId != snapshotWindowID {
+            throw PeekabooError.invalidInput(
+                field: "target",
+                reason: "\(command) windowId \(windowId) does not match snapshot window \(snapshotWindowID)")
+        }
 
+        let useForeground = foreground ?? false
+        if !useForeground,
+           command == "type" || command == "hotkey",
+           windowId != nil,
+           effectiveSnapshot == nil
+        {
+            throw PeekabooError.invalidInput(
+                field: "target",
+                reason: "Background \(command) cannot safely target a specific window without a focused-element " +
+                    "proof. Use a snapshot-scoped field or exact-window click, target app/pid without a window " +
+                    "selector, or set foreground: true")
+        }
         let windowPID = windowId.flatMap(Self.processIdentifierForWindow)
         if let windowId, windowPID == nil {
             throw PeekabooError.windowNotFound(criteria: "window id \(windowId)")
@@ -368,7 +447,6 @@ extension ProcessService {
                 reason: "\(command) target fields resolve to different processes")
         }
 
-        let useForeground = foreground ?? false
         let resolvedPID = candidates.first
         if !useForeground, resolvedPID == nil {
             throw Self.explicitForegroundRequired(
@@ -376,12 +454,68 @@ extension ProcessService {
                 reason: "background delivery needs app, pid, windowId, or a process-scoped snapshot")
         }
 
+        let resolvedWindowID = windowId ?? snapshotWindowID
+        let windowIdentity: WindowMutationIdentity? = if !useForeground,
+                                                         let resolvedWindowID,
+                                                         let resolvedPID,
+                                                         let windowBounds = snapshotWindowBounds,
+                                                         let identity = snapshotWindowIdentity,
+                                                         identity.windowID == resolvedWindowID,
+                                                         identity.ownerProcessIdentifier == resolvedPID,
+                                                         let cgWindowID = CGWindowID(exactly: resolvedWindowID),
+                                                         let currentWindow = self
+                                                             .systemWindowIdentityProvider(cgWindowID),
+                                                             currentWindow.ownerProcessIdentifier == resolvedPID,
+                                                             currentWindow.bounds == windowBounds,
+                                                             self.windowMutationIdentityProvider(cgWindowID) == identity
+        {
+            identity
+        } else {
+            nil
+        }
+        if !useForeground, resolvedWindowID != nil, windowIdentity == nil {
+            throw PeekabooError.invalidInput(
+                field: "target",
+                reason: "Exact-window identity changed; capture a fresh snapshot before background input")
+        }
+        let windowScopedKeyboard = !useForeground &&
+            (command == "type" || command == "hotkey") &&
+            resolvedWindowID != nil
+        let proofMatches = if let proof = backgroundKeyboardDestinationProof,
+                              let effectiveSnapshot,
+                              let resolvedPID,
+                              let resolvedWindowID,
+                              let windowIdentity
+        {
+            proof.snapshotID == effectiveSnapshot &&
+                proof.processID == resolvedPID &&
+                proof.windowID == resolvedWindowID &&
+                proof.windowIdentity == windowIdentity
+        } else {
+            false
+        }
+        let fieldCanProveDestination = command == "type" &&
+            request.hasFieldTarget &&
+            effectiveSnapshot != nil &&
+            snapshotWindowBounds != nil
+        if windowScopedKeyboard, !proofMatches, !fieldCanProveDestination {
+            throw PeekabooError.invalidInput(
+                field: "target",
+                reason: "Background \(command) cannot safely target a specific window without a focused-element " +
+                    "proof. Use a snapshot-scoped type field, immediately follow a successful exact-window " +
+                    "click, target app/pid without a window selector, or set foreground: true")
+        }
+
         return InteractionContext(
             snapshotId: effectiveSnapshot,
             processId: resolvedPID,
-            windowId: windowId ?? snapshotWindowID,
+            windowId: resolvedWindowID,
+            windowBounds: snapshotWindowBounds,
+            windowIdentity: windowIdentity,
+            expectedFocusedElement: proofMatches ? backgroundKeyboardDestinationProof?.focusedElement : nil,
             app: app,
-            foreground: useForeground)
+            foreground: useForeground,
+            requiresFocusedElementProof: windowScopedKeyboard)
     }
 
     private func prepareForegroundIfNeeded(_ context: InteractionContext) async throws {
@@ -393,6 +527,82 @@ extension ProcessService {
         } else if let processId = context.processId {
             try await self.applicationService.activateApplication(identifier: "PID:\(processId)")
         }
+    }
+
+    func backgroundKeyboardDestinationProof(
+        after step: ScriptStep,
+        result: StepExecutionResult) async -> BackgroundKeyboardDestinationProof?
+    {
+        guard let normalizedStep = try? self.normalizeStepParameters(step) else {
+            return nil
+        }
+        guard normalizedStep.command.lowercased() == "click",
+              case let .click(params) = normalizedStep.params,
+              params.foreground != true,
+              let snapshotID = result.snapshotId
+        else {
+            return nil
+        }
+
+        let processID: pid_t?
+        let windowID: Int?
+        let windowBounds: CGRect?
+        let capturedWindowIdentity: WindowMutationIdentity?
+        if let snapshot = try? await self.snapshotManager.getUIAutomationSnapshot(snapshotId: snapshotID) {
+            processID = snapshot.applicationProcessId.map { pid_t($0) }
+            windowID = snapshot.windowID.map(Int.init)
+            windowBounds = snapshot.windowBounds
+            capturedWindowIdentity = snapshot.windowMutationIdentity
+        } else if let detection = try? await self.snapshotManager.getDetectionResult(snapshotId: snapshotID) {
+            processID = detection.metadata.windowContext?.applicationProcessId.map { pid_t($0) }
+            windowID = detection.metadata.windowContext?.windowID
+            windowBounds = detection.metadata.windowContext?.windowBounds
+            capturedWindowIdentity = detection.metadata.windowContext?.windowMutationIdentity
+        } else {
+            return nil
+        }
+
+        guard let processID,
+              let windowID,
+              let windowBounds,
+              let capturedWindowIdentity,
+              capturedWindowIdentity.windowID == windowID,
+              capturedWindowIdentity.ownerProcessIdentifier == processID,
+              let cgWindowID = CGWindowID(exactly: windowID),
+              let currentWindow = self.systemWindowIdentityProvider(cgWindowID),
+              currentWindow.ownerProcessIdentifier == processID,
+              currentWindow.bounds == windowBounds,
+              self.windowMutationIdentityProvider(cgWindowID) == capturedWindowIdentity
+        else {
+            return nil
+        }
+
+        let clickTarget: ClickTarget
+        if let label = params.label {
+            clickTarget = .query(label)
+        } else if let x = params.x, let y = params.y {
+            clickTarget = .coordinates(CGPoint(x: x, y: y))
+        } else {
+            return nil
+        }
+        guard let focusedElement = await self.focusedDestinationIdentity(
+            after: clickTarget,
+            snapshotID: snapshotID,
+            processID: processID,
+            windowID: windowID)
+        else {
+            return nil
+        }
+
+        // A successful exact-window click authorizes only the immediately following keyboard step.
+        // The exact keyboard operation remains the proof boundary: it atomically revalidates the
+        // focused element's PID, CGWindowID, and bounds before dispatching any input.
+        return BackgroundKeyboardDestinationProof(
+            snapshotID: snapshotID,
+            processID: processID,
+            windowID: windowID,
+            windowIdentity: capturedWindowIdentity,
+            focusedElement: focusedElement)
     }
 
     private func performClick(
@@ -419,9 +629,11 @@ extension ProcessService {
             throw PeekabooError.serviceUnavailable("Background click unavailable: \(reason)")
         }
 
-        if let windowId = context.windowId {
+        if context.windowId != nil {
             guard let exact = targeted as? any ExactWindowTargetedClickServiceProtocol,
-                  exact.supportsExactWindowTargetedClicks
+                  exact.supportsExactWindowTargetedClicks,
+                  let windowIdentity = context.windowIdentity,
+                  let windowBounds = context.windowBounds
             else {
                 throw PeekabooError.serviceUnavailable(
                     "Background click for windowId requires exact-window targeting support")
@@ -430,8 +642,8 @@ extension ProcessService {
                 target: target,
                 clickType: clickType,
                 snapshotId: context.snapshotId,
-                targetProcessIdentifier: processId,
-                targetWindowID: windowId)
+                expectedWindowIdentity: windowIdentity,
+                expectedWindowBounds: windowBounds)
         } else {
             try await targeted.click(
                 target: target,
@@ -472,6 +684,32 @@ extension ProcessService {
             targetProcessIdentifier: processId)
     }
 
+    private func performExactWindowTypeActions(
+        _ actions: [TypeAction],
+        context: InteractionContext,
+        expectedFocusedElement: FocusedElementIdentity?) async throws -> TypeResult
+    {
+        guard context.processId != nil,
+              context.windowId != nil,
+              let windowBounds = context.windowBounds,
+              let windowIdentity = context.windowIdentity,
+              let expectedFocusedElement,
+              let atomic = self.uiAutomationService as? any ExactWindowTargetedKeyboardServiceProtocol,
+              atomic.supportsExactWindowTargetedKeyboard
+        else {
+            throw PeekabooError.serviceUnavailable(
+                "Exact-window background typing requires atomic focus validation and dispatch")
+        }
+        return try await atomic.typeActions(
+            actions,
+            cadence: .fixed(milliseconds: 50),
+            snapshotId: context.snapshotId,
+            target: ExactWindowKeyboardTarget(
+                windowIdentity: windowIdentity,
+                windowBounds: windowBounds,
+                focusedElement: expectedFocusedElement))
+    }
+
     private func performHotkey(_ keys: String, context: InteractionContext) async throws {
         if context.foreground {
             try await self.uiAutomationService.hotkey(keys: keys, holdDuration: 0)
@@ -489,6 +727,66 @@ extension ProcessService {
             throw PeekabooError.serviceUnavailable("Background hotkey unavailable: \(reason)")
         }
         try await targeted.hotkey(keys: keys, holdDuration: 0, targetProcessIdentifier: processId)
+    }
+
+    private func performExactWindowHotkey(_ keys: String, context: InteractionContext) async throws {
+        guard context.processId != nil,
+              context.windowId != nil,
+              let windowBounds = context.windowBounds,
+              let windowIdentity = context.windowIdentity,
+              let expectedFocusedElement = context.expectedFocusedElement,
+              let atomic = self.uiAutomationService as? any ExactWindowTargetedKeyboardServiceProtocol,
+              atomic.supportsExactWindowTargetedKeyboard
+        else {
+            throw PeekabooError.serviceUnavailable(
+                "Exact-window background hotkeys require atomic focus validation and dispatch")
+        }
+        try await atomic.hotkey(
+            keys: keys,
+            holdDuration: 0,
+            target: ExactWindowKeyboardTarget(
+                windowIdentity: windowIdentity,
+                windowBounds: windowBounds,
+                focusedElement: expectedFocusedElement))
+    }
+
+    private func focusedDestinationIdentity(
+        after target: ClickTarget,
+        snapshotID: String,
+        processID: pid_t,
+        windowID: Int) async -> FocusedElementIdentity?
+    {
+        guard let focusedService = self.uiAutomationService as? any TargetedFocusedElementServiceProtocol,
+              let focused = await focusedService.getFocusedElement(targetProcessIdentifier: processID),
+              let identity = FocusedElementIdentity(focused),
+              identity.processIdentifier == processID,
+              identity.windowID == windowID
+        else { return nil }
+
+        let expectedElement: DetectedElement?
+        switch target {
+        case let .coordinates(point):
+            return focused.frame.contains(point) ? identity : nil
+        case let .elementId(elementID):
+            let detection = try? await self.snapshotManager.getDetectionResult(snapshotId: snapshotID)
+            expectedElement = detection?.elements.findById(elementID)
+        case let .query(query):
+            let detection = try? await self.snapshotManager.getDetectionResult(snapshotId: snapshotID)
+            expectedElement = detection.flatMap { ClickService.resolveTargetElement(query: query, in: $0) }
+        }
+
+        guard let expectedElement else { return nil }
+        if let expectedIdentifier = expectedElement.attributes["identifier"],
+           !expectedIdentifier.isEmpty,
+           let focusedIdentifier = identity.identifier,
+           focusedIdentifier != expectedIdentifier
+        {
+            return nil
+        }
+        let framesMatch = expectedElement.bounds == identity.frame ||
+            expectedElement.bounds.contains(CGPoint(x: identity.frame.midX, y: identity.frame.midY)) ||
+            identity.frame.contains(CGPoint(x: expectedElement.bounds.midX, y: expectedElement.bounds.midY))
+        return framesMatch ? identity : nil
     }
 
     private func interactionOutput(message: String, context: InteractionContext) -> ProcessCommandOutput {

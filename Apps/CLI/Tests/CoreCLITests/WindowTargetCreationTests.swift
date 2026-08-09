@@ -1,3 +1,4 @@
+import CoreGraphics
 import PeekabooCore
 import Testing
 @testable import PeekabooCLI
@@ -98,6 +99,66 @@ struct WindowTargetCreationTests {
             #expect(id == 12345)
         default:
             Issue.record("Expected .windowId")
+        }
+    }
+
+    @Test
+    func `exact mutation selection inventories only the requested PID owner`() throws {
+        var options = WindowIdentificationOptions()
+        options.pid = 12345
+        options.windowId = 678
+
+        switch try options.toWindowSelectionTarget() {
+        case let .application(app):
+            #expect(app == "PID:12345")
+        default:
+            Issue.record("Expected PID application inventory target")
+        }
+    }
+
+    @Test
+    func `exact mutation selection without an owner keeps exact ID lookup`() throws {
+        var options = WindowIdentificationOptions()
+        options.windowId = 678
+
+        switch try options.toWindowSelectionTarget() {
+        case let .windowId(id):
+            #expect(id == 678)
+        default:
+            Issue.record("Expected exact window ID target")
+        }
+    }
+
+    @Test
+    @MainActor
+    func `exact PID mutation selection rejects another owner receipt`() {
+        var options = WindowIdentificationOptions()
+        options.pid = 42
+        options.windowId = 678
+        let window = ServiceWindowInfo(
+            windowID: 678,
+            title: "Fixture",
+            bounds: CGRect(x: 0, y: 0, width: 100, height: 100),
+            mutationIdentity: WindowMutationIdentity(
+                windowID: 678,
+                ownerProcessIdentifier: 99,
+                ownerProcessStartIdentity: 8,
+                capturedBounds: CGRect(x: 0, y: 0, width: 100, height: 100)
+            )
+        )
+        let application = ServiceApplicationInfo(
+            processIdentifier: 42,
+            processStartIdentity: 7,
+            bundleIdentifier: "example.fixture",
+            name: "Fixture"
+        )
+
+        #expect(throws: (any Error).self) {
+            try options.requireMutationWindow(
+                from: [window],
+                expectedApplication: application,
+                action: "restore"
+            )
         }
     }
 

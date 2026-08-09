@@ -8,38 +8,111 @@ public struct ApplicationLaunchRequest: Sendable, Codable, Equatable {
     public let openURLs: [URL]
     public let activates: Bool
     public let waitUntilReady: Bool
+    public let waitForWindow: Bool
+    public let createsNewInstance: Bool
 
     public init(
         applicationIdentifier: String? = nil,
         applicationBundleIdentifier: String? = nil,
         openURLs: [URL] = [],
         activates: Bool = false,
-        waitUntilReady: Bool = false)
+        waitUntilReady: Bool = false,
+        waitForWindow: Bool = false,
+        createsNewInstance: Bool = false)
     {
         self.applicationIdentifier = applicationIdentifier
         self.applicationBundleIdentifier = applicationBundleIdentifier
         self.openURLs = openURLs
         self.activates = activates
         self.waitUntilReady = waitUntilReady
+        self.waitForWindow = waitForWindow
+        self.createsNewInstance = createsNewInstance
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case applicationIdentifier
+        case applicationBundleIdentifier
+        case openURLs
+        case activates
+        case waitUntilReady
+        case waitForWindow
+        case createsNewInstance
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.applicationIdentifier = try container.decodeIfPresent(String.self, forKey: .applicationIdentifier)
+        self.applicationBundleIdentifier = try container.decodeIfPresent(
+            String.self,
+            forKey: .applicationBundleIdentifier)
+        self.openURLs = try container.decode([URL].self, forKey: .openURLs)
+        self.activates = try container.decode(Bool.self, forKey: .activates)
+        self.waitUntilReady = try container.decode(Bool.self, forKey: .waitUntilReady)
+        self.waitForWindow = try container.decodeIfPresent(Bool.self, forKey: .waitForWindow) ?? false
+        self.createsNewInstance = try container.decodeIfPresent(Bool.self, forKey: .createsNewInstance) ?? false
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encodeIfPresent(self.applicationIdentifier, forKey: .applicationIdentifier)
+        try container.encodeIfPresent(self.applicationBundleIdentifier, forKey: .applicationBundleIdentifier)
+        try container.encode(self.openURLs, forKey: .openURLs)
+        try container.encode(self.activates, forKey: .activates)
+        try container.encode(self.waitUntilReady, forKey: .waitUntilReady)
+        try container.encode(self.waitForWindow, forKey: .waitForWindow)
+        try container.encode(self.createsNewInstance, forKey: .createsNewInstance)
     }
 }
 
 public struct ApplicationRelaunchRequest: Sendable, Codable, Equatable {
     public let targetIdentifier: String
+    public let expectedTargetIdentity: ApplicationProcessIdentity?
     public let launchRequest: ApplicationLaunchRequest
     public let force: Bool
     public let waitSeconds: TimeInterval
 
     public init(
         targetIdentifier: String,
+        expectedTargetIdentity: ApplicationProcessIdentity? = nil,
         launchRequest: ApplicationLaunchRequest,
         force: Bool = false,
         waitSeconds: TimeInterval = 2)
     {
         self.targetIdentifier = targetIdentifier
+        self.expectedTargetIdentity = expectedTargetIdentity
         self.launchRequest = launchRequest
         self.force = force
         self.waitSeconds = waitSeconds
+    }
+}
+
+/// Pins an application mutation to one process generation.
+///
+/// PIDs are reusable. Destructive callers must retain this receipt from application discovery and
+/// hosts must revalidate it immediately before dispatching the mutation.
+public struct ApplicationProcessIdentity: Sendable, Codable, Equatable {
+    public let processIdentifier: Int32
+    public let processStartIdentity: UInt64
+
+    public init(processIdentifier: Int32, processStartIdentity: UInt64) {
+        self.processIdentifier = processIdentifier
+        self.processStartIdentity = processStartIdentity
+    }
+}
+
+public struct ApplicationQuitRequest: Sendable, Codable, Equatable {
+    public let identifier: String
+    public let force: Bool
+    public let expectedIdentity: ApplicationProcessIdentity?
+
+    public init(
+        identifier: String,
+        force: Bool = false,
+        expectedIdentity: ApplicationProcessIdentity? = nil)
+    {
+        self.identifier = identifier
+        self.force = force
+        self.expectedIdentity = expectedIdentity
     }
 }
 
@@ -49,8 +122,17 @@ public protocol ApplicationServiceProtocol: Sendable {
     /// Whether this service implements the full `ApplicationLaunchRequest` contract.
     var supportsApplicationLaunchOptions: Bool { get }
 
+    /// Whether launch requests can require a distinct process even when the app is already running.
+    var supportsNewApplicationInstanceLaunch: Bool { get }
+
+    /// Whether launch requests can wait for a regular app to expose a real window.
+    var supportsApplicationWindowReadiness: Bool { get }
+
     /// Whether this service keeps quit/wait/launch in one host-side transaction.
     var supportsApplicationRelaunch: Bool { get }
+
+    /// Whether quit requests can be pinned to an exact process generation.
+    var supportsProcessGenerationPinnedApplicationQuit: Bool { get }
 
     /// List all running applications
     /// - Returns: UnifiedToolOutput containing application information
@@ -76,7 +158,7 @@ public protocol ApplicationServiceProtocol: Sendable {
     /// Check if an application is running
     /// - Parameter identifier: Application name or bundle ID
     /// - Returns: True if the application is running
-    func isApplicationRunning(identifier: String) async -> Bool
+    func isApplicationRunning(identifier: String) async throws -> Bool
 
     /// Launch an application
     /// - Parameter identifier: Application name or bundle ID
@@ -100,6 +182,9 @@ public protocol ApplicationServiceProtocol: Sendable {
     /// - Returns: True if the application was successfully quit
     func quitApplication(identifier: String, force: Bool) async throws -> Bool
 
+    /// Quit only while the resolved process still matches the discovery receipt.
+    func quitApplication(request: ApplicationQuitRequest) async throws -> Bool
+
     /// Hide an application
     /// - Parameter identifier: Application name or bundle ID
     func hideApplication(identifier: String) async throws
@@ -121,7 +206,19 @@ extension ApplicationServiceProtocol {
         false
     }
 
+    public var supportsNewApplicationInstanceLaunch: Bool {
+        false
+    }
+
+    public var supportsApplicationWindowReadiness: Bool {
+        false
+    }
+
     public var supportsApplicationRelaunch: Bool {
+        false
+    }
+
+    public var supportsProcessGenerationPinnedApplicationQuit: Bool {
         false
     }
 
@@ -129,7 +226,9 @@ extension ApplicationServiceProtocol {
         guard let identifier = request.applicationIdentifier,
               request.openURLs.isEmpty,
               request.activates,
-              !request.waitUntilReady
+              !request.waitUntilReady,
+              !request.waitForWindow,
+              !request.createsNewInstance
         else {
             throw PeekabooError.serviceUnavailable(
                 "This application service does not support launch options; update the Peekaboo runtime host")
@@ -141,12 +240,26 @@ extension ApplicationServiceProtocol {
         throw PeekabooError.serviceUnavailable(
             "This application service does not support atomic relaunch; update the Peekaboo runtime host")
     }
+
+    public func quitApplication(request: ApplicationQuitRequest) async throws -> Bool {
+        guard request.expectedIdentity == nil else {
+            throw PeekabooError.serviceUnavailable(
+                "This application service does not support process-generation-pinned quit; update the runtime host")
+        }
+        return try await self.quitApplication(identifier: request.identifier, force: request.force)
+    }
 }
 
 /// Information about an application for service layer
 public struct ServiceApplicationInfo: Sendable, Codable, Equatable {
     /// Process identifier
     public let processIdentifier: Int32
+
+    /// Process-generation token captured while this application was resolved.
+    ///
+    /// Older Bridge hosts omit this field. Destructive callers must treat `nil` as unpinned and
+    /// fail closed instead of relying on the reusable numeric PID alone.
+    public let processStartIdentity: UInt64?
 
     /// Bundle identifier (e.g., "com.apple.Safari")
     public let bundleIdentifier: String?
@@ -166,6 +279,12 @@ public struct ServiceApplicationInfo: Sendable, Codable, Equatable {
     /// Number of windows
     public var windowCount: Int
 
+    /// Exact WindowServer identifiers known for the application's current windows.
+    ///
+    /// Older Bridge hosts omit this field, so callers must treat `nil` as unknown rather than
+    /// claiming the application has no windows. A non-`nil` value is a point-in-time snapshot.
+    public let windowIDs: [Int]?
+
     /// macOS activation policy, when known.
     public let activationPolicy: ServiceApplicationActivationPolicy?
 
@@ -174,24 +293,36 @@ public struct ServiceApplicationInfo: Sendable, Codable, Equatable {
 
     public init(
         processIdentifier: Int32,
+        processStartIdentity: UInt64? = nil,
         bundleIdentifier: String?,
         name: String,
         bundlePath: String? = nil,
         isActive: Bool = false,
         isHidden: Bool = false,
         windowCount: Int = 0,
+        windowIDs: [Int]? = nil,
         activationPolicy: ServiceApplicationActivationPolicy? = nil,
         isFinishedLaunching: Bool? = nil)
     {
         self.processIdentifier = processIdentifier
+        self.processStartIdentity = processStartIdentity
         self.bundleIdentifier = bundleIdentifier
         self.name = name
         self.bundlePath = bundlePath
         self.isActive = isActive
         self.isHidden = isHidden
         self.windowCount = windowCount
+        self.windowIDs = windowIDs
         self.activationPolicy = activationPolicy
         self.isFinishedLaunching = isFinishedLaunching
+    }
+
+    public var processIdentity: ApplicationProcessIdentity? {
+        self.processStartIdentity.map {
+            ApplicationProcessIdentity(
+                processIdentifier: self.processIdentifier,
+                processStartIdentity: $0)
+        }
     }
 }
 
@@ -207,6 +338,43 @@ public enum WindowSharingState: Int, Codable, Sendable {
     case none = 0
     case readOnly = 1
     case readWrite = 2
+}
+
+/// Pins a destructive window mutation to one WindowServer ID and one process generation.
+///
+/// A numeric CGWindowID and PID can both be recycled. Callers must retain this receipt from the
+/// window-selection result and hosts must revalidate its immutable capture-time bounds after
+/// mutation admission and immediately before native dispatch. `isMinimized` is only a state hint;
+/// it is never identity evidence.
+public struct WindowMutationIdentity: Sendable, Codable, Equatable {
+    public let windowID: Int
+    public let ownerProcessIdentifier: Int32
+    public let ownerProcessStartIdentity: UInt64
+    public let capturedBounds: CGRect?
+    public let isMinimized: Bool?
+
+    public init(
+        windowID: Int,
+        ownerProcessIdentifier: Int32,
+        ownerProcessStartIdentity: UInt64,
+        capturedBounds: CGRect? = nil,
+        isMinimized: Bool? = nil)
+    {
+        self.windowID = windowID
+        self.ownerProcessIdentifier = ownerProcessIdentifier
+        self.ownerProcessStartIdentity = ownerProcessStartIdentity
+        self.capturedBounds = capturedBounds
+        self.isMinimized = isMinimized
+    }
+
+    public func withMinimizedState(_ isMinimized: Bool) -> WindowMutationIdentity {
+        WindowMutationIdentity(
+            windowID: self.windowID,
+            ownerProcessIdentifier: self.ownerProcessIdentifier,
+            ownerProcessStartIdentity: self.ownerProcessStartIdentity,
+            capturedBounds: self.capturedBounds,
+            isMinimized: isMinimized)
+    }
 }
 
 public struct ServiceWindowInfo: Sendable, Codable, Equatable {
@@ -270,6 +438,9 @@ public struct ServiceWindowInfo: Sendable, Codable, Equatable {
     /// Whether our own NSWindow asked to hide from the Windows menu
     public let isExcludedFromWindowsMenu: Bool
 
+    /// Process-generation receipt captured with this listing for later destructive mutations.
+    public let mutationIdentity: WindowMutationIdentity?
+
     enum CodingKeys: String, CodingKey {
         case windowID = "window_id"
         case title
@@ -291,6 +462,7 @@ public struct ServiceWindowInfo: Sendable, Codable, Equatable {
         case isOnScreen
         case sharingState
         case isExcludedFromWindowsMenu
+        case mutationIdentity
     }
 
     public init(
@@ -313,7 +485,8 @@ public struct ServiceWindowInfo: Sendable, Codable, Equatable {
         layer: Int = 0,
         isOnScreen: Bool = true,
         sharingState: WindowSharingState? = nil,
-        isExcludedFromWindowsMenu: Bool = false)
+        isExcludedFromWindowsMenu: Bool = false,
+        mutationIdentity: WindowMutationIdentity? = nil)
     {
         self.windowID = windowID
         self.title = title
@@ -335,6 +508,7 @@ public struct ServiceWindowInfo: Sendable, Codable, Equatable {
         self.isOnScreen = isOnScreen
         self.sharingState = sharingState
         self.isExcludedFromWindowsMenu = isExcludedFromWindowsMenu
+        self.mutationIdentity = mutationIdentity
     }
 
     public var isShareableWindow: Bool {

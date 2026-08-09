@@ -162,6 +162,11 @@ public protocol MCPToolSnapshotMutationCoordinating: Sendable {
     @MainActor
     @discardableResult
     func completeMutation(_ scope: MCPToolSnapshotMutationScope, succeeded: Bool) async -> Bool
+
+    /// Cancel preparation when a tool proves that no mutation was dispatched.
+    @MainActor
+    @discardableResult
+    func cancelMutation(_ scope: MCPToolSnapshotMutationScope) async -> Bool
 }
 
 extension MCPToolSnapshotMutationCoordinating {
@@ -173,6 +178,11 @@ extension MCPToolSnapshotMutationCoordinating {
         _: MCPToolSnapshotMutationScope) throws -> MCPToolMutationBarrierCompletion?
     {
         nil
+    }
+
+    @MainActor
+    public func cancelMutation(_: MCPToolSnapshotMutationScope) async -> Bool {
+        true
     }
 }
 
@@ -186,6 +196,8 @@ enum MCPToolSnapshotMutationPolicy {
             self.observationEffect(arguments: arguments)
         case "inspect_ui":
             self.observationEffect(arguments: arguments)
+        case "verify_state":
+            .freshObservation
         case "image":
             self.captureEffect(arguments: arguments)
         case "capture":

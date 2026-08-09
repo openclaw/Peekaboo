@@ -17,6 +17,7 @@ public struct AppTool: MCPTool {
 
         Always include the `action` field in your JSON payload. Examples:
         - { "action": "launch", "name": "Finder" }
+        - { "action": "launch", "name": "TextEdit", "newInstance": true, "waitForWindow": true }
         - { "action": "open", "name": "Safari", "openTargets": ["https://example.com"] }
         - { "action": "launch", "name": "Calendar", "foreground": true }
         - { "action": "switch", "to": "Safari" }
@@ -48,7 +49,13 @@ public struct AppTool: MCPTool {
                     description: "Wait time (seconds) between quit/launch for relaunch",
                     default: 2.0),
                 "waitUntilReady": SchemaBuilder.boolean(
-                    description: "Wait until the launched app is ready",
+                    description: "Wait until LaunchServices reports startup complete",
+                    default: false),
+                "waitForWindow": SchemaBuilder.boolean(
+                    description: "Wait until the launched app exposes an exact WindowServer window",
+                    default: false),
+                "newInstance": SchemaBuilder.boolean(
+                    description: "Launch a distinct process even if the app is already running",
                     default: false),
                 "all": SchemaBuilder.boolean(
                     description: "Quit all applications",
@@ -81,6 +88,8 @@ public struct AppTool: MCPTool {
             force: arguments.getBool("force") ?? false,
             wait: arguments.getNumber("wait") ?? 2.0,
             waitUntilReady: arguments.getBool("waitUntilReady") ?? false,
+            waitForWindow: arguments.getBool("waitForWindow") ?? false,
+            newInstance: arguments.getBool("newInstance") ?? false,
             all: arguments.getBool("all") ?? false,
             except: arguments.getString("except"),
             switchTarget: arguments.getString("to"),
@@ -110,6 +119,8 @@ struct AppToolRequest {
     let force: Bool
     let wait: Double
     let waitUntilReady: Bool
+    let waitForWindow: Bool
+    let newInstance: Bool
     let all: Bool
     let except: String?
     let switchTarget: String?

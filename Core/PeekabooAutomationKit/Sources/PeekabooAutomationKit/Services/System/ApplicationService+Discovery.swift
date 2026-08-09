@@ -232,14 +232,26 @@ extension ApplicationService {
     }
 
     func createApplicationInfo(from app: NSRunningApplication) -> ServiceApplicationInfo {
-        ServiceApplicationInfo(
+        let processStartIdentityBeforeRead = self.processStartIdentityProvider(app.processIdentifier)
+        let windows = self.getWindowIdentities(for: app)
+        let processStartIdentityAfterRead = self.processStartIdentityProvider(app.processIdentifier)
+        let stableProcessStartIdentity: UInt64? = if !app.isTerminated,
+                                                     processStartIdentityBeforeRead == processStartIdentityAfterRead
+        {
+            processStartIdentityBeforeRead
+        } else {
+            nil
+        }
+        return ServiceApplicationInfo(
             processIdentifier: app.processIdentifier,
+            processStartIdentity: stableProcessStartIdentity,
             bundleIdentifier: app.bundleIdentifier,
             name: app.localizedName ?? "Unknown",
             bundlePath: app.bundleURL?.path,
             isActive: app.isActive,
             isHidden: app.isHidden,
-            windowCount: self.getWindowCount(for: app),
+            windowCount: windows.count,
+            windowIDs: windows.map { Int($0.windowID) },
             activationPolicy: Self.serviceActivationPolicy(from: app.activationPolicy),
             isFinishedLaunching: app.isFinishedLaunching)
     }
@@ -261,13 +273,18 @@ extension ApplicationService {
 
     @MainActor
     private func getWindowCount(for app: NSRunningApplication) -> Int {
+        self.getWindowIdentities(for: app).count
+    }
+
+    @MainActor
+    private func getWindowIdentities(for app: NSRunningApplication) -> [WindowIdentityInfo] {
         let cgWindows = self.windowIdentityService.getWindows(for: app)
         if cgWindows.isEmpty {
-            return 0
+            return []
         }
 
         let renderable = cgWindows.filter(\.isRenderable)
-        return renderable.isEmpty ? cgWindows.count : renderable.count
+        return renderable.isEmpty ? cgWindows : renderable
     }
 
     public func getApplicationWithWindowCount(identifier: String) async throws -> ServiceApplicationInfo {

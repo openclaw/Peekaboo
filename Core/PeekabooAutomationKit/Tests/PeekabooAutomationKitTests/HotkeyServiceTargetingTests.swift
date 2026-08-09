@@ -236,6 +236,99 @@ struct HotkeyServiceTargetingTests {
         #expect(postedEvents.allSatisfy { $0.pid == getpid() })
     }
 
+    @Test func `exact window validator failure before modifiers posts no events`() async throws {
+        var validationCount = 0
+        var postedEventCount = 0
+        let service = HotkeyService(
+            inputPolicy: UIInputPolicy(defaultStrategy: .synthOnly),
+            postEventAccessEvaluator: { true },
+            eventPoster: { _, _ in postedEventCount += 1 })
+
+        do {
+            try await service.hotkey(
+                keys: "cmd,shift,l",
+                holdDuration: 0,
+                targetProcessIdentifier: getpid(),
+                deliveryValidator: {
+                    validationCount += 1
+                    if validationCount == 2 {
+                        throw HotkeyDeliveryTestError.focusChanged
+                    }
+                })
+            Issue.record("Expected exact-window validation to fail")
+        } catch HotkeyDeliveryTestError.focusChanged {
+            // Expected.
+        } catch {
+            Issue.record("Expected focus-changed error, got \(error)")
+        }
+
+        #expect(validationCount == 2)
+        #expect(postedEventCount == 0)
+    }
+
+    @Test func `exact window focus change blocks primary hotkey event`() async {
+        let events = await self.targetedFocusChangeEvents()
+        let primaryEvents = events.filter { event in
+            event.type == .keyDown || event.type == .keyUp
+        }
+
+        #expect(primaryEvents.isEmpty)
+    }
+
+    @Test func `exact window focus change releases every pressed modifier`() async {
+        let events = await self.targetedFocusChangeEvents()
+
+        #expect(events.map(\.type) == [.flagsChanged, .flagsChanged, .flagsChanged, .flagsChanged])
+        #expect(events.map(\.keyCode) == [0x37, 0x38, 0x38, 0x37])
+    }
+
+    @Test func `final hotkey drift is retry unsafe after all releases`() async throws {
+        var destinationIsValid = true
+        var validationCount = 0
+        var postedEvents: [CGEventType] = []
+        let service = HotkeyService(
+            inputPolicy: UIInputPolicy(defaultStrategy: .synthOnly),
+            postEventAccessEvaluator: { true },
+            eventPoster: { event, _ in
+                postedEvents.append(event.type)
+                if postedEvents.count == 6 {
+                    destinationIsValid = false
+                }
+            })
+
+        do {
+            try await service.hotkey(
+                keys: "cmd,shift,l",
+                holdDuration: 0,
+                targetProcessIdentifier: getpid(),
+                deliveryValidator: {
+                    validationCount += 1
+                    guard destinationIsValid else {
+                        throw HotkeyDeliveryTestError.focusChanged
+                    }
+                })
+            Issue.record("Expected final hotkey validation to fail")
+        } catch let error as InputDeliveryIndeterminateError {
+            #expect(error.operation == .hotkey)
+            #expect(error.emittedUnitCount == 6)
+            #expect(error.operationMayHaveCompleted)
+            #expect(!error.retrySafe)
+            #expect(error.causeDescription?.contains("focus changed") == true)
+        } catch {
+            Issue.record("Expected indeterminate delivery error, got \(error)")
+        }
+
+        #expect(validationCount == 4)
+        #expect(postedEvents == [
+            .flagsChanged,
+            .flagsChanged,
+            .keyDown,
+            .keyUp,
+            .flagsChanged,
+            .flagsChanged,
+        ])
+    }
+
     @Test func `process liveness check rejects stale pids`() {
         #expect(HotkeyService.isProcessAliveForTesting(getpid()))
         #expect(!HotkeyService.isProcessAliveForTesting(pid_t(Int32.max)))
@@ -276,6 +369,56 @@ struct HotkeyServiceTargetingTests {
         #expect(driver.hotkeyCalls == [["cmd", "s"]])
         #expect(postedEvents.map(\.type) == [.flagsChanged, .keyDown, .keyUp, .flagsChanged])
         #expect(postedEvents.map(\.keyCode) == [0x37, 0x01, 0x01, 0x37])
+    }
+
+    private func targetedFocusChangeEvents() async -> [PostedKeyboardEvent] {
+        var exactWindowHasFocus = true
+        var postedEvents: [PostedKeyboardEvent] = []
+        let service = HotkeyService(
+            inputPolicy: UIInputPolicy(defaultStrategy: .synthOnly),
+            postEventAccessEvaluator: { true },
+            eventPoster: { event, pid in
+                postedEvents.append(PostedKeyboardEvent(
+                    type: event.type,
+                    keyCode: event.getIntegerValueField(.keyboardEventKeycode),
+                    flags: event.flags,
+                    targetPID: event.getIntegerValueField(.eventTargetUnixProcessID),
+                    pid: pid))
+                if postedEvents.count == 2 {
+                    exactWindowHasFocus = false
+                }
+            })
+
+        do {
+            try await service.hotkey(
+                keys: "cmd,shift,l",
+                holdDuration: 0,
+                targetProcessIdentifier: getpid(),
+                deliveryValidator: {
+                    guard exactWindowHasFocus else {
+                        throw HotkeyDeliveryTestError.focusChanged
+                    }
+                })
+            Issue.record("Expected focus change to stop hotkey delivery")
+        } catch let error as InputDeliveryIndeterminateError {
+            #expect(error.operation == .hotkey)
+            #expect(error.emittedUnitCount == 2)
+            #expect(error.operationMayHaveCompleted)
+            #expect(!error.retrySafe)
+            #expect(error.causeDescription?.contains("focus changed") == true)
+        } catch {
+            Issue.record("Expected indeterminate delivery error, got \(error)")
+        }
+
+        return postedEvents
+    }
+}
+
+private enum HotkeyDeliveryTestError: LocalizedError {
+    case focusChanged
+
+    var errorDescription: String? {
+        "focus changed"
     }
 }
 

@@ -55,6 +55,11 @@ extension AppCommand {
                     )
                 }
                 let processIdentifier = "PID:\(originalPID)"
+                guard let originalProcessIdentity = appInfo.processIdentity else {
+                    throw PeekabooError.commandFailed(
+                        "Application discovery did not return a process-generation identity for atomic relaunch"
+                    )
+                }
                 guard self.wait.isFinite, self.wait >= 0 else {
                     throw PeekabooError.invalidInput("Relaunch wait must be a finite, non-negative number of seconds")
                 }
@@ -63,6 +68,7 @@ extension AppCommand {
                 let launchedApp = try await services.applications.relaunchApplication(
                     request: ApplicationRelaunchRequest(
                         targetIdentifier: processIdentifier,
+                        expectedTargetIdentity: originalProcessIdentity,
                         launchRequest: ApplicationLaunchRequest(
                             applicationIdentifier: launchIdentifier,
                             applicationBundleIdentifier: appInfo.bundleIdentifier,
@@ -84,6 +90,7 @@ extension AppCommand {
                     let app_name: String
                     let old_pid: Int32
                     let new_pid: Int32
+                    let new_process_start_identity: UInt64?
                     let bundle_id: String?
                     let quit_forced: Bool
                     let wait_time: TimeInterval
@@ -95,6 +102,7 @@ extension AppCommand {
                     app_name: appInfo.name,
                     old_pid: originalPID,
                     new_pid: launchedApp.processIdentifier,
+                    new_process_start_identity: launchedApp.processStartIdentity,
                     bundle_id: appInfo.bundleIdentifier,
                     quit_forced: self.force,
                     wait_time: self.wait,

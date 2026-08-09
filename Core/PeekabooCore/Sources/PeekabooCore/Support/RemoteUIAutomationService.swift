@@ -8,7 +8,9 @@ import PeekabooFoundation
 @MainActor
 public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, TargetedHotkeyServiceProtocol,
     TargetedTypeServiceProtocol,
-    ExactWindowTargetedClickServiceProtocol
+    ExactWindowTargetedClickServiceProtocol,
+    TargetedFocusedElementServiceProtocol,
+    ExactWindowTargetedKeyboardServiceProtocol
 {
     let client: PeekabooBridgeClient
     public let supportsTargetedHotkeys: Bool
@@ -24,6 +26,8 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
     public let supportsTargetedScroll: Bool
     public let supportsInspectAccessibilityTree: Bool
     public let inspectAccessibilityTreeUnavailableReason: String?
+    public let supportsExactWindowTargetedKeyboard: Bool
+    public let exactWindowTargetedKeyboardUnavailableReason: String?
 
     public init(
         client: PeekabooBridgeClient,
@@ -39,7 +43,9 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
         supportsExactWindowTargetedClicks: Bool = false,
         supportsTargetedScroll: Bool = false,
         supportsInspectAccessibilityTree: Bool = false,
-        inspectAccessibilityTreeUnavailableReason: String? = nil)
+        inspectAccessibilityTreeUnavailableReason: String? = nil,
+        supportsExactWindowTargetedKeyboard: Bool = false,
+        exactWindowTargetedKeyboardUnavailableReason: String? = nil)
     {
         self.client = client
         self.supportsTargetedHotkeys = supportsTargetedHotkeys
@@ -55,6 +61,8 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
         self.supportsTargetedScroll = supportsTargetedScroll
         self.supportsInspectAccessibilityTree = supportsInspectAccessibilityTree
         self.inspectAccessibilityTreeUnavailableReason = inspectAccessibilityTreeUnavailableReason
+        self.supportsExactWindowTargetedKeyboard = supportsExactWindowTargetedKeyboard
+        self.exactWindowTargetedKeyboardUnavailableReason = exactWindowTargetedKeyboardUnavailableReason
     }
 
     public func detectElements(
@@ -122,6 +130,8 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
                 clickType: clickType,
                 snapshotId: snapshotId,
                 targetProcessIdentifier: targetProcessIdentifier)
+        } catch let envelope as PeekabooBridgeErrorEnvelope where envelope.operationMayHaveCompleted {
+            throw Self.inputDeliveryIndeterminateError(for: envelope, operation: .click)
         } catch let envelope as PeekabooBridgeErrorEnvelope {
             throw Self.automationError(for: envelope, snapshotId: snapshotId)
         }
@@ -131,8 +141,8 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
         target: ClickTarget,
         clickType: ClickType,
         snapshotId: String?,
-        targetProcessIdentifier: pid_t,
-        targetWindowID: Int) async throws
+        expectedWindowIdentity: WindowMutationIdentity,
+        expectedWindowBounds: CGRect) async throws
     {
         guard self.supportsExactWindowTargetedClicks else {
             throw PeekabooError.serviceUnavailable(
@@ -150,8 +160,10 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
                 target: target,
                 clickType: clickType,
                 snapshotId: snapshotId,
-                targetProcessIdentifier: targetProcessIdentifier,
-                targetWindowID: targetWindowID)
+                expectedWindowIdentity: expectedWindowIdentity,
+                expectedWindowBounds: expectedWindowBounds)
+        } catch let envelope as PeekabooBridgeErrorEnvelope where envelope.operationMayHaveCompleted {
+            throw Self.inputDeliveryIndeterminateError(for: envelope, operation: .click)
         } catch let envelope as PeekabooBridgeErrorEnvelope {
             throw Self.automationError(for: envelope, snapshotId: snapshotId)
         }
@@ -207,6 +219,9 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
                 snapshotId: snapshotId,
                 targetProcessIdentifier: targetProcessIdentifier)
         } catch let envelope as PeekabooBridgeErrorEnvelope {
+            if envelope.operationMayHaveCompleted {
+                throw Self.inputDeliveryIndeterminateError(for: envelope, operation: .type)
+            }
             throw Self.automationError(for: envelope, snapshotId: snapshotId)
         }
     }
@@ -240,6 +255,9 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
                 holdDuration: holdDuration,
                 targetProcessIdentifier: targetProcessIdentifier)
         } catch let envelope as PeekabooBridgeErrorEnvelope {
+            if envelope.operationMayHaveCompleted {
+                throw Self.inputDeliveryIndeterminateError(for: envelope, operation: .hotkey)
+            }
             switch envelope.code {
             case .permissionDenied:
                 throw Self.permissionDeniedError(for: envelope)
@@ -281,6 +299,16 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
         default:
             envelope
         }
+    }
+
+    private static func inputDeliveryIndeterminateError(
+        for envelope: PeekabooBridgeErrorEnvelope,
+        operation: InputDeliveryIndeterminateError.Operation) -> InputDeliveryIndeterminateError
+    {
+        InputDeliveryIndeterminateError(
+            operation: operation,
+            emittedUnitCount: nil,
+            causeDescription: envelope.message)
     }
 
     private static func targetedHotkeyUnavailableError(
@@ -379,6 +407,98 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
     public func getFocusedElement() -> UIFocusInfo? {
         // Not yet implemented over XPC; fall back to nil to avoid blocking callers.
         nil
+    }
+
+    public func getFocusedElement(targetProcessIdentifier: pid_t) async -> UIFocusInfo? {
+        try? await self.client.getFocusedElement(targetProcessIdentifier: targetProcessIdentifier)
+    }
+
+    public func typeActions(
+        _ actions: [TypeAction],
+        cadence: TypingCadence,
+        snapshotId: String?,
+        expectedWindowIdentity: WindowMutationIdentity,
+        expectedWindowBounds: CGRect) async throws -> TypeResult
+    {
+        guard self.supportsExactWindowTargetedKeyboard else {
+            throw PeekabooError.serviceUnavailable(
+                self.exactWindowTargetedKeyboardUnavailableReason ??
+                    "Atomic exact-window background typing is unavailable")
+        }
+        do {
+            return try await self.client.typeActions(
+                actions,
+                cadence: cadence,
+                snapshotId: snapshotId,
+                expectedWindowIdentity: expectedWindowIdentity,
+                expectedWindowBounds: expectedWindowBounds)
+        } catch let envelope as PeekabooBridgeErrorEnvelope where envelope.operationMayHaveCompleted {
+            throw Self.inputDeliveryIndeterminateError(for: envelope, operation: .type)
+        }
+    }
+
+    public func hotkey(
+        keys: String,
+        holdDuration: Int,
+        expectedWindowIdentity: WindowMutationIdentity,
+        expectedWindowBounds: CGRect) async throws
+    {
+        guard self.supportsExactWindowTargetedKeyboard else {
+            throw PeekabooError.serviceUnavailable(
+                self.exactWindowTargetedKeyboardUnavailableReason ??
+                    "Atomic exact-window background hotkeys are unavailable")
+        }
+        do {
+            try await self.client.hotkey(
+                keys: keys,
+                holdDuration: holdDuration,
+                expectedWindowIdentity: expectedWindowIdentity,
+                expectedWindowBounds: expectedWindowBounds)
+        } catch let envelope as PeekabooBridgeErrorEnvelope where envelope.operationMayHaveCompleted {
+            throw Self.inputDeliveryIndeterminateError(for: envelope, operation: .hotkey)
+        }
+    }
+
+    public func typeActions(
+        _ actions: [TypeAction],
+        cadence: TypingCadence,
+        snapshotId: String?,
+        target: ExactWindowKeyboardTarget) async throws -> TypeResult
+    {
+        guard self.supportsExactWindowTargetedKeyboard else {
+            throw PeekabooError.serviceUnavailable(
+                self.exactWindowTargetedKeyboardUnavailableReason ??
+                    "Atomic exact-window background typing is unavailable")
+        }
+        do {
+            return try await self.client.typeActions(
+                actions,
+                cadence: cadence,
+                snapshotId: snapshotId,
+                target: target)
+        } catch let envelope as PeekabooBridgeErrorEnvelope where envelope.operationMayHaveCompleted {
+            throw Self.inputDeliveryIndeterminateError(for: envelope, operation: .type)
+        }
+    }
+
+    public func hotkey(
+        keys: String,
+        holdDuration: Int,
+        target: ExactWindowKeyboardTarget) async throws
+    {
+        guard self.supportsExactWindowTargetedKeyboard else {
+            throw PeekabooError.serviceUnavailable(
+                self.exactWindowTargetedKeyboardUnavailableReason ??
+                    "Atomic exact-window background hotkeys are unavailable")
+        }
+        do {
+            try await self.client.hotkey(
+                keys: keys,
+                holdDuration: holdDuration,
+                target: target)
+        } catch let envelope as PeekabooBridgeErrorEnvelope where envelope.operationMayHaveCompleted {
+            throw Self.inputDeliveryIndeterminateError(for: envelope, operation: .hotkey)
+        }
     }
 
     public func findElement(matching criteria: UIElementSearchCriteria, in appName: String?) async throws

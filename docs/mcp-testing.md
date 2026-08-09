@@ -55,6 +55,18 @@ claude mcp list
 
 Remove or replace that registration after the test so future sessions do not silently keep using an old debug binary.
 
+### 4. Manual stdio testing
+
+For low-level protocol testing, you can interact with the MCP server directly:
+
+```bash
+# Start the server in stdio mode
+peekaboo mcp
+
+# Send one JSON-RPC request; Peekaboo drains its response before exiting on EOF
+printf '%s\n' '{"jsonrpc":"2.0","method":"tools/list","id":1}' | peekaboo mcp
+```
+
 ## Development Workflow
 
 ### Recommended Testing Cycle

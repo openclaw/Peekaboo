@@ -194,18 +194,25 @@ extension UIAutomationService {
         target: ClickTarget,
         clickType: ClickType,
         snapshotId: String?,
-        targetProcessIdentifier: pid_t,
-        targetWindowID: Int) async throws
+        expectedWindowIdentity: WindowMutationIdentity,
+        expectedWindowBounds: CGRect) async throws
     {
         self.logger.debug("Delegating exact-window background click to ClickService")
+        guard self.exactWindowIdentityValidator(expectedWindowIdentity, expectedWindowBounds) else {
+            throw PeekabooError.invalidInput(
+                field: "target",
+                reason: "Exact-window click identity changed before dispatch; capture a fresh snapshot")
+        }
         defer { self.elementDetectionService.invalidateCache() }
         let result = try await self.normalizingSnapshotErrors {
             try await self.clickService.click(
                 target: target,
                 clickType: clickType,
                 snapshotId: snapshotId,
-                targetProcessIdentifier: targetProcessIdentifier,
-                targetWindowID: targetWindowID)
+                targetProcessIdentifier: expectedWindowIdentity.ownerProcessIdentifier,
+                targetWindowID: expectedWindowIdentity.windowID,
+                expectedWindowIdentity: expectedWindowIdentity,
+                expectedWindowBounds: expectedWindowBounds)
         }
 
         try await self.visualizeClick(
@@ -213,7 +220,7 @@ extension UIAutomationService {
             actionAnchor: result.anchorPoint,
             clickType: clickType,
             snapshotId: snapshotId,
-            targetProcessIdentifier: targetProcessIdentifier)
+            targetProcessIdentifier: expectedWindowIdentity.ownerProcessIdentifier)
     }
 
     /// Background delivery must remain invisible to the foreground user. Visualizer windows are

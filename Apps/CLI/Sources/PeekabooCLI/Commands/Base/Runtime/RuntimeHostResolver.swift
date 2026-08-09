@@ -27,6 +27,7 @@ enum RuntimeHostResolver {
         let daemonSocketPath: String
         let runtimeBuildIdentity: String
         let buildScopedDaemonSocketPath: String?
+        let historicalBuildScopedDaemonTargets: [DaemonControlTarget]
         let historicalBuildScopedDaemonSocketPaths: [String]
         let candidates: [ImplicitRemoteCandidate]
     }
@@ -47,7 +48,8 @@ enum RuntimeHostResolver {
             options: options,
             environment: environment,
             configurationInput: configurationInput
-        ) else {
+        )
+        else {
             return Resolution(
                 services: RuntimeServiceFactory.makeLocalServices(options: options),
                 hostDescription: "local (in-process)",
@@ -119,7 +121,7 @@ enum RuntimeHostResolver {
                 snapshotInvalidationRemoteSocketPaths: snapshotInvalidationRemoteSocketPaths,
                 permissionRejections: &permissionRejections
             ) {
-                return resolved
+                return await self.finalizeExactBuildScopedResolution(resolved, candidatePlan: candidatePlan)
             }
 
             let exactHostExists = await DaemonControlClient(socketPath: buildScopedDaemonSocketPath)
@@ -143,7 +145,7 @@ enum RuntimeHostResolver {
                    snapshotInvalidationRemoteSocketPaths: snapshotInvalidationRemoteSocketPaths,
                    permissionRejections: &permissionRejections
                ) {
-                return resolved
+                return await self.finalizeExactBuildScopedResolution(resolved, candidatePlan: candidatePlan)
             }
         }
 
@@ -154,7 +156,7 @@ enum RuntimeHostResolver {
             snapshotInvalidationRemoteSocketPaths: snapshotInvalidationRemoteSocketPaths,
             permissionRejections: &permissionRejections
         ) {
-            return resolved
+            return await self.finalizeExactBuildScopedResolution(resolved, candidatePlan: candidatePlan)
         }
 
         if !prefersExactBuildScopedHost,
@@ -182,7 +184,7 @@ enum RuntimeHostResolver {
                     snapshotInvalidationRemoteSocketPaths: snapshotInvalidationRemoteSocketPaths,
                     permissionRejections: &permissionRejections
                 ) {
-                return resolved
+                return await self.finalizeExactBuildScopedResolution(resolved, candidatePlan: candidatePlan)
             }
         }
 
@@ -225,7 +227,7 @@ enum RuntimeHostResolver {
             daemonSocketPath: daemonSocketPath,
             runtimeBuildIdentity: runtimeBuildIdentity
         )
-        let historicalBuildScopedDaemonSocketPaths: [String] = if self.shouldDiscoverHistoricalDaemons(
+        let historicalBuildScopedDaemonTargets: [DaemonControlTarget] = if self.shouldDiscoverHistoricalDaemons(
             explicitSocket: explicitSocket,
             daemonSocketPath: daemonSocketPath
         ) {
@@ -233,11 +235,12 @@ enum RuntimeHostResolver {
                 daemonSocketPath: daemonSocketPath,
                 currentBuildScopedSocketPath: buildScopedDaemonSocketPath
             )
-            .filter { DaemonControlPlanner.supportsCurrentDaemon($0.status) }
-            .map(\.client.socketPath)
         } else {
             []
         }
+        let historicalBuildScopedDaemonSocketPaths = historicalBuildScopedDaemonTargets
+            .filter { DaemonControlPlanner.supportsCurrentDaemon($0.status) }
+            .map(\.client.socketPath)
 
         let candidates: [ImplicitRemoteCandidate] = if let explicitSocket, !explicitSocket.isEmpty {
             [ImplicitRemoteCandidate(
@@ -260,9 +263,32 @@ enum RuntimeHostResolver {
             daemonSocketPath: daemonSocketPath,
             runtimeBuildIdentity: runtimeBuildIdentity,
             buildScopedDaemonSocketPath: buildScopedDaemonSocketPath,
+            historicalBuildScopedDaemonTargets: historicalBuildScopedDaemonTargets,
             historicalBuildScopedDaemonSocketPaths: historicalBuildScopedDaemonSocketPaths,
             candidates: candidates
         )
+    }
+
+    private static func finalizeExactBuildScopedResolution(
+        _ resolution: Resolution,
+        candidatePlan: RemoteCandidatePlan
+    ) async -> Resolution {
+        guard candidatePlan.explicitSocket == nil,
+              let currentSocketPath = candidatePlan.buildScopedDaemonSocketPath,
+              resolution.selectedRemoteSocketPath == NSString(string: currentSocketPath).standardizingPath
+        else {
+            return resolution
+        }
+
+        // Debug builds get generation-specific hosts. Once the current generation is usable,
+        // retire only safely identified auto hosts already past their idle deadline so
+        // ScreenCaptureKit state cannot pile up without interrupting long-lived clients.
+        await DaemonControlResolver.stopIdleHistoricalAutoDaemons(
+            candidatePlan.historicalBuildScopedDaemonTargets,
+            daemonSocketPath: candidatePlan.daemonSocketPath,
+            currentBuildScopedSocketPath: currentSocketPath
+        )
+        return resolution
     }
 
     static func initialRoutingDecision(
@@ -453,7 +479,8 @@ enum RuntimeHostResolver {
                     handshake: handshake,
                     options: options,
                     requiredProtocolVersion: requiredProtocolVersion
-                ) else {
+                )
+                else {
                     let missingPermissions = BridgeCapabilityPolicy.explicitlyMissingRemotePermissions(
                         for: handshake,
                         options: options
@@ -496,6 +523,12 @@ enum RuntimeHostResolver {
                             .backgroundCloseWindow,
                             for: handshake
                         ),
+                        supportsPinnedWindowMutations:
+                        BridgeCapabilityPolicy.supportsPinnedWindowMutations(for: handshake),
+                        supportsWindowRestore: BridgeCapabilityPolicy.supportsOperation(
+                            .restoreWindow,
+                            for: handshake
+                        ),
                         supportsBackgroundDialogClick: BridgeCapabilityPolicy.supportsOperation(
                             .backgroundDialogClickButton,
                             for: handshake
@@ -504,6 +537,12 @@ enum RuntimeHostResolver {
                         supportsInspectAccessibilityTree: BridgeCapabilityPolicy.supportsInspectAccessibilityTree(
                             for: handshake
                         ),
+                        supportsExactWindowTargetedKeyboard:
+                        BridgeCapabilityPolicy.supportsExactWindowTargetedKeyboard(for: handshake),
+                        exactWindowTargetedKeyboardUnavailableReason:
+                        BridgeCapabilityPolicy.supportsExactWindowTargetedKeyboard(for: handshake)
+                            ? nil
+                            : "Bridge host lacks atomic exact-window keyboard delivery",
                         supportsPostEventPermissionRequest: BridgeCapabilityPolicy.supportsPostEventPermissionRequest(
                             for: handshake
                         ),
@@ -513,8 +552,14 @@ enum RuntimeHostResolver {
                         BridgeCapabilityPolicy.supportsImplicitSnapshotInvalidation(for: handshake),
                         supportsApplicationLaunchOptions:
                         BridgeCapabilityPolicy.supportsApplicationLaunchOptions(for: handshake),
+                        supportsNewApplicationInstanceLaunch:
+                        BridgeCapabilityPolicy.supportsNewApplicationInstanceLaunch(for: handshake),
+                        supportsApplicationWindowReadiness:
+                        BridgeCapabilityPolicy.supportsApplicationWindowReadiness(for: handshake),
                         supportsApplicationRelaunch:
                         BridgeCapabilityPolicy.supportsApplicationRelaunch(for: handshake),
+                        supportsProcessGenerationPinnedApplicationQuit:
+                        BridgeCapabilityPolicy.supportsProcessGenerationPinnedApplicationQuit(for: handshake),
                         allowLocalApplicationFallback: handshake.hostKind == .onDemand,
                         desktopMutationWatermarkStore: DesktopMutationWatermarkStore()
                     ),

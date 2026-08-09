@@ -15,7 +15,7 @@ struct AppToolCancellationTests {
         let clock = ContinuousClock()
         let start = clock.now
         let waitTask = Task { @MainActor in
-            await actions.waitForRunningState(
+            try await actions.waitForRunningState(
                 identifier: "NeverRunning",
                 desiredState: true,
                 timeout: 10)
@@ -24,7 +24,7 @@ struct AppToolCancellationTests {
         try await Task.sleep(for: .milliseconds(20))
         waitTask.cancel()
 
-        #expect(await waitTask.value == false)
+        #expect(try await waitTask.value == false)
         #expect(start.duration(to: clock.now) < .seconds(2))
         #expect(service.runningStateCheckCount > 0)
         #expect(service.runningStateCheckCount <= 2)

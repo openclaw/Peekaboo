@@ -69,15 +69,30 @@ struct ElementDetectionWindowResolver {
         let appElement = AXApp(app).element
 
         if let windowID = context?.windowID {
-            let cgWindowID = CGWindowID(windowID)
-            if let handle = self.windowIdentityService.findWindow(byID: cgWindowID, in: app) ??
-                self.windowIdentityService.findWindow(byID: cgWindowID)
-            {
-                let title = handle.element.title() ?? "Untitled"
+            guard windowID > 0, let cgWindowID = CGWindowID(exactly: windowID) else {
+                throw PeekabooError.invalidInput(
+                    field: "windowID",
+                    reason: "windowID must be a positive UInt32 value")
+            }
+            let identifier = app.localizedName ?? app.bundleIdentifier ?? "PID:\(app.processIdentifier)"
+            guard SystemIdentityResolver.windowOwnerProcessIdentifier(cgWindowID) == app.processIdentifier else {
+                throw PeekabooError.windowNotFound(criteria: "window id \(windowID) owned by \(identifier)")
+            }
+
+            let timeout = Float(min(max(context?.accessibilityTimeoutSeconds ?? 1, 0.05), 1))
+            appElement.setMessagingTimeout(timeout)
+            defer { appElement.setMessagingTimeout(0) }
+            let matchingWindow = appElement.windowsWithTimeout(timeout: timeout)?.first { window in
+                self.windowIdentityService.getWindowID(
+                    from: window,
+                    messagingTimeout: min(timeout, 0.25)) == cgWindowID
+            }
+            if let window = matchingWindow {
+                window.setMessagingTimeout(min(timeout, 0.25))
+                defer { window.setMessagingTimeout(0) }
+                let title = window.title() ?? "Untitled"
                 let identifier = app.localizedName ?? app.bundleIdentifier ?? "PID:\(app.processIdentifier)"
                 self.logger.notice("Resolved window via CGWindowID \(windowID): '\(title)' for \(identifier)")
-
-                let window = handle.element
 
                 let subrole = window.subrole() ?? ""
                 let isDialogRole = ["AXDialog", "AXSystemDialog", "AXSheet"].contains(subrole)
@@ -87,8 +102,7 @@ struct ElementDetectionWindowResolver {
                 return WindowResolution(appElement: appElement, window: window, isDialog: isDialog)
             }
 
-            self.logger.warning(
-                "Could not resolve window via CGWindowID \(windowID); falling back to title-based selection")
+            throw PeekabooError.windowNotFound(criteria: "window id \(windowID) owned by \(identifier)")
         }
 
         // Chrome and other multi-process apps occasionally return an empty window list unless we set

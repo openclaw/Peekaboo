@@ -17,7 +17,7 @@ enum MCPInteractionTargetError: LocalizedError {
         case .invalidWindowId:
             "window_id must be a positive integer."
         case .invalidProcessIdentifier:
-            "pid must be a positive integer."
+            "pid must be a positive 32-bit integer."
         case .backgroundTargetRequired:
             "Background keyboard input requires app or pid targeting. " +
                 "Set foreground=true for intentional global input."

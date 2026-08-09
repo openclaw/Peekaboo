@@ -7,7 +7,7 @@ import PeekabooFoundation
 extension LegacyScreenCaptureOperator {
     func captureScreenWithSystemScreencapture(
         screen: NSScreen,
-        correlationId: String) throws -> CGImage
+        correlationId: String) async throws -> CGImage
     {
         guard let displayID = self.displayID(for: screen) else {
             throw OperationError.captureFailed(reason: "Could not resolve the selected NSScreen display ID")
@@ -27,7 +27,7 @@ extension LegacyScreenCaptureOperator {
                 reason: "Selected display \(displayID) is not in the active display list")
         }
 
-        return try self.captureImageWithSystemScreencapture(
+        return try await self.captureImageWithSystemScreencapture(
             arguments: [
                 "-x",
                 "-D",
@@ -44,9 +44,9 @@ extension LegacyScreenCaptureOperator {
 
     func captureAreaWithSystemScreencapture(
         _ rect: CGRect,
-        correlationId: String) throws -> CGImage
+        correlationId: String) async throws -> CGImage
     {
-        try self.captureImageWithSystemScreencapture(
+        try await self.captureImageWithSystemScreencapture(
             arguments: [
                 "-x",
                 Self.regionArgument(for: rect),
@@ -59,11 +59,11 @@ extension LegacyScreenCaptureOperator {
 
     func captureWindowWithSystemScreencapture(
         windowID: CGWindowID,
-        correlationId: String) throws -> CGImage
+        correlationId: String) async throws -> CGImage
     {
         // Match Apple's native window capture path; Hopper shows `screencapture -l` using
         // private window-id lookup before building its SCScreenshotManager content filter.
-        try self.captureImageWithSystemScreencapture(
+        try await self.captureImageWithSystemScreencapture(
             arguments: [
                 "-l",
                 String(windowID),
@@ -81,7 +81,7 @@ extension LegacyScreenCaptureOperator {
         outputPrefix: String,
         logMessage: String,
         metadata: [String: String],
-        correlationId: String) throws -> CGImage
+        correlationId: String) async throws -> CGImage
     {
         let url = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("\(outputPrefix)-\(UUID().uuidString).png")
@@ -93,7 +93,10 @@ extension LegacyScreenCaptureOperator {
         let standardError = Pipe()
         process.standardError = standardError
         try process.run()
-        process.waitUntilExit()
+        try await Self.waitForSystemScreencaptureExit(
+            process,
+            timeoutSeconds: 5,
+            operationName: "screencapture \(outputPrefix)")
         let errorData = standardError.fileHandleForReading.readDataToEndOfFile()
         guard process.terminationStatus == 0 else {
             let errorText = (String(bytes: errorData, encoding: .utf8) ?? "")
@@ -118,6 +121,71 @@ extension LegacyScreenCaptureOperator {
             metadata: logMetadata,
             correlationId: correlationId)
         return image
+    }
+
+    nonisolated static func waitForSystemScreencaptureExit(
+        _ process: Process,
+        timeoutSeconds: TimeInterval,
+        operationName: String) async throws
+    {
+        try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                do {
+                    try self.waitForSystemScreencaptureExitBlocking(
+                        process,
+                        timeoutSeconds: timeoutSeconds,
+                        operationName: operationName)
+                    continuation.resume()
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
+
+    private nonisolated static func waitForSystemScreencaptureExitBlocking(
+        _ process: Process,
+        timeoutSeconds: TimeInterval,
+        operationName: String) throws
+    {
+        final class Completion: @unchecked Sendable {
+            private let lock = NSLock()
+            private let group = DispatchGroup()
+            private var completed = false
+
+            init() {
+                self.group.enter()
+            }
+
+            func finish() {
+                self.lock.lock()
+                defer { self.lock.unlock() }
+                guard !self.completed else { return }
+                self.completed = true
+                self.group.leave()
+            }
+
+            func wait(seconds: TimeInterval) -> DispatchTimeoutResult {
+                self.group.wait(timeout: .now() + max(seconds, 0))
+            }
+        }
+
+        let completion = Completion()
+        process.terminationHandler = { _ in completion.finish() }
+        if !process.isRunning {
+            completion.finish()
+        }
+        guard completion.wait(seconds: timeoutSeconds) == .timedOut else { return }
+
+        process.terminate()
+        if completion.wait(seconds: 0.5) == .timedOut {
+            let processIdentifier = process.processIdentifier
+            if processIdentifier > 0 {
+                kill(processIdentifier, SIGKILL)
+            }
+            _ = completion.wait(seconds: 0.5)
+        }
+        throw OperationError.timeout(operation: operationName, duration: timeoutSeconds)
     }
 
     private nonisolated static func regionArgument(for rect: CGRect) -> String {

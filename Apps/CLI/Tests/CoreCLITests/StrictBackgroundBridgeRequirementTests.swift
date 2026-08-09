@@ -33,4 +33,31 @@ struct StrictBackgroundBridgeRequirementTests {
         #expect(background.requiresBackgroundDialogClick)
         #expect(!foreground.requiresBackgroundDialogClick)
     }
+
+    @Test
+    func `Window mutators declare pinned host requirement without restricting reads or focus`() throws {
+        let parsed = ParsedValues(positional: [], options: [:], flags: [])
+        let mutators: [any ParsableCommand.Type] = [
+            WindowCommand.CloseSubcommand.self,
+            WindowCommand.MinimizeSubcommand.self,
+            WindowCommand.RestoreSubcommand.self,
+            WindowCommand.MaximizeSubcommand.self,
+            WindowCommand.MoveSubcommand.self,
+            WindowCommand.ResizeSubcommand.self,
+            WindowCommand.SetBoundsSubcommand.self,
+        ]
+
+        for commandType in mutators {
+            let options = try CommanderCLIBinder.makeRuntimeOptions(from: parsed, commandType: commandType)
+            #expect(options.requiresPinnedWindowMutations, "Missing pinned mutation requirement: \(commandType)")
+        }
+
+        for commandType in [
+            WindowCommand.WindowListSubcommand.self,
+            WindowCommand.FocusSubcommand.self,
+        ] as [any ParsableCommand.Type] {
+            let options = try CommanderCLIBinder.makeRuntimeOptions(from: parsed, commandType: commandType)
+            #expect(!options.requiresPinnedWindowMutations, "Unexpected pinned mutation requirement: \(commandType)")
+        }
+    }
 }

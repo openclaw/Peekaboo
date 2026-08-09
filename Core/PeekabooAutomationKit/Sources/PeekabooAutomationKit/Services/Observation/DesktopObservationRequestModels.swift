@@ -11,7 +11,7 @@ public struct DesktopCaptureOptions: Sendable, Codable, Equatable {
         engine: CaptureEnginePreference = .auto,
         scale: CaptureScalePreference = .logical1x,
         focus: CaptureFocus = .background,
-        visualizerMode: CaptureVisualizerMode = .screenshotFlash,
+        visualizerMode: CaptureVisualizerMode = .none,
         includeMenuBar: Bool = false)
     {
         self.engine = engine
@@ -105,21 +105,58 @@ public struct DetectionTruncationInfo: Sendable, Codable, Equatable {
     public let maxDepthReached: Bool
     public let maxElementCountReached: Bool
     public let maxChildrenPerNodeReached: Bool
+    public let deadlineReached: Bool
+    public let incompleteAccessibilityRead: Bool
+
+    private enum CodingKeys: String, CodingKey {
+        case maxDepthReached
+        case maxElementCountReached
+        case maxChildrenPerNodeReached
+        case deadlineReached
+        case incompleteAccessibilityRead
+    }
 
     public init(
         maxDepthReached: Bool = false,
         maxElementCountReached: Bool = false,
-        maxChildrenPerNodeReached: Bool = false)
+        maxChildrenPerNodeReached: Bool = false,
+        deadlineReached: Bool = false,
+        incompleteAccessibilityRead: Bool = false)
     {
         self.maxDepthReached = maxDepthReached
         self.maxElementCountReached = maxElementCountReached
         self.maxChildrenPerNodeReached = maxChildrenPerNodeReached
+        self.deadlineReached = deadlineReached
+        self.incompleteAccessibilityRead = incompleteAccessibilityRead
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.maxDepthReached = try container.decode(Bool.self, forKey: .maxDepthReached)
+        self.maxElementCountReached = try container.decode(Bool.self, forKey: .maxElementCountReached)
+        self.maxChildrenPerNodeReached = try container.decode(Bool.self, forKey: .maxChildrenPerNodeReached)
+        self.deadlineReached = try container.decodeIfPresent(Bool.self, forKey: .deadlineReached) ?? false
+        self.incompleteAccessibilityRead = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .incompleteAccessibilityRead) ?? false
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(self.maxDepthReached, forKey: .maxDepthReached)
+        try container.encode(self.maxElementCountReached, forKey: .maxElementCountReached)
+        try container.encode(self.maxChildrenPerNodeReached, forKey: .maxChildrenPerNodeReached)
+        try container.encode(self.deadlineReached, forKey: .deadlineReached)
+        if self.incompleteAccessibilityRead {
+            try container.encode(true, forKey: .incompleteAccessibilityRead)
+        }
     }
 }
 
 extension DetectionTruncationInfo {
     public var isTruncated: Bool {
-        self.maxDepthReached || self.maxElementCountReached || self.maxChildrenPerNodeReached
+        self.maxDepthReached || self.maxElementCountReached || self.maxChildrenPerNodeReached ||
+            self.deadlineReached || self.incompleteAccessibilityRead
     }
 
     public func remediationMessage(budget: AXTraversalBudget?) -> String {
@@ -134,8 +171,22 @@ extension DetectionTruncationInfo {
         if self.maxChildrenPerNodeReached {
             limits.append("children per node \(budget.maxChildrenPerNode)")
         }
+        if self.deadlineReached {
+            limits.append("time deadline")
+        }
+        if self.incompleteAccessibilityRead {
+            limits.append("incomplete accessibility read")
+        }
 
         let limitSummary = limits.isEmpty ? "the AX traversal budget" : limits.joined(separator: ", ")
+        if self.incompleteAccessibilityRead {
+            return "Warning: AX tree incomplete at \(limitSummary). Retry the observation; if the problem persists, " +
+                "use a narrower target or a longer caller timeout."
+        }
+        if self.deadlineReached {
+            return "Warning: AX tree truncated at \(limitSummary). Retry with a longer caller timeout, a narrower " +
+                "target, or larger AX traversal limits."
+        }
         return "Warning: AX tree truncated at \(limitSummary). Retry with larger --max-depth, --max-elements, " +
             "or --max-children values, or set \(AXTraversalBudget.maxDepthEnvironmentKey), " +
             "\(AXTraversalBudget.maxElementCountEnvironmentKey), or " +
@@ -150,7 +201,10 @@ extension DetectionTruncationInfo {
         return DetectionTruncationInfo(
             maxDepthReached: lhs?.maxDepthReached == true || rhs?.maxDepthReached == true,
             maxElementCountReached: lhs?.maxElementCountReached == true || rhs?.maxElementCountReached == true,
-            maxChildrenPerNodeReached: lhs?.maxChildrenPerNodeReached == true || rhs?.maxChildrenPerNodeReached == true)
+            maxChildrenPerNodeReached: lhs?.maxChildrenPerNodeReached == true || rhs?.maxChildrenPerNodeReached == true,
+            deadlineReached: lhs?.deadlineReached == true || rhs?.deadlineReached == true,
+            incompleteAccessibilityRead: lhs?.incompleteAccessibilityRead == true ||
+                rhs?.incompleteAccessibilityRead == true)
     }
 }
 
@@ -222,10 +276,12 @@ public struct DesktopObservationOutputOptions: Sendable, Codable, Equatable {
 public struct DesktopObservationTimeouts: Sendable, Codable, Equatable {
     public var overall: TimeInterval?
     public var detection: TimeInterval?
+    public var ocr: TimeInterval?
 
-    public init(overall: TimeInterval? = nil, detection: TimeInterval? = nil) {
+    public init(overall: TimeInterval? = nil, detection: TimeInterval? = nil, ocr: TimeInterval? = nil) {
         self.overall = overall
         self.detection = detection
+        self.ocr = ocr
     }
 }
 

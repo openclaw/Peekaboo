@@ -14,29 +14,50 @@ read_when:
 | --- | --- |
 | `[task]` | Optional free-form task description. Required unless you pass `--resume`/`--resume-session`. |
 | `--chat` | Force the interactive chat loop even when stdin/stdout are not TTYs. |
-| `--dry-run` | Emit the planned steps without actually invoking tools. |
+| `--dry-run` | Validate and echo the task without calling a model, invoking tools, or creating a session. |
 | `--max-steps <n>` | Cap model turns to `1...100` (default: 100). One turn may contain multiple tool calls. |
 | `--model gpt-5.6|gpt-5.5|claude-fable-5|claude-sonnet-5|gemini-3-flash|minimax|minimax-cn/<model>|openrouter/<provider>/<model>|ollama/<model>|lmstudio/<model>` | Override the default model (`gpt-5.5`). Input is validated against supported hosted providers and local model providers. |
 | `--resume` / `--resume-session <id>` | Continue the most recent session or a specific session ID. |
 | `--list-sessions` | Print cached sessions (id, task, timestamps, message count) instead of running anything. |
-| `--no-cache` | Always create a fresh session even if one is already active. |
+| `--no-cache` | Run ephemerally without saving a resumable session. Cannot be combined with resume/list flags. |
 | `--quiet` / `--simple` / `--no-color` / `--debug-terminal` | Control output mode; the command auto-detects terminal capabilities when you don’t override it. |
 | `--audio` / `--audio-file <path>` | Use microphone input or pipe audio from disk. |
 
 ## Implementation notes
 - The command resolves output “modes” (`minimal`, `compact`, `enhanced`, `quiet`, `verbose`) using terminal detection heuristics; `--simple` and `--no-color` force minimal mode, while `--quiet` suppresses progress output entirely.
-- Session metadata lives inside `agentService` (PeekabooCore). `--resume` grabs the most recent session, `--list-sessions` prints the cached list, and `--no-cache` disables reuse so each run starts clean.
+- Session metadata lives inside `agentService` (PeekabooCore). `--resume` grabs the most recent session, `--list-sessions` prints the cached list, and `--no-cache` keeps the run in memory without writing an initial, final, failed, or cancelled checkpoint.
+- Agent execution stays in the caller process by default. Pass the global `--bridge-socket <path>` option to route its tools through one specific Bridge host; `--no-remote` keeps the run strictly caller-local.
 - All agent executions run under `CommandRuntime.makeDefault()`, so environment variables, credentials, and logging levels match the top-level CLI state.
-- When `--dry-run` is set the agent still reasons about the task, but tool invocations are skipped; this is useful for understanding plans without touching the UI.
+- `--dry-run` is a zero-provider task preview: it echoes the task without model reasoning, tool calls, or a resumable session.
 - Audio flags wire into Tachikoma’s audio stack: `--audio` opens the microphone and `--audio-file` loads a WAV/CAF file.
 - Generation uses `agent.temperature` and `agent.maxTokens` from the shared config written by the macOS Settings UI.
   Token requests are capped to model capability; unsupported temperature controls are omitted automatically.
-- A run saves its session and fails when its final permitted turn still requests tools and therefore needs another
+- Unless `--no-cache` is set, a run saves its session and fails when its final permitted turn still requests tools and therefore needs another
   model turn to interpret their results. This avoids reporting an empty success when the step budget expires with
   pending work; resume the reported session to continue.
 - Native `ollama/<model>` runs replay each assistant tool call and named tool result on the next model turn. Ollama
   support is model-dependent, and native text arrives incrementally with a model-dependent chunk cadence. See the
   [Ollama guide](../providers/ollama.md).
+
+### JSON execution trace
+
+`--json` retains the legacy `result.toolCalls` array for compatibility and adds
+`result.executionTrace`. The trace correlates each provider-emitted call ID with its runtime result and reports one of
+four dispositions: `executed/succeeded`, `executed/failed`, `skipped-before-dispatch`, or `missing-result`. This lets a
+validator distinguish a model's attempted calls from mutations Peekaboo actually dispatched.
+
+`executionTrace.entries[].arguments` is a JSON object rather than the legacy string preview. Trace arguments are
+bounded and allowlist only audit-relevant targeting, delivery modes, action enums, timeouts, predicate kinds, and safe
+boolean controls. Content-bearing and unknown values are represented by typed redaction summaries, including typed or
+pasted text, expected values, messages, prompts, shell commands, URLs, open targets, queries, labels, paths, and binary
+image data. Each `result` is a bounded status summary, not the raw tool payload; screenshot bytes and arbitrary output
+text are intentionally omitted. The trace is capped at 512 entries and reports `totalCallCount` plus `truncated` when
+calls were omitted.
+
+Mutating trace entries expose `mutationDispatch` as `dispatched`, `not_dispatched`, or `possibly_dispatched`.
+`mutation_dispatched` is retained in the bounded result summary only when the tool explicitly reported the legacy
+boolean (or Peekaboo itself skipped the call before dispatch). Older or opaque results are `possibly_dispatched`, omit
+the legacy boolean, and report `retry_safe: false` so clients do not replay a mutation whose dispatch is unknown.
 
 ## Chat mode
 

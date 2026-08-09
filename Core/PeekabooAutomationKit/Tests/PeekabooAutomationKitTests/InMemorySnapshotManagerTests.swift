@@ -437,7 +437,11 @@ struct InMemorySnapshotManagerTests {
             applicationProcessId: 123,
             windowTitle: "Calculator",
             windowID: 456,
-            windowBounds: CGRect(x: 10, y: 20, width: 300, height: 200))
+            windowBounds: CGRect(x: 10, y: 20, width: 300, height: 200),
+            windowMutationIdentity: WindowMutationIdentity(
+                windowID: 456,
+                ownerProcessIdentifier: 123,
+                ownerProcessStartIdentity: 789))
         let element = DetectedElement(
             id: "elem_1",
             type: .button,
@@ -462,6 +466,10 @@ struct InMemorySnapshotManagerTests {
         #expect(hydrated?.metadata.windowContext?.windowTitle == "Calculator")
         #expect(hydrated?.metadata.windowContext?.windowID == 456)
         #expect(hydrated?.metadata.windowContext?.windowBounds == CGRect(x: 10, y: 20, width: 300, height: 200))
+        #expect(hydrated?.metadata.windowContext?.windowMutationIdentity == WindowMutationIdentity(
+            windowID: 456,
+            ownerProcessIdentifier: 123,
+            ownerProcessStartIdentity: 789))
     }
 
     private static func screenshotRequest(snapshotId: String, path: String) -> SnapshotScreenshotRequest {

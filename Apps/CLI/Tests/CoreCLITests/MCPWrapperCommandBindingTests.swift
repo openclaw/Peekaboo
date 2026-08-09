@@ -10,24 +10,50 @@ struct MCPWrapperCommandBindingTests {
         let parsed = ParsedValues(
             positional: ["navigate"],
             options: [
-                "channel": ["chrome"],
+                "channel": ["stable"],
                 "url": ["https://example.com"],
                 "timeout": ["5000"],
                 "types": ["error,warning", "info"],
                 "resourceTypes": ["script", "xhr"],
             ],
-            flags: ["background", "includeSnapshot", "noReload"]
+            flags: ["bringToFront", "foreground", "includeSnapshot", "noReload"]
         )
         let command = try CommanderCLIBinder.instantiateCommand(ofType: BrowserCommand.self, parsedValues: parsed)
         #expect(command.action == "navigate")
-        #expect(command.channel == "chrome")
+        #expect(command.channel == "stable")
         #expect(command.url == "https://example.com")
         #expect(command.timeout == 5000)
         #expect(command.types == ["error", "warning", "info"])
         #expect(command.resourceTypes == ["script", "xhr"])
-        #expect(command.background == true)
+        #expect(command.bringToFront == true)
+        #expect(command.foreground == true)
         #expect(command.includeSnapshot == true)
         #expect(command.noReload == true)
+    }
+
+    @Test
+    func `Browser command rejects contradictory foreground flags`() {
+        #expect(throws: ValidationError.self) {
+            _ = try CommanderCLIBinder.instantiateCommand(
+                ofType: BrowserCommand.self,
+                parsedValues: ParsedValues(
+                    positional: ["new-page"],
+                    options: ["url": ["https://example.com"]],
+                    flags: ["background", "foreground"]
+                )
+            )
+        }
+
+        #expect(throws: ValidationError.self) {
+            _ = try CommanderCLIBinder.instantiateCommand(
+                ofType: BrowserCommand.self,
+                parsedValues: ParsedValues(
+                    positional: ["select-page"],
+                    options: ["pageId": ["1"]],
+                    flags: ["bringToFront", "noBringToFront"]
+                )
+            )
+        }
     }
 
     @Test

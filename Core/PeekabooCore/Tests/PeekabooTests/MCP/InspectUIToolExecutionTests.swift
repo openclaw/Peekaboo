@@ -228,6 +228,65 @@ struct InspectUIToolExecutionTests {
     }
 
     @Test
+    func `Inspect UI tool rejects a missing explicit snapshot without inspecting frontmost UI`() async throws {
+        await UISnapshotManager.shared.removeAllSnapshots()
+        let automation = await MainActor.run {
+            InspectUITestAutomationService(
+                accessibilityGranted: true,
+                detectionResult: Self.emptyDetectionResult(id: "must-not-be-used"))
+        }
+        let context = await Self.makeContext(automation: automation)
+        let tool = InspectUITool(context: context)
+        let hostSnapshotIDsBefore = try await Set(context.snapshots.listSnapshots().map(\.id))
+
+        let response = try await tool.execute(arguments: ToolArguments(raw: [
+            "snapshot": "missing-snapshot",
+        ]))
+
+        #expect(response.isError)
+        guard case let .text(text: output, annotations: _, _meta: _) = response.content.first else {
+            Issue.record("Expected missing snapshot error")
+            return
+        }
+        #expect(output.contains("Snapshot 'missing-snapshot' was not found"))
+        #expect(await MainActor.run { automation.lastInspectWindowContext } == nil)
+        let hostSnapshotIDsAfter = try await Set(context.snapshots.listSnapshots().map(\.id))
+        #expect(hostSnapshotIDsAfter == hostSnapshotIDsBefore)
+        #expect(await UISnapshotManager.shared.getSnapshot(id: nil) == nil)
+    }
+
+    @Test
+    func `Inspect UI tool rejects a host-only snapshot unavailable in the current process`() async throws {
+        await UISnapshotManager.shared.removeAllSnapshots()
+        let automation = await MainActor.run {
+            InspectUITestAutomationService(
+                accessibilityGranted: true,
+                detectionResult: Self.emptyDetectionResult(id: "must-not-be-used"))
+        }
+        let context = await Self.makeContext(automation: automation)
+        let snapshotId = try await context.snapshots.createSnapshot()
+        let tool = InspectUITool(context: context)
+        let hostSnapshotIDsBefore = try await Set(context.snapshots.listSnapshots().map(\.id))
+
+        let response = try await tool.execute(arguments: ToolArguments(raw: [
+            "snapshot": snapshotId,
+        ]))
+
+        #expect(response.isError)
+        guard case let .text(text: output, annotations: _, _meta: _) = response.content.first else {
+            Issue.record("Expected unavailable snapshot error")
+            return
+        }
+        #expect(output.contains("Snapshot '\(snapshotId)' is not available in this process"))
+        #expect(await MainActor.run { automation.lastInspectWindowContext } == nil)
+        let hostSnapshotIDsAfter = try await Set(context.snapshots.listSnapshots().map(\.id))
+        #expect(hostSnapshotIDsAfter == hostSnapshotIDsBefore)
+        #expect(hostSnapshotIDsAfter.contains(snapshotId))
+        #expect(await UISnapshotManager.shared.getSnapshot(id: nil) == nil)
+        try await context.snapshots.cleanSnapshot(snapshotId: snapshotId)
+    }
+
+    @Test
     func `Inspect UI tool stores detection result for follow-up automation`() async throws {
         await UISnapshotManager.shared.removeAllSnapshots()
         let detectionResult = ElementDetectionResult(
@@ -384,6 +443,85 @@ struct InspectUIToolExecutionTests {
     }
 
     @Test
+    func `Inspect UI exact window id is forwarded without catalog enumeration`() async throws {
+        let windows = UnexpectedWindowListingService()
+        let automation = await MainActor.run {
+            InspectUITestAutomationService(
+                accessibilityGranted: true,
+                detectionResult: Self.emptyDetectionResult(id: "snapshot-inspect-window-id"))
+        }
+        let context = await Self.makeContext(automation: automation, windows: windows)
+        let tool = InspectUITool(context: context)
+
+        let exact = try await tool.execute(arguments: ToolArguments(raw: [
+            "app_target": "Safari",
+            "window_id": 42,
+        ]))
+        #expect(exact.isError == false)
+        let exactContext = await MainActor.run { automation.lastWindowContext }
+        #expect(exactContext?.applicationName == "Safari")
+        #expect(exactContext?.windowID == 42)
+
+        let mixedSelectors = try await tool.execute(arguments: ToolArguments(raw: [
+            "app_target": "Safari:Main",
+            "window_id": 42,
+        ]))
+        #expect(mixedSelectors.isError)
+    }
+
+    @Test
+    func `Inspect UI rejects every supplied invalid window id before AX inspection`() async throws {
+        let automation = await MainActor.run {
+            InspectUITestAutomationService(
+                accessibilityGranted: true,
+                detectionResult: Self.emptyDetectionResult(id: "snapshot-invalid-window-id"))
+        }
+        let context = await Self.makeContext(automation: automation)
+        let tool = InspectUITool(context: context)
+        let invalidValues: [Any] = [
+            "42",
+            42.5,
+            0,
+            -1,
+            Int(UInt32.max) + 1,
+            true,
+            NSNull(),
+        ]
+
+        for invalidValue in invalidValues {
+            let response = try await tool.execute(arguments: ToolArguments(raw: [
+                "app_target": "Safari",
+                "window_id": invalidValue,
+            ]))
+            #expect(response.isError, "Expected window_id \(String(describing: invalidValue)) to fail")
+        }
+        let conflictingSelectors = try await tool.execute(arguments: ToolArguments(raw: [
+            "app_target": "Safari:Main",
+            "window_id": 42,
+        ]))
+        #expect(conflictingSelectors.isError)
+        #expect(await MainActor.run { automation.lastInspectWindowContext } == nil)
+    }
+
+    @Test
+    func `Inspect UI declares window id as a bounded integer`() async {
+        let automation = await MainActor.run { InspectUITestAutomationService(accessibilityGranted: true) }
+        let context = await Self.makeContext(automation: automation)
+        let tool = InspectUITool(context: context)
+        guard case let .object(root) = tool.inputSchema,
+              case let .object(properties)? = root["properties"],
+              case let .object(windowID)? = properties["window_id"]
+        else {
+            Issue.record("Expected window_id schema")
+            return
+        }
+
+        #expect(windowID["type"] == .string("integer"))
+        #expect(windowID["minimum"] == .int(1))
+        #expect(windowID["maximum"] == .int(Int(UInt32.max)))
+    }
+
+    @Test
     func `Inspect UI tool rejects screenshot-only targets`() async throws {
         let automation = await MainActor.run { InspectUITestAutomationService(accessibilityGranted: true) }
         let context = await Self.makeContext(automation: automation)
@@ -472,19 +610,20 @@ struct InspectUIToolExecutionTests {
 
     @MainActor
     private static func makeContext(automation: any UIAutomationServiceProtocol) -> MCPToolContext {
-        self.makeContext(automation: automation, snapshots: nil)
+        self.makeContext(automation: automation, snapshots: nil, windows: nil)
     }
 
     @MainActor
     private static func makeContext(
         automation: any UIAutomationServiceProtocol,
-        snapshots: (any SnapshotManagerProtocol)?) -> MCPToolContext
+        snapshots: (any SnapshotManagerProtocol)? = nil,
+        windows: (any WindowManagementServiceProtocol)? = nil) -> MCPToolContext
     {
         let services = PeekabooServices()
         return MCPToolContext(
             automation: automation,
             menu: services.menu,
-            windows: services.windows,
+            windows: windows ?? services.windows,
             applications: services.applications,
             dialogs: services.dialogs,
             dock: services.dock,
@@ -508,5 +647,43 @@ struct InspectUIToolExecutionTests {
             screenshotPath: "",
             elements: DetectedElements(),
             metadata: DetectionMetadata(detectionTime: 0.01, elementCount: 0, method: "AXorcist"))
+    }
+}
+
+private final class UnexpectedWindowListingService: WindowManagementServiceProtocol, @unchecked Sendable {
+    func listWindows(target _: WindowTarget) async throws -> [ServiceWindowInfo] {
+        throw PeekabooError.operationError(message: "Exact window inspection must not enumerate the window catalog")
+    }
+
+    func closeWindow(target _: WindowTarget) async throws {
+        fatalError("unused")
+    }
+
+    func minimizeWindow(target _: WindowTarget) async throws {
+        fatalError("unused")
+    }
+
+    func maximizeWindow(target _: WindowTarget) async throws {
+        fatalError("unused")
+    }
+
+    func moveWindow(target _: WindowTarget, to _: CGPoint) async throws {
+        fatalError("unused")
+    }
+
+    func resizeWindow(target _: WindowTarget, to _: CGSize) async throws {
+        fatalError("unused")
+    }
+
+    func setWindowBounds(target _: WindowTarget, bounds _: CGRect) async throws {
+        fatalError("unused")
+    }
+
+    func focusWindow(target _: WindowTarget) async throws {
+        fatalError("unused")
+    }
+
+    func getFocusedWindow() async throws -> ServiceWindowInfo? {
+        fatalError("unused")
     }
 }

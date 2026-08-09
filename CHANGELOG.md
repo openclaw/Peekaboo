@@ -5,6 +5,8 @@
 ### Added
 - Add a Developer-ID-signed Playground validation harness that continuously detects focus, window, cursor, clipboard, and visualizer leakage during background automation.
 - Show recently automated app icons beside Peekaboo in the menu bar, with a settings toggle.
+- Add distinct background app instances and exact WindowServer readiness/ID receipts to app launch and open workflows.
+- Add native exact-window background pixel right- and double-clicks with per-event owner/generation validation, generation-safe mouse-up cleanup, no cursor movement or activation, and explicit unverifiable-effect reporting.
 
 ### Changed
 - Add rich formatter coverage for every current MCP and agent tool, and remove the non-functional agent `--realtime` flag.
@@ -17,6 +19,8 @@
 ### Fixed
 - Preserve tool response metadata for native agent tools so the Mac activity feed and CLI agent chat show their short summaries, matching external MCP tools.
 - Return all content items from multi-part native tool responses (e.g. `see` with annotation, `analyze`) instead of only the first.
+- Refuse PID-only/app-only background coordinate clicks and require a fresh capture-owned exact-window receipt, with retry-safe pre-dispatch metadata and no mutation invalidation on validation failure.
+- Route automatic window capture around quarantined or contended in-process ScreenCaptureKit calls through a bounded isolated `screencapture` fallback, while explicit modern-only capture still fails honestly.
 - Stop bridge hosts from requiring AppleScript permission for native application activate, hide, unhide, hide-others, and show-all operations.
 - Keep targeted UI observation in the background, exclude irrelevant application menu trees, and restore the documented `see` traversal flags and output-path aliases.
 - Reject phantom-success accessibility actions, support selectable sidebar rows, and verify typed `set-value` results against live AX state.
@@ -24,6 +28,15 @@
 - Restore documented app, window, and menu CLI options; unsupported menu-extra item selection and failed app quits now exit nonzero instead of claiming success.
 - Remove the Dock-removal AppleScript path in favor of native accessibility actions.
 - Reject targetless or ambiguous background keyboard, paste, scroll, dialog, and window operations instead of silently falling through to the foreground app or shared cursor.
+- Serialize clipboard-backed paste across every Peekaboo process, fail closed without touching the pasteboard when setup is unsafe, restore partial writes, route plain text through verified background typing, preserve MCP exact-window selectors through atomic dispatch, report MCP partial direct-text failure as retry-unsafe without touching the clipboard, and report targeted Cmd+V as retry-unsafe when macOS cannot confirm receiver consumption.
+- Verify app termination and exact window disappearance before reporting quit/close success, and make maximize a bounded background geometry operation that cannot activate an app or enter full screen.
+- Return launch-bound process-generation receipts from app launch and relaunch so cleanup never has to infer ownership from a reusable PID.
+- Reject queued window mutations when the selected CGWindowID or owner PID generation has disappeared or been recycled, and report minimized windows from live AX state.
+- Bind destructive window mutations to immutable capture-time bounds, reject same-process CGWindowID reuse, repin intended geometry transitions, and refuse Bridge hosts that would ignore the stronger receipt.
+- Keep minimized exact PID/window-ID targets addressable through bounded AX inventory, add native background `window restore` to CLI/MCP/Bridge, and make default minimized close return restore-or-`--foreground` guidance.
+- Verify minimize from the original AX window when WindowServer hides it, and close minimized exact windows without activating their app.
+- Restore minimized privacy state before returning when a background close cannot be verified.
+- Keep agent JSON output machine-readable and refuse terminal text that impersonates an unexecuted tool call.
 
 ## [3.10.0] - 2026-08-02
 

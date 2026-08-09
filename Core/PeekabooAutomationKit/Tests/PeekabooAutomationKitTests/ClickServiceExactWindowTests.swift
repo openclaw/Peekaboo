@@ -1,4 +1,5 @@
 import CoreGraphics
+import Foundation
 import enum PeekabooFoundation.PeekabooError
 import Testing
 @testable import PeekabooAutomationKit
@@ -8,17 +9,25 @@ struct ClickServiceExactWindowTests {
     @MainActor
     func `Background coordinate click preserves exact target window`() async throws {
         let synthetic = ClickRecordingSyntheticInputDriver()
+        let identity = WindowMutationIdentity(
+            windowID: 42,
+            ownerProcessIdentifier: 12345,
+            ownerProcessStartIdentity: 1)
+        let bounds = CGRect(x: 0, y: 0, width: 100, height: 100)
         let service = ClickService(
             snapshotManager: InMemorySnapshotManager(),
             inputPolicy: UIInputPolicy(defaultStrategy: .synthOnly),
-            syntheticInputDriver: synthetic)
+            syntheticInputDriver: synthetic,
+            exactWindowIdentityValidator: { _, _ in true })
 
         _ = try await service.click(
             target: .coordinates(CGPoint(x: 10, y: 20)),
             clickType: .single,
             snapshotId: nil,
             targetProcessIdentifier: 12345,
-            targetWindowID: 42)
+            targetWindowID: 42,
+            expectedWindowIdentity: identity,
+            expectedWindowBounds: bounds)
 
         #expect(synthetic.events == [
             .targetedClick(
@@ -28,6 +37,40 @@ struct ClickServiceExactWindowTests {
                 targetProcessIdentifier: 12345,
                 targetWindowID: 42),
         ])
+    }
+
+    @Test
+    @MainActor
+    func `Exact click drift after dispatch is indeterminate`() async {
+        let synthetic = ClickRecordingSyntheticInputDriver()
+        let validations = ExactClickValidationSequence([true, false])
+        let identity = WindowMutationIdentity(
+            windowID: 42,
+            ownerProcessIdentifier: 12345,
+            ownerProcessStartIdentity: 1)
+        let service = ClickService(
+            snapshotManager: InMemorySnapshotManager(),
+            inputPolicy: UIInputPolicy(defaultStrategy: .synthOnly),
+            syntheticInputDriver: synthetic,
+            exactWindowIdentityValidator: { _, _ in validations.next() })
+
+        do {
+            _ = try await service.click(
+                target: .coordinates(CGPoint(x: 10, y: 20)),
+                clickType: .single,
+                snapshotId: nil,
+                targetProcessIdentifier: 12345,
+                targetWindowID: 42,
+                expectedWindowIdentity: identity,
+                expectedWindowBounds: CGRect(x: 0, y: 0, width: 100, height: 100))
+            Issue.record("Expected indeterminate click completion")
+        } catch let error as InputDeliveryIndeterminateError {
+            #expect(error.operation == .click)
+            #expect(!error.retrySafe)
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+        #expect(synthetic.events.count == 1)
     }
 
     @Test
@@ -79,15 +122,19 @@ struct ClickServiceExactWindowTests {
             inputPolicy: UIInputPolicy(defaultStrategy: .synthOnly),
             actionInputDriver: ActionInputDriver(),
             syntheticInputDriver: synthetic,
-            automationElementResolver: AutomationElementResolver())
+            automationElementResolver: AutomationElementResolver(),
+            exactWindowIdentityValidator: { _, _ in true })
 
         do {
             _ = try await service.click(
                 target: .elementId("B1"),
                 clickType: .single,
                 snapshotId: "expired-snapshot",
-                targetProcessIdentifier: getpid(),
-                targetWindowID: 42)
+                expectedWindowIdentity: WindowMutationIdentity(
+                    windowID: 42,
+                    ownerProcessIdentifier: getpid(),
+                    ownerProcessStartIdentity: 1),
+                expectedWindowBounds: CGRect(x: 0, y: 0, width: 100, height: 100))
             Issue.record("Expected stale snapshot error")
         } catch let PeekabooError.snapshotStale(reason) {
             #expect(reason.contains("no longer available"))
@@ -168,19 +215,32 @@ struct ClickServiceExactWindowTests {
                     detectionTime: 0.01,
                     elementCount: 1,
                     method: "test",
-                    windowContext: WindowContext(applicationProcessId: pid, windowID: 42)))
+                    windowContext: WindowContext(
+                        applicationProcessId: pid,
+                        windowID: 42,
+                        windowBounds: CGRect(x: 0, y: 0, width: 100, height: 100),
+                        windowMutationIdentity: WindowMutationIdentity(
+                            windowID: 42,
+                            ownerProcessIdentifier: pid,
+                            ownerProcessStartIdentity: 1))))
             let synthetic = ClickRecordingSyntheticInputDriver()
             let service = ClickService(
                 snapshotManager: InMemorySnapshotManager(detectionResult: detectionResult),
                 inputPolicy: UIInputPolicy(defaultStrategy: .synthOnly),
-                syntheticInputDriver: synthetic)
+                syntheticInputDriver: synthetic,
+                exactWindowIdentityValidator: { _, _ in true })
 
             let result = try await service.click(
                 target: .elementId(target.id),
                 clickType: .single,
                 snapshotId: "snapshot",
                 targetProcessIdentifier: pid,
-                targetWindowID: 42)
+                targetWindowID: 42,
+                expectedWindowIdentity: WindowMutationIdentity(
+                    windowID: 42,
+                    ownerProcessIdentifier: pid,
+                    ownerProcessStartIdentity: 1),
+                expectedWindowBounds: CGRect(x: 0, y: 0, width: 100, height: 100))
 
             #expect(result.path == .synth)
             #expect(synthetic.events == [
@@ -206,9 +266,24 @@ struct ClickServiceExactWindowTests {
     }
 }
 
+private final class ExactClickValidationSequence: @unchecked Sendable {
+    private let lock = NSLock()
+    private var values: [Bool]
+
+    init(_ values: [Bool]) {
+        self.values = values
+    }
+
+    func next() -> Bool {
+        self.lock.lock()
+        defer { self.lock.unlock() }
+        return self.values.isEmpty ? false : self.values.removeFirst()
+    }
+}
+
 private final class ExactWindowTracker: WindowTrackingProviding, @unchecked Sendable {
     @MainActor
     func windowBounds(for _: CGWindowID) -> CGRect? {
-        .zero
+        CGRect(x: 0, y: 0, width: 100, height: 100)
     }
 }

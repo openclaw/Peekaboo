@@ -38,6 +38,8 @@ struct WindowEnumerationContext {
         let isKeyWindow: Bool?
         let isFrontmost: Bool?
         let subrole: String?
+        let isMinimized: Bool?
+        let mutationIdentity: WindowMutationIdentity?
 
         init(
             windowID: Int?,
@@ -47,7 +49,9 @@ struct WindowEnumerationContext {
             isMainWindow: Bool = false,
             isKeyWindow: Bool? = nil,
             isFrontmost: Bool? = nil,
-            subrole: String? = nil)
+            subrole: String? = nil,
+            isMinimized: Bool? = nil,
+            mutationIdentity: WindowMutationIdentity? = nil)
         {
             self.windowID = windowID
             self.title = title
@@ -57,6 +61,8 @@ struct WindowEnumerationContext {
             self.isKeyWindow = isKeyWindow
             self.isFrontmost = isFrontmost
             self.subrole = subrole
+            self.isMinimized = isMinimized
+            self.mutationIdentity = mutationIdentity
         }
     }
 
@@ -146,20 +152,35 @@ struct WindowEnumerationContext {
         }
 
         let bounds = CGRect(x: x, y: y, width: width, height: height)
-        let windowID = windowInfo[kCGWindowNumber as String] as? Int ?? index
+        guard let windowIDValue = windowInfo[kCGWindowNumber as String] as? Int,
+              let windowID = CGWindowID(exactly: windowIDValue),
+              let ownerPID = windowInfo[kCGWindowOwnerPID as String] as? pid_t,
+              let processIdentity = self.app.processIdentity,
+              ownerPID == processIdentity.processIdentifier
+        else {
+            return nil
+        }
         let windowLevel = windowInfo[kCGWindowLayer as String] as? Int ?? 0
         let alpha = windowInfo[kCGWindowAlpha as String] as? CGFloat ?? 1.0
-        let isOnScreen = windowInfo[kCGWindowIsOnscreen as String] as? Bool ?? true
         let sharingRaw = windowInfo[kCGWindowSharingState as String] as? Int
         let sharingState = sharingRaw.flatMap { WindowSharingState(rawValue: $0) }
-        let ownerPID = windowInfo[kCGWindowOwnerPID as String] as? pid_t
         let windowTitle = (windowInfo[kCGWindowName as String] as? String) ?? ""
         let isMinimized = bounds.origin.x < -10000 || bounds.origin.y < -10000
-        let spaces = spaceService.getSpacesForWindow(windowID: CGWindowID(windowID))
+        let isOnScreen = windowInfo[kCGWindowIsOnscreen as String] as? Bool ?? !isMinimized
+        guard let mutationIdentity = SystemIdentityResolver.windowMutationIdentity(
+            windowID: windowID,
+            expectedOwnerProcessIdentifier: ownerPID,
+            expectedOwnerProcessStartIdentity: processIdentity.processStartIdentity,
+            expectedBounds: bounds,
+            isMinimized: isMinimized)
+        else {
+            return nil
+        }
+        let spaces = spaceService.getSpacesForWindow(windowID: windowID)
         let (spaceID, spaceName) = spaces.first.map { ($0.id, $0.name) } ?? (nil, nil)
         let screenInfo = screenService.screenContainingWindow(bounds: bounds)
         let excludedFromMenu: Bool = if ownerPID == getpid(),
-                                        let window = NSApp.window(withWindowNumber: windowID)
+                                        let window = NSApp.window(withWindowNumber: windowIDValue)
         {
             window.isExcludedFromWindowsMenu
         } else {
@@ -167,7 +188,7 @@ struct WindowEnumerationContext {
         }
 
         return ServiceWindowInfo(
-            windowID: windowID,
+            windowID: windowIDValue,
             title: windowTitle,
             bounds: bounds,
             isMinimized: isMinimized,
@@ -183,7 +204,8 @@ struct WindowEnumerationContext {
             layer: windowLevel,
             isOnScreen: isOnScreen,
             sharingState: sharingState,
-            isExcludedFromWindowsMenu: excludedFromMenu)
+            isExcludedFromWindowsMenu: excludedFromMenu,
+            mutationIdentity: mutationIdentity)
     }
 
     private func terminatedOutput() -> UnifiedToolOutput<ServiceWindowListData> {
@@ -265,8 +287,26 @@ struct WindowEnumerationContext {
 
             let title = axWindow.title() ?? ""
             let resolvedID = windowIdentityService.getWindowID(from: axWindow).map(Int.init)
+            let isMinimized = axWindow.isMinimized()
             let bounds: CGRect? = axWindow.position().map { position in
                 CGRect(origin: position, size: axWindow.size() ?? .zero)
+            }
+            let mutationIdentity: WindowMutationIdentity? = if let resolvedID,
+                                                               let windowID = CGWindowID(exactly: resolvedID),
+                                                               let bounds,
+                                                               let processIdentity = self.app.processIdentity
+            {
+                SystemIdentityResolver.axWindowMutationIdentity(
+                    snapshot: SystemIdentityResolver.WindowMutationSnapshot(
+                        windowID: windowID,
+                        ownerProcessIdentifier: processIdentity.processIdentifier,
+                        ownerProcessStartIdentity: processIdentity.processStartIdentity,
+                        bounds: bounds,
+                        isMinimized: isMinimized),
+                    processStartIdentityProvider: SystemIdentityResolver.processStartIdentity,
+                    windowIdentityProvider: SystemIdentityResolver.windowIdentity)
+            } else {
+                nil
             }
 
             var standaloneInfo: ServiceWindowInfo?
@@ -279,7 +319,8 @@ struct WindowEnumerationContext {
                     from: axWindow,
                     index: index,
                     isKeyWindow: focusMetadata.isKey,
-                    isFrontmost: focusMetadata.isFrontmost)
+                    isFrontmost: focusMetadata.isFrontmost,
+                    expectedProcessIdentity: self.app.processIdentity)
             }
 
             let focusMetadata = Self.focusMetadata(
@@ -295,7 +336,9 @@ struct WindowEnumerationContext {
                 isMainWindow: axWindow.isMain() ?? false,
                 isKeyWindow: focusMetadata.isKey,
                 isFrontmost: focusMetadata.isFrontmost,
-                subrole: axWindow.subrole()))
+                subrole: axWindow.subrole(),
+                isMinimized: isMinimized,
+                mutationIdentity: mutationIdentity))
         }
 
         return descriptors
@@ -345,11 +388,7 @@ struct WindowEnumerationContext {
         for cgWindow in cgWindows where seenWindowIDs.insert(cgWindow.windowID).inserted {
             var enrichedWindow = cgWindow
             if let descriptor = axDescriptorByID[cgWindow.windowID] {
-                enrichedWindow = enrichedWindow.withAXMetadata(
-                    isMainWindow: descriptor.isMainWindow,
-                    isKeyWindow: descriptor.isKeyWindow,
-                    isFrontmost: descriptor.isFrontmost,
-                    subrole: descriptor.subrole)
+                enrichedWindow = enrichedWindow.withAXMetadata(descriptor)
             }
 
             guard enrichedWindow.title.isEmpty else {
@@ -458,7 +497,8 @@ struct WindowEnumerationContext {
                 from: window,
                 index: index,
                 isKeyWindow: focusMetadata.isKey,
-                isFrontmost: focusMetadata.isFrontmost)
+                isFrontmost: focusMetadata.isFrontmost,
+                expectedProcessIdentity: self.app.processIdentity)
             {
                 windowInfos.append(windowInfo)
             }
@@ -487,6 +527,31 @@ struct WindowEnumerationContext {
 }
 
 extension ServiceWindowInfo {
+    func withMutationIdentity(_ mutationIdentity: WindowMutationIdentity) -> ServiceWindowInfo {
+        ServiceWindowInfo(
+            windowID: self.windowID,
+            title: self.title,
+            bounds: self.bounds,
+            isMinimized: self.isMinimized,
+            isMainWindow: self.isMainWindow,
+            isKeyWindow: self.isKeyWindow,
+            isFrontmost: self.isFrontmost,
+            subrole: self.subrole,
+            windowLevel: self.windowLevel,
+            alpha: self.alpha,
+            index: self.index,
+            spaceID: self.spaceID,
+            spaceName: self.spaceName,
+            screenIndex: self.screenIndex,
+            screenName: self.screenName,
+            isOffScreen: self.isOffScreen,
+            layer: self.layer,
+            isOnScreen: self.isOnScreen,
+            sharingState: self.sharingState,
+            isExcludedFromWindowsMenu: self.isExcludedFromWindowsMenu,
+            mutationIdentity: mutationIdentity)
+    }
+
     /// Returns a copy of this window with a replacement title, preserving every other field.
     fileprivate func withTitle(_ newTitle: String) -> ServiceWindowInfo {
         ServiceWindowInfo(
@@ -509,24 +574,22 @@ extension ServiceWindowInfo {
             layer: self.layer,
             isOnScreen: self.isOnScreen,
             sharingState: self.sharingState,
-            isExcludedFromWindowsMenu: self.isExcludedFromWindowsMenu)
+            isExcludedFromWindowsMenu: self.isExcludedFromWindowsMenu,
+            mutationIdentity: self.mutationIdentity)
     }
 
     fileprivate func withAXMetadata(
-        isMainWindow: Bool,
-        isKeyWindow: Bool?,
-        isFrontmost: Bool?,
-        subrole: String?) -> ServiceWindowInfo
+        _ descriptor: WindowEnumerationContext.AXWindowDescriptor) -> ServiceWindowInfo
     {
         ServiceWindowInfo(
             windowID: self.windowID,
             title: self.title,
             bounds: self.bounds,
-            isMinimized: self.isMinimized,
-            isMainWindow: isMainWindow,
-            isKeyWindow: isKeyWindow,
-            isFrontmost: isFrontmost,
-            subrole: subrole,
+            isMinimized: descriptor.isMinimized ?? self.isMinimized,
+            isMainWindow: descriptor.isMainWindow,
+            isKeyWindow: descriptor.isKeyWindow,
+            isFrontmost: descriptor.isFrontmost,
+            subrole: descriptor.subrole,
             windowLevel: self.windowLevel,
             alpha: self.alpha,
             index: self.index,
@@ -534,10 +597,12 @@ extension ServiceWindowInfo {
             spaceName: self.spaceName,
             screenIndex: self.screenIndex,
             screenName: self.screenName,
-            isOffScreen: self.isOffScreen,
+            isOffScreen: (descriptor.isMinimized ?? self.isMinimized) || self.isOffScreen,
             layer: self.layer,
-            isOnScreen: self.isOnScreen,
+            isOnScreen: (descriptor.isMinimized ?? self.isMinimized) ? false : self.isOnScreen,
             sharingState: self.sharingState,
-            isExcludedFromWindowsMenu: self.isExcludedFromWindowsMenu)
+            isExcludedFromWindowsMenu: self.isExcludedFromWindowsMenu,
+            mutationIdentity: self.mutationIdentity?
+                .withMinimizedState(descriptor.isMinimized ?? self.isMinimized) ?? descriptor.mutationIdentity)
     }
 }

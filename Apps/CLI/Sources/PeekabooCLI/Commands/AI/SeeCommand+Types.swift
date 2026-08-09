@@ -151,6 +151,8 @@ struct SeeTruncationSummary: Codable {
     let max_depth_reached: Bool
     let max_element_count_reached: Bool
     let max_children_per_node_reached: Bool
+    let deadline_reached: Bool
+    let incomplete_accessibility_read: Bool
     let warning: String
 
     init?(metadata: DetectionMetadata) {
@@ -160,6 +162,8 @@ struct SeeTruncationSummary: Codable {
         self.max_depth_reached = truncationInfo.maxDepthReached
         self.max_element_count_reached = truncationInfo.maxElementCountReached
         self.max_children_per_node_reached = truncationInfo.maxChildrenPerNodeReached
+        self.deadline_reached = truncationInfo.deadlineReached
+        self.incomplete_accessibility_read = truncationInfo.incompleteAccessibilityRead
         self.warning = truncationInfo.remediationMessage(budget: metadata.windowContext?.traversalBudget)
     }
 }

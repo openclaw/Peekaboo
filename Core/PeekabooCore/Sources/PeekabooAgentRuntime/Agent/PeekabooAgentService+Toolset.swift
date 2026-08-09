@@ -156,6 +156,7 @@ extension PeekabooAgentService {
         // Vision tools
         agentTools.append(createSeeTool())
         agentTools.append(createInspectUITool())
+        agentTools.append(createVerifyStateTool())
         agentTools.append(createImageTool())
         agentTools.append(createCaptureTool())
         agentTools.append(createAnalyzeTool())

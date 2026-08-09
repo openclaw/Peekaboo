@@ -134,6 +134,54 @@ extension UIAutomationService {
         _ actions: [TypeAction],
         cadence: TypingCadence,
         snapshotId: String?,
+        expectedWindowIdentity: WindowMutationIdentity,
+        expectedWindowBounds: CGRect) async throws -> TypeResult
+    {
+        let validator: @MainActor @Sendable () async throws -> Void = {
+            try await self.requireExactWindowKeyboardFocus(
+                expectedWindowIdentity: expectedWindowIdentity,
+                expectedWindowBounds: expectedWindowBounds)
+        }
+        defer { self.elementDetectionService.invalidateCache() }
+        let summary = try await self.normalizingSnapshotErrors {
+            try await self.typeService.typeActionsTrackingSecureInput(
+                actions,
+                cadence: cadence,
+                snapshotId: snapshotId,
+                targetProcessIdentifier: expectedWindowIdentity.ownerProcessIdentifier,
+                deliveryValidator: validator)
+        }
+        return summary.result
+    }
+
+    public func typeActions(
+        _ actions: [TypeAction],
+        cadence: TypingCadence,
+        snapshotId: String?,
+        target: ExactWindowKeyboardTarget) async throws -> TypeResult
+    {
+        let validator: @MainActor @Sendable () async throws -> Void = {
+            try await self.requireExactWindowKeyboardFocus(
+                expectedWindowIdentity: target.windowIdentity,
+                expectedWindowBounds: target.windowBounds,
+                expectedFocusedElement: target.focusedElement)
+        }
+        defer { self.elementDetectionService.invalidateCache() }
+        let summary = try await self.normalizingSnapshotErrors {
+            try await self.typeService.typeActionsTrackingSecureInput(
+                actions,
+                cadence: cadence,
+                snapshotId: snapshotId,
+                targetProcessIdentifier: target.windowIdentity.ownerProcessIdentifier,
+                deliveryValidator: validator)
+        }
+        return summary.result
+    }
+
+    public func typeActions(
+        _ actions: [TypeAction],
+        cadence: TypingCadence,
+        snapshotId: String?,
         targetProcessIdentifier: pid_t) async throws -> TypeResult
     {
         self.logger.debug("Delegating targeted typeActions to TypeService")

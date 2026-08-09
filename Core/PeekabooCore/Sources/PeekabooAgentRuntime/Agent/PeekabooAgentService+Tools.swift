@@ -20,7 +20,7 @@ extension PeekabooAgentService {
             snapshotExecutionGate: self.snapshotExecutionGate)
     }
 
-    private func makeAgentTool(
+    func makeAgentTool(
         from tool: some MCPTool,
         name: String? = nil,
         description: String? = nil) -> AgentTool
@@ -32,11 +32,13 @@ extension PeekabooAgentService {
             name: toolName,
             description: description ?? tool.description,
             parameters: self.convertMCPSchemaToAgentSchema(tool.inputSchema),
-            execute: { arguments in
+            executeWithContext: { arguments, executionContext in
                 let response = try await context.execute(
                     tool: tool,
                     arguments: makeToolArguments(from: arguments))
-                return await convertToolResponseToAgentToolResultAsync(response)
+                return await convertToolResponseToAgentToolResultAsync(
+                    response,
+                    executionContext: executionContext)
             })
     }
 
@@ -48,6 +50,10 @@ extension PeekabooAgentService {
 
     public func createInspectUITool() -> AgentTool {
         self.makeAgentTool(from: InspectUITool(context: self.makeToolContext()))
+    }
+
+    public func createVerifyStateTool() -> AgentTool {
+        self.makeAgentTool(from: VerifyStateTool(context: self.makeToolContext()))
     }
 
     public func createImageTool() -> AgentTool {
@@ -246,7 +252,7 @@ extension PeekabooAgentService {
     public func createDoneTool() -> AgentTool {
         AgentTool(
             name: "done",
-            description: "Indicate that the task is complete",
+            description: "Indicate completion after any two-phase structured verification debt is cleared",
             parameters: AgentToolParameters(
                 properties: [
                     "message": AgentToolParameterProperty(

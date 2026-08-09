@@ -305,6 +305,38 @@ struct WindowListDeduplicationTests {
     }
 
     @Test
+    func `hybrid merge lets AX minimized state override stale CG visibility`() throws {
+        let cgWindows = [Self.window(
+            id: 1091,
+            title: "Untitled",
+            index: 0,
+            mutationIdentity: .init(
+                windowID: 1091,
+                ownerProcessIdentifier: 42,
+                ownerProcessStartIdentity: 7,
+                isMinimized: false
+            )
+        )]
+        let axDescriptors = [WindowEnumerationContext.AXWindowDescriptor(
+            windowID: 1091,
+            title: "Untitled",
+            bounds: cgWindows[0].bounds,
+            standaloneInfo: nil,
+            isMinimized: true
+        )]
+
+        let window = try #require(WindowEnumerationContext.mergeWindows(
+            cgWindows: cgWindows,
+            axDescriptors: axDescriptors
+        ).first)
+
+        #expect(window.isMinimized)
+        #expect(!window.isOnScreen)
+        #expect(window.isOffScreen)
+        #expect(window.mutationIdentity?.isMinimized == true)
+    }
+
+    @Test
     func `unresolved AX identities preserve unknown focus metadata`() {
         let missingWindowID = WindowEnumerationContext.focusMetadata(
             windowID: nil,
@@ -337,6 +369,7 @@ struct WindowListDeduplicationTests {
         object.removeValue(forKey: "isKeyWindow")
         object.removeValue(forKey: "isFrontmost")
         object.removeValue(forKey: "subrole")
+        object.removeValue(forKey: "mutationIdentity")
 
         let legacyData = try JSONSerialization.data(withJSONObject: object)
         let decoded = try JSONDecoder().decode(ServiceWindowInfo.self, from: legacyData)
@@ -345,6 +378,7 @@ struct WindowListDeduplicationTests {
         #expect(decoded.isKeyWindow == nil)
         #expect(decoded.isFrontmost == nil)
         #expect(decoded.subrole == nil)
+        #expect(decoded.mutationIdentity == nil)
     }
 
     private static func window(
@@ -354,7 +388,8 @@ struct WindowListDeduplicationTests {
         layer: Int = 0,
         bounds: CGRect = CGRect(x: 14, y: 59, width: 1200, height: 832),
         isKeyWindow: Bool? = nil,
-        isFrontmost: Bool? = nil
+        isFrontmost: Bool? = nil,
+        mutationIdentity: WindowMutationIdentity? = nil
     ) -> ServiceWindowInfo {
         ServiceWindowInfo(
             windowID: id,
@@ -370,7 +405,8 @@ struct WindowListDeduplicationTests {
             layer: layer,
             isOnScreen: true,
             sharingState: .readOnly,
-            isExcludedFromWindowsMenu: false
+            isExcludedFromWindowsMenu: false,
+            mutationIdentity: mutationIdentity
         )
     }
 

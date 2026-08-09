@@ -47,6 +47,30 @@ struct AgentTurnBoundaryTranscriptTests {
         }
         #expect(skippedJSON["skipped"] as? Bool == true)
         #expect((skippedJSON["reason"] as? String)?.contains("click") == true)
+        #expect(service.turnBoundarySignal(from: step.toolResults) == .continueNextStep(
+            reason: "Stopped after click; call `see` again before the next UI action."))
+        #expect(service.turnBoundaryStopReason(from: step.toolResults) == nil)
+
+        let skippedBoundary = try #require(skippedJSON["turn_boundary"] as? [String: Any])
+        #expect(skippedBoundary["continue_next_step"] as? Bool == true)
+        #expect(skippedBoundary["stop_after_current_step"] as? Bool == true)
+    }
+
+    @Test
+    func `legacy persisted stop marker remains terminal`() throws {
+        let service = try PeekabooAgentService(services: PeekabooServices())
+        let legacy = AgentToolResult(
+            toolCallId: "legacy-call",
+            result: AnyAgentToolValue(object: [
+                "turn_boundary": AnyAgentToolValue(object: [
+                    "stop_after_current_step": AnyAgentToolValue(bool: true),
+                    "reason": AnyAgentToolValue(string: "Legacy terminal boundary"),
+                ]),
+            ]),
+            isError: false)
+
+        #expect(service.turnBoundarySignal(from: legacy) == .stopAgent(reason: "Legacy terminal boundary"))
+        #expect(service.turnBoundaryStopReason(from: legacy) == "Legacy terminal boundary")
     }
 
     @Test

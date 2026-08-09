@@ -15,14 +15,29 @@ extension PeekabooBridgeClient {
         let effectiveTimeoutSec = timeoutSec ?? self.requestTimeoutSec
         let (socketPath, maxResponseBytes, requestTimeoutSec) =
             (self.socketPath, self.maxResponseBytes, effectiveTimeoutSec)
-        let responseData = try await Task.detached(priority: .userInitiated) {
-            try Self.sendBlocking(
-                socketPath: socketPath,
-                requestData: payload,
-                maxResponseBytes: maxResponseBytes,
-                timeoutSec: requestTimeoutSec)
-        }.value
-
+        let cancellation = PeekabooBridgeClientConnectionCancellation()
+        let responseData: Data
+        do {
+            responseData = try await withTaskCancellationHandler {
+                try await Task.detached(priority: .userInitiated) {
+                    try Self.sendBlocking(
+                        socketPath: socketPath,
+                        requestData: payload,
+                        maxResponseBytes: maxResponseBytes,
+                        timeoutSec: requestTimeoutSec,
+                        cancellation: cancellation)
+                }.value
+            } onCancel: {
+                cancellation.cancel()
+            }
+        } catch let failure as PeekabooBridgeResponseReadFailure {
+            guard request.mayMutateDesktop else {
+                throw failure.underlying
+            }
+            throw Self.indeterminateResponseFailure(
+                failure.underlying,
+                operation: op)
+        }
         guard !responseData.isEmpty else {
             let details = """
             EOF while reading response for \(op.rawValue).
@@ -36,18 +51,26 @@ extension PeekabooBridgeClient {
 
             throw PeekabooBridgeErrorEnvelope(
                 code: .internalError,
-                message: "Bridge host returned no response",
-                details: details)
+                message: request.mayMutateDesktop
+                    ? "Bridge host returned no response after \(op.rawValue); outcome is indeterminate; do not retry"
+                    : "Bridge host returned no response",
+                details: details,
+                operationMayHaveCompleted: request.mayMutateDesktop)
         }
 
         let response: PeekabooBridgeResponse
         do {
             response = try self.decoder.decode(PeekabooBridgeResponse.self, from: responseData)
         } catch {
+            let message = request.mayMutateDesktop
+                ? "Bridge host returned an invalid response after \(op.rawValue); " +
+                "outcome is indeterminate; do not retry"
+                : "Bridge host returned an invalid response"
             throw PeekabooBridgeErrorEnvelope(
                 code: .decodingFailed,
-                message: "Bridge host returned an invalid response",
-                details: "\(error)")
+                message: message,
+                details: "\(error)",
+                operationMayHaveCompleted: request.mayMutateDesktop)
         }
         let duration = Date().timeIntervalSince(start)
         self.logger.debug(
@@ -76,39 +99,146 @@ extension PeekabooBridgeClient {
         socketPath: String,
         requestData: Data,
         maxResponseBytes: Int,
-        timeoutSec: TimeInterval) throws -> Data
+        timeoutSec: TimeInterval,
+        cancellation: PeekabooBridgeClientConnectionCancellation) throws -> Data
     {
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
         guard fd >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
-        defer { close(fd) }
-
-        Self.disableSigPipe(fd: fd)
-        try PeekabooBridgeSocketIO.configureConnectedSocket(fd)
-        let deadline = Date().addingTimeInterval(timeoutSec)
-
-        var addr = sockaddr_un()
-        addr.sun_family = sa_family_t(AF_UNIX)
-        let capacity = MemoryLayout.size(ofValue: addr.sun_path)
-        let copied = socketPath.withCString { cstr -> Int in
-            strlcpy(&addr.sun_path.0, cstr, capacity)
+        try cancellation.install(fd: fd)
+        defer {
+            cancellation.clear(fd: fd)
+            close(fd)
         }
-        guard copied < capacity else { throw POSIXError(.ENAMETOOLONG) }
-        addr.sun_len = UInt8(MemoryLayout.size(ofValue: addr))
 
-        let len = socklen_t(MemoryLayout.size(ofValue: addr))
-        let connectResult = withUnsafePointer(to: &addr) { ptr in
-            connect(fd, UnsafePointer<sockaddr>(OpaquePointer(ptr)), len)
-        }
-        if connectResult != 0 {
-            guard errno == EINPROGRESS || errno == EAGAIN || errno == EALREADY else {
-                throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .ECONNREFUSED)
+        do {
+            Self.disableSigPipe(fd: fd)
+            try PeekabooBridgeSocketIO.configureConnectedSocket(fd)
+            let deadline = Date().addingTimeInterval(timeoutSec)
+
+            var addr = sockaddr_un()
+            addr.sun_family = sa_family_t(AF_UNIX)
+            let capacity = MemoryLayout.size(ofValue: addr.sun_path)
+            let copied = socketPath.withCString { cstr -> Int in
+                strlcpy(&addr.sun_path.0, cstr, capacity)
             }
-            try PeekabooBridgeSocketIO.finishConnect(fd: fd, deadline: deadline)
+            guard copied < capacity else { throw POSIXError(.ENAMETOOLONG) }
+            addr.sun_len = UInt8(MemoryLayout.size(ofValue: addr))
+
+            let len = socklen_t(MemoryLayout.size(ofValue: addr))
+            let connectResult = withUnsafePointer(to: &addr) { ptr in
+                connect(fd, UnsafePointer<sockaddr>(OpaquePointer(ptr)), len)
+            }
+            if connectResult != 0 {
+                guard errno == EINPROGRESS || errno == EAGAIN || errno == EALREADY else {
+                    throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .ECONNREFUSED)
+                }
+                try PeekabooBridgeSocketIO.finishConnect(fd: fd, deadline: deadline)
+            }
+
+            try cancellation.check()
+            try PeekabooBridgeSocketIO.writeAll(fd: fd, data: requestData, deadline: deadline)
+            do {
+                guard shutdown(fd, SHUT_WR) == 0 else {
+                    throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+                }
+                let response = try PeekabooBridgeSocketIO.readAll(
+                    fd: fd,
+                    maxBytes: maxResponseBytes,
+                    deadline: deadline)
+                try cancellation.check()
+                return response
+            } catch {
+                let responseFailure: any Error
+                do {
+                    try cancellation.check()
+                    responseFailure = error
+                } catch let cancellationError {
+                    responseFailure = cancellationError
+                }
+                throw PeekabooBridgeResponseReadFailure(underlying: responseFailure)
+            }
+        } catch let responseFailure as PeekabooBridgeResponseReadFailure {
+            throw responseFailure
+        } catch {
+            try cancellation.check()
+            throw error
         }
+    }
 
-        try PeekabooBridgeSocketIO.writeAll(fd: fd, data: requestData, deadline: deadline)
-        _ = shutdown(fd, SHUT_WR)
+    private nonisolated static func indeterminateResponseFailure(
+        _ error: any Error,
+        operation: PeekabooBridgeOperation) -> PeekabooBridgeErrorEnvelope
+    {
+        let code: PeekabooBridgeErrorCode = if let error = error as? POSIXError, error.code == .ETIMEDOUT {
+            .timeout
+        } else {
+            .internalError
+        }
+        let message = "Bridge response was lost after \(operation.rawValue) was dispatched; " +
+            "outcome is indeterminate; do not retry"
+        return PeekabooBridgeErrorEnvelope(
+            code: code,
+            message: message,
+            details: "\(error)",
+            operationMayHaveCompleted: true)
+    }
+}
 
-        return try PeekabooBridgeSocketIO.readAll(fd: fd, maxBytes: maxResponseBytes, deadline: deadline)
+private struct PeekabooBridgeResponseReadFailure: Error {
+    let underlying: any Error
+}
+
+/// Wakes blocking socket I/O when the Swift caller is cancelled. The blocking worker remains the sole owner of
+/// `close(2)` so cancellation cannot close a descriptor that the kernel has already recycled for another request.
+final class PeekabooBridgeClientConnectionCancellation: @unchecked Sendable {
+    typealias ShutdownHandler = @Sendable (Int32) -> Void
+
+    private let lock = NSLock()
+    private let shutdownHandler: ShutdownHandler
+    private var fileDescriptor: Int32?
+    private var isCancelled = false
+
+    init(shutdownHandler: @escaping ShutdownHandler = { fd in
+        _ = shutdown(fd, SHUT_RDWR)
+    }) {
+        self.shutdownHandler = shutdownHandler
+    }
+
+    func install(fd: Int32) throws {
+        self.lock.lock()
+        if self.isCancelled {
+            self.lock.unlock()
+            close(fd)
+            throw CancellationError()
+        }
+        self.fileDescriptor = fd
+        self.lock.unlock()
+    }
+
+    func cancel() {
+        self.lock.lock()
+        self.isCancelled = true
+        if let fd = self.fileDescriptor {
+            // `clear(fd:)` cannot release this descriptor for close/reuse until shutdown completes.
+            self.shutdownHandler(fd)
+        }
+        self.lock.unlock()
+    }
+
+    func clear(fd: Int32) {
+        self.lock.lock()
+        if self.fileDescriptor == fd {
+            self.fileDescriptor = nil
+        }
+        self.lock.unlock()
+    }
+
+    func check() throws {
+        self.lock.lock()
+        let isCancelled = self.isCancelled
+        self.lock.unlock()
+        if isCancelled {
+            throw CancellationError()
+        }
     }
 }

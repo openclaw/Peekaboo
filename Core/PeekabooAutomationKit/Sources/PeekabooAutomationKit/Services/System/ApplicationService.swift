@@ -44,24 +44,40 @@ import PeekabooFoundation
 @MainActor
 public final class ApplicationService: ApplicationServiceProtocol {
     public let supportsApplicationLaunchOptions = true
+    public let supportsNewApplicationInstanceLaunch = true
+    public let supportsApplicationWindowReadiness = true
     public let supportsApplicationRelaunch = true
+    public let supportsProcessGenerationPinnedApplicationQuit = true
 
     typealias ApplicationOpenHandler = @MainActor (
         _ applicationURL: URL,
         _ openURLs: [URL],
         _ configuration: NSWorkspace.OpenConfiguration) async throws -> NSRunningApplication
+    typealias DefaultApplicationOpenHandler = @MainActor (
+        _ targetURL: URL,
+        _ configuration: NSWorkspace.OpenConfiguration) async throws -> NSRunningApplication
     typealias RelaunchTargetResolver = @MainActor (_ identifier: String) async throws -> ServiceApplicationInfo
-    typealias RelaunchQuitHandler = @MainActor (_ identifier: String, _ force: Bool) async throws -> Bool
-    typealias RelaunchRunningHandler = @MainActor (_ identifier: String) async -> Bool
+    typealias RelaunchQuitHandler = @MainActor (_ request: ApplicationQuitRequest) async throws -> Bool
+    typealias RelaunchRunningHandler = @MainActor (_ identifier: String) async throws -> Bool
+    typealias ApplicationReadinessHandler = @MainActor (_ application: NSRunningApplication) -> Bool
+    typealias ProcessStartIdentityProvider = @MainActor (_ processIdentifier: pid_t) -> UInt64?
+    typealias ApplicationQuitHandler = @MainActor (_ application: NSRunningApplication, _ force: Bool) -> Bool
 
     let logger = Logger(subsystem: "boo.peekaboo.core", category: "ApplicationService")
     let windowIdentityService = WindowIdentityService()
     let permissions: PermissionsService
     let feedbackClient: any AutomationFeedbackClient
     let applicationOpenHandler: ApplicationOpenHandler
+    let defaultApplicationOpenHandler: DefaultApplicationOpenHandler
     let relaunchTargetResolver: RelaunchTargetResolver?
     let relaunchQuitHandler: RelaunchQuitHandler?
     let relaunchRunningHandler: RelaunchRunningHandler?
+    let applicationReadinessHandler: ApplicationReadinessHandler
+    let processStartIdentityProvider: ProcessStartIdentityProvider
+    let applicationQuitHandler: ApplicationQuitHandler
+    let applicationReadinessTimeout: TimeInterval
+    let backgroundLaunchActivationGraceDuration: Duration
+    let backgroundOpenActivationGraceDuration: Duration
 
     /// Timeout for accessibility API calls to prevent hangs
     /// AX can be sluggish on some apps (e.g., Arc); allow more headroom.
@@ -84,25 +100,45 @@ public final class ApplicationService: ApplicationServiceProtocol {
                     openURLs,
                     withApplicationAt: applicationURL,
                     configuration: configuration)
-            })
+            },
+            applicationReadinessHandler: Self.isReadyForAutomation)
     }
 
     init(
         permissions: PermissionsService = PermissionsService(),
         feedbackClient: any AutomationFeedbackClient = NoopAutomationFeedbackClient(),
         applicationOpenHandler: @escaping ApplicationOpenHandler,
+        defaultApplicationOpenHandler: @escaping DefaultApplicationOpenHandler = { targetURL, configuration in
+            try await NSWorkspace.shared.open(targetURL, configuration: configuration)
+        },
         relaunchTargetResolver: RelaunchTargetResolver? = nil,
         relaunchQuitHandler: RelaunchQuitHandler? = nil,
-        relaunchRunningHandler: RelaunchRunningHandler? = nil)
+        relaunchRunningHandler: RelaunchRunningHandler? = nil,
+        applicationReadinessHandler: @escaping ApplicationReadinessHandler = ApplicationService.isReadyForAutomation,
+        processStartIdentityProvider: @escaping ProcessStartIdentityProvider = SystemIdentityResolver
+            .processStartIdentity,
+        applicationQuitHandler: @escaping ApplicationQuitHandler = { application, force in
+            force ? application.forceTerminate() : application.terminate()
+        },
+        applicationReadinessTimeout: TimeInterval = 10,
+        backgroundLaunchActivationGraceDuration: Duration = .milliseconds(500),
+        backgroundOpenActivationGraceDuration: Duration = .seconds(2))
     {
         // Set global AX timeout to prevent hangs
         AXTimeoutConfiguration.setGlobalTimeout(Self.axTimeout)
         self.permissions = permissions
         self.feedbackClient = feedbackClient
         self.applicationOpenHandler = applicationOpenHandler
+        self.defaultApplicationOpenHandler = defaultApplicationOpenHandler
         self.relaunchTargetResolver = relaunchTargetResolver
         self.relaunchQuitHandler = relaunchQuitHandler
         self.relaunchRunningHandler = relaunchRunningHandler
+        self.applicationReadinessHandler = applicationReadinessHandler
+        self.processStartIdentityProvider = processStartIdentityProvider
+        self.applicationQuitHandler = applicationQuitHandler
+        self.applicationReadinessTimeout = applicationReadinessTimeout
+        self.backgroundLaunchActivationGraceDuration = backgroundLaunchActivationGraceDuration
+        self.backgroundOpenActivationGraceDuration = backgroundOpenActivationGraceDuration
 
         // Connect to visual feedback if available.
         let isMacApp = Bundle.main.bundleIdentifier?.hasPrefix("boo.peekaboo.mac") == true

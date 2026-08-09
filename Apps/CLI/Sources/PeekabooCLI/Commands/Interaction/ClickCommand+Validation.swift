@@ -42,6 +42,10 @@ extension ClickCommand {
             self.focusOptions.hasForegroundFocusOverrides {
             throw ValidationError("--focus-background cannot be combined with focus options")
         }
+
+        if !self.foreground, !self.longPress, self.focusOptions.hasForegroundFocusOverrides {
+            throw ValidationError("Focus options require --foreground for click")
+        }
     }
 
     func formatElementInfo(_ element: DetectedElement) -> String {

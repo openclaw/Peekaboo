@@ -16,6 +16,7 @@ struct OpenCommand: ParsableCommand, OutputFormattable, ErrorHandlingCommand, Ru
 
                 - `--app` / `--bundle-id` to force a handler
                 - `--wait-until-ready` to block until the app reports it has finished launching
+                - `--wait-for-window` to wait for an exact WindowServer window identity
                 - background delivery by default; `--foreground` activates the handler
                 - `--json` for structured scripting (alias: `--json-output`)
 
@@ -42,6 +43,9 @@ struct OpenCommand: ParsableCommand, OutputFormattable, ErrorHandlingCommand, Ru
 
     @Flag(help: "Wait until the handling application finishes launching")
     var waitUntilReady = false
+
+    @Flag(help: "Wait until the handling application exposes an exact WindowServer window")
+    var waitForWindow = false
 
     @Flag(help: "Bring the handling application to the foreground")
     var foreground = false
@@ -77,7 +81,8 @@ struct OpenCommand: ParsableCommand, OutputFormattable, ErrorHandlingCommand, Ru
                 applicationBundleIdentifier: self.bundleId,
                 openURLs: [targetURL],
                 activates: self.shouldFocus,
-                waitUntilReady: self.waitUntilReady
+                waitUntilReady: self.waitUntilReady,
+                waitForWindow: self.waitForWindow
             ))
             await self.invalidateSnapshotsAfterOpen()
             self.renderSuccess(app: app, targetURL: targetURL)
@@ -130,6 +135,10 @@ struct OpenCommand: ParsableCommand, OutputFormattable, ErrorHandlingCommand, Ru
             bundle_id: app.bundleIdentifier,
             pid: app.processIdentifier,
             is_ready: app.isFinishedLaunching ?? !self.waitUntilReady,
+            window_ready: (app.windowIDs?.count ?? app.windowCount) > 0,
+            window_count: app.windowIDs?.count ?? app.windowCount,
+            window_ids: app.windowIDs,
+            window_identity: app.windowIDs == nil ? "unknown" : "exact",
             focused: self.shouldFocus && app.isActive
         )
         AutomationEventLogger.log(
@@ -157,6 +166,10 @@ struct OpenResult: Codable {
     let bundle_id: String?
     let pid: Int32
     let is_ready: Bool
+    let window_ready: Bool
+    let window_count: Int
+    let window_ids: [Int]?
+    let window_identity: String
     let focused: Bool
 }
 
@@ -170,6 +183,7 @@ extension OpenCommand: CommanderBindableCommand {
         self.app = values.singleOption("app")
         self.bundleId = values.singleOption("bundleId")
         self.waitUntilReady = values.flag("waitUntilReady")
+        self.waitForWindow = values.flag("waitForWindow")
         self.foreground = values.flag("foreground")
         self.noFocus = values.flag("noFocus")
     }

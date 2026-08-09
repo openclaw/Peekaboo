@@ -693,16 +693,27 @@ struct ImageCommandTests {
 
     @Test(.tags(.imageCapture))
     func `Retina flag applies to window ID captures`() async throws {
+        let windowID = 120_099
+        let processIdentifier: pid_t = 7373
+        let processStartIdentity: UInt64 = 73730
+        let bundleIdentifier = "app.zephyr.agency"
         let window = ServiceWindowInfo(
-            windowID: 120_099,
+            windowID: windowID,
             title: "Zephyr Agency",
-            bounds: CGRect(x: 50, y: 50, width: 1460, height: 945)
+            bounds: CGRect(x: 50, y: 50, width: 1460, height: 945),
+            mutationIdentity: WindowMutationIdentity(
+                windowID: windowID,
+                ownerProcessIdentifier: processIdentifier,
+                ownerProcessStartIdentity: processStartIdentity
+            )
         )
         let app = ServiceApplicationInfo(
-            processIdentifier: 7373,
-            bundleIdentifier: "app.zephyr.agency",
+            processIdentifier: processIdentifier,
+            processStartIdentity: processStartIdentity,
+            bundleIdentifier: bundleIdentifier,
             name: "Zephyr Agency",
-            windowCount: 1
+            windowCount: 1,
+            windowIDs: [window.windowID]
         )
         let captureService = StubScreenCaptureService(permissionGranted: true)
         var recordedWindowID: CGWindowID?
@@ -713,10 +724,24 @@ struct ImageCommandTests {
             return Self.makeCaptureResult(app: app, window: window)
         }
 
-        let services = TestServicesFactory.makePeekabooServices(screenCapture: captureService)
+        let windowsByApp = [
+            app.name: [window],
+            bundleIdentifier: [window],
+            "PID:\(app.processIdentifier)": [window],
+        ]
+        let baseServices = TestServicesFactory.makePeekabooServices(
+            applications: StubApplicationService(applications: [app], windowsByApp: windowsByApp),
+            windows: StubWindowService(windowsByApp: windowsByApp),
+            screenCapture: captureService
+        )
+        let services = ImageCommandTestServices(
+            base: baseServices,
+            exactWindowMetadataProvider: OwnedExactWindowMetadataProvider(app: app, window: window)
+        )
         let path = Self.makeTempCapturePath("window-id-retina.png")
         var command = try ImageCommand.parse([
             "--window-id", "\(window.windowID)",
+            "--app", bundleIdentifier,
             "--retina",
             "--path", path,
             "--json",
@@ -926,6 +951,146 @@ struct ImageCommandTests {
         )
         #expect(response.success == false)
         #expect(response.error?.code == ErrorCode.WINDOW_NOT_FOUND.rawValue)
+    }
+}
+
+private struct OwnedExactWindowMetadataProvider: ExactWindowMetadataProviding {
+    let app: ServiceApplicationInfo
+    let window: ServiceWindowInfo
+
+    func metadata(for windowID: CGWindowID) -> ExactWindowObservationMetadata? {
+        guard Int(windowID) == self.window.windowID,
+              let processStartIdentity = self.app.processStartIdentity
+        else {
+            return nil
+        }
+        return ExactWindowObservationMetadata(
+            ownerProcessIdentifier: self.app.processIdentifier,
+            ownerProcessStartIdentity: processStartIdentity,
+            title: self.window.title,
+            bounds: self.window.bounds,
+            applicationName: self.app.name
+        )
+    }
+
+    func windows(for processIdentifier: Int32) -> [SystemWindowIdentity] {
+        guard processIdentifier == self.app.processIdentifier,
+              let processStartIdentity = self.app.processStartIdentity
+        else {
+            return []
+        }
+        return [SystemWindowIdentity(
+            windowID: CGWindowID(self.window.windowID),
+            ownerProcessIdentifier: processIdentifier,
+            ownerProcessStartIdentity: processStartIdentity,
+            title: self.window.title,
+            bounds: self.window.bounds,
+            layer: self.window.layer,
+            alpha: self.window.alpha,
+            isOnScreen: self.window.isOnScreen,
+            sharingState: self.window.sharingState,
+            applicationName: self.app.name
+        )]
+    }
+
+    func processStartIdentity(for processIdentifier: Int32) -> UInt64? {
+        guard processIdentifier == self.app.processIdentifier else { return nil }
+        return self.app.processStartIdentity
+    }
+}
+
+@MainActor
+private final class ImageCommandTestServices: PeekabooServiceProviding {
+    private let base: PeekabooServices
+    let desktopObservation: any DesktopObservationServiceProtocol
+
+    init(base: PeekabooServices, exactWindowMetadataProvider: any ExactWindowMetadataProviding) {
+        self.base = base
+        self.desktopObservation = DesktopObservationService(
+            screenCapture: base.screenCapture,
+            automation: base.automation,
+            applications: base.applications,
+            menu: base.menu,
+            screens: base.screens,
+            snapshotManager: base.snapshots,
+            exactWindowMetadataProvider: exactWindowMetadataProvider
+        )
+    }
+
+    var logging: any LoggingServiceProtocol {
+        self.base.logging
+    }
+
+    var screenCapture: any ScreenCaptureServiceProtocol {
+        self.base.screenCapture
+    }
+
+    var applications: any ApplicationServiceProtocol {
+        self.base.applications
+    }
+
+    var automation: any UIAutomationServiceProtocol {
+        self.base.automation
+    }
+
+    var windows: any WindowManagementServiceProtocol {
+        self.base.windows
+    }
+
+    var menu: any MenuServiceProtocol {
+        self.base.menu
+    }
+
+    var dock: any DockServiceProtocol {
+        self.base.dock
+    }
+
+    var dialogs: any DialogServiceProtocol {
+        self.base.dialogs
+    }
+
+    var snapshots: any SnapshotManagerProtocol {
+        self.base.snapshots
+    }
+
+    var files: any FileServiceProtocol {
+        self.base.files
+    }
+
+    var clipboard: any ClipboardServiceProtocol {
+        self.base.clipboard
+    }
+
+    var configuration: PeekabooCore.ConfigurationManager {
+        self.base.configuration
+    }
+
+    var process: any ProcessServiceProtocol {
+        self.base.process
+    }
+
+    var permissions: PermissionsService {
+        self.base.permissions
+    }
+
+    var audioInput: AudioInputService {
+        self.base.audioInput
+    }
+
+    var screens: any ScreenServiceProtocol {
+        self.base.screens
+    }
+
+    var browser: any BrowserMCPClientProviding {
+        self.base.browser
+    }
+
+    var agent: (any AgentServiceProtocol)? {
+        self.base.agent
+    }
+
+    func ensureVisualizerConnection() {
+        self.base.ensureVisualizerConnection()
     }
 }
 #endif

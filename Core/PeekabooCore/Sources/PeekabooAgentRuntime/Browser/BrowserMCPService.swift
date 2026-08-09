@@ -124,7 +124,8 @@ public final class BrowserMCPService: BrowserMCPClientProviding, @unchecked Send
         let resolvedChannel = channel ?? .stable
         var args = [
             "-y",
-            "chrome-devtools-mcp@latest",
+            "chrome-devtools-mcp@1.6.0",
+            "--experimentalPageIdRouting",
         ]
         let description: String
 

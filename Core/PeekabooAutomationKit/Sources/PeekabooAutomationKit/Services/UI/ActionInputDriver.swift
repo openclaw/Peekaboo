@@ -529,6 +529,25 @@ struct ActionInputDriver: ActionInputDriving {
         direction: PeekabooFoundation.ScrollDirection,
         pages: Int) throws -> ActionInputResult
     {
+        do {
+            return try self.performPageScrollActions(
+                element: element,
+                direction: direction,
+                pages: pages)
+        } catch let error as ActionInputError where Self.shouldContinueTryingScrollAction(after: error) {
+            return try self.performScrollbarScroll(
+                element: element,
+                direction: direction,
+                pages: pages,
+                pageActionError: error)
+        }
+    }
+
+    private func performPageScrollActions(
+        element: any AutomationElementRepresenting,
+        direction: PeekabooFoundation.ScrollDirection,
+        pages: Int) throws -> ActionInputResult
+    {
         let actions = self.scrollActionNames(for: direction)
         var lastError: ActionInputError?
         var performedActionName: String?
@@ -558,6 +577,137 @@ struct ActionInputDriver: ActionInputDriving {
             actionName: performedActionName,
             anchorPoint: element.anchorPoint,
             elementRole: element.role)
+    }
+
+    /// Standard AppKit scroll areas commonly expose no page-scroll action on the container. Their
+    /// descendant AXScrollBar is nevertheless a settable native Accessibility control, so mutate
+    /// that value before declaring background scrolling unsupported.
+    private func performScrollbarScroll(
+        element: any AutomationElementRepresenting,
+        direction: PeekabooFoundation.ScrollDirection,
+        pages: Int,
+        pageActionError: ActionInputError) throws -> ActionInputResult
+    {
+        guard let scrollBar = self.findScrollBar(in: element, direction: direction) else {
+            throw Self.scrollFallbackError(from: pageActionError)
+        }
+
+        let actionName: String = switch direction {
+        case .down, .right:
+            AXActionNames.kAXIncrementAction
+        case .up, .left:
+            AXActionNames.kAXDecrementAction
+        }
+        if scrollBar.supportsAction(actionName) {
+            do {
+                var result = ActionInputResult()
+                for _ in 0..<max(1, pages) {
+                    result = try self.performAction(actionName, on: scrollBar)
+                }
+                return result
+            } catch let error as ActionInputError where Self.shouldContinueTryingScrollAction(after: error) {
+                // Some controls advertise increment/decrement but reject invocation. A settable AXValue
+                // remains a native background path and is verified below.
+            }
+        }
+
+        guard scrollBar.isValueSettable,
+              let currentValue = Self.numericValue(scrollBar.value)
+        else {
+            throw Self.scrollFallbackError(from: pageActionError)
+        }
+
+        let minimumValue = scrollBar.doubleAttribute(AXAttributeNames.kAXMinValueAttribute) ?? 0
+        let maximumValue = scrollBar.doubleAttribute(AXAttributeNames.kAXMaxValueAttribute) ?? 1
+        guard maximumValue > minimumValue else {
+            throw Self.scrollFallbackError(from: pageActionError)
+        }
+
+        let range = maximumValue - minimumValue
+        let advertisedIncrement = scrollBar.doubleAttribute(AXAttributeNames.kAXValueIncrementAttribute)
+        let singleStep = advertisedIncrement.flatMap { $0 > 0 ? min($0, range) : nil } ?? (range / 10)
+        let signedStep: Double = switch direction {
+        case .down, .right:
+            singleStep
+        case .up, .left:
+            -singleStep
+        }
+        let requestedValue = min(
+            maximumValue,
+            max(minimumValue, currentValue + signedStep * Double(max(1, pages))))
+
+        do {
+            try scrollBar.setAutomationValue(.double(requestedValue))
+        } catch {
+            throw Self.classify(error)
+        }
+
+        if requestedValue != currentValue,
+           let observedValue = Self.numericValue(scrollBar.value),
+           abs(observedValue - currentValue) < 1e-9
+        {
+            throw ActionInputError.failed("Accessibility scroll bar value did not change")
+        }
+
+        return ActionInputResult(
+            actionName: "AXSetValue",
+            anchorPoint: scrollBar.anchorPoint,
+            elementRole: scrollBar.role)
+    }
+
+    private func findScrollBar(
+        in element: any AutomationElementRepresenting,
+        direction: PeekabooFoundation.ScrollDirection) -> (any AutomationElementRepresenting)?
+    {
+        let budget = 200
+        var queue: [any AutomationElementRepresenting] = [element]
+        var nextIndex = 0
+
+        // Breadth-first traversal matters here. A scroll area may contain nested editors/lists with
+        // their own scroll bars; the nearest axis-matching descendant belongs to the requested area.
+        while nextIndex < queue.count, nextIndex < budget {
+            let isRoot = nextIndex == 0
+            let candidate = queue[nextIndex]
+            nextIndex += 1
+            if candidate.role == AXRoleNames.kAXScrollBarRole,
+               Self.scrollBar(candidate, matches: direction)
+            {
+                return candidate
+            }
+
+            // A nested scroll area owns its own bars. Descending into it would mutate a different
+            // receiver when the requested outer area has no bar for this axis.
+            if !isRoot, candidate.role == AXRoleNames.kAXScrollAreaRole {
+                continue
+            }
+            let remainingCapacity = budget - queue.count
+            if remainingCapacity > 0 {
+                queue.append(contentsOf: candidate.automationChildren.prefix(remainingCapacity))
+            }
+        }
+        return nil
+    }
+
+    private static func scrollBar(
+        _ element: any AutomationElementRepresenting,
+        matches direction: PeekabooFoundation.ScrollDirection) -> Bool
+    {
+        guard let frame = element.frame else { return true }
+        switch direction {
+        case .up, .down:
+            return frame.height >= frame.width
+        case .left, .right:
+            return frame.width >= frame.height
+        }
+    }
+
+    private static func numericValue(_ value: Any?) -> Double? {
+        guard let number = value as? NSNumber,
+              CFGetTypeID(number) != CFBooleanGetTypeID()
+        else {
+            return nil
+        }
+        return number.doubleValue
     }
 
     private func findMenuItem(

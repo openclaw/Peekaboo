@@ -5,42 +5,36 @@ import PeekabooFoundation
 import Testing
 @testable import PeekabooCLI
 
-/// Fake window whose green-button zoom is a toggle and whose frame changes asynchronously across
-/// reads, mirroring AppKit: `maximize` presses an animated toggle, so an immediate read-back returns
-/// an intermediate frame, and pressing again on an already-maximized window restores the user frame.
-///
-/// `zoomTarget` is the frame the zoom button produces from the user frame. For most apps this fills
-/// the screen (`maxFrame`), but some apps zoom to a preferred size smaller than the current window.
+/// Fake exact-window geometry backend whose frame changes asynchronously across reads.
 @MainActor
-private final class FakeZoomWindow {
+private final class FakeMaximizeWindow {
     private(set) var isMaximized: Bool
-    private(set) var pressCount = 0
+    private(set) var applyCount = 0
     let userFrame: CGRect
-    let zoomTarget: CGRect
+    let maximizeTarget: CGRect
     let title: String
     /// Number of upcoming reads that return a mid-animation frame before the settled frame appears.
     private var pendingIntermediateReads = 0
 
-    init(isMaximized: Bool, userFrame: CGRect, zoomTarget: CGRect, title: String = "Zoom Fixture") {
+    init(isMaximized: Bool, userFrame: CGRect, maximizeTarget: CGRect, title: String = "Maximize Fixture") {
         self.isMaximized = isMaximized
         self.userFrame = userFrame
-        self.zoomTarget = zoomTarget
+        self.maximizeTarget = maximizeTarget
         self.title = title
     }
 
     var currentInfo: ServiceWindowInfo {
-        self.info(self.isMaximized ? self.zoomTarget : self.userFrame)
+        self.info(self.isMaximized ? self.maximizeTarget : self.userFrame)
     }
 
-    func press() {
-        self.pressCount += 1
-        self.isMaximized.toggle()
-        // The zoom animation makes the first read after a press return an intermediate frame.
+    func apply() {
+        self.applyCount += 1
+        self.isMaximized = true
         self.pendingIntermediateReads = 1
     }
 
     func read() -> ServiceWindowInfo? {
-        let settledFrame = self.isMaximized ? self.zoomTarget : self.userFrame
+        let settledFrame = self.isMaximized ? self.maximizeTarget : self.userFrame
         if self.pendingIntermediateReads > 0 {
             self.pendingIntermediateReads -= 1
             return self.info(self.intermediateFrame(towards: settledFrame))
@@ -49,9 +43,7 @@ private final class FakeZoomWindow {
     }
 
     private func intermediateFrame(towards target: CGRect) -> CGRect {
-        // Midpoint between the two toggle states: clearly different from the settled target so the
-        // settle loop must poll at least once more.
-        let other = self.isMaximized ? self.userFrame : self.zoomTarget
+        let other = self.isMaximized ? self.userFrame : self.maximizeTarget
         return CGRect(
             x: (target.origin.x + other.origin.x) / 2,
             y: (target.origin.y + other.origin.y) / 2,
@@ -178,105 +170,119 @@ struct WindowMaximizeSettleTests {
     // MARK: - Idempotent maximize
 
     @Test func `maximize from a normal window reports the settled maximized frame`() async throws {
-        let window = FakeZoomWindow(isMaximized: false, userFrame: self.userFrame, zoomTarget: self.maxFrame)
+        let window = FakeMaximizeWindow(
+            isMaximized: false,
+            userFrame: self.userFrame,
+            maximizeTarget: self.maxFrame
+        )
 
         let outcome = try await resolveIdempotentMaximize(
             original: window.currentInfo,
             screenVisibleFramesTopLeft: self.screenFrames,
             pollInterval: .zero,
-            press: { window.press() },
+            apply: { window.apply() },
             read: { window.read() }
         )
 
         #expect(window.isMaximized)
-        #expect(window.pressCount == 1)
+        #expect(window.applyCount == 1)
         #expect(outcome.info?.bounds == self.maxFrame)
         #expect(!outcome.alreadyMaximized)
         #expect(outcome.stabilized)
     }
 
     @Test func `maximizing an already-maximized window is a no-op that stays maximized`() async throws {
-        // Already screen-sized: pressing the toggle would un-maximize it, so it must be skipped.
-        let window = FakeZoomWindow(isMaximized: true, userFrame: self.userFrame, zoomTarget: self.maxFrame)
+        let window = FakeMaximizeWindow(
+            isMaximized: true,
+            userFrame: self.userFrame,
+            maximizeTarget: self.maxFrame
+        )
 
         let outcome = try await resolveIdempotentMaximize(
             original: window.currentInfo,
             screenVisibleFramesTopLeft: self.screenFrames,
             pollInterval: .zero,
-            press: { window.press() },
+            apply: { window.apply() },
             read: { window.read() }
         )
 
         #expect(window.isMaximized)
-        #expect(window.pressCount == 0) // no toggle press at all
+        #expect(window.applyCount == 0)
         #expect(outcome.info?.bounds == self.maxFrame)
         #expect(outcome.alreadyMaximized)
     }
 
     @Test func `maximize twice in a row leaves the window maximized`() async throws {
-        let window = FakeZoomWindow(isMaximized: false, userFrame: self.userFrame, zoomTarget: self.maxFrame)
+        let window = FakeMaximizeWindow(
+            isMaximized: false,
+            userFrame: self.userFrame,
+            maximizeTarget: self.maxFrame
+        )
 
         let first = try await resolveIdempotentMaximize(
             original: window.currentInfo,
             screenVisibleFramesTopLeft: self.screenFrames,
             pollInterval: .zero,
-            press: { window.press() },
+            apply: { window.apply() },
             read: { window.read() }
         )
         #expect(window.isMaximized)
         #expect(first.info?.bounds == self.maxFrame)
         #expect(!first.alreadyMaximized)
 
-        // Second call: the window now fills the screen, so it must be a no-op, not a toggle.
+        // Second call: the window now fills the screen, so the redundant AX request is skipped.
         let second = try await resolveIdempotentMaximize(
             original: window.currentInfo,
             screenVisibleFramesTopLeft: self.screenFrames,
             pollInterval: .zero,
-            press: { window.press() },
+            apply: { window.apply() },
             read: { window.read() }
         )
         #expect(window.isMaximized)
-        #expect(window.pressCount == 1) // only the first call pressed
+        #expect(window.applyCount == 1)
         #expect(second.info?.bounds == self.maxFrame)
         #expect(second.alreadyMaximized)
     }
 
-    @Test func `maximizing an oversized window whose zoom target is smaller is not misclassified`() async throws {
-        // Reviewer regression: a not-maximized window larger than its app's zoom target. Pressing zoom
-        // legitimately shrinks it; this must NOT be treated as an already-maximized no-op.
-        let oversized = CGRect(x: 20, y: 40, width: 3000, height: 1600) // larger than the 1200x800 zoom target
-        let zoomTarget = CGRect(x: 100, y: 100, width: 1200, height: 800)
-        let window = FakeZoomWindow(isMaximized: false, userFrame: oversized, zoomTarget: zoomTarget)
+    @Test func `maximizing an oversized window applies the exact visible frame`() async throws {
+        let oversized = CGRect(x: 20, y: 40, width: 3600, height: 1900)
+        let window = FakeMaximizeWindow(
+            isMaximized: false,
+            userFrame: oversized,
+            maximizeTarget: self.maxFrame
+        )
 
         let outcome = try await resolveIdempotentMaximize(
             original: window.currentInfo,
             screenVisibleFramesTopLeft: self.screenFrames,
             pollInterval: .zero,
-            press: { window.press() },
+            apply: { window.apply() },
             read: { window.read() }
         )
 
-        #expect(window.pressCount == 1) // zoom was actually pressed, not skipped
-        #expect(!outcome.alreadyMaximized) // not a no-op
-        #expect(outcome.info?.bounds == zoomTarget) // reports the real (smaller) settled frame
+        #expect(window.applyCount == 1)
+        #expect(!outcome.alreadyMaximized)
+        #expect(outcome.info?.bounds == self.maxFrame)
     }
 
-    @Test func `maximizing a moved screen-sized window presses zoom to reposition it`() async throws {
-        // Reviewer regression: a window the size of the screen but displaced must NOT be skipped;
-        // maximize should press zoom and move it back to the visible frame.
+    @Test func `maximizing a moved screen-sized window repositions it`() async throws {
         let displaced = CGRect(x: 500, y: 300, width: 3200, height: 1690)
-        let window = FakeZoomWindow(isMaximized: false, userFrame: displaced, zoomTarget: self.maxFrame)
+        let window = FakeMaximizeWindow(
+            isMaximized: false,
+            userFrame: displaced,
+            maximizeTarget: self.maxFrame
+        )
 
         let outcome = try await resolveIdempotentMaximize(
             original: window.currentInfo,
             screenVisibleFramesTopLeft: self.screenFrames,
             pollInterval: .zero,
-            press: { window.press() },
+            apply: { window.apply() },
             read: { window.read() }
         )
 
-        #expect(window.pressCount == 1) // pressed, not skipped
+        #expect(window.applyCount == 1)
         #expect(!outcome.alreadyMaximized)
-        #expect(outcome.info?.bounds == self.maxFrame) // repositioned to the visible frame
+        #expect(outcome.info?.bounds == self.maxFrame)
     }
 }

@@ -55,6 +55,7 @@ struct MCPCommandTests {
         #expect(helpText.contains("npx @modelcontextprotocol/inspector"))
         #expect(helpText.contains("--transport"))
         #expect(helpText.contains("--port"))
+        #expect(helpText.contains("reserved but not implemented"))
     }
 
     // MARK: - Argument Parsing Tests
@@ -79,6 +80,21 @@ struct MCPCommandTests {
         #expect(result.exitStatus == 1)
         #expect(result.stdout.contains("\"success\" : false"))
         #expect(result.stdout.contains("Invalid transport 'bogus'"))
+    }
+
+    @Test(arguments: ["http", "sse"])
+    func `Reject unimplemented transport with structured error`(_ transport: String) async throws {
+        let result = try await InProcessCommandRunner.runShared(
+            ["mcp", "serve", "--transport", transport, "--json"],
+            allowedExitCodes: [1]
+        )
+
+        #expect(result.exitStatus == 1)
+        let data = try #require(result.stdout.data(using: .utf8))
+        let payload = try JSONDecoder().decode(JSONResponse.self, from: data)
+        #expect(payload.success == false)
+        #expect(payload.error?.code == ErrorCode.VALIDATION_ERROR.rawValue)
+        #expect(payload.error?.message == "Transport '\(transport)' is not implemented. Use stdio.")
     }
 
     // MARK: - Validation Tests

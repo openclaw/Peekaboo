@@ -98,7 +98,10 @@ public final class ObservationOutputWriter {
                 .processIdentifier,
             applicationName: windowContext?.applicationName ?? capture.metadata.applicationInfo?.name,
             windowTitle: windowContext?.windowTitle ?? capture.metadata.windowInfo?.title,
-            windowBounds: windowContext?.windowBounds ?? capture.metadata.windowInfo?.bounds))
+            windowBounds: windowContext?.windowBounds ?? capture.metadata.windowInfo?.bounds,
+            windowID: windowContext?.windowID ?? capture.metadata.windowInfo?.windowID,
+            windowMutationIdentity: windowContext?.windowMutationIdentity ?? capture.metadata.windowInfo?
+                .mutationIdentity))
 
         if let elements {
             try await snapshotManager.storeDetectionResult(

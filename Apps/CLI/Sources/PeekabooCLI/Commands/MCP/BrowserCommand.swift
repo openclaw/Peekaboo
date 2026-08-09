@@ -20,8 +20,10 @@ InjectedRuntimeBackedCommand {
     var dialogAction: String?
     var includeSnapshot = false
     var double = false
+    var bringToFront = false
     var noBringToFront = false
     var background = false
+    var foreground = false
     var timeout: Int?
     var pageSize: Int?
     var pageIndex: Int?
@@ -62,9 +64,9 @@ InjectedRuntimeBackedCommand {
 
         Examples:
           peekaboo browser status --json
-          peekaboo browser connect --channel chrome
-          peekaboo browser navigate --url https://example.com
-          peekaboo browser snapshot --path /tmp/page.txt
+          peekaboo browser connect --channel stable
+          peekaboo browser new-page --url https://example.com
+          peekaboo browser snapshot --page-id 2 --path /tmp/page.txt
         """
     )
 
@@ -121,6 +123,10 @@ InjectedRuntimeBackedCommand {
         guard BrowserAction(rawValue: normalizedAction) != nil else {
             throw ValidationError("Unsupported browser action '\(self.action)'")
         }
+        if let channel, BrowserMCPChannel(rawValue: channel) == nil {
+            let choices = BrowserMCPChannel.allCases.map(\.rawValue).joined(separator: "|")
+            throw ValidationError("Unsupported browser channel '\(channel)' (expected \(choices))")
+        }
 
         var arguments: [String: Any] = ["action": normalizedAction]
         self.add(self.channel, as: "channel", to: &arguments)
@@ -136,10 +142,16 @@ InjectedRuntimeBackedCommand {
         self.add(self.dialogAction, as: "dialog_action", to: &arguments)
         self.addFlag(self.includeSnapshot, as: "include_snapshot", to: &arguments)
         self.addFlag(self.double, as: "double", to: &arguments)
-        if self.noBringToFront {
+        if self.bringToFront {
+            arguments["bring_to_front"] = true
+        } else if self.noBringToFront {
             arguments["bring_to_front"] = false
         }
-        self.addFlag(self.background, as: "background", to: &arguments)
+        if self.foreground {
+            arguments["background"] = false
+        } else if self.background {
+            arguments["background"] = true
+        }
         self.add(self.timeout, as: "timeout", to: &arguments)
         self.add(self.pageSize, as: "page_size", to: &arguments)
         self.add(self.pageIndex, as: "page_index", to: &arguments)
@@ -264,8 +276,14 @@ extension BrowserCommand: CommanderSignatureProviding {
                     long: "include-snapshot"
                 ),
                 .commandFlag("double", help: "Double-click for click", long: "double"),
-                .commandFlag("noBringToFront", help: "Do not bring selected page to front", long: "no-bring-to-front"),
-                .commandFlag("background", help: "Open new page in background", long: "background"),
+                .commandFlag("bringToFront", help: "Bring selected page to front", long: "bring-to-front"),
+                .commandFlag(
+                    "noBringToFront",
+                    help: "Keep selected page in background (default; legacy explicit form)",
+                    long: "no-bring-to-front"
+                ),
+                .commandFlag("background", help: "Open new page in background (default)", long: "background"),
+                .commandFlag("foreground", help: "Open new page in foreground", long: "foreground"),
                 .commandFlag(
                     "includePreserved",
                     help: "Include preserved console/network data",
@@ -295,8 +313,16 @@ extension BrowserCommand: CommanderBindableCommand {
         self.dialogAction = values.singleOption("dialogAction")
         self.includeSnapshot = values.flag("includeSnapshot")
         self.double = values.flag("double")
+        self.bringToFront = values.flag("bringToFront")
         self.noBringToFront = values.flag("noBringToFront")
         self.background = values.flag("background")
+        self.foreground = values.flag("foreground")
+        if self.bringToFront, self.noBringToFront {
+            throw ValidationError("--bring-to-front and --no-bring-to-front cannot be used together")
+        }
+        if self.background, self.foreground {
+            throw ValidationError("--background and --foreground cannot be used together")
+        }
         self.timeout = try values.decodeOption("timeout", as: Int.self)
         self.pageSize = try values.decodeOption("pageSize", as: Int.self)
         self.pageIndex = try values.decodeOption("pageIndex", as: Int.self)

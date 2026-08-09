@@ -236,6 +236,16 @@ public struct MCPToolContext: @unchecked Sendable {
                 try await tool.execute(arguments: arguments)
             }
             try Task.checkCancellation()
+            if Self.explicitlyNotDispatched(response) {
+                let cancelled = await self.snapshotMutationCoordinator?.cancelMutation(scope) ?? true
+                await self.snapshotExecutionGate.release()
+                guard cancelled else {
+                    return ToolResponse.error(
+                        "The tool was refused before dispatch, but its mutation reservation could not be cancelled",
+                        meta: response.meta)
+                }
+                return response
+            }
             let completionCertificate = Self.mutationCompletionCertificate(response: response)
             let completedScope = scope.completed(
                 at: Date(),
@@ -366,6 +376,13 @@ public struct MCPToolContext: @unchecked Sendable {
             nil
         }
         return (completedAt, preservationAllowed)
+    }
+
+    private static func explicitlyNotDispatched(_ response: ToolResponse) -> Bool {
+        guard case let .object(meta)? = response.meta,
+              case .bool(false)? = meta["mutation_dispatched"]
+        else { return false }
+        return true
     }
 
     private static func refreshedSnapshotID(

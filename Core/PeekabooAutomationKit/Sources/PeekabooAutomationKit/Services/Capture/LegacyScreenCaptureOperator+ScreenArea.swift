@@ -37,7 +37,7 @@ extension LegacyScreenCaptureOperator {
             frameWidth: screenBounds.width)
         let image: CGImage
         do {
-            image = try self.captureScreenWithSystemScreencapture(
+            image = try await self.captureScreenWithSystemScreencapture(
                 screen: targetScreen,
                 correlationId: correlationId)
         } catch {
@@ -103,7 +103,7 @@ extension LegacyScreenCaptureOperator {
             displayID: display.id,
             fallbackPixelWidth: CGDisplayPixelsWide(display.id),
             frameWidth: display.bounds.width)
-        let image = try self.captureAreaWithSystemScreencapture(
+        let image = try await self.captureAreaWithSystemScreencapture(
             rect,
             correlationId: correlationId)
         let scaledImage = ScreenCaptureImageScaler.maybeDownscale(

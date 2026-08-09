@@ -6,6 +6,20 @@ import Testing
 @Suite(.tags(.safe), .serialized)
 struct ClipboardCommandTests {
     @Test
+    func `Clipboard rejects conflicting action spellings as validation JSON`() async throws {
+        let result = try await InProcessCommandRunner.runShared(
+            ["clipboard", "get", "--action", "set", "--json"],
+            allowedExitCodes: [1]
+        )
+
+        #expect(result.stderr.isEmpty)
+        let data = try #require(result.stdout.data(using: .utf8))
+        let payload = try JSONDecoder().decode(JSONResponse.self, from: data)
+        #expect(payload.success == false)
+        #expect(payload.error?.code == ErrorCode.VALIDATION_ERROR.rawValue)
+    }
+
+    @Test
     @MainActor
     func `Clipboard set invalidates implicit latest only after marking the mutation`() async throws {
         let snapshots = StubSnapshotManager()

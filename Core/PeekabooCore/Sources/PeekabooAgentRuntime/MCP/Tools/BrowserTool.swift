@@ -32,7 +32,10 @@ public struct BrowserTool: MCPTool {
                     Chrome channel for auto-connect. Defaults to the running Chrome channel, then stable.
                     """,
                     enum: BrowserMCPChannel.allCases.map(\.rawValue)),
-                "page_id": SchemaBuilder.number(description: "Chrome DevTools page ID for select_page/close_page."),
+                "page_id": SchemaBuilder.integer(description: """
+                Chrome DevTools page ID. Required for every page-scoped action so concurrent clients cannot
+                redirect one another by changing the shared selected page. Use list_pages to discover IDs.
+                """, minimum: 0),
                 "url": SchemaBuilder.string(description: "URL for navigate/new_page."),
                 "navigation_type": SchemaBuilder.string(
                     description: "Navigation type for navigate.",
@@ -50,8 +53,8 @@ public struct BrowserTool: MCPTool {
                     description: "Ask Chrome DevTools MCP to include a fresh snapshot when supported.",
                     default: false),
                 "double": SchemaBuilder.boolean(description: "Double-click for click.", default: false),
-                "bring_to_front": SchemaBuilder.boolean(description: "Bring selected page to front.", default: true),
-                "background": SchemaBuilder.boolean(description: "Open new page in the background.", default: false),
+                "bring_to_front": SchemaBuilder.boolean(description: "Bring selected page to front.", default: false),
+                "background": SchemaBuilder.boolean(description: "Open new page in the background.", default: true),
                 "timeout": SchemaBuilder.number(description: "Timeout in milliseconds for navigation/waits."),
                 "page_size": SchemaBuilder.number(description: "Pagination size for console/network listings."),
                 "page_index": SchemaBuilder.number(description: "Zero-based page index for console/network listings."),
@@ -81,8 +84,10 @@ public struct BrowserTool: MCPTool {
                 "auto_stop": SchemaBuilder.boolean(description: "Auto-stop trace after capture.", default: true),
                 "insight_set_id": SchemaBuilder.string(description: "Insight set id from trace summary."),
                 "insight_name": SchemaBuilder.string(description: "Insight name from trace summary."),
-                "mcp_tool": SchemaBuilder.string(description: "Advanced: raw Chrome DevTools MCP tool name for call."),
-                "mcp_args_json": SchemaBuilder.string(description: "Advanced: JSON object args for raw MCP call."),
+                "mcp_tool": SchemaBuilder.string(
+                    description: "Advanced: audited Chrome DevTools MCP v1.6.0 tool name for call."),
+                "mcp_args_json": SchemaBuilder.string(description: "Advanced: JSON object args for raw MCP call. " +
+                    "Page-targeted tools require top-level page_id; nested pageId cannot select the page."),
             ],
             required: ["action"])
     }
@@ -103,7 +108,15 @@ public struct BrowserTool: MCPTool {
             return ToolResponse.error("Missing or invalid required parameter: action")
         }
 
-        let channel = arguments.getString("channel").flatMap(BrowserMCPChannel.init(rawValue:))
+        let channel: BrowserMCPChannel?
+        if let rawChannel = arguments.getString("channel") {
+            guard let parsedChannel = BrowserMCPChannel(rawValue: rawChannel) else {
+                return ToolResponse.error("Invalid browser channel: \(rawChannel)")
+            }
+            channel = parsedChannel
+        } else {
+            channel = nil
+        }
 
         do {
             switch action {
@@ -124,6 +137,8 @@ public struct BrowserTool: MCPTool {
                     arguments: call.arguments,
                     channel: channel)
             }
+        } catch let error as BrowserToolError {
+            return ToolResponse.error(error.localizedDescription)
         } catch {
             return ToolResponse.error(Self.permissionHelp(error: error))
         }
@@ -139,7 +154,16 @@ public struct BrowserTool: MCPTool {
         guard let toolName = arguments.getString("mcp_tool"), !toolName.isEmpty else {
             return ToolResponse.error("Missing required parameter: mcp_tool")
         }
-        let rawArgs = try Self.parseJSONObject(arguments.getString("mcp_args_json") ?? "{}")
+        guard let routing = BrowserMCPPageRoutingContract.routing(for: toolName) else {
+            throw BrowserToolError.unsupportedRawTool(toolName)
+        }
+        if routing == .blockedSelectedPage {
+            throw BrowserToolError.selectedPageRoutingUnsupported(toolName)
+        }
+        var rawArgs = try Self.parseJSONObject(arguments.getString("mcp_args_json") ?? "{}")
+        if routing == .pageTargeted || arguments.getValue(for: "page_id") != nil {
+            rawArgs["pageId"] = try BrowserMCPCallMapper.requiredPageID(arguments)
+        }
         return try await self.client.execute(toolName: toolName, arguments: rawArgs, channel: channel)
     }
 
@@ -198,8 +222,11 @@ public struct BrowserTool: MCPTool {
     }
 
     private static func parseJSONObject(_ json: String) throws -> [String: Any] {
-        guard let data = json.data(using: .utf8) else { return [:] }
-        let object = try JSONSerialization.jsonObject(with: data)
+        guard let data = json.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data)
+        else {
+            throw BrowserToolError.invalidJSONArguments
+        }
         guard let dictionary = object as? [String: Any] else {
             throw BrowserToolError.invalidJSONArguments
         }
@@ -211,6 +238,9 @@ private enum BrowserToolError: LocalizedError {
     case invalidJSONArguments
     case missingParameter(String)
     case invalidAction(String)
+    case invalidPageID
+    case unsupportedRawTool(String)
+    case selectedPageRoutingUnsupported(String)
 
     var errorDescription: String? {
         switch self {
@@ -220,6 +250,14 @@ private enum BrowserToolError: LocalizedError {
             "Missing required parameter: \(name)"
         case let .invalidAction(action):
             "Invalid browser action: \(action)"
+        case .invalidPageID:
+            "page_id must be a non-negative integer from list_pages"
+        case let .unsupportedRawTool(toolName):
+            "Unsupported raw Chrome DevTools MCP tool '\(toolName)' for the audited " +
+                "v\(BrowserMCPPageRoutingContract.dependencyVersion) contract"
+        case let .selectedPageRoutingUnsupported(toolName):
+            "Raw Chrome DevTools MCP tool '\(toolName)' depends on shared selected-page state and is unsupported " +
+                "until upstream adds explicit pageId routing"
         }
     }
 }
@@ -263,16 +301,31 @@ public struct BrowserMCPMappedCall {
 
 public enum BrowserMCPCallMapper {
     public static func map(action: BrowserAction, arguments: ToolArguments) throws -> BrowserMCPMappedCall {
-        switch action {
+        let call: BrowserMCPMappedCall = switch action {
         case .status, .connect, .disconnect, .call:
             throw BrowserToolError.invalidAction(action.rawValue)
         case .listPages, .selectPage, .closePage, .newPage, .navigate, .waitFor:
-            return try self.pageCall(action: action, arguments: arguments)
+            try self.pageCall(action: action, arguments: arguments)
         case .snapshot, .click, .fill, .fillForm, .drag, .hover, .type, .pressKey, .uploadFile, .handleDialog,
              .screenshot:
-            return try self.interactionCall(action: action, arguments: arguments)
+            try self.interactionCall(action: action, arguments: arguments)
         case .console, .network, .performanceTrace:
-            return try self.diagnosticsCall(action: action, arguments: arguments)
+            try self.diagnosticsCall(action: action, arguments: arguments)
+        }
+
+        guard self.requiresPageID(action) else { return call }
+        var mappedArguments = call.arguments
+        mappedArguments["pageId"] = try self.requiredPageID(arguments)
+        return BrowserMCPMappedCall(toolName: call.toolName, arguments: mappedArguments)
+    }
+
+    private static func requiresPageID(_ action: BrowserAction) -> Bool {
+        switch action {
+        case .navigate, .waitFor, .snapshot, .click, .fill, .fillForm, .drag, .hover, .type, .pressKey,
+             .uploadFile, .handleDialog, .console, .network, .screenshot, .performanceTrace:
+            true
+        case .status, .connect, .disconnect, .listPages, .selectPage, .closePage, .newPage, .call:
+            false
         }
     }
 
@@ -282,17 +335,17 @@ public enum BrowserMCPCallMapper {
             return BrowserMCPMappedCall(toolName: "list_pages", arguments: [:])
         case .selectPage:
             return try BrowserMCPMappedCall(toolName: "select_page", arguments: [
-                "pageId": self.requiredInt("page_id", arguments),
-                "bringToFront": arguments.getBool("bring_to_front") ?? true,
+                "pageId": self.requiredPageID(arguments),
+                "bringToFront": arguments.getBool("bring_to_front") ?? false,
             ])
         case .closePage:
             return try BrowserMCPMappedCall(toolName: "close_page", arguments: [
-                "pageId": self.requiredInt("page_id", arguments),
+                "pageId": self.requiredPageID(arguments),
             ])
         case .newPage:
             return try BrowserMCPMappedCall(toolName: "new_page", arguments: self.compact([
-                "url": self.requiredString("url", arguments),
-                "background": arguments.getBool("background") ?? false,
+                "url": self.requiredURL(arguments),
+                "background": arguments.getBool("background") ?? true,
                 "timeout": arguments.getInt("timeout"),
             ]))
         case .navigate:
@@ -400,10 +453,11 @@ public enum BrowserMCPCallMapper {
     }
 
     private static func navigateArguments(_ arguments: ToolArguments) -> [String: Any] {
-        let type = arguments.getString("navigation_type") ?? (arguments.getString("url") == nil ? "reload" : "url")
+        let url = self.url(arguments)
+        let type = arguments.getString("navigation_type") ?? (url == nil ? "reload" : "url")
         return self.compact([
             "type": type,
-            "url": arguments.getString("url"),
+            "url": url,
             "timeout": arguments.getInt("timeout"),
         ])
     }
@@ -466,11 +520,41 @@ public enum BrowserMCPCallMapper {
         return value
     }
 
-    private static func requiredInt(_ key: String, _ arguments: ToolArguments) throws -> Int {
-        guard let value = arguments.getInt(key) else {
-            throw BrowserToolError.missingParameter(key)
+    private static func requiredURL(_ arguments: ToolArguments) throws -> String {
+        guard let value = self.url(arguments), !value.isEmpty else {
+            throw BrowserToolError.missingParameter("url")
         }
         return value
+    }
+
+    private static func url(_ arguments: ToolArguments) -> String? {
+        guard let value = arguments.getValue(for: "url") else { return nil }
+        switch value {
+        case let .string(url):
+            return url
+        case .data:
+            // MCP.Value decodes data: URL strings as binary values. Re-encode them before forwarding to Chrome.
+            return value.description
+        default:
+            return nil
+        }
+    }
+
+    fileprivate static func requiredPageID(_ arguments: ToolArguments) throws -> Int {
+        let pageID: Int? = switch arguments.getValue(for: "page_id") {
+        case let .int(value):
+            value
+        case let .double(value) where value.isFinite && value.rounded() == value:
+            Int(exactly: value)
+        case let .string(value):
+            Int(value)
+        default:
+            nil
+        }
+        guard let pageID, pageID >= 0 else {
+            throw BrowserToolError.invalidPageID
+        }
+        return pageID
     }
 
     private static func jsonObject(

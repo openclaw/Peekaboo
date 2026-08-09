@@ -64,6 +64,7 @@ extension LegacyScreenCaptureOperator {
         }
 
         let windowTitle = targetWindow[kCGWindowName as String] as? String ?? "untitled"
+        let mutationSnapshot = Self.windowMutationSnapshot(from: targetWindow)
         self.logger.debug(
             "Capturing window (legacy)",
             metadata: [
@@ -73,6 +74,10 @@ extension LegacyScreenCaptureOperator {
             correlationId: correlationId)
 
         let image = try await self.captureWindowImage(windowID: windowID, correlationId: correlationId)
+        let mutationIdentity: WindowMutationIdentity? = mutationSnapshot.flatMap { snapshot in
+            guard snapshot.ownerProcessStartIdentity == app.processStartIdentity else { return nil }
+            return Self.validatedMutationIdentity(snapshot)
+        }
 
         let bounds = Self.windowBounds(from: targetWindow, fallbackImage: image)
         let scalePlan = self.scalePlan(for: bounds, preference: scale)
@@ -100,6 +105,7 @@ extension LegacyScreenCaptureOperator {
             mode: .window,
             applicationInfo: ServiceApplicationInfo(
                 processIdentifier: app.processIdentifier,
+                processStartIdentity: mutationIdentity?.ownerProcessStartIdentity,
                 bundleIdentifier: app.bundleIdentifier,
                 name: app.name,
                 bundlePath: app.bundlePath),
@@ -117,7 +123,8 @@ extension LegacyScreenCaptureOperator {
                 isOnScreen: targetWindow[kCGWindowIsOnscreen as String] as? Bool ?? true,
                 sharingState: (targetWindow[kCGWindowSharingState as String] as? Int).flatMap {
                     WindowSharingState(rawValue: $0)
-                }),
+                },
+                mutationIdentity: mutationIdentity),
             displayInfo: DisplayInfo(
                 index: resolvedIndex,
                 name: nil,
@@ -162,6 +169,7 @@ extension LegacyScreenCaptureOperator {
         }) ?? 0
 
         let windowTitle = targetWindow[kCGWindowName as String] as? String ?? "untitled"
+        let mutationSnapshot = Self.windowMutationSnapshot(from: targetWindow)
         self.logger.debug(
             "Capturing window by id (legacy)",
             metadata: [
@@ -171,6 +179,7 @@ extension LegacyScreenCaptureOperator {
             correlationId: correlationId)
 
         let image = try await self.captureWindowImage(windowID: windowID, correlationId: correlationId)
+        let mutationIdentity = mutationSnapshot.flatMap(Self.validatedMutationIdentity)
 
         let bounds = Self.windowBounds(from: targetWindow, fallbackImage: image)
         let scalePlan = self.scalePlan(for: bounds, preference: scale)
@@ -190,6 +199,7 @@ extension LegacyScreenCaptureOperator {
         {
             ServiceApplicationInfo(
                 processIdentifier: runningApplication.processIdentifier,
+                processStartIdentity: mutationIdentity?.ownerProcessStartIdentity,
                 bundleIdentifier: runningApplication.bundleIdentifier,
                 name: runningApplication.localizedName ?? runningApplication.bundleIdentifier ?? "Unknown",
                 bundlePath: runningApplication.bundleURL?.path,
@@ -217,7 +227,8 @@ extension LegacyScreenCaptureOperator {
                 isOnScreen: targetWindow[kCGWindowIsOnscreen as String] as? Bool ?? true,
                 sharingState: (targetWindow[kCGWindowSharingState as String] as? Int).flatMap {
                     WindowSharingState(rawValue: $0)
-                }),
+                },
+                mutationIdentity: mutationIdentity),
             displayInfo: DisplayInfo(
                 index: 0,
                 name: nil,
@@ -232,41 +243,49 @@ extension LegacyScreenCaptureOperator {
             metadata: metadata)
     }
 
+    private static func windowMutationSnapshot(
+        from window: [String: Any]) -> SystemIdentityResolver.WindowMutationSnapshot?
+    {
+        guard let windowIDValue = window[kCGWindowNumber as String] as? Int,
+              let windowID = CGWindowID(exactly: windowIDValue),
+              let ownerProcessIdentifier = window[kCGWindowOwnerPID as String] as? pid_t,
+              let processStartIdentity = SystemIdentityResolver.processStartIdentity(ownerProcessIdentifier),
+              let boundsDictionary = window[kCGWindowBounds as String] as? [String: Any],
+              let bounds = CGRect(dictionaryRepresentation: boundsDictionary as CFDictionary)
+        else {
+            return nil
+        }
+        return SystemIdentityResolver.WindowMutationSnapshot(
+            windowID: windowID,
+            ownerProcessIdentifier: ownerProcessIdentifier,
+            ownerProcessStartIdentity: processStartIdentity,
+            bounds: bounds,
+            isMinimized: false)
+    }
+
+    private static func validatedMutationIdentity(
+        _ snapshot: SystemIdentityResolver.WindowMutationSnapshot) -> WindowMutationIdentity?
+    {
+        SystemIdentityResolver.windowMutationIdentity(
+            windowID: snapshot.windowID,
+            expectedOwnerProcessIdentifier: snapshot.ownerProcessIdentifier,
+            expectedOwnerProcessStartIdentity: snapshot.ownerProcessStartIdentity,
+            expectedBounds: snapshot.bounds,
+            isMinimized: snapshot.isMinimized)
+    }
+
     private func captureWindowImage(
         windowID: CGWindowID,
         correlationId: String) async throws -> CGImage
     {
-        let forceCoreGraphics = self.shouldUseLegacyCGCapture()
-        if forceCoreGraphics {
-            do {
-                let image = try await self.captureWindowWithCGWindowList(
-                    windowID: windowID,
-                    correlationId: correlationId)
-                self.logger.debug(
-                    "Captured window via CGWindowList",
-                    metadata: ["windowID": String(windowID)],
-                    correlationId: correlationId)
-                return image
-            } catch {
-                let explicitLegacy = ScreenCaptureService.captureEnginePreference == .legacy
-                self.logger.warning(
-                    explicitLegacy
-                        ? "CGWindowList capture failed for explicit legacy capture engine"
-                        : "CGWindowList capture failed, falling back to SCScreenshotManager",
-                    metadata: ["error": String(describing: error)],
-                    correlationId: correlationId)
-                if explicitLegacy {
-                    throw error
-                }
-                return try await self.captureWindowWithScreenshotManager(
-                    windowID: windowID,
-                    correlationId: correlationId)
-            }
-        }
-
-        return try await self.captureWindowWithScreenshotManager(
+        let image = try await self.captureWindowWithCGWindowList(
             windowID: windowID,
             correlationId: correlationId)
+        self.logger.debug(
+            "Captured window via isolated legacy path",
+            metadata: ["windowID": String(windowID)],
+            correlationId: correlationId)
+        return image
     }
 
     private static func windowBounds(

@@ -44,16 +44,23 @@ public final class RemotePeekabooServices: PeekabooServiceProviding {
         targetedClickRequiresEventSynthesizingPermission: Bool = false,
         supportsExactWindowTargetedClicks: Bool = false,
         supportsBackgroundWindowClose: Bool = false,
+        supportsPinnedWindowMutations: Bool = false,
+        supportsWindowRestore: Bool = false,
         supportsBackgroundDialogClick: Bool = false,
         supportsTargetedScroll: Bool = false,
         supportsInspectAccessibilityTree: Bool = false,
         inspectAccessibilityTreeUnavailableReason: String? = nil,
+        supportsExactWindowTargetedKeyboard: Bool = false,
+        exactWindowTargetedKeyboardUnavailableReason: String? = nil,
         supportsPostEventPermissionRequest: Bool = false,
         supportsElementActions: Bool = false,
         supportsDesktopObservation: Bool = false,
         supportsImplicitLatestSnapshotInvalidation: Bool = false,
         supportsApplicationLaunchOptions: Bool = false,
+        supportsNewApplicationInstanceLaunch: Bool = false,
+        supportsApplicationWindowReadiness: Bool = false,
         supportsApplicationRelaunch: Bool = false,
+        supportsProcessGenerationPinnedApplicationQuit: Bool = false,
         allowLocalApplicationFallback: Bool = false,
         desktopMutationWatermarkStore: DesktopMutationWatermarkStore? = nil)
     {
@@ -66,7 +73,10 @@ public final class RemotePeekabooServices: PeekabooServiceProviding {
             client: client,
             localFallback: allowLocalApplicationFallback ? ApplicationService() : nil,
             supportsLaunchOptions: supportsApplicationLaunchOptions,
-            supportsRelaunch: supportsApplicationRelaunch)
+            supportsNewInstanceLaunch: supportsNewApplicationInstanceLaunch,
+            supportsWindowReadiness: supportsApplicationWindowReadiness,
+            supportsRelaunch: supportsApplicationRelaunch,
+            supportsPinnedQuit: supportsProcessGenerationPinnedApplicationQuit)
         self.automation = if supportsElementActions {
             RemoteElementActionUIAutomationService(
                 client: client,
@@ -82,7 +92,9 @@ public final class RemotePeekabooServices: PeekabooServiceProviding {
                 supportsExactWindowTargetedClicks: supportsExactWindowTargetedClicks,
                 supportsTargetedScroll: supportsTargetedScroll,
                 supportsInspectAccessibilityTree: supportsInspectAccessibilityTree,
-                inspectAccessibilityTreeUnavailableReason: inspectAccessibilityTreeUnavailableReason)
+                inspectAccessibilityTreeUnavailableReason: inspectAccessibilityTreeUnavailableReason,
+                supportsExactWindowTargetedKeyboard: supportsExactWindowTargetedKeyboard,
+                exactWindowTargetedKeyboardUnavailableReason: exactWindowTargetedKeyboardUnavailableReason)
         } else {
             RemoteUIAutomationService(
                 client: client,
@@ -98,11 +110,15 @@ public final class RemotePeekabooServices: PeekabooServiceProviding {
                 supportsExactWindowTargetedClicks: supportsExactWindowTargetedClicks,
                 supportsTargetedScroll: supportsTargetedScroll,
                 supportsInspectAccessibilityTree: supportsInspectAccessibilityTree,
-                inspectAccessibilityTreeUnavailableReason: inspectAccessibilityTreeUnavailableReason)
+                inspectAccessibilityTreeUnavailableReason: inspectAccessibilityTreeUnavailableReason,
+                supportsExactWindowTargetedKeyboard: supportsExactWindowTargetedKeyboard,
+                exactWindowTargetedKeyboardUnavailableReason: exactWindowTargetedKeyboardUnavailableReason)
         }
         self.windows = RemoteWindowManagementService(
             client: client,
-            supportsBackgroundClose: supportsBackgroundWindowClose)
+            supportsBackgroundClose: supportsBackgroundWindowClose,
+            supportsPinnedWindowMutations: supportsPinnedWindowMutations,
+            supportsWindowRestore: supportsWindowRestore)
         let snapshotManager = RemoteSnapshotManager(
             client: client,
             supportsImplicitLatestSnapshotInvalidation: supportsImplicitLatestSnapshotInvalidation,

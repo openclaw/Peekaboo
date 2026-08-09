@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [3.10.1] - Unreleased
 
+### Added
+- Add owner-validated exact `window_id` targeting to the MCP `see` and `inspect_ui` tools without changing legacy window-index syntax.
+- Add atomic exact-window background typing and hotkeys with per-dispatch focused-window revalidation across local and Bridge runtimes.
+- Add an observation-only MCP `verify_state` tool with exact app/PID/window ownership, fresh 100 ms native polling, stable samples, and a hard 10-second cap.
+- Add native exact-window background pixel right- and double-clicks with per-event owner/generation validation, generation-safe mouse-up cleanup, no cursor movement or activation, and explicit unverifiable-effect reporting.
+
+### Changed
+- Make Chrome DevTools page creation and selection background-first, pin the verified browser MCP runtime, and require direct page-ID routing for page-scoped actions so concurrent agents cannot redirect one another's tab work.
+- Let independent observations overlap by keeping AX traversal and OCR outside the serialized ScreenCaptureKit transaction.
+- Keep agent screenshot grounding transient so session checkpoints retain text and tool state without persisting image bytes or local image paths.
+
+### Fixed
+- Refuse PID-only/app-only background coordinate clicks and require a fresh capture-owned exact-window receipt, with retry-safe pre-dispatch metadata and no mutation invalidation on validation failure.
+- Route automatic window capture around quarantined or contended in-process ScreenCaptureKit calls through a bounded isolated `screencapture` fallback, while explicit modern-only capture still fails honestly.
+- Require explicit `--foreground` before click focus flags can select the foreground path, instead of silently overriding the background default.
+- Make `inspect-ui --snapshot` fail closed when the named snapshot is missing or unavailable in the current process instead of silently inspecting the frontmost app under a new snapshot.
+- Serialize clipboard-backed paste transactions across CLI, daemon, and GUI clients with one secure per-user lock; fail closed before writes on capability, cancellation, or prior-state read errors; restore partial writes noncancellably; re-resolve queued targets; detect PID reuse; route background text without clipboard mutation; preserve MCP exact-window selectors through atomic dispatch; report MCP partial direct-text failure as retry-unsafe; and report targeted Cmd+V as may-have-pasted instead of claiming unverified receiver consumption.
+- Cancel queued Bridge mutations when their client disconnects and recheck liveness after cross-process mutation admission.
+- Report failed or unavailable action verification honestly without replaying the mutation, and keep all verification captures background-silent.
+- Reject conflicting exact-window selectors instead of silently broadening to another same-process window.
+- Make daemon cleanup ownership- and idle-deadline-aware so automatic migration cannot terminate an active or user-managed host.
+- Restore Peekaboo-specific `config init` guidance instead of emitting Tachikoma commands and an incorrect no-file-written message.
+- Preserve `data:` navigation URLs received through MCP instead of misclassifying them as a missing browser URL.
+- Flush the final MCP stdio response before exiting on input EOF, so one-shot pipelines no longer need an artificial delay.
+- Make agent `--no-cache` runs truly ephemeral across CLI and MCP, keep their validation output machine-readable, and stop dry runs from reporting phantom resumable sessions.
+- Keep `agent --json` stdout parseable during model-source conflicts and reject tool-call-shaped terminal text that was never executed.
+- Reject reserved HTTP/SSE MCP transports before daemon startup with an actionable structured error instead of failing late.
+- Add native background `--new-instance` launches, explicit `--wait-for-window` automation readiness, and bounded focus restoration when a background-launched app self-activates.
+- Return launch-bound process-generation receipts and refreshed exact window IDs from launch/open/relaunch readiness, reject PID reuse before returning a launch result, verify process termination before reporting quit success, pin application quit to the resolved PID/process generation, and accept saved generation receipts for race-free cleanup.
+- Make maximize a bounded exact-window geometry operation that cannot activate or enter full screen, and require exact WindowServer disappearance before close succeeds.
+- Pin destructive window mutations to the selected owner PID/process generation through Bridge admission and correct minimized-window inventory with AX state.
+- Bind destructive window mutations to immutable capture-time bounds, reject same-process CGWindowID reuse, repin intended geometry transitions, and refuse Bridge hosts that would ignore the stronger receipt.
+- Keep minimized exact PID/window-ID targets addressable through bounded AX inventory, add native background `window restore` to CLI/MCP/Bridge, and make default minimized close return restore-or-`--foreground` guidance.
+- Treat WindowServer disappearance as valid after AX-verified minimize and close minimized exact windows through a bounded non-activating AX restore/close path.
+- Re-minimize a temporarily restored exact window before returning any failed or indeterminate minimized-close result.
+- Make background screenshot, observation, and live-capture paths visualizer-silent, including multi-display and menu-bar OCR fallbacks, while preserving explicit foreground feedback.
+
 ## [3.10.0] - 2026-08-02
 
 ### Added

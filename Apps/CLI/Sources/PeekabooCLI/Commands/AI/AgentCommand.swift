@@ -1,4 +1,5 @@
 import Commander
+import Darwin
 import Foundation
 import Logging
 import os
@@ -22,10 +23,9 @@ private var isDebugLoggingEnabled: Bool {
     return false
 }
 
-private func aiDebugPrint(_ message: String) {
-    if isDebugLoggingEnabled {
-        print(message)
-    }
+private func aiDebugPrint(_ message: String, verbose: Bool, jsonOutput: Bool) {
+    guard verbose || isDebugLoggingEnabled, !jsonOutput else { return }
+    fputs("\(message)\n", stderr)
 }
 
 /// Output modes for agent execution with progressive enhancement
@@ -53,7 +53,7 @@ struct AgentCommand: RuntimeBackedCommand {
         discussion: """
         Launches the autonomous Peekaboo operator so it can interpret a natural-language goal,
         choose tools (see, click, type, etc.), and report progress back to you. Supports resuming
-        previous sessions, dry-run planning, audio input, and JSON/quiet output modes for CI.
+        previous sessions, dry-run task previews, audio input, and JSON/quiet output modes for CI.
         """,
         usageExamples: [
             CommandUsageExample(
@@ -80,7 +80,7 @@ struct AgentCommand: RuntimeBackedCommand {
     @Flag(names: [.short("q"), .long], help: "Quiet mode - only show final result")
     var quiet = false
 
-    @Flag(name: .long, help: "Dry run - show planned steps without executing")
+    @Flag(name: .long, help: "Validate and echo the task without calling a model or tools")
     var dryRun = false
 
     @Option(name: .long, help: "Maximum model turns before failing (1-100, default 100)")
@@ -107,7 +107,7 @@ struct AgentCommand: RuntimeBackedCommand {
     @Flag(name: .long, help: "List available sessions")
     var listSessions = false
 
-    @Flag(name: .long, help: "Disable session caching (always create new session)")
+    @Flag(name: .long, help: "Run without saving a resumable session")
     var noCache = false
 
     @Flag(name: .long, help: "Enable audio input mode (record from microphone)")
@@ -180,16 +180,28 @@ extension AgentCommand {
         do {
             try await self.runInternal(runtime: runtime)
         } catch let error as DecodingError {
-            aiDebugPrint("DEBUG: Caught DecodingError in run(): \(error)")
+            aiDebugPrint(
+                "DEBUG: Caught DecodingError in run(): \(error)",
+                verbose: self.verbose,
+                jsonOutput: self.jsonOutput
+            )
             throw error
         } catch let error as NSError {
-            aiDebugPrint("DEBUG: Caught NSError in run(): \(error)")
-            aiDebugPrint("DEBUG: Domain: \(error.domain)")
-            aiDebugPrint("DEBUG: Code: \(error.code)")
-            aiDebugPrint("DEBUG: UserInfo: \(error.userInfo)")
+            aiDebugPrint(
+                "DEBUG: Caught NSError in run(): \(error)",
+                verbose: self.verbose,
+                jsonOutput: self.jsonOutput
+            )
+            aiDebugPrint("DEBUG: Domain: \(error.domain)", verbose: self.verbose, jsonOutput: self.jsonOutput)
+            aiDebugPrint("DEBUG: Code: \(error.code)", verbose: self.verbose, jsonOutput: self.jsonOutput)
+            aiDebugPrint("DEBUG: UserInfo: \(error.userInfo)", verbose: self.verbose, jsonOutput: self.jsonOutput)
             throw error
         } catch {
-            aiDebugPrint("DEBUG: Caught unknown error in run(): \(error)")
+            aiDebugPrint(
+                "DEBUG: Caught unknown error in run(): \(error)",
+                verbose: self.verbose,
+                jsonOutput: self.jsonOutput
+            )
             throw error
         }
     }
@@ -198,6 +210,13 @@ extension AgentCommand {
     mutating func runInternal(runtime: CommandRuntime) async throws {
         if self.isAgentDisabled() {
             self.emitAgentUnavailableMessage()
+            throw ExitCode.failure
+        }
+
+        do {
+            try self.validateSessionOptions()
+        } catch {
+            self.printAgentValidationError(error.localizedDescription)
             throw ExitCode.failure
         }
 

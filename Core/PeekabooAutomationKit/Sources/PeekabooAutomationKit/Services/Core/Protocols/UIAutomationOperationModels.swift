@@ -140,6 +140,8 @@ public struct UIFocusInfo: Sendable, Codable {
     public let applicationName: String
     public let bundleIdentifier: String
     public let processId: Int
+    public let windowID: Int?
+    public let identifier: String?
 
     public init(
         role: String,
@@ -148,7 +150,9 @@ public struct UIFocusInfo: Sendable, Codable {
         frame: CGRect,
         applicationName: String,
         bundleIdentifier: String,
-        processId: Int)
+        processId: Int,
+        windowID: Int? = nil,
+        identifier: String? = nil)
     {
         self.role = role
         self.title = title
@@ -157,6 +161,64 @@ public struct UIFocusInfo: Sendable, Codable {
         self.applicationName = applicationName
         self.bundleIdentifier = bundleIdentifier
         self.processId = processId
+        self.windowID = windowID
+        self.identifier = identifier
+    }
+}
+
+/// Stable, non-value-bearing identity for the element that received a background click.
+public struct FocusedElementIdentity: Sendable, Codable, Equatable {
+    public let processIdentifier: Int32
+    public let windowID: Int
+    public let role: String
+    public let title: String?
+    public let identifier: String?
+    public let frame: CGRect
+
+    public init(
+        processIdentifier: Int32,
+        windowID: Int,
+        role: String,
+        title: String? = nil,
+        identifier: String? = nil,
+        frame: CGRect)
+    {
+        self.processIdentifier = processIdentifier
+        self.windowID = windowID
+        self.role = role
+        self.title = title
+        self.identifier = identifier
+        self.frame = frame
+    }
+
+    public init?(_ focus: UIFocusInfo) {
+        guard let windowID = focus.windowID,
+              let processIdentifier = Int32(exactly: focus.processId),
+              !focus.frame.isEmpty
+        else { return nil }
+        self.init(
+            processIdentifier: processIdentifier,
+            windowID: windowID,
+            role: focus.role,
+            title: focus.title,
+            identifier: focus.identifier,
+            frame: focus.frame)
+    }
+}
+
+public struct ExactWindowKeyboardTarget: Sendable, Codable, Equatable {
+    public let windowIdentity: WindowMutationIdentity
+    public let windowBounds: CGRect
+    public let focusedElement: FocusedElementIdentity
+
+    public init(
+        windowIdentity: WindowMutationIdentity,
+        windowBounds: CGRect,
+        focusedElement: FocusedElementIdentity)
+    {
+        self.windowIdentity = windowIdentity
+        self.windowBounds = windowBounds
+        self.focusedElement = focusedElement
     }
 }
 

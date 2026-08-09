@@ -235,7 +235,7 @@ public enum ToolRegistry {
         let category: ToolCategory = switch tool.name {
         case "see", "screenshot", "window_capture":
             .vision
-        case "inspect_ui":
+        case "inspect_ui", "verify_state":
             .element
         case "click", "type", "press", "scroll", "hotkey", "swipe", "drag", "move":
             .automation

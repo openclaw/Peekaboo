@@ -40,6 +40,7 @@ struct MCPSpecificToolTests {
         #expect(props["annotate"] != nil)
         #expect(props["snapshot"] != nil)
         #expect(props["app_target"] != nil)
+        #expect(props["window_id"] != nil)
         #expect(props["path"] != nil)
         #expect(props["web_focus"] != nil)
 
@@ -67,6 +68,7 @@ struct MCPSpecificToolTests {
         }
 
         #expect(props["app_target"] != nil)
+        #expect(props["window_id"] != nil)
         #expect(props["snapshot"] != nil)
         #expect(props["web_focus"] != nil)
         #expect(props["annotate"] == nil)
@@ -547,6 +549,61 @@ struct MCPSpecificToolTests {
         #expect(throws: (any Error).self) {
             try MCPAgentTool.validatedMaxSteps(101)
         }
+    }
+
+    @Test
+    func `Agent no cache rejects session lookup options`() throws {
+        let conflictingOptions: [(resume: Bool, resumeSession: String?, listSessions: Bool)] = [
+            (true, nil, false),
+            (false, "saved", false),
+            (false, nil, true),
+        ]
+        for options in conflictingOptions {
+            #expect(throws: (any Error).self) {
+                try MCPAgentTool.validateSessionOptions(
+                    noCache: true,
+                    resume: options.resume,
+                    resumeSession: options.resumeSession,
+                    listSessions: options.listSessions)
+            }
+        }
+        try MCPAgentTool.validateSessionOptions(
+            noCache: true,
+            resume: false,
+            resumeSession: nil,
+            listSessions: false)
+    }
+
+    @Test
+    func `MCP agent metadata exposes the bounded redacted execution trace`() throws {
+        let call = AgentToolCall(
+            id: "call-1",
+            name: "type",
+            arguments: ["text": AnyAgentToolValue(string: "private typed content")])
+        let result = AgentExecutionResult(
+            content: "done",
+            messages: [
+                ModelMessage(role: .assistant, content: [.toolCall(call)]),
+                ModelMessage(role: .tool, content: [.toolResult(AgentToolResult.success(
+                    toolCallId: call.id,
+                    result: AnyAgentToolValue(string: "typed")))]),
+            ],
+            metadata: AgentMetadata(
+                executionTime: 0,
+                toolCallCount: 1,
+                modelName: "test",
+                startTime: Date(),
+                endTime: Date()))
+
+        let metadata = try #require(MCPAgentTool.executionTraceMetadata(for: result).objectValue)
+        let trace = try #require(metadata["executionTrace"]?.objectValue)
+        let entries = try #require(trace["entries"]?.arrayValue)
+        let firstEntry = try #require(entries.first?.objectValue)
+        let arguments = try #require(firstEntry["arguments"]?.objectValue)
+
+        #expect(trace["totalCallCount"]?.intValue == 1)
+        #expect(arguments["text"]?.objectValue?["redacted"]?.boolValue == true)
+        #expect(String(describing: metadata).contains("private typed content") == false)
     }
 
     // MARK: - Shell Tool Tests

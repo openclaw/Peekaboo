@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 struct DialogFixtureView: View {
     @EnvironmentObject private var actionLogger: ActionLogger
 
+    @State private var owningWindow: NSWindow?
     @State private var filename: String = "playground-dialog-fixture.rtf"
     @State private var content: String = "Peekaboo Playground Dialog Fixture"
 
@@ -113,6 +114,7 @@ struct DialogFixtureView: View {
                         .font(.system(.caption, design: .monospaced))
                         .textSelection(.enabled)
                         .accessibilityIdentifier("dialog-fixture-last-alert-result")
+                        .id(self.lastAlertResult)
                     Spacer()
                 }
             }
@@ -121,6 +123,7 @@ struct DialogFixtureView: View {
         }
         .padding(16)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(OwningWindowReader(window: self.$owningWindow))
     }
 
     private enum SavePanelMode {
@@ -130,8 +133,8 @@ struct DialogFixtureView: View {
     }
 
     private func showSavePanel(mode: SavePanelMode) {
-        guard let window = NSApp.keyWindow else {
-            self.actionLogger.log(.dialog, "Save panel failed", details: "No keyWindow")
+        guard let window = self.owningWindow else {
+            self.actionLogger.log(.dialog, "Save panel failed", details: "No owning window")
             return
         }
 
@@ -200,8 +203,8 @@ struct DialogFixtureView: View {
     }
 
     private func showOpenPanel() {
-        guard let window = NSApp.keyWindow else {
-            self.actionLogger.log(.dialog, "Open panel failed", details: "No keyWindow")
+        guard let window = self.owningWindow else {
+            self.actionLogger.log(.dialog, "Open panel failed", details: "No owning window")
             return
         }
 
@@ -223,8 +226,8 @@ struct DialogFixtureView: View {
     }
 
     private func showAlert(withTextField: Bool) {
-        guard let window = NSApp.keyWindow else {
-            self.actionLogger.log(.dialog, "Alert failed", details: "No keyWindow")
+        guard let window = self.owningWindow else {
+            self.actionLogger.log(.dialog, "Alert failed", details: "No owning window")
             return
         }
 

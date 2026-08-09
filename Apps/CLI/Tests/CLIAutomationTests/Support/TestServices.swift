@@ -26,6 +26,7 @@ final class StubScreenCaptureService: ScreenCaptureServiceProtocol {
     var captureWindowByIdHandler: ((CGWindowID, CaptureScalePreference) async throws -> CaptureResult)?
     var captureFrontmostHandler: ((CaptureScalePreference) async throws -> CaptureResult)?
     var captureAreaHandler: ((CGRect, CaptureScalePreference) async throws -> CaptureResult)?
+    private(set) var captureVisualizerModes: [CaptureVisualizerMode] = []
 
     init(permissionGranted: Bool = true) {
         self.permissionGranted = permissionGranted
@@ -33,9 +34,10 @@ final class StubScreenCaptureService: ScreenCaptureServiceProtocol {
 
     func captureScreen(
         displayIndex: Int?,
-        visualizerMode _: CaptureVisualizerMode,
+        visualizerMode: CaptureVisualizerMode,
         scale: CaptureScalePreference
     ) async throws -> CaptureResult {
+        self.captureVisualizerModes.append(visualizerMode)
         if let handler = captureScreenHandler {
             return try await handler(displayIndex, scale)
         }
@@ -45,9 +47,10 @@ final class StubScreenCaptureService: ScreenCaptureServiceProtocol {
     func captureWindow(
         appIdentifier: String,
         windowIndex: Int?,
-        visualizerMode _: CaptureVisualizerMode,
+        visualizerMode: CaptureVisualizerMode,
         scale: CaptureScalePreference
     ) async throws -> CaptureResult {
+        self.captureVisualizerModes.append(visualizerMode)
         if let handler = captureWindowHandler {
             return try await handler(appIdentifier, windowIndex, scale)
         }
@@ -56,9 +59,10 @@ final class StubScreenCaptureService: ScreenCaptureServiceProtocol {
 
     func captureWindow(
         windowID: CGWindowID,
-        visualizerMode _: CaptureVisualizerMode,
+        visualizerMode: CaptureVisualizerMode,
         scale: CaptureScalePreference
     ) async throws -> CaptureResult {
+        self.captureVisualizerModes.append(visualizerMode)
         if let handler = captureWindowByIdHandler {
             return try await handler(windowID, scale)
         }
@@ -66,9 +70,10 @@ final class StubScreenCaptureService: ScreenCaptureServiceProtocol {
     }
 
     func captureFrontmost(
-        visualizerMode _: CaptureVisualizerMode,
+        visualizerMode: CaptureVisualizerMode,
         scale: CaptureScalePreference
     ) async throws -> CaptureResult {
+        self.captureVisualizerModes.append(visualizerMode)
         if let handler = captureFrontmostHandler {
             return try await handler(scale)
         }
@@ -77,9 +82,10 @@ final class StubScreenCaptureService: ScreenCaptureServiceProtocol {
 
     func captureArea(
         _ rect: CGRect,
-        visualizerMode _: CaptureVisualizerMode,
+        visualizerMode: CaptureVisualizerMode,
         scale: CaptureScalePreference
     ) async throws -> CaptureResult {
+        self.captureVisualizerModes.append(visualizerMode)
         if let handler = captureAreaHandler {
             return try await handler(rect, scale)
         }
@@ -208,6 +214,8 @@ ExactWindowTargetedClickServiceProtocol {
     var supportsTargetedHotkeys = true
     var targetedHotkeyUnavailableReason: String?
     var targetedHotkeyRequiresEventSynthesizingPermission = false
+    var hotkeyError: (any Error)?
+    var targetedHotkeyError: (any Error)?
     var supportsTargetedTypeActions = true
     var targetedTypeUnavailableReason: String?
     var targetedTypeRequiresEventSynthesizingPermission = false
@@ -290,6 +298,25 @@ ExactWindowTargetedClickServiceProtocol {
         }
     }
 
+    func click(
+        target: ClickTarget,
+        clickType: ClickType,
+        snapshotId: String?,
+        expectedWindowIdentity: WindowMutationIdentity,
+        expectedWindowBounds _: CGRect
+    ) async throws {
+        self.targetedClickCalls.append(TargetedClickCall(
+            target: target,
+            clickType: clickType,
+            snapshotId: snapshotId,
+            targetProcessIdentifier: expectedWindowIdentity.ownerProcessIdentifier,
+            targetWindowID: expectedWindowIdentity.windowID
+        ))
+        if let clickError {
+            throw clickError
+        }
+    }
+
     func type(
         text: String,
         target: String?,
@@ -365,6 +392,9 @@ ExactWindowTargetedClickServiceProtocol {
 
     func hotkey(keys: String, holdDuration: Int) async throws {
         self.hotkeyCalls.append(HotkeyCall(keys: keys, holdDuration: holdDuration))
+        if let hotkeyError {
+            throw hotkeyError
+        }
     }
 
     func hotkey(keys: String, holdDuration: Int, targetProcessIdentifier: pid_t) async throws {
@@ -373,6 +403,9 @@ ExactWindowTargetedClickServiceProtocol {
             holdDuration: holdDuration,
             targetProcessIdentifier: targetProcessIdentifier
         ))
+        if let targetedHotkeyError {
+            throw targetedHotkeyError
+        }
     }
 
     func swipe(from: CGPoint, to: CGPoint, duration: Int, steps: Int, profile: MouseMovementProfile) async throws {
@@ -455,6 +488,8 @@ ExactWindowTargetedClickServiceProtocol {
 
 @MainActor
 final class StubApplicationService: ApplicationServiceProtocol {
+    let supportsApplicationLaunchOptions = true
+    let supportsApplicationRelaunch = true
     var applications: [ServiceApplicationInfo]
     var windowsByApp: [String: [ServiceWindowInfo]]
     var launchResults: [String: ServiceApplicationInfo]
@@ -462,7 +497,9 @@ final class StubApplicationService: ApplicationServiceProtocol {
     var activateCalls: [String] = []
     var activateApplicationHandler: ((String) async throws -> Void)?
     var quitCalls: [(identifier: String, force: Bool)] = []
+    var quitRequests: [ApplicationQuitRequest] = []
     var quitShouldSucceed = true
+    var terminationCount = 0
     var hideCalls: [String] = []
     var unhideCalls: [String] = []
     var hideOtherCalls: [String] = []
@@ -561,6 +598,15 @@ final class StubApplicationService: ApplicationServiceProtocol {
         )
     }
 
+    func launchApplication(request: ApplicationLaunchRequest) async throws -> ServiceApplicationInfo {
+        let identifier = request.applicationBundleIdentifier ?? request.applicationIdentifier ?? "default handler"
+        return try await self.launchApplication(identifier: identifier)
+    }
+
+    func relaunchApplication(request: ApplicationRelaunchRequest) async throws -> ServiceApplicationInfo {
+        try await self.launchApplication(request: request.launchRequest)
+    }
+
     func activateApplication(identifier: String) async throws {
         self.activateCalls.append(identifier)
         try await self.activateApplicationHandler?(identifier)
@@ -568,6 +614,22 @@ final class StubApplicationService: ApplicationServiceProtocol {
 
     func quitApplication(identifier: String, force: Bool) async throws -> Bool {
         self.quitCalls.append((identifier: identifier, force: force))
+        return self.quitShouldSucceed
+    }
+
+    func quitApplication(request: ApplicationQuitRequest) async throws -> Bool {
+        self.quitRequests.append(request)
+        guard let expectedIdentity = request.expectedIdentity,
+              self.applications.first(where: {
+                  $0.processIdentifier == expectedIdentity.processIdentifier
+              })?.processIdentity == expectedIdentity
+        else {
+            throw PeekabooError.commandFailed("Application process generation changed")
+        }
+        self.quitCalls.append((identifier: request.identifier, force: request.force))
+        if self.quitShouldSucceed {
+            self.terminationCount += 1
+        }
         return self.quitShouldSucceed
     }
 
@@ -1041,15 +1103,29 @@ final class StubClipboardService: ClipboardServiceProtocol {
     var current: ClipboardReadResult?
     var slots: [String: ClipboardReadResult] = [:]
     var beforeMutation: (() -> Void)?
+    var afterSave: (() -> Void)?
+    var afterSet: (() -> Void)?
+    var getError: (any Error)?
+    var setError: (any Error)?
+    var setMutatesBeforeThrow = false
     var restoreError: (any Error)?
+    private(set) var getCallCount = 0
+    private(set) var setCallCount = 0
+    private(set) var clearCallCount = 0
+    private(set) var saveCallCount = 0
     private(set) var restoreCallCount = 0
 
     func get(prefer _: UTType?) throws -> ClipboardReadResult? {
-        self.current
+        self.getCallCount += 1
+        if let getError {
+            throw getError
+        }
+        return self.current
     }
 
     func set(_ request: ClipboardWriteRequest) throws -> ClipboardReadResult {
         self.beforeMutation?()
+        self.setCallCount += 1
         guard let primary = request.representations.first else {
             throw ClipboardServiceError.writeFailed("No representations provided")
         }
@@ -1058,20 +1134,30 @@ final class StubClipboardService: ClipboardServiceProtocol {
             data: primary.data,
             textPreview: request.alsoText
         )
+        if let setError {
+            if self.setMutatesBeforeThrow {
+                self.current = result
+            }
+            throw setError
+        }
         self.current = result
+        self.afterSet?()
         return result
     }
 
     func clear() {
         self.beforeMutation?()
+        self.clearCallCount += 1
         self.current = nil
     }
 
     func save(slot: String) throws {
+        self.saveCallCount += 1
         guard let current else {
             throw ClipboardServiceError.empty
         }
         self.slots[slot] = current
+        self.afterSave?()
     }
 
     func restore(slot: String) throws -> ClipboardReadResult {
@@ -1276,9 +1362,14 @@ final class StubWindowService: WindowManagementServiceProtocol {
     var windowsByApp: [String: [ServiceWindowInfo]]
     var focusCalls: [WindowTarget] = []
     var closeFallbackRequests: [Bool] = []
+    var moveCalls: [WindowTarget] = []
+    var resizeCalls: [WindowTarget] = []
+    var setBoundsCalls: [WindowTarget] = []
 
     init(windowsByApp: [String: [ServiceWindowInfo]]) {
-        self.windowsByApp = windowsByApp
+        self.windowsByApp = windowsByApp.mapValues { windows in
+            windows.map { $0.withMutationIdentityForTesting() }
+        }
     }
 
     func closeWindow(target: WindowTarget) async throws {
@@ -1286,39 +1377,83 @@ final class StubWindowService: WindowManagementServiceProtocol {
     }
 
     @MainActor
-    func closeWindow(target _: WindowTarget, allowForegroundFallback: Bool) async throws {
+    func closeWindow(target: WindowTarget, allowForegroundFallback: Bool) async throws {
         self.closeFallbackRequests.append(allowForegroundFallback)
+        let selection = try self.resolveWindowLocation(target: target)
+        let window = self.windowsByApp[selection.app]?[selection.index]
+        if window?.isMinimized == true, !allowForegroundFallback {
+            throw OperationError.interactionFailed(
+                action: "close window",
+                reason: "A minimized window cannot be closed with a verified background-only route; " +
+                    "run `peekaboo window restore` for the same exact target first, or retry with --foreground"
+            )
+        }
     }
 
-    func minimizeWindow(target: WindowTarget) async throws {
-        throw TestStubError.unimplemented(#function)
+    func closeWindow(
+        target: WindowTarget,
+        expectedIdentity _: WindowMutationIdentity,
+        allowForegroundFallback: Bool
+    ) async throws {
+        try await self.closeWindow(target: target, allowForegroundFallback: allowForegroundFallback)
     }
 
     func maximizeWindow(target: WindowTarget) async throws {
         throw TestStubError.unimplemented(#function)
     }
 
+    func maximizeWindow(target: WindowTarget, expectedIdentity _: WindowMutationIdentity) async throws {
+        try await self.maximizeWindow(target: target)
+    }
+
     @MainActor
     func moveWindow(target: WindowTarget, to position: CGPoint) async throws {
+        self.moveCalls.append(target)
         try self.updateWindow(target: target) { info in
             let newBounds = CGRect(origin: position, size: info.bounds.size)
             return info.withBounds(newBounds)
         }
     }
 
+    func moveWindow(
+        target: WindowTarget,
+        expectedIdentity _: WindowMutationIdentity,
+        to position: CGPoint
+    ) async throws {
+        try await self.moveWindow(target: target, to: position)
+    }
+
     @MainActor
     func resizeWindow(target: WindowTarget, to size: CGSize) async throws {
+        self.resizeCalls.append(target)
         try self.updateWindow(target: target) { info in
             let newBounds = CGRect(origin: info.bounds.origin, size: size)
             return info.withBounds(newBounds)
         }
     }
 
+    func resizeWindow(
+        target: WindowTarget,
+        expectedIdentity _: WindowMutationIdentity,
+        to size: CGSize
+    ) async throws {
+        try await self.resizeWindow(target: target, to: size)
+    }
+
     @MainActor
     func setWindowBounds(target: WindowTarget, bounds: CGRect) async throws {
+        self.setBoundsCalls.append(target)
         try self.updateWindow(target: target) { info in
             info.withBounds(bounds)
         }
+    }
+
+    func setWindowBounds(
+        target: WindowTarget,
+        expectedIdentity _: WindowMutationIdentity,
+        bounds: CGRect
+    ) async throws {
+        try await self.setWindowBounds(target: target, bounds: bounds)
     }
 
     @MainActor
@@ -1330,7 +1465,7 @@ final class StubWindowService: WindowManagementServiceProtocol {
     func listWindows(target: WindowTarget) async throws -> [ServiceWindowInfo] {
         switch target {
         case let .application(app):
-            return self.windowsByApp[app] ?? []
+            return self.windowsForApplicationTarget(app)
         case let .applicationAndTitle(app, title):
             return self.windowsByApp[app]?.filter { $0.title.contains(title) } ?? []
         case .frontmost:
@@ -1350,7 +1485,7 @@ final class StubWindowService: WindowManagementServiceProtocol {
     }
 
     @MainActor
-    private func updateWindow(
+    func updateWindow(
         target: WindowTarget,
         transform: (ServiceWindowInfo) -> ServiceWindowInfo
     ) throws {
@@ -1422,7 +1557,40 @@ extension ServiceWindowInfo {
             spaceID: spaceID,
             spaceName: spaceName,
             screenIndex: screenIndex,
-            screenName: screenName
+            screenName: screenName,
+            mutationIdentity: mutationIdentity
+        )
+    }
+
+    fileprivate func withMutationIdentityForTesting() -> ServiceWindowInfo {
+        guard self.mutationIdentity == nil else { return self }
+        return ServiceWindowInfo(
+            windowID: self.windowID,
+            title: self.title,
+            bounds: self.bounds,
+            isMinimized: self.isMinimized,
+            isMainWindow: self.isMainWindow,
+            isKeyWindow: self.isKeyWindow,
+            isFrontmost: self.isFrontmost,
+            subrole: self.subrole,
+            windowLevel: self.windowLevel,
+            alpha: self.alpha,
+            index: self.index,
+            spaceID: self.spaceID,
+            spaceName: self.spaceName,
+            screenIndex: self.screenIndex,
+            screenName: self.screenName,
+            isOffScreen: self.isOffScreen,
+            layer: self.layer,
+            isOnScreen: self.isOnScreen,
+            sharingState: self.sharingState,
+            isExcludedFromWindowsMenu: self.isExcludedFromWindowsMenu,
+            mutationIdentity: WindowMutationIdentity(
+                windowID: self.windowID,
+                ownerProcessIdentifier: 42,
+                ownerProcessStartIdentity: 7,
+                capturedBounds: self.bounds
+            )
         )
     }
 }

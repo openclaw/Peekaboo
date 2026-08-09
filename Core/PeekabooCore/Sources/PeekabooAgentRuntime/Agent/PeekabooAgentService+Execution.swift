@@ -172,14 +172,18 @@ extension PeekabooAgentService {
         return AgentExecutionResult(
             content: "Dry run completed. Audio task: \(description)",
             messages: [],
-            sessionId: UUID().uuidString,
+            sessionId: nil,
             usage: nil,
             metadata: AgentMetadata(
                 executionTime: 0,
                 toolCallCount: 0,
                 modelName: self.defaultModelDisplayName,
                 startTime: now,
-                endTime: now))
+                endTime: now,
+                context: [
+                    "dry_run": "true",
+                    "session_persistence": "disabled",
+                ]))
     }
 
     func executeAudioStreamingTask(
@@ -348,13 +352,16 @@ extension PeekabooAgentService {
             status: outcome.reachedStepLimit ? "max_steps_exhausted" : "completed")
 
         if outcome.reachedStepLimit {
-            throw AgentStepLimitExceededError(maxSteps: maxSteps, sessionId: context.id)
+            throw AgentStepLimitExceededError(
+                maxSteps: maxSteps,
+                sessionId: context.id,
+                sessionWasPersisted: context.isPersistent)
         }
 
         return AgentExecutionResult(
             content: outcome.content,
             messages: outcome.messages,
-            sessionId: context.id,
+            sessionId: context.isPersistent ? context.id : nil,
             usage: outcome.usage,
             metadata: self.makeExecutionMetadata(
                 model: model,
@@ -423,13 +430,16 @@ extension PeekabooAgentService {
             status: outcome.reachedStepLimit ? "max_steps_exhausted" : "completed")
 
         if outcome.reachedStepLimit {
-            throw AgentStepLimitExceededError(maxSteps: maxSteps, sessionId: context.id)
+            throw AgentStepLimitExceededError(
+                maxSteps: maxSteps,
+                sessionId: context.id,
+                sessionWasPersisted: context.isPersistent)
         }
 
         return AgentExecutionResult(
             content: outcome.content,
             messages: outcome.messages,
-            sessionId: context.id,
+            sessionId: context.isPersistent ? context.id : nil,
             usage: outcome.usage,
             metadata: self.makeExecutionMetadata(
                 model: model,
@@ -448,9 +458,11 @@ extension PeekabooAgentService {
         var state = StreamingLoopState(messages: initialMessages)
         let toolContext = ToolHandlingContext(
             model: configuration.model,
+            providerSupportsVision: configuration.provider.capabilities.supportsVision,
             tools: configuration.tools,
             eventHandler: configuration.eventHandler,
             sessionId: configuration.sessionId,
+            initialMessages: initialMessages,
             enhancementOptions: configuration.enhancementOptions)
 
         let resolvedConfiguration = TachikomaConfiguration.resolve(.current)
@@ -481,6 +493,7 @@ extension PeekabooAgentService {
                 tools: configuration.tools.isEmpty ? nil : configuration.tools,
                 settings: self.generationSettings(for: configuration.model))
             let response = try await provider.generateText(request: request)
+            state.messages.removeConsumedAgentToolImageContext()
 
             if let usage = response.usage {
                 state.usage = usageAccumulator.record(usage)
@@ -493,10 +506,11 @@ extension PeekabooAgentService {
                 response.finishReason,
                 hasToolCalls: !toolCalls.isEmpty)
             if toolCalls.isEmpty {
-                try self.validateTerminalResponse(text: response.text)
+                try self.validateTerminalResponse(
+                    text: response.text,
+                    availableToolNames: Set(configuration.tools.map(\.name)))
             }
 
-            state.content += response.text
             if !response.text.isEmpty {
                 await configuration.eventHandler?.send(.assistantMessage(content: response.text))
             }
@@ -511,14 +525,21 @@ extension PeekabooAgentService {
                 to: &state.messages)
 
             if toolCalls.isEmpty {
-                self.appendFinalStep(
-                    text: response.text,
-                    to: &state.messages,
-                    steps: &state.steps,
+                if self.handleTerminalResponse(
+                    response.text,
+                    boundary: toolContext.turnBoundary,
+                    state: &state,
                     stepIndex: stepIndex,
-                    appendMessage: !recordedAssistantTurn)
-                break
+                    appendAssistantMessage: !recordedAssistantTurn)
+                {
+                    break
+                }
+                reachedStepLimit = stepIndex == maxSteps - 1
+                onCheckpoint?(self.makeLoopOutcome(state: state, reachedStepLimit: reachedStepLimit))
+                continue
             }
+
+            state.content += response.text
 
             var cancellationStep: GenerationStep?
             let step: GenerationStep
@@ -545,11 +566,16 @@ extension PeekabooAgentService {
             state.toolCallCount += step.toolResults.count
             onCheckpoint?(self.makeLoopOutcome(state: state, reachedStepLimit: false))
 
-            if let stopReason = self.turnBoundaryStopReason(from: step.toolResults) {
-                state.content = self.contentByAppendingTurnBoundaryReason(
-                    stopReason,
-                    to: state.content)
-                break
+            if let boundarySignal = self.turnBoundarySignal(from: step.toolResults) {
+                switch boundarySignal {
+                case .continueNextStep:
+                    state.desktopContextState.lastFingerprint = nil
+                case let .stopAgent(reason):
+                    state.content = self.contentByAppendingTurnBoundaryReason(reason, to: state.content)
+                }
+                if case .stopAgent = boundarySignal {
+                    break
+                }
             }
 
             if stepIndex == maxSteps - 1 {

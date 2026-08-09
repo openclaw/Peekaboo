@@ -1,16 +1,48 @@
 import Foundation
+import PeekabooAutomationKit
+
+enum PeekabooBridgeRequestContext {
+    @TaskLocal static var clientConnectionProbe: (@Sendable () -> Bool)?
+
+    static func checkRequestIsActive() throws {
+        try Task.checkCancellation()
+        guard self.clientConnectionProbe?() != false else {
+            throw CancellationError()
+        }
+    }
+}
 
 actor PeekabooBridgeMutationGate {
-    private var locked = false
-    private var waiters: [CheckedContinuation<Void, Never>] = []
+    private struct Waiter {
+        let id: UUID
+        let continuation: CheckedContinuation<Bool, Never>
+    }
 
-    func acquire() async {
-        guard self.locked else {
-            self.locked = true
-            return
+    private var locked = false
+    private var waiters: [Waiter] = []
+
+    var waitingCount: Int {
+        self.waiters.count
+    }
+
+    func acquire() async throws {
+        try Task.checkCancellation()
+
+        let waiterID = UUID()
+        let acquired = await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                self.enqueue(waiterID, continuation: continuation)
+            }
+        } onCancel: {
+            Task { await self.cancel(waiterID) }
         }
-        await withCheckedContinuation { continuation in
-            self.waiters.append(continuation)
+
+        guard acquired else {
+            throw CancellationError()
+        }
+        if Task.isCancelled {
+            self.release()
+            throw CancellationError()
         }
     }
 
@@ -19,11 +51,60 @@ actor PeekabooBridgeMutationGate {
             self.locked = false
             return
         }
-        self.waiters.removeFirst().resume()
+        self.waiters.removeFirst().continuation.resume(returning: true)
+    }
+
+    private func enqueue(_ id: UUID, continuation: CheckedContinuation<Bool, Never>) {
+        guard self.locked else {
+            self.locked = true
+            continuation.resume(returning: true)
+            return
+        }
+        self.waiters.append(Waiter(id: id, continuation: continuation))
+    }
+
+    private func cancel(_ id: UUID) {
+        guard let index = self.waiters.firstIndex(where: { $0.id == id }) else { return }
+        self.waiters.remove(at: index).continuation.resume(returning: false)
     }
 }
 
 extension PeekabooBridgeRequest {
+    var requiresPinnedWindowMutationReceipt: Bool {
+        switch self {
+        case .moveWindow,
+             .resizeWindow,
+             .setWindowBounds,
+             .closeWindow,
+             .backgroundCloseWindow,
+             .minimizeWindow,
+             .restoreWindow,
+             .maximizeWindow:
+            true
+        default:
+            false
+        }
+    }
+
+    var pinnedWindowMutation: (target: WindowTarget, identity: WindowMutationIdentity)? {
+        switch self {
+        case let .moveWindow(payload):
+            payload.expectedIdentity.map { (payload.target, $0) }
+        case let .resizeWindow(payload):
+            payload.expectedIdentity.map { (payload.target, $0) }
+        case let .setWindowBounds(payload):
+            payload.expectedIdentity.map { (payload.target, $0) }
+        case let .closeWindow(payload),
+             let .backgroundCloseWindow(payload),
+             let .minimizeWindow(payload),
+             let .restoreWindow(payload),
+             let .maximizeWindow(payload):
+            payload.expectedIdentity.map { (payload.target, $0) }
+        default:
+            nil
+        }
+    }
+
     var mayMutateDesktop: Bool {
         if case let .dialogFindActive(request) = self {
             return request.windowTitle != nil
@@ -65,7 +146,9 @@ extension PeekabooBridgeOperation {
              .targetedScroll,
              .hotkey,
              .targetedHotkey,
+             .exactWindowTargetedHotkey,
              .targetedTypeActions,
+             .exactWindowTargetedTypeActions,
              .targetedClick,
              .exactWindowTargetedClick,
              .swipe,
@@ -78,6 +161,7 @@ extension PeekabooBridgeOperation {
              .closeWindow,
              .backgroundCloseWindow,
              .minimizeWindow,
+             .restoreWindow,
              .maximizeWindow,
              .launchApplication,
              .launchApplicationWithOptions,
@@ -116,6 +200,7 @@ extension PeekabooBridgeOperation {
              .desktopObservation,
              .detectElements,
              .inspectAccessibilityTree,
+             .getFocusedElement,
              .waitForElement,
              .listWindows,
              .getFocusedWindow,

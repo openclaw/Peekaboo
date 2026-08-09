@@ -5,10 +5,10 @@ import PeekabooFoundation
 @preconcurrency import ScreenCaptureKit
 
 enum ScreenCaptureKitCaptureGate {
-    /// Protects concurrent SCK calls within one process. ScreenCaptureKit can leak
-    /// continuations instead of returning an error when re-entered under load.
-    @MainActor private static var isCaptureActive = false
     @TaskLocal private static var isInsideCaptureOperation = false
+    @MainActor private static let captureCoordinator = ScreenCaptureKitOperationCoordinator(
+        lockFilePath: (NSTemporaryDirectory() as NSString)
+            .appendingPathComponent("boo.peekaboo.sckit-capture.lock"))
 
     @MainActor
     static func withExclusiveCaptureOperation<T: Sendable>(
@@ -58,22 +58,23 @@ enum ScreenCaptureKitCaptureGate {
         contentFilter: SCContentFilter,
         configuration: SCStreamConfiguration) async throws -> CGImage
     {
-        try await self.withExclusiveCapture {
-            try await self
-                .withScreenCaptureKitTimeout(seconds: 3.0, operationName: "SCScreenshotManager.captureImage") {
-                    try await SCScreenshotManager.captureImage(
-                        contentFilter: contentFilter,
-                        configuration: configuration)
-                }
+        try await self.captureCoordinator.run(
+            seconds: 3.0,
+            operationName: "SCScreenshotManager.captureImage")
+        {
+            try await SCScreenshotManager.captureImage(
+                contentFilter: contentFilter,
+                configuration: configuration)
         }
     }
 
     @MainActor
     static func currentShareableContent() async throws -> SCShareableContent {
-        try await self.withExclusiveCapture {
-            try await self.withScreenCaptureKitTimeout(seconds: 5.0, operationName: "SCShareableContent.current") {
-                try await SCShareableContent.current
-            }
+        try await self.captureCoordinator.run(
+            seconds: 5.0,
+            operationName: "SCShareableContent.current")
+        {
+            try await SCShareableContent.current
         }
     }
 
@@ -82,158 +83,334 @@ enum ScreenCaptureKitCaptureGate {
         excludingDesktopWindows: Bool,
         onScreenWindowsOnly: Bool) async throws -> SCShareableContent
     {
-        try await self.withExclusiveCapture {
-            try await self.withScreenCaptureKitTimeout(
-                seconds: 5.0,
-                operationName: "SCShareableContent.excludingDesktopWindows")
-            {
-                try await SCShareableContent.excludingDesktopWindows(
-                    excludingDesktopWindows,
-                    onScreenWindowsOnly: onScreenWindowsOnly)
-            }
+        try await self.captureCoordinator.run(
+            seconds: 5.0,
+            operationName: "SCShareableContent.excludingDesktopWindows")
+        {
+            try await SCShareableContent.excludingDesktopWindows(
+                excludingDesktopWindows,
+                onScreenWindowsOnly: onScreenWindowsOnly)
+        }
+    }
+}
+
+/// Owns the complete lifetime of one ScreenCaptureKit call, including an SCK call that ignores caller cancellation.
+/// A timed-out call quarantines this coordinator until that exact call finishes, preventing orphan accumulation.
+@MainActor
+final class ScreenCaptureKitOperationCoordinator {
+    private enum LeasePhase: Equatable {
+        case acquiring
+        case running
+        case quarantined
+    }
+
+    private final class Lease {
+        let id = UUID()
+        let operationName: String
+        var phase: LeasePhase = .acquiring
+        var fileDescriptor: Int32?
+        var ownsFileLock = false
+        var operationTask: Task<Void, Never>?
+
+        init(operationName: String) {
+            self.operationName = operationName
         }
     }
 
-    @MainActor
-    private static func withExclusiveCapture<T: Sendable>(
-        _ operation: () async throws -> T) async throws -> T
-    {
-        while self.isCaptureActive {
-            try Task.checkCancellation()
-            try await Task.sleep(nanoseconds: 10_000_000)
-        }
-        self.isCaptureActive = true
-        defer { self.isCaptureActive = false }
+    private let lockFilePath: String?
+    private var activeLease: Lease?
 
-        // Also serialize across separate `peekaboo` CLI invocations; the underlying
-        // replayd/ScreenCaptureKit service is shared system-wide.
-        let path = (NSTemporaryDirectory() as NSString)
-            .appendingPathComponent("boo.peekaboo.sckit-capture.lock")
-        let fd = open(path, O_CREAT | O_RDWR, S_IRUSR | S_IWUSR)
-        guard fd >= 0 else {
-            return try await operation()
-        }
-        defer { close(fd) }
-
-        while flock(fd, LOCK_EX | LOCK_NB) != 0 {
-            guard errno == EWOULDBLOCK || errno == EAGAIN || errno == EINTR else {
-                // Locking is defensive. If it fails unexpectedly, keep capture functional.
-                return try await operation()
-            }
-
-            try Task.checkCancellation()
-            try await Task.sleep(nanoseconds: 10_000_000)
-        }
-        defer { flock(fd, LOCK_UN) }
-
-        return try await operation()
+    init(lockFilePath: String?) {
+        self.lockFilePath = lockFilePath
     }
 
-    @MainActor
-    private static func withScreenCaptureKitTimeout<T: Sendable>(
+    func run<T: Sendable>(
         seconds: TimeInterval,
         operationName: String,
         operation: @escaping @MainActor @Sendable () async throws -> T) async throws -> T
     {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(max(seconds, 0)))
+        let lease = try await self.reserveLease(
+            operationName: operationName,
+            deadline: deadline,
+            timeoutSeconds: seconds)
+
+        do {
+            try await self.acquireCrossProcessLock(
+                for: lease,
+                deadline: deadline,
+                timeoutSeconds: seconds)
+            try Self.checkDeadline(
+                deadline,
+                operationName: operationName,
+                timeoutSeconds: seconds)
+        } catch {
+            self.release(lease)
+            throw error
+        }
+
+        return try await self.runOwnedOperation(
+            lease: lease,
+            deadline: deadline,
+            timeoutSeconds: seconds,
+            operationName: operationName,
+            operation: operation)
+    }
+
+    var isQuarantined: Bool {
+        self.activeLease?.phase == .quarantined
+    }
+
+    private func reserveLease(
+        operationName: String,
+        deadline: ContinuousClock.Instant,
+        timeoutSeconds: TimeInterval) async throws -> Lease
+    {
+        while let activeLease = self.activeLease {
+            if activeLease.phase == .quarantined {
+                throw OperationError.captureFailed(
+                    reason: "ScreenCaptureKit is quarantined after an abandoned \(activeLease.operationName) call")
+            }
+
+            try Task.checkCancellation()
+            try Self.checkDeadline(
+                deadline,
+                operationName: operationName,
+                timeoutSeconds: timeoutSeconds)
+            try await Self.sleepBeforeRetry(deadline: deadline)
+        }
+
+        try Task.checkCancellation()
+        try Self.checkDeadline(
+            deadline,
+            operationName: operationName,
+            timeoutSeconds: timeoutSeconds)
+        let lease = Lease(operationName: operationName)
+        self.activeLease = lease
+        return lease
+    }
+
+    private func acquireCrossProcessLock(
+        for lease: Lease,
+        deadline: ContinuousClock.Instant,
+        timeoutSeconds: TimeInterval) async throws
+    {
+        guard let lockFilePath else { return }
+
+        let fd = open(lockFilePath, O_CREAT | O_RDWR | O_CLOEXEC, S_IRUSR | S_IWUSR)
+        guard fd >= 0 else {
+            // The file lock is a defensive second layer; the in-process lease still protects this host.
+            return
+        }
+        lease.fileDescriptor = fd
+
+        while true {
+            try Task.checkCancellation()
+            try Self.checkDeadline(
+                deadline,
+                operationName: lease.operationName,
+                timeoutSeconds: timeoutSeconds,
+                waitingForCrossProcessGate: true)
+
+            guard flock(fd, LOCK_EX | LOCK_NB) != 0 else {
+                lease.ownsFileLock = true
+                return
+            }
+            guard errno == EWOULDBLOCK || errno == EAGAIN || errno == EINTR else {
+                close(fd)
+                lease.fileDescriptor = nil
+                return
+            }
+
+            try await Self.sleepBeforeRetry(deadline: deadline)
+        }
+    }
+
+    private func runOwnedOperation<T: Sendable>(
+        lease: Lease,
+        deadline: ContinuousClock.Instant,
+        timeoutSeconds: TimeInterval,
+        operationName: String,
+        operation: @escaping @MainActor @Sendable () async throws -> T) async throws -> T
+    {
         let race = ScreenCaptureKitTimeoutRace<T>()
+        let leaseID = lease.id
 
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
-                race.setContinuation(continuation)
+                guard race.setContinuation(continuation) else {
+                    self.release(lease)
+                    return
+                }
 
                 let operationTask = Task { @MainActor in
+                    guard race.claimOperation() else {
+                        self.release(lease)
+                        return
+                    }
+                    lease.phase = .running
+
+                    let result: Result<T, any Error>
                     do {
                         let value = try await operation()
-                        race.resume(.success(value))
+                        result = .success(value)
                     } catch {
-                        race.resume(.failure(error))
+                        result = .failure(error)
                     }
+
+                    // The framework call is truly over. Only now may another SCK call enter this host or process.
+                    self.release(lease)
+                    race.resume(result)
                 }
-                let timeoutTask = Task {
+                lease.operationTask = operationTask
+
+                let timeoutTask = Task { @MainActor in
                     do {
-                        try await Task.sleep(nanoseconds: Self.timeoutNanoseconds(for: seconds))
+                        let now = ContinuousClock.now
+                        if now < deadline {
+                            try await Task.sleep(for: now.duration(to: deadline))
+                        }
                     } catch {
                         return
                     }
-                    operationTask.cancel()
-                    race.resume(.failure(OperationError.timeout(operation: operationName, duration: seconds)))
+                    if race.resume(.failure(OperationError.timeout(
+                        operation: operationName,
+                        duration: timeoutSeconds)))
+                    {
+                        self.quarantineIfRunning(lease)
+                    }
                 }
 
-                race.setTasks(operationTask: operationTask, timeoutTask: timeoutTask)
+                race.setTimeoutTask(timeoutTask)
             }
         } onCancel: {
-            race.cancel()
+            if race.cancel() {
+                Task { @MainActor in
+                    self.quarantineIfRunning(id: leaseID)
+                }
+            }
         }
     }
 
-    private nonisolated static func timeoutNanoseconds(for seconds: TimeInterval) -> UInt64 {
-        UInt64(max(seconds, 0) * 1_000_000_000)
+    private func quarantineIfRunning(_ lease: Lease) {
+        guard self.activeLease === lease, lease.phase == .running else { return }
+        lease.phase = .quarantined
+    }
+
+    private func quarantineIfRunning(id: UUID) {
+        guard let lease = self.activeLease, lease.id == id else { return }
+        self.quarantineIfRunning(lease)
+    }
+
+    private func release(_ lease: Lease) {
+        guard self.activeLease === lease else { return }
+
+        if lease.ownsFileLock, let fd = lease.fileDescriptor {
+            flock(fd, LOCK_UN)
+        }
+        if let fd = lease.fileDescriptor {
+            close(fd)
+        }
+        lease.operationTask = nil
+        lease.fileDescriptor = nil
+        lease.ownsFileLock = false
+        self.activeLease = nil
+    }
+
+    private nonisolated static func checkDeadline(
+        _ deadline: ContinuousClock.Instant,
+        operationName: String,
+        timeoutSeconds: TimeInterval,
+        waitingForCrossProcessGate: Bool = false) throws
+    {
+        guard ContinuousClock.now < deadline else {
+            let operation = waitingForCrossProcessGate
+                ? "\(operationName) waiting for the ScreenCaptureKit gate; another process may be quarantined"
+                : operationName
+            throw OperationError.timeout(operation: operation, duration: timeoutSeconds)
+        }
+    }
+
+    private nonisolated static func sleepBeforeRetry(deadline: ContinuousClock.Instant) async throws {
+        let now = ContinuousClock.now
+        guard now < deadline else { return }
+        try await Task.sleep(for: min(now.duration(to: deadline), .milliseconds(10)))
     }
 }
 
-private final class ScreenCaptureKitTimeoutRace<T: Sendable>: @unchecked Sendable {
+final class ScreenCaptureKitTimeoutRace<T: Sendable>: @unchecked Sendable {
     private let lock = NSLock()
     private var continuation: CheckedContinuation<T, any Error>?
-    private var operationTask: Task<Void, Never>?
     private var timeoutTask: Task<Void, Never>?
+    private var terminalResult: Result<T, any Error>?
     private var didFinish = false
+    private var operationStarted = false
 
-    func setContinuation(_ continuation: CheckedContinuation<T, any Error>) {
-        self.lock.withLock {
+    /// Returns false when cancellation or another terminal result arrived before installation.
+    func setContinuation(_ continuation: CheckedContinuation<T, any Error>) -> Bool {
+        let terminalResult = self.lock.withLock { () -> Result<T, any Error>? in
+            if let terminalResult = self.terminalResult {
+                return terminalResult
+            }
             self.continuation = continuation
+            return nil
+        }
+        if let terminalResult {
+            continuation.resume(with: terminalResult)
+            return false
+        }
+        return true
+    }
+
+    func claimOperation() -> Bool {
+        self.lock.withLock {
+            guard !self.didFinish, !self.operationStarted else { return false }
+            self.operationStarted = true
+            return true
         }
     }
 
-    func setTasks(operationTask: Task<Void, Never>, timeoutTask: Task<Void, Never>) {
-        var shouldCancel = false
+    func setTimeoutTask(_ timeoutTask: Task<Void, Never>) {
+        var shouldCancelTimeout = false
         self.lock.withLock {
-            shouldCancel = self.didFinish
+            shouldCancelTimeout = self.didFinish
             if !self.didFinish {
-                self.operationTask = operationTask
                 self.timeoutTask = timeoutTask
             }
         }
 
-        if shouldCancel {
-            operationTask.cancel()
+        if shouldCancelTimeout {
             timeoutTask.cancel()
         }
     }
 
-    func resume(_ result: Result<T, any Error>) {
+    /// Returns true only when this result won the caller-facing race.
+    @discardableResult
+    func resume(_ result: Result<T, any Error>) -> Bool {
         let continuation: CheckedContinuation<T, any Error>?
-        let operationTask: Task<Void, Never>?
         let timeoutTask: Task<Void, Never>?
 
         self.lock.lock()
         guard !self.didFinish else {
             self.lock.unlock()
-            return
+            return false
         }
 
         self.didFinish = true
+        self.terminalResult = result
         continuation = self.continuation
-        operationTask = self.operationTask
         timeoutTask = self.timeoutTask
         self.continuation = nil
-        self.operationTask = nil
         self.timeoutTask = nil
         self.lock.unlock()
 
-        // SCK sometimes leaks its own continuation after cancellation; this wrapper intentionally
-        // returns to the caller without waiting for that child task to unwind.
-        operationTask?.cancel()
         timeoutTask?.cancel()
-
-        switch result {
-        case let .success(value):
-            continuation?.resume(returning: value)
-        case let .failure(error):
-            continuation?.resume(throwing: error)
-        }
+        continuation?.resume(with: result)
+        return true
     }
 
-    func cancel() {
+    @discardableResult
+    func cancel() -> Bool {
         self.resume(.failure(CancellationError()))
     }
 }

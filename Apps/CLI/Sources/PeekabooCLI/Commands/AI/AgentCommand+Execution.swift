@@ -1,4 +1,5 @@
 import Commander
+import Darwin
 import Foundation
 import PeekabooAgentRuntime
 import PeekabooCore
@@ -31,37 +32,7 @@ extension AgentCommand {
     @MainActor
     func displayResult(_ result: AgentExecutionResult, delegate: AgentOutputDelegate? = nil) {
         if self.jsonOutput {
-            let response = [
-                "success": true,
-                "result": [
-                    "content": result.content,
-                    "sessionId": result.sessionId as Any,
-                    "toolCalls": result.messages.flatMap { message in
-                        message.content.compactMap { content in
-                            if case let .toolCall(toolCall) = content {
-                                return [
-                                    "id": toolCall.id,
-                                    "name": toolCall.name,
-                                    "arguments": String(describing: toolCall.arguments)
-                                ]
-                            }
-                            return nil
-                        }
-                    },
-                    "metadata": [
-                        "executionTime": result.metadata.executionTime,
-                        "toolCallCount": result.metadata.toolCallCount,
-                        "modelName": result.metadata.modelName
-                    ],
-                    "usage": result.usage.map { usage in
-                        [
-                            "inputTokens": usage.inputTokens,
-                            "outputTokens": usage.outputTokens,
-                            "totalTokens": usage.totalTokens
-                        ]
-                    } as Any
-                ]
-            ] as [String: Any]
+            let response = self.makeAgentJSONResponse(result)
             if let jsonData = try? JSONSerialization.data(withJSONObject: response, options: .prettyPrinted) {
                 print(String(data: jsonData, encoding: .utf8) ?? "{}")
             }
@@ -70,6 +41,55 @@ extension AgentCommand {
         }
 
         delegate?.showFinalSummaryIfNeeded(result)
+    }
+
+    func makeAgentJSONResponse(_ result: AgentExecutionResult) -> [String: Any] {
+        let legacyToolCalls: [[String: Any]] = result.messages.flatMap { message in
+            message.content.compactMap { content in
+                guard case let .toolCall(toolCall) = content else { return nil }
+                return [
+                    "id": toolCall.id,
+                    "name": toolCall.name,
+                    "arguments": String(describing: toolCall.arguments),
+                ]
+            }
+        }
+        let usage: Any = result.usage.map { usage in
+            [
+                "inputTokens": usage.inputTokens,
+                "outputTokens": usage.outputTokens,
+                "totalTokens": usage.totalTokens,
+            ]
+        } ?? NSNull()
+        let resultPayload: [String: Any] = [
+            "content": result.content,
+            "sessionId": result.sessionId.map { $0 as Any } ?? NSNull(),
+            "toolCalls": legacyToolCalls,
+            "executionTrace": self.executionTraceJSONObject(for: result),
+            "metadata": [
+                "executionTime": result.metadata.executionTime,
+                "toolCallCount": result.metadata.toolCallCount,
+                "modelName": result.metadata.modelName,
+            ],
+            "usage": usage,
+        ]
+        return ["success": true, "result": resultPayload]
+    }
+
+    private func executionTraceJSONObject(for result: AgentExecutionResult) -> [String: Any] {
+        let trace = result.executionTrace()
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let data = try? encoder.encode(trace),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else {
+            return [
+                "entries": [],
+                "totalCallCount": trace.totalCallCount,
+                "truncated": true,
+            ]
+        }
+        return object
     }
 
     func makeDisplayDelegate(for task: String) -> AgentOutputDelegate? {
@@ -107,6 +127,16 @@ extension AgentCommand {
         }
     }
 
+    func printAgentValidationError(_ message: String) {
+        if self.jsonOutput {
+            let logger = Logger.shared
+            logger.setJsonOutputMode(true)
+            outputError(message: message, code: .VALIDATION_ERROR, logger: logger)
+        } else {
+            fputs("Error: \(message)\n", stderr)
+        }
+    }
+
     func executeAgentTask(
         _ agentService: PeekabooAgentService,
         task: String,
@@ -127,7 +157,8 @@ extension AgentCommand {
                 dryRun: self.dryRun,
                 queueMode: queueMode,
                 eventDelegate: streamingDelegate,
-                verbose: self.verbose
+                verbose: self.verbose,
+                persistSession: !self.noCache
             )
             self.displayResult(result, delegate: outputDelegate)
             let duration = String(format: "%.2f", result.metadata.executionTime)

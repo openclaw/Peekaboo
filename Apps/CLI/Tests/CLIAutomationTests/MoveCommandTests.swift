@@ -1,3 +1,4 @@
+import Commander
 import CoreGraphics
 import Foundation
 import PeekabooCore
@@ -12,6 +13,15 @@ import Testing
     .enabled(if: CLITestEnvironment.runAutomationRead)
 )
 struct MoveCommandTests {
+    @Test
+    func `Move rejects positional and option coordinates together`() throws {
+        var command = try MoveCommand.parse(["10,20", "--coords", "30,40", "--foreground"])
+
+        #expect(throws: ValidationError.self) {
+            try command.validate()
+        }
+    }
+
     @Test
     func `move --help lists options`() async throws {
         let context = await self.makeContext()

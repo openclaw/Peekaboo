@@ -1,0 +1,704 @@
+import AppKit
+import Foundation
+import MCP
+import PeekabooAutomationKit
+import PeekabooFoundation
+import TachikomaMCP
+import Testing
+@testable import PeekabooAgentRuntime
+@testable import PeekabooAutomation
+@testable import PeekabooCore
+@testable import PeekabooVisualizer
+
+extension MCPToolExecutionTests {
+    // MARK: - App Tool Tests
+
+    @Test
+    func `App tool missing action`() async throws {
+        let mockApps = await MainActor.run { MockApplicationService() }
+        let context = await MCPToolTestHelpers.makeContext(applications: mockApps)
+        let tool = AppTool(context: context)
+        let args = ToolArguments(raw: ["target": "Finder"])
+
+        let response = try await tool.execute(arguments: args)
+        #expect(response.isError == true)
+    }
+
+    @Test
+    func `App tool switch cycle uses automation service`() async throws {
+        let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
+        let context = await MCPToolTestHelpers.makeContext(automation: automation)
+        let tool = AppTool(context: context)
+
+        let response = try await tool.execute(arguments: ToolArguments(raw: [
+            "action": "switch",
+            "cycle": true,
+        ]))
+
+        #expect(response.isError == false)
+        #expect(await MainActor.run { automation.lastHotkeyKeys } == "cmd,tab")
+        #expect(await MainActor.run { automation.lastHotkeyHoldDuration } == 50)
+    }
+
+    @Test
+    func `Click tool preserves element target for automation service`() async throws {
+        let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
+        let context = await MCPToolTestHelpers.makeContext(automation: automation)
+        let snapshot = await UISnapshotManager.shared.createSnapshot()
+        let snapshotId = await snapshot.id
+        await snapshot.setScreenshot(
+            path: "/tmp/screenshot.png",
+            metadata: CaptureMetadata(
+                size: CGSize(width: 200, height: 100),
+                mode: .window,
+                applicationInfo: ServiceApplicationInfo(
+                    processIdentifier: 111,
+                    bundleIdentifier: "com.example.snapshot",
+                    name: "SnapshotApp")))
+        await snapshot.setUIElements([
+            UIElement(
+                id: "B1",
+                elementId: "B1",
+                role: "button",
+                title: "OK",
+                label: "OK",
+                value: nil,
+                description: nil,
+                help: nil,
+                roleDescription: "button",
+                identifier: nil,
+                frame: CGRect(x: 10, y: 20, width: 80, height: 30),
+                isActionable: true),
+        ])
+
+        let tool = ClickTool(context: context)
+        let response = try await tool.execute(arguments: ToolArguments(raw: [
+            "on": "B1",
+            "snapshot": snapshotId,
+        ]))
+
+        #expect(response.isError == false)
+        let calls = await MainActor.run { automation.targetedClickCalls }
+        #expect(calls.count == 1)
+        #expect(calls.first?.snapshotId == snapshotId)
+        #expect(calls.first?.targetProcessIdentifier == 111)
+        if case let .elementId(id) = calls.first?.target {
+            #expect(id == "B1")
+        } else {
+            Issue.record("Expected ClickTool to forward .elementId, not coordinates")
+        }
+        let preserved = await UISnapshotManager.shared.getSnapshot(id: snapshotId)
+        let implicitLatest = await UISnapshotManager.shared.getSnapshot(id: nil)
+        #expect(preserved != nil)
+        #expect(implicitLatest == nil)
+        #expect(MCPResponseMeta.requiresFreshObservation(response))
+        #expect(!MCPResponseMeta.hasRequiresFreshSee(response))
+    }
+
+    @Test
+    func `Click tool forwards latest snapshot id when snapshot argument is omitted`() async throws {
+        let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
+        let context = await MCPToolTestHelpers.makeContext(automation: automation)
+        let snapshot = await UISnapshotManager.shared.createSnapshot()
+        let snapshotId = await snapshot.id
+        await snapshot.setScreenshot(
+            path: "/tmp/screenshot.png",
+            metadata: CaptureMetadata(
+                size: CGSize(width: 200, height: 100),
+                mode: .window,
+                applicationInfo: ServiceApplicationInfo(
+                    processIdentifier: 111,
+                    bundleIdentifier: "com.example.snapshot",
+                    name: "SnapshotApp")))
+        await snapshot.setUIElements([
+            UIElement(
+                id: "B1",
+                elementId: "B1",
+                role: "button",
+                title: "OK",
+                label: "OK",
+                value: nil,
+                description: nil,
+                help: nil,
+                roleDescription: "button",
+                identifier: nil,
+                frame: CGRect(x: 10, y: 20, width: 80, height: 30),
+                isActionable: true),
+        ])
+
+        let tool = ClickTool(context: context)
+        let response = try await tool.execute(arguments: ToolArguments(raw: ["on": "B1"]))
+
+        #expect(response.isError == false)
+        let calls = await MainActor.run { automation.targetedClickCalls }
+        #expect(calls.first?.snapshotId == snapshotId)
+        #expect(calls.first?.targetProcessIdentifier == 111)
+        let preserved = await UISnapshotManager.shared.getSnapshot(id: snapshotId)
+        let implicitLatest = await UISnapshotManager.shared.getSnapshot(id: nil)
+        #expect(preserved != nil)
+        #expect(implicitLatest == nil)
+        #expect(MCPResponseMeta.requiresFreshObservation(response))
+        #expect(!MCPResponseMeta.hasRequiresFreshSee(response))
+    }
+
+    @Test
+    func `Click tool preserves resolved query element target for automation service`() async throws {
+        let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
+        let context = await MCPToolTestHelpers.makeContext(automation: automation)
+        let snapshot = await UISnapshotManager.shared.createSnapshot()
+        let snapshotId = await snapshot.id
+        await snapshot.setScreenshot(
+            path: "/tmp/screenshot.png",
+            metadata: CaptureMetadata(
+                size: CGSize(width: 200, height: 100),
+                mode: .window,
+                applicationInfo: ServiceApplicationInfo(
+                    processIdentifier: 111,
+                    bundleIdentifier: "com.example.snapshot",
+                    name: "SnapshotApp")))
+        await snapshot.setUIElements([
+            UIElement(
+                id: "B1",
+                elementId: "B1",
+                role: "button",
+                title: "OK",
+                label: "OK",
+                value: nil,
+                description: nil,
+                help: nil,
+                roleDescription: "button",
+                identifier: nil,
+                frame: CGRect(x: 10, y: 20, width: 80, height: 30),
+                isActionable: false),
+            UIElement(
+                id: "B2",
+                elementId: "B2",
+                role: "button",
+                title: "OK",
+                label: "OK",
+                value: nil,
+                description: nil,
+                help: nil,
+                roleDescription: "button",
+                identifier: nil,
+                frame: CGRect(x: 110, y: 20, width: 80, height: 30),
+                isActionable: true),
+        ])
+
+        let tool = ClickTool(context: context)
+        let response = try await tool.execute(arguments: ToolArguments(raw: [
+            "query": "OK",
+            "snapshot": snapshotId,
+        ]))
+
+        #expect(response.isError == false)
+        let calls = await MainActor.run { automation.targetedClickCalls }
+        #expect(calls.count == 1)
+        #expect(calls.first?.snapshotId == snapshotId)
+        #expect(calls.first?.targetProcessIdentifier == 111)
+        if case let .elementId(id) = calls.first?.target {
+            #expect(id == "B2")
+        } else {
+            Issue.record("Expected ClickTool query click to forward resolved .elementId")
+        }
+    }
+
+    @Test
+    func `Click tool reports explicit background pid for element target`() async throws {
+        let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
+        let context = await MCPToolTestHelpers.makeContext(automation: automation)
+        let snapshot = await UISnapshotManager.shared.createSnapshot()
+        let snapshotId = await snapshot.id
+        await snapshot.setScreenshot(
+            path: "/tmp/screenshot.png",
+            metadata: CaptureMetadata(
+                size: CGSize(width: 200, height: 100),
+                mode: .window,
+                applicationInfo: ServiceApplicationInfo(
+                    processIdentifier: 111,
+                    bundleIdentifier: "com.example.snapshot",
+                    name: "SnapshotApp")))
+        await snapshot.setUIElements([
+            UIElement(
+                id: "B1",
+                elementId: "B1",
+                role: "button",
+                title: "OK",
+                label: "OK",
+                value: nil,
+                description: nil,
+                help: nil,
+                roleDescription: "button",
+                identifier: nil,
+                frame: CGRect(x: 10, y: 20, width: 80, height: 30),
+                isActionable: true),
+        ])
+
+        let tool = ClickTool(context: context)
+        let response = try await tool.execute(arguments: ToolArguments(raw: [
+            "on": "B1",
+            "snapshot": snapshotId,
+            "background": true,
+            "pid": 222,
+        ]))
+
+        #expect(response.isError == false)
+        let calls = await MainActor.run { automation.targetedClickCalls }
+        let call = try #require(calls.first)
+        #expect(call.snapshotId == snapshotId)
+        #expect(call.targetProcessIdentifier == 222)
+        #expect(Self.targetPID(from: response) == 222)
+    }
+
+    @Test
+    func `Click tool reports routed background double click as unverifiable`() async throws {
+        let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
+        let context = await MCPToolTestHelpers.makeContext(automation: automation)
+        let snapshot = await UISnapshotManager.shared.createSnapshot()
+        let snapshotId = await snapshot.id
+        await snapshot.setScreenshot(
+            path: "/tmp/routed-double-click.png",
+            metadata: CaptureMetadata(
+                size: CGSize(width: 200, height: 100),
+                mode: .window,
+                applicationInfo: ServiceApplicationInfo(
+                    processIdentifier: 111,
+                    bundleIdentifier: "com.example.snapshot",
+                    name: "SnapshotApp")))
+        await snapshot.setUIElements([
+            UIElement(
+                id: "B1",
+                elementId: "B1",
+                role: "button",
+                title: "Open",
+                label: "Open",
+                value: nil,
+                description: nil,
+                help: nil,
+                roleDescription: "button",
+                identifier: nil,
+                frame: CGRect(x: 10, y: 20, width: 80, height: 30),
+                isActionable: true),
+        ])
+
+        let response = try await ClickTool(context: context).execute(arguments: ToolArguments(raw: [
+            "on": "B1",
+            "snapshot": snapshotId,
+            "double": true,
+        ]))
+
+        #expect(!response.isError)
+        let call = try #require(await MainActor.run { automation.targetedClickCalls.first })
+        #expect(call.clickType == .double)
+        guard case let .object(meta) = response.meta else {
+            Issue.record("Expected routed click metadata")
+            return
+        }
+        #expect(meta["verified"] == .bool(false))
+        #expect(meta["effect"] == .string("unverifiable"))
+        guard case let .text(text, annotations: _, _meta: _) = response.content.first else {
+            Issue.record("Expected routed click text response")
+            return
+        }
+        #expect(text.contains("effect is unverifiable"))
+    }
+
+    @Test
+    func `Click tool invalidates latest snapshot after coordinate click`() async throws {
+        await UISnapshotManager.shared.removeAllSnapshots()
+        let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
+        let context = await MCPToolTestHelpers.makeContext(automation: automation)
+        let snapshot = await UISnapshotManager.shared.createSnapshot()
+        let snapshotId = await snapshot.id
+
+        let tool = ClickTool(context: context)
+        let response = try await tool.execute(arguments: ToolArguments(raw: [
+            "coords": "40,50",
+            "foreground": true,
+        ]))
+
+        #expect(response.isError == false)
+        let calls = await MainActor.run { automation.clickCalls }
+        #expect(calls.first?.snapshotId == nil)
+        let preserved = await UISnapshotManager.shared.getSnapshot(id: snapshotId)
+        let implicitLatest = await UISnapshotManager.shared.getSnapshot(id: nil)
+        #expect(preserved != nil)
+        #expect(implicitLatest == nil)
+    }
+
+    @Test
+    func `Click tool invalidates implicit latest while preserving explicit snapshot history`() async throws {
+        await UISnapshotManager.shared.removeAllSnapshots()
+        let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
+        let context = await MCPToolTestHelpers.makeContext(automation: automation)
+        let explicitSnapshot = await UISnapshotManager.shared.createSnapshot()
+        let explicitSnapshotId = await explicitSnapshot.id
+        let latestSnapshot = await UISnapshotManager.shared.createSnapshot()
+        let latestSnapshotId = await latestSnapshot.id
+
+        let tool = ClickTool(context: context)
+        let response = try await tool.execute(arguments: ToolArguments(raw: [
+            "coords": "40,50",
+            "snapshot": explicitSnapshotId,
+            "foreground": true,
+        ]))
+
+        #expect(response.isError == false)
+        let calls = await MainActor.run { automation.clickCalls }
+        #expect(calls.first?.snapshotId == explicitSnapshotId)
+        let explicitHistory = await UISnapshotManager.shared.getSnapshot(id: explicitSnapshotId)
+        let latestHistory = await UISnapshotManager.shared.getSnapshot(id: latestSnapshotId)
+        let implicitLatest = await UISnapshotManager.shared.getSnapshot(id: nil)
+        #expect(explicitHistory != nil)
+        #expect(latestHistory != nil)
+        #expect(implicitLatest == nil)
+        #expect(MCPResponseMeta.requiresFreshObservation(response))
+        #expect(!MCPResponseMeta.hasRequiresFreshSee(response))
+    }
+
+    @Test
+    func `Click tool maps referenced image pixels to global logical points`() async throws {
+        await UISnapshotManager.shared.removeAllSnapshots()
+        let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
+        let (snapshot, window) = await Self.makeExactCoordinateSnapshot()
+        let context = await MCPToolTestHelpers.makeContext(
+            automation: automation,
+            windows: PointerPolicyWindowService(window: window))
+        let snapshotId = await snapshot.id
+
+        let response = try await ClickTool(context: context).execute(arguments: ToolArguments(raw: [
+            "coords": "1000,500",
+            "coordinate_space": "image_pixels",
+            "coordinate_reference": snapshotId,
+        ]))
+
+        #expect(response.isError == false)
+        let call = try #require(await MainActor.run { automation.targetedClickCalls.first })
+        #expect(call.snapshotId == snapshotId)
+        #expect(call.targetProcessIdentifier == 111)
+        guard case let .coordinates(point) = call.target else {
+            Issue.record("Expected mapped coordinate target")
+            return
+        }
+        #expect(point == CGPoint(x: 600, y: 300))
+    }
+
+    @Test
+    func `Click tool maps referenced normalized coordinates`() async throws {
+        await UISnapshotManager.shared.removeAllSnapshots()
+        let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
+        let context = await MCPToolTestHelpers.makeContext(automation: automation)
+        let snapshot = await Self.makeCoordinateSnapshot()
+        let snapshotId = await snapshot.id
+
+        let response = try await ClickTool(context: context).execute(arguments: ToolArguments(raw: [
+            "coords": "0.25,0.75",
+            "coordinate_space": "normalized",
+            "coordinate_reference": snapshotId,
+            "foreground": true,
+        ]))
+
+        #expect(response.isError == false)
+        let call = try #require(await MainActor.run { automation.clickCalls.first })
+        #expect(call.snapshotId == snapshotId)
+        guard case let .coordinates(point) = call.target else {
+            Issue.record("Expected mapped coordinate target")
+            return
+        }
+        #expect(point == CGPoint(x: 350, y: 425))
+    }
+
+    @Test
+    func `Click tool rejects missing stale and out-of-bounds coordinate references`() async throws {
+        await UISnapshotManager.shared.removeAllSnapshots()
+        let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
+        let applications = await MainActor.run { MockApplicationService() }
+        let windows = EmptyRecordingWindowService()
+        let context = await MCPToolTestHelpers.makeContext(
+            automation: automation,
+            applications: applications,
+            windows: windows)
+        let snapshot = await Self.makeCoordinateSnapshot()
+        let snapshotId = await snapshot.id
+        let tool = ClickTool(context: context)
+
+        let missing = try await tool.execute(arguments: ToolArguments(raw: [
+            "coords": "100,100",
+            "coordinate_space": "image_pixels",
+        ]))
+        let stale = try await tool.execute(arguments: ToolArguments(raw: [
+            "coords": "100,100",
+            "coordinate_space": "image_pixels",
+            "coordinate_reference": "missing-snapshot",
+        ]))
+        let outOfBounds = try await tool.execute(arguments: ToolArguments(raw: [
+            "coords": "2000,500",
+            "coordinate_space": "image_pixels",
+            "coordinate_reference": snapshotId,
+        ]))
+        let windowSnapshot = await UISnapshotManager.shared.createSnapshot()
+        let windowSnapshotId = await windowSnapshot.id
+        await windowSnapshot.setScreenshot(
+            path: "/tmp/stale-window-snapshot.png",
+            metadata: CaptureMetadata(
+                size: CGSize(width: 1000, height: 500),
+                mode: .window,
+                applicationInfo: ServiceApplicationInfo(
+                    processIdentifier: 111,
+                    bundleIdentifier: "com.example.snapshot",
+                    name: "SnapshotApp"),
+                windowInfo: ServiceWindowInfo(
+                    windowID: 2_147_483_647,
+                    title: "Missing Window",
+                    bounds: CGRect(x: 100, y: 50, width: 1000, height: 500),
+                    index: 0)))
+        let staleWindow = try await tool.execute(arguments: ToolArguments(raw: [
+            "coords": "500,250",
+            "coordinate_space": "image_pixels",
+            "coordinate_reference": windowSnapshotId,
+            "foreground": true,
+        ]))
+
+        #expect(missing.isError)
+        #expect(stale.isError)
+        #expect(outOfBounds.isError)
+        #expect(staleWindow.isError)
+        #expect(await MainActor.run { automation.clickCalls.isEmpty })
+        #expect(await MainActor.run { automation.targetedClickCalls.isEmpty })
+        #expect(await windows.requestedWindowIDs == [2_147_483_647])
+    }
+
+    @Test
+    func `Type tool preserves element target when focusing before typing`() async throws {
+        let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
+        let context = await MCPToolTestHelpers.makeContext(automation: automation)
+        let snapshot = await UISnapshotManager.shared.createSnapshot()
+        let snapshotId = await snapshot.id
+        await snapshot.setUIElements([
+            UIElement(
+                id: "T1",
+                elementId: "T1",
+                role: "textField",
+                title: nil,
+                label: "Name",
+                value: nil,
+                description: nil,
+                help: nil,
+                roleDescription: "text field",
+                identifier: nil,
+                frame: CGRect(x: 10, y: 20, width: 160, height: 30),
+                isActionable: true),
+        ])
+
+        let tool = TypeTool(context: context)
+        let response = try await tool.execute(arguments: ToolArguments(raw: [
+            "on": "T1",
+            "text": "hello",
+            "snapshot": snapshotId,
+            "foreground": true,
+        ]))
+
+        #expect(response.isError == false)
+        let calls = await MainActor.run { automation.clickCalls }
+        #expect(calls.count == 1)
+        #expect(calls.first?.snapshotId == snapshotId)
+        if case let .elementId(id) = calls.first?.target {
+            #expect(id == "T1")
+        } else {
+            Issue.record("Expected TypeTool focus click to forward .elementId, not coordinates")
+        }
+    }
+
+    @Test
+    func `Type tool invalidates latest snapshot after focused typing`() async throws {
+        await UISnapshotManager.shared.removeAllSnapshots()
+        let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
+        let context = await MCPToolTestHelpers.makeContext(automation: automation)
+        let snapshot = await UISnapshotManager.shared.createSnapshot()
+        let snapshotId = await snapshot.id
+
+        let tool = TypeTool(context: context)
+        let response = try await tool.execute(arguments: ToolArguments(raw: [
+            "text": "hello",
+            "foreground": true,
+        ]))
+
+        #expect(response.isError == false)
+        let typeSnapshotId = await MainActor.run { automation.lastTypeSnapshotId }
+        #expect(typeSnapshotId == nil)
+        let preserved = await UISnapshotManager.shared.getSnapshot(id: snapshotId)
+        let implicitLatest = await UISnapshotManager.shared.getSnapshot(id: nil)
+        #expect(preserved != nil)
+        #expect(implicitLatest == nil)
+        #expect(MCPResponseMeta.requiresFreshObservation(response))
+        #expect(!MCPResponseMeta.hasRequiresFreshSee(response))
+    }
+
+    @Test
+    func `Type tool invalidates implicit latest while preserving explicit snapshot history`() async throws {
+        await UISnapshotManager.shared.removeAllSnapshots()
+        let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
+        let context = await MCPToolTestHelpers.makeContext(automation: automation)
+        let explicitSnapshot = await UISnapshotManager.shared.createSnapshot()
+        let explicitSnapshotId = await explicitSnapshot.id
+        let latestSnapshot = await UISnapshotManager.shared.createSnapshot()
+        let latestSnapshotId = await latestSnapshot.id
+
+        let tool = TypeTool(context: context)
+        let response = try await tool.execute(arguments: ToolArguments(raw: [
+            "text": "hello",
+            "snapshot": explicitSnapshotId,
+            "foreground": true,
+        ]))
+
+        #expect(response.isError == false)
+        let typeSnapshotId = await MainActor.run { automation.lastTypeSnapshotId }
+        #expect(typeSnapshotId == explicitSnapshotId)
+        let explicitHistory = await UISnapshotManager.shared.getSnapshot(id: explicitSnapshotId)
+        let latestHistory = await UISnapshotManager.shared.getSnapshot(id: latestSnapshotId)
+        let implicitLatest = await UISnapshotManager.shared.getSnapshot(id: nil)
+        #expect(explicitHistory != nil)
+        #expect(latestHistory != nil)
+        #expect(implicitLatest == nil)
+        #expect(MCPResponseMeta.requiresFreshObservation(response))
+        #expect(!MCPResponseMeta.hasRequiresFreshSee(response))
+    }
+
+    @Test
+    func `Scroll tool invalidates latest snapshot after pointer-position scroll`() async throws {
+        await UISnapshotManager.shared.removeAllSnapshots()
+        let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
+        let context = await MCPToolTestHelpers.makeContext(automation: automation)
+        let snapshot = await UISnapshotManager.shared.createSnapshot()
+        let snapshotId = await snapshot.id
+
+        let tool = ScrollTool(context: context)
+        let response = try await tool.execute(arguments: ToolArguments(raw: [
+            "direction": "down",
+            "foreground": true,
+        ]))
+
+        #expect(response.isError == false)
+        let requests = await MainActor.run { automation.scrollRequests }
+        #expect(requests.first?.snapshotId == nil)
+        let preserved = await UISnapshotManager.shared.getSnapshot(id: snapshotId)
+        let implicitLatest = await UISnapshotManager.shared.getSnapshot(id: nil)
+        #expect(preserved != nil)
+        #expect(implicitLatest == nil)
+        #expect(MCPResponseMeta.requiresFreshObservation(response))
+        #expect(!MCPResponseMeta.hasRequiresFreshSee(response))
+    }
+
+    @Test
+    func `Scroll tool invalidates implicit latest while preserving explicit snapshot history`() async throws {
+        await UISnapshotManager.shared.removeAllSnapshots()
+        let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
+        let context = await MCPToolTestHelpers.makeContext(automation: automation)
+        let explicitSnapshot = await UISnapshotManager.shared.createSnapshot()
+        let explicitSnapshotId = await explicitSnapshot.id
+        let latestSnapshot = await UISnapshotManager.shared.createSnapshot()
+        let latestSnapshotId = await latestSnapshot.id
+
+        let tool = ScrollTool(context: context)
+        let response = try await tool.execute(arguments: ToolArguments(raw: [
+            "direction": "down",
+            "snapshot": explicitSnapshotId,
+            "foreground": true,
+        ]))
+
+        #expect(response.isError == false)
+        let requests = await MainActor.run { automation.scrollRequests }
+        #expect(requests.first?.snapshotId == explicitSnapshotId)
+        let explicitHistory = await UISnapshotManager.shared.getSnapshot(id: explicitSnapshotId)
+        let latestHistory = await UISnapshotManager.shared.getSnapshot(id: latestSnapshotId)
+        let implicitLatest = await UISnapshotManager.shared.getSnapshot(id: nil)
+        #expect(explicitHistory != nil)
+        #expect(latestHistory != nil)
+        #expect(implicitLatest == nil)
+        #expect(MCPResponseMeta.requiresFreshObservation(response))
+        #expect(!MCPResponseMeta.hasRequiresFreshSee(response))
+    }
+
+    @Test
+    func `Move tool center uses screen and cursor services`() async throws {
+        let automation = await MainActor.run {
+            MockAutomationService(accessibilityGranted: true, currentMouseLocation: CGPoint(x: 10, y: 20))
+        }
+        let screens = await MainActor.run {
+            MockScreenService(screens: [
+                ScreenInfo(
+                    index: 0,
+                    name: "Mock Display",
+                    frame: CGRect(x: 100, y: 200, width: 800, height: 600),
+                    visibleFrame: CGRect(x: 100, y: 200, width: 800, height: 600),
+                    isPrimary: true,
+                    scaleFactor: 1,
+                    displayID: 1),
+            ])
+        }
+        let context = await MCPToolTestHelpers.makeContext(automation: automation, screens: screens)
+        let tool = MoveTool(context: context)
+
+        let response = try await tool.execute(arguments: ToolArguments(raw: [
+            "center": true,
+            "foreground": true,
+        ]))
+
+        #expect(response.isError == false)
+        #expect(await MainActor.run { automation.lastMoveTarget } == CGPoint(x: 500, y: 500))
+        #expect(await MainActor.run { automation.lastMoveDuration } == 0)
+    }
+
+    private static func makeCoordinateSnapshot() async -> UISnapshot {
+        let snapshot = await UISnapshotManager.shared.createSnapshot()
+        await snapshot.setScreenshot(
+            path: "/tmp/coordinate-snapshot.png",
+            metadata: CaptureMetadata(
+                size: CGSize(width: 2000, height: 1000),
+                mode: .screen,
+                applicationInfo: ServiceApplicationInfo(
+                    processIdentifier: 111,
+                    bundleIdentifier: "com.example.snapshot",
+                    name: "SnapshotApp"),
+                displayInfo: DisplayInfo(
+                    index: 0,
+                    name: "Display",
+                    bounds: CGRect(x: 100, y: 50, width: 1000, height: 500),
+                    scaleFactor: 2)))
+        return snapshot
+    }
+
+    private static func makeExactCoordinateSnapshot() async -> (UISnapshot, ServiceWindowInfo) {
+        let identity = WindowMutationIdentity(
+            windowID: 42,
+            ownerProcessIdentifier: 111,
+            ownerProcessStartIdentity: 7)
+        let window = ServiceWindowInfo(
+            windowID: 42,
+            title: "Coordinate Window",
+            bounds: CGRect(x: 100, y: 50, width: 1000, height: 500),
+            index: 0,
+            mutationIdentity: identity)
+        let snapshot = await UISnapshotManager.shared.createSnapshot()
+        await snapshot.setScreenshot(
+            path: "/tmp/exact-coordinate-snapshot.png",
+            metadata: CaptureMetadata(
+                size: CGSize(width: 2000, height: 1000),
+                mode: .window,
+                applicationInfo: ServiceApplicationInfo(
+                    processIdentifier: 111,
+                    bundleIdentifier: "com.example.snapshot",
+                    name: "SnapshotApp"),
+                windowInfo: window))
+        return (snapshot, window)
+    }
+
+    private static func targetPID(from response: ToolResponse) -> Int32? {
+        guard case let .object(meta) = response.meta,
+              case let .double(pid)? = meta["target_pid"]
+        else {
+            return nil
+        }
+        return Int32(pid)
+    }
+}

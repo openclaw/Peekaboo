@@ -94,10 +94,27 @@ extension WindowCommand.MinimizeSubcommand: ParsableCommand {
 extension WindowCommand.MinimizeSubcommand: AsyncRuntimeCommand {}
 
 @MainActor
+extension WindowCommand.RestoreSubcommand: ParsableCommand {
+    nonisolated(unsafe) static var commandDescription: CommandDescription {
+        MainActorCommandDescription.describe {
+            CommandDescription(
+                commandName: "restore",
+                abstract: "Restore a minimized window without activation or focus"
+            )
+        }
+    }
+}
+
+extension WindowCommand.RestoreSubcommand: AsyncRuntimeCommand {}
+
+@MainActor
 extension WindowCommand.MaximizeSubcommand: ParsableCommand {
     nonisolated(unsafe) static var commandDescription: CommandDescription {
         MainActorCommandDescription.describe {
-            CommandDescription(commandName: "maximize", abstract: "Maximize a window (full screen)")
+            CommandDescription(
+                commandName: "maximize",
+                abstract: "Fill a window's screen without entering full screen"
+            )
         }
     }
 }
@@ -143,6 +160,13 @@ extension WindowCommand.CloseSubcommand: CommanderBindableCommand {
 
 @MainActor
 extension WindowCommand.MinimizeSubcommand: CommanderBindableCommand {
+    mutating func applyCommanderValues(_ values: CommanderBindableValues) throws {
+        self.windowOptions = try values.makeWindowOptions()
+    }
+}
+
+@MainActor
+extension WindowCommand.RestoreSubcommand: CommanderBindableCommand {
     mutating func applyCommanderValues(_ values: CommanderBindableValues) throws {
         self.windowOptions = try values.makeWindowOptions()
     }

@@ -72,6 +72,19 @@ public struct AgentSystemPrompt {
           targets, menu bar targets, or when accessibility text is missing or incomplete.
         - Treat element IDs from `see` or `inspect_ui` as valid only for the current visible state; after any mutating
           action, use the action result or fetch fresh state to verify the UI changed as expected.
+        - Trust only evidence the tool result says was delivered to you. If a `see` result says its screenshot was
+          not delivered, do not describe or reason from its pixels. If its AX tree is also incomplete or truncated,
+          missing text or elements do not prove absence: use `verify_state` for the exact native postcondition. If
+          verification remains unknown, report that the state is unverified instead of claiming success or failure.
+          Completion evidence after an incomplete observation is a two-phase contract. The first structurally valid
+          same-target `verify_state` call commits its exact predicates but cannot clear the debt, even if satisfied.
+          Repeat the exact same target and predicates; only a later identical satisfied receipt clears the debt. An
+          unrelated predicate on the same window cannot prove the committed postcondition.
+        - Emit at most one desktop-mutating tool call in each model response. After that mutation succeeds, Peekaboo
+          ends the provider step and skips later mutations until a fresh successful `see`. You may batch read-only
+          observations, but send the next click, type, scroll, hotkey, or other desktop mutation in a later response.
+        - Prefer `verify_state` over fixed sleeps when waiting for exact window bounds or native element
+          existence/value/enabled/selected state. It is observation-only and requires stable fresh AX samples.
         - `see` accepts an `app_target` field to capture background apps; `inspect_ui` accepts the same field for
           AX-only inspection. Observation never focuses the target by default. Only set `web_focus: true` when a
           sparse Chromium/Tauri accessibility tree justifies an explicit AXPress retry.
@@ -178,9 +191,11 @@ public struct AgentSystemPrompt {
           browser chrome, permissions, menus, dialogs, and non-browser apps.
         - Open a URL without stealing focus with
           `{ "action": "open", "name": "Safari", "openTargets": ["https://example.com"], "foreground": false }`.
-          In Chrome DevTools flows, create separate pages with
-          `{ "action": "new_page", "url": "https://example.com", "background": true }` and keep
-          `bring_to_front: false` when selecting a page for background work.
+          In Chrome DevTools flows, `new_page` and `select_page` stay in the background by default.
+        - Start each Chrome flow with `list_pages` or `new_page`, retain its page ID, and include `page_id` in every
+          later page-scoped browser action. Never rely on the shared selected page: another agent may be using the
+          same daemon concurrently.
+        - Use `bring_to_front: true` or `background: false` only when the task explicitly requires foreground Chrome.
         - If `browser` fails or is unavailable, fall back to native Peekaboo screen/AX tools.
         """
     }

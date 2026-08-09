@@ -76,6 +76,13 @@ public final class ElementDetectionService {
         let effectiveSnapshotId = snapshotId ?? UUID().uuidString
 
         let targetApp = try await self.windowResolver.resolveApplication(windowContext: windowContext)
+        if windowContext?.shouldFocusWebContent != true {
+            return try await self.inspectReadOnlyElements(
+                targetApp: targetApp,
+                snapshotId: effectiveSnapshotId,
+                windowContext: windowContext)
+        }
+
         let windowResolution = try await self.windowResolver.resolveWindow(for: targetApp, context: windowContext)
         let windowName = windowResolution.window.title() ?? "Untitled"
         self.logger.debug("Found \(windowResolution.windowTypeDescription): \(windowName)")
@@ -89,6 +96,12 @@ public final class ElementDetectionService {
         let budget = AXTraversalBudget.normalizedForTraversal(windowContext?.traversalBudget)
         let usesDefaultBudget = budget == AXTraversalBudget()
         let resolvedWindowBounds = windowContext?.windowBounds ?? windowResolution.window.frame()
+        let resolvedWindowMutationIdentity = try Self.validatedExactWindowReceipt(
+            windowID: windowContext?.windowID,
+            processIdentifier: targetApp.processIdentifier,
+            capturedBounds: windowContext?.windowBounds,
+            receipt: windowContext?.windowMutationIdentity,
+            requiresActionCapability: windowContext?.shouldFocusWebContent == true)
         let resolvedWindowContext = WindowContext(
             applicationName: windowContext?.applicationName ?? targetApp.localizedName,
             applicationBundleId: windowContext?.applicationBundleId ?? targetApp.bundleIdentifier,
@@ -96,9 +109,12 @@ public final class ElementDetectionService {
             windowTitle: windowName,
             windowID: resolvedWindowID,
             windowBounds: resolvedWindowBounds,
+            windowMutationIdentity: resolvedWindowMutationIdentity,
             shouldFocusWebContent: windowContext?.shouldFocusWebContent,
             includeMenuBarElements: windowContext?.includeMenuBarElements,
-            traversalBudget: budget)
+            traversalBudget: budget,
+            requiresFreshAccessibilityTree: windowContext?.requiresFreshAccessibilityTree ?? false,
+            accessibilityTimeoutSeconds: windowContext?.accessibilityTimeoutSeconds)
 
         // GameBridge: check if this is a known game-bridge app (SDL/GPU-rendered)
         // before attempting AX tree traversal, which won't find elements in GPU windows.
@@ -113,7 +129,7 @@ public final class ElementDetectionService {
         let detectedElements: [DetectedElement]
         let usedCache: Bool
         let truncationInfo: DetectionTruncationInfo?
-        let cacheKey = usesDefaultBudget
+        let cacheKey = usesDefaultBudget && windowContext?.requiresFreshAccessibilityTree != true
             ? self.axTreeCache.key(
                 windowID: resolvedWindowID,
                 processID: targetApp.processIdentifier,
@@ -140,7 +156,9 @@ public final class ElementDetectionService {
                     appIsActive: targetApp.isActive,
                     allowWebFocus: allowWebFocus,
                     includeMenuBarElements: includeMenuBarElements,
-                    budget: budget),
+                    budget: budget,
+                    timeoutSeconds: Self.normalizedAccessibilityTimeout(
+                        windowContext?.accessibilityTimeoutSeconds)),
                 elementIdMap: &elementIdMap)
             detectedElements = collection.elements
             truncationInfo = collection.truncationInfo
@@ -168,6 +186,291 @@ public final class ElementDetectionService {
 
     func invalidateCache() {
         self.axTreeCache.removeAll()
+    }
+
+    private static func normalizedAccessibilityTimeout(_ requested: TimeInterval?) -> TimeInterval {
+        guard let requested, requested.isFinite else { return 20 }
+        return min(max(requested, 0.05), 20)
+    }
+
+    private func inspectReadOnlyElements(
+        targetApp: NSRunningApplication,
+        snapshotId: String,
+        windowContext: WindowContext?) async throws -> ElementDetectionResult
+    {
+        let processIdentifier = targetApp.processIdentifier
+        let context = try Self.readOnlyWindowContext(targetApp: targetApp, requested: windowContext)
+        if let requestedWindowID = context?.windowID {
+            guard requestedWindowID > 0,
+                  let cgWindowID = CGWindowID(exactly: requestedWindowID),
+                  SystemIdentityResolver.windowOwnerProcessIdentifier(cgWindowID) == processIdentifier
+            else {
+                let identifier = targetApp.localizedName ?? targetApp.bundleIdentifier ?? "PID:\(processIdentifier)"
+                throw PeekabooError.windowNotFound(
+                    criteria: "window id \(requestedWindowID) owned by \(identifier)")
+            }
+        }
+
+        let includeMenuBarElements = context?.includeMenuBarElements ?? true
+        let budget = AXTraversalBudget.normalizedForTraversal(context?.traversalBudget)
+        let usesDefaultBudget = budget == AXTraversalBudget()
+        let preliminaryContext = WindowContext(
+            applicationName: context?.applicationName ?? targetApp.localizedName,
+            applicationBundleId: context?.applicationBundleId ?? targetApp.bundleIdentifier,
+            applicationProcessId: processIdentifier,
+            windowTitle: context?.windowTitle,
+            windowID: context?.windowID,
+            windowBounds: context?.windowBounds,
+            windowMutationIdentity: context?.windowMutationIdentity,
+            shouldFocusWebContent: false,
+            includeMenuBarElements: includeMenuBarElements,
+            traversalBudget: budget,
+            requiresFreshAccessibilityTree: context?.requiresFreshAccessibilityTree ?? false,
+            accessibilityTimeoutSeconds: context?.accessibilityTimeoutSeconds)
+        if let gameBridgeResult = GameBridgeDetectionService.tryDetect(
+            windowContext: preliminaryContext,
+            snapshotId: snapshotId)
+        {
+            return gameBridgeResult
+        }
+
+        let cacheKey = usesDefaultBudget && context?.requiresFreshAccessibilityTree != true
+            ? self.axTreeCache.key(
+                windowID: context?.windowID,
+                processID: processIdentifier,
+                allowWebFocus: false,
+                includeMenuBarElements: includeMenuBarElements)
+            : nil
+        let invalidatedThrough = self.snapshotManager?.effectiveImplicitLatestInvalidationWatermark
+        if let cacheKey,
+           let cached = self.axTreeCache.result(
+               for: cacheKey,
+               invalidatedThrough: invalidatedThrough)
+        {
+            let cachedContext = WindowContext(
+                applicationName: context?.applicationName ?? targetApp.localizedName,
+                applicationBundleId: context?.applicationBundleId ?? targetApp.bundleIdentifier,
+                applicationProcessId: processIdentifier,
+                windowTitle: context?.windowTitle,
+                windowID: context?.windowID,
+                windowBounds: context?.windowBounds,
+                windowMutationIdentity: context?.windowMutationIdentity,
+                shouldFocusWebContent: false,
+                includeMenuBarElements: includeMenuBarElements,
+                traversalBudget: budget,
+                requiresFreshAccessibilityTree: false,
+                accessibilityTimeoutSeconds: context?.accessibilityTimeoutSeconds)
+            return ElementDetectionResultBuilder.makeResult(
+                snapshotId: snapshotId,
+                elements: cached.elements,
+                usedCache: true,
+                windowContext: cachedContext,
+                isDialog: false,
+                truncationInfo: cached.truncationInfo)
+        }
+
+        let timeoutSeconds = Self.normalizedAccessibilityTimeout(context?.accessibilityTimeoutSeconds)
+        let expectedProcessStartIdentity = context?.windowMutationIdentity?.ownerProcessStartIdentity ??
+            SystemIdentityResolver.processStartIdentity(processIdentifier)
+        guard let expectedProcessStartIdentity else {
+            throw PeekabooError.snapshotStale(
+                "Could not capture the target process generation before detached AX observation")
+        }
+        let request = DetachedAXObservationRequest(
+            processIdentifier: processIdentifier,
+            expectedProcessStartIdentity: expectedProcessStartIdentity,
+            windowID: context?.windowID,
+            windowTitle: context?.windowTitle,
+            expectedWindowBounds: context?.windowBounds,
+            windowMutationIdentity: context?.windowMutationIdentity,
+            includeMenuBarElements: includeMenuBarElements,
+            appIsActive: targetApp.isActive,
+            traversalBudget: budget,
+            timeoutSeconds: timeoutSeconds)
+        let detachedResult = try await ElementDetectionTimeoutRunner.runDetached(
+            targetProcessIdentifier: processIdentifier,
+            targetProcessStartIdentity: expectedProcessStartIdentity,
+            seconds: timeoutSeconds)
+        {
+            try DetachedAXObservationWorker.inspect(request)
+        }
+
+        let resolvedContext = WindowContext(
+            applicationName: context?.applicationName ?? targetApp.localizedName,
+            applicationBundleId: context?.applicationBundleId ?? targetApp.bundleIdentifier,
+            applicationProcessId: processIdentifier,
+            windowTitle: detachedResult.windowTitle,
+            windowID: detachedResult.windowID,
+            windowBounds: context?.windowBounds ?? detachedResult.windowBounds,
+            windowMutationIdentity: context?.windowMutationIdentity,
+            shouldFocusWebContent: false,
+            includeMenuBarElements: includeMenuBarElements,
+            traversalBudget: budget,
+            requiresFreshAccessibilityTree: context?.requiresFreshAccessibilityTree ?? false,
+            accessibilityTimeoutSeconds: timeoutSeconds)
+
+        if let cacheKey {
+            self.axTreeCache.store(
+                detachedResult.elements,
+                truncationInfo: detachedResult.truncationInfo,
+                for: cacheKey)
+        }
+        self.logger.info("Detected \(detachedResult.elements.count) elements on detached AX lane")
+        return ElementDetectionResultBuilder.makeResult(
+            snapshotId: snapshotId,
+            elements: detachedResult.elements,
+            usedCache: false,
+            windowContext: resolvedContext,
+            isDialog: detachedResult.isDialog,
+            truncationInfo: detachedResult.truncationInfo)
+    }
+
+    private static func readOnlyWindowContext(
+        targetApp: NSRunningApplication,
+        requested: WindowContext?) throws -> WindowContext?
+    {
+        if let requestedWindowID = requested?.windowID {
+            guard let windowID = CGWindowID(exactly: requestedWindowID),
+                  let liveWindow = SystemIdentityResolver.windowIdentity(windowID),
+                  liveWindow.ownerProcessIdentifier == targetApp.processIdentifier
+            else {
+                throw PeekabooError.snapshotStale(
+                    "Exact observation window changed before its process-generation receipt was captured")
+            }
+            let bounds = requested?.windowBounds ?? liveWindow.bounds
+            let mutationIdentity = try Self.validatedExactWindowReceipt(
+                windowID: requestedWindowID,
+                processIdentifier: targetApp.processIdentifier,
+                capturedBounds: requested?.windowBounds,
+                receipt: requested?.windowMutationIdentity,
+                requiresActionCapability: false)
+            return WindowContext(
+                applicationName: requested?.applicationName ?? targetApp.localizedName,
+                applicationBundleId: requested?.applicationBundleId ?? targetApp.bundleIdentifier,
+                applicationProcessId: targetApp.processIdentifier,
+                windowTitle: requested?.windowTitle ?? liveWindow.title,
+                windowID: requestedWindowID,
+                windowBounds: bounds,
+                windowMutationIdentity: mutationIdentity,
+                shouldFocusWebContent: requested?.shouldFocusWebContent,
+                includeMenuBarElements: requested?.includeMenuBarElements,
+                traversalBudget: requested?.traversalBudget,
+                requiresFreshAccessibilityTree: requested?.requiresFreshAccessibilityTree ?? false,
+                accessibilityTimeoutSeconds: requested?.accessibilityTimeoutSeconds)
+        }
+        let windows = SystemIdentityResolver.windowIdentities(
+            ownerProcessIdentifier: targetApp.processIdentifier)
+            .enumerated()
+            .map { index, identity in ObservationTargetResolver.serviceWindowInfo(identity, index: index) }
+        let applicationIdentifier = targetApp.localizedName ?? targetApp.bundleIdentifier ??
+            "PID:\(targetApp.processIdentifier)"
+        guard let window = try Self.selectReadOnlyWindow(
+            requestedTitle: requested?.windowTitle,
+            windows: windows,
+            applicationIdentifier: applicationIdentifier)
+        else {
+            return requested
+        }
+        return WindowContext(
+            applicationName: requested?.applicationName ?? targetApp.localizedName,
+            applicationBundleId: requested?.applicationBundleId ?? targetApp.bundleIdentifier,
+            applicationProcessId: targetApp.processIdentifier,
+            windowTitle: window.title,
+            windowID: window.windowID,
+            windowBounds: window.bounds,
+            windowMutationIdentity: nil,
+            shouldFocusWebContent: requested?.shouldFocusWebContent,
+            includeMenuBarElements: requested?.includeMenuBarElements,
+            traversalBudget: requested?.traversalBudget,
+            requiresFreshAccessibilityTree: requested?.requiresFreshAccessibilityTree ?? false,
+            accessibilityTimeoutSeconds: requested?.accessibilityTimeoutSeconds)
+    }
+
+    nonisolated static func validatedExactWindowReceipt(
+        windowID: Int?,
+        processIdentifier: pid_t,
+        capturedBounds: CGRect?,
+        receipt: WindowMutationIdentity?,
+        requiresActionCapability: Bool,
+        validator: (WindowMutationIdentity, CGRect) -> Bool = {
+            SystemIdentityResolver.validateWindowMutationIdentity($0, expectedBounds: $1)
+        }) throws -> WindowMutationIdentity?
+    {
+        guard let windowID else {
+            guard receipt == nil else {
+                throw PeekabooError.snapshotStale(
+                    "Window receipt was provided without an exact capture-time window identifier")
+            }
+            return nil
+        }
+        guard let receipt else {
+            if requiresActionCapability {
+                throw PeekabooError.snapshotStale(
+                    "Exact action-capable detection requires a capture-time process-generation receipt")
+            }
+            return nil
+        }
+        guard let capturedBounds,
+              receipt.windowID == windowID,
+              receipt.ownerProcessIdentifier == processIdentifier,
+              validator(receipt, capturedBounds)
+        else {
+            throw PeekabooError.snapshotStale(
+                "Exact capture-time window receipt changed before AX traversal")
+        }
+        return receipt
+    }
+
+    nonisolated static func selectReadOnlyWindow(
+        requestedTitle: String?,
+        windows: [ServiceWindowInfo],
+        applicationIdentifier: String) throws -> ServiceWindowInfo?
+    {
+        guard let requestedTitle else {
+            return ObservationTargetResolver.bestWindow(from: windows)
+        }
+
+        let exactMatches = windows.filter {
+            $0.title.localizedCaseInsensitiveCompare(requestedTitle) == .orderedSame
+        }
+        if exactMatches.count == 1 {
+            return exactMatches[0]
+        }
+        if exactMatches.count > 1 {
+            throw PeekabooError.windowNotFound(
+                criteria: Self.ambiguousWindowTitleCriteria(
+                    requestedTitle,
+                    applicationIdentifier: applicationIdentifier,
+                    matches: exactMatches))
+        }
+
+        if !requestedTitle.isEmpty {
+            let partialMatches = windows.filter {
+                $0.title.localizedCaseInsensitiveContains(requestedTitle)
+            }
+            if partialMatches.count == 1 {
+                return partialMatches[0]
+            }
+            if partialMatches.count > 1 {
+                throw PeekabooError.windowNotFound(
+                    criteria: Self.ambiguousWindowTitleCriteria(
+                        requestedTitle,
+                        applicationIdentifier: applicationIdentifier,
+                        matches: partialMatches))
+            }
+        }
+
+        throw PeekabooError.windowNotFound(
+            criteria: "window title '\(requestedTitle)' in \(applicationIdentifier)")
+    }
+
+    private nonisolated static func ambiguousWindowTitleCriteria(
+        _ requestedTitle: String,
+        applicationIdentifier: String,
+        matches: [ServiceWindowInfo]) -> String
+    {
+        let matchSummary = matches.map { "id=\($0.windowID) '\($0.title)'" }.joined(separator: ", ")
+        return "window title '\(requestedTitle)' is ambiguous in \(applicationIdentifier); matches: \(matchSummary)"
     }
 }
 
@@ -202,7 +505,7 @@ extension ElementDetectionService {
 }
 
 extension ElementDetectionService {
-    private struct ElementCollection {
+    private struct ElementCollection: Sendable {
         let elements: [DetectedElement]
         let truncationInfo: DetectionTruncationInfo?
     }
@@ -280,7 +583,7 @@ extension ElementDetectionService {
     }
 }
 
-private struct ElementCollectionRequest {
+private struct ElementCollectionRequest: Sendable {
     let window: Element
     let appElement: Element
     let appIsActive: Bool
@@ -290,12 +593,12 @@ private struct ElementCollectionRequest {
     let budget: AXTraversalBudget?
 }
 
-private struct ElementCollectionTimeoutRequest {
+private struct ElementCollectionTimeoutRequest: Sendable {
     let window: Element
     let appElement: Element
     let appIsActive: Bool
     let allowWebFocus: Bool
     let includeMenuBarElements: Bool
     let budget: AXTraversalBudget?
-    let timeoutSeconds = 20.0
+    let timeoutSeconds: TimeInterval
 }

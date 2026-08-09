@@ -36,6 +36,13 @@ public struct InspectUITool: MCPTool {
                     Use 'AppName:WindowTitle' or 'PID:PROCESS_ID:WindowTitle' for a specific window title.
                     Screen and menu bar targets require screenshots; use `see` for those.
                     """),
+                "window_id": SchemaBuilder.integer(
+                    description: """
+                    Optional. Exact CoreGraphics window ID. Requires an application or PID app_target; Peekaboo
+                    verifies the window belongs to that owner. Numeric app_target suffixes remain window indexes.
+                    """,
+                    minimum: 1,
+                    maximum: Int(UInt32.max)),
                 "snapshot": SchemaBuilder.string(
                     description: """
                     Optional. Snapshot ID for UI automation tracking. A new snapshot is created when absent.
@@ -67,11 +74,11 @@ public struct InspectUITool: MCPTool {
         var newlyCreatedSnapshotWasPending = false
 
         do {
+            let target = try self.parseTarget(request.appTarget, windowIDValue: request.windowIDValue)
             let selection = try await self.getOrCreateSnapshot(snapshotId: request.snapshotId)
             let snapshot = selection.snapshot
             newlyCreatedSnapshotID = selection.isNew ? snapshot.id : nil
             newlyCreatedSnapshotWasPending = selection.isNew && MCPToolContext.snapshotObservationStartedAt != nil
-            let target = try self.parseTarget(request.appTarget)
             let windowContext = try self.makeWindowContext(
                 for: target,
                 webFocus: request.webFocus,
@@ -141,11 +148,16 @@ public struct InspectUITool: MCPTool {
     private func getOrCreateSnapshot(snapshotId: String?) async throws -> (snapshot: UISnapshot, isNew: Bool) {
         if let snapshotId {
             let hostHasSnapshot = try await self.context.snapshots.listSnapshots().contains { $0.id == snapshotId }
-            if hostHasSnapshot,
-               let existingSnapshot = await UISnapshotManager.shared.getSnapshot(id: snapshotId)
-            {
-                return (existingSnapshot, false)
+            guard hostHasSnapshot else {
+                throw PeekabooError.snapshotNotFound(
+                    "Snapshot '\(snapshotId)' was not found. Omit --snapshot and run inspect-ui again.")
             }
+            guard let existingSnapshot = await UISnapshotManager.shared.getSnapshot(id: snapshotId) else {
+                throw PeekabooError.snapshotNotFound(
+                    "Snapshot '\(snapshotId)' is not available in this process. " +
+                        "Omit --snapshot and run inspect-ui again.")
+            }
+            return (existingSnapshot, false)
         }
         let observationStartedAt = MCPToolContext.snapshotObservationStartedAt
         let snapshotId = if let observationStartedAt {
@@ -160,14 +172,17 @@ public struct InspectUITool: MCPTool {
         return (snapshot, true)
     }
 
-    private func parseTarget(_ rawTarget: String?) throws -> ObservationTargetArgument {
+    private func parseTarget(_ rawTarget: String?, windowIDValue: Value?) throws -> ObservationTargetArgument {
         guard let rawTarget,
               !rawTarget.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         else {
+            if windowIDValue != nil {
+                return try ObservationTargetArgument.parse(nil, windowIDValue: windowIDValue)
+            }
             return .frontmost
         }
 
-        let target = try ObservationTargetArgument.parse(rawTarget)
+        let target = try ObservationTargetArgument.parse(rawTarget, windowIDValue: windowIDValue)
         switch target {
         case .screen, .menubar:
             throw PeekabooError.invalidInput(

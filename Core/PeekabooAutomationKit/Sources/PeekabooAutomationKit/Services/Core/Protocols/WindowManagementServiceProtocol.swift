@@ -13,15 +13,30 @@ public protocol WindowManagementServiceProtocol: Sendable {
     /// Background callers must leave `allowForegroundFallback` false.
     func closeWindow(target: WindowTarget, allowForegroundFallback: Bool) async throws
 
+    /// Close only while the exact window owner and owner process generation match the selection receipt.
+    func closeWindow(
+        target: WindowTarget,
+        expectedIdentity: WindowMutationIdentity,
+        allowForegroundFallback: Bool) async throws
+
     /// Minimize a window
     /// - Parameters:
     ///   - target: Window targeting options
     func minimizeWindow(target: WindowTarget) async throws
 
-    /// Maximize/zoom a window
+    func minimizeWindow(target: WindowTarget, expectedIdentity: WindowMutationIdentity) async throws
+
+    /// Restore a minimized window without activating or focusing its application.
+    func restoreWindow(target: WindowTarget) async throws
+
+    func restoreWindow(target: WindowTarget, expectedIdentity: WindowMutationIdentity) async throws
+
+    /// Fill a window's current screen using background-safe geometry.
     /// - Parameters:
     ///   - target: Window targeting options
     func maximizeWindow(target: WindowTarget) async throws
+
+    func maximizeWindow(target: WindowTarget, expectedIdentity: WindowMutationIdentity) async throws
 
     /// Move a window to specific coordinates
     /// - Parameters:
@@ -29,17 +44,32 @@ public protocol WindowManagementServiceProtocol: Sendable {
     ///   - position: New position for the window
     func moveWindow(target: WindowTarget, to position: CGPoint) async throws
 
+    func moveWindow(
+        target: WindowTarget,
+        expectedIdentity: WindowMutationIdentity,
+        to position: CGPoint) async throws
+
     /// Resize a window
     /// - Parameters:
     ///   - target: Window targeting options
     ///   - size: New size for the window
     func resizeWindow(target: WindowTarget, to size: CGSize) async throws
 
+    func resizeWindow(
+        target: WindowTarget,
+        expectedIdentity: WindowMutationIdentity,
+        to size: CGSize) async throws
+
     /// Set window bounds (position and size)
     /// - Parameters:
     ///   - target: Window targeting options
     ///   - bounds: New bounds for the window
     func setWindowBounds(target: WindowTarget, bounds: CGRect) async throws
+
+    func setWindowBounds(
+        target: WindowTarget,
+        expectedIdentity: WindowMutationIdentity,
+        bounds: CGRect) async throws
 
     /// Focus/activate a window
     /// - Parameters:
@@ -64,6 +94,59 @@ extension WindowManagementServiceProtocol {
                 message: "This window service does not implement AX-only background close")
         }
         try await self.closeWindow(target: target)
+    }
+
+    public func closeWindow(
+        target _: WindowTarget,
+        expectedIdentity _: WindowMutationIdentity,
+        allowForegroundFallback _: Bool) async throws
+    {
+        throw Self.unsupportedPinnedWindowMutation()
+    }
+
+    public func minimizeWindow(target _: WindowTarget, expectedIdentity _: WindowMutationIdentity) async throws {
+        throw Self.unsupportedPinnedWindowMutation()
+    }
+
+    public func restoreWindow(target _: WindowTarget) async throws {
+        throw Self.unsupportedPinnedWindowMutation()
+    }
+
+    public func restoreWindow(target _: WindowTarget, expectedIdentity _: WindowMutationIdentity) async throws {
+        throw Self.unsupportedPinnedWindowMutation()
+    }
+
+    public func maximizeWindow(target _: WindowTarget, expectedIdentity _: WindowMutationIdentity) async throws {
+        throw Self.unsupportedPinnedWindowMutation()
+    }
+
+    public func moveWindow(
+        target _: WindowTarget,
+        expectedIdentity _: WindowMutationIdentity,
+        to _: CGPoint) async throws
+    {
+        throw Self.unsupportedPinnedWindowMutation()
+    }
+
+    public func resizeWindow(
+        target _: WindowTarget,
+        expectedIdentity _: WindowMutationIdentity,
+        to _: CGSize) async throws
+    {
+        throw Self.unsupportedPinnedWindowMutation()
+    }
+
+    public func setWindowBounds(
+        target _: WindowTarget,
+        expectedIdentity _: WindowMutationIdentity,
+        bounds _: CGRect) async throws
+    {
+        throw Self.unsupportedPinnedWindowMutation()
+    }
+
+    private static func unsupportedPinnedWindowMutation() -> PeekabooError {
+        PeekabooError.serviceUnavailable(
+            "This window service does not support process-generation-pinned mutations; update the runtime host")
     }
 }
 

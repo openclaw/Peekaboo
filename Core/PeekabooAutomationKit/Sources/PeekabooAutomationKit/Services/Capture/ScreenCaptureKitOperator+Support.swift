@@ -38,6 +38,8 @@ extension ScreenCaptureKitOperator {
 
     func emitVisualizer(mode: CaptureVisualizerMode, rect: CGRect) async {
         switch mode {
+        case .none:
+            return
         case .screenshotFlash:
             _ = await self.feedbackClient.showScreenshotFlash(in: rect)
         case .watchCapture:

@@ -47,13 +47,32 @@ read_when:
 }
 ```
 
-Interaction steps use background delivery by default. `click`, `type`, `hotkey`, and `scroll` accept the common target fields `app`, `pid`, `windowId`, and `snapshot`; an explicit field overrides the snapshot carried from the preceding `see` step. Process target fields must agree when combined. Set `"foreground": true` only when the action intentionally focuses or drives the current desktop.
+Interaction steps use background delivery by default. `see`, `click`, `type`, `hotkey`, and `scroll` accept `app`,
+`pid`, and `windowId` targets; process targets and exact window identities must agree when combined. An explicit
+`windowId` never reuses a snapshot from a sibling window, even when both windows belong to the same process. An
+interaction without `snapshot` carries the snapshot produced by the preceding `see` when its element or exact-window
+context is required, and validates any explicit target against that snapshot. Set `"foreground": true` only when the
+action intentionally focuses or drives the current desktop.
+
+`pid` is a positive signed 32-bit integer and `windowId` is a positive unsigned 32-bit integer. A present malformed,
+zero, negative, or out-of-range identifier fails before Peekaboo resolves or captures any fallback target.
+
+Within one script, `snapshot` accepts a generated snapshot ID, `"latest"`, or the `stepId` of any preceding step that
+produced a snapshot. Each `see` creates a fresh snapshot, so a later observation does not overwrite an earlier named
+one. `latest` fails clearly if no preceding step has produced a snapshot.
+
+Hotkeys use `key` plus `modifiers` as the canonical schema. For parity with the standalone command, the additive
+`keys` chord form is also accepted, for example `"keys": ["cmd", "a"]` or `"keys": "cmd+a"`.
 
 Safety is strict:
 
 - Background `click`, `type`, and `hotkey` must resolve a process from `app`, `pid`, `windowId`, or a process-scoped snapshot. They fail instead of silently sending global input.
 - Background clicks use the process-targeted click API. PID/window-targeted coordinates are resolved through background-safe Accessibility hit testing; a coordinate without a process target fails closed. Set `"foreground": true` only when you intentionally want a physical pointer click.
-- Background typing and hotkeys use process-targeted keyboard delivery. A `field` on `type` is clicked through the same delivery route before the typing actions are sent.
+- Background typing and hotkeys use process-targeted keyboard delivery. For a window-scoped snapshot, `type` must name
+  a `field` that Peekaboo can focus and verify inside that window, or immediately follow a successful exact-window
+  click whose focused element remains inside it. The same immediate click proof can authorize a window-scoped
+  `hotkey`; otherwise target the app/PID or use foreground delivery. Exact-window keyboard validation and dispatch are
+  one host-side operation, and paced typing rechecks the owning window before every dispatched character.
 - Background scroll requires both an element `target` and a process-scoped `snapshot`, normally produced by `see`. Targetless scroll, `swipe`, and `drag` affect the physical pointer and require `"foreground": true`.
 - When foreground delivery has an app, PID, window, or snapshot target, `run` focuses that target before dispatching input.
 
@@ -73,17 +92,17 @@ peekaboo run ./flows/regression.peekaboo.json --no-fail-fast --output /tmp/regre
     {
       "stepId": "observe",
       "command": "see",
-      "params": {"app": "Safari", "path": "/tmp/safari.png"}
+      "params": {"pid": 4242, "windowId": 9001, "path": "/tmp/safari.png"}
     },
     {
       "stepId": "click-address",
       "command": "click",
-      "params": {"query": "Smart Search Field"}
+      "params": {"query": "Smart Search Field", "snapshot": "observe"}
     },
     {
       "stepId": "enter-url",
       "command": "type",
-      "params": {"text": "https://example.com", "pressEnter": true}
+      "params": {"field": "Smart Search Field", "text": "https://example.com", "pressEnter": true}
     }
   ]
 }

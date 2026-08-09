@@ -79,7 +79,7 @@ extension SeeCommand {
 
         if captureContext.prefersOCR {
             self.logger.verbose("Running OCR for menu bar popover", category: "Capture")
-            let ocrElements = try self.ocrElements(
+            let ocrElements = try await self.ocrElements(
                 imageData: captureResult.imageData,
                 windowBounds: captureContext.captureBounds ?? captureResult.metadata.windowInfo?.bounds
             )

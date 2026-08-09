@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 import PeekabooFoundation
 
@@ -34,6 +35,8 @@ extension SnapshotManager {
         snapshotData.applicationProcessId = request.applicationProcessId
         snapshotData.windowTitle = request.windowTitle
         snapshotData.windowBounds = request.windowBounds
+        snapshotData.windowID = request.windowID.flatMap { CGWindowID(exactly: $0) }
+        snapshotData.windowMutationIdentity = request.windowMutationIdentity
         snapshotData.lastUpdateTime = Date()
 
         try await self.snapshotActor.saveSnapshot(snapshotId: request.snapshotId, data: snapshotData, at: snapshotPath)

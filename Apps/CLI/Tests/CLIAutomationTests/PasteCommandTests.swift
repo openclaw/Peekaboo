@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import Testing
 @testable import PeekabooCLI
@@ -49,8 +50,6 @@ struct PasteCommandTests {
             ["paste", "--uti", "public.rtf", "--json", "--no-remote"],
             ["paste", "--also-text", "fallback", "--json", "--no-remote"],
             ["paste", "--allow-large", "--json", "--no-remote"],
-            ["paste", "--restore-delay-ms", "150", "--json", "--no-remote"],
-            ["paste", "--restore-delay-ms", "500", "--json", "--no-remote"],
         ] {
             let result = try await InProcessCommandRunner.run(argv, services: services)
             #expect(result.exitStatus != 0, "expected validation failure for \(argv)")
@@ -102,7 +101,7 @@ struct PasteCommandTests {
 
     @Test
     @MainActor
-    func `Bare paste with app target uses background hotkey`() async throws {
+    func `Bare background paste reports unverified receiver consumption`() async throws {
         let app = ServiceApplicationInfo(
             processIdentifier: 2468,
             bundleIdentifier: "com.apple.TextEdit",
@@ -124,7 +123,9 @@ struct PasteCommandTests {
             services: services
         )
 
-        #expect(result.exitStatus == 0)
+        #expect(result.exitStatus != 0)
+        #expect(result.stdout.contains("Background paste delivery could not be verified"))
+        #expect(result.stdout.contains("may have pasted; do not retry"))
         #expect(automation.hotkeyCalls.isEmpty)
         #expect(automation.targetedHotkeyCalls.map(\.keys) == ["cmd,v"])
         #expect(automation.targetedHotkeyCalls.first?.targetProcessIdentifier == 2468)
@@ -220,7 +221,50 @@ struct PasteCommandTests {
 
     @Test
     @MainActor
-    func `Paste binary payload keeps background hotkey delivery`() async throws {
+    func `Paste UTF8 data uses proven background text delivery`() async throws {
+        let app = ServiceApplicationInfo(
+            processIdentifier: 2468,
+            bundleIdentifier: "com.apple.TextEdit",
+            name: "TextEdit"
+        )
+        let automation = StubAutomationService()
+        let clipboard = StubClipboardService()
+        clipboard.current = ClipboardReadResult(
+            utiIdentifier: "public.utf8-plain-text",
+            data: Data("prior".utf8),
+            textPreview: "prior"
+        )
+        let services = TestServicesFactory.makePeekabooServices(
+            applications: StubApplicationService(applications: [app]),
+            clipboard: clipboard,
+            automation: automation
+        )
+
+        let result = try await InProcessCommandRunner.run(
+            [
+                "paste",
+                "--app", "TextEdit",
+                "--data-base64", Data("decoded text".utf8).base64EncodedString(),
+                "--uti", "public.utf8-plain-text",
+                "--json",
+                "--no-remote",
+            ],
+            services: services
+        )
+
+        #expect(result.exitStatus == 0)
+        let typeCall = try #require(automation.targetedTypeActionsCalls.first)
+        if case .text("decoded text")? = typeCall.actions.first {} else {
+            Issue.record("Expected UTF-8 clipboard data to use targeted text delivery")
+        }
+        #expect(automation.targetedHotkeyCalls.isEmpty)
+        #expect(clipboard.current?.textPreview == "prior")
+        #expect(clipboard.restoreCallCount == 0)
+    }
+
+    @Test
+    @MainActor
+    func `Paste binary payload preserves transaction but never claims background consumption`() async throws {
         let app = ServiceApplicationInfo(
             processIdentifier: 2468,
             bundleIdentifier: "com.apple.TextEdit",
@@ -254,7 +298,10 @@ struct PasteCommandTests {
             services: services
         )
 
-        #expect(result.exitStatus == 0)
+        #expect(result.exitStatus != 0)
+        #expect(result.stdout.contains("Background paste delivery could not be verified"))
+        #expect(result.stdout.contains("may have pasted; do not retry"))
+        #expect(result.stdout.contains("\"code\" : \"INTERACTION_FAILED\""))
         #expect(automation.targetedTypeActionsCalls.isEmpty)
         #expect(automation.targetedHotkeyCalls.map(\.keys) == ["cmd,v"])
         #expect(automation.targetedHotkeyCalls.first?.targetProcessIdentifier == 2468)
@@ -263,14 +310,6 @@ struct PasteCommandTests {
         #expect(clipboard.current?.data == priorClipboard.data)
         #expect(clipboard.current?.textPreview == priorClipboard.textPreview)
         #expect(clipboard.restoreCallCount == 1)
-        let payload = try ExternalCommandRunner.decodeJSONResponse(
-            from: result,
-            as: CodableJSONResponse<PasteResult>.self
-        )
-        #expect(payload.data.restoreSucceeded)
-        #expect(payload.data.restoreError == nil)
-        #expect(payload.data.restoredUti == priorClipboard.utiIdentifier)
-        #expect(payload.data.restoredSize == priorClipboard.data.count)
     }
 
     @Test
@@ -299,6 +338,8 @@ struct PasteCommandTests {
             [
                 "paste",
                 "--app", "TextEdit",
+                "--foreground",
+                "--no-auto-focus",
                 "--data-base64", "aGVsbG8=",
                 "--uti", "public.data",
                 "--restore-delay-ms", "0",
@@ -309,7 +350,7 @@ struct PasteCommandTests {
         )
 
         #expect(jsonResult.exitStatus == 0)
-        #expect(automation.targetedHotkeyCalls.map(\.keys) == ["cmd,v"])
+        #expect(automation.hotkeyCalls.map(\.keys) == ["cmd,v"])
         #expect(clipboard.restoreCallCount == 1)
         let payload = try ExternalCommandRunner.decodeJSONResponse(
             from: jsonResult,
@@ -330,6 +371,8 @@ struct PasteCommandTests {
             [
                 "paste",
                 "--app", "TextEdit",
+                "--foreground",
+                "--no-auto-focus",
                 "--data-base64", "aGVsbG8=",
                 "--uti", "public.data",
                 "--restore-delay-ms", "0",
@@ -369,6 +412,7 @@ struct PasteCommandTests {
                 "--app", "TextEdit",
                 "--text", "smoke",
                 "--foreground",
+                "--no-auto-focus",
                 "--restore-delay-ms", "0",
                 "--json",
                 "--no-remote",
@@ -415,4 +459,691 @@ struct PasteCommandTests {
         #expect(automation.hotkeyCalls.isEmpty)
         #expect(try clipboard.get(prefer: nil) == nil)
     }
+
+    @Test
+    @MainActor
+    func `Clipboard-backed paste re-resolves its process after lock contention`() async throws {
+        let heldFD = try await self.holdPasteTransactionLock()
+        var lockHeld = true
+        defer {
+            if lockHeld {
+                flock(heldFD, LOCK_UN)
+            }
+            close(heldFD)
+        }
+
+        let context = self.makeTransactionGateContext()
+        let command = Task { @MainActor in
+            try await InProcessCommandRunner.run(
+                [
+                    "paste",
+                    "--app", "TextEdit",
+                    "--data-base64", "cGF5bG9hZA==",
+                    "--uti", "public.data",
+                    "--restore-delay-ms", "0",
+                    "--json",
+                    "--no-remote",
+                ],
+                services: context.services
+            )
+        }
+
+        try await Task.sleep(for: .milliseconds(75))
+        #expect(context.clipboard.current?.textPreview == "prior")
+        #expect(context.automation.targetedHotkeyCalls.isEmpty)
+        context.applications.applications = [
+            ServiceApplicationInfo(
+                processIdentifier: 9753,
+                bundleIdentifier: "com.apple.TextEdit",
+                name: "TextEdit"
+            ),
+        ]
+
+        #expect(flock(heldFD, LOCK_UN) == 0)
+        lockHeld = false
+
+        let result = try await command.value
+        #expect(result.exitStatus != 0)
+        #expect(result.stdout.contains("Background paste delivery could not be verified"))
+        #expect(context.automation.targetedHotkeyCalls.map(\.keys) == ["cmd,v"])
+        #expect(context.automation.targetedHotkeyCalls.first?.targetProcessIdentifier == 9753)
+        #expect(context.clipboard.current?.textPreview == "prior")
+        #expect(context.clipboard.restoreCallCount == 1)
+    }
+
+    @Test
+    @MainActor
+    func `Targeted text paste remains lock-free`() async throws {
+        let heldFD = try await self.holdPasteTransactionLock()
+        defer {
+            flock(heldFD, LOCK_UN)
+            close(heldFD)
+        }
+
+        let context = self.makeTransactionGateContext()
+        let command = Task { @MainActor in
+            let result = try await InProcessCommandRunner.run(
+                [
+                    "paste",
+                    "--app", "TextEdit",
+                    "--text", "direct text",
+                    "--json",
+                    "--no-remote",
+                ],
+                services: context.services
+            )
+            return result.exitStatus
+        }
+        let timeout = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(500))
+            command.cancel()
+        }
+        let exitStatus = try await command.value
+        timeout.cancel()
+
+        #expect(exitStatus == 0)
+        #expect(context.automation.targetedHotkeyCalls.isEmpty)
+        let typeCall = try #require(context.automation.targetedTypeActionsCalls.first)
+        #expect(typeCall.targetProcessIdentifier == 2468)
+        #expect(context.clipboard.current?.textPreview == "prior")
+        #expect(context.clipboard.restoreCallCount == 0)
+    }
+
+    @Test
+    @MainActor
+    func `Clipboard capability refusal never reads or mutates the clipboard`() async throws {
+        let context = self.makeTransactionGateContext()
+        context.automation.supportsTargetedHotkeys = false
+
+        let result = try await InProcessCommandRunner.run(
+            [
+                "paste",
+                "--app", "TextEdit",
+                "--data-base64", "cGF5bG9hZA==",
+                "--uti", "public.data",
+                "--json",
+                "--no-remote",
+            ],
+            services: context.services
+        )
+
+        #expect(result.exitStatus != 0)
+        #expect(context.clipboard.getCallCount == 0)
+        #expect(context.clipboard.saveCallCount == 0)
+        #expect(context.clipboard.setCallCount == 0)
+        #expect(context.clipboard.clearCallCount == 0)
+        #expect(context.clipboard.restoreCallCount == 0)
+        #expect(context.clipboard.current?.textPreview == "prior")
+        #expect(context.automation.targetedHotkeyCalls.isEmpty)
+    }
+
+    @Test
+    @MainActor
+    func `Clipboard read failure is not treated as an empty clipboard`() async throws {
+        let context = self.makeTransactionGateContext()
+        context.clipboard.getError = ClipboardServiceError.writeFailed("simulated read failure")
+
+        let result = try await InProcessCommandRunner.run(
+            [
+                "paste",
+                "--app", "TextEdit",
+                "--data-base64", "cGF5bG9hZA==",
+                "--uti", "public.data",
+                "--json",
+                "--no-remote",
+            ],
+            services: context.services
+        )
+
+        #expect(result.exitStatus != 0)
+        #expect(result.stdout.contains("simulated read failure"))
+        #expect(context.clipboard.getCallCount == 1)
+        #expect(context.clipboard.saveCallCount == 0)
+        #expect(context.clipboard.setCallCount == 0)
+        #expect(context.clipboard.clearCallCount == 0)
+        #expect(context.clipboard.restoreCallCount == 0)
+        #expect(context.clipboard.current?.textPreview == "prior")
+        #expect(context.automation.targetedHotkeyCalls.isEmpty)
+    }
+
+    @Test
+    @MainActor
+    func `Current clipboard read failure aborts before Cmd V`() async throws {
+        let context = self.makeTransactionGateContext()
+        context.clipboard.getError = ClipboardServiceError.writeFailed("simulated current read failure")
+
+        let result = try await InProcessCommandRunner.run(
+            [
+                "paste",
+                "--foreground",
+                "--json",
+                "--no-remote",
+            ],
+            services: context.services
+        )
+
+        #expect(result.exitStatus != 0)
+        #expect(result.stdout.contains("simulated current read failure"))
+        #expect(context.clipboard.getCallCount == 1)
+        #expect(context.clipboard.setCallCount == 0)
+        #expect(context.clipboard.clearCallCount == 0)
+        #expect(context.clipboard.restoreCallCount == 0)
+        #expect(context.automation.hotkeyCalls.isEmpty)
+        #expect(context.automation.targetedHotkeyCalls.isEmpty)
+    }
+
+    @Test
+    @MainActor
+    func `Cancellation after snapshot but before write never restores or clears`() async throws {
+        let context = self.makeTransactionGateContext()
+        context.clipboard.afterSave = {
+            withUnsafeCurrentTask { task in
+                task?.cancel()
+            }
+        }
+        let command = Task { @MainActor in
+            try await InProcessCommandRunner.run(
+                [
+                    "paste",
+                    "--app", "TextEdit",
+                    "--data-base64", "cGF5bG9hZA==",
+                    "--uti", "public.data",
+                    "--json",
+                    "--no-remote",
+                ],
+                services: context.services
+            )
+        }
+
+        let result = try await command.value
+
+        #expect(result.exitStatus != 0)
+        #expect(context.clipboard.saveCallCount == 1)
+        #expect(context.clipboard.setCallCount == 0)
+        #expect(context.clipboard.clearCallCount == 0)
+        #expect(context.clipboard.restoreCallCount == 0)
+        #expect(context.clipboard.current?.textPreview == "prior")
+        #expect(context.automation.targetedHotkeyCalls.isEmpty)
+    }
+
+    @Test
+    @MainActor
+    func `Cancellation during clipboard write restores before dispatch`() async throws {
+        let context = self.makeTransactionGateContext()
+        context.clipboard.afterSet = {
+            withUnsafeCurrentTask { task in
+                task?.cancel()
+            }
+        }
+        let command = Task { @MainActor in
+            try await InProcessCommandRunner.run(
+                [
+                    "paste",
+                    "--app", "TextEdit",
+                    "--data-base64", "cGF5bG9hZA==",
+                    "--uti", "public.data",
+                    "--json",
+                    "--no-remote",
+                ],
+                services: context.services
+            )
+        }
+
+        let result = try await command.value
+
+        #expect(result.exitStatus != 0)
+        #expect(context.clipboard.setCallCount == 1)
+        #expect(context.clipboard.restoreCallCount == 1)
+        #expect(context.clipboard.current?.textPreview == "prior")
+        #expect(context.automation.targetedHotkeyCalls.isEmpty)
+    }
+
+    @Test(arguments: [false, true])
+    @MainActor
+    func `Set failure restores exact prior clipboard before dispatch`(mutatesBeforeThrow: Bool) async throws {
+        let context = self.makeTransactionGateContext()
+        context.clipboard.setError = ClipboardServiceError.writeFailed("simulated set failure")
+        context.clipboard.setMutatesBeforeThrow = mutatesBeforeThrow
+
+        let result = try await InProcessCommandRunner.run(
+            [
+                "paste",
+                "--app", "TextEdit",
+                "--data-base64", "cGF5bG9hZA==",
+                "--uti", "public.data",
+                "--json",
+                "--no-remote",
+            ],
+            services: context.services
+        )
+
+        #expect(result.exitStatus != 0)
+        #expect(result.stdout.contains("simulated set failure"))
+        #expect(context.clipboard.saveCallCount == 1)
+        #expect(context.clipboard.setCallCount == 1)
+        #expect(context.clipboard.clearCallCount == 0)
+        #expect(context.clipboard.restoreCallCount == 1)
+        #expect(context.clipboard.current?.textPreview == "prior")
+        #expect(context.automation.targetedHotkeyCalls.isEmpty)
+    }
+
+    @Test
+    @MainActor
+    func `Set and restoration failure reports clipboard integrity risk without dispatch`() async throws {
+        let context = self.makeTransactionGateContext()
+        context.clipboard.setError = ClipboardServiceError.writeFailed("simulated partial set failure")
+        context.clipboard.setMutatesBeforeThrow = true
+        context.clipboard.restoreError = ClipboardServiceError.writeFailed("simulated restore failure")
+
+        let result = try await InProcessCommandRunner.run(
+            [
+                "paste",
+                "--app", "TextEdit",
+                "--data-base64", "cGF5bG9hZA==",
+                "--uti", "public.data",
+                "--json",
+                "--no-remote",
+            ],
+            services: context.services
+        )
+
+        #expect(result.exitStatus != 0)
+        #expect(result.stdout.contains("Paste payload setup failed"))
+        #expect(result.stdout.contains("restoring the prior clipboard also failed"))
+        #expect(context.clipboard.setCallCount == 1)
+        #expect(context.clipboard.restoreCallCount == 1)
+        #expect(context.automation.targetedHotkeyCalls.isEmpty)
+    }
+
+    @Test
+    @MainActor
+    func `Partial set failure restores a genuinely empty clipboard by clearing`() async throws {
+        let context = self.makeTransactionGateContext()
+        context.clipboard.current = nil
+        context.clipboard.setError = ClipboardServiceError.writeFailed("simulated partial set failure")
+        context.clipboard.setMutatesBeforeThrow = true
+
+        let result = try await InProcessCommandRunner.run(
+            [
+                "paste",
+                "--app", "TextEdit",
+                "--data-base64", "cGF5bG9hZA==",
+                "--uti", "public.data",
+                "--json",
+                "--no-remote",
+            ],
+            services: context.services
+        )
+
+        #expect(result.exitStatus != 0)
+        #expect(context.clipboard.getCallCount == 1)
+        #expect(context.clipboard.saveCallCount == 0)
+        #expect(context.clipboard.setCallCount == 1)
+        #expect(context.clipboard.clearCallCount == 1)
+        #expect(context.clipboard.restoreCallCount == 0)
+        #expect(context.clipboard.current == nil)
+        #expect(context.automation.targetedHotkeyCalls.isEmpty)
+    }
+
+    @Test
+    @MainActor
+    func `Current clipboard paste waits for an active transaction`() async throws {
+        let heldFD = try await self.holdPasteTransactionLock()
+        var lockHeld = true
+        defer {
+            if lockHeld {
+                flock(heldFD, LOCK_UN)
+            }
+            close(heldFD)
+        }
+
+        let context = self.makeTransactionGateContext()
+        let command = Task { @MainActor in
+            try await InProcessCommandRunner.run(
+                [
+                    "paste",
+                    "--app", "TextEdit",
+                    "--json",
+                    "--no-remote",
+                ],
+                services: context.services
+            )
+        }
+
+        try await Task.sleep(for: .milliseconds(75))
+        #expect(context.automation.targetedHotkeyCalls.isEmpty)
+
+        #expect(flock(heldFD, LOCK_UN) == 0)
+        lockHeld = false
+
+        let result = try await command.value
+        #expect(result.exitStatus != 0)
+        #expect(result.stdout.contains("Background paste delivery could not be verified"))
+        #expect(context.automation.targetedHotkeyCalls.map(\.keys) == ["cmd,v"])
+        #expect(context.clipboard.current?.textPreview == "prior")
+        #expect(context.clipboard.restoreCallCount == 0)
+    }
+
+    @Test
+    @MainActor
+    func `Foreground target is revalidated only after the transaction lock is acquired`() async throws {
+        let heldFD = try await self.holdPasteTransactionLock()
+        var lockHeld = true
+        defer {
+            if lockHeld {
+                flock(heldFD, LOCK_UN)
+            }
+            close(heldFD)
+        }
+
+        let context = self.makeTransactionGateContext()
+        let command = Task { @MainActor in
+            try await InProcessCommandRunner.run(
+                [
+                    "paste",
+                    "--pid", "2468",
+                    "--foreground",
+                    "--data-base64", "cGF5bG9hZA==",
+                    "--uti", "public.data",
+                    "--restore-delay-ms", "0",
+                    "--json",
+                    "--no-remote",
+                ],
+                services: context.services
+            )
+        }
+
+        try await Task.sleep(for: .milliseconds(75))
+        #expect(context.applications.activateCalls.isEmpty)
+        #expect(context.clipboard.current?.textPreview == "prior")
+        context.applications.applications.removeAll()
+
+        #expect(flock(heldFD, LOCK_UN) == 0)
+        lockHeld = false
+
+        let result = try await command.value
+        #expect(result.exitStatus != 0)
+        #expect(context.automation.hotkeyCalls.isEmpty)
+        #expect(context.clipboard.current?.textPreview == "prior")
+        #expect(context.clipboard.restoreCallCount == 0)
+    }
+
+    @Test
+    @MainActor
+    func `Current clipboard paste holds the lock through its consumption delay`() async throws {
+        let context = self.makeTransactionGateContext()
+        let command = Task { @MainActor in
+            try await InProcessCommandRunner.run(
+                [
+                    "paste",
+                    "--app", "TextEdit",
+                    "--restore-delay-ms", "250",
+                    "--json",
+                    "--no-remote",
+                ],
+                services: context.services
+            )
+        }
+
+        for _ in 0..<100 where context.automation.targetedHotkeyCalls.isEmpty {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        #expect(context.automation.targetedHotkeyCalls.map(\.keys) == ["cmd,v"])
+
+        let contenderFD = try self.openPasteTransactionLock()
+        defer { close(contenderFD) }
+        let contentionResult = flock(contenderFD, LOCK_EX | LOCK_NB)
+        let contentionError = errno
+        #expect(contentionResult != 0)
+        #expect(contentionError == EWOULDBLOCK || contentionError == EAGAIN)
+
+        let result = try await command.value
+        #expect(result.exitStatus != 0)
+        #expect(result.stdout.contains("Background paste delivery could not be verified"))
+        #expect(flock(contenderFD, LOCK_EX | LOCK_NB) == 0)
+        #expect(flock(contenderFD, LOCK_UN) == 0)
+    }
+
+    @Test
+    @MainActor
+    func `Cancellation after paste waits for consumption before restoring`() async throws {
+        let context = self.makeTransactionGateContext()
+        let command = Task { @MainActor in
+            try await InProcessCommandRunner.run(
+                [
+                    "paste",
+                    "--app", "TextEdit",
+                    "--data-base64", "cGF5bG9hZA==",
+                    "--uti", "public.data",
+                    "--restore-delay-ms", "250",
+                    "--json",
+                    "--no-remote",
+                ],
+                services: context.services
+            )
+        }
+
+        for _ in 0..<100 where context.automation.targetedHotkeyCalls.isEmpty {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        #expect(context.automation.targetedHotkeyCalls.map(\.keys) == ["cmd,v"])
+        let clock = ContinuousClock()
+        let canceledAt = clock.now
+        command.cancel()
+
+        try await Task.sleep(for: .milliseconds(75))
+        #expect(context.clipboard.current?.utiIdentifier == "public.data")
+        #expect(context.clipboard.restoreCallCount == 0)
+
+        let result = try await command.value
+        #expect(result.exitStatus != 0)
+        #expect(result.stdout.contains("Paste outcome is indeterminate"))
+        #expect(result.stdout.contains("may have pasted; do not retry"))
+        #expect(clock.now - canceledAt >= .milliseconds(150))
+        #expect(context.clipboard.current?.textPreview == "prior")
+        #expect(context.clipboard.restoreCallCount == 1)
+    }
+
+    @Test
+    @MainActor
+    func `Foreground PID paste fails closed when process identity changes while queued`() async throws {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/sleep")
+        process.arguments = ["30"]
+        try process.run()
+        defer {
+            if process.isRunning {
+                process.terminate()
+            }
+        }
+
+        let heldFD = try await self.holdPasteTransactionLock()
+        var lockHeld = true
+        defer {
+            if lockHeld {
+                flock(heldFD, LOCK_UN)
+            }
+            close(heldFD)
+        }
+
+        let processIdentifier = process.processIdentifier
+        let context = self.makeTransactionGateContext(processIdentifier: processIdentifier)
+        let command = Task { @MainActor in
+            try await InProcessCommandRunner.run(
+                [
+                    "paste",
+                    "--pid", String(processIdentifier),
+                    "--foreground",
+                    "--no-auto-focus",
+                    "--data-base64", "cGF5bG9hZA==",
+                    "--uti", "public.data",
+                    "--restore-delay-ms", "0",
+                    "--json",
+                    "--no-remote",
+                ],
+                services: context.services
+            )
+        }
+
+        try await Task.sleep(for: .milliseconds(75))
+        #expect(context.automation.hotkeyCalls.isEmpty)
+        process.terminate()
+        process.waitUntilExit()
+
+        #expect(flock(heldFD, LOCK_UN) == 0)
+        lockHeld = false
+
+        let result = try await command.value
+        #expect(result.exitStatus != 0)
+        #expect(context.automation.hotkeyCalls.isEmpty)
+        #expect(context.clipboard.current?.textPreview == "prior")
+        #expect(context.clipboard.restoreCallCount == 0)
+    }
+
+    @Test
+    @MainActor
+    func `Throwing paste dispatch settles before restore and unlock`() async throws {
+        let context = self.makeTransactionGateContext()
+        context.automation.targetedHotkeyError = ExpectedPasteDispatchError.afterPosting
+        let command = Task { @MainActor in
+            try await InProcessCommandRunner.run(
+                [
+                    "paste",
+                    "--app", "TextEdit",
+                    "--data-base64", "cGF5bG9hZA==",
+                    "--uti", "public.data",
+                    "--restore-delay-ms", "250",
+                    "--json",
+                    "--no-remote",
+                ],
+                services: context.services
+            )
+        }
+
+        for _ in 0..<100 where context.automation.targetedHotkeyCalls.isEmpty {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        let clock = ContinuousClock()
+        let dispatchedAt = clock.now
+        try await Task.sleep(for: .milliseconds(75))
+        #expect(context.clipboard.current?.utiIdentifier == "public.data")
+        #expect(context.clipboard.restoreCallCount == 0)
+
+        let contenderFD = try self.openPasteTransactionLock()
+        defer { close(contenderFD) }
+        #expect(flock(contenderFD, LOCK_EX | LOCK_NB) != 0)
+
+        let result = try await command.value
+        #expect(result.exitStatus != 0)
+        #expect(result.stdout.contains("Paste outcome is indeterminate"))
+        #expect(result.stdout.contains("may have pasted; do not retry"))
+        #expect(result.stdout.contains("Paste outcome is indeterminate"))
+        #expect(result.stdout.contains("may have pasted; do not retry"))
+        #expect(clock.now - dispatchedAt >= .milliseconds(150))
+        #expect(context.clipboard.current?.textPreview == "prior")
+        #expect(context.clipboard.restoreCallCount == 1)
+        #expect(flock(contenderFD, LOCK_EX | LOCK_NB) == 0)
+        #expect(flock(contenderFD, LOCK_UN) == 0)
+    }
+
+    @Test
+    @MainActor
+    func `Throwing current clipboard dispatch keeps the gate through consumption`() async throws {
+        let context = self.makeTransactionGateContext()
+        context.automation.targetedHotkeyError = ExpectedPasteDispatchError.afterPosting
+        let command = Task { @MainActor in
+            try await InProcessCommandRunner.run(
+                [
+                    "paste",
+                    "--app", "TextEdit",
+                    "--restore-delay-ms", "250",
+                    "--json",
+                    "--no-remote",
+                ],
+                services: context.services
+            )
+        }
+
+        for _ in 0..<100 where context.automation.targetedHotkeyCalls.isEmpty {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        let clock = ContinuousClock()
+        let dispatchedAt = clock.now
+        let contenderFD = try self.openPasteTransactionLock()
+        defer { close(contenderFD) }
+        #expect(flock(contenderFD, LOCK_EX | LOCK_NB) != 0)
+
+        let result = try await command.value
+        #expect(result.exitStatus != 0)
+        #expect(result.stdout.contains("Paste outcome is indeterminate"))
+        #expect(result.stdout.contains("may have pasted; do not retry"))
+        #expect(clock.now - dispatchedAt >= .milliseconds(150))
+        #expect(context.clipboard.current?.textPreview == "prior")
+        #expect(context.clipboard.restoreCallCount == 0)
+        #expect(flock(contenderFD, LOCK_EX | LOCK_NB) == 0)
+        #expect(flock(contenderFD, LOCK_UN) == 0)
+    }
+
+    @Test
+    @MainActor
+    func `Throwing foreground payload dispatch is indeterminate after restore`() async throws {
+        let context = self.makeTransactionGateContext()
+        context.automation.hotkeyError = ExpectedPasteDispatchError.afterPosting
+
+        let result = try await InProcessCommandRunner.run(
+            [
+                "paste",
+                "--foreground",
+                "--no-auto-focus",
+                "--data-base64", "cGF5bG9hZA==",
+                "--uti", "public.data",
+                "--restore-delay-ms", "0",
+                "--json",
+                "--no-remote",
+            ],
+            services: context.services
+        )
+
+        #expect(result.exitStatus != 0)
+        #expect(result.stdout.contains("Paste outcome is indeterminate"))
+        #expect(result.stdout.contains("may have pasted; do not retry"))
+        #expect(context.automation.hotkeyCalls.map(\.keys) == ["cmd,v"])
+        #expect(context.clipboard.current?.textPreview == "prior")
+        #expect(context.clipboard.restoreCallCount == 1)
+    }
+
+    @Test
+    @MainActor
+    func `Cancelled foreground current clipboard dispatch settles and is indeterminate`() async throws {
+        let context = self.makeTransactionGateContext()
+        let command = Task { @MainActor in
+            try await InProcessCommandRunner.run(
+                [
+                    "paste",
+                    "--foreground",
+                    "--no-auto-focus",
+                    "--restore-delay-ms", "250",
+                    "--json",
+                    "--no-remote",
+                ],
+                services: context.services
+            )
+        }
+
+        for _ in 0..<100 where context.automation.hotkeyCalls.isEmpty {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        command.cancel()
+
+        let result = try await command.value
+        #expect(result.exitStatus != 0)
+        #expect(result.stdout.contains("Paste outcome is indeterminate"))
+        #expect(result.stdout.contains("may have pasted; do not retry"))
+        #expect(context.clipboard.current?.textPreview == "prior")
+        #expect(context.clipboard.restoreCallCount == 0)
+    }
+}
+
+private enum ExpectedPasteDispatchError: Error {
+    case afterPosting
 }

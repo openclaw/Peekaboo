@@ -1,0 +1,379 @@
+import CoreGraphics
+import Darwin
+import Foundation
+
+public struct SystemWindowIdentity: Sendable, Equatable {
+    public let windowID: CGWindowID
+    public let ownerProcessIdentifier: pid_t
+    public let ownerProcessStartIdentity: UInt64?
+    public let title: String
+    public let bounds: CGRect
+    public let layer: Int
+    public let alpha: CGFloat
+    public let isOnScreen: Bool
+    public let sharingState: WindowSharingState?
+    public let applicationName: String?
+
+    public init(
+        windowID: CGWindowID,
+        ownerProcessIdentifier: pid_t,
+        ownerProcessStartIdentity: UInt64? = nil,
+        title: String,
+        bounds: CGRect,
+        layer: Int,
+        alpha: CGFloat,
+        isOnScreen: Bool,
+        sharingState: WindowSharingState?,
+        applicationName: String? = nil)
+    {
+        self.windowID = windowID
+        self.ownerProcessIdentifier = ownerProcessIdentifier
+        self.ownerProcessStartIdentity = ownerProcessStartIdentity
+        self.title = title
+        self.bounds = bounds
+        self.layer = layer
+        self.alpha = alpha
+        self.isOnScreen = isOnScreen
+        self.sharingState = sharingState
+        self.applicationName = applicationName
+    }
+}
+
+/// Native process/window identity lookups used when a numeric identifier must not
+/// silently retarget after macOS recycles it.
+public enum SystemIdentityResolver {
+    struct WindowMutationIdentityProviders {
+        let processStartIdentity: (pid_t) -> UInt64?
+        let windowIdentity: (CGWindowID) -> SystemWindowIdentity?
+        let mutationIdentity: (CGWindowID) -> WindowMutationIdentity?
+    }
+
+    struct WindowMutationSnapshot {
+        let windowID: CGWindowID
+        let ownerProcessIdentifier: pid_t
+        let ownerProcessStartIdentity: UInt64
+        let bounds: CGRect
+        let isMinimized: Bool?
+    }
+
+    /// Returns an identity that changes when macOS reuses a numeric process identifier.
+    public static func processStartIdentity(_ processIdentifier: pid_t) -> UInt64? {
+        guard processIdentifier > 0 else { return nil }
+        var info = proc_bsdinfo()
+        let expectedSize = Int32(MemoryLayout<proc_bsdinfo>.stride)
+        guard proc_pidinfo(
+            processIdentifier,
+            PROC_PIDTBSDINFO,
+            0,
+            &info,
+            expectedSize) == expectedSize
+        else {
+            return nil
+        }
+        let seconds = UInt64(info.pbi_start_tvsec)
+        let microseconds = UInt64(info.pbi_start_tvusec)
+        return seconds.multipliedReportingOverflow(by: 1_000_000).partialValue &+ microseconds
+    }
+
+    /// Resolves one exact window from the current WindowServer catalog without AX traversal.
+    public static func windowIdentity(_ windowID: CGWindowID) -> SystemWindowIdentity? {
+        guard windowID != kCGNullWindowID else { return nil }
+        if let windows = CGWindowListCopyWindowInfo([.optionIncludingWindow], windowID) as? [[String: Any]],
+           let identity = self.windowIdentity(windowID, in: windows)
+        {
+            return identity
+        }
+
+        // `optionIncludingWindow` can omit a minimized/off-screen window even while `optionAll`
+        // still carries its exact WindowServer ID, owner, and frame. Search the full catalog only
+        // after the fast exact query misses; never fall back to title or bounds matching.
+        guard let windows = CGWindowListCopyWindowInfo(
+            [.optionAll, .excludeDesktopElements],
+            kCGNullWindowID) as? [[String: Any]],
+            let identity = self.windowIdentity(windowID, in: windows)
+        else {
+            return nil
+        }
+        return identity
+    }
+
+    /// Lists one process's current WindowServer entries in front-to-back order without AX traversal.
+    public static func windowIdentities(ownerProcessIdentifier: pid_t) -> [SystemWindowIdentity] {
+        guard ownerProcessIdentifier > 0,
+              let processStartIdentity = self.processStartIdentity(ownerProcessIdentifier),
+              let windows = CGWindowListCopyWindowInfo([.optionAll, .excludeDesktopElements], kCGNullWindowID)
+              as? [[String: Any]],
+              self.processStartIdentity(ownerProcessIdentifier) == processStartIdentity
+        else {
+            return []
+        }
+        return windows.compactMap(self.windowIdentity(from:)).compactMap { identity in
+            guard identity.ownerProcessIdentifier == ownerProcessIdentifier else { return nil }
+            return SystemWindowIdentity(
+                windowID: identity.windowID,
+                ownerProcessIdentifier: identity.ownerProcessIdentifier,
+                ownerProcessStartIdentity: processStartIdentity,
+                title: identity.title,
+                bounds: identity.bounds,
+                layer: identity.layer,
+                alpha: identity.alpha,
+                isOnScreen: identity.isOnScreen,
+                sharingState: identity.sharingState,
+                applicationName: identity.applicationName)
+        }
+    }
+
+    private static func windowIdentity(from window: [String: Any]) -> SystemWindowIdentity? {
+        guard let rawWindowID = intValue(window[kCGWindowNumber as String]),
+              let windowID = CGWindowID(exactly: rawWindowID),
+              let owner = intValue(window[kCGWindowOwnerPID as String]),
+              let processIdentifier = pid_t(exactly: owner),
+              processIdentifier > 0,
+              let boundsDictionary = window[kCGWindowBounds as String] as? [String: Any],
+              let bounds = CGRect(dictionaryRepresentation: boundsDictionary as CFDictionary)
+        else {
+            return nil
+        }
+        return SystemWindowIdentity(
+            windowID: windowID,
+            ownerProcessIdentifier: processIdentifier,
+            title: window[kCGWindowName as String] as? String ?? "",
+            bounds: bounds,
+            layer: Self.intValue(window[kCGWindowLayer as String]) ?? 0,
+            alpha: Self.cgFloatValue(window[kCGWindowAlpha as String]) ?? 1,
+            isOnScreen: window[kCGWindowIsOnscreen as String] as? Bool ?? false,
+            sharingState: Self.intValue(window[kCGWindowSharingState as String])
+                .flatMap(WindowSharingState.init(rawValue:)),
+            applicationName: window[kCGWindowOwnerName as String] as? String)
+    }
+
+    static func windowIdentity(
+        _ windowID: CGWindowID,
+        in windows: [[String: Any]]) -> SystemWindowIdentity?
+    {
+        windows.first(where: {
+            self.intValue($0[kCGWindowNumber as String]) == Int(windowID)
+        }).flatMap(self.windowIdentity(from:))
+    }
+
+    /// Resolves the current CoreGraphics owner for one exact window identifier.
+    /// A missing result means the identifier is not present in the current WindowServer catalog.
+    public static func windowOwnerProcessIdentifier(_ windowID: CGWindowID) -> pid_t? {
+        self.windowIdentity(windowID)?.ownerProcessIdentifier
+    }
+
+    /// Captures one stable exact-window/process-generation receipt.
+    public static func windowMutationIdentity(windowID: CGWindowID) -> WindowMutationIdentity? {
+        guard let before = self.windowIdentity(windowID),
+              let processStartIdentity = self.processStartIdentity(before.ownerProcessIdentifier)
+        else {
+            return nil
+        }
+        return self.windowMutationIdentity(
+            windowID: windowID,
+            expectedOwnerProcessIdentifier: before.ownerProcessIdentifier,
+            expectedOwnerProcessStartIdentity: processStartIdentity,
+            expectedBounds: before.bounds,
+            isMinimized: false)
+    }
+
+    /// Creates a receipt only while an earlier local window snapshot still names the live window.
+    static func windowMutationIdentity(
+        windowID: CGWindowID,
+        expectedOwnerProcessIdentifier: pid_t,
+        expectedOwnerProcessStartIdentity: UInt64,
+        expectedBounds: CGRect,
+        isMinimized: Bool?) -> WindowMutationIdentity?
+    {
+        self.windowMutationIdentity(
+            snapshot: WindowMutationSnapshot(
+                windowID: windowID,
+                ownerProcessIdentifier: expectedOwnerProcessIdentifier,
+                ownerProcessStartIdentity: expectedOwnerProcessStartIdentity,
+                bounds: expectedBounds,
+                isMinimized: isMinimized),
+            processStartIdentityProvider: self.processStartIdentity,
+            windowIdentityProvider: self.windowIdentity)
+    }
+
+    static func windowMutationIdentity(
+        snapshot: WindowMutationSnapshot,
+        processStartIdentityProvider: (pid_t) -> UInt64?,
+        windowIdentityProvider: (CGWindowID) -> SystemWindowIdentity?) -> WindowMutationIdentity?
+    {
+        guard snapshot.windowID != kCGNullWindowID,
+              snapshot.ownerProcessIdentifier > 0,
+              processStartIdentityProvider(snapshot.ownerProcessIdentifier) == snapshot.ownerProcessStartIdentity,
+              let current = windowIdentityProvider(snapshot.windowID),
+              current.windowID == snapshot.windowID,
+              current.ownerProcessIdentifier == snapshot.ownerProcessIdentifier,
+              current.bounds == snapshot.bounds
+        else {
+            return nil
+        }
+        return WindowMutationIdentity(
+            windowID: Int(snapshot.windowID),
+            ownerProcessIdentifier: snapshot.ownerProcessIdentifier,
+            ownerProcessStartIdentity: snapshot.ownerProcessStartIdentity,
+            capturedBounds: snapshot.bounds,
+            isMinimized: snapshot.isMinimized)
+    }
+
+    /// Captures an exact AX window receipt when WindowServer omits a minimized entry. If a CG entry
+    /// exists it remains authoritative and must match; absence is accepted only for AX-minimized state.
+    static func axWindowMutationIdentity(
+        snapshot: WindowMutationSnapshot,
+        processStartIdentityProvider: (pid_t) -> UInt64?,
+        windowIdentityProvider: (CGWindowID) -> SystemWindowIdentity?) -> WindowMutationIdentity?
+    {
+        guard snapshot.windowID != kCGNullWindowID,
+              snapshot.ownerProcessIdentifier > 0,
+              processStartIdentityProvider(snapshot.ownerProcessIdentifier) == snapshot.ownerProcessStartIdentity
+        else {
+            return nil
+        }
+        if let current = windowIdentityProvider(snapshot.windowID) {
+            guard current.windowID == snapshot.windowID,
+                  current.ownerProcessIdentifier == snapshot.ownerProcessIdentifier,
+                  current.bounds == snapshot.bounds
+            else {
+                return nil
+            }
+        } else if snapshot.isMinimized != true {
+            return nil
+        }
+        guard processStartIdentityProvider(snapshot.ownerProcessIdentifier) == snapshot.ownerProcessStartIdentity else {
+            return nil
+        }
+        return WindowMutationIdentity(
+            windowID: Int(snapshot.windowID),
+            ownerProcessIdentifier: snapshot.ownerProcessIdentifier,
+            ownerProcessStartIdentity: snapshot.ownerProcessStartIdentity,
+            capturedBounds: snapshot.bounds,
+            isMinimized: snapshot.isMinimized)
+    }
+
+    /// Revalidates only the owner process generation. This is a prerequisite for a bounded AX scan,
+    /// not sufficient evidence that a recyclable window identifier still names the captured window.
+    public static func validateWindowMutationOwnerGeneration(_ expected: WindowMutationIdentity) -> Bool {
+        expected.windowID > 0 &&
+            expected.ownerProcessIdentifier > 0 &&
+            CGWindowID(exactly: expected.windowID) != nil &&
+            self.processStartIdentity(expected.ownerProcessIdentifier) == expected.ownerProcessStartIdentity
+    }
+
+    /// Revalidates the exact window owner, owner process generation, and capture-time bounds.
+    public static func validateWindowMutationIdentity(_ expected: WindowMutationIdentity) -> Bool {
+        guard let capturedBounds = expected.capturedBounds else { return false }
+        return self.validateWindowMutationIdentity(expected, expectedBounds: capturedBounds)
+    }
+
+    /// Revalidates one capture-time bounds sidecar. Legacy input receipts may still carry the bounds
+    /// separately, but when the receipt embeds bounds both sources must agree.
+    public static func validateWindowMutationIdentity(
+        _ expected: WindowMutationIdentity,
+        expectedBounds: CGRect) -> Bool
+    {
+        guard expected.capturedBounds == nil || expected.capturedBounds == expectedBounds else {
+            return false
+        }
+        return self.validateWindowMutationIdentity(
+            expected,
+            expectedBounds: expectedBounds,
+            processStartIdentityProvider: self.processStartIdentity,
+            windowIdentityProvider: self.windowIdentity)
+    }
+
+    static func validateWindowMutationIdentity(
+        _ expected: WindowMutationIdentity,
+        expectedBounds: CGRect,
+        processStartIdentityProvider: (pid_t) -> UInt64?,
+        windowIdentityProvider: (CGWindowID) -> SystemWindowIdentity?) -> Bool
+    {
+        guard expected.windowID > 0,
+              expected.ownerProcessIdentifier > 0,
+              let windowID = CGWindowID(exactly: expected.windowID),
+              processStartIdentityProvider(expected.ownerProcessIdentifier) == expected.ownerProcessStartIdentity,
+              let current = windowIdentityProvider(windowID)
+        else {
+            return false
+        }
+        return current.ownerProcessIdentifier == expected.ownerProcessIdentifier && current.bounds == expectedBounds
+    }
+
+    /// Repins a completed geometry mutation only when the requested final bounds belong to the
+    /// original owner process generation. Callers intentionally discard the old bounds receipt.
+    public static func repinWindowMutationIdentity(
+        _ expected: WindowMutationIdentity,
+        expectedBounds: CGRect,
+        tolerance: CGFloat = 1) -> WindowMutationIdentity?
+    {
+        self.repinWindowMutationIdentity(
+            expected,
+            expectedBounds: expectedBounds,
+            tolerance: tolerance,
+            providers: WindowMutationIdentityProviders(
+                processStartIdentity: self.processStartIdentity,
+                windowIdentity: self.windowIdentity,
+                mutationIdentity: self.windowMutationIdentity))
+    }
+
+    static func repinWindowMutationIdentity(
+        _ expected: WindowMutationIdentity,
+        expectedBounds: CGRect,
+        tolerance: CGFloat,
+        providers: WindowMutationIdentityProviders) -> WindowMutationIdentity?
+    {
+        guard expected.windowID > 0,
+              expected.ownerProcessIdentifier > 0,
+              let windowID = CGWindowID(exactly: expected.windowID),
+              providers.processStartIdentity(expected.ownerProcessIdentifier) == expected.ownerProcessStartIdentity,
+              let current = providers.windowIdentity(windowID),
+              current.ownerProcessIdentifier == expected.ownerProcessIdentifier,
+              self.boundsMatch(current.bounds, expectedBounds, tolerance: tolerance),
+              let repinned = providers.mutationIdentity(windowID),
+              repinned.ownerProcessIdentifier == expected.ownerProcessIdentifier,
+              repinned.ownerProcessStartIdentity == expected.ownerProcessStartIdentity,
+              let repinnedBounds = repinned.capturedBounds,
+              self.boundsMatch(repinnedBounds, expectedBounds, tolerance: tolerance)
+        else {
+            return nil
+        }
+        return repinned
+    }
+
+    private static func boundsMatch(_ lhs: CGRect, _ rhs: CGRect, tolerance: CGFloat) -> Bool {
+        abs(lhs.minX - rhs.minX) <= tolerance &&
+            abs(lhs.minY - rhs.minY) <= tolerance &&
+            abs(lhs.width - rhs.width) <= tolerance &&
+            abs(lhs.height - rhs.height) <= tolerance
+    }
+
+    private static func intValue(_ value: Any?) -> Int? {
+        switch value {
+        case let value as Int:
+            value
+        case let value as Int32:
+            Int(value)
+        case let value as NSNumber:
+            value.intValue
+        default:
+            nil
+        }
+    }
+
+    private static func cgFloatValue(_ value: Any?) -> CGFloat? {
+        switch value {
+        case let value as CGFloat:
+            value
+        case let value as Double:
+            CGFloat(value)
+        case let value as Int:
+            CGFloat(value)
+        case let value as NSNumber:
+            CGFloat(value.doubleValue)
+        default:
+            nil
+        }
+    }
+}

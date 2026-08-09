@@ -39,6 +39,112 @@ final class ProcessServiceCaptureScriptTests: XCTestCase {
         XCTAssertLessThanOrEqual(try XCTUnwrap(result.startedAt), Date())
     }
 
+    func testEachScriptSeeCreatesFreshSnapshotForNamedReferences() async throws {
+        let firstURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekaboo-script-first-\(UUID().uuidString).png")
+        let secondURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekaboo-script-second-\(UUID().uuidString).png")
+        let processService = ProcessService(
+            applicationService: UnusedApplicationService(),
+            screenCaptureService: StaticScreenCaptureService(),
+            snapshotManager: InMemorySnapshotManager(),
+            uiAutomationService: UnusedUIAutomationService(),
+            windowManagementService: UnusedWindowManagementService(),
+            menuService: UnusedMenuService(),
+            dockService: UnusedDockService(),
+            clipboardService: ClipboardService(pasteboard: NSPasteboard.withUniqueName()))
+        defer {
+            try? FileManager.default.removeItem(at: firstURL)
+            try? FileManager.default.removeItem(at: secondURL)
+        }
+
+        let results = try await processService.executeScript(
+            PeekabooScript(description: nil, steps: [
+                ScriptStep(stepId: "first", comment: nil, command: "see", params: .screenshot(.init(
+                    path: firstURL.path,
+                    mode: "frontmost",
+                    annotate: false))),
+                ScriptStep(stepId: "second", comment: nil, command: "see", params: .screenshot(.init(
+                    path: secondURL.path,
+                    mode: "frontmost",
+                    annotate: false))),
+            ]),
+            failFast: true,
+            verbose: false)
+
+        XCTAssertEqual(results.count, 2)
+        XCTAssertNotEqual(try XCTUnwrap(results[0].snapshotId), try XCTUnwrap(results[1].snapshotId))
+    }
+
+    func testGenericSeeParsesPIDAndExactWindowID() throws {
+        let processService = ProcessService(
+            applicationService: UnusedApplicationService(),
+            screenCaptureService: UnusedScreenCaptureService(),
+            snapshotManager: UnusedSnapshotManager(),
+            uiAutomationService: UnusedUIAutomationService(),
+            windowManagementService: UnusedWindowManagementService(),
+            menuService: UnusedMenuService(),
+            dockService: UnusedDockService(),
+            clipboardService: ClipboardService(pasteboard: NSPasteboard.withUniqueName()))
+
+        let normalized = try processService.normalizeStepParameters(ScriptStep(
+            stepId: "observe",
+            comment: nil,
+            command: "see",
+            params: .generic([
+                "pid": "4242",
+                "window_id": "9001",
+                "path": "/tmp/observe.png",
+            ])))
+
+        guard case let .screenshot(params) = normalized.params else {
+            return XCTFail("Expected screenshot parameters")
+        }
+        XCTAssertEqual(params.pid, 4242)
+        XCTAssertEqual(params.windowId, 9001)
+    }
+
+    func testRunRejectsMalformedAndOverflowingTargetIdentifiersBeforeCapture() async throws {
+        let capture = StaticScreenCaptureService()
+        let processService = ProcessService(
+            applicationService: UnusedApplicationService(),
+            screenCaptureService: capture,
+            snapshotManager: UnusedSnapshotManager(),
+            uiAutomationService: UnusedUIAutomationService(),
+            windowManagementService: UnusedWindowManagementService(),
+            menuService: UnusedMenuService(),
+            dockService: UnusedDockService(),
+            clipboardService: ClipboardService(pasteboard: NSPasteboard.withUniqueName()))
+        let invalidTargets = [
+            (key: "pid", value: "not-a-pid", expectedField: "pid"),
+            (key: "pid", value: String(UInt64(Int32.max) + 1), expectedField: "pid"),
+            (key: "window-id", value: "12.5", expectedField: "windowId"),
+            (key: "window_id", value: String(UInt64(UInt32.max) + 1), expectedField: "windowId"),
+        ]
+
+        for invalidTarget in invalidTargets {
+            let results = try await processService.executeScript(
+                PeekabooScript(description: nil, steps: [
+                    ScriptStep(
+                        stepId: "invalid-target",
+                        comment: nil,
+                        command: "see",
+                        params: .generic([
+                            invalidTarget.key: invalidTarget.value,
+                            "path": "/tmp/peekaboo-invalid-target-must-not-capture.png",
+                        ])),
+                ]),
+                failFast: true,
+                verbose: false)
+
+            XCTAssertEqual(results.count, 1)
+            XCTAssertFalse(results[0].success)
+            XCTAssertTrue(try XCTUnwrap(results[0].error).contains("Invalid \(invalidTarget.expectedField)"))
+        }
+
+        XCTAssertEqual(capture.captureCount, 0)
+    }
+
     func testScreenshotPathExpandsHomeDirectoryPath() async throws {
         let relativePath = "Library/Caches/peekaboo-script-shot-\(UUID().uuidString).png"
         let outputURL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(relativePath)
@@ -113,13 +219,15 @@ final class ProcessServiceCaptureScriptTests: XCTestCase {
 @MainActor
 private final class StaticScreenCaptureService: ScreenCaptureServiceProtocol {
     static let imageData = Data("fake screenshot".utf8)
+    private(set) var captureCount = 0
 
     func captureScreen(
         displayIndex _: Int?,
         visualizerMode _: CaptureVisualizerMode,
         scale _: CaptureScalePreference) async throws -> CaptureResult
     {
-        self.result(mode: .screen)
+        self.captureCount += 1
+        return self.result(mode: .screen)
     }
 
     func captureWindow(
@@ -128,14 +236,16 @@ private final class StaticScreenCaptureService: ScreenCaptureServiceProtocol {
         visualizerMode _: CaptureVisualizerMode,
         scale _: CaptureScalePreference) async throws -> CaptureResult
     {
-        self.result(mode: .window)
+        self.captureCount += 1
+        return self.result(mode: .window)
     }
 
     func captureFrontmost(
         visualizerMode _: CaptureVisualizerMode,
         scale _: CaptureScalePreference) async throws -> CaptureResult
     {
-        self.result(mode: .frontmost)
+        self.captureCount += 1
+        return self.result(mode: .frontmost)
     }
 
     func captureArea(
@@ -143,7 +253,8 @@ private final class StaticScreenCaptureService: ScreenCaptureServiceProtocol {
         visualizerMode _: CaptureVisualizerMode,
         scale _: CaptureScalePreference) async throws -> CaptureResult
     {
-        self.result(mode: .area)
+        self.captureCount += 1
+        return self.result(mode: .area)
     }
 
     func hasScreenRecordingPermission() async -> Bool {

@@ -58,6 +58,14 @@ public struct PeekabooBridgeInspectAccessibilityTreeRequest: Codable, Sendable {
     public let windowContext: WindowContext?
 }
 
+public struct PeekabooBridgeFocusedElementRequest: Codable, Sendable {
+    public let targetProcessIdentifier: Int32
+
+    public init(targetProcessIdentifier: Int32) {
+        self.targetProcessIdentifier = targetProcessIdentifier
+    }
+}
+
 public struct PeekabooBridgeClickRequest: Codable, Sendable {
     public let target: ClickTarget
     public let clickType: ClickType
@@ -100,6 +108,31 @@ public struct PeekabooBridgeTargetedTypeActionsRequest: Codable, Sendable {
         self.cadence = cadence
         self.snapshotId = snapshotId
         self.targetProcessIdentifier = targetProcessIdentifier
+    }
+}
+
+public struct PeekabooBridgeExactWindowTypeActionsRequest: Codable, Sendable {
+    public let actions: [TypeAction]
+    public let cadence: TypingCadence
+    public let snapshotId: String?
+    public let expectedWindowIdentity: WindowMutationIdentity
+    public let expectedWindowBounds: CGRect
+    public let expectedFocusedElement: FocusedElementIdentity?
+
+    public init(
+        actions: [TypeAction],
+        cadence: TypingCadence,
+        snapshotId: String?,
+        expectedWindowIdentity: WindowMutationIdentity,
+        expectedWindowBounds: CGRect,
+        expectedFocusedElement: FocusedElementIdentity? = nil)
+    {
+        self.actions = actions
+        self.cadence = cadence
+        self.snapshotId = snapshotId
+        self.expectedWindowIdentity = expectedWindowIdentity
+        self.expectedWindowBounds = expectedWindowBounds
+        self.expectedFocusedElement = expectedFocusedElement
     }
 }
 
@@ -157,25 +190,53 @@ public struct PeekabooBridgeTargetedHotkeyRequest: Codable, Sendable {
     }
 }
 
+public struct PeekabooBridgeExactWindowHotkeyRequest: Codable, Sendable {
+    public let keys: String
+    public let holdDuration: Int
+    public let expectedWindowIdentity: WindowMutationIdentity
+    public let expectedWindowBounds: CGRect
+    public let expectedFocusedElement: FocusedElementIdentity?
+
+    public init(
+        keys: String,
+        holdDuration: Int,
+        expectedWindowIdentity: WindowMutationIdentity,
+        expectedWindowBounds: CGRect,
+        expectedFocusedElement: FocusedElementIdentity? = nil)
+    {
+        self.keys = keys
+        self.holdDuration = holdDuration
+        self.expectedWindowIdentity = expectedWindowIdentity
+        self.expectedWindowBounds = expectedWindowBounds
+        self.expectedFocusedElement = expectedFocusedElement
+    }
+}
+
 public struct PeekabooBridgeTargetedClickRequest: Codable, Sendable {
     public let target: ClickTarget
     public let clickType: ClickType
     public let snapshotId: String?
     public let targetProcessIdentifier: Int32
     public let targetWindowID: Int?
+    public let expectedWindowIdentity: WindowMutationIdentity?
+    public let expectedWindowBounds: CGRect?
 
     public init(
         target: ClickTarget,
         clickType: ClickType,
         snapshotId: String?,
         targetProcessIdentifier: Int32,
-        targetWindowID: Int? = nil)
+        targetWindowID: Int? = nil,
+        expectedWindowIdentity: WindowMutationIdentity? = nil,
+        expectedWindowBounds: CGRect? = nil)
     {
         self.target = target
         self.clickType = clickType
         self.snapshotId = snapshotId
         self.targetProcessIdentifier = targetProcessIdentifier
         self.targetWindowID = targetWindowID
+        self.expectedWindowIdentity = expectedWindowIdentity
+        self.expectedWindowBounds = expectedWindowBounds
     }
 
     /// Whether a legacy (protocol <= 1.8) host would deliver this request via the synthetic
@@ -247,21 +308,60 @@ public struct PeekabooBridgeWaitRequest: Codable, Sendable {
 
 public struct PeekabooBridgeWindowTargetRequest: Codable, Sendable {
     public let target: WindowTarget
+    public let expectedIdentity: WindowMutationIdentity?
+
+    public init(target: WindowTarget, expectedIdentity: WindowMutationIdentity? = nil) {
+        self.target = target
+        self.expectedIdentity = expectedIdentity
+    }
 }
 
 public struct PeekabooBridgeWindowMoveRequest: Codable, Sendable {
     public let target: WindowTarget
+    public let expectedIdentity: WindowMutationIdentity?
     public let position: CGPoint
+
+    public init(
+        target: WindowTarget,
+        expectedIdentity: WindowMutationIdentity? = nil,
+        position: CGPoint)
+    {
+        self.target = target
+        self.expectedIdentity = expectedIdentity
+        self.position = position
+    }
 }
 
 public struct PeekabooBridgeWindowResizeRequest: Codable, Sendable {
     public let target: WindowTarget
+    public let expectedIdentity: WindowMutationIdentity?
     public let size: CGSize
+
+    public init(
+        target: WindowTarget,
+        expectedIdentity: WindowMutationIdentity? = nil,
+        size: CGSize)
+    {
+        self.target = target
+        self.expectedIdentity = expectedIdentity
+        self.size = size
+    }
 }
 
 public struct PeekabooBridgeWindowBoundsRequest: Codable, Sendable {
     public let target: WindowTarget
+    public let expectedIdentity: WindowMutationIdentity?
     public let bounds: CGRect
+
+    public init(
+        target: WindowTarget,
+        expectedIdentity: WindowMutationIdentity? = nil,
+        bounds: CGRect)
+    {
+        self.target = target
+        self.expectedIdentity = expectedIdentity
+        self.bounds = bounds
+    }
 }
 
 public struct PeekabooBridgeAppIdentifierRequest: Codable, Sendable {
@@ -275,6 +375,24 @@ public struct PeekabooBridgeAppIdentifierRequest: Codable, Sendable {
 public struct PeekabooBridgeQuitAppRequest: Codable, Sendable {
     public let identifier: String
     public let force: Bool
+    public let expectedIdentity: ApplicationProcessIdentity?
+
+    public init(
+        identifier: String,
+        force: Bool,
+        expectedIdentity: ApplicationProcessIdentity? = nil)
+    {
+        self.identifier = identifier
+        self.force = force
+        self.expectedIdentity = expectedIdentity
+    }
+
+    public init(_ request: ApplicationQuitRequest) {
+        self.init(
+            identifier: request.identifier,
+            force: request.force,
+            expectedIdentity: request.expectedIdentity)
+    }
 }
 
 public struct PeekabooBridgeMenuListRequest: Codable, Sendable {

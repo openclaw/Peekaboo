@@ -9,6 +9,8 @@ public struct SnapshotScreenshotRequest: Sendable, Equatable {
     public let applicationName: String?
     public let windowTitle: String?
     public let windowBounds: CGRect?
+    public let windowID: Int?
+    public let windowMutationIdentity: WindowMutationIdentity?
 
     public init(
         snapshotId: String,
@@ -17,7 +19,9 @@ public struct SnapshotScreenshotRequest: Sendable, Equatable {
         applicationProcessId: Int32?,
         applicationName: String?,
         windowTitle: String?,
-        windowBounds: CGRect?)
+        windowBounds: CGRect?,
+        windowID: Int? = nil,
+        windowMutationIdentity: WindowMutationIdentity? = nil)
     {
         self.snapshotId = snapshotId
         self.screenshotPath = screenshotPath
@@ -26,6 +30,8 @@ public struct SnapshotScreenshotRequest: Sendable, Equatable {
         self.applicationName = applicationName
         self.windowTitle = windowTitle
         self.windowBounds = windowBounds
+        self.windowID = windowID
+        self.windowMutationIdentity = windowMutationIdentity
     }
 }
 

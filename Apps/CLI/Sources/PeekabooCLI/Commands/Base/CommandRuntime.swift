@@ -27,8 +27,12 @@ struct CommandRuntimeOptions {
     var requiresInspectAccessibilityTree = false
     var requiresBrowserMCP = false
     var requiresApplicationLaunchOptions = false
+    var requiresNewApplicationInstanceLaunch = false
+    var requiresApplicationWindowReadiness = false
     var requiresApplicationRelaunch = false
     var requiresSurvivingApplicationHost = false
+    /// Protocol 1.16 carries a process-generation receipt with application quit requests.
+    var requiresProcessGenerationPinnedApplicationQuit = false
     var requiresHostApplicationInventory = false
     var requiresImplicitSnapshotInvalidation = false
     var requiresCallerDesktopMutationBarrier = false
@@ -40,6 +44,16 @@ struct CommandRuntimeOptions {
     var requiresLongPressClick = false
     var requiresBackgroundWindowClose = false
     var requiresBackgroundDialogClick = false
+    /// Protocol 1.12 added the silent capture visualizer mode used by background observation.
+    /// Older hosts cannot decode that enum value, so commands that can send it must fail preflight.
+    var requiresSilentCapture = false
+    var requiresTargetedFocusedElement = false
+    var requiresExactWindowTargetedKeyboard = false
+    /// Protocol 1.18 pins window mutations to the PID, process generation, CGWindowID, and
+    /// capture-time bounds. Commands that mutate a window must reject older hosts before dispatch.
+    var requiresPinnedWindowMutations = false
+    /// Restore was added as a receipt-pinned Bridge operation in protocol 1.18.
+    var requiresWindowRestore = false
     /// Set for commands that acquire screen pixels (capture/detection/desktop observation) so a
     /// remote host that explicitly lacks Screen Recording is rejected during selection. Not set for
     /// interaction commands (click/scroll/type) that operate on cached snapshots.
@@ -63,7 +77,7 @@ struct CommandRuntimeOptions {
         if options.captureEnginePreference == nil,
            let captureEngine = Self.captureEnginePreference(environment: environment) {
             options.captureEnginePreference = captureEngine
-            if !options.requiresApplicationLaunchOptions && !options.requiresHostApplicationInventory {
+            if !options.requiresApplicationLaunchOptions, !options.requiresHostApplicationInventory {
                 options.preferRemote = false
             }
         }
@@ -73,7 +87,8 @@ struct CommandRuntimeOptions {
     static func captureEnginePreference(environment: [String: String]) -> String? {
         guard let value = environment["PEEKABOO_CAPTURE_ENGINE"]?
             .trimmingCharacters(in: .whitespacesAndNewlines),
-            !value.isEmpty else {
+            !value.isEmpty
+        else {
             return nil
         }
         return value
@@ -142,7 +157,7 @@ struct CommandRuntime {
         self.logger.setJsonOutputMode(configuration.jsonOutput)
         let explicitLevel = configuration.logLevel
         var shouldEnableVerbose = configuration.verbose
-        if configuration.jsonOutput && explicitLevel == nil {
+        if configuration.jsonOutput, explicitLevel == nil {
             shouldEnableVerbose = true
         }
         if let explicitLevel, explicitLevel <= .verbose {

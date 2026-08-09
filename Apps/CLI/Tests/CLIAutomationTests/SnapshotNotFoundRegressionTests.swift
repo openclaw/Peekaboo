@@ -13,7 +13,7 @@ struct SnapshotNotFoundRegressionTests {
         try await context.snapshots.cleanSnapshot(snapshotId: snapshotId)
 
         let result = try await InProcessCommandRunner.run(
-            ["click", "Single Click", "--snapshot", snapshotId, "--json", "--no-auto-focus"],
+            ["click", "Single Click", "--snapshot", snapshotId, "--json"],
             services: context.services
         )
 
@@ -31,7 +31,7 @@ struct SnapshotNotFoundRegressionTests {
         try await context.snapshots.cleanSnapshot(snapshotId: snapshotId)
 
         let result = try await InProcessCommandRunner.run(
-            ["move", "--on", "B1", "--snapshot", snapshotId, "--json"],
+            ["move", "--on", "B1", "--snapshot", snapshotId, "--foreground", "--json"],
             services: context.services
         )
 
@@ -49,7 +49,7 @@ struct SnapshotNotFoundRegressionTests {
         try await context.snapshots.cleanSnapshot(snapshotId: snapshotId)
 
         let result = try await InProcessCommandRunner.run(
-            ["scroll", "--direction", "down", "--on", "B1", "--snapshot", snapshotId, "--json", "--no-auto-focus"],
+            ["scroll", "--direction", "down", "--on", "B1", "--snapshot", snapshotId, "--json"],
             services: context.services
         )
 
@@ -67,7 +67,10 @@ struct SnapshotNotFoundRegressionTests {
         try await context.snapshots.cleanSnapshot(snapshotId: snapshotId)
 
         let result = try await InProcessCommandRunner.run(
-            ["drag", "--from", "B1", "--to", "B1", "--snapshot", snapshotId, "--json", "--no-auto-focus"],
+            [
+                "drag", "--from", "B1", "--to", "B1", "--snapshot", snapshotId,
+                "--foreground", "--json",
+            ],
             services: context.services
         )
 
@@ -85,7 +88,7 @@ struct SnapshotNotFoundRegressionTests {
         try await context.snapshots.cleanSnapshot(snapshotId: snapshotId)
 
         let result = try await InProcessCommandRunner.run(
-            ["swipe", "--from", "B1", "--to", "B1", "--snapshot", snapshotId, "--json"],
+            ["swipe", "--from", "B1", "--to", "B1", "--snapshot", snapshotId, "--foreground", "--json"],
             services: context.services
         )
 

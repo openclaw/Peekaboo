@@ -130,6 +130,17 @@ The MCP `image` and `see` tools share target parsing with the desktop observatio
 - pass `menubar` for menu-bar capture;
 - pass `PID:1234`, `PID:1234:2`, `App Name`, `App Name:2`, or `App Name:Window Title` for app/window capture.
 
+The `see` and `inspect_ui` tools additionally accept an exact CoreGraphics `window_id` when `app_target` names the
+owning application or PID. Peekaboo verifies that ownership before using the ID. Do not combine `window_id` with a
+window title or index suffix in `app_target`; choose one window selector so stale inputs cannot redirect work to a
+sibling window from the same process. `window_id` is a positive 32-bit integer; strings, fractional numbers, zero,
+negative values, and out-of-range values fail before capture or Accessibility traversal begins.
+
+Every successful MCP `see` response includes the selected raw or annotated screenshot as inline image content. When
+multiple calls intentionally share the same `path`, each response still returns pixels owned by its own capture; the
+path remains the caller-requested publication destination and therefore contains whichever concurrent write finishes
+last.
+
 Observation and capture do not activate a target by default. `see` and `inspect_ui` only perform the focus-changing `AXWebArea` retry when `web_focus: true` is supplied. `image` and live `capture` use `capture_focus: "background"` by default; pass `capture_focus: "foreground"` when activating the target is intentional. The legacy `auto` value remains accepted for focus-if-needed compatibility.
 
 The MCP `image` tool stores logical 1x captures by default. Pass `scale: "native"` or `retina: true` to request native display pixels. Set `max_dimension` to a positive integer to cap the longest output edge while preserving aspect ratio; inline `format: "data"` captures default to 1500 pixels when no cap is supplied.
@@ -147,7 +158,21 @@ The `image` and `see` tools include an additive, versioned `coordinate_context` 
 
 Consumers should check `version` before interpreting the object. Version `1` uses `logical_space: "global_display_points"` and `origin: "top_left"`. To convert an image-local pixel `(px, py)` to a global logical point, scale it against `delivered_image_size` and add the `logical_bounds` origin; do not assume a fixed Retina factor. The fields are additive, so clients that do not understand them can continue ignoring `_meta`.
 
-The `click` tool accepts screenshot-relative coordinates when they are explicitly bound to a `see` snapshot. Pass `coordinate_space: "image_pixels"` for delivered-raster pixels or `coordinate_space: "normalized"` for values from 0 through 1, plus the snapshot's `reference_id` as `coordinate_reference`. Missing, stale, out-of-bounds, or moved-window references fail without dispatching a click. Bare `coords` retain their existing global logical-point meaning. Screen-wide references are not tied to an application process, so use `foreground: true` (or supply an explicit `pid` for background delivery).
+The `click` tool accepts screenshot-relative coordinates when they are explicitly bound to a `see` snapshot. Pass `coordinate_space: "image_pixels"` for delivered-raster pixels or `coordinate_space: "normalized"` for values from 0 through 1, plus the snapshot's `reference_id` as `coordinate_reference`. Missing, empty, stale, out-of-bounds, moved-window, owner-changed, or process-generation-changed references fail before automation. Every background coordinate click requires a nonempty exact-window capture reference; a bare PID/app plus global coordinates is ambiguous and is refused. Validation errors include `mutation_dispatched: false` and `retry_safe: true`, and do not invalidate snapshots as mutations. Explicit foreground global coordinates remain snapshot-free.
+
+Background right- and double-clicks use exact PID/window-routed native events without activating the app or moving the physical cursor. Every event revalidates the window owner, process generation, and bounds. Since macOS provides no application-level acknowledgment for routed pointer events, successful dispatch responses include `verified: false` and `effect: "unverifiable"`; an unprovable or changed route is refused rather than redirected through the desktop-global event tap.
+
+The MCP `paste` tool also keeps window selectors exact in background mode. With `window_id`, `window_title`, or
+`window_index`, it resolves one window and carries that window's ID, owner PID, and bounds into the atomic keyboard
+dispatch; it never degrades the request to process-only delivery that could reach a sibling window. Direct text
+revalidates the exact focused destination throughout typing and never touches the clipboard. If process-targeted or
+exact-window direct text fails or is cancelled after dispatch begins, a prefix may already have been inserted;
+Peekaboo returns `paste_outcome: "indeterminate"`, `partial_text_possible: true`, `retry_safe: false`,
+`clipboard_mutated: false`, and `requires_fresh_observation: true`, with `characters_typed: null` rather than guessing
+the delivered prefix length when the input receipt cannot provide one. When the receipt does contain an emitted-unit
+count, `characters_typed` reports that lower bound. Rich/binary and current-clipboard payloads require the same
+exact-window capability before clipboard mutation or Cmd+V dispatch, then return the normal retry-unsafe
+may-have-pasted result because macOS does not acknowledge receiver consumption.
 
 Pointer tools use an explicit interruption policy. `scroll` is background-safe only when `on` identifies an Accessibility-scrollable element; it never falls back to the shared cursor. Set `foreground: true` for targetless, smooth, or delayed scrolling. `move`, `drag`, and `swipe` always manipulate the shared physical cursor, require `foreground: true`, and abort if a requested target cannot be focused. MCP schemas intentionally omit background/auto-focus fields for those global pointer tools.
 

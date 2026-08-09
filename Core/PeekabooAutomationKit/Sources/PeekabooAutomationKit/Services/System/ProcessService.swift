@@ -1,5 +1,14 @@
+import CoreGraphics
 import Foundation
 import PeekabooFoundation
+
+struct BackgroundKeyboardDestinationProof: Sendable, Equatable {
+    let snapshotID: String
+    let processID: pid_t
+    let windowID: Int
+    let windowIdentity: WindowMutationIdentity
+    let focusedElement: FocusedElementIdentity
+}
 
 /// Implementation of ProcessServiceProtocol for executing Peekaboo scripts
 @available(macOS 14.0, *)
@@ -14,6 +23,8 @@ public final class ProcessService: ProcessServiceProtocol {
     let dockService: any DockServiceProtocol
     let clipboardService: any ClipboardServiceProtocol
     let screenService: any ScreenServiceProtocol
+    let systemWindowIdentityProvider: @Sendable (CGWindowID) -> SystemWindowIdentity?
+    let windowMutationIdentityProvider: @Sendable (CGWindowID) -> WindowMutationIdentity?
 
     public init(
         applicationService: any ApplicationServiceProtocol,
@@ -24,7 +35,11 @@ public final class ProcessService: ProcessServiceProtocol {
         menuService: any MenuServiceProtocol,
         dockService: any DockServiceProtocol,
         clipboardService: any ClipboardServiceProtocol,
-        screenService: any ScreenServiceProtocol)
+        screenService: any ScreenServiceProtocol,
+        systemWindowIdentityProvider: @escaping @Sendable (CGWindowID) -> SystemWindowIdentity? =
+            SystemIdentityResolver.windowIdentity,
+        windowMutationIdentityProvider: @escaping @Sendable (CGWindowID) -> WindowMutationIdentity? =
+            SystemIdentityResolver.windowMutationIdentity)
     {
         self.applicationService = applicationService
         self.screenCaptureService = screenCaptureService
@@ -35,6 +50,8 @@ public final class ProcessService: ProcessServiceProtocol {
         self.dockService = dockService
         self.clipboardService = clipboardService
         self.screenService = screenService
+        self.systemWindowIdentityProvider = systemWindowIdentityProvider
+        self.windowMutationIdentityProvider = windowMutationIdentityProvider
     }
 
     public convenience init(
@@ -162,19 +179,35 @@ public final class ProcessService: ProcessServiceProtocol {
     {
         var results: [StepResult] = []
         var currentSnapshotId: String?
+        var snapshotIdsByStepId: [String: String] = [:]
+        var backgroundKeyboardDestinationProof: BackgroundKeyboardDestinationProof?
 
         for (index, step) in script.steps.indexed() {
             let stepNumber = index + 1
             let stepStartTime = Date()
 
             do {
+                let proofForCurrentStep = backgroundKeyboardDestinationProof
+                backgroundKeyboardDestinationProof = nil
+                let normalizedStep = try self.normalizeStepParameters(step)
+                let executionStep = try self.resolvingScriptSnapshotReference(
+                    in: normalizedStep,
+                    currentSnapshotId: currentSnapshotId,
+                    snapshotIdsByStepId: snapshotIdsByStepId)
                 // Execute the step
-                let executionResult = try await executeStep(step, snapshotId: currentSnapshotId)
+                let executionResult = try await self.executeStep(
+                    executionStep,
+                    snapshotId: executionStep.command.lowercased() == "see" ? nil : currentSnapshotId,
+                    backgroundKeyboardDestinationProof: proofForCurrentStep)
 
                 // Update snapshot ID if a new one was created
                 if let newSnapshotId = executionResult.snapshotId {
                     currentSnapshotId = newSnapshotId
+                    snapshotIdsByStepId[step.stepId] = newSnapshotId
                 }
+                backgroundKeyboardDestinationProof = await self.backgroundKeyboardDestinationProof(
+                    after: executionStep,
+                    result: executionResult)
 
                 let result = StepResult(
                     stepId: step.stepId,
@@ -212,6 +245,77 @@ public final class ProcessService: ProcessServiceProtocol {
 
         return results
     }
+
+    func resolvingScriptSnapshotReference(
+        in step: ScriptStep,
+        currentSnapshotId: String?,
+        snapshotIdsByStepId: [String: String]) throws -> ScriptStep
+    {
+        func resolve(_ reference: String?) throws -> String? {
+            guard let reference else { return nil }
+            if reference.caseInsensitiveCompare("latest") == .orderedSame {
+                guard let currentSnapshotId else {
+                    throw PeekabooError.snapshotNotAvailable(
+                        "No preceding script step has produced a snapshot for `latest`")
+                }
+                return currentSnapshotId
+            }
+            return snapshotIdsByStepId[reference] ?? reference
+        }
+
+        let parameters: ProcessCommandParameters? = switch step.params {
+        case let .click(value):
+            try .click(.init(
+                x: value.x,
+                y: value.y,
+                label: value.label,
+                app: value.app,
+                pid: value.pid,
+                windowId: value.windowId,
+                snapshot: resolve(value.snapshot),
+                foreground: value.foreground,
+                button: value.button,
+                modifiers: value.modifiers))
+        case let .type(value):
+            try .type(.init(
+                text: value.text,
+                app: value.app,
+                pid: value.pid,
+                windowId: value.windowId,
+                snapshot: resolve(value.snapshot),
+                foreground: value.foreground,
+                field: value.field,
+                clearFirst: value.clearFirst,
+                pressEnter: value.pressEnter))
+        case let .hotkey(value):
+            try .hotkey(.init(
+                key: value.key,
+                modifiers: value.modifiers,
+                app: value.app,
+                pid: value.pid,
+                windowId: value.windowId,
+                snapshot: resolve(value.snapshot),
+                foreground: value.foreground))
+        case let .scroll(value):
+            try .scroll(.init(
+                direction: value.direction,
+                amount: value.amount,
+                app: value.app,
+                pid: value.pid,
+                windowId: value.windowId,
+                snapshot: resolve(value.snapshot),
+                foreground: value.foreground,
+                target: value.target))
+        default:
+            step.params
+        }
+
+        return ScriptStep(
+            stepId: step.stepId,
+            comment: step.comment,
+            command: step.command,
+            params: parameters)
+    }
 }
 
 @MainActor
@@ -220,7 +324,18 @@ extension ProcessService {
         _ step: ScriptStep,
         snapshotId: String?) async throws -> StepExecutionResult
     {
-        let normalizedStep = self.normalizeStepParameters(step)
+        try await self.executeStep(
+            step,
+            snapshotId: snapshotId,
+            backgroundKeyboardDestinationProof: nil)
+    }
+
+    func executeStep(
+        _ step: ScriptStep,
+        snapshotId: String?,
+        backgroundKeyboardDestinationProof: BackgroundKeyboardDestinationProof?) async throws -> StepExecutionResult
+    {
+        let normalizedStep = try self.normalizeStepParameters(step)
 
         switch normalizedStep.command.lowercased() {
         case "see":
@@ -228,7 +343,10 @@ extension ProcessService {
         case "click":
             return try await self.executeClickCommand(normalizedStep, snapshotId: snapshotId)
         case "type":
-            return try await self.executeTypeCommand(normalizedStep, snapshotId: snapshotId)
+            return try await self.executeTypeCommand(
+                normalizedStep,
+                snapshotId: snapshotId,
+                backgroundKeyboardDestinationProof: backgroundKeyboardDestinationProof)
         case "scroll":
             return try await self.executeScrollCommand(normalizedStep, snapshotId: snapshotId)
         case "swipe":
@@ -236,7 +354,10 @@ extension ProcessService {
         case "drag":
             return try await self.executeDragCommand(normalizedStep, snapshotId: snapshotId)
         case "hotkey":
-            return try await self.executeHotkeyCommand(normalizedStep, snapshotId: snapshotId)
+            return try await self.executeHotkeyCommand(
+                normalizedStep,
+                snapshotId: snapshotId,
+                backgroundKeyboardDestinationProof: backgroundKeyboardDestinationProof)
         case "sleep":
             return try await self.executeSleepCommand(normalizedStep)
         case "window":

@@ -26,35 +26,46 @@ extension WindowCommand {
 
             do {
                 try self.windowOptions.validate()
-                let target = try self.windowOptions.createTarget()
                 let appInfo = try await self.windowOptions.resolveApplicationInfoIfNeeded(services: self.services)
 
                 // Get window info
                 let windows = try await WindowServiceBridge.listWindows(
                     windows: self.services.windows,
-                    target: self.windowOptions.toWindowTarget()
+                    target: self.windowOptions.toWindowSelectionTarget()
                 )
-                let windowInfo = self.windowOptions.selectWindow(from: windows)
-                let appName = appInfo?.name ?? self.windowOptions.displayName(windowInfo: windowInfo)
-                guard windowInfo != nil else {
-                    throw PeekabooError.windowNotFound(criteria: "No windows found for \(appName)")
+                let selectedWindowInfo = self.windowOptions.selectWindow(from: windows)
+                let appName = appInfo?.name ?? self.windowOptions.displayName(windowInfo: selectedWindowInfo)
+                let windowInfo = try self.windowOptions.requireMutationWindow(
+                    from: windows,
+                    expectedApplication: appInfo,
+                    action: "move"
+                )
+                let target = WindowTarget.windowId(windowInfo.windowID)
+                guard let mutationIdentity = windowInfo.mutationIdentity else {
+                    throw PeekabooError.commandFailed(
+                        "Window \(windowInfo.windowID) did not include a process-generation identity"
+                    )
                 }
 
                 // Move the window
                 let newOrigin = CGPoint(x: x, y: y)
                 self.resolvedRuntime.beginInteractionMutation()
-                try await WindowServiceBridge.moveWindow(windows: self.services.windows, target: target, to: newOrigin)
+                try await WindowServiceBridge.moveWindow(
+                    windows: self.services.windows,
+                    target: target,
+                    expectedIdentity: mutationIdentity,
+                    to: newOrigin
+                )
                 await invalidateLatestSnapshotAfterWindowMutation(
                     runtime: self.resolvedRuntime,
                     reason: "window move"
                 )
 
                 // Read the frame back so the report shows what the OS actually applied.
-                let refreshedWindowInfo = await self.windowOptions.refetchWindowInfo(
-                    services: self.services,
-                    logger: self.logger,
-                    context: "window-move"
-                )
+                let refreshedWindowInfo = try await WindowServiceBridge.listWindows(
+                    windows: self.services.windows,
+                    target: target
+                ).first
                 let verified = try verifiedWindowActionResult(
                     action: "move",
                     appName: appName,
@@ -112,35 +123,46 @@ extension WindowCommand {
 
             do {
                 try self.windowOptions.validate()
-                let target = try self.windowOptions.createTarget()
                 let appInfo = try await self.windowOptions.resolveApplicationInfoIfNeeded(services: self.services)
 
                 // Get window info
                 let windows = try await WindowServiceBridge.listWindows(
                     windows: self.services.windows,
-                    target: self.windowOptions.toWindowTarget()
+                    target: self.windowOptions.toWindowSelectionTarget()
                 )
-                let windowInfo = self.windowOptions.selectWindow(from: windows)
-                let appName = appInfo?.name ?? self.windowOptions.displayName(windowInfo: windowInfo)
-                guard windowInfo != nil else {
-                    throw PeekabooError.windowNotFound(criteria: "No windows found for \(appName)")
+                let selectedWindowInfo = self.windowOptions.selectWindow(from: windows)
+                let appName = appInfo?.name ?? self.windowOptions.displayName(windowInfo: selectedWindowInfo)
+                let windowInfo = try self.windowOptions.requireMutationWindow(
+                    from: windows,
+                    expectedApplication: appInfo,
+                    action: "resize"
+                )
+                let target = WindowTarget.windowId(windowInfo.windowID)
+                guard let mutationIdentity = windowInfo.mutationIdentity else {
+                    throw PeekabooError.commandFailed(
+                        "Window \(windowInfo.windowID) did not include a process-generation identity"
+                    )
                 }
 
                 // Resize the window
                 let newSize = CGSize(width: width, height: height)
                 self.resolvedRuntime.beginInteractionMutation()
-                try await WindowServiceBridge.resizeWindow(windows: self.services.windows, target: target, to: newSize)
+                try await WindowServiceBridge.resizeWindow(
+                    windows: self.services.windows,
+                    target: target,
+                    expectedIdentity: mutationIdentity,
+                    to: newSize
+                )
                 await invalidateLatestSnapshotAfterWindowMutation(
                     runtime: self.resolvedRuntime,
                     reason: "window resize"
                 )
 
                 // Read the frame back: AX accepts resizes the app then clamps (e.g. minimum size).
-                let refreshedWindowInfo = await self.windowOptions.refetchWindowInfo(
-                    services: self.services,
-                    logger: self.logger,
-                    context: "window-resize"
-                )
+                let refreshedWindowInfo = try await WindowServiceBridge.listWindows(
+                    windows: self.services.windows,
+                    target: target
+                ).first
                 let verified = try verifiedWindowActionResult(
                     action: "resize",
                     appName: appName,
@@ -204,18 +226,25 @@ extension WindowCommand {
 
             do {
                 try self.windowOptions.validate()
-                let target = try self.windowOptions.createTarget()
                 let appInfo = try await self.windowOptions.resolveApplicationInfoIfNeeded(services: self.services)
 
                 // Get window info
                 let windows = try await WindowServiceBridge.listWindows(
                     windows: self.services.windows,
-                    target: self.windowOptions.toWindowTarget()
+                    target: self.windowOptions.toWindowSelectionTarget()
                 )
-                let windowInfo = self.windowOptions.selectWindow(from: windows)
-                let appName = appInfo?.name ?? self.windowOptions.displayName(windowInfo: windowInfo)
-                guard windowInfo != nil else {
-                    throw PeekabooError.windowNotFound(criteria: "No windows found for \(appName)")
+                let selectedWindowInfo = self.windowOptions.selectWindow(from: windows)
+                let appName = appInfo?.name ?? self.windowOptions.displayName(windowInfo: selectedWindowInfo)
+                let windowInfo = try self.windowOptions.requireMutationWindow(
+                    from: windows,
+                    expectedApplication: appInfo,
+                    action: "set bounds"
+                )
+                let target = WindowTarget.windowId(windowInfo.windowID)
+                guard let mutationIdentity = windowInfo.mutationIdentity else {
+                    throw PeekabooError.commandFailed(
+                        "Window \(windowInfo.windowID) did not include a process-generation identity"
+                    )
                 }
 
                 // Set bounds
@@ -224,6 +253,7 @@ extension WindowCommand {
                 try await WindowServiceBridge.setWindowBounds(
                     windows: self.services.windows,
                     target: target,
+                    expectedIdentity: mutationIdentity,
                     bounds: newBounds
                 )
                 await invalidateLatestSnapshotAfterWindowMutation(
@@ -232,11 +262,10 @@ extension WindowCommand {
                 )
 
                 // Read the frame back so the report shows what the OS actually applied.
-                let refreshedWindowInfo = await self.windowOptions.refetchWindowInfo(
-                    services: self.services,
-                    logger: self.logger,
-                    context: "window-set-bounds"
-                )
+                let refreshedWindowInfo = try await WindowServiceBridge.listWindows(
+                    windows: self.services.windows,
+                    target: target
+                ).first
                 let verified = try verifiedWindowActionResult(
                     action: "set-bounds",
                     appName: appName,

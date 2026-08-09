@@ -1,14 +1,15 @@
 import Foundation
+import PeekabooFoundation
 
 @MainActor
 extension ProcessService {
     /// Normalize generic parameters to typed parameters based on command
-    func normalizeStepParameters(_ step: ScriptStep) -> ScriptStep {
+    func normalizeStepParameters(_ step: ScriptStep) throws -> ScriptStep {
         guard case let .generic(dict) = step.params else {
             return step
         }
 
-        guard let typedParams = self.typedParameters(for: step.command.lowercased(), dict: dict) else {
+        guard let typedParams = try self.typedParameters(for: step.command.lowercased(), dict: dict) else {
             return step
         }
 
@@ -19,18 +20,18 @@ extension ProcessService {
             params: typedParams)
     }
 
-    private func typedParameters(for command: String, dict: [String: String]) -> ProcessCommandParameters? {
+    private func typedParameters(for command: String, dict: [String: String]) throws -> ProcessCommandParameters? {
         switch command {
         case "see":
-            .screenshot(self.typedScreenshotParameters(from: dict))
+            try .screenshot(self.typedScreenshotParameters(from: dict))
         case "click":
-            .click(self.typedClickParameters(from: dict))
+            try .click(self.typedClickParameters(from: dict))
         case "type":
-            self.typedTypeParameters(from: dict)
+            try self.typedTypeParameters(from: dict)
         case "scroll":
-            .scroll(self.typedScrollParameters(from: dict))
+            try .scroll(self.typedScrollParameters(from: dict))
         case "hotkey":
-            self.typedHotkeyParameters(from: dict)
+            try self.typedHotkeyParameters(from: dict)
         case "menu":
             self.typedMenuParameters(from: dict)
         case "window":
@@ -52,19 +53,21 @@ extension ProcessService {
         }
     }
 
-    private func typedScreenshotParameters(from dict: [String: String]) -> ProcessCommandParameters
+    private func typedScreenshotParameters(from dict: [String: String]) throws -> ProcessCommandParameters
     .ScreenshotParameters {
-        ProcessCommandParameters.ScreenshotParameters(
+        try ProcessCommandParameters.ScreenshotParameters(
             path: dict["path"] ?? "screenshot.png",
             app: dict["app"],
+            pid: self.int32Value(from: dict, keys: ["pid"]),
+            windowId: self.intValue(from: dict, keys: ["windowId", "window-id", "window_id"]),
             window: dict["window"],
             display: dict["display"].flatMap { Int($0) },
             mode: dict["mode"],
             annotate: dict["annotate"].flatMap { Bool($0) })
     }
 
-    private func typedClickParameters(from dict: [String: String]) -> ProcessCommandParameters.ClickParameters {
-        ProcessCommandParameters.ClickParameters(
+    private func typedClickParameters(from dict: [String: String]) throws -> ProcessCommandParameters.ClickParameters {
+        try ProcessCommandParameters.ClickParameters(
             x: dict["x"].flatMap { Double($0) },
             y: dict["y"].flatMap { Double($0) },
             label: dict["query"] ?? dict["label"],
@@ -79,9 +82,9 @@ extension ProcessService {
             modifiers: nil)
     }
 
-    private func typedTypeParameters(from dict: [String: String]) -> ProcessCommandParameters? {
+    private func typedTypeParameters(from dict: [String: String]) throws -> ProcessCommandParameters? {
         guard let text = dict["text"] else { return nil }
-        return .type(ProcessCommandParameters.TypeParameters(
+        return try .type(ProcessCommandParameters.TypeParameters(
             text: text,
             app: dict["app"],
             pid: self.int32Value(from: dict, keys: ["pid"]),
@@ -89,12 +92,13 @@ extension ProcessService {
             snapshot: dict["snapshot"] ?? dict["snapshotId"] ?? dict["snapshot-id"],
             foreground: self.boolValue(from: dict, keys: ["foreground"]),
             field: dict["field"],
-            clearFirst: self.boolValue(from: dict, keys: ["clear-first", "clearFirst", "clear_first"]),
+            clearFirst: self.boolValue(from: dict, keys: ["clear", "clear-first", "clearFirst", "clear_first"]),
             pressEnter: self.boolValue(from: dict, keys: ["press-enter", "pressEnter", "press_enter"])))
     }
 
-    private func typedScrollParameters(from dict: [String: String]) -> ProcessCommandParameters.ScrollParameters {
-        ProcessCommandParameters.ScrollParameters(
+    private func typedScrollParameters(from dict: [String: String]) throws -> ProcessCommandParameters
+    .ScrollParameters {
+        try ProcessCommandParameters.ScrollParameters(
             direction: dict["direction"] ?? "down",
             amount: dict["amount"].flatMap { Int($0) },
             app: dict["app"],
@@ -105,8 +109,9 @@ extension ProcessService {
             target: dict["on"] ?? dict["target"])
     }
 
-    private func typedHotkeyParameters(from dict: [String: String]) -> ProcessCommandParameters? {
-        guard let key = dict["key"] else { return nil }
+    private func typedHotkeyParameters(from dict: [String: String]) throws -> ProcessCommandParameters? {
+        let chord = dict["keys"].map(self.parseHotkeyChord)
+        guard let key = dict["key"] ?? chord?.key else { return nil }
         var modifiers: [String] = []
         if dict["cmd"] == "true" || dict["command"] == "true" {
             modifiers.append("command")
@@ -126,8 +131,16 @@ extension ProcessService {
         if let modifierList = dict["modifiers"] {
             modifiers.append(contentsOf: self.parseModifierList(modifierList))
         }
+        if let chord {
+            modifiers.append(contentsOf: chord.modifiers)
+        }
+        modifiers = modifiers.reduce(into: []) { unique, modifier in
+            if !unique.contains(where: { $0.caseInsensitiveCompare(modifier) == .orderedSame }) {
+                unique.append(modifier)
+            }
+        }
 
-        return .hotkey(ProcessCommandParameters.HotkeyParameters(
+        return try .hotkey(ProcessCommandParameters.HotkeyParameters(
             key: key,
             modifiers: modifiers,
             app: dict["app"],
@@ -230,6 +243,16 @@ extension ProcessService {
             .filter { !$0.isEmpty }
     }
 
+    private func parseHotkeyChord(_ value: String) -> (key: String?, modifiers: [String]) {
+        let tokens = value.split(whereSeparator: { character in
+            character == "," || character == "+" || character.isWhitespace
+        }).map(String.init)
+        let modifierNames = Set(["cmd", "command", "shift", "ctrl", "control", "alt", "option", "fn", "function"])
+        let modifiers = tokens.filter { modifierNames.contains($0.lowercased()) }
+        let keys = tokens.filter { !modifierNames.contains($0.lowercased()) }
+        return (keys.count == 1 ? keys[0] : nil, modifiers)
+    }
+
     private func boolValue(from dict: [String: String], keys: [String]) -> Bool? {
         for key in keys {
             if let value = dict[key].flatMap(Bool.init) {
@@ -239,17 +262,12 @@ extension ProcessService {
         return nil
     }
 
-    private func intValue(from dict: [String: String], keys: [String]) -> Int? {
-        for key in keys {
-            if let value = dict[key].flatMap(Int.init) {
-                return value
-            }
-        }
-        return nil
+    private func intValue(from dict: [String: String], keys: [String]) throws -> Int? {
+        try ProcessTargetIdentifierParser.windowID(from: dict, keys: keys)
     }
 
-    private func int32Value(from dict: [String: String], keys: [String]) -> Int32? {
-        self.intValue(from: dict, keys: keys).flatMap(Int32.init(exactly:))
+    private func int32Value(from dict: [String: String], keys: [String]) throws -> Int32? {
+        try ProcessTargetIdentifierParser.pid(from: dict, keys: keys)
     }
 
     private func typedDockParameters(from dict: [String: String]) -> ProcessCommandParameters.DockParameters {
@@ -273,5 +291,51 @@ extension ProcessService {
             slot: dict["slot"],
             alsoText: dict["also-text"] ?? dict["alsoText"],
             allowLarge: dict["allow-large"].flatMap { Bool($0) } ?? dict["allowLarge"].flatMap { Bool($0) }))
+    }
+}
+
+enum ProcessTargetIdentifierParser {
+    static func pid(from values: [String: String], keys: [String] = ["pid"]) throws -> Int32? {
+        let parsed = try self.parseUnsignedIdentifier(
+            from: values,
+            keys: keys,
+            field: "pid",
+            maximum: UInt64(Int32.max))
+        return parsed.map(Int32.init)
+    }
+
+    static func windowID(from values: [String: String], keys: [String]) throws -> Int? {
+        let parsed = try self.parseUnsignedIdentifier(
+            from: values,
+            keys: keys,
+            field: "windowId",
+            maximum: UInt64(UInt32.max))
+        return parsed.map(Int.init)
+    }
+
+    private static func parseUnsignedIdentifier(
+        from values: [String: String],
+        keys: [String],
+        field: String,
+        maximum: UInt64) throws -> UInt64?
+    {
+        let supplied = keys.compactMap { key in values[key].map { (key: key, rawValue: $0) } }
+        guard !supplied.isEmpty else { return nil }
+
+        let parsed = try supplied.map { suppliedValue -> UInt64 in
+            guard let value = UInt64(suppliedValue.rawValue), value > 0, value <= maximum else {
+                throw PeekabooError.invalidInput(
+                    field: field,
+                    reason: "\(suppliedValue.key) must be an integer between 1 and \(maximum)")
+            }
+            return value
+        }
+        guard let first = parsed.first else { return nil }
+        if parsed.dropFirst().contains(where: { $0 != first }) {
+            throw PeekabooError.invalidInput(
+                field: field,
+                reason: "\(field) aliases must resolve to the same value")
+        }
+        return first
     }
 }

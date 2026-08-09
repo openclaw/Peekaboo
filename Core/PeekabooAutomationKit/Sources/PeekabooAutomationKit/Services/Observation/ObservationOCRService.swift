@@ -19,26 +19,86 @@ public struct OCRTextObservation: Sendable, Codable, Equatable {
 public struct OCRTextResult: Sendable, Codable, Equatable {
     public let observations: [OCRTextObservation]
     public let imageSize: CGSize
+    public let isComplete: Bool
+    public let deadlineReached: Bool
+    public let warnings: [String]
 
-    public init(observations: [OCRTextObservation], imageSize: CGSize) {
+    public init(
+        observations: [OCRTextObservation],
+        imageSize: CGSize,
+        isComplete: Bool = true,
+        deadlineReached: Bool = false,
+        warnings: [String] = [])
+    {
         self.observations = observations
         self.imageSize = imageSize
+        self.isComplete = isComplete
+        self.deadlineReached = deadlineReached
+        self.warnings = warnings
+    }
+
+    public static func incomplete(imageSize: CGSize, deadlineReached: Bool, reason: String) -> OCRTextResult {
+        OCRTextResult(
+            observations: [],
+            imageSize: imageSize,
+            isComplete: false,
+            deadlineReached: deadlineReached,
+            warnings: [reason])
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case observations
+        case imageSize
+        case isComplete
+        case deadlineReached
+        case warnings
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.observations = try container.decode([OCRTextObservation].self, forKey: .observations)
+        self.imageSize = try container.decode(CGSize.self, forKey: .imageSize)
+        self.isComplete = try container.decodeIfPresent(Bool.self, forKey: .isComplete) ?? true
+        self.deadlineReached = try container.decodeIfPresent(Bool.self, forKey: .deadlineReached) ?? false
+        self.warnings = try container.decodeIfPresent([String].self, forKey: .warnings) ?? []
     }
 }
 
 public enum OCRServiceError: Error, Equatable {
     case invalidImageData
+    case incomplete(String)
 }
 
-@MainActor
+extension OCRServiceError: LocalizedError {
+    public var errorDescription: String? {
+        switch self {
+        case .invalidImageData:
+            "OCR could not decode the captured image"
+        case let .incomplete(reason):
+            reason.isEmpty ? "OCR was incomplete; missing text does not prove absence" : reason
+        }
+    }
+}
+
 public protocol OCRRecognizing: Sendable {
-    func recognizeText(in imageData: Data) throws -> OCRTextResult
+    func recognizeText(in imageData: Data, timeoutSeconds: TimeInterval) async throws -> OCRTextResult
 }
 
 public struct OCRService: OCRRecognizing {
+    public static let defaultTimeoutSeconds: TimeInterval = 5
+
     public init() {}
 
-    public func recognizeText(in imageData: Data) throws -> OCRTextResult {
+    public nonisolated func recognizeText(
+        in imageData: Data,
+        timeoutSeconds: TimeInterval = Self.defaultTimeoutSeconds) async throws -> OCRTextResult
+    {
+        try await OCRExecutionRunner.run(seconds: timeoutSeconds) {
+            try Self.performRecognition(in: imageData)
+        }
+    }
+
+    private nonisolated static func performRecognition(in imageData: Data) throws -> OCRTextResult {
         guard let source = CGImageSourceCreateWithData(imageData as CFData, nil),
               let image = CGImageSourceCreateImageAtIndex(source, 0, nil)
         else {
@@ -68,8 +128,125 @@ public struct OCRService: OCRRecognizing {
     }
 }
 
+@_spi(Testing) public enum OCRExecutionRunner {
+    public static func run<T: Sendable>(
+        seconds: TimeInterval,
+        operation: @escaping @Sendable () throws -> T) async throws -> T
+    {
+        guard seconds.isFinite, seconds > 0 else {
+            throw CaptureError.detectionTimedOut(seconds)
+        }
+        let state = OCRExecutionState<T>()
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                state.install(continuation)
+                let timeoutTask = Task.detached {
+                    do {
+                        try await Task.sleep(for: .seconds(seconds))
+                        state.resume(with: .failure(CaptureError.detectionTimedOut(seconds)))
+                    } catch {
+                        // Completion or caller cancellation cancels the deadline task.
+                    }
+                }
+                state.setTimeoutTask(timeoutTask)
+                DispatchQueue.global(qos: .userInitiated).async {
+                    let result: Result<T, any Error> = autoreleasepool {
+                        do {
+                            return try .success(operation())
+                        } catch {
+                            return .failure(error)
+                        }
+                    }
+                    state.resume(with: result)
+                }
+            }
+        } onCancel: {
+            state.resume(with: .failure(CancellationError()))
+        }
+    }
+
+    public static func runAsync<T: Sendable>(
+        seconds: TimeInterval,
+        operation: @escaping @Sendable () async throws -> T) async throws -> T
+    {
+        guard seconds.isFinite, seconds > 0 else {
+            throw CaptureError.detectionTimedOut(seconds)
+        }
+        let state = OCRExecutionState<T>()
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                state.install(continuation)
+                let timeoutTask = Task.detached {
+                    do {
+                        try await Task.sleep(for: .seconds(seconds))
+                        state.resume(with: .failure(CaptureError.detectionTimedOut(seconds)))
+                    } catch {
+                        // Completion or caller cancellation cancels the deadline task.
+                    }
+                }
+                state.setTimeoutTask(timeoutTask)
+                Task.detached {
+                    do {
+                        let value = try await operation()
+                        state.resume(with: .success(value))
+                    } catch {
+                        state.resume(with: .failure(error))
+                    }
+                }
+            }
+        } onCancel: {
+            state.resume(with: .failure(CancellationError()))
+        }
+    }
+}
+
+private final class OCRExecutionState<T: Sendable>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<T, any Error>?
+    private var timeoutTask: Task<Void, Never>?
+    private var finished = false
+
+    func install(_ continuation: CheckedContinuation<T, any Error>) {
+        let alreadyFinished = self.lock.withLock {
+            guard !self.finished else { return true }
+            self.continuation = continuation
+            return false
+        }
+        if alreadyFinished {
+            continuation.resume(throwing: CancellationError())
+        }
+    }
+
+    func setTimeoutTask(_ task: Task<Void, Never>) {
+        let cancel = self.lock.withLock {
+            if self.finished {
+                return true
+            }
+            self.timeoutTask = task
+            return false
+        }
+        if cancel {
+            task.cancel()
+        }
+    }
+
+    func resume(with result: Result<T, any Error>) {
+        let completion: (CheckedContinuation<T, any Error>?, Task<Void, Never>?) = self.lock.withLock {
+            guard !self.finished else { return (nil, nil) }
+            self.finished = true
+            let completion = (self.continuation, self.timeoutTask)
+            self.continuation = nil
+            self.timeoutTask = nil
+            return completion
+        }
+        completion.1?.cancel()
+        completion.0?.resume(with: result)
+    }
+}
+
 public enum ObservationOCRMapper {
     public static func matches(_ result: OCRTextResult, hints: [String]) -> Bool {
+        guard result.isComplete else { return false }
         guard !hints.isEmpty else { return !result.observations.isEmpty }
         let text = result.observations.map(\.text).joined(separator: " ").lowercased()
         return hints.contains { hint in
@@ -116,12 +293,11 @@ public enum ObservationOCRMapper {
     }
 
     public static func merge(
+        ocrResult: OCRTextResult,
         ocrElements: [DetectedElement],
         into detectionResult: ElementDetectionResult,
         methodSuffix: String = "+OCR") -> ElementDetectionResult
     {
-        guard !ocrElements.isEmpty else { return detectionResult }
-
         let elements = detectionResult.elements
         let mergedElements = DetectedElements(
             buttons: elements.buttons,
@@ -146,10 +322,14 @@ public enum ObservationOCRMapper {
                 detectionTime: metadata.detectionTime,
                 elementCount: mergedElements.all.count,
                 method: method,
-                warnings: metadata.warnings,
+                warnings: metadata.warnings + ocrResult.warnings,
                 windowContext: metadata.windowContext,
                 isDialog: metadata.isDialog,
-                truncationInfo: metadata.truncationInfo))
+                truncationInfo: DetectionTruncationInfo.merge(
+                    metadata.truncationInfo,
+                    ocrResult.isComplete ? nil : DetectionTruncationInfo(
+                        deadlineReached: ocrResult.deadlineReached,
+                        incompleteAccessibilityRead: false))))
     }
 
     public static func detectionResult(
@@ -176,9 +356,14 @@ public enum ObservationOCRMapper {
                 detectionTime: detectionTime,
                 elementCount: elements.count,
                 method: "OCR",
-                warnings: elements.isEmpty ? ["OCR produced no elements"] : [],
+                warnings: ocrResult.warnings + (elements.isEmpty && ocrResult.isComplete
+                    ? ["OCR produced no elements"]
+                    : []),
                 windowContext: windowContext,
-                isDialog: false))
+                isDialog: false,
+                truncationInfo: ocrResult.isComplete ? nil : DetectionTruncationInfo(
+                    deadlineReached: ocrResult.deadlineReached,
+                    incompleteAccessibilityRead: false)))
     }
 
     private static func screenRect(

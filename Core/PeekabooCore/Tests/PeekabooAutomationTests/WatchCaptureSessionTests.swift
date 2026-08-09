@@ -160,6 +160,44 @@ struct WatchCaptureSessionTests {
 
     @Test
     @MainActor
+    func `Live capture visualizer follows capture focus`() async throws {
+        let png = Self.makePNG(size: CGSize(width: 20, height: 20))
+        let scope = CaptureScope(kind: .frontmost)
+
+        for (focus, expectedMode) in [
+            (CaptureFocus.background, CaptureVisualizerMode.none),
+            (.foreground, .watchCapture),
+            (.auto, .watchCapture),
+        ] {
+            let capture = StubScreenCaptureService(result: png, size: CGSize(width: 20, height: 20))
+            let provider = WatchCaptureFrameProvider(
+                screenCapture: capture,
+                frameSource: nil,
+                scope: scope,
+                options: CaptureOptions(
+                    duration: 1,
+                    idleFps: 1,
+                    activeFps: 1,
+                    changeThresholdPercent: 1,
+                    heartbeatSeconds: 0,
+                    quietMsToIdle: 0,
+                    maxFrames: 1,
+                    maxMegabytes: nil,
+                    highlightChanges: false,
+                    captureFocus: focus,
+                    resolutionCap: nil,
+                    diffStrategy: .fast,
+                    diffBudgetMs: nil),
+                regionValidator: WatchCaptureRegionValidator(screenService: nil))
+
+            _ = try await provider.captureFrame()
+
+            #expect(capture.capturedVisualizerModes == [expectedMode])
+        }
+    }
+
+    @Test
+    @MainActor
     func `Stops at max-frames cap and keeps first frame`() async throws {
         let png = Self.makePNG(size: CGSize(width: 20, height: 20))
         let capture = StubScreenCaptureService(result: png, size: CGSize(width: 20, height: 20))
@@ -609,6 +647,7 @@ private final class StubScreenCaptureService: ScreenCaptureServiceProtocol {
     var capturedAppIdentifier: String?
     var capturedWindowIndex: Int?
     var capturedWindowID: CGWindowID?
+    private(set) var capturedVisualizerModes: [CaptureVisualizerMode] = []
 
     init(result: Data, size: CGSize) {
         self.resultData = result
@@ -617,18 +656,20 @@ private final class StubScreenCaptureService: ScreenCaptureServiceProtocol {
 
     func captureScreen(
         displayIndex _: Int?,
-        visualizerMode _: CaptureVisualizerMode,
+        visualizerMode: CaptureVisualizerMode,
         scale _: CaptureScalePreference) async throws -> CaptureResult
     {
-        self.makeResult(mode: .screen)
+        self.capturedVisualizerModes.append(visualizerMode)
+        return self.makeResult(mode: .screen)
     }
 
     func captureWindow(
         appIdentifier: String,
         windowIndex: Int?,
-        visualizerMode _: CaptureVisualizerMode,
+        visualizerMode: CaptureVisualizerMode,
         scale _: CaptureScalePreference) async throws -> CaptureResult
     {
+        self.capturedVisualizerModes.append(visualizerMode)
         self.capturedAppIdentifier = appIdentifier
         self.capturedWindowIndex = windowIndex
         return self.makeResult(mode: .window)
@@ -636,25 +677,28 @@ private final class StubScreenCaptureService: ScreenCaptureServiceProtocol {
 
     func captureWindow(
         windowID: CGWindowID,
-        visualizerMode _: CaptureVisualizerMode,
+        visualizerMode: CaptureVisualizerMode,
         scale _: CaptureScalePreference) async throws -> CaptureResult
     {
+        self.capturedVisualizerModes.append(visualizerMode)
         self.capturedWindowID = windowID
         return self.makeResult(mode: .window)
     }
 
     func captureFrontmost(
-        visualizerMode _: CaptureVisualizerMode,
+        visualizerMode: CaptureVisualizerMode,
         scale _: CaptureScalePreference) async throws -> CaptureResult
     {
-        self.makeResult(mode: .frontmost)
+        self.capturedVisualizerModes.append(visualizerMode)
+        return self.makeResult(mode: .frontmost)
     }
 
     func captureArea(
         _ rect: CGRect,
-        visualizerMode _: CaptureVisualizerMode,
+        visualizerMode: CaptureVisualizerMode,
         scale _: CaptureScalePreference) async throws -> CaptureResult
     {
+        self.capturedVisualizerModes.append(visualizerMode)
         let metadata = CaptureMetadata(
             size: rect.size,
             mode: .area,

@@ -31,16 +31,21 @@ struct AXTreeCollector {
         var maxDepthReached = false
         var maxElementCountReached = false
         var maxChildrenPerNodeReached = false
+        var deadlineReached = false
+        var incompleteAccessibilityRead = false
 
         var isEmpty: Bool {
-            !self.maxDepthReached && !self.maxElementCountReached && !self.maxChildrenPerNodeReached
+            !self.maxDepthReached && !self.maxElementCountReached && !self.maxChildrenPerNodeReached &&
+                !self.deadlineReached && !self.incompleteAccessibilityRead
         }
 
         func toInfo() -> DetectionTruncationInfo {
             DetectionTruncationInfo(
                 maxDepthReached: self.maxDepthReached,
                 maxElementCountReached: self.maxElementCountReached,
-                maxChildrenPerNodeReached: self.maxChildrenPerNodeReached)
+                maxChildrenPerNodeReached: self.maxChildrenPerNodeReached,
+                deadlineReached: self.deadlineReached,
+                incompleteAccessibilityRead: self.incompleteAccessibilityRead)
         }
     }
 
@@ -60,6 +65,11 @@ struct AXTreeCollector {
     ]
 
     private let logger = Logger(subsystem: "boo.peekaboo.core", category: "AXTreeCollector")
+    private let descriptorReader: @MainActor (Element) -> AXDescriptorReader.ReadResult
+
+    init(descriptorReader: @escaping @MainActor (Element) -> AXDescriptorReader.ReadResult = AXDescriptorReader.read) {
+        self.descriptorReader = descriptorReader
+    }
 
     func collect(window: Element, deadline: Date, budget: AXTraversalBudget? = nil) -> Result {
         var state = TraversalState()
@@ -95,13 +105,25 @@ struct AXTreeCollector {
             return
         }
         guard !Task.isCancelled else { return }
-        guard Date() < deadline else { return }
+        guard Date() < deadline else {
+            state.truncationFlags.deadlineReached = true
+            return
+        }
         guard state.elements.count < budget.maxElementCount else {
             state.truncationFlags.maxElementCountReached = true
             return
         }
         guard state.visitedElements.insert(element).inserted else { return }
-        guard let descriptor = AXDescriptorReader.describe(element) else { return }
+        let descriptor: AXDescriptorReader.Descriptor
+        switch self.descriptorReader(element) {
+        case let .descriptor(value):
+            descriptor = value
+        case .absent:
+            return
+        case .incomplete:
+            state.truncationFlags.incompleteAccessibilityRead = true
+            return
+        }
 
         self.logButtonDebugInfoIfNeeded(descriptor)
 
@@ -112,7 +134,7 @@ struct AXTreeCollector {
         let keyboardShortcut = isActionable ? self.extractKeyboardShortcut(element, role: descriptor.role) : nil
         let label = self.effectiveLabel(for: element, descriptor: descriptor)
 
-        let attributes = ElementClassifier.attributes(
+        var attributes = ElementClassifier.attributes(
             from: ElementClassifier.AttributeInput(
                 role: descriptor.role,
                 title: descriptor.title,
@@ -123,6 +145,7 @@ struct AXTreeCollector {
                 isActionable: isActionable,
                 keyboardShortcut: keyboardShortcut,
                 placeholder: descriptor.placeholder))
+        attributes["axEnabledKnown"] = String(descriptor.isEnabled != nil)
 
         let detectedElement = DetectedElement(
             id: elementId,
@@ -130,8 +153,8 @@ struct AXTreeCollector {
             label: label,
             value: descriptor.value,
             bounds: descriptor.frame,
-            isEnabled: descriptor.isEnabled,
-            isSelected: nil,
+            isEnabled: descriptor.isEnabled ?? false,
+            isSelected: descriptor.isSelected,
             attributes: attributes)
 
         state.elements.append(detectedElement)

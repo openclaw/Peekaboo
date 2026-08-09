@@ -328,8 +328,8 @@ struct MCPKeyboardBackgroundToolTests {
         ]))
 
         #expect(response.isError == false)
-        let calls = await MainActor.run { automation.targetedHotkeyCalls }
-        #expect(calls.map(\.keys) == ["cmd,v"])
+        let calls = await MainActor.run { automation.targetedTypeActionsCalls }
+        #expect(calls.count == 1)
         #expect(calls.first?.targetProcessIdentifier == 333)
         #expect(await MainActor.run { automation.lastHotkeyKeys } == nil)
         guard case let .object(meta) = response.meta else {
@@ -338,9 +338,38 @@ struct MCPKeyboardBackgroundToolTests {
         }
         #expect(meta["delivery_mode"] == .string("background"))
         #expect(meta["target_pid"] == .int(333))
-        #expect(meta["restore_succeeded"] == .bool(true))
-        #expect(meta["restore_error"] == .null)
-        #expect(await MainActor.run { clipboard.restoreCallCount } == 1)
+        #expect(meta["paste_method"] == .string("background_text"))
+        #expect(await MainActor.run { clipboard.restoreCallCount } == 0)
+    }
+
+    @Test
+    func `Paste tool routes UTF8 data through targeted text delivery`() async throws {
+        let app = ServiceApplicationInfo(
+            processIdentifier: 333,
+            bundleIdentifier: "com.example.editor",
+            name: "Editor")
+        let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
+        let applications = await MainActor.run { MockApplicationService(applications: [app]) }
+        let clipboard = await MainActor.run { MockClipboardService() }
+        let context = await MCPToolTestHelpers.makeContext(
+            automation: automation,
+            applications: applications,
+            clipboard: clipboard)
+
+        let response = try await PasteTool(context: context).execute(arguments: ToolArguments(raw: [
+            "app": "Editor",
+            "dataBase64": Data("decoded text".utf8).base64EncodedString(),
+            "uti": UTType.utf8PlainText.identifier,
+        ]))
+
+        #expect(response.isError == false)
+        let calls = await MainActor.run { automation.targetedTypeActionsCalls }
+        #expect(calls.count == 1)
+        if case .text("decoded text")? = calls.first?.actions.first {} else {
+            Issue.record("Expected UTF-8 data to use targeted text delivery")
+        }
+        #expect(await MainActor.run { automation.targetedHotkeyCalls.isEmpty })
+        #expect(await MainActor.run { clipboard.restoreCallCount } == 0)
     }
 
     @Test
@@ -368,8 +397,8 @@ struct MCPKeyboardBackgroundToolTests {
         let tool = PasteTool(context: context)
 
         let response = try await tool.execute(arguments: ToolArguments(raw: [
-            "app": "Editor",
             "text": "hello",
+            "foreground": true,
             "restore_delay_ms": 0,
         ]))
 

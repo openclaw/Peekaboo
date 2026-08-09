@@ -51,7 +51,8 @@ public final class SmartCaptureService {
     /// Capture the screen only if it has changed significantly since the last capture.
     /// Returns nil image if screen is unchanged.
     public func captureIfChanged(
-        threshold: Float = 0.05) async throws -> SmartCaptureResult
+        threshold: Float = 0.05,
+        visualizerMode: CaptureVisualizerMode = .screenshotFlash) async throws -> SmartCaptureResult
     {
         let now = Date()
 
@@ -60,7 +61,7 @@ public final class SmartCaptureService {
            now.timeIntervalSince(lastState.timestamp) > forceRefreshInterval
         {
             self.logger.debug("Force refresh: \(self.forceRefreshInterval)s elapsed since last capture")
-            return try await self.captureAndUpdateState()
+            return try await self.captureAndUpdateState(visualizerMode: visualizerMode)
         }
 
         // Quick check: has focused app changed?
@@ -68,11 +69,14 @@ public final class SmartCaptureService {
         if currentApp != self.lastCaptureState?.focusedApp {
             self.logger
                 .debug("App changed from \(self.lastCaptureState?.focusedApp ?? "nil") to \(currentApp ?? "nil")")
-            return try await self.captureAndUpdateState()
+            return try await self.captureAndUpdateState(visualizerMode: visualizerMode)
         }
 
         // Capture current frame
-        let captureResult = try await captureService.captureScreen(displayIndex: nil)
+        let captureResult = try await captureService.captureScreen(
+            displayIndex: nil,
+            visualizerMode: visualizerMode,
+            scale: .logical1x)
         guard let currentImage = SmartCaptureImageProcessor.cgImage(from: captureResult) else {
             throw SmartCaptureError.imageConversionFailed
         }
@@ -94,7 +98,7 @@ public final class SmartCaptureService {
         }
 
         // Screen changed - update state and return
-        return try await self.captureAndUpdateState(image: currentImage)
+        return try await self.captureAndUpdateState(image: currentImage, visualizerMode: visualizerMode)
     }
 
     // MARK: - Region-Focused Capture
@@ -103,7 +107,8 @@ public final class SmartCaptureService {
     public func captureAroundPoint(
         _ center: CGPoint,
         radius: CGFloat = 300,
-        includeContextThumbnail: Bool = true) async throws -> SmartCaptureResult
+        includeContextThumbnail: Bool = true,
+        visualizerMode: CaptureVisualizerMode = .screenshotFlash) async throws -> SmartCaptureResult
     {
         // Calculate capture rect
         var rect = CGRect(
@@ -118,7 +123,10 @@ public final class SmartCaptureService {
         }
 
         // Capture the region
-        let regionResult = try await captureService.captureArea(rect)
+        let regionResult = try await captureService.captureArea(
+            rect,
+            visualizerMode: visualizerMode,
+            scale: .logical1x)
         guard let regionImage = SmartCaptureImageProcessor.cgImage(from: regionResult) else {
             throw SmartCaptureError.imageConversionFailed
         }
@@ -126,7 +134,10 @@ public final class SmartCaptureService {
         // Optionally capture a thumbnail of full screen for context
         var contextThumbnail: CGImage?
         if includeContextThumbnail {
-            let fullScreenResult = try await captureService.captureScreen(displayIndex: nil)
+            let fullScreenResult = try await captureService.captureScreen(
+                displayIndex: nil,
+                visualizerMode: visualizerMode,
+                scale: .logical1x)
             if let fullScreen = SmartCaptureImageProcessor.cgImage(from: fullScreenResult) {
                 contextThumbnail = SmartCaptureImageProcessor.resize(fullScreen, to: CGSize(width: 400, height: 250))
             }
@@ -145,11 +156,12 @@ public final class SmartCaptureService {
     /// Capture around an action target, inferring appropriate radius.
     public func captureAfterAction(
         toolName: String,
-        targetPoint: CGPoint?) async throws -> SmartCaptureResult
+        targetPoint: CGPoint?,
+        visualizerMode: CaptureVisualizerMode = .screenshotFlash) async throws -> SmartCaptureResult
     {
         guard let point = targetPoint else {
             // No specific target - use diff-aware full capture
-            return try await self.captureIfChanged()
+            return try await self.captureIfChanged(visualizerMode: visualizerMode)
         }
 
         // Determine appropriate radius based on action type
@@ -166,7 +178,7 @@ public final class SmartCaptureService {
             250 // Default medium radius
         }
 
-        return try await self.captureAroundPoint(point, radius: radius)
+        return try await self.captureAroundPoint(point, radius: radius, visualizerMode: visualizerMode)
     }
 
     // MARK: - State Management
@@ -178,12 +190,18 @@ public final class SmartCaptureService {
 
     // MARK: - Private Helpers
 
-    private func captureAndUpdateState(image: CGImage? = nil) async throws -> SmartCaptureResult {
+    private func captureAndUpdateState(
+        image: CGImage? = nil,
+        visualizerMode: CaptureVisualizerMode) async throws -> SmartCaptureResult
+    {
         let capturedImage: CGImage
         if let existingImage = image {
             capturedImage = existingImage
         } else {
-            let result = try await captureService.captureScreen(displayIndex: nil)
+            let result = try await captureService.captureScreen(
+                displayIndex: nil,
+                visualizerMode: visualizerMode,
+                scale: .logical1x)
             guard let img = SmartCaptureImageProcessor.cgImage(from: result) else {
                 throw SmartCaptureError.imageConversionFailed
             }

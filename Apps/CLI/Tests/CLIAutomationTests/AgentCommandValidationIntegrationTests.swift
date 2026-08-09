@@ -8,6 +8,21 @@ import Testing
 
 @Suite(.serialized, .tags(.safe))
 struct AgentCommandValidationIntegrationTests {
+    @Test
+    func `No cache session conflicts return one validation JSON object`() async throws {
+        let result = try await InProcessCommandRunner.runShared(
+            ["agent", "continuation", "--no-cache", "--resume", "--json", "--verbose"],
+            allowedExitCodes: [1]
+        )
+
+        #expect(result.exitStatus == 1)
+        let data = try #require(result.stdout.trimmingCharacters(in: .whitespacesAndNewlines).data(using: .utf8))
+        let payload = try JSONDecoder().decode(JSONResponse.self, from: data)
+        #expect(payload.success == false)
+        #expect(payload.error?.code == ErrorCode.VALIDATION_ERROR.rawValue)
+        #expect(payload.error?.message.contains("--no-cache cannot be combined") == true)
+    }
+
     @Test(arguments: [0, 101])
     func `Invalid max steps returns one JSON error`(_ maxSteps: Int) async throws {
         let result = try await InProcessCommandRunner.runShared(

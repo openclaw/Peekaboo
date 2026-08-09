@@ -16,7 +16,7 @@ extension PeekabooBridgeServer {
             let app = try await self.services.applications.getFrontmostApplication()
             return .application(app)
         case let .isApplicationRunning(payload):
-            let running = await self.services.applications.isApplicationRunning(identifier: payload.identifier)
+            let running = try await self.services.applications.isApplicationRunning(identifier: payload.identifier)
             return .bool(running)
         case let .launchApplication(payload):
             let app = try await self.services.applications.launchApplication(identifier: payload.identifier)
@@ -35,9 +35,15 @@ extension PeekabooBridgeServer {
             await self.reportAutomationActivity(appIdentifier: payload.identifier)
             return .ok
         case let .quitApplication(payload):
-            let success = try await self.services.applications.quitApplication(
+            guard let expectedIdentity = payload.expectedIdentity else {
+                throw PeekabooError.invalidInput(
+                    "Bridge application quit requires a process-generation identity " +
+                        "(protocol 1.16 or newer); update the client")
+            }
+            let success = try await self.services.applications.quitApplication(request: ApplicationQuitRequest(
                 identifier: payload.identifier,
-                force: payload.force)
+                force: payload.force,
+                expectedIdentity: expectedIdentity))
             return .bool(success)
         case let .hideApplication(payload):
             try await self.services.applications.hideApplication(identifier: payload.identifier)

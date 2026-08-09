@@ -15,6 +15,7 @@ extension ScreenCaptureKitOperator {
         let display: SCDisplay
         let displayIndex: Int
         let scalePlan: ScreenCaptureScaleResolver.Plan
+        let mutationIdentity: WindowMutationIdentity?
     }
 
     func captureWindowImpl(
@@ -50,6 +51,7 @@ extension ScreenCaptureKitOperator {
             appName: app.name,
             correlationId: correlationId)
         let targetWindow = appWindows[resolvedIndex]
+        let mutationSnapshot = Self.windowMutationSnapshot(for: targetWindow)
 
         self.logger.debug(
             "Capturing window",
@@ -81,6 +83,10 @@ extension ScreenCaptureKitOperator {
             display: targetDisplay,
             useDisplayBoundFilter: resolution.isMapped)
         let imageData = try image.pngData()
+        let mutationIdentity: WindowMutationIdentity? = mutationSnapshot.flatMap { snapshot in
+            guard snapshot.ownerProcessStartIdentity == app.processStartIdentity else { return nil }
+            return Self.validatedMutationIdentity(snapshot)
+        }
 
         self.logger.debug(
             "Screenshot created",
@@ -98,6 +104,7 @@ extension ScreenCaptureKitOperator {
                 mode: .window,
                 applicationInfo: ServiceApplicationInfo(
                     processIdentifier: app.processIdentifier,
+                    processStartIdentity: mutationIdentity?.ownerProcessStartIdentity,
                     bundleIdentifier: app.bundleIdentifier,
                     name: app.name,
                     bundlePath: app.bundlePath),
@@ -105,7 +112,8 @@ extension ScreenCaptureKitOperator {
                 windowIndex: resolvedIndex,
                 display: targetDisplay,
                 displayIndex: content.displays.firstIndex(where: { $0.displayID == targetDisplay.displayID }) ?? 0,
-                scalePlan: scalePlan))
+                scalePlan: scalePlan,
+                mutationIdentity: mutationIdentity))
 
         return CaptureResult(imageData: imageData, metadata: metadata)
     }
@@ -131,6 +139,7 @@ extension ScreenCaptureKitOperator {
             [targetWindow]
         }
         let resolvedIndex = appWindows.firstIndex(where: { $0.windowID == windowID }) ?? 0
+        let mutationSnapshot = Self.windowMutationSnapshot(for: targetWindow)
 
         self.logger.debug(
             "Capturing window by id",
@@ -162,6 +171,7 @@ extension ScreenCaptureKitOperator {
             display: targetDisplay,
             useDisplayBoundFilter: resolution.isMapped)
         let imageData = try image.pngData()
+        let mutationIdentity = mutationSnapshot.flatMap(Self.validatedMutationIdentity)
 
         await self.emitVisualizer(mode: visualizerMode, rect: targetWindow.frame)
 
@@ -169,12 +179,16 @@ extension ScreenCaptureKitOperator {
             image: image,
             context: WindowMetadataContext(
                 mode: .window,
-                applicationInfo: self.applicationInfo(for: owningPid, windowCount: appWindows.count),
+                applicationInfo: self.applicationInfo(
+                    for: owningPid,
+                    processStartIdentity: mutationIdentity?.ownerProcessStartIdentity,
+                    windowCount: appWindows.count),
                 window: targetWindow,
                 windowIndex: resolvedIndex,
                 display: targetDisplay,
                 displayIndex: content.displays.firstIndex(where: { $0.displayID == targetDisplay.displayID }) ?? 0,
-                scalePlan: scalePlan))
+                scalePlan: scalePlan,
+                mutationIdentity: mutationIdentity))
 
         return CaptureResult(imageData: imageData, metadata: metadata)
     }
@@ -298,7 +312,8 @@ extension ScreenCaptureKitOperator {
                 index: context.windowIndex,
                 isOffScreen: !context.window.isOnScreen,
                 layer: 0,
-                isOnScreen: context.window.isOnScreen),
+                isOnScreen: context.window.isOnScreen,
+                mutationIdentity: context.mutationIdentity),
             displayInfo: DisplayInfo(
                 index: context.displayIndex,
                 name: context.display.displayID.description,
@@ -309,7 +324,11 @@ extension ScreenCaptureKitOperator {
                 finalPixelSize: CGSize(width: image.width, height: image.height)))
     }
 
-    func applicationInfo(for processID: pid_t?, windowCount: Int) -> ServiceApplicationInfo? {
+    func applicationInfo(
+        for processID: pid_t?,
+        processStartIdentity: UInt64?,
+        windowCount: Int) -> ServiceApplicationInfo?
+    {
         guard let processID,
               let runningApplication = NSRunningApplication(processIdentifier: processID)
         else {
@@ -318,12 +337,40 @@ extension ScreenCaptureKitOperator {
 
         return ServiceApplicationInfo(
             processIdentifier: runningApplication.processIdentifier,
+            processStartIdentity: processStartIdentity,
             bundleIdentifier: runningApplication.bundleIdentifier,
             name: runningApplication.localizedName ?? runningApplication.bundleIdentifier ?? "Unknown",
             bundlePath: runningApplication.bundleURL?.path,
             isActive: runningApplication.isActive,
             isHidden: runningApplication.isHidden,
             windowCount: windowCount)
+    }
+
+    private nonisolated static func windowMutationSnapshot(
+        for window: SCWindow) -> SystemIdentityResolver.WindowMutationSnapshot?
+    {
+        guard let ownerProcessIdentifier = window.owningApplication?.processID,
+              let processStartIdentity = SystemIdentityResolver.processStartIdentity(ownerProcessIdentifier)
+        else {
+            return nil
+        }
+        return SystemIdentityResolver.WindowMutationSnapshot(
+            windowID: window.windowID,
+            ownerProcessIdentifier: ownerProcessIdentifier,
+            ownerProcessStartIdentity: processStartIdentity,
+            bounds: window.frame,
+            isMinimized: !window.isOnScreen)
+    }
+
+    private nonisolated static func validatedMutationIdentity(
+        _ snapshot: SystemIdentityResolver.WindowMutationSnapshot) -> WindowMutationIdentity?
+    {
+        SystemIdentityResolver.windowMutationIdentity(
+            windowID: snapshot.windowID,
+            expectedOwnerProcessIdentifier: snapshot.ownerProcessIdentifier,
+            expectedOwnerProcessStartIdentity: snapshot.ownerProcessStartIdentity,
+            expectedBounds: snapshot.bounds,
+            isMinimized: snapshot.isMinimized)
     }
 
     nonisolated static func firstRenderableWindowIndex(in windows: [SCWindow]) -> Int? {

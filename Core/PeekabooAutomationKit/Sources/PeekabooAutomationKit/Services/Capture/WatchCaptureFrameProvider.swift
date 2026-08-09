@@ -23,24 +23,27 @@ struct WatchCaptureFrameProvider {
 
         let result: CaptureResult
         let warning: WatchWarning?
+        let visualizerMode = CaptureVisualizerMode.resolved(
+            for: self.options.captureFocus,
+            visibleMode: .watchCapture)
         switch self.scope.kind {
         case .screen:
             warning = nil
             result = try await self.screenCapture.captureScreen(
                 displayIndex: self.scope.screenIndex,
-                visualizerMode: .watchCapture,
+                visualizerMode: visualizerMode,
                 scale: .logical1x)
         case .frontmost:
             warning = nil
             result = try await self.screenCapture.captureFrontmost(
-                visualizerMode: .watchCapture,
+                visualizerMode: visualizerMode,
                 scale: .logical1x)
         case .window:
             if let windowId = self.scope.windowId {
                 warning = nil
                 result = try await self.screenCapture.captureWindow(
                     windowID: CGWindowID(windowId),
-                    visualizerMode: .watchCapture,
+                    visualizerMode: visualizerMode,
                     scale: .logical1x)
                 break
             }
@@ -52,7 +55,7 @@ struct WatchCaptureFrameProvider {
             result = try await self.screenCapture.captureWindow(
                 appIdentifier: app,
                 windowIndex: self.scope.windowIndex,
-                visualizerMode: .watchCapture,
+                visualizerMode: visualizerMode,
                 scale: .logical1x)
         case .region:
             guard let rect = self.scope.region else {
@@ -65,7 +68,7 @@ struct WatchCaptureFrameProvider {
             let captureArea: @MainActor @Sendable () async throws -> CaptureResult = {
                 try await screenCapture.captureArea(
                     validatedRect,
-                    visualizerMode: .watchCapture,
+                    visualizerMode: visualizerMode,
                     scale: .logical1x)
             }
             if Self.shouldPreferLegacyAreaCapture,
