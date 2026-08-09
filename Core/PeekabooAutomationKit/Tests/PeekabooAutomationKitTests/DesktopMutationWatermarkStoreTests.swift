@@ -402,9 +402,182 @@ struct DesktopMutationWatermarkStoreTests {
         #expect(DesktopMutationWatermarkStore(directoryURL: store.directoryURL).effectiveWatermark() == cutoff)
     }
 
+    @Test
+    func `Target watermarks follow global process and window hierarchy`() throws {
+        let root = Self.temporaryDirectory(named: "target-hierarchy")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = DesktopMutationWatermarkStore(directoryURL: root)
+        let process = ApplicationProcessIdentity(processIdentifier: 810, processStartIdentity: 10)
+        let otherProcess = ApplicationProcessIdentity(processIdentifier: 811, processStartIdentity: 20)
+        let firstWindow = Self.window(windowID: 1, process: process)
+        let secondWindow = Self.window(windowID: 2, process: process)
+        let otherWindow = Self.window(windowID: 1, process: otherProcess)
+        let windowCutoff = Date().addingTimeInterval(-3)
+        let processCutoff = Date().addingTimeInterval(-2)
+        let globalCutoff = Date().addingTimeInterval(-1)
+
+        let windowMutation = try store.beginMutation(at: windowCutoff, target: .window(firstWindow))
+        _ = try store.completeMutation(windowMutation, through: windowCutoff)
+
+        #expect(store.effectiveWatermark() == windowCutoff)
+        #expect(store.effectiveWatermark(for: .window(firstWindow)) == windowCutoff)
+        #expect(store.effectiveWatermark(for: .window(secondWindow)) == nil)
+        #expect(store.effectiveWatermark(for: .process(process)) == windowCutoff)
+        #expect(store.effectiveWatermark(for: .window(otherWindow)) == nil)
+
+        let processMutation = try store.beginMutation(at: processCutoff, target: .process(process))
+        _ = try store.completeMutation(processMutation, through: processCutoff)
+
+        #expect(store.effectiveWatermark(for: .window(firstWindow)) == processCutoff)
+        #expect(store.effectiveWatermark(for: .window(secondWindow)) == processCutoff)
+        #expect(store.effectiveWatermark(for: .process(process)) == processCutoff)
+        #expect(store.effectiveWatermark(for: .window(otherWindow)) == nil)
+
+        let globalMutation = try store.beginMutation(at: globalCutoff, target: .global)
+        _ = try store.completeMutation(globalMutation, through: globalCutoff)
+
+        #expect(store.effectiveWatermark(for: .window(firstWindow)) == globalCutoff)
+        #expect(store.effectiveWatermark(for: .window(otherWindow)) == globalCutoff)
+    }
+
+    @Test
+    func `Sibling window mutations keep independent preservation fences`() throws {
+        let root = Self.temporaryDirectory(named: "sibling-preservation")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = DesktopMutationWatermarkStore(directoryURL: root)
+        let process = ApplicationProcessIdentity(processIdentifier: 820, processStartIdentity: 10)
+        let first = try store.beginMutation(target: .window(Self.window(windowID: 1, process: process)))
+        let second = try store.beginMutation(target: .window(Self.window(windowID: 2, process: process)))
+
+        let firstCompletion = try store.completeMutation(first, through: Date())
+        let secondCompletion = try store.completeMutation(second, through: Date().addingTimeInterval(1))
+
+        #expect(firstCompletion.allowsObservationPreservation)
+        #expect(secondCompletion.allowsObservationPreservation)
+        #expect(store.isPreservationFenceCurrent(firstCompletion.preservationFence))
+        #expect(store.isPreservationFenceCurrent(secondCompletion.preservationFence))
+
+        let laterFirst = try store.beginMutation(target: firstCompletion.preservationFence.target)
+        _ = try store.completeMutation(laterFirst, through: Date().addingTimeInterval(2))
+        #expect(!store.isPreservationFenceCurrent(firstCompletion.preservationFence))
+        #expect(store.isPreservationFenceCurrent(secondCompletion.preservationFence))
+    }
+
+    @Test
+    func `Same window and process-wide peers invalidate preservation fences`() throws {
+        let root = Self.temporaryDirectory(named: "relevant-preservation")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = DesktopMutationWatermarkStore(directoryURL: root)
+        let process = ApplicationProcessIdentity(processIdentifier: 830, processStartIdentity: 10)
+        let window = Self.window(windowID: 1, process: process)
+        let first = try store.beginMutation(target: .window(window))
+        let sameWindow = try store.beginMutation(target: .window(window))
+
+        #expect(try !(store.completeMutation(first, through: Date()).allowsObservationPreservation))
+        #expect(try !(store.completeMutation(sameWindow, through: Date()).allowsObservationPreservation))
+
+        let nextWindow = try store.beginMutation(target: .window(window))
+        let processMutation = try store.beginMutation(target: .process(process))
+        #expect(try !(store.completeMutation(nextWindow, through: Date()).allowsObservationPreservation))
+        #expect(try !(store.completeMutation(processMutation, through: Date()).allowsObservationPreservation))
+    }
+
+    @Test
+    func `Legacy writer drift is reconciled as a conservative global cutoff`() throws {
+        let root = Self.temporaryDirectory(named: "legacy-writer")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = DesktopMutationWatermarkStore(directoryURL: root)
+        let process = ApplicationProcessIdentity(processIdentifier: 840, processStartIdentity: 10)
+        let window = Self.window(windowID: 1, process: process)
+        let baseline = Date().addingTimeInterval(-10)
+        _ = try store.advance(through: baseline, target: .window(window))
+
+        let foreignCutoff = Date()
+        let legacyRecord: [String: Any] = [
+            "version": 1,
+            "cutoffReferenceDateSeconds": foreignCutoff.timeIntervalSinceReferenceDate,
+            "completionGeneration": 99,
+        ]
+        try JSONSerialization.data(withJSONObject: legacyRecord).write(to: store.watermarkURL, options: .atomic)
+
+        let unrelatedWindow = Self.window(
+            windowID: 99,
+            process: ApplicationProcessIdentity(processIdentifier: 999, processStartIdentity: 999))
+        #expect(store.effectiveWatermark(for: .window(unrelatedWindow)) == foreignCutoff)
+        #expect(store.effectiveWatermark(for: .process(process)) == foreignCutoff)
+    }
+
+    @Test
+    func `Resolved journal rebuilds exact target ledger after legacy publication crash`() throws {
+        let root = Self.temporaryDirectory(named: "target-journal-recovery")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let remover = PendingRecordRemovalController(failing: true)
+        let process = ApplicationProcessIdentity(processIdentifier: 850, processStartIdentity: 10)
+        let target = Self.window(windowID: 1, process: process)
+        let sibling = Self.window(windowID: 2, process: process)
+        let store = DesktopMutationWatermarkStore(
+            directoryURL: root,
+            processStartIdentityProvider: { _ in 10 },
+            pendingRecordRemover: { try remover.remove($0) })
+        let mutation = try store.beginMutation(target: .window(target))
+        let cutoff = Date()
+        _ = try store.completeMutation(mutation, through: cutoff)
+        try FileManager.default.removeItem(at: store.scopedLedgerURL)
+
+        let restarted = DesktopMutationWatermarkStore(
+            directoryURL: root,
+            processStartIdentityProvider: { _ in 10 })
+        #expect(restarted.effectiveWatermark(for: .window(target)) == cutoff)
+        #expect(restarted.effectiveWatermark(for: .window(sibling)) == nil)
+    }
+
+    @Test
+    func `Default watermark root is fixed runtime coordination storage`() {
+        let store = DesktopMutationWatermarkStore()
+
+        #expect(store.directoryURL == DesktopCoordinationRuntimeRoot.defaultURL)
+        #expect(!store.directoryURL.path.contains(".peekaboo"))
+    }
+
+    @Test
+    func `Production coordination root ignores configurable home temp and config paths`() {
+        let expected = DesktopCoordinationRuntimeRoot.defaultURL
+        let names = ["HOME", "TMPDIR", "CFFIXED_USER_HOME", "PEEKABOO_CONFIG_DIR"]
+        let previous = names.reduce(into: [String: String]()) { values, name in
+            values[name] = getenv(name).map { String(cString: $0) }
+        }
+        defer {
+            for name in names {
+                if let value = previous[name] {
+                    setenv(name, value, 1)
+                } else {
+                    unsetenv(name)
+                }
+            }
+        }
+        for name in names {
+            setenv(name, "/tmp/peekaboo-untrusted-root", 1)
+        }
+
+        #expect(DesktopCoordinationRuntimeRoot.defaultURL == expected)
+        #expect(DesktopMutationWatermarkStore().directoryURL == expected)
+    }
+
     private static func temporaryDirectory(named name: String) -> URL {
         FileManager.default.temporaryDirectory
             .appendingPathComponent("peekaboo-watermark-\(name)-\(UUID().uuidString)", isDirectory: true)
+    }
+
+    private static func window(
+        windowID: Int,
+        process: ApplicationProcessIdentity) -> WindowMutationIdentity
+    {
+        WindowMutationIdentity(
+            windowID: windowID,
+            ownerProcessIdentifier: process.processIdentifier,
+            ownerProcessStartIdentity: process.processStartIdentity,
+            capturedBounds: CGRect(x: 0, y: 0, width: 100, height: 100),
+            isMinimized: false)
     }
 }
 

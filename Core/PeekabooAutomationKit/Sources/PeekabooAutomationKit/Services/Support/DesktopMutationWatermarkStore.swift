@@ -10,12 +10,24 @@ public final class DesktopMutationWatermarkStore: @unchecked Sendable {
     public struct PendingMutation: Sendable, Equatable {
         fileprivate let id: UUID
         fileprivate let startedAt: Date
-        fileprivate let completionGenerationAtStart: UInt64
+        fileprivate let target: DesktopOperationScope
+        fileprivate let relevantGenerationAtStart: UInt64
+    }
+
+    public struct PreservationFence: Sendable, Codable, Equatable {
+        public let target: DesktopOperationScope
+        public let relevantGeneration: UInt64
+
+        public init(target: DesktopOperationScope, relevantGeneration: UInt64) {
+            self.target = target
+            self.relevantGeneration = relevantGeneration
+        }
     }
 
     public struct MutationCompletion: Sendable, Equatable {
         public let cutoff: Date
         public let allowsObservationPreservation: Bool
+        public let preservationFence: PreservationFence
     }
 
     private struct Record: Codable {
@@ -33,7 +45,44 @@ public final class DesktopMutationWatermarkStore: @unchecked Sendable {
         let ownerProcessIdentifier: pid_t
         let ownerProcessStartIdentity: UInt64?
         let startedAtReferenceDateSeconds: TimeInterval
+        let target: DesktopOperationScope?
         let resolution: PendingMutationResolution?
+    }
+
+    private struct ScopedMark: Codable, Equatable {
+        let cutoffReferenceDateSeconds: TimeInterval
+        let generation: UInt64
+
+        var cutoff: Date {
+            Date(timeIntervalSinceReferenceDate: self.cutoffReferenceDateSeconds)
+        }
+    }
+
+    private struct ScopedProcessMarks: Codable {
+        var direct: ScopedMark?
+        var aggregate: ScopedMark?
+    }
+
+    private struct LegacyShadow: Codable, Equatable {
+        let cutoffReferenceDateSeconds: TimeInterval?
+        let completionGeneration: UInt64
+    }
+
+    private struct ScopedLedger: Codable {
+        let version: Int
+        var aggregate: ScopedMark?
+        var globalExclusive: ScopedMark?
+        var processes: [String: ScopedProcessMarks]
+        var windows: [String: ScopedMark]
+        var legacyShadow: LegacyShadow
+
+        static let empty = ScopedLedger(
+            version: 1,
+            aggregate: nil,
+            globalExclusive: nil,
+            processes: [:],
+            windows: [:],
+            legacyShadow: LegacyShadow(cutoffReferenceDateSeconds: nil, completionGeneration: 0))
     }
 
     private enum PendingMutationResolution: Codable {
@@ -45,6 +94,7 @@ public final class DesktopMutationWatermarkStore: @unchecked Sendable {
     private static let watermarkFileName = "desktop-mutation-watermark.json"
     private static let lockFileName = "desktop-mutation-watermark.lock"
     private static let pendingDirectoryName = "desktop-mutation-pending"
+    private static let scopedLedgerFileName = "desktop-mutation-targets.json"
     @TaskLocal private static var visiblePendingMutationIDs: Set<UUID> = []
 
     private let logger = Logger(subsystem: "boo.peekaboo.core", category: "DesktopMutationWatermark")
@@ -52,20 +102,12 @@ public final class DesktopMutationWatermarkStore: @unchecked Sendable {
     let watermarkURL: URL
     private let lockURL: URL
     private let pendingDirectoryURL: URL
+    let scopedLedgerURL: URL
     private let processStartIdentityProvider: @Sendable (pid_t) -> UInt64?
     private let pendingRecordRemover: @Sendable (URL) throws -> Void
 
     public convenience init() {
-        let processInfo = ProcessInfo.processInfo
-        let configuredRoot = processInfo.environment["PEEKABOO_CONFIG_DIR"]?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        let root = if let configuredRoot, !configuredRoot.isEmpty {
-            URL(fileURLWithPath: NSString(string: configuredRoot).expandingTildeInPath, isDirectory: true)
-        } else {
-            FileManager.default.homeDirectoryForCurrentUser
-                .appendingPathComponent(".peekaboo", isDirectory: true)
-        }
-        self.init(directoryURL: root)
+        self.init(directoryURL: DesktopCoordinationRuntimeRoot.defaultURL)
     }
 
     public init(directoryURL: URL) {
@@ -73,6 +115,7 @@ public final class DesktopMutationWatermarkStore: @unchecked Sendable {
         self.watermarkURL = directoryURL.appendingPathComponent(Self.watermarkFileName, isDirectory: false)
         self.lockURL = directoryURL.appendingPathComponent(Self.lockFileName, isDirectory: false)
         self.pendingDirectoryURL = directoryURL.appendingPathComponent(Self.pendingDirectoryName, isDirectory: true)
+        self.scopedLedgerURL = directoryURL.appendingPathComponent(Self.scopedLedgerFileName, isDirectory: false)
         self.processStartIdentityProvider = SystemIdentityResolver.processStartIdentity
         self.pendingRecordRemover = { try FileManager.default.removeItem(at: $0) }
     }
@@ -88,6 +131,7 @@ public final class DesktopMutationWatermarkStore: @unchecked Sendable {
         self.watermarkURL = directoryURL.appendingPathComponent(Self.watermarkFileName, isDirectory: false)
         self.lockURL = directoryURL.appendingPathComponent(Self.lockFileName, isDirectory: false)
         self.pendingDirectoryURL = directoryURL.appendingPathComponent(Self.pendingDirectoryName, isDirectory: true)
+        self.scopedLedgerURL = directoryURL.appendingPathComponent(Self.scopedLedgerFileName, isDirectory: false)
         self.processStartIdentityProvider = processStartIdentityProvider
         self.pendingRecordRemover = pendingRecordRemover
     }
@@ -125,6 +169,47 @@ public final class DesktopMutationWatermarkStore: @unchecked Sendable {
             self.logger
                 .error("Failed to lock desktop mutation watermark; using lockless read: \(error.localizedDescription)")
             return self.effectiveWatermarkLockless()
+        }
+    }
+
+    /// Returns the cutoff relevant to a generation-pinned target. Legacy and unresolved callers
+    /// deliberately continue to use `effectiveWatermark()`, the aggregate compatibility shadow.
+    public func effectiveWatermark(for target: DesktopOperationScope) -> Date? {
+        do {
+            return try self.withLock(operation: LOCK_EX | LOCK_NB) {
+                let now = Date()
+                let hasPendingMutation = try self.hasPendingMutationUnlocked(
+                    recoveredAt: now,
+                    excluding: Self.visiblePendingMutationIDs,
+                    relevantTo: target)
+                var ledger = self.readScopedLedgerUnlocked()
+                try self.reconcileForeignLegacyWriterUnlocked(ledger: &ledger)
+                let persisted = self.relevantMark(in: ledger, for: target)?.cutoff
+                return hasPendingMutation
+                    ? max(persisted ?? now, now)
+                    : persisted
+            }
+        } catch {
+            // Lock contention or unreadable target metadata is conservatively aggregate. This can
+            // over-invalidate briefly, but can never expose a snapshot across an uncertain mutation.
+            return self.effectiveWatermarkLockless()
+        }
+    }
+
+    /// Whether no relevant mutation completed or remains pending after this completion certificate.
+    /// Sibling windows and unrelated process generations do not invalidate one another's fences.
+    public func isPreservationFenceCurrent(_ fence: PreservationFence) -> Bool {
+        do {
+            return try self.withLock(operation: LOCK_EX | LOCK_NB) {
+                if try self.hasPendingMutationUnlocked(recoveredAt: Date(), relevantTo: fence.target) {
+                    return false
+                }
+                var ledger = self.readScopedLedgerUnlocked()
+                try self.reconcileForeignLegacyWriterUnlocked(ledger: &ledger)
+                return self.relevantGeneration(in: ledger, for: fence.target) == fence.relevantGeneration
+            }
+        } catch {
+            return false
         }
     }
 
@@ -175,13 +260,22 @@ public final class DesktopMutationWatermarkStore: @unchecked Sendable {
     }
 
     /// Installs a durable, cross-process barrier before a mutation is dispatched.
-    public func beginMutation(at startedAt: Date = Date()) throws -> PendingMutation {
-        try self.beginMutation(at: startedAt, ownerProcessIdentifier: getpid())
+    public func beginMutation(
+        at startedAt: Date = Date(),
+        target: DesktopOperationScope = .global) throws -> PendingMutation
+    {
+        try self.beginMutation(
+            at: startedAt,
+            ownerProcessIdentifier: getpid(),
+            target: target)
     }
 
     /// Waits for the cross-process barrier without blocking an actor executor and stops promptly when its task is
     /// cancelled. Bridge requests use this before dispatch so a disconnected client cannot remain queued in `flock`.
-    public func beginMutationCancellable(at startedAt: Date = Date()) async throws -> PendingMutation {
+    public func beginMutationCancellable(
+        at startedAt: Date = Date(),
+        target: DesktopOperationScope = .global) async throws -> PendingMutation
+    {
         let descriptor = try self.openLockDescriptor()
         defer { close(descriptor) }
 
@@ -198,37 +292,46 @@ public final class DesktopMutationWatermarkStore: @unchecked Sendable {
         try Task.checkCancellation()
         return try self.beginMutationUnlocked(
             at: startedAt,
-            ownerProcessIdentifier: getpid())
+            ownerProcessIdentifier: getpid(),
+            target: target)
     }
 
     func beginMutation(
         at startedAt: Date,
-        ownerProcessIdentifier: pid_t) throws -> PendingMutation
+        ownerProcessIdentifier: pid_t,
+        target: DesktopOperationScope = .global) throws -> PendingMutation
     {
         try self.withLock(operation: LOCK_EX) {
             try self.beginMutationUnlocked(
                 at: startedAt,
-                ownerProcessIdentifier: ownerProcessIdentifier)
+                ownerProcessIdentifier: ownerProcessIdentifier,
+                target: target)
         }
     }
 
     private func beginMutationUnlocked(
         at startedAt: Date,
-        ownerProcessIdentifier: pid_t) throws -> PendingMutation
+        ownerProcessIdentifier: pid_t,
+        target: DesktopOperationScope) throws -> PendingMutation
     {
         try FileManager.default.createDirectory(
             at: self.pendingDirectoryURL,
             withIntermediateDirectories: true,
             attributes: [.posixPermissions: NSNumber(value: S_IRWXU)])
+        _ = try self.hasPendingMutationUnlocked(recoveredAt: Date())
+        var ledger = self.readScopedLedgerUnlocked()
+        try self.reconcileForeignLegacyWriterUnlocked(ledger: &ledger)
         let mutation = PendingMutation(
             id: UUID(),
             startedAt: startedAt,
-            completionGenerationAtStart: self.readCompletionGenerationUnlocked())
+            target: target,
+            relevantGenerationAtStart: self.relevantGeneration(in: ledger, for: target))
         let record = PendingMutationRecord(
             version: Self.currentVersion,
             ownerProcessIdentifier: ownerProcessIdentifier,
             ownerProcessStartIdentity: self.processStartIdentityProvider(ownerProcessIdentifier),
             startedAtReferenceDateSeconds: startedAt.timeIntervalSinceReferenceDate,
+            target: target,
             resolution: nil)
         let url = self.pendingMutationURL(for: mutation)
         do {
@@ -248,11 +351,18 @@ public final class DesktopMutationWatermarkStore: @unchecked Sendable {
     {
         try self.withLock(operation: LOCK_EX) {
             let hasOtherPendingMutation = try self.hasOtherPendingMutationUnlocked(
-                excluding: mutation)
+                excluding: mutation,
+                relevantTo: mutation.target)
+            var ledger = self.readScopedLedgerUnlocked()
+            try self.reconcileForeignLegacyWriterUnlocked(ledger: &ledger)
+            let relevantGenerationBeforeCompletion = self.relevantGeneration(
+                in: ledger,
+                for: mutation.target)
             let allowsObservationPreservation = !hasOtherPendingMutation &&
-                self.readCompletionGenerationUnlocked() == mutation.completionGenerationAtStart
+                relevantGenerationBeforeCompletion == mutation.relevantGenerationAtStart &&
+                relevantGenerationBeforeCompletion < UInt64.max
             let url = self.pendingMutationURL(for: mutation)
-            let targetGeneration = self.nextCompletionGenerationUnlocked()
+            let targetGeneration = self.nextCompletionGenerationUnlocked(ledger: ledger)
             try self.writeResolvedPendingRecordUnlocked(
                 mutation,
                 resolution: .completed(
@@ -261,10 +371,20 @@ public final class DesktopMutationWatermarkStore: @unchecked Sendable {
             let next = try self.writeUnlocked(
                 through: cutoff,
                 minimumCompletionGeneration: targetGeneration)
+            self.apply(
+                target: mutation.target,
+                cutoff: cutoff,
+                generation: targetGeneration,
+                to: &ledger)
+            ledger.legacyShadow = self.currentLegacyShadowUnlocked()
+            try self.writeScopedLedgerUnlocked(ledger)
             self.removeResolvedPendingRecordBestEffort(at: url)
             return MutationCompletion(
                 cutoff: next,
-                allowsObservationPreservation: allowsObservationPreservation)
+                allowsObservationPreservation: allowsObservationPreservation,
+                preservationFence: PreservationFence(
+                    target: mutation.target,
+                    relevantGeneration: self.relevantGeneration(in: ledger, for: mutation.target)))
         }
     }
 
@@ -279,28 +399,37 @@ public final class DesktopMutationWatermarkStore: @unchecked Sendable {
 
     /// Atomically advances the boundary without allowing older writers to move it backwards.
     @discardableResult
-    public func advance(through cutoff: Date) throws -> Date {
+    public func advance(
+        through cutoff: Date,
+        target: DesktopOperationScope = .global) throws -> Date
+    {
         try self.withLock(operation: LOCK_EX) {
-            if let current = self.readUnlocked(), cutoff <= current {
+            _ = try self.hasPendingMutationUnlocked(recoveredAt: Date())
+            var ledger = self.readScopedLedgerUnlocked()
+            try self.reconcileForeignLegacyWriterUnlocked(ledger: &ledger)
+            if let current = self.relevantMark(in: ledger, for: target)?.cutoff, cutoff <= current {
                 return current
             }
-            return try self.writeUnlocked(through: cutoff, incrementCompletionGeneration: true)
+            let generation = self.nextCompletionGenerationUnlocked(ledger: ledger)
+            let aggregate = try self.writeUnlocked(
+                through: cutoff,
+                minimumCompletionGeneration: generation)
+            self.apply(target: target, cutoff: cutoff, generation: generation, to: &ledger)
+            ledger.legacyShadow = self.currentLegacyShadowUnlocked()
+            try self.writeScopedLedgerUnlocked(ledger)
+            return target == .global
+                ? aggregate
+                : self.relevantMark(in: ledger, for: target)?.cutoff ?? cutoff
         }
     }
 
     private func writeUnlocked(
         through cutoff: Date,
-        incrementCompletionGeneration: Bool = false,
         minimumCompletionGeneration: UInt64? = nil) throws -> Date
     {
         let next = max(self.readUnlocked() ?? cutoff, cutoff)
         let currentGeneration = self.readCompletionGenerationUnlocked()
-        let incrementedGeneration = if incrementCompletionGeneration, currentGeneration < UInt64.max {
-            currentGeneration + 1
-        } else {
-            currentGeneration
-        }
-        let nextGeneration = max(incrementedGeneration, minimumCompletionGeneration ?? 0)
+        let nextGeneration = max(currentGeneration, minimumCompletionGeneration ?? 0)
         let record = Record(
             version: Self.currentVersion,
             cutoffReferenceDateSeconds: next.timeIntervalSinceReferenceDate,
@@ -313,9 +442,148 @@ public final class DesktopMutationWatermarkStore: @unchecked Sendable {
         return next
     }
 
-    private func nextCompletionGenerationUnlocked() -> UInt64 {
-        let current = self.readCompletionGenerationUnlocked()
+    private func nextCompletionGenerationUnlocked(ledger: ScopedLedger) -> UInt64 {
+        let current = max(
+            self.readCompletionGenerationUnlocked(),
+            ledger.aggregate?.generation ?? 0)
         return current < UInt64.max ? current + 1 : current
+    }
+
+    private func readScopedLedgerUnlocked() -> ScopedLedger {
+        guard let data = try? Data(contentsOf: self.scopedLedgerURL),
+              let ledger = try? JSONDecoder().decode(ScopedLedger.self, from: data),
+              ledger.version == 1
+        else {
+            return .empty
+        }
+        return ledger
+    }
+
+    private func writeScopedLedgerUnlocked(_ ledger: ScopedLedger) throws {
+        let data = try JSONEncoder().encode(ledger)
+        try data.write(to: self.scopedLedgerURL, options: .atomic)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: NSNumber(value: S_IRUSR | S_IWUSR)],
+            ofItemAtPath: self.scopedLedgerURL.path)
+    }
+
+    private func currentLegacyShadowUnlocked() -> LegacyShadow {
+        guard let data = try? Data(contentsOf: self.watermarkURL),
+              let record = try? JSONDecoder().decode(Record.self, from: data),
+              record.version == Self.currentVersion
+        else {
+            return LegacyShadow(
+                cutoffReferenceDateSeconds: self.readUnlocked()?.timeIntervalSinceReferenceDate,
+                completionGeneration: 0)
+        }
+        return LegacyShadow(
+            cutoffReferenceDateSeconds: record.cutoffReferenceDateSeconds,
+            completionGeneration: record.completionGeneration ?? 0)
+    }
+
+    private func reconcileForeignLegacyWriterUnlocked(ledger: inout ScopedLedger) throws {
+        let legacy = self.currentLegacyShadowUnlocked()
+        guard legacy != ledger.legacyShadow else { return }
+
+        if let seconds = legacy.cutoffReferenceDateSeconds {
+            let nextGeneration: UInt64
+            let aggregateGeneration = ledger.aggregate?.generation ?? 0
+            if legacy.completionGeneration > aggregateGeneration {
+                nextGeneration = legacy.completionGeneration
+            } else if aggregateGeneration < UInt64.max {
+                nextGeneration = aggregateGeneration + 1
+            } else {
+                nextGeneration = aggregateGeneration
+            }
+            self.apply(
+                target: .global,
+                cutoff: Date(timeIntervalSinceReferenceDate: seconds),
+                generation: nextGeneration,
+                to: &ledger)
+        }
+        ledger.legacyShadow = legacy
+        try self.writeScopedLedgerUnlocked(ledger)
+    }
+
+    private func apply(
+        target: DesktopOperationScope,
+        cutoff: Date,
+        generation: UInt64,
+        to ledger: inout ScopedLedger)
+    {
+        let mark = ScopedMark(
+            cutoffReferenceDateSeconds: cutoff.timeIntervalSinceReferenceDate,
+            generation: generation)
+        ledger.aggregate = Self.merging(ledger.aggregate, mark)
+        switch target {
+        case .global:
+            ledger.globalExclusive = Self.merging(ledger.globalExclusive, mark)
+        case let .process(identity):
+            let key = Self.processKey(identity)
+            var process = ledger.processes[key] ?? ScopedProcessMarks(direct: nil, aggregate: nil)
+            process.direct = Self.merging(process.direct, mark)
+            process.aggregate = Self.merging(process.aggregate, mark)
+            ledger.processes[key] = process
+        case let .window(identity):
+            let processIdentity = ApplicationProcessIdentity(
+                processIdentifier: identity.ownerProcessIdentifier,
+                processStartIdentity: identity.ownerProcessStartIdentity)
+            let processKey = Self.processKey(processIdentity)
+            var process = ledger.processes[processKey] ?? ScopedProcessMarks(direct: nil, aggregate: nil)
+            process.aggregate = Self.merging(process.aggregate, mark)
+            ledger.processes[processKey] = process
+            let windowKey = Self.windowKey(identity)
+            ledger.windows[windowKey] = Self.merging(ledger.windows[windowKey], mark)
+        }
+    }
+
+    private static func merging(_ current: ScopedMark?, _ candidate: ScopedMark) -> ScopedMark {
+        guard let current else { return candidate }
+        return ScopedMark(
+            cutoffReferenceDateSeconds: max(
+                current.cutoffReferenceDateSeconds,
+                candidate.cutoffReferenceDateSeconds),
+            generation: max(current.generation, candidate.generation))
+    }
+
+    private func relevantGeneration(in ledger: ScopedLedger, for target: DesktopOperationScope) -> UInt64 {
+        self.relevantMark(in: ledger, for: target)?.generation ?? 0
+    }
+
+    private func relevantMark(in ledger: ScopedLedger, for target: DesktopOperationScope) -> ScopedMark? {
+        switch target {
+        case .global:
+            return ledger.aggregate
+        case let .process(identity):
+            return Self.mergingOptional(
+                ledger.globalExclusive,
+                ledger.processes[Self.processKey(identity)]?.aggregate)
+        case let .window(identity):
+            let processIdentity = ApplicationProcessIdentity(
+                processIdentifier: identity.ownerProcessIdentifier,
+                processStartIdentity: identity.ownerProcessStartIdentity)
+            let process = ledger.processes[Self.processKey(processIdentity)]
+            return Self.mergingOptional(
+                Self.mergingOptional(ledger.globalExclusive, process?.direct),
+                ledger.windows[Self.windowKey(identity)])
+        }
+    }
+
+    private static func mergingOptional(_ lhs: ScopedMark?, _ rhs: ScopedMark?) -> ScopedMark? {
+        switch (lhs, rhs) {
+        case let (lhs?, rhs?): self.merging(lhs, rhs)
+        case let (lhs?, nil): lhs
+        case let (nil, rhs?): rhs
+        case (nil, nil): nil
+        }
+    }
+
+    private static func processKey(_ identity: ApplicationProcessIdentity) -> String {
+        "\(identity.processIdentifier):\(identity.processStartIdentity)"
+    }
+
+    private static func windowKey(_ identity: WindowMutationIdentity) -> String {
+        "\(identity.ownerProcessIdentifier):\(identity.ownerProcessStartIdentity):\(identity.windowID)"
     }
 
     private func writeResolvedPendingRecordUnlocked(
@@ -331,6 +599,7 @@ public final class DesktopMutationWatermarkStore: @unchecked Sendable {
                 self.processStartIdentityProvider(getpid()),
             startedAtReferenceDateSeconds: existing?.startedAtReferenceDateSeconds ??
                 mutation.startedAt.timeIntervalSinceReferenceDate,
+            target: existing?.target ?? mutation.target,
             resolution: resolution)
         try self.writePendingRecordUnlocked(record, to: url)
     }
@@ -358,6 +627,13 @@ public final class DesktopMutationWatermarkStore: @unchecked Sendable {
         switch resolution {
         case let .completed(cutoffReferenceDateSeconds, completionGeneration):
             let cutoff = Date(timeIntervalSinceReferenceDate: cutoffReferenceDateSeconds)
+            var ledger = self.readScopedLedgerUnlocked()
+            let legacyBeforeRecovery = self.currentLegacyShadowUnlocked()
+            let legacyBelongsToThisJournal = legacyBeforeRecovery.completionGeneration == completionGeneration &&
+                legacyBeforeRecovery.cutoffReferenceDateSeconds == cutoffReferenceDateSeconds
+            if legacyBeforeRecovery != ledger.legacyShadow, !legacyBelongsToThisJournal {
+                try self.reconcileForeignLegacyWriterUnlocked(ledger: &ledger)
+            }
             let persistedCutoff = self.readUnlocked()
             let persistedGeneration = self.readCompletionGenerationUnlocked()
             if persistedCutoff == nil || persistedCutoff! < cutoff || persistedGeneration < completionGeneration {
@@ -365,6 +641,13 @@ public final class DesktopMutationWatermarkStore: @unchecked Sendable {
                     through: cutoff,
                     minimumCompletionGeneration: completionGeneration)
             }
+            self.apply(
+                target: record.target ?? .global,
+                cutoff: cutoff,
+                generation: completionGeneration,
+                to: &ledger)
+            ledger.legacyShadow = self.currentLegacyShadowUnlocked()
+            try self.writeScopedLedgerUnlocked(ledger)
         case .canceled:
             break
         }
@@ -410,7 +693,8 @@ public final class DesktopMutationWatermarkStore: @unchecked Sendable {
 
     private func hasPendingMutationUnlocked(
         recoveredAt: Date,
-        excluding excludedMutationIDs: Set<UUID> = []) throws -> Bool
+        excluding excludedMutationIDs: Set<UUID> = [],
+        relevantTo target: DesktopOperationScope? = nil) throws -> Bool
     {
         guard FileManager.default.fileExists(atPath: self.pendingDirectoryURL.path) else { return false }
         let urls = try FileManager.default.contentsOfDirectory(
@@ -435,7 +719,9 @@ public final class DesktopMutationWatermarkStore: @unchecked Sendable {
                 continue
             }
             if self.processMatches(record) {
-                hasPendingMutation = true
+                if self.targetsOverlap(record.target, target) {
+                    hasPendingMutation = true
+                }
                 continue
             }
             try self.resolveOrphanedPendingRecordUnlocked(
@@ -447,7 +733,8 @@ public final class DesktopMutationWatermarkStore: @unchecked Sendable {
     }
 
     private func hasOtherPendingMutationUnlocked(
-        excluding mutation: PendingMutation) throws -> Bool
+        excluding mutation: PendingMutation,
+        relevantTo target: DesktopOperationScope? = nil) throws -> Bool
     {
         guard FileManager.default.fileExists(atPath: self.pendingDirectoryURL.path) else { return false }
         let ownURL = self.pendingMutationURL(for: mutation)
@@ -468,7 +755,9 @@ public final class DesktopMutationWatermarkStore: @unchecked Sendable {
                 continue
             }
             if self.processMatches(record) {
-                foundOtherMutation = true
+                if self.targetsOverlap(record.target, target) {
+                    foundOtherMutation = true
+                }
                 continue
             }
             try self.resolveOrphanedPendingRecordUnlocked(
@@ -483,7 +772,7 @@ public final class DesktopMutationWatermarkStore: @unchecked Sendable {
     /// Uses the same lock and rules as `completeMutation`.
     func hasOtherLivePendingMutation(excluding mutation: PendingMutation) throws -> Bool {
         try self.withLock(operation: LOCK_EX) {
-            try self.hasOtherPendingMutationUnlocked(excluding: mutation)
+            try self.hasOtherPendingMutationUnlocked(excluding: mutation, relevantTo: mutation.target)
         }
     }
 
@@ -492,17 +781,41 @@ public final class DesktopMutationWatermarkStore: @unchecked Sendable {
         at url: URL,
         recoveredAt: Date) throws
     {
+        let ledger = self.readScopedLedgerUnlocked()
+        let completionGeneration = self.nextCompletionGenerationUnlocked(ledger: ledger)
         let resolved = PendingMutationRecord(
             version: record.version,
             ownerProcessIdentifier: record.ownerProcessIdentifier,
             ownerProcessStartIdentity: record.ownerProcessStartIdentity,
             startedAtReferenceDateSeconds: record.startedAtReferenceDateSeconds,
+            target: record.target,
             resolution: .completed(
                 cutoffReferenceDateSeconds: recoveredAt.timeIntervalSinceReferenceDate,
-                completionGeneration: self.nextCompletionGenerationUnlocked()))
+                completionGeneration: completionGeneration))
         try self.writePendingRecordUnlocked(resolved, to: url)
         _ = try self.reconcileResolvedPendingRecordUnlocked(resolved)
         self.removeResolvedPendingRecordBestEffort(at: url)
+    }
+
+    private func targetsOverlap(
+        _ pendingTarget: DesktopOperationScope?,
+        _ requestedTarget: DesktopOperationScope?) -> Bool
+    {
+        guard let pendingTarget, let requestedTarget else { return true }
+        switch (pendingTarget, requestedTarget) {
+        case (.global, _), (_, .global):
+            return true
+        case let (.process(lhs), .process(rhs)):
+            return lhs == rhs
+        case let (.process(process), .window(window)),
+             let (.window(window), .process(process)):
+            return process.processIdentifier == window.ownerProcessIdentifier &&
+                process.processStartIdentity == window.ownerProcessStartIdentity
+        case let (.window(lhs), .window(rhs)):
+            return lhs.ownerProcessIdentifier == rhs.ownerProcessIdentifier &&
+                lhs.ownerProcessStartIdentity == rhs.ownerProcessStartIdentity &&
+                lhs.windowID == rhs.windowID
+        }
     }
 
     private func pendingMutationURL(for mutation: PendingMutation) -> URL {
@@ -544,12 +857,33 @@ public final class DesktopMutationWatermarkStore: @unchecked Sendable {
             at: self.directoryURL,
             withIntermediateDirectories: true,
             attributes: [.posixPermissions: NSNumber(value: S_IRWXU)])
+
+        var directoryInfo = stat()
+        guard lstat(self.directoryURL.path, &directoryInfo) == 0,
+              directoryInfo.st_mode & mode_t(S_IFMT) == mode_t(S_IFDIR),
+              directoryInfo.st_uid == geteuid(),
+              directoryInfo.st_mode & mode_t(S_IWGRP | S_IWOTH) == 0,
+              chmod(self.directoryURL.path, S_IRWXU) == 0
+        else {
+            throw self.lockError(code: EACCES)
+        }
         let descriptor = open(
             self.lockURL.path,
-            O_CREAT | O_RDWR | O_CLOEXEC | O_NOFOLLOW,
+            O_CREAT | O_RDWR | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK,
             S_IRUSR | S_IWUSR)
         guard descriptor >= 0 else {
             throw self.lockError(code: errno)
+        }
+        var lockInfo = stat()
+        guard fstat(descriptor, &lockInfo) == 0,
+              lockInfo.st_mode & mode_t(S_IFMT) == mode_t(S_IFREG),
+              lockInfo.st_uid == geteuid(),
+              lockInfo.st_nlink == 1,
+              fchmod(descriptor, S_IRUSR | S_IWUSR) == 0
+        else {
+            let code = errno == 0 ? EACCES : errno
+            close(descriptor)
+            throw self.lockError(code: code)
         }
         return descriptor
     }
