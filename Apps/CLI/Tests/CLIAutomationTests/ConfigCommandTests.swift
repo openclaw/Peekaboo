@@ -50,28 +50,19 @@ struct ConfigCommandTests {
         #expect(command.commandDescription.commandName == "config")
         #expect(command.commandDescription.abstract == "Manage Peekaboo configuration")
 
-        // Check subcommands
+        // Check subcommands by name — comparing existential metatypes in closures
+        // crashes SILGen on Swift 6.2.3 (Xcode 26.2 CI toolchain).
         let subcommands = command.commandDescription.subcommands
         #expect(subcommands.count == 8)
-        let hasInit = subcommands.contains { $0 == ConfigCommand.InitCommand.self }
-        #expect(hasInit)
-        let hasShow = subcommands.contains { $0 == ConfigCommand.ShowCommand.self }
-        #expect(hasShow)
-        let hasStatus = subcommands.contains { $0 == ConfigCommand.StatusCommand.self }
-        #expect(hasStatus)
-        let hasEdit = subcommands.contains { $0 == ConfigCommand.EditCommand.self }
-        #expect(hasEdit)
-        let hasValidate = subcommands.contains { $0 == ConfigCommand.ValidateCommand.self }
-        #expect(hasValidate)
-        let hasLogin = subcommands.contains { $0 == ConfigCommand.LoginCommand.self }
-        #expect(hasLogin)
-        #expect(subcommands.contains { $0 == ConfigCommand.ProviderCommand.self })
-        #expect(subcommands.contains { $0 == ConfigCommand.CredentialCommand.self })
+        let subcommandNames = subcommands.map(\.commandDescription.commandName)
+        for expected in ["init", "show", "status", "edit", "validate", "login", "provider", "credential"] {
+            #expect(subcommandNames.contains(expected), "missing config subcommand \(expected)")
+        }
         let providerCommands = ConfigCommand.ProviderCommand.commandDescription.subcommands
         #expect(providerCommands.map(\.commandDescription.commandName) == ["add", "remove", "list", "test", "models"])
-        #expect(ConfigCommand.CredentialCommand.commandDescription.subcommands.elementsEqual(
-            [ConfigCommand.CredentialSetCommand.self],
-            by: { $0 == $1 }))
+        let credentialNames = ConfigCommand.CredentialCommand.commandDescription.subcommands
+            .map(\.commandDescription.commandName)
+        #expect(credentialNames == ["set"])
     }
 
     @Test
