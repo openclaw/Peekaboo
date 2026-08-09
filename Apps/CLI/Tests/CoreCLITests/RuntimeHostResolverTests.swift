@@ -76,7 +76,7 @@ struct RuntimeHostResolverTests {
     func `Non-mutating local command skips remote endpoint discovery`() throws {
         let options = try CommanderCLIBinder.makeRuntimeOptions(
             from: ParsedValues(positional: [], options: [:], flags: []),
-            commandType: SleepCommand.self
+            commandType: ToolsCommand.self
         )
 
         #expect(!options.preferRemote)

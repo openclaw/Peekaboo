@@ -20,12 +20,12 @@ struct CLIRuntimeSmokeTests {
     }
 
     @Test
-    func `peekaboo list apps emits JSON via Commander`() async throws {
+    func `peekaboo app list emits JSON via Commander`() async throws {
         guard Self.ensureLocalRuntimeAvailable() else { return }
-        let result = try await TestChildProcess.runPeekaboo(["list", "apps", "--json", "--no-remote"])
+        let result = try await TestChildProcess.runPeekaboo(["app", "list", "--json", "--no-remote"])
 
         if result.status == .exited(0) {
-            #expect(result.standardOutput.contains("\"applications\""))
+            #expect(result.standardOutput.contains("\"apps\""))
             let object = try JSONSerialization.jsonObject(with: Data(result.standardOutput.utf8))
             guard let json = object as? [String: Any] else {
                 Issue.record("Expected JSON object output from list apps.")
@@ -52,35 +52,27 @@ struct CLIRuntimeSmokeTests {
     }
 
     @Test
-    func `peekaboo list windows requires --app`() async throws {
+    func `peekaboo window list requires --app or --pid`() async throws {
         guard Self.ensureLocalRuntimeAvailable() else { return }
-        let result = try await TestChildProcess.runPeekaboo(["list", "windows", "--json", "--no-remote"])
+        let result = try await TestChildProcess.runPeekaboo(["window", "list", "--json", "--no-remote"])
         #expect(result.status != .exited(0))
         let payload = !result.standardOutput.isEmpty ? result.standardOutput : result.standardError
         let data = Data(payload.utf8)
         let object = try JSONSerialization.jsonObject(with: data)
         guard let json = object as? [String: Any],
               let error = json["error"] as? [String: Any] else {
-            Issue.record("Expected JSON parse-error output from list windows.")
+            Issue.record("Expected JSON parse-error output from window list.")
             return
         }
         #expect(json["success"] as? Bool == false)
-        #expect(error["code"] as? String == "INVALID_ARGUMENT")
-        #expect((error["message"] as? String)?.contains("Missing argument: app") == true)
-    }
-
-    @Test
-    func `peekaboo sleep executes via Commander`() async throws {
-        guard Self.ensureLocalRuntimeAvailable() else { return }
-        let result = try await TestChildProcess.runPeekaboo(["sleep", "1", "--no-remote"])
-        #expect(result.status == .exited(0))
-        #expect(result.standardOutput.contains("Paused"))
+        #expect(error["code"] as? String == "INVALID_INPUT")
+        #expect((error["message"] as? String)?.contains("Either --app or --pid") == true)
     }
 
     @Test
     func `peekaboo parse errors honor JSON mode`() async throws {
         guard Self.ensureLocalRuntimeAvailable() else { return }
-        let result = try await TestChildProcess.runPeekaboo(["sleep", "1", "--bogus", "--json", "--no-remote"])
+        let result = try await TestChildProcess.runPeekaboo(["tools", "--bogus", "--json", "--no-remote"])
         #expect(result.status == .exited(1))
 
         let payload = !result.standardOutput.isEmpty ? result.standardOutput : result.standardError
@@ -165,24 +157,6 @@ struct CLIRuntimeSmokeTests {
     }
 
     @Test
-    func `peekaboo commander emits diagnostics JSON`() async throws {
-        guard Self.ensureLocalRuntimeAvailable() else { return }
-        let result = try await TestChildProcess.runPeekaboo(["commander", "--json", "--no-remote"])
-        #expect(result.status == .exited(0))
-
-        let data = Data(result.standardOutput.utf8)
-        let object = try JSONSerialization.jsonObject(with: data)
-        guard let json = object as? [String: Any] else {
-            Issue.record("Expected JSON object output from commander command.")
-            return
-        }
-
-        #expect(json["success"] as? Bool == true)
-        let dataPayload = json["data"] as? [String: Any]
-        #expect((dataPayload?["commands"] as? [[String: Any]])?.isEmpty == false)
-    }
-
-    @Test
     func `peekaboo config show effective emits only JSON in JSON mode`() async throws {
         guard Self.ensureLocalRuntimeAvailable() else { return }
         let result = try await TestChildProcess.runPeekaboo([
@@ -241,30 +215,7 @@ struct CLIRuntimeSmokeTests {
     }
 
     @Test
-    func `peekaboo list menubar emits standard JSON envelope`() async throws {
-        guard Self.ensureLocalRuntimeAvailable() else { return }
-        let result = try await TestChildProcess.runPeekaboo(["list", "menubar", "--json", "--no-remote"])
-
-        let data = Data(result.standardOutput.utf8)
-        let object = try JSONSerialization.jsonObject(with: data)
-        guard let json = object as? [String: Any] else {
-            Issue.record("Expected JSON object output from list menubar command.")
-            return
-        }
-
-        if result.status != .exited(0) {
-            #expect(json["success"] as? Bool == false)
-            return
-        }
-
-        #expect(json["success"] as? Bool == true)
-        let dataPayload = json["data"] as? [String: Any]
-        #expect(dataPayload?["items"] is [[String: Any]])
-        #expect(dataPayload?["count"] as? Int == (dataPayload?["items"] as? [[String: Any]])?.count)
-    }
-
-    @Test
-    func `peekaboo menubar list emits same JSON envelope as list menubar`() async throws {
+    func `peekaboo menubar list emits standard JSON envelope`() async throws {
         guard Self.ensureLocalRuntimeAvailable() else { return }
         let result = try await TestChildProcess.runPeekaboo(["menubar", "list", "--json", "--no-remote"])
 
@@ -287,9 +238,9 @@ struct CLIRuntimeSmokeTests {
     }
 
     @Test
-    func `peekaboo list permissions emits standard JSON envelope`() async throws {
+    func `peekaboo permissions status emits standard JSON envelope`() async throws {
         guard Self.ensureLocalRuntimeAvailable() else { return }
-        let result = try await TestChildProcess.runPeekaboo(["list", "permissions", "--json", "--no-remote"])
+        let result = try await TestChildProcess.runPeekaboo(["permissions", "status", "--json", "--no-remote"])
         #expect(result.status == .exited(0))
 
         let data = Data(result.standardOutput.utf8)

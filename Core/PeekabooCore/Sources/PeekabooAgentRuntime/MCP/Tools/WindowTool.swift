@@ -8,15 +8,16 @@ import TachikomaMCP
 /// MCP tool for manipulating application windows
 public struct WindowTool: MCPTool {
     private let logger = os.Logger(subsystem: "boo.peekaboo.mcp", category: "WindowTool")
-    private let context: MCPToolContext
+    let context: MCPToolContext
 
     public let name = "window"
 
     public var description: String {
         """
-        Manipulate application windows - close, minimize, restore, maximize, move, resize, and focus.
+        List and manipulate application windows.
 
         Actions:
+        - list: List an application's windows with IDs, bounds, and off-screen state
         - close: Close a window
         - minimize: Minimize a window
         - restore: Restore a minimized window without activating or focusing its application
@@ -31,6 +32,7 @@ public struct WindowTool: MCPTool {
         Supports partial title matching for convenience.
 
         JSON Examples (ALWAYS include `action`):
+        - { "action": "list", "app": "Safari" }
         - { "action": "focus", "app": "Google Chrome" }
         - { "action": "move", "app": "TextEdit", "x": 100, "y": 100 }
         - { "action": "restore", "app": "PID:1234", "window_id": 5678 }
@@ -45,7 +47,17 @@ public struct WindowTool: MCPTool {
             properties: [
                 "action": SchemaBuilder.string(
                     description: "The action to perform on the window",
-                    enum: ["close", "minimize", "restore", "maximize", "move", "resize", "set-bounds", "focus"]),
+                    enum: [
+                        "list",
+                        "close",
+                        "minimize",
+                        "restore",
+                        "maximize",
+                        "move",
+                        "resize",
+                        "set-bounds",
+                        "focus",
+                    ]),
                 "app": SchemaBuilder.string(
                     description: "Target application name, bundle ID, or process ID"),
                 "title": SchemaBuilder.string(
@@ -65,6 +77,9 @@ public struct WindowTool: MCPTool {
                 "foreground": SchemaBuilder.boolean(
                     description: "For close only: allow focused/global fallback after AX close fails.",
                     default: false),
+                "include_window_details": SchemaBuilder.array(
+                    items: SchemaBuilder.string(enum: WindowDetail.allCases.map(\.rawValue)),
+                    description: "Details for list results. Defaults to ids, bounds, and off_screen."),
             ],
             required: ["action"])
     }
@@ -96,6 +111,28 @@ public struct WindowTool: MCPTool {
         if foreground {
             guard action == .close else {
                 return ToolResponse.error("foreground is only supported for the close action")
+            }
+        }
+
+        if action == .list {
+            guard let app, !app.isEmpty else {
+                return ToolResponse.error("Missing required parameter: app (required for list action)")
+            }
+            let rawDetails = arguments.getStringArray("include_window_details")
+                ?? WindowDetail.allCases.map(\.rawValue)
+            do {
+                let details = try Set(rawDetails.map { raw in
+                    guard let detail = WindowDetail(rawValue: raw) else {
+                        throw WindowActionError.missingParameters(
+                            "Unknown value in 'include_window_details': \(raw).")
+                    }
+                    return detail
+                })
+                return try await self.listWindows(app: app, details: details)
+            } catch let validationError as WindowActionError {
+                return ToolResponse.error(validationError.message)
+            } catch {
+                return ToolResponse.error("Failed to list windows: \(error.localizedDescription)")
             }
         }
 
@@ -150,6 +187,9 @@ public struct WindowTool: MCPTool {
         let target = WindowActionTarget(target: rawTarget, expectedOwnerIdentity: expectedOwnerIdentity)
 
         switch action {
+        case .list:
+            preconditionFailure("list is handled before window mutation dispatch")
+
         case .close:
             return try await self.handleClose(
                 service: service,
@@ -215,6 +255,15 @@ public struct WindowTool: MCPTool {
         }
     }
 
+    private func listWindows(app: String, details: Set<WindowDetail>) async throws -> ToolResponse {
+        let output = try await self.context.applications.listWindows(for: app, timeout: nil)
+        return WindowListFormatter(
+            appInfo: output.data.targetApplication,
+            identifier: app,
+            windows: output.data.windows,
+            details: details).response()
+    }
+
     // MARK: - Helper Methods
 
     private func createWindowTarget(app: String?, title: String?, index: Int?, windowId: Int?) throws -> WindowTarget {
@@ -249,6 +298,7 @@ struct WindowActionTarget {
 }
 
 private enum WindowAction: String, CaseIterable, Equatable {
+    case list
     case close
     case minimize
     case restore

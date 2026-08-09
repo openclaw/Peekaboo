@@ -136,10 +136,6 @@ private final class ServicesWithStubClipboard: PeekabooServiceProviding {
         self.base.configuration
     }
 
-    var process: any ProcessServiceProtocol {
-        self.base.process
-    }
-
     var permissions: PermissionsService {
         self.base.permissions
     }

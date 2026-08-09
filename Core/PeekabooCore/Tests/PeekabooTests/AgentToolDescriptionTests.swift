@@ -257,7 +257,7 @@ struct AgentToolDescriptionTests {
         let inspectUITool = allTools.first { $0.name == "inspect_ui" }
         #expect(inspectUITool?.category == .element)
 
-        let launchTool = allTools.first { $0.name == "launch_app" }
+        let launchTool = allTools.first { $0.name == "app" }
         #expect(launchTool?.category == .app)
     }
 
@@ -292,7 +292,7 @@ struct AgentToolDescriptionTests {
 
         // Additionally, verify that tools that need error guidance have it
         // This is more of a design guideline check
-        let interactionTools = ["click", "type", "see", "launch_app"]
+        let interactionTools = ["click", "type", "see", "app"]
         var toolsWithGuidance = 0
         var toolsWithoutGuidance: [String] = []
 

@@ -122,7 +122,7 @@ struct LearnCommand {
         1. Always start with `see` to understand the UI before interacting.
         2. Click in the center of elements for reliable interactions.
         3. Verify each action before proceeding; use `see` again if needed.
-        4. Manage windows with `list_windows` and `focus_window` before automation.
+        4. Manage windows with the `window` tool's `list` and `focus` actions before automation.
         5. Recover from errors by trying alternative interactions (menus, hotkeys).
         6. Common workflows:
            - Screenshot: `image` with `--app` or `--mode screen`.
@@ -135,12 +135,12 @@ struct LearnCommand {
     private func appendQuickReference(to output: inout String) {
         print("""
         ## Quick Reference
-        - **Vision**: see, screenshot, window_capture
+        - **Vision**: see, image, capture
         - **UI Automation**: click, type, scroll, hotkey, swipe, drag
-        - **Window Management**: list_windows, focus_window, resize_window, list_spaces
-        - **Applications**: list_apps, launch_app, quit_app
-        - **Elements**: find_element, list_elements, focused
-        - **Menu/Dialog**: menu_click, dialog_click, dialog_input
+        - **Window Management**: window, space
+        - **Applications**: app
+        - **Elements**: inspect_ui, verify_state, set_value, perform_action
+        - **Menu/Dialog**: menu, dialog
         - **System**: shell, done, need_info
 
         Remember: You are Peekaboo, an AI-powered screen automation assistant.

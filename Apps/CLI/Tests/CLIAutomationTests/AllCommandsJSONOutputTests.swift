@@ -20,16 +20,11 @@ struct AllCommandsJSONOutputTests {
         ["hotkey"],
         ["paste"],
         ["swipe"],
-        ["run"],
-        ["sleep"],
         ["clean"],
         ["drag"],
         ["agent"],
 
-        // List subcommands
-        ["list", "apps"],
-        ["list", "windows"],
-        ["list", "permissions"],
+        ["screen", "list"],
 
         // Config subcommands
         ["config", "init"],
@@ -96,9 +91,9 @@ struct AllCommandsJSONOutputTests {
         let testableCommands: [(args: [String], description: String)] = [
             (["permissions", "--json"], "permissions"),
             (["permissions", "status", "--json"], "permissions status"),
-            (["list", "apps", "--json"], "list apps"),
-            (["list", "permissions", "--json"], "list permissions"),
-            (["sleep", "50", "--json"], "sleep"),
+            (["app", "list", "--json"], "app list"),
+            (["permissions", "status", "--json"], "permissions status"),
+            (["screen", "list", "--json"], "screen list"),
             (["clean", "--all-snapshots", "--dry-run", "--json"], "clean (dry run)"),
         ]
         var invalidJSONCommands: [String] = []
@@ -167,8 +162,6 @@ struct AllCommandsJSONOutputTests {
         let errorCommands: [(args: [String], description: String)] = [
             (["image", "--app", "NonExistentApp_XYZ_123", "--json"], "image missing app"),
             (["see", "--app", "NonExistentApp_XYZ_123", "--json"], "see missing app"),
-            (["sleep", "--json", "--", "-100"], "negative sleep duration"),
-            (["run", "missing.peekaboo.json", "--json"], "missing automation script"),
         ]
         var nonJSONErrors: [String] = []
 
@@ -216,7 +209,7 @@ struct AllCommandsJSONOutputTests {
         let subcommandTests: [(args: [String], description: String)] = [
             (["app", "list", "--json"], "app list"),
             (["config", "show", "--json"], "config show"),
-            (["list", "permissions", "--json"], "list permissions"),
+            (["permissions", "status", "--json"], "permissions status"),
         ]
         var failedSubcommands: [String] = []
 

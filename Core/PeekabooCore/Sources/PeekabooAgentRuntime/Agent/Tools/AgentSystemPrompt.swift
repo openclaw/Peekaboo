@@ -52,7 +52,7 @@ public struct AgentSystemPrompt {
         Other common tool usage:
         - Observation → choose `browser`, `inspect_ui`, or `see` based on the target surface.
         - UI interaction → use `click`, `type`, `scroll`.
-        - Information gathering → use `list`, `inspect_ui`, or `analyze` based on the information source.
+        - Information gathering → use `app`/`window` list actions, `inspect_ui`, or `analyze` based on the source.
 
         NEVER provide calculated results directly—always go through the Calculator app.
 
@@ -142,11 +142,11 @@ public struct AgentSystemPrompt {
     private static func windowManagementSection() -> String {
         """
         **Window Management Strategy**
-        1. Use the `list` tool with `{ "item_type": "application_windows", "app": "Safari" }` to see available windows.
-        2. If the target window is missing, call `list_apps` to check whether the app is running.
+        1. Use `window` with `{ "action": "list", "app": "Safari" }` to see available windows.
+        2. If the target window is missing, use `app` with `{ "action": "list" }` to check whether the app is running.
         3. Launch applications with the `app` tool:
            `{ "action": "launch", "name": "Safari", "foreground": false, "waitUntilReady": true }`.
-        4. Use the `list` tool with `{ "item_type": "application_windows", "app": "Safari" }`
+        4. Use `window` with `{ "action": "list", "app": "Safari" }`
            again to confirm the window exists.
         5. Observe background apps with `inspect_ui` when AX-only text/control state is enough, or `see` when a
            screenshot is needed, using `{ "app_target": "Safari" }`.

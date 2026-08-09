@@ -28,7 +28,6 @@ public enum MCPToolCatalog {
             CaptureTool(context: context),
             AnalyzeTool(),
             BrowserTool(context: context),
-            ListTool(context: context),
             PermissionsTool(context: context),
             SleepTool(),
 

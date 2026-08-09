@@ -20,7 +20,7 @@ extension AppCommand {
               --bundle-id <id>       Launch by bundle identifier instead of name/path
               --open <path-or-url>   Repeatable; pass documents/URLs to the app right after launch
               --new-instance         Launch a distinct process even if the app is already running
-              --wait-until-ready     Wait until LaunchServices reports startup complete
+              --wait-ready           Wait until LaunchServices reports startup complete
               --wait-for-window      Wait for a real AX or WindowServer window
               --foreground           Bring the app to the foreground after launching
 
@@ -28,9 +28,9 @@ extension AppCommand {
               peekaboo app launch "Safari"
               peekaboo app launch "Safari" --open https://example.com --open https://news.ycombinator.com
               peekaboo app launch "Preview" --open ~/Desktop/report.pdf
-              peekaboo app launch "TextEdit" --new-instance --wait-until-ready
+              peekaboo app launch "TextEdit" --new-instance --wait-ready
               peekaboo app launch "Safari" --foreground
-              peekaboo app launch --bundle-id com.apple.Notes --wait-until-ready
+              peekaboo app launch --bundle-id com.apple.Notes --wait-ready
             """
         )
 
@@ -40,7 +40,7 @@ extension AppCommand {
         @Option(help: "Launch by bundle identifier instead of name")
         var bundleId: String?
 
-        @Flag(help: "Wait for the application to be ready")
+        @Flag(name: .customLong("wait-ready"), help: "Wait for the application to be ready")
         var waitUntilReady = false
 
         @Flag(help: "Wait for the application to expose an exact WindowServer window")

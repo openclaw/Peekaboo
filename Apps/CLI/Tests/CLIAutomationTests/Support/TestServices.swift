@@ -938,90 +938,6 @@ final class StubFileService: FileServiceProtocol {
     }
 }
 
-@available(macOS 14.0, *)
-final class StubProcessService: ProcessServiceProtocol, @unchecked Sendable {
-    struct LoadScriptCall {
-        let path: String
-    }
-
-    struct ExecuteScriptCall {
-        let script: PeekabooScript
-        let failFast: Bool
-        let verbose: Bool
-    }
-
-    struct ExecuteStepCall {
-        let step: ScriptStep
-        let snapshotId: String?
-    }
-
-    var loadScriptCalls: [LoadScriptCall] = []
-    var executeScriptCalls: [ExecuteScriptCall] = []
-    var executeStepCalls: [ExecuteStepCall] = []
-
-    var scriptsByPath: [String: PeekabooScript] = [:]
-    var loadScriptProvider: ((String) async throws -> PeekabooScript)?
-    var executeScriptProvider: ((PeekabooScript, Bool, Bool) async throws -> [StepResult])?
-    var executeStepProvider: ((ScriptStep, String?) async throws -> StepExecutionResult)?
-
-    var nextScript: PeekabooScript?
-    var nextExecuteScriptResults: [StepResult]?
-    var nextStepResult: StepExecutionResult?
-
-    func loadScript(from path: String) async throws -> PeekabooScript {
-        self.loadScriptCalls.append(LoadScriptCall(path: path))
-
-        if let provider = loadScriptProvider {
-            return try await provider(path)
-        }
-
-        if let script = scriptsByPath[path] ?? scriptsByPath["*"] {
-            return script
-        }
-
-        if let script = nextScript {
-            return script
-        }
-
-        throw TestStubError.unimplemented(#function)
-    }
-
-    func executeScript(
-        _ script: PeekabooScript,
-        failFast: Bool,
-        verbose: Bool
-    ) async throws -> [StepResult] {
-        self.executeScriptCalls.append(ExecuteScriptCall(script: script, failFast: failFast, verbose: verbose))
-
-        if let provider = executeScriptProvider {
-            return try await provider(script, failFast, verbose)
-        }
-
-        if let results = nextExecuteScriptResults {
-            return results
-        }
-
-        return []
-    }
-
-    func executeStep(
-        _ step: ScriptStep,
-        snapshotId: String?
-    ) async throws -> StepExecutionResult {
-        self.executeStepCalls.append(ExecuteStepCall(step: step, snapshotId: snapshotId))
-
-        if let provider = executeStepProvider {
-            return try await provider(step, snapshotId)
-        }
-
-        if let result = nextStepResult {
-            return result
-        }
-
-        throw TestStubError.unimplemented(#function)
-    }
-}
-
 @MainActor
 final class StubDockService: DockServiceProtocol {
     var items: [DockItem]
@@ -1642,7 +1558,6 @@ enum TestServicesFactory {
         snapshots: any SnapshotManagerProtocol = StubSnapshotManager(),
         files: any FileServiceProtocol = StubFileService(),
         clipboard: any ClipboardServiceProtocol = StubClipboardService(),
-        process: any ProcessServiceProtocol = StubProcessService(),
         screens: [ScreenInfo] = [],
         automation: any UIAutomationServiceProtocol = StubAutomationService(),
         screenCapture: any ScreenCaptureServiceProtocol = StubScreenCaptureService()
@@ -1660,7 +1575,6 @@ enum TestServicesFactory {
             snapshots: snapshots,
             files: files,
             clipboard: clipboard,
-            process: process,
             permissions: PermissionsService(),
             audioInput: AudioInputService(aiService: PeekabooAIService()),
             agent: nil,
@@ -1686,7 +1600,6 @@ enum TestServicesFactory {
         dock: any DockServiceProtocol = StubDockService(),
         files: any FileServiceProtocol = StubFileService(),
         clipboard: any ClipboardServiceProtocol = StubClipboardService(),
-        process: any ProcessServiceProtocol = StubProcessService(),
         screens: [ScreenInfo] = [],
         screenCapture: any ScreenCaptureServiceProtocol = StubScreenCaptureService()
     ) -> AutomationTestContext {
@@ -1699,7 +1612,6 @@ enum TestServicesFactory {
             snapshots: snapshots,
             files: files,
             clipboard: clipboard,
-            process: process,
             screens: screens,
             automation: automation,
             screenCapture: screenCapture

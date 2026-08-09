@@ -95,25 +95,6 @@ struct MCPWrapperCommandBindingTests {
     }
 
     @Test
-    func `Inspect UI command preserves app target alias`() throws {
-        let parsed = ParsedValues(positional: [], options: ["appTarget": ["TextEdit"]], flags: [])
-        let command = try CommanderCLIBinder.instantiateCommand(ofType: InspectUICommand.self, parsedValues: parsed)
-        #expect(command.appTarget == "TextEdit")
-    }
-
-    @Test
-    func `Inspect UI command rejects both app spellings`() throws {
-        let parsed = ParsedValues(
-            positional: [],
-            options: ["app": ["TextEdit"], "appTarget": ["Finder"]],
-            flags: []
-        )
-        #expect(throws: ValidationError.self) {
-            _ = try CommanderCLIBinder.instantiateCommand(ofType: InspectUICommand.self, parsedValues: parsed)
-        }
-    }
-
-    @Test
     func `Inspect UI command requires remote inspect capability`() throws {
         let command = try CommanderCLIBinder.instantiateCommand(
             ofType: InspectUICommand.self,

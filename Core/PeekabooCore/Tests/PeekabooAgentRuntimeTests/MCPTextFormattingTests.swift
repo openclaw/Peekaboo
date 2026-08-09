@@ -5,36 +5,6 @@ import Testing
 
 struct MCPTextFormattingTests {
     @Test
-    func `Running application formatter includes optional metadata when present`() {
-        let app = ServiceApplicationInfo(
-            processIdentifier: 42,
-            bundleIdentifier: "com.example.Editor",
-            name: "Editor",
-            bundlePath: "/Applications/Editor.app",
-            isActive: true,
-            isHidden: true,
-            windowCount: 3)
-
-        let line = RunningApplicationTextFormatter.format(app, index: 0)
-
-        #expect(
-            line ==
-                "1. Editor (com.example.Editor) [/Applications/Editor.app] - PID: 42 [ACTIVE] [HIDDEN] - Windows: 3")
-    }
-
-    @Test
-    func `Running application formatter omits absent optional metadata`() {
-        let app = ServiceApplicationInfo(
-            processIdentifier: 7,
-            bundleIdentifier: nil,
-            name: "Notes")
-
-        let line = RunningApplicationTextFormatter.format(app, index: 1)
-
-        #expect(line == "2. Notes - PID: 7 - Windows: 0")
-    }
-
-    @Test
     func `See element formatter surfaces extra metadata`() {
         let element = UIElement(
             id: "B1",

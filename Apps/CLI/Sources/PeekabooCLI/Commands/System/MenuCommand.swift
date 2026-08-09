@@ -9,7 +9,6 @@ enum MenuError: Error {
     case menuBarNotFound
     case menuItemNotFound(String)
     case submenuNotFound(String)
-    case menuExtraNotFound
     case menuItemDisabled(String)
     case menuOperationFailed(String)
 }
@@ -23,8 +22,6 @@ extension MenuError: LocalizedError {
             "Menu item not found: \(path)"
         case let .submenuNotFound(path):
             "Submenu not found: \(path)"
-        case .menuExtraNotFound:
-            "Menu extra not found"
         case let .menuItemDisabled(path):
             "Menu item is disabled: \(path)"
         case let .menuOperationFailed(reason):
@@ -33,7 +30,7 @@ extension MenuError: LocalizedError {
     }
 }
 
-/// Interact with application menu bar items and system menu extras
+/// Interact with application menu bar items.
 @MainActor
 struct MenuCommand: ParsableCommand {
     nonisolated(unsafe) static var commandDescription: CommandDescription {
@@ -42,7 +39,7 @@ struct MenuCommand: ParsableCommand {
                 commandName: "menu",
                 abstract: "Interact with application menu bar",
                 discussion: """
-                Provides access to application menu bar items and system menu extras.
+                Provides access to application menu bar items.
 
                 EXAMPLES:
                   # Click a simple menu item
@@ -51,17 +48,12 @@ struct MenuCommand: ParsableCommand {
                   # Navigate nested menus with path
                   peekaboo menu click --app TextEdit --path "Format > Font > Show Fonts"
 
-                  # Click system menu extras (WiFi, Bluetooth, etc.)
-                  peekaboo menu click-extra --title "WiFi"
-
                   # List all menu items for an app
                   peekaboo menu list --app Finder
                 """,
                 subcommands: [
                     ClickSubcommand.self,
-                    ClickExtraSubcommand.self,
                     ListSubcommand.self,
-                    ListAllSubcommand.self,
                 ],
                 showHelpOnEmptyInvocation: true
             )
@@ -133,29 +125,6 @@ extension MenuCommand.ClickSubcommand: CommanderBindableCommand {
 }
 
 @MainActor
-extension MenuCommand.ClickExtraSubcommand: ParsableCommand {
-    nonisolated(unsafe) static var commandDescription: CommandDescription {
-        MainActorCommandDescription.describe {
-            CommandDescription(
-                commandName: "click-extra",
-                abstract: "Click a system menu extra (status bar item)"
-            )
-        }
-    }
-}
-
-extension MenuCommand.ClickExtraSubcommand: AsyncRuntimeCommand {}
-
-@MainActor
-extension MenuCommand.ClickExtraSubcommand: CommanderBindableCommand {
-    mutating func applyCommanderValues(_ values: CommanderBindableValues) throws {
-        self.title = try values.requireOption("title", as: String.self)
-        self.item = values.singleOption("item")
-        self.verify = values.flag("verify")
-    }
-}
-
-@MainActor
 extension MenuCommand.ListSubcommand: ParsableCommand {
     nonisolated(unsafe) static var commandDescription: CommandDescription {
         MainActorCommandDescription.describe {
@@ -179,28 +148,6 @@ extension MenuCommand.ListSubcommand: CommanderBindableCommand {
     }
 }
 
-@MainActor
-extension MenuCommand.ListAllSubcommand: ParsableCommand {
-    nonisolated(unsafe) static var commandDescription: CommandDescription {
-        MainActorCommandDescription.describe {
-            CommandDescription(
-                commandName: "list-all",
-                abstract: "List all menu bar items system-wide (including status items)"
-            )
-        }
-    }
-}
-
-extension MenuCommand.ListAllSubcommand: AsyncRuntimeCommand {}
-
-@MainActor
-extension MenuCommand.ListAllSubcommand: CommanderBindableCommand {
-    mutating func applyCommanderValues(_ values: CommanderBindableValues) throws {
-        self.includeDisabled = values.flag("includeDisabled")
-        self.includeFrames = values.flag("includeFrames")
-    }
-}
-
 // MARK: - Data Structures
 
 struct MenuClickResult: Codable {
@@ -208,14 +155,6 @@ struct MenuClickResult: Codable {
     let app: String
     let menu_path: String
     let clicked_item: String
-}
-
-struct MenuExtraClickResult: Codable {
-    let action: String
-    let menu_extra: String
-    let clicked_item: String
-    let location: [String: Double]?
-    let verified: Bool?
 }
 
 /// Typed menu structures for JSON output

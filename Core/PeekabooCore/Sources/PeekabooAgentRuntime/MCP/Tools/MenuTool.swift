@@ -15,9 +15,7 @@ public struct MenuTool: MCPTool {
 
         Actions:
         - list: Discover all available menus and menu items for an application
-        - list-all: List all menus across all applications (for debugging)
         - click: Click on a specific menu item using path notation
-        - click-extra: Click on a system menu extra (menu bar items)
 
         Target applications by name (e.g., "Safari"), bundle ID (e.g., "com.apple.Safari"),
         or process ID (e.g., "PID:663"). Fuzzy matching is supported for names.
@@ -36,11 +34,10 @@ public struct MenuTool: MCPTool {
             properties: [
                 "action": SchemaBuilder.string(
                     description: """
-                    Action to perform. Use 'list' to discover menus, 'click' to
-                    interact with menu items, 'click-extra' for system menu extras,
-                    or 'list-all' for all menus.
+                    Action to perform. Use 'list' to discover menus or 'click' to
+                    interact with menu items.
                     """.trimmingCharacters(in: .whitespacesAndNewlines),
-                    enum: ["list", "click", "click-extra", "list-all"]),
+                    enum: ["list", "click"]),
                 "app": SchemaBuilder.string(
                     description: "Target application name, bundle ID, or process ID " +
                         "(required for list and click actions)"),
@@ -48,8 +45,6 @@ public struct MenuTool: MCPTool {
                     description: "Menu path for nested items (e.g., 'File > Save As...' or 'Edit > Copy')"),
                 "item": SchemaBuilder.string(
                     description: "Simple menu item to click (for non-nested items)"),
-                "title": SchemaBuilder.string(
-                    description: "Title of system menu extra (for click-extra action)"),
                 "foreground": SchemaBuilder.boolean(
                     description: "Focus the target before list/click. Defaults to background AX access.",
                     default: false),
@@ -70,14 +65,10 @@ public struct MenuTool: MCPTool {
         switch action {
         case "list":
             return try await self.handleListAction(arguments: arguments)
-        case "list-all":
-            return try await self.handleListAllAction()
         case "click":
             return try await self.handleClickAction(arguments: arguments)
-        case "click-extra":
-            return try await self.handleClickExtraAction(arguments: arguments)
         default:
-            let errorMessage = "Invalid action: \(action). Must be one of: list, click, click-extra, list-all"
+            let errorMessage = "Invalid action: \(action). Must be one of: list, click"
             return ToolResponse.error(errorMessage)
         }
     }
@@ -111,49 +102,6 @@ public struct MenuTool: MCPTool {
                 meta: ToolEventSummary.merge(summary: summary, into: baseMeta))
         } catch {
             return ToolResponse.error("Failed to list menus for app '\(app)': \(error.localizedDescription)")
-        }
-    }
-
-    private func handleListAllAction() async throws -> ToolResponse {
-        // This is a debugging feature - we'll list menus for all running applications
-        do {
-            let apps = try await self.context.applications.listApplications()
-            var allMenus: [(app: String, menuCount: Int, itemCount: Int)] = []
-
-            for app in apps.data.applications {
-                do {
-                    let menuStructure = try await self.context.menu.listMenus(for: app.name)
-                    allMenus.append((
-                        app: app.name,
-                        menuCount: menuStructure.menus.count,
-                        itemCount: menuStructure.totalItems))
-                } catch {
-                    // Skip apps that don't have accessible menus
-                    continue
-                }
-            }
-
-            if allMenus.isEmpty {
-                return ToolResponse.text("No applications with accessible menus found.")
-            }
-
-            var output = "[menu] All Application Menus\n\n"
-            for menuInfo in allMenus.sorted(by: { $0.app < $1.app }) {
-                output += "• \(menuInfo.app): \(menuInfo.menuCount) menus, \(menuInfo.itemCount) items\n"
-            }
-
-            let baseMeta: Value = .object([
-                "total_apps": .int(allMenus.count),
-                "apps": .array(allMenus.map { .string($0.app) }),
-            ])
-            let summary = ToolEventSummary(
-                actionDescription: "List All Menus",
-                notes: "\(allMenus.count) apps")
-            return ToolResponse.text(
-                output,
-                meta: ToolEventSummary.merge(summary: summary, into: baseMeta))
-        } catch {
-            return ToolResponse.error("Failed to list all menus: \(error.localizedDescription)")
         }
     }
 
@@ -198,24 +146,6 @@ public struct MenuTool: MCPTool {
         } else {
             return ToolResponse
                 .error("Missing required parameter: either 'path' or 'item' must be provided for click action")
-        }
-    }
-
-    private func handleClickExtraAction(arguments: ToolArguments) async throws -> ToolResponse {
-        guard let title = arguments.getString("title") else {
-            return ToolResponse.error("Missing required parameter: title (required for click-extra action)")
-        }
-
-        do {
-            try await self.context.menu.clickMenuExtra(title: title)
-            let summary = ToolEventSummary(
-                actionDescription: "Menu Extra",
-                notes: title)
-            return ToolResponse.text(
-                "\(AgentDisplayTokens.Status.success) Successfully clicked system menu extra: \(title)",
-                meta: ToolEventSummary.merge(summary: summary, into: nil))
-        } catch {
-            return ToolResponse.error("Failed to click system menu extra '\(title)': \(error.localizedDescription)")
         }
     }
 

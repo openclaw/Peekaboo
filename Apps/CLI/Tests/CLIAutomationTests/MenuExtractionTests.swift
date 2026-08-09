@@ -190,36 +190,6 @@ struct MenuExtractionTests {
     }
 
     @Test
-    func `Menu list-all extracts frontmost app menus`() async throws {
-        #if !os(Linux)
-        guard ProcessInfo.processInfo.environment["RUN_LOCAL_TESTS"] != nil else { return }
-
-        let output = try await runPeekabooCommand(["menu", "list-all", "--json"])
-        let data = try #require(output.data(using: .utf8))
-        let json = try JSONDecoder().decode(MenuTestResponse.self, from: data)
-
-        #expect(json.success == true)
-
-        if let apps = json.data?.apps {
-            #expect(!apps.isEmpty)
-
-            if let firstApp = apps.first {
-                #expect(firstApp["app_name"] != nil)
-                #expect(firstApp["bundle_id"] != nil)
-                #expect(firstApp["pid"] != nil)
-
-                if let menus = firstApp["menus"] as? [[String: Any]] {
-                    #expect(!menus.isEmpty)
-
-                    let menuTitles = menus.compactMap { $0["title"] as? String }
-                    #expect(menuTitles.contains("Apple"))
-                }
-            }
-        }
-        #endif
-    }
-
-    @Test
     func `Menu extraction handles nested submenus`() async throws {
         #if !os(Linux)
         guard ProcessInfo.processInfo.environment["RUN_LOCAL_TESTS"] != nil else { return }
@@ -441,7 +411,7 @@ struct MenuDialogLocalHarnessTests {
             [
                 "app", "launch",
                 appName,
-                "--wait-until-ready",
+                "--wait-ready",
             ]
         )
         _ = try self.runCLI(

@@ -185,15 +185,7 @@ extension PeekabooAgentService {
         // Dock management
         agentTools.append(createDockTool())
 
-        // List tool (full access)
-        agentTools.append(createListTool())
-
-        // Screen tools (legacy wrappers)
-        agentTools.append(createListScreensTool())
-
         // Application tools
-        agentTools.append(createListAppsTool())
-        agentTools.append(createLaunchAppTool())
         agentTools.append(createAppTool()) // Full app management (launch, quit, focus, etc.)
 
         // Space management

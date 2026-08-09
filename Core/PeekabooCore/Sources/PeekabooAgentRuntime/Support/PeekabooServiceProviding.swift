@@ -1,6 +1,5 @@
 import Foundation
 import PeekabooAutomation
-import PeekabooAutomationKit
 
 /// Aggregated service provider protocol exposed to higher-level modules.
 @MainActor
@@ -18,7 +17,6 @@ public protocol PeekabooServiceProviding: AnyObject, Sendable {
     var files: any FileServiceProtocol { get }
     var clipboard: any ClipboardServiceProtocol { get }
     var configuration: ConfigurationManager { get }
-    var process: any ProcessServiceProtocol { get }
     var permissions: PermissionsService { get }
     var audioInput: AudioInputService { get }
     var screens: any ScreenServiceProtocol { get }

@@ -196,7 +196,7 @@ private enum AgentExecutionTraceBuilder {
             .replacingOccurrences(of: "-", with: "_")
             .lowercased()
         let mutatingTools: Set = [
-            "app", "click", "dialog", "dock", "drag", "hotkey", "launch_app", "menu", "move", "paste",
+            "app", "click", "dialog", "dock", "drag", "hotkey", "menu", "move", "paste",
             "perform_action", "scroll", "set_value", "space", "swipe", "type", "window",
         ]
         guard mutatingTools.contains(name) else { return false }
@@ -205,8 +205,9 @@ private enum AgentExecutionTraceBuilder {
             "app": ["list"],
             "dialog": ["list"],
             "dock": ["list"],
-            "menu": ["list", "list_all"],
+            "menu": ["list"],
             "space": ["list"],
+            "window": ["list"],
         ]
         guard let readOnly = readOnlyActions[name],
               let action = call.arguments["action"]?.stringValue

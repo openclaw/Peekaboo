@@ -9,173 +9,6 @@ import Testing
 @testable import PeekabooCLI
 
 @MainActor
-struct OpenCommandFlowTests {
-    @Test
-    func `List apps does not require screen recording permission`() async throws {
-        let app = ServiceApplicationInfo(
-            processIdentifier: 42,
-            bundleIdentifier: "com.example.Editor",
-            name: "Editor"
-        )
-        let service = RecordingApplicationService(applications: [app])
-        var command = ListCommand.AppsSubcommand()
-        let runtime = CommandRuntime(
-            configuration: .init(verbose: false, jsonOutput: true, logLevel: nil),
-            services: ServicesWithApplicationStub(
-                applications: service,
-                screenCapture: DeniedScreenCaptureService()
-            )
-        )
-
-        try await command.run(using: runtime)
-
-        #expect(service.listCallCount == 1)
-    }
-
-    @Test
-    func `Open command uses runtime host for default handler`() async throws {
-        let app = ServiceApplicationInfo(
-            processIdentifier: 42,
-            bundleIdentifier: "com.apple.Safari",
-            name: "Safari",
-            isActive: true,
-            isFinishedLaunching: true
-        )
-        let service = RecordingApplicationService(applications: [app], launchResponse: app)
-
-        var command = OpenCommand()
-        command.target = "https://example.com"
-        let runtime = CommandRuntime(
-            configuration: .init(verbose: false, jsonOutput: true, logLevel: nil),
-            services: ServicesWithApplicationStub(applications: service)
-        )
-        try await command.run(using: runtime)
-
-        let request = try #require(service.launchRequests.first)
-        #expect(request.applicationIdentifier == nil)
-        #expect(request.openURLs.map(\.absoluteString) == ["https://example.com"])
-        #expect(!request.activates)
-        #expect(!request.waitUntilReady)
-        #expect(!request.waitForWindow)
-    }
-
-    @Test
-    func `Open command forwards exact-window readiness without foregrounding`() async throws {
-        let app = ServiceApplicationInfo(
-            processIdentifier: 42,
-            bundleIdentifier: "com.apple.Safari",
-            name: "Safari",
-            windowCount: 1,
-            windowIDs: [924],
-            isFinishedLaunching: true
-        )
-        let service = RecordingApplicationService(applications: [app], launchResponse: app)
-        var command = OpenCommand()
-        command.target = "https://example.com"
-        command.waitForWindow = true
-
-        try await command.run(using: CommandRuntime(
-            configuration: .init(verbose: false, jsonOutput: true, logLevel: nil),
-            services: ServicesWithApplicationStub(applications: service)
-        ))
-
-        let request = try #require(service.launchRequests.first)
-        #expect(request.waitForWindow)
-        #expect(!request.activates)
-    }
-
-    @Test
-    func `Open command activates only with foreground`() async throws {
-        let app = ServiceApplicationInfo(processIdentifier: 42, bundleIdentifier: "com.apple.Safari", name: "Safari")
-        let service = RecordingApplicationService(applications: [app], launchResponse: app)
-        var command = OpenCommand()
-        command.target = "https://example.com"
-        command.foreground = true
-
-        try await command.run(using: CommandRuntime(
-            configuration: .init(verbose: false, jsonOutput: true, logLevel: nil),
-            services: ServicesWithApplicationStub(applications: service)
-        ))
-
-        #expect(service.launchRequests.first?.activates == true)
-    }
-
-    @Test
-    func `Open command preserves strict bundle identifier`() async throws {
-        let app = ServiceApplicationInfo(
-            processIdentifier: 42,
-            bundleIdentifier: "com.apple.Safari",
-            name: "Safari"
-        )
-        let service = RecordingApplicationService(applications: [app], launchResponse: app)
-        var command = OpenCommand()
-        command.target = "https://example.com"
-        command.bundleId = "com.apple.Safari"
-
-        try await command.run(using: CommandRuntime(
-            configuration: .init(verbose: false, jsonOutput: true, logLevel: nil),
-            services: ServicesWithApplicationStub(applications: service)
-        ))
-
-        let request = try #require(service.launchRequests.first)
-        #expect(request.applicationIdentifier == nil)
-        #expect(request.applicationBundleIdentifier == "com.apple.Safari")
-    }
-
-    @Test
-    func `Open command preserves no focus and invalidates selected and discovered snapshots`() async throws {
-        let app = ServiceApplicationInfo(
-            processIdentifier: 43,
-            bundleIdentifier: "com.apple.Notes",
-            name: "Notes",
-            isFinishedLaunching: true
-        )
-        let service = RecordingApplicationService(applications: [app], launchResponse: app)
-        let snapshots = try await SnapshotInvalidationFixture.start()
-        defer { Task { await snapshots.host.stop() } }
-
-        var command = OpenCommand()
-        command.target = "~/Desktop/test.txt"
-        command.app = "Notes"
-        command.noFocus = true
-        let runtime = CommandRuntime(
-            configuration: .init(verbose: false, jsonOutput: true, logLevel: nil),
-            services: ServicesWithApplicationStub(
-                applications: service,
-                snapshots: snapshots.selected
-            ),
-            snapshotInvalidationRemoteSocketPaths: [snapshots.discoveredSocketPath]
-        )
-        try await command.run(using: runtime)
-
-        let request = try #require(service.launchRequests.first)
-        #expect(request.applicationIdentifier == "Notes")
-        #expect(request.openURLs.first?.path.hasSuffix("/Desktop/test.txt") == true)
-        #expect(!request.activates)
-        #expect(await snapshots.selected.getMostRecentSnapshot() == nil)
-        #expect(await snapshots.discovered.getMostRecentSnapshot() == nil)
-    }
-
-    @Test
-    func `Open command resolves a relative handler path in the caller directory`() async throws {
-        let app = ServiceApplicationInfo(processIdentifier: 44, bundleIdentifier: nil, name: "Fixture")
-        let service = RecordingApplicationService(applications: [app], launchResponse: app)
-
-        var command = OpenCommand()
-        command.target = "document.txt"
-        command.app = "./Build/Fixture.app"
-        let runtime = CommandRuntime(
-            configuration: .init(verbose: false, jsonOutput: true, logLevel: nil),
-            services: ServicesWithApplicationStub(applications: service)
-        )
-        try await command.run(using: runtime)
-
-        let request = try #require(service.launchRequests.first)
-        #expect(request.applicationIdentifier == ApplicationIdentifierResolver.resolve("./Build/Fixture.app"))
-    }
-}
-
-@MainActor
 struct AppCommandLaunchFlowTests {
     @Test
     func `Launch without --open stays background through runtime host`() async throws {
@@ -210,12 +43,14 @@ struct AppCommandLaunchFlowTests {
         var command = AppCommand.LaunchSubcommand()
         command.app = "TextEdit"
         command.newInstance = true
+        command.waitUntilReady = true
         command.waitForWindow = true
 
         try await command.run(using: self.makeRuntime(applicationService: service))
 
         let request = try #require(service.launchRequests.first)
         #expect(request.createsNewInstance)
+        #expect(request.waitUntilReady)
         #expect(request.waitForWindow)
         #expect(!request.activates)
     }
@@ -641,10 +476,6 @@ private final class ServicesWithApplicationStub: PeekabooServiceProviding {
 
     var configuration: PeekabooCore.ConfigurationManager {
         self.base.configuration
-    }
-
-    var process: any ProcessServiceProtocol {
-        self.base.process
     }
 
     var permissions: PermissionsService {

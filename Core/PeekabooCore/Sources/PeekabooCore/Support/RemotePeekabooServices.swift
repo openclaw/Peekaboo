@@ -21,7 +21,6 @@ public final class RemotePeekabooServices: PeekabooServiceProviding {
     public let files: any FileServiceProtocol
     public let clipboard: any ClipboardServiceProtocol
     public let configuration: ConfigurationManager
-    public let process: any ProcessServiceProtocol
     public let permissions: PermissionsService
     public let audioInput: AudioInputService
     public let screens: any ScreenServiceProtocol
@@ -146,15 +145,6 @@ public final class RemotePeekabooServices: PeekabooServiceProviding {
         self.files = FileService()
         self.clipboard = ClipboardService()
         self.configuration = ConfigurationManager.shared
-        self.process = ProcessService(
-            applicationService: self.applications,
-            screenCaptureService: self.screenCapture,
-            snapshotManager: snapshotManager,
-            uiAutomationService: self.automation,
-            windowManagementService: self.windows,
-            menuService: self.menu,
-            dockService: self.dock,
-            clipboardService: self.clipboard)
         self.permissions = PermissionsService()
         self.audioInput = AudioInputService(aiService: PeekabooAIService())
         self.screens = screenService

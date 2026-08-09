@@ -17,9 +17,6 @@ struct PasteCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedComma
     @Option(name: .long, help: "Path to file to paste (copies file bytes into clipboard first)")
     var filePath: String?
 
-    @Option(name: .long, help: "Path to image to paste (alias of file-path)")
-    var imagePath: String?
-
     @Option(name: .long, help: "Base64 data to paste")
     var dataBase64: String?
 
@@ -64,7 +61,7 @@ struct PasteCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedComma
         // is also an explicit payload. Only targeting/focus/delivery flags may
         // combine with the bare-paste path. The restore delay is also the
         // consumption window for a current-clipboard paste, so it is valid there.
-        self.text != nil || self.textOption != nil || self.filePath != nil || self.imagePath != nil
+        self.text != nil || self.textOption != nil || self.filePath != nil
             || self.dataBase64 != nil || self.uti != nil || self.alsoText != nil
             || self.allowLarge
     }
@@ -369,7 +366,7 @@ struct PasteCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedComma
             )
         }
 
-        if let path = self.filePath ?? self.imagePath {
+        if let path = self.filePath {
             let url = ClipboardPathResolver.fileURL(from: path)
             let data = try Data(contentsOf: url)
             let inferred = UTType(filenameExtension: url.pathExtension) ?? .data
@@ -394,7 +391,7 @@ struct PasteCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedComma
             )
         }
 
-        throw ValidationError("Provide text, --file-path/--image-path, or --data-base64 with --uti")
+        throw ValidationError("Provide text, --file-path, or --data-base64 with --uti")
     }
 
     private func pasteCurrentClipboard(expectedPIDIdentity: UInt64?) async throws {

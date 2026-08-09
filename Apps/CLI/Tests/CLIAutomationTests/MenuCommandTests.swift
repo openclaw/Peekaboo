@@ -38,7 +38,7 @@ struct MenuCommandTests {
     @Test
     func `Menu command has expected subcommands`() {
         let subcommands = MenuCommand.commandDescription.subcommands
-        #expect(subcommands.count == 4)
+        #expect(subcommands.count == 2)
 
         var names: [String] = [] // Key-path map here trips SILGen; keep the explicit loop.
         names.reserveCapacity(subcommands.count)
@@ -47,9 +47,7 @@ struct MenuCommandTests {
             names.append(name)
         }
         #expect(names.contains("click"))
-        #expect(names.contains("click-extra"))
         #expect(names.contains("list"))
-        #expect(names.contains("list-all"))
     }
 
     @Test
@@ -85,28 +83,6 @@ struct MenuCommandTests {
         let path2 = "Window > Bring All to Front"
         let components2 = path2.split(separator: ">").map { $0.trimmingCharacters(in: .whitespaces) }
         #expect(components2 == ["Window", "Bring All to Front"])
-    }
-
-    @Test
-    func `Menu click-extra command help`() async throws {
-        let result = try await self.runMenuCommand(["menu", "click-extra", "--help"])
-        #expect(result.exitStatus == 0)
-        let output = self.output(from: result)
-        #expect(output.contains("Click a system menu extra"))
-        #expect(output.contains("--title"))
-        #expect(output.contains("--item"))
-        #expect(output.contains("--verify"))
-    }
-
-    @Test
-    func `Menu click-extra rejects unsupported nested item without clicking`() async throws {
-        let (result, context) = try await self.runMenuCommandWithContext([
-            "menu", "click-extra", "--title", "WiFi", "--item", "Settings", "--json",
-        ])
-        #expect(result.exitStatus != 0)
-        #expect(self.output(from: result).contains("--item is not supported"))
-        let calls = await self.menuState(context.menuService) { $0.clickExtraCalls }
-        #expect(calls.isEmpty)
     }
 
     @Test

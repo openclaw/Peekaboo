@@ -40,7 +40,7 @@ struct AppCommandTests {
         #expect(output.contains("Launch an application"))
         #expect(output.contains("--bundle-id"))
         #expect(output.contains("--open"))
-        #expect(output.contains("--wait-until-ready"))
+        #expect(output.contains("--wait-ready"))
         #expect(output.contains("--wait-for-window"))
         #expect(output.contains("--new-instance"))
         #expect(output.contains("--foreground"))
@@ -202,7 +202,7 @@ struct AppCommandTests {
     @Test
     func `App lifecycle flow`() {
         // This tests the logical flow of app lifecycle commands
-        let launchCmd = ["app", "launch", "TextEdit", "--wait-until-ready"]
+        let launchCmd = ["app", "launch", "TextEdit", "--wait-ready"]
         let hideCmd = ["app", "hide", "--app", "TextEdit"]
         let showCmd = ["app", "unhide", "--app", "TextEdit"]
         let quitCmd = ["app", "quit", "--app", "TextEdit", "--json"]
@@ -238,7 +238,7 @@ struct AppCommandIntegrationTests {
             [
                 "app", "launch",
                 "TextEdit",
-                "--wait-until-ready",
+                "--wait-ready",
                 "--json",
             ],
             allowedExitCodes: [0, 1]

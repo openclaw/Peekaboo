@@ -804,7 +804,6 @@ struct MCPToolDescriptionTests {
         let tools: [any MCPTool] = [
             makeTestTool(ImageTool.init),
             makeTestTool(AnalyzeTool.init),
-            makeTestTool(ListTool.init),
             makeTestTool(PermissionsTool.init),
             makeTestTool(SleepTool.init),
             makeTestTool(SeeTool.init),

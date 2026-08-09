@@ -40,9 +40,6 @@ struct ClipboardCommand: OutputFormattable, RuntimeOptionsConfigurable {
     @Option(name: .long, help: "Path to file to copy")
     var filePath: String?
 
-    @Option(name: .long, help: "Path to image to copy (alias of file-path)")
-    var imagePath: String?
-
     @Option(name: .long, help: "Base64 data to copy")
     var dataBase64: String?
 
@@ -221,8 +218,8 @@ struct ClipboardCommand: OutputFormattable, RuntimeOptionsConfigurable {
     }
 
     private func handleLoad() throws {
-        guard let path = self.filePath ?? self.imagePath else {
-            throw ValidationError("load requires --file-path or --image-path")
+        guard let path = self.filePath else {
+            throw ValidationError("load requires --file-path")
         }
         let resolvedPath = ClipboardPathResolver.filePath(from: path) ?? path
         let request = try self.makeWriteRequest(overridePath: path)
@@ -313,7 +310,7 @@ struct ClipboardCommand: OutputFormattable, RuntimeOptionsConfigurable {
             )
         }
 
-        if let path = overridePath ?? self.filePath ?? self.imagePath {
+        if let path = overridePath ?? self.filePath {
             let url = ClipboardPathResolver.fileURL(from: path)
             let data = try Data(contentsOf: url)
             let uti = UTType(filenameExtension: url.pathExtension) ?? .data
@@ -337,7 +334,7 @@ struct ClipboardCommand: OutputFormattable, RuntimeOptionsConfigurable {
             )
         }
 
-        throw ValidationError("Provide --text, --file-path/--image-path, or --data-base64 with --uti")
+        throw ValidationError("Provide --text, --file-path, or --data-base64 with --uti")
     }
 
     private func verifyWriteIfNeeded(request: ClipboardWriteRequest) throws -> ClipboardVerifyResult? {

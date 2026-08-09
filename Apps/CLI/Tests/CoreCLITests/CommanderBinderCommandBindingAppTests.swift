@@ -45,24 +45,6 @@ struct CommanderBinderAppConfigTests {
     }
 
     @Test
-    func `Open wait-for-window requires a current bridge host`() throws {
-        let parsed = ParsedValues(
-            positional: ["https://example.com"],
-            options: [:],
-            flags: ["waitForWindow"]
-        )
-
-        let options = try CommanderCLIBinder.makeRuntimeOptions(
-            from: parsed,
-            commandType: OpenCommand.self
-        )
-
-        #expect(options.requiresApplicationLaunchOptions)
-        #expect(options.requiresApplicationWindowReadiness)
-        #expect(!options.requiresNewApplicationInstanceLaunch)
-    }
-
-    @Test
     func `App launch binding with --foreground`() throws {
         let parsed = ParsedValues(positional: ["Calendar"], options: [:], flags: ["foreground"])
         let command = try CommanderCLIBinder.instantiateCommand(
@@ -123,45 +105,6 @@ struct CommanderBinderAppConfigTests {
         #expect(command.app == nil)
         #expect(command.bundleId == "com.apple.Notes")
         #expect(command.noFocus == true)
-    }
-
-    @Test
-    func `Open command binding with overrides`() throws {
-        let parsed = ParsedValues(
-            positional: ["https://example.com"],
-            options: [
-                "app": ["Safari"],
-                "bundleId": ["com.apple.Safari"]
-            ],
-            flags: ["waitUntilReady", "waitForWindow", "foreground"]
-        )
-
-        let command = try CommanderCLIBinder.instantiateCommand(ofType: OpenCommand.self, parsedValues: parsed)
-        #expect(command.target == "https://example.com")
-        #expect(command.app == "Safari")
-        #expect(command.bundleId == "com.apple.Safari")
-        #expect(command.waitUntilReady == true)
-        #expect(command.waitForWindow == true)
-        #expect(command.foreground == true)
-        #expect(command.noFocus == false)
-    }
-
-    @Test
-    func `Open command binding minimal`() throws {
-        let parsed = ParsedValues(
-            positional: ["~/Desktop"],
-            options: [:],
-            flags: []
-        )
-
-        let command = try CommanderCLIBinder.instantiateCommand(ofType: OpenCommand.self, parsedValues: parsed)
-        #expect(command.target == "~/Desktop")
-        #expect(command.app == nil)
-        #expect(command.bundleId == nil)
-        #expect(command.waitUntilReady == false)
-        #expect(command.waitForWindow == false)
-        #expect(command.foreground == false)
-        #expect(command.noFocus == false)
     }
 
     @Test

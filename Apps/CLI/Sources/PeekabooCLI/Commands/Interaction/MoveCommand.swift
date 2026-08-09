@@ -20,9 +20,6 @@ struct MoveCommand: ErrorHandlingCommand, OutputFormattable, InjectedRuntimeBack
     @Option(help: "Opaque element ID copied from current see or inspect-ui output")
     var on: String?
 
-    @Option(name: .customLong("id"), help: "Element ID to move to (alias for --on)")
-    var id: String?
-
     @OptionGroup var target: InteractionTargetOptions
     @OptionGroup var focusOptions: FocusCommandOptions
 
@@ -67,15 +64,14 @@ struct MoveCommand: ErrorHandlingCommand, OutputFormattable, InjectedRuntimeBack
             self.resolvedCoordinates == nil ? 0 : 1,
             self.to == nil ? 0 : 1,
             self.on == nil ? 0 : 1,
-            self.id == nil ? 0 : 1,
         ].reduce(0, +)
 
         guard targetCount >= 1 else {
-            throw ValidationError("Specify coordinates, --coords, --to, --on/--id, or --center")
+            throw ValidationError("Specify coordinates, --coords, --to, --on, or --center")
         }
 
         guard targetCount == 1 else {
-            throw ValidationError("Specify exactly one target: coordinates, --coords, --to, --on/--id, or --center")
+            throw ValidationError("Specify exactly one target: coordinates, --coords, --to, --on, or --center")
         }
 
         // Validate coordinates format if provided
@@ -204,7 +200,7 @@ struct MoveCommand: ErrorHandlingCommand, OutputFormattable, InjectedRuntimeBack
             )
         }
 
-        if let elementId = on ?? id {
+        if let elementId = on {
             return try await self.resolveElementTarget(elementId: elementId)
         }
 
@@ -212,7 +208,7 @@ struct MoveCommand: ErrorHandlingCommand, OutputFormattable, InjectedRuntimeBack
             return try await self.resolveQueryTarget(query: query)
         }
 
-        throw ValidationError("Specify coordinates, --coords, --to, --on/--id, or --center")
+        throw ValidationError("Specify coordinates, --coords, --to, --on, or --center")
     }
 
     private func focusForCoordinateTarget() async throws {

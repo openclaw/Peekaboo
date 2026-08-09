@@ -87,9 +87,3 @@ extension CaptureVideoCommand: CommanderSignatureProviding {
         )
     }
 }
-
-extension CaptureWatchAlias: CommanderSignatureProviding {
-    static func commanderSignature() -> CommandSignature {
-        CaptureLiveCommand.commanderSignature()
-    }
-}

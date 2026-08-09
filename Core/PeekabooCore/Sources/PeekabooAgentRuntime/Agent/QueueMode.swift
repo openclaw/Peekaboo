@@ -44,7 +44,6 @@ final class AgentTurnBoundary {
         "dock",
         "drag",
         "hotkey",
-        "launch_app",
         "menu",
         "move",
         "paste",
@@ -61,8 +60,9 @@ final class AgentTurnBoundary {
         "app": ["list"],
         "dialog": ["list"],
         "dock": ["list"],
-        "menu": ["list", "list_all"],
+        "menu": ["list"],
         "space": ["list"],
+        "window": ["list"],
     ]
 
     private enum PerceptionState {

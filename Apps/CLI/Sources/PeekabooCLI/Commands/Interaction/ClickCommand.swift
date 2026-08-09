@@ -17,9 +17,6 @@ struct ClickCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedComma
     @Option(help: "Opaque element ID copied from current see or inspect-ui output")
     var on: String?
 
-    @Option(name: .customLong("id"), help: "Element ID to click (alias for --on)")
-    var id: String?
-
     @OptionGroup var target: InteractionTargetOptions
 
     @Option(help: "Click at coordinates (x,y)")
@@ -142,7 +139,7 @@ struct ClickCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedComma
                 try await self.focusApplicationIfNeeded(snapshotId: observation.focusSnapshotId(for: self.target))
 
                 // Use whichever element ID parameter was provided
-                let elementId = self.on ?? self.id
+                let elementId = self.on
 
                 if let elementId {
                     if !self.usesBackgroundDelivery {

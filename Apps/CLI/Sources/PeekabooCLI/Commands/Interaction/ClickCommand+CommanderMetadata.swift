@@ -22,7 +22,6 @@ extension ClickCommand: CommanderBindableCommand {
         self.query = try values.decodeOptionalPositional(0, label: "query")
         self.snapshot = values.singleOption("snapshot")
         self.on = values.singleOption("on")
-        self.id = values.singleOption("id")
         self.target = try values.makeInteractionTargetOptions()
         self.coords = values.singleOption("coords")
         self.globalCoords = values.flag("globalCoords")
@@ -57,11 +56,6 @@ extension ClickCommand: CommanderSignatureProviding {
                     "on",
                     help: "Opaque element ID copied from current see or inspect-ui output",
                     long: "on"
-                ),
-                .commandOption(
-                    "id",
-                    help: "Element ID to click (alias for --on)",
-                    long: "id"
                 ),
                 .commandOption(
                     "coords",

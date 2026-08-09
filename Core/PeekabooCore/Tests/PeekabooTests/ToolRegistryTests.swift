@@ -30,8 +30,8 @@ struct ToolRegistryTests {
         #expect(clickTool?.name == "click")
 
         // Test command name match (if different from tool name)
-        let listAppsTool = ToolRegistry.tool(named: "list_apps")
-        #expect(listAppsTool != nil)
+        let appTool = ToolRegistry.tool(named: "app")
+        #expect(appTool != nil)
 
         // Test non-existent tool
         let nonExistentTool = ToolRegistry.tool(named: "non_existent_tool")

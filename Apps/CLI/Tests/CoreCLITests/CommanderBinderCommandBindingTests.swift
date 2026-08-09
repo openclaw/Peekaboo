@@ -4,30 +4,6 @@ import Testing
 
 struct CommanderBinderCommandBindingTests {
     @Test
-    func `Sleep command duration binding`() throws {
-        let parsed = ParsedValues(positional: ["2500"], options: [:], flags: [])
-        let command = try CommanderCLIBinder.instantiateCommand(ofType: SleepCommand.self, parsedValues: parsed)
-        #expect(command.duration == 2500)
-    }
-
-    @Test
-    func `Sleep command binding errors`() {
-        let missing = ParsedValues(positional: [], options: [:], flags: [])
-        #expect(throws: CommanderBindingError.missingArgument(label: "duration")) {
-            _ = try CommanderCLIBinder.instantiateCommand(ofType: SleepCommand.self, parsedValues: missing)
-        }
-
-        let invalid = ParsedValues(positional: ["abc"], options: [:], flags: [])
-        #expect(throws: CommanderBindingError.invalidArgument(
-            label: "duration",
-            value: "abc",
-            reason: "Unable to parse Int"
-        )) {
-            _ = try CommanderCLIBinder.instantiateCommand(ofType: SleepCommand.self, parsedValues: invalid)
-        }
-    }
-
-    @Test
     func `Clean command option + flag binding`() throws {
         let parsed = ParsedValues(
             positional: [],
@@ -45,27 +21,6 @@ struct CommanderBinderCommandBindingTests {
     }
 
     @Test
-    func `Run command binding`() throws {
-        let parsed = ParsedValues(
-            positional: ["/tmp/demo.peekaboo.json"],
-            options: ["output": ["/tmp/result.json"]],
-            flags: ["noFailFast"]
-        )
-        let command = try CommanderCLIBinder.instantiateCommand(ofType: RunCommand.self, parsedValues: parsed)
-        #expect(command.scriptPath == "/tmp/demo.peekaboo.json")
-        #expect(command.output == "/tmp/result.json")
-        #expect(command.noFailFast == true)
-    }
-
-    @Test
-    func `Run command requires script path`() {
-        let parsed = ParsedValues(positional: [], options: [:], flags: [])
-        #expect(throws: CommanderBindingError.missingArgument(label: "scriptPath")) {
-            _ = try CommanderCLIBinder.instantiateCommand(ofType: RunCommand.self, parsedValues: parsed)
-        }
-    }
-
-    @Test
     func `Clipboard command binding with file-path and also-text`() throws {
         let parsed = ParsedValues(
             positional: ["set"],
@@ -80,7 +35,6 @@ struct CommanderBinderCommandBindingTests {
         #expect(command.action == "set")
         #expect(command.actionOption == nil)
         #expect(command.filePath == "/tmp/demo.txt")
-        #expect(command.imagePath == nil)
         #expect(command.text == nil)
         #expect(command.alsoText == "Peekaboo clipboard file smoke")
         #expect(command.allowLarge == true)
@@ -237,58 +191,6 @@ struct CommanderBinderCommandBindingTests {
         )
         let command = try CommanderCLIBinder.instantiateCommand(ofType: ToolsCommand.self, parsedValues: parsed)
         #expect(command.noSort == true)
-    }
-
-    @Test
-    func `List menubar binding`() throws {
-        let parsed = ParsedValues(positional: [], options: [:], flags: [])
-        _ = try CommanderCLIBinder.instantiateCommand(ofType: ListCommand.MenuBarSubcommand.self, parsedValues: parsed)
-    }
-
-    @Test
-    func `List windows binding`() throws {
-        let parsed = ParsedValues(
-            positional: [],
-            options: [
-                "app": ["Safari"],
-                "pid": ["123"],
-                "includeDetails": ["bounds,ids"]
-            ],
-            flags: []
-        )
-        let command = try CommanderCLIBinder.instantiateCommand(
-            ofType: ListCommand.WindowsSubcommand.self,
-            parsedValues: parsed
-        )
-        #expect(command.app == "Safari")
-        #expect(command.pid == 123)
-        #expect(command.includeDetails == "bounds,ids")
-    }
-
-    @Test
-    func `List windows requires app`() {
-        let parsed = ParsedValues(positional: [], options: [:], flags: [])
-        #expect(throws: CommanderBindingError.missingArgument(label: "app")) {
-            _ = try CommanderCLIBinder.instantiateCommand(
-                ofType: ListCommand.WindowsSubcommand.self,
-                parsedValues: parsed
-            )
-        }
-    }
-
-    @Test
-    func `List windows binding accepts pid without app`() throws {
-        let parsed = ParsedValues(
-            positional: [],
-            options: ["pid": ["123"]],
-            flags: []
-        )
-        let command = try CommanderCLIBinder.instantiateCommand(
-            ofType: ListCommand.WindowsSubcommand.self,
-            parsedValues: parsed
-        )
-        #expect(command.app == nil)
-        #expect(command.pid == 123)
     }
 
     @Test
@@ -782,7 +684,6 @@ struct CommanderBinderCommandBindingTests {
         )
         let command = try CommanderCLIBinder.instantiateCommand(ofType: MoveCommand.self, parsedValues: parsed)
         #expect(command.on == "B1")
-        #expect(command.id == nil)
         #expect(command.snapshot == "sess-1")
     }
 

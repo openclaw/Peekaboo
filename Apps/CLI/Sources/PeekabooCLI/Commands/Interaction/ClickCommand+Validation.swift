@@ -6,16 +6,12 @@ import PeekabooCore
 extension ClickCommand {
     mutating func validate() throws {
         try self.target.validate()
-        guard self.query != nil || self.on != nil || self.id != nil || self.coords != nil else {
-            throw ValidationError("Specify an element query, --on/--id, or --coords.")
+        guard self.query != nil || self.on != nil || self.coords != nil else {
+            throw ValidationError("Specify an element query, --on, or --coords.")
         }
 
         if self.on != nil && self.coords != nil {
             throw ValidationError("Cannot specify both --on and --coords.")
-        }
-
-        if self.on != nil && self.id != nil {
-            throw ValidationError("Cannot specify both --on and --id.")
         }
 
         if let coordString = self.coords, Self.parseCoordinates(coordString) == nil {

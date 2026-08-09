@@ -106,7 +106,7 @@ struct MoveCommandTests {
         try await context.snapshots.storeDetectionResult(snapshotId: "snapshot-id", result: detection)
 
         let result = try await self.runMove(
-            arguments: ["--id", "B1", "--snapshot", "snapshot-id", "--json", "--foreground"],
+            arguments: ["--on", "B1", "--snapshot", "snapshot-id", "--json", "--foreground"],
             context: context
         )
 

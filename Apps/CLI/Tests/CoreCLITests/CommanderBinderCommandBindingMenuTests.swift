@@ -63,24 +63,6 @@ struct CommanderBinderMenuDockTests {
     }
 
     @Test
-    func `Menu click-extra binding`() throws {
-        let parsed = ParsedValues(
-            positional: [],
-            options: [
-                "title": ["Wi-Fi"],
-                "item": ["Turn Wi-Fi Off"]
-            ],
-            flags: []
-        )
-        let command = try CommanderCLIBinder.instantiateCommand(
-            ofType: MenuCommand.ClickExtraSubcommand.self,
-            parsedValues: parsed
-        )
-        #expect(command.title == "Wi-Fi")
-        #expect(command.item == "Turn Wi-Fi Off")
-    }
-
-    @Test
     func `Menu list binding`() throws {
         let parsed = ParsedValues(
             positional: [],
@@ -105,21 +87,6 @@ struct CommanderBinderMenuDockTests {
             parsedValues: parsed
         )
         #expect(command.target.app == nil)
-    }
-
-    @Test
-    func `Menu list-all binding`() throws {
-        let parsed = ParsedValues(
-            positional: [],
-            options: [:],
-            flags: ["includeDisabled", "includeFrames"]
-        )
-        let command = try CommanderCLIBinder.instantiateCommand(
-            ofType: MenuCommand.ListAllSubcommand.self,
-            parsedValues: parsed
-        )
-        #expect(command.includeDisabled == true)
-        #expect(command.includeFrames == true)
     }
 
     @Test

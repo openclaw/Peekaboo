@@ -218,7 +218,6 @@ struct CommanderBinderTests {
     func `Launch commands require a bridge host with launch options`() throws {
         let parsed = ParsedValues(positional: [], options: [:], flags: [])
         let commandTypes: [any ParsableCommand.Type] = [
-            OpenCommand.self,
             AppCommand.LaunchSubcommand.self,
             AppCommand.RelaunchSubcommand.self,
         ]
@@ -234,7 +233,6 @@ struct CommanderBinderTests {
     func `Snapshot-mutating commands require implicit invalidation support`() throws {
         let parsed = ParsedValues(positional: [], options: [:], flags: [])
         let commandTypes: [any ParsableCommand.Type] = [
-            OpenCommand.self,
             AppCommand.LaunchSubcommand.self,
             AppCommand.RelaunchSubcommand.self,
             AppCommand.QuitSubcommand.self,
@@ -266,7 +264,6 @@ struct CommanderBinderTests {
             DialogCommand.InputSubcommand.self,
             DialogCommand.FileSubcommand.self,
             MenuCommand.ClickSubcommand.self,
-            MenuCommand.ClickExtraSubcommand.self,
             MenuCommand.ListSubcommand.self,
             DockCommand.LaunchSubcommand.self,
             DockCommand.RightClickSubcommand.self,
@@ -274,7 +271,6 @@ struct CommanderBinderTests {
             DockCommand.ShowSubcommand.self,
             SwitchSubcommand.self,
             MoveWindowSubcommand.self,
-            RunCommand.self,
         ]
 
         for commandType in commandTypes {
@@ -343,7 +339,7 @@ struct CommanderBinderTests {
 
         let readOnly = try CommanderCLIBinder.makeRuntimeOptions(
             from: parsed,
-            commandType: ListCommand.AppsSubcommand.self
+            commandType: AppCommand.ListSubcommand.self
         )
         #expect(!readOnly.requiresImplicitSnapshotInvalidation)
 
@@ -443,10 +439,8 @@ struct CommanderBinderTests {
     func `Interactive permission requests invalidate implicit snapshots`() throws {
         let commandTypes: [any ParsableCommand.Type] = [
             PermissionsCommand.RequestScreenRecordingSubcommand.self,
+            PermissionsCommand.RequestAccessibilitySubcommand.self,
             PermissionsCommand.RequestEventSynthesizingSubcommand.self,
-            PermissionCommand.RequestScreenRecordingSubcommand.self,
-            PermissionCommand.RequestAccessibilitySubcommand.self,
-            PermissionCommand.RequestEventSynthesizingSubcommand.self,
         ]
 
         for commandType in commandTypes {
@@ -460,8 +454,7 @@ struct CommanderBinderTests {
 
         let callerLocalCommandTypes: [any ParsableCommand.Type] = [
             PermissionsCommand.RequestScreenRecordingSubcommand.self,
-            PermissionCommand.RequestScreenRecordingSubcommand.self,
-            PermissionCommand.RequestAccessibilitySubcommand.self,
+            PermissionsCommand.RequestAccessibilitySubcommand.self,
         ]
         for commandType in callerLocalCommandTypes {
             let options = try CommanderCLIBinder.makeRuntimeOptions(
@@ -532,11 +525,6 @@ struct CommanderBinderTests {
                 options: ["app": ["TextEdit"], "captureFocus": ["background"]],
                 flags: []
             )),
-            (CaptureWatchAlias.self, ParsedValues(
-                positional: [],
-                options: ["app": ["TextEdit"], "captureFocus": ["background"]],
-                flags: []
-            )),
         ]
 
         for (commandType, parsed) in readOnlyCaptures {
@@ -554,11 +542,6 @@ struct CommanderBinderTests {
             (CaptureLiveCommand.self, ParsedValues(
                 positional: [],
                 options: ["app": ["TextEdit"], "captureFocus": ["foreground"]],
-                flags: []
-            )),
-            (CaptureWatchAlias.self, ParsedValues(
-                positional: [],
-                options: ["mode": ["window"], "pid": ["123"], "captureFocus": ["auto"]],
                 flags: []
             )),
         ]
@@ -972,10 +955,13 @@ extension CommanderBinderTests {
             flags: []
         )
 
-        let options = try CommanderCLIBinder.makeRuntimeOptions(from: parsed, commandType: OpenCommand.self)
+        let options = try CommanderCLIBinder.makeRuntimeOptions(
+            from: parsed,
+            commandType: AppCommand.LaunchSubcommand.self
+        )
         let ambientBase = try CommanderCLIBinder.makeRuntimeOptions(
             from: ParsedValues(positional: [], options: [:], flags: []),
-            commandType: OpenCommand.self
+            commandType: AppCommand.LaunchSubcommand.self
         )
         let environmentOptions = ambientBase.applyingEnvironmentOverrides(environment: [
             "PEEKABOO_CAPTURE_ENGINE": "legacy",
@@ -1200,10 +1186,8 @@ extension CommanderBinderTests {
     @Test
     func `Pure local runtime commands do not auto start daemon`() throws {
         let parsed = ParsedValues(positional: [], options: [:], flags: [])
-        let sleepOptions = try CommanderCLIBinder.makeRuntimeOptions(from: parsed, commandType: SleepCommand.self)
         let toolsOptions = try CommanderCLIBinder.makeRuntimeOptions(from: parsed, commandType: ToolsCommand.self)
 
-        #expect(sleepOptions.preferRemote == false)
         #expect(toolsOptions.preferRemote == false)
     }
 
@@ -1238,7 +1222,6 @@ extension CommanderBinderTests {
     func `Application list runtimes use bridge host inventory`() throws {
         let parsed = ParsedValues(positional: [], options: [:], flags: [])
         let commandTypes: [any ParsableCommand.Type] = [
-            ListCommand.AppsSubcommand.self,
             AppCommand.ListSubcommand.self,
         ]
 
@@ -1300,7 +1283,6 @@ extension CommanderBinderTests {
             flags: []
         )
         let commandTypes: [any ParsableCommand.Type] = [
-            ListCommand.AppsSubcommand.self,
             AppCommand.ListSubcommand.self,
         ]
 
@@ -1334,25 +1316,11 @@ extension CommanderBinderTests {
     }
 
     @Test
-    func `Stateful list inventory runtimes default to daemon host mode`() throws {
-        let parsed = ParsedValues(positional: [], options: [:], flags: [])
-        let commandTypes: [any ParsableCommand.Type] = [
-            ListCommand.WindowsSubcommand.self,
-            ListCommand.MenuBarSubcommand.self,
-        ]
-
-        for commandType in commandTypes {
-            let options = try CommanderCLIBinder.makeRuntimeOptions(from: parsed, commandType: commandType)
-            #expect(options.preferRemote == true)
-        }
-    }
-
-    @Test
     func `List screens runtime defaults to local host mode`() throws {
         let parsed = ParsedValues(positional: [], options: [:], flags: [])
         let options = try CommanderCLIBinder.makeRuntimeOptions(
             from: parsed,
-            commandType: ListCommand.ScreensSubcommand.self
+            commandType: ScreenCommand.ListSubcommand.self
         )
         #expect(options.preferRemote == false)
     }
@@ -1362,7 +1330,7 @@ extension CommanderBinderTests {
         let parsed = ParsedValues(positional: [], options: [:], flags: [])
         let options = try CommanderCLIBinder.makeRuntimeOptions(
             from: parsed,
-            commandType: ListCommand.PermissionsSubcommand.self
+            commandType: PermissionsCommand.StatusSubcommand.self
         )
         #expect(options.preferRemote == true)
     }
@@ -1423,7 +1391,6 @@ extension CommanderBinderTests {
             ImageCommand.self,
             SeeCommand.self,
             CaptureLiveCommand.self,
-            CaptureWatchAlias.self,
             CaptureVideoCommand.self,
             CaptureActionCommand.self,
         ]
@@ -1432,15 +1399,12 @@ extension CommanderBinderTests {
             #expect(options.requiresScreenCapturePermission, "Expected capture gating for \(commandType)")
         }
 
-        // `run` is intentionally NOT gated: its script may contain only non-capture steps, and the
-        // steps are unknown at host-resolution time, so gating would push valid hosts away.
         let nonCaptureCommands: [any ParsableCommand.Type] = [
             ClickCommand.self,
             ScrollCommand.self,
             TypeCommand.self,
             AppCommand.LaunchSubcommand.self,
-            ListCommand.AppsSubcommand.self,
-            RunCommand.self,
+            AppCommand.ListSubcommand.self,
         ]
         for commandType in nonCaptureCommands {
             let options = try CommanderCLIBinder.makeRuntimeOptions(from: parsed, commandType: commandType)
@@ -1455,7 +1419,6 @@ extension CommanderBinderTests {
             (ImageCommand.self, parsed),
             (SeeCommand.self, parsed),
             (CaptureLiveCommand.self, parsed),
-            (CaptureWatchAlias.self, parsed),
             (CaptureActionCommand.self, parsed),
             (AgentCommand.self, parsed),
             (MCPCommand.Serve.self, parsed),
@@ -1527,75 +1490,5 @@ extension CommanderBinderTests {
         silentOptions.requiresSilentCapture = true
         #expect(!CommandRuntime.supportsRemoteRequirements(for: legacy, options: silentOptions))
         #expect(CommandRuntime.supportsRemoteRequirements(for: current, options: silentOptions))
-    }
-
-    @Test
-    func `Run requires PID scoped focus only for window scoped keyboard scripts`() throws {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("peekaboo-run-capability-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let safePath = directory.appendingPathComponent("safe.peekaboo.json")
-        let riskyPath = directory.appendingPathComponent("risky.peekaboo.json")
-        try Data(#"{"steps":[{"stepId":"sleep","command":"sleep","params":{"duration":1}}]}"#.utf8)
-            .write(to: safePath)
-        let riskyScript = """
-        {"steps":[{"stepId":"see","command":"see","params":{"app":"TextEdit"}},\
-        {"stepId":"type","command":"type","params":{"text":"hello","field":"Body"}}]}
-        """
-        try Data(riskyScript.utf8).write(to: riskyPath)
-
-        let safeOptions = try CommanderCLIBinder.makeRuntimeOptions(
-            from: ParsedValues(positional: [safePath.path], options: [:], flags: []),
-            commandType: RunCommand.self
-        )
-        let riskyOptions = try CommanderCLIBinder.makeRuntimeOptions(
-            from: ParsedValues(positional: [riskyPath.path], options: [:], flags: []),
-            commandType: RunCommand.self
-        )
-        let legacy = PeekabooBridgeHandshakeResponse(
-            negotiatedVersion: .init(major: 1, minor: 11),
-            hostKind: .onDemand,
-            build: nil,
-            supportedOperations: [.captureScreen, .invalidateImplicitLatestSnapshot]
-        )
-        let previous = PeekabooBridgeHandshakeResponse(
-            negotiatedVersion: .init(major: 1, minor: 14),
-            hostKind: .onDemand,
-            build: nil,
-            supportedOperations: [.captureScreen, .getFocusedElement, .invalidateImplicitLatestSnapshot]
-        )
-        let current = PeekabooBridgeHandshakeResponse(
-            negotiatedVersion: .init(major: 1, minor: 17),
-            hostKind: .onDemand,
-            build: nil,
-            supportedOperations: [
-                .captureScreen,
-                .getFocusedElement,
-                .invalidateImplicitLatestSnapshot,
-                .exactWindowTargetedTypeActions,
-                .exactWindowTargetedHotkey,
-            ]
-        )
-        let preFocusedDestinationBinding = PeekabooBridgeHandshakeResponse(
-            negotiatedVersion: .init(major: 1, minor: 16),
-            hostKind: .onDemand,
-            build: nil,
-            supportedOperations: current.supportedOperations
-        )
-
-        #expect(!safeOptions.requiresExactWindowTargetedKeyboard)
-        #expect(!safeOptions.requiresSilentCapture)
-        #expect(riskyOptions.requiresExactWindowTargetedKeyboard)
-        #expect(riskyOptions.requiresSilentCapture)
-        #expect(CommandRuntime.supportsRemoteRequirements(for: legacy, options: safeOptions))
-        #expect(!CommandRuntime.supportsRemoteRequirements(for: legacy, options: riskyOptions))
-        #expect(CommandRuntime.supportsRemoteRequirements(for: previous, options: safeOptions))
-        #expect(!CommandRuntime.supportsRemoteRequirements(for: previous, options: riskyOptions))
-        #expect(!CommandRuntime.supportsRemoteRequirements(
-            for: preFocusedDestinationBinding,
-            options: riskyOptions
-        ))
-        #expect(CommandRuntime.supportsRemoteRequirements(for: current, options: riskyOptions))
     }
 }

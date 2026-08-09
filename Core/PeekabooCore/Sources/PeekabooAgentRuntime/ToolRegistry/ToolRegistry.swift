@@ -94,26 +94,6 @@ public enum ToolRegistry {
             ],
             agentGuidance: "Remember to escape newline/tab characters when providing prompts; " +
                 "literal newlines may be interpreted by the shell."),
-        "launch_app": ToolOverride(
-            category: .app,
-            abstract: "Launch applications by name or bundle identifier with optional wait logic.",
-            discussion: """
-            Launches an application and optionally waits for it to become ready.
-            You can pass either the display name or bundle identifier.
-
-            EXAMPLE
-            peekaboo launch_app --name \"Safari\"
-
-            TROUBLESHOOTING
-            If the app fails to launch, double-check the bundle identifier or try
-            `peekaboo list apps` to confirm the exact name.
-            """,
-            examples: [
-                "peekaboo launch_app --name \"Simulator\"",
-                "peekaboo launch_app --bundle-id com.apple.Terminal --wait-until-ready",
-            ],
-            agentGuidance: "After launching, follow up with `peekaboo window focus` to ensure " +
-                "the UI is ready for automation."),
         "shell": ToolOverride(
             category: .system,
             abstract: "Run shell commands with quoting guidance and examples.",
@@ -239,7 +219,7 @@ public enum ToolRegistry {
             .element
         case "click", "type", "press", "scroll", "hotkey", "swipe", "drag", "move":
             .automation
-        case "list_apps", "launch_app":
+        case "app":
             .app
         case "menu_click", "list_menus":
             .menu

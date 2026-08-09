@@ -23,7 +23,7 @@ struct SeeCommandPlaygroundTests {
         _ = try? await self.runPeekabooCommand([
             "app", "launch",
             "--name", "Playground",
-            "--wait-until-ready",
+            "--wait-ready",
         ])
 
         try? await Task.sleep(nanoseconds: 1_000_000_000)

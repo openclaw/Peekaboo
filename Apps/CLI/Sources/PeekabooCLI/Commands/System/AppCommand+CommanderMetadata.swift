@@ -27,7 +27,7 @@ extension AppCommand.LaunchSubcommand: CommanderSignatureProviding {
                 .commandFlag(
                     "waitUntilReady",
                     help: "Wait for the application to be ready",
-                    long: "wait-until-ready"
+                    long: "wait-ready"
                 ),
                 .commandFlag(
                     "newInstance",

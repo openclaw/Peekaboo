@@ -101,7 +101,7 @@ struct CommanderBinderMCPWindowTests {
             "launch",
             "\"Visual Studio Code\"",
             "--bundle-id", "com.microsoft.VSCode",
-            "--wait-until-ready"
+            "--wait-ready"
         ])
         let values = invocation.parsedValues
         #expect(values.positional == ["\"Visual Studio Code\""])

@@ -12,7 +12,6 @@ import Testing
 struct MCPToolSnapshotMutationTests {
     @Test
     func `Mutation policy distinguishes reads mutations and fresh observations`() {
-        #expect(Self.effect("list", [:]) == .none)
         #expect(Self.effect("app", ["action": "list"]) == .none)
         #expect(Self.effect("app", ["action": "launch"]) == .mutation)
         #expect(Self.effect("menu", ["action": "click"]) == .mutation)
@@ -41,6 +40,19 @@ struct MCPToolSnapshotMutationTests {
         #expect(Self.effect("browser", ["action": "snapshot"]) == .none)
         #expect(Self.effect("browser", ["action": "click"]) == .mutation)
         #expect(Self.effect("agent", [:]) == .none)
+    }
+
+    @Test
+    func `Every cataloged MCP tool has an explicit snapshot effect classification`() {
+        let context = MCPToolContext(services: PeekabooServices())
+        let tools = MCPToolCatalog.unfilteredTools(context: context)
+
+        for tool in tools {
+            let effect = MCPToolSnapshotMutationPolicy.explicitEffect(
+                toolName: tool.name,
+                arguments: ToolArguments(raw: [:]))
+            #expect(effect != nil, "Missing snapshot effect classification for \(tool.name)")
+        }
     }
 
     @Test
@@ -498,8 +510,8 @@ struct MCPToolSnapshotMutationTests {
         let context = await MCPToolTestHelpers.makeContext(snapshots: snapshots)
 
         _ = try await context.execute(
-            tool: StubMCPTool(name: "list"),
-            arguments: ToolArguments(raw: [:]))
+            tool: StubMCPTool(name: "app"),
+            arguments: ToolArguments(raw: ["action": "list"]))
 
         #expect(await manager.getSnapshot(id: nil) == nil)
         #expect(await manager.getSnapshot(id: staleID) != nil)

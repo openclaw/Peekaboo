@@ -48,7 +48,6 @@ extension MoveCommand: CommanderBindableCommand {
         self.coords = values.singleOption("coords")
         self.to = values.singleOption("to")
         self.on = values.singleOption("on")
-        self.id = values.singleOption("id")
         self.target = try values.makeInteractionTargetOptions()
         self.center = values.flag("center")
         self.smooth = values.flag("smooth")
@@ -90,11 +89,6 @@ extension MoveCommand: CommanderSignatureProviding {
                     "on",
                     help: "Opaque element ID copied from current see or inspect-ui output",
                     long: "on"
-                ),
-                .commandOption(
-                    "id",
-                    help: "Element ID to move to (alias for --on)",
-                    long: "id"
                 ),
                 .commandOption(
                     "duration",

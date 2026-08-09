@@ -169,8 +169,6 @@ struct AgentEnhancementIntegrationTests {
             "see",
             "done",
             "need_info",
-            "list_screens",
-            "list_apps",
             "shell",
             "sleep",
         ]
@@ -181,7 +179,6 @@ struct AgentEnhancementIntegrationTests {
             "dock",
             "drag",
             "hotkey",
-            "launch_app",
             "paste",
             "perform_action",
             "scroll",
@@ -213,10 +210,10 @@ struct AgentEnhancementIntegrationTests {
         #expect(!ActionVerifier.shouldVerify(toolName: "dock", arguments: ["action": "list"], options: options))
         #expect(ActionVerifier.shouldVerify(toolName: "dock", arguments: ["action": "hide"], options: options))
         #expect(!ActionVerifier.shouldVerify(toolName: "menu", arguments: ["action": "list"], options: options))
-        #expect(!ActionVerifier.shouldVerify(toolName: "menu", arguments: ["action": "list-all"], options: options))
         #expect(ActionVerifier.shouldVerify(toolName: "menu", arguments: ["action": "click"], options: options))
         #expect(!ActionVerifier.shouldVerify(toolName: "move", arguments: ["to": "100,100"], options: options))
         #expect(!ActionVerifier.shouldVerify(toolName: "space", arguments: ["action": "list"], options: options))
+        #expect(!ActionVerifier.shouldVerify(toolName: "window", arguments: ["action": "list"], options: options))
         #expect(ActionVerifier.shouldVerify(toolName: "space", arguments: ["action": "switch"], options: options))
         #expect(!ActionVerifier.shouldVerify(toolName: "browser", arguments: ["action": "snapshot"], options: options))
         #expect(!ActionVerifier.shouldVerify(toolName: "browser", arguments: ["action": "wait_for"], options: options))
@@ -418,8 +415,8 @@ struct AgentEnhancementIntegrationTests {
     func `launch verification expectation preserves background default`() throws {
         let service = try PeekabooAgentService(services: PeekabooServices(), defaultModel: .openai(.gpt55))
         let backgroundExpectation = service.actionVerifier.inferExpectedOutcome(for: ActionDescriptor(
-            toolName: "launch_app",
-            arguments: ["name": "Calendar"]))
+            toolName: "app",
+            arguments: ["action": "launch", "name": "Calendar"]))
         let explicitForegroundExpectation = service.actionVerifier.inferExpectedOutcome(for: ActionDescriptor(
             toolName: "app",
             arguments: ["action": "launch", "name": "Calendar", "foreground": "true"]))
@@ -499,10 +496,6 @@ private final class CaptureOverrideServices: PeekabooServiceProviding {
 
     var configuration: ConfigurationManager {
         self.base.configuration
-    }
-
-    var process: any ProcessServiceProtocol {
-        self.base.process
     }
 
     var permissions: PermissionsService {

@@ -7,7 +7,7 @@ struct CommanderRuntimeRouterHelpPathTests {
     @Test
     func `help resolves longest matching command prefix`() {
         let exitCode = #expect(throws: ExitCode.self) {
-            _ = try CommanderRuntimeRouter.resolve(argv: ["peekaboo", "help", "list", "apps", "extra-token"])
+            _ = try CommanderRuntimeRouter.resolve(argv: ["peekaboo", "help", "app", "list", "extra-token"])
         }
         #expect(exitCode == .success)
     }

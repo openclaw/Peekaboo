@@ -12,6 +12,7 @@ struct PermissionsCommand: ParsableCommand {
             StatusSubcommand.self,
             GrantSubcommand.self,
             RequestScreenRecordingSubcommand.self,
+            RequestAccessibilitySubcommand.self,
             RequestEventSynthesizingSubcommand.self,
         ],
         defaultSubcommand: StatusSubcommand.self
@@ -140,6 +141,69 @@ extension PermissionsCommand {
     }
 
     @MainActor
+    struct RequestAccessibilitySubcommand: OutputFormattable, RuntimeBackedCommand {
+        private struct Result: Codable {
+            let action: String
+            let alreadyGranted: Bool
+            let promptTriggered: Bool
+            let granted: Bool
+
+            private enum CodingKeys: String, CodingKey {
+                case action
+                case alreadyGranted = "already_granted"
+                case promptTriggered = "prompt_triggered"
+                case granted
+            }
+        }
+
+        @RuntimeStorage var runtime: CommandRuntime?
+        var runtimeOptions = CommandRuntimeOptions()
+
+        mutating func run(using runtime: CommandRuntime) async throws {
+            self.runtime = runtime
+            self.logger.setJsonOutputMode(self.jsonOutput)
+
+            let alreadyGranted = await AutomationServiceBridge
+                .hasAccessibilityPermission(automation: runtime.services.automation)
+            if alreadyGranted {
+                self.render(Result(
+                    action: "request-accessibility",
+                    alreadyGranted: true,
+                    promptTriggered: false,
+                    granted: true
+                ))
+                return
+            }
+
+            let granted = await PermissionHelpers.performInteractivePermissionRequest(using: runtime) {
+                runtime.services.permissions.requestAccessibilityPermission(interactive: true)
+            }
+            self.render(Result(
+                action: "request-accessibility",
+                alreadyGranted: false,
+                promptTriggered: true,
+                granted: granted
+            ))
+        }
+
+        private func render(_ result: Result) {
+            if self.jsonOutput {
+                outputSuccessCodable(data: result, logger: self.outputLogger)
+                return
+            }
+
+            if result.alreadyGranted {
+                print("Accessibility permission is already granted.")
+            } else if result.granted {
+                print("Accessibility permission granted.")
+            } else {
+                print("Accessibility permission was not granted.")
+                print("Grant it manually in System Settings > Privacy & Security > Accessibility.")
+            }
+        }
+    }
+
+    @MainActor
     struct RequestEventSynthesizingSubcommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedCommand {
         @RuntimeStorage var runtime: CommandRuntime?
         var runtimeOptions = CommandRuntimeOptions()
@@ -241,6 +305,27 @@ extension PermissionsCommand.RequestScreenRecordingSubcommand: AsyncRuntimeComma
 
 @MainActor
 extension PermissionsCommand.RequestScreenRecordingSubcommand: CommanderBindableCommand {
+    mutating func applyCommanderValues(_ values: CommanderBindableValues) throws {
+        _ = values
+    }
+}
+
+@MainActor
+extension PermissionsCommand.RequestAccessibilitySubcommand: ParsableCommand {
+    nonisolated(unsafe) static var commandDescription: CommandDescription {
+        MainActorCommandDescription.describe {
+            CommandDescription(
+                commandName: "request-accessibility",
+                abstract: "Request Accessibility permission for the local Peekaboo process"
+            )
+        }
+    }
+}
+
+extension PermissionsCommand.RequestAccessibilitySubcommand: AsyncRuntimeCommand {}
+
+@MainActor
+extension PermissionsCommand.RequestAccessibilitySubcommand: CommanderBindableCommand {
     mutating func applyCommanderValues(_ values: CommanderBindableValues) throws {
         _ = values
     }

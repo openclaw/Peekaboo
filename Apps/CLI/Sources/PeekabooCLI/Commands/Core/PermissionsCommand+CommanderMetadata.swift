@@ -38,6 +38,12 @@ extension PermissionsCommand.RequestScreenRecordingSubcommand: CommanderSignatur
     }
 }
 
+extension PermissionsCommand.RequestAccessibilitySubcommand: CommanderSignatureProviding {
+    static func commanderSignature() -> CommandSignature {
+        CommandSignature()
+    }
+}
+
 extension PermissionsCommand.RequestEventSynthesizingSubcommand: CommanderSignatureProviding {
     static func commanderSignature() -> CommandSignature {
         CommandSignature()

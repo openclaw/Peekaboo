@@ -27,7 +27,6 @@ struct CaptureCommand: ParsableCommand {
                     CaptureLiveCommand.self,
                     CaptureActionCommand.self,
                     CaptureVideoCommand.self,
-                    CaptureWatchAlias.self,
                 ],
                 showHelpOnEmptyInvocation: true
             )

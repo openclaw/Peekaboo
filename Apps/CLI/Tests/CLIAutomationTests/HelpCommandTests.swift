@@ -15,7 +15,7 @@ struct HelpCommandTests {
         #expect(output.contains("peekaboo <command>"))
         #expect(output.contains("Core Commands"))
         #expect(output.contains("image"))
-        #expect(output.contains("list"))
+        #expect(output.contains("screen"))
         #expect(output.contains("agent"))
         #expect(output.contains("Global Runtime Flags"))
         #expect(output.contains("--json/-j"))
@@ -34,7 +34,7 @@ struct HelpCommandTests {
     func `help subcommand for each tool`() async throws {
         let subcommands = [
             "image",
-            "list",
+            "screen",
             "config",
             "permissions",
             "see",
@@ -45,8 +45,6 @@ struct HelpCommandTests {
             "swipe",
             "drag",
             "move",
-            "run",
-            "sleep",
             "clean",
             "window",
             "menu",
@@ -104,7 +102,7 @@ struct HelpCommandTests {
     @Test
     func `Subcommand --help flag`() async throws {
         // Test that each subcommand's --help flag works
-        let subcommands = ["image", "list", "config", "agent", "see", "click"]
+        let subcommands = ["image", "screen", "config", "agent", "see", "click"]
 
         for subcommand in subcommands {
             let output = try await runPeekaboo([subcommand, "--help"]).stdout
@@ -117,9 +115,9 @@ struct HelpCommandTests {
 
     @Test
     func `Lifecycle and maximize help describe exact background contracts`() async throws {
-        let openHelp = try await runPeekaboo(["open", "--help"]).stdout
-        #expect(openHelp.contains("--wait-for-window"))
-        #expect(openHelp.contains("exact WindowServer window"))
+        let launchHelp = try await runPeekaboo(["app", "launch", "--help"]).stdout
+        #expect(launchHelp.contains("--wait-for-window"))
+        #expect(launchHelp.contains("exact WindowServer window"))
 
         let maximizeHelp = try await runPeekaboo(["window", "maximize", "--help"]).stdout
         #expect(maximizeHelp.contains("without entering full screen"))

@@ -343,102 +343,39 @@ struct MCPToolExecutionTests {
         }
     }
 
-    // MARK: - List Tool Tests
+    // MARK: - Window List Tool Tests
 
     @Test
-    func `List tool for apps`() async throws {
-        let mockApplications = await MainActor.run {
+    func `Window list returns IDs bounds and off-screen state`() async throws {
+        let app = ServiceApplicationInfo(
+            processIdentifier: 1,
+            bundleIdentifier: "com.apple.finder",
+            name: "Finder")
+        let window = ServiceWindowInfo(
+            windowID: 42,
+            title: "Desktop",
+            bounds: CGRect(x: 10, y: 20, width: 800, height: 600),
+            index: 0,
+            isOffScreen: true)
+        let applications = await MainActor.run {
             MockApplicationService(
-                applications: [
-                    ServiceApplicationInfo(
-                        processIdentifier: 1,
-                        bundleIdentifier: "com.apple.finder",
-                        name: "Finder",
-                        isActive: true,
-                        windowCount: 1),
-                ])
+                applications: [app],
+                windowsByIdentifier: ["Finder": [window]])
         }
-        let context = await MCPToolTestHelpers.makeContext(applications: mockApplications)
-        let tool = ListTool(context: context)
-        let args = ToolArguments(raw: ["type": "apps"])
+        let context = await MCPToolTestHelpers.makeContext(applications: applications)
+        let response = try await WindowTool(context: context).execute(arguments: ToolArguments(raw: [
+            "action": "list",
+            "app": "Finder",
+        ]))
 
-        let response = try await tool.execute(arguments: args)
-        #expect(response.isError == false)
-
-        if case let .text(text: output, annotations: _, _meta: _) = response.content.first {
-            // Should contain at least Finder
-            #expect(output.contains("Finder") || output.contains("com.apple.finder"))
-        }
-    }
-
-    @Test
-    func `List tool for apps includes bundle path and hidden state`() async throws {
-        let mockApplications = await MainActor.run {
-            MockApplicationService(
-                applications: [
-                    ServiceApplicationInfo(
-                        processIdentifier: 1,
-                        bundleIdentifier: "com.apple.finder",
-                        name: "Finder",
-                        bundlePath: "/System/Library/CoreServices/Finder.app",
-                        isActive: true,
-                        isHidden: true,
-                        windowCount: 1),
-                ])
-        }
-        let context = await MCPToolTestHelpers.makeContext(applications: mockApplications)
-        let tool = ListTool(context: context)
-
-        let response = try await tool.execute(arguments: ToolArguments(raw: ["type": "apps"]))
-        #expect(response.isError == false)
-
+        #expect(!response.isError)
         guard case let .text(text: output, annotations: _, _meta: _) = response.content.first else {
-            Issue.record("Expected text response for apps listing")
+            Issue.record("Expected text response for window listing")
             return
         }
-
-        #expect(output.contains("[/System/Library/CoreServices/Finder.app]"))
-        #expect(output.contains("[HIDDEN]"))
-    }
-
-    @Test
-    func `List tool with invalid type`() async throws {
-        let mockApplications = await MainActor.run { MockApplicationService() }
-        let context = await MCPToolTestHelpers.makeContext(applications: mockApplications)
-        let tool = ListTool(context: context)
-        let args = ToolArguments(raw: ["type": "invalid"])
-
-        let response = try await tool.execute(arguments: args)
-        // List tool might not validate the type and just return empty results
-        // or it might fall back to a default type
-        // Let's just check that it returns a response without crashing
-        #expect(!response.content.isEmpty)
-    }
-
-    @Test
-    func `List tool description includes centralized MCP version banner`() async {
-        let mockApplications = await MainActor.run { MockApplicationService() }
-        let context = await MCPToolTestHelpers.makeContext(applications: mockApplications)
-        let tool = ListTool(context: context)
-        #expect(tool.description.contains(PeekabooMCPVersion.banner))
-    }
-
-    @Test
-    func `Server status output uses centralized MCP version`() async throws {
-        let mockApplications = await MainActor.run { MockApplicationService() }
-        let context = await MCPToolTestHelpers.makeContext(applications: mockApplications)
-        let tool = ListTool(context: context)
-        let args = ToolArguments(raw: ["item_type": "server_status"])
-
-        let response = try await tool.execute(arguments: args)
-        #expect(response.isError == false)
-
-        guard case let .text(text: output, annotations: _, _meta: _) = response.content.first else {
-            Issue.record("Expected text response for server_status")
-            return
-        }
-
-        #expect(output.contains("Version: \(PeekabooMCPVersion.current)"))
+        #expect(output.contains("ID: 42"))
+        #expect(output.contains("Bounds: 10, 20 800×600"))
+        #expect(output.contains("OFF-SCREEN"))
     }
 
     @Test
@@ -1634,11 +1571,11 @@ struct MCPToolIntegrationTests {
         {
             let sleepTool = SleepTool()
             let permissionsTool = PermissionsTool()
-            let listTool = ListTool()
+            let appTool = AppTool()
 
             async let sleep = sleepTool.execute(arguments: ToolArguments(raw: ["duration": 0.1]))
             async let permissions = permissionsTool.execute(arguments: ToolArguments(raw: [:]))
-            async let list = listTool.execute(arguments: ToolArguments(raw: ["type": "apps"]))
+            async let list = appTool.execute(arguments: ToolArguments(raw: ["action": "list"]))
 
             let results = try await (sleep, permissions, list)
 

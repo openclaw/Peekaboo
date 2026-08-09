@@ -103,9 +103,6 @@ public final class PeekabooServices {
     /// Configuration management for user preferences and API keys
     public let configuration: ConfigurationManager
 
-    /// Process execution service for running shell commands and scripts
-    public let process: any ProcessServiceProtocol
-
     /// Permissions verification service for checking macOS privacy permissions
     public let permissions: PermissionsService
 
@@ -203,17 +200,6 @@ public final class PeekabooServices {
 
         self.configuration = configuration
 
-        self.process = ProcessService(
-            applicationService: apps,
-            screenCaptureService: screenCap,
-            snapshotManager: snapshots,
-            uiAutomationService: auto,
-            windowManagementService: windows,
-            menuService: menuSvc,
-            dockService: dockSvc,
-            clipboardService: clipboard)
-        self.logger.debug("\(AgentDisplayTokens.Status.success) ProcessService initialized")
-
         self.permissions = PermissionsService()
         self.logger.debug("\(AgentDisplayTokens.Status.success) PermissionsService initialized")
 
@@ -286,17 +272,6 @@ public final class PeekabooServices {
         let clipboard = ClipboardService()
         logger.debug("\(AgentDisplayTokens.Status.success) ClipboardService initialized")
 
-        let process = ProcessService(
-            applicationService: apps,
-            screenCaptureService: screenCap,
-            snapshotManager: snapshots,
-            uiAutomationService: auto,
-            windowManagementService: windows,
-            menuService: menuSvc,
-            dockService: dockSvc,
-            clipboardService: clipboard)
-        logger.debug("\(AgentDisplayTokens.Status.success) ProcessService initialized")
-
         let permissions = PermissionsService()
         logger.debug("\(AgentDisplayTokens.Status.success) PermissionsService initialized")
 
@@ -318,7 +293,6 @@ public final class PeekabooServices {
             snapshots: snapshots,
             files: files,
             clipboard: clipboard,
-            process: process,
             permissions: permissions,
             audioInput: audioInput,
             browser: BrowserMCPService(),
@@ -345,7 +319,6 @@ public final class PeekabooServices {
         snapshots: any SnapshotManagerProtocol,
         files: any FileServiceProtocol,
         clipboard: any ClipboardServiceProtocol,
-        process: any ProcessServiceProtocol,
         permissions: PermissionsService? = nil,
         audioInput: AudioInputService? = nil,
         browser: (any BrowserMCPClientProviding)? = nil,
@@ -374,7 +347,6 @@ public final class PeekabooServices {
         self.snapshots = snapshots
         self.files = files
         self.clipboard = clipboard
-        self.process = process
         self.permissions = permissions ?? PermissionsService()
         self.audioInput = audioInput ?? AudioInputService(aiService: PeekabooAIService())
         self.browser = browser ?? BrowserMCPService()
@@ -400,7 +372,6 @@ public final class PeekabooServices {
         snapshots: any SnapshotManagerProtocol,
         files: any FileServiceProtocol,
         clipboard: any ClipboardServiceProtocol,
-        process: any ProcessServiceProtocol,
         permissions: PermissionsService,
         audioInput: AudioInputService,
         browser: any BrowserMCPClientProviding,
@@ -427,7 +398,6 @@ public final class PeekabooServices {
         self.snapshots = snapshots
         self.files = files
         self.clipboard = clipboard
-        self.process = process
         self.permissions = permissions
         self.audioInput = audioInput
         self.browser = browser

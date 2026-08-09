@@ -25,9 +25,6 @@ enum CommanderRuntimeRouter {
         if try Self.handleHelpRequest(arguments: trimmedArgs, descriptors: descriptors) {
             throw ExitCode.success
         }
-        if let alias = try Self.resolveAgentPermissionAlias(arguments: trimmedArgs, originalArgv: argv) {
-            return alias
-        }
         let program = Program(descriptors: descriptors.map(\.metadata))
         let invocation = try program.resolve(argv: argv)
         guard let descriptor = Self.findDescriptor(in: descriptors, matching: invocation.path) else {
@@ -72,9 +69,6 @@ enum CommanderRuntimeRouter {
 
         if arguments[0].caseInsensitiveCompare("help") == .orderedSame {
             let tokens = Array(arguments.dropFirst())
-            if self.handleAgentPermissionHelp(tokens: tokens) {
-                return true
-            }
             let path = self.resolveHelpPath(from: tokens, descriptors: descriptors)
             try self.printHelp(for: path, descriptors: descriptors)
             return true
@@ -83,56 +77,12 @@ enum CommanderRuntimeRouter {
         let helpSearchArguments = Array(arguments.prefix { $0 != "--" })
         if let index = helpSearchArguments.firstIndex(where: { self.isHelpToken($0) }) {
             let tokens = Array(helpSearchArguments.prefix(index))
-            if self.handleAgentPermissionHelp(tokens: tokens) {
-                return true
-            }
             let path = self.resolveHelpPath(from: tokens, descriptors: descriptors)
             try self.printHelp(for: path, descriptors: descriptors)
             return true
         }
 
         return false
-    }
-
-    private static func handleAgentPermissionHelp(tokens: [String]) -> Bool {
-        guard tokens.count >= 2,
-              tokens[0].caseInsensitiveCompare("agent") == .orderedSame,
-              tokens[1].caseInsensitiveCompare("permission") == .orderedSame else {
-            return false
-        }
-
-        let rootDescriptor = CommanderRegistryBuilder.buildDescriptor(for: PermissionCommand.self)
-        let permissionPath = ["permission"] + tokens.dropFirst(2)
-        guard let descriptor = self.findDescriptor(in: [rootDescriptor], matching: permissionPath) else {
-            return false
-        }
-        self.printCommandHelp(descriptor, path: ["agent"] + permissionPath)
-        return true
-    }
-
-    private static func resolveAgentPermissionAlias(
-        arguments: [String],
-        originalArgv: [String]
-    ) throws -> CommanderResolvedCommand? {
-        guard arguments.count >= 2,
-              arguments[0].caseInsensitiveCompare("agent") == .orderedSame,
-              arguments[1].caseInsensitiveCompare("permission") == .orderedSame else {
-            return nil
-        }
-
-        let rootDescriptor = CommanderRegistryBuilder.buildDescriptor(for: PermissionCommand.self)
-        let executable = originalArgv.first ?? "peekaboo"
-        let aliasArgv = [executable, "permission"] + arguments.dropFirst(2)
-        let program = Program(descriptors: [rootDescriptor.metadata])
-        let invocation = try program.resolve(argv: Array(aliasArgv))
-        guard let descriptor = self.findDescriptor(in: [rootDescriptor], matching: invocation.path) else {
-            throw CommanderProgramError.unknownCommand(invocation.path.joined(separator: ":"))
-        }
-        return CommanderResolvedCommand(
-            metadata: descriptor.metadata,
-            type: descriptor.type,
-            parsedValues: invocation.parsedValues
-        )
     }
 
     private static func resolveHelpPath(

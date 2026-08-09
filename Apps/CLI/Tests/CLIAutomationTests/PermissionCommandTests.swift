@@ -7,6 +7,12 @@ import Testing
 @Suite(.serialized, .tags(.permissions))
 struct PermissionCommandTests {
     @Test
+    func `permissions includes accessibility request`() {
+        let names = PermissionsCommand.commandDescription.subcommands.compactMap(\.commandDescription.commandName)
+        #expect(names.contains("request-accessibility"))
+    }
+
+    @Test
     func `permissions command emits JSON with stub statuses`() async {
         let automation = StubAutomationService()
         automation.accessibilityPermissionGranted = false

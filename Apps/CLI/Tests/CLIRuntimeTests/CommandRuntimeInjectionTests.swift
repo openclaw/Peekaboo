@@ -907,10 +907,6 @@ final class RecordingPeekabooServices: PeekabooServiceProviding {
         self.base.configuration
     }
 
-    var process: any ProcessServiceProtocol {
-        self.base.process
-    }
-
     var permissions: PermissionsService {
         self.base.permissions
     }

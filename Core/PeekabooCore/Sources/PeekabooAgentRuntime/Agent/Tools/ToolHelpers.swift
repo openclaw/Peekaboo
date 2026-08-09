@@ -65,7 +65,7 @@ extension PeekabooAgentService {
 
         case let .appNotFound(appName):
             message = "Application '\(appName)' not found"
-            suggestion = "Check the app name spelling or use 'list_apps' to see available applications"
+            suggestion = "Check the app name spelling or use the app tool with action 'list'"
             metadata["app_name"] = appName
 
         case let .windowNotFound(criteria):
@@ -75,7 +75,7 @@ extension PeekabooAgentService {
             } else {
                 message = "No window found"
             }
-            suggestion = "Use 'list_windows' to see available windows, or check if the app is running"
+            suggestion = "Use the window tool with action 'list', or check if the app is running"
 
         case let .elementNotFound(id):
             message = "Element not found: \(id)"

@@ -31,7 +31,7 @@ struct AgentMenuTests {
         guard environment["RUN_LOCAL_TESTS"] != nil else { return }
 
         // Ensure Calculator is running
-        _ = try await runCommand(["app", "launch", "Calculator", "--wait-until-ready"])
+        _ = try await runCommand(["app", "launch", "Calculator", "--wait-ready"])
         try await Task.sleep(for: .seconds(2))
 
         // Test agent discovering menus
@@ -69,7 +69,7 @@ struct AgentMenuTests {
         guard environment["RUN_LOCAL_TESTS"] != nil else { return }
 
         // Ensure Calculator is running
-        _ = try await runCommand(["app", "launch", "Calculator", "--wait-until-ready"])
+        _ = try await runCommand(["app", "launch", "Calculator", "--wait-ready"])
         try await Task.sleep(for: .seconds(2))
 
         // Test agent using menu to switch Calculator mode
@@ -105,7 +105,7 @@ struct AgentMenuTests {
         guard environment["RUN_LOCAL_TESTS"] != nil else { return }
 
         // Test with TextEdit
-        _ = try await runCommand(["app", "launch", "TextEdit", "--wait-until-ready"])
+        _ = try await runCommand(["app", "launch", "TextEdit", "--wait-ready"])
         try await Task.sleep(for: .seconds(2))
 
         let output = try await runCommand([
@@ -145,7 +145,7 @@ struct AgentMenuTests {
 
         guard environment["RUN_LOCAL_TESTS"] != nil else { return }
 
-        _ = try await runCommand(["app", "launch", "Calculator", "--wait-until-ready"])
+        _ = try await runCommand(["app", "launch", "Calculator", "--wait-ready"])
         try await Task.sleep(for: .seconds(2))
 
         // Test with non-existent menu item

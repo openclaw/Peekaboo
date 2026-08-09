@@ -13,7 +13,7 @@ struct AppCommand: ParsableCommand {
         EXAMPLES:
           # Launch an application
           peekaboo app launch "Visual Studio Code"
-          peekaboo app launch --bundle-id com.microsoft.VSCode --wait-until-ready
+          peekaboo app launch --bundle-id com.microsoft.VSCode --wait-ready
           peekaboo app launch "Safari" --open https://example.com --open ~/Desktop/notes.txt
           peekaboo app launch "Safari" --foreground
 

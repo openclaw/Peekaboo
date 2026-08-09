@@ -153,14 +153,6 @@ public final class ActionVerifier {
             let keys = action.arguments["keys"] ?? "keys"
             return "The hotkey '\(keys)' should have triggered an action - look for any visible change"
 
-        case "launch_app":
-            let app = action.arguments["app"] ?? action.arguments["name"] ?? "application"
-            if Self.foregroundRequested(in: action.arguments) {
-                return "The \(app) application should now be running, ready, activated, and in the foreground"
-            }
-            return "The \(app) application should now be running and ready; the launch should not activate it or " +
-                "change the frontmost application"
-
         case "app":
             let actionName = action.arguments["action"] ?? "requested app action"
             let app = action.arguments["app"] ?? action.arguments["name"] ?? action.arguments["to"] ?? "application"

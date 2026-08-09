@@ -152,7 +152,7 @@ enum MenuErrorOutputSupport {
         switch error {
         case .menuBarNotFound:
             .MENU_BAR_NOT_FOUND
-        case .menuItemNotFound, .submenuNotFound, .menuExtraNotFound:
+        case .menuItemNotFound, .submenuNotFound:
             .MENU_ITEM_NOT_FOUND
         case .menuItemDisabled, .menuOperationFailed:
             .INTERACTION_FAILED

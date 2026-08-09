@@ -100,7 +100,6 @@ extension InspectUICommand: CommanderSignatureProviding {
         CommandSignature(
             options: [
                 .commandOption("app", help: "App name, bundle ID, PID, or frontmost", long: "app"),
-                .commandOption("appTarget", help: "Legacy alias for --app", long: "app-target"),
                 .commandOption("snapshot", help: "Existing UI snapshot ID", long: "snapshot"),
                 .commandOption("maxDepth", help: "Maximum accessibility-tree depth", long: "max-depth"),
                 .commandOption("maxElements", help: "Maximum elements to inspect", long: "max-elements"),
@@ -120,11 +119,7 @@ extension InspectUICommand: CommanderSignatureProviding {
 extension InspectUICommand: CommanderBindableCommand {
     mutating func applyCommanderValues(_ values: CommanderBindableValues) throws {
         let app = values.singleOption("app")
-        let legacyAppTarget = values.singleOption("appTarget")
-        if app != nil, legacyAppTarget != nil {
-            throw ValidationError("Cannot specify both --app and --app-target")
-        }
-        self.appTarget = app ?? legacyAppTarget
+        self.appTarget = app
         self.snapshot = values.singleOption("snapshot")
         self.maxDepth = try values.decodeOption("maxDepth", as: Int.self)
         self.maxElements = try values.decodeOption("maxElements", as: Int.self)

@@ -21,10 +21,6 @@ extension ClipboardCommand: CommanderBindableCommand {
         if self.filePath == nil {
             self.filePath = try values.decodeOption("file-path", as: String.self)
         }
-        self.imagePath = try values.decodeOption("imagePath", as: String.self)
-        if self.imagePath == nil {
-            self.imagePath = try values.decodeOption("image-path", as: String.self)
-        }
         self.dataBase64 = try values.decodeOption("dataBase64", as: String.self)
         if self.dataBase64 == nil {
             self.dataBase64 = try values.decodeOption("data-base64", as: String.self)

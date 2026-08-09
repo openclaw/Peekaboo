@@ -14,7 +14,6 @@ extension PasteCommand: CommanderSignatureProviding {
             options: [
                 .commandOption("textOption", help: "Text to paste (alternative to positional argument)", long: "text"),
                 .commandOption("filePath", help: "Path to file to paste", long: "file-path"),
-                .commandOption("imagePath", help: "Path to image to paste (alias of file-path)", long: "image-path"),
                 .commandOption("dataBase64", help: "Base64 data to paste", long: "data-base64"),
                 .commandOption("uti", help: "UTI for base64 payload or to force type", long: "uti"),
                 .commandOption(
@@ -51,7 +50,6 @@ extension PasteCommand: CommanderBindableCommand {
         self.text = values.positional.first
         self.textOption = values.singleOption("text") ?? values.singleOption("textOption")
         self.filePath = values.singleOption("filePath")
-        self.imagePath = values.singleOption("imagePath")
         self.dataBase64 = values.singleOption("dataBase64")
         self.uti = values.singleOption("uti")
         self.alsoText = values.singleOption("alsoText")

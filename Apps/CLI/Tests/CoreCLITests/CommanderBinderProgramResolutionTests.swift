@@ -71,7 +71,7 @@ struct CommanderBinderProgramResolutionTests {
 
     @Test
     @MainActor
-    func `Commander program preserves window and menu documented options`() throws {
+    func `Commander program preserves window documented options`() throws {
         let descriptors = CommanderRegistryBuilder.buildDescriptors()
         let program = Program(descriptors: descriptors.map(\.metadata))
         let listInvocation = try program.resolve(argv: [
@@ -89,11 +89,6 @@ struct CommanderBinderProgramResolutionTests {
             "--x", "0", "--y", "0", "-w", "800", "--height", "600",
         ])
         #expect(boundsInvocation.parsedValues.options["width"] == ["800"])
-
-        let menuInvocation = try program.resolve(argv: [
-            "peekaboo", "menu", "click-extra", "--title", "WiFi", "--verify",
-        ])
-        #expect(menuInvocation.parsedValues.flags.contains("verify"))
     }
 
     @Test
@@ -110,23 +105,6 @@ struct CommanderBinderProgramResolutionTests {
         ])
         #expect(invocation.parsedValues.positional.isEmpty)
         #expect(invocation.parsedValues.options["bundleId"] == ["com.apple.TextEdit"])
-    }
-
-    @Test
-    @MainActor
-    func `Commander program resolves list windows options`() throws {
-        let descriptors = CommanderRegistryBuilder.buildDescriptors()
-        let program = Program(descriptors: descriptors.map(\.metadata))
-        let invocation = try program.resolve(argv: [
-            "peekaboo",
-            "list",
-            "windows",
-            "--app", "Safari",
-            "--include-details", "ids,bounds"
-        ])
-        let values = invocation.parsedValues
-        #expect(values.options["app"] == ["Safari"])
-        #expect(values.options["includeDetails"] == ["ids,bounds"])
     }
 
     @Test
@@ -169,15 +147,15 @@ struct CommanderBinderProgramResolutionTests {
 
     @Test
     @MainActor
-    func `Commander program preserves inspect UI app target alias`() throws {
+    func `Commander program resolves inspect UI app target`() throws {
         let descriptors = CommanderRegistryBuilder.buildDescriptors()
         let program = Program(descriptors: descriptors.map(\.metadata))
         let invocation = try program.resolve(argv: [
             "peekaboo",
             "inspect-ui",
-            "--app-target", "TextEdit",
+            "--app", "TextEdit",
         ])
-        #expect(invocation.parsedValues.options["appTarget"] == ["TextEdit"])
+        #expect(invocation.parsedValues.options["app"] == ["TextEdit"])
     }
 
     @Test
@@ -199,23 +177,6 @@ struct CommanderBinderProgramResolutionTests {
         #expect(invocation.path == ["capture", "action"])
         #expect(values.options["durationLimit"] == ["3"])
         #expect(values.options["command"] == ["echo", "hello", "--flag"])
-    }
-
-    @Test
-    @MainActor
-    func `Commander router resolves agent permission alias before task argument`() throws {
-        let invocation = try CommanderRuntimeRouter.resolve(argv: [
-            "peekaboo",
-            "agent",
-            "permission",
-            "status",
-            "--json",
-        ])
-
-        #expect(invocation.metadata.name == "status")
-        #expect(String(reflecting: invocation.type).contains("PermissionCommand.StatusSubcommand"))
-        #expect(invocation.parsedValues.flags.contains("jsonOutput"))
-        #expect(invocation.parsedValues.positional.isEmpty)
     }
 
     @Test
@@ -375,46 +336,6 @@ struct CommanderBinderProgramResolutionTests {
 
     @Test
     @MainActor
-    func `Commander program resolves list default to apps`() throws {
-        let descriptors = CommanderRegistryBuilder.buildDescriptors()
-        let program = Program(descriptors: descriptors.map(\.metadata))
-        let invocation = try program.resolve(argv: [
-            "peekaboo",
-            "list",
-            "--json"
-        ])
-        #expect(invocation.path == ["list", "apps"])
-        #expect(invocation.parsedValues.flags.contains("jsonOutput"))
-    }
-
-    @Test
-    @MainActor
-    func `Commander program resolves list menubar`() throws {
-        let descriptors = CommanderRegistryBuilder.buildDescriptors()
-        let program = Program(descriptors: descriptors.map(\.metadata))
-        let invocation = try program.resolve(argv: [
-            "peekaboo",
-            "list",
-            "menubar"
-        ])
-        #expect(invocation.path == ["list", "menubar"])
-    }
-
-    @Test
-    @MainActor
-    func `Commander program resolves list screens`() throws {
-        let descriptors = CommanderRegistryBuilder.buildDescriptors()
-        let program = Program(descriptors: descriptors.map(\.metadata))
-        let invocation = try program.resolve(argv: [
-            "peekaboo",
-            "list",
-            "screens"
-        ])
-        #expect(invocation.path == ["list", "screens"])
-    }
-
-    @Test
-    @MainActor
     func `Commander program resolves screen list`() throws {
         let descriptors = CommanderRegistryBuilder.buildDescriptors()
         let program = Program(descriptors: descriptors.map(\.metadata))
@@ -486,7 +407,7 @@ struct CommanderBinderProgramResolutionTests {
             "move",
             "120,240",
             "--to", "Submit",
-            "--id", "B2",
+            "--on", "B2",
             "--duration", "750",
             "--steps", "30",
             "--snapshot", "sess-20",
@@ -496,7 +417,7 @@ struct CommanderBinderProgramResolutionTests {
         let values = invocation.parsedValues
         #expect(values.positional == ["120,240"])
         #expect(values.options["to"] == ["Submit"])
-        #expect(values.options["id"] == ["B2"])
+        #expect(values.options["on"] == ["B2"])
         #expect(values.options["duration"] == ["750"])
         #expect(values.options["steps"] == ["30"])
         #expect(values.options["snapshot"] == ["sess-20"])

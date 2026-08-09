@@ -188,9 +188,13 @@ extension MCPToolSnapshotMutationCoordinating {
 
 enum MCPToolSnapshotMutationPolicy {
     static func effect(toolName: String, arguments: ToolArguments) -> MCPToolSnapshotEffect {
+        self.explicitEffect(toolName: toolName, arguments: arguments) ?? .none
+    }
+
+    static func explicitEffect(toolName: String, arguments: ToolArguments) -> MCPToolSnapshotEffect? {
         switch toolName {
         case "click", "type", "set_value", "perform_action", "scroll", "hotkey", "swipe", "drag", "move",
-             "paste", "window", "shell":
+             "paste", "shell":
             .mutation
         case "see":
             self.observationEffect(arguments: arguments)
@@ -203,24 +207,28 @@ enum MCPToolSnapshotMutationPolicy {
         case "capture":
             self.captureEffect(arguments: arguments)
         case "app":
-            arguments.getString("action") == "list" ? .none : .mutation
+            arguments.getString("action") == "list" ? MCPToolSnapshotEffect.none : .mutation
+        case "window":
+            arguments.getString("action") == "list" ? MCPToolSnapshotEffect.none : .mutation
         case "menu":
-            ["click", "click-extra"].contains(arguments.getString("action")) ? .mutation : .none
+            arguments.getString("action") == "click" ? .mutation : MCPToolSnapshotEffect.none
         case "dialog":
             self.dialogEffect(arguments: arguments)
         case "dock", "space":
-            arguments.getString("action") == "list" ? .none : .mutation
+            arguments.getString("action") == "list" ? MCPToolSnapshotEffect.none : .mutation
         case "clipboard":
             self.clipboardEffect(arguments: arguments)
         case "browser":
             self.browserEffect(arguments: arguments)
         case "permissions":
-            arguments.getString("action") == "request" ? .mutation : .none
+            arguments.getString("action") == "request" ? .mutation : MCPToolSnapshotEffect.none
         case "agent":
             // Nested agent tools acquire this gate themselves; locking the outer call would deadlock.
-            .none
+            MCPToolSnapshotEffect.none
+        case "analyze", "sleep":
+            MCPToolSnapshotEffect.none
         default:
-            .none
+            nil
         }
     }
 

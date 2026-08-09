@@ -68,7 +68,7 @@ struct EnhancedErrorIntegrationTests {
         let events = delegate.getEvents()
         let errorEvent = events.first { event in
             if case let .toolCallCompleted(name, result) = event,
-               name == "launch_app" {
+               name == "app" {
                 return result.contains("Did you mean") || result.contains("Safari")
             }
             return false

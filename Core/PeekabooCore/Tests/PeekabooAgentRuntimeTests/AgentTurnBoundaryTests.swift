@@ -78,7 +78,6 @@ struct AgentTurnBoundaryTests {
             ("dialog", "list"),
             ("dock", "list"),
             ("menu", "list"),
-            ("menu", "list-all"),
             ("space", "list"),
         ]
 

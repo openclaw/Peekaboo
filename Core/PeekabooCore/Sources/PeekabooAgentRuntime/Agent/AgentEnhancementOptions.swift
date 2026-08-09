@@ -128,8 +128,9 @@ public enum VerifiableActionType: String, Sendable, Hashable, CaseIterable {
     ]
     private static let dialogReadOnlyActions: Set<String> = ["list"]
     private static let dockReadOnlyActions: Set<String> = ["list"]
-    private static let menuReadOnlyActions: Set<String> = ["list", "list-all", "list_all"]
+    private static let menuReadOnlyActions: Set<String> = ["list"]
     private static let spaceReadOnlyActions: Set<String> = ["list"]
+    private static let windowReadOnlyActions: Set<String> = ["list"]
 
     /// Whether this tool can modify state and should be verified by default when action details are unavailable.
     public var isMutating: Bool {
@@ -151,6 +152,8 @@ public enum VerifiableActionType: String, Sendable, Hashable, CaseIterable {
             !Self.menuReadOnlyActions.contains(Self.actionName(in: arguments))
         case .space:
             !Self.spaceReadOnlyActions.contains(Self.actionName(in: arguments))
+        case .window:
+            !Self.windowReadOnlyActions.contains(Self.actionName(in: arguments))
         default:
             true
         }
