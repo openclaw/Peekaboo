@@ -2,7 +2,7 @@ import Foundation
 import MCP
 import Tachikoma
 
-enum TypedValueBridge {
+package enum TypedValueBridge {
     static func typedValue(from value: MCP.Value) -> Tachikoma.TypedValue {
         switch value {
         case .null:
@@ -67,7 +67,7 @@ enum TypedValueBridge {
         }
     }
 
-    static func anyAgentValue(from value: MCP.Value) -> AnyAgentToolValue {
+    package static func anyAgentValue(from value: MCP.Value) -> AnyAgentToolValue {
         self.anyAgentValue(from: self.typedValue(from: value))
     }
 

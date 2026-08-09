@@ -13,6 +13,7 @@
 - Add strict bridge 1.11 capabilities for background scrolling, dialog buttons, and window close so stale hosts fail before unsafe fallback dispatch.
 
 ### Fixed
+- Preserve tool response metadata for native agent tools so the Mac activity feed and CLI agent chat show their short summaries, matching external MCP tools.
 - Stop bridge hosts from requiring AppleScript permission for native application activate, hide, unhide, hide-others, and show-all operations.
 - Keep targeted UI observation in the background, exclude irrelevant application menu trees, and restore the documented `see` traversal flags and output-path aliases.
 - Reject phantom-success accessibility actions, support selectable sidebar rows, and verify typed `set-value` results against live AX state.
