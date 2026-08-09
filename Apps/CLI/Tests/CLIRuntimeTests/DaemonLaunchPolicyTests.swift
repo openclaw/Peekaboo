@@ -4,6 +4,27 @@ import Testing
 @testable import PeekabooCLI
 
 struct DaemonLaunchPolicyTests {
+    /// Shell snippet that writes the child's PID via an atomic rename, so the PID file
+    /// never exists in a created-but-not-yet-written state.
+    private static func writePIDCommand(to pidURL: URL) -> String {
+        "echo $$ > \(pidURL.path).tmp; mv \(pidURL.path).tmp \(pidURL.path)"
+    }
+
+    /// Polls until the PID file contains a parsable positive PID; returns nil on deadline.
+    private static func waitForPID(at pidURL: URL, timeout: TimeInterval = 5) async throws -> pid_t? {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if let text = try? String(contentsOf: pidURL, encoding: .utf8) {
+                let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                if let pid = pid_t(trimmed), pid > 0 {
+                    return pid
+                }
+            }
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        return nil
+    }
+
     @Test
     func `daemon executable resolution prefers the canonical bundle executable`() {
         let bundleExecutable = URL(fileURLWithPath: "/opt/peekaboo/bin/peekaboo")
@@ -121,6 +142,7 @@ struct DaemonLaunchPolicyTests {
                 kill(childPID, SIGKILL)
             }
             unlink(pidURL.path)
+            unlink(pidURL.path + ".tmp")
         }
 
         let clock = ContinuousClock()
@@ -128,7 +150,7 @@ struct DaemonLaunchPolicyTests {
         do {
             _ = try await DaemonLaunchPolicy.launchDaemon(
                 socketPath: "/tmp/peekaboo-daemon-term-\(UUID().uuidString).sock",
-                arguments: ["-c", "trap '' TERM; echo $$ > \(pidURL.path); exec /bin/sleep 30"],
+                arguments: ["-c", "trap '' TERM; \(Self.writePIDCommand(to: pidURL)); exec /bin/sleep 30"],
                 timeout: 0.05,
                 executableURL: URL(fileURLWithPath: "/bin/sh"),
                 logHandle: .nullDevice
@@ -144,9 +166,7 @@ struct DaemonLaunchPolicyTests {
         }
 
         #expect(clock.now - startedAt < .seconds(3))
-        let pidText = try String(contentsOf: pidURL, encoding: .utf8)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        childPID = pid_t(pidText)
+        childPID = try await Self.waitForPID(at: pidURL)
         let stoppedPID = try #require(childPID)
         #expect(kill(stoppedPID, 0) == -1)
         #expect(errno == ESRCH)
@@ -162,33 +182,25 @@ struct DaemonLaunchPolicyTests {
                 kill(childPID, SIGKILL)
             }
             unlink(pidURL.path)
+            unlink(pidURL.path + ".tmp")
         }
 
         let launchTask = Task {
             try await DaemonLaunchPolicy.launchDaemon(
                 socketPath: "/tmp/peekaboo-daemon-cancel-\(UUID().uuidString).sock",
-                arguments: ["-c", "echo $$ > \(pidURL.path); exec /bin/sleep 30"],
+                arguments: ["-c", "\(Self.writePIDCommand(to: pidURL)); exec /bin/sleep 30"],
                 timeout: 10,
                 executableURL: URL(fileURLWithPath: "/bin/sh"),
                 logHandle: .nullDevice
             )
         }
-        let pidDeadline = Date().addingTimeInterval(1)
-        while !FileManager.default.fileExists(atPath: pidURL.path), Date() < pidDeadline {
-            try await Task.sleep(nanoseconds: 10_000_000)
-        }
-        guard FileManager.default.fileExists(atPath: pidURL.path) else {
+        guard let stoppedPID = try await Self.waitForPID(at: pidURL) else {
             launchTask.cancel()
             _ = await launchTask.result
-            Issue.record("Daemon child did not write its PID")
+            Issue.record("Daemon child did not write a parsable PID")
             return
         }
-
-        let pidText = try String(contentsOf: pidURL, encoding: .utf8)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        let parsedPID = pid_t(pidText)
-        childPID = parsedPID
-        let stoppedPID = try #require(parsedPID)
+        childPID = stoppedPID
         launchTask.cancel()
 
         switch await launchTask.result {
