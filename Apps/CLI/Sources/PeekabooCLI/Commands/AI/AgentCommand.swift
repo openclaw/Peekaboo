@@ -116,9 +116,6 @@ struct AgentCommand: RuntimeBackedCommand {
     @Option(name: .long, help: "Audio input file path (instead of microphone)")
     var audioFile: String?
 
-    @Flag(name: .long, help: "Use real-time audio streaming (OpenAI only)")
-    var realtime = false
-
     @Flag(name: .long, help: "Force simple output mode (no colors or rich formatting)")
     var simple = false
 

@@ -17,7 +17,6 @@ extension AgentCommand: CommanderBindableCommand {
         self.noCache = values.flag("noCache")
         self.audio = values.flag("audio")
         self.audioFile = values.singleOption("audioFile")
-        self.realtime = values.flag("realtime")
         self.simple = values.flag("simple")
         self.noColor = values.flag("noColor")
         self.chat = values.flag("chat")

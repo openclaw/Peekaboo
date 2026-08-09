@@ -56,7 +56,7 @@ Not in scope: backwards compatibility with pre-3.0 CLIs, legacy argument parser 
 ### 3.2 PeekabooAgentRuntime
 - `PeekabooAgentService`: orchestrates tools, system prompt, MCP tool registry.
 - `AgentDisplayTokens`: maps tool names to icons/text for progress output.
-- Tachikoma integrations for GPT‑5, Claude, Grok, and Ollama. `--audio` and `--audio-file` transcribe input before running the agent; `--realtime` is still accepted by the parser but currently has no execution path pending a product decision.
+- Tachikoma integrations for GPT‑5, Claude, Grok, and Ollama. `--audio` and `--audio-file` transcribe input before running the agent; the non-functional `--realtime` flag was removed.
 
 ### 3.3 PeekabooVisualizer
 - Animation + overlay payloads for CLI/app progress indicators.

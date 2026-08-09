@@ -26,23 +26,27 @@ public final class ToolFormatterRegistry: @unchecked Sendable {
 
         // Application tools
         let appFormatter = ApplicationToolFormatter(toolType: .launchApp)
-        self.register(appFormatter, for: [.launchApp, .listApps, .quitApp, .focusApp, .hideApp, .unhideApp, .switchApp])
+        self.register(appFormatter, for: [
+            .app, .list,
+            .launchApp, .listApps, .quitApp, .focusApp, .hideApp, .unhideApp, .switchApp,
+        ])
 
         // Vision tools
         let visionFormatter = VisionToolFormatter(toolType: .see)
-        self.register(visionFormatter, for: [.see, .screenshot, .windowCapture, .analyze])
+        self.register(visionFormatter, for: [.see, .image, .capture, .screenshot, .windowCapture, .analyze])
 
         // UI Automation tools
         let uiFormatter = UIAutomationToolFormatter(toolType: .click)
         self.register(uiFormatter, for: [
             .click,
-            .type, .scroll, .hotkey, .press,
+            .type, .paste, .scroll, .hotkey, .press,
             .move,
         ])
 
         // Menu and dialog tools
         let menuSystemFormatter = MenuSystemToolFormatter(toolType: .menuClick)
         self.register(menuSystemFormatter, for: [
+            .menu, .dialog, .dock,
             .menuClick, .listMenus,
             .dialogInput, .dialogClick,
         ])
@@ -50,6 +54,7 @@ public final class ToolFormatterRegistry: @unchecked Sendable {
         // System tools
         let systemFormatter = SystemToolFormatter(toolType: .shell)
         self.register(systemFormatter, for: [
+            .browser, .permissions, .sleep, .agent,
             .shell, .wait, .clipboard, .copyToClipboard, .pasteFromClipboard,
         ])
 
@@ -62,6 +67,7 @@ public final class ToolFormatterRegistry: @unchecked Sendable {
         // Window management tools (use standard for now)
         let windowFormatter = WindowToolFormatter(toolType: .focusWindow)
         self.register(windowFormatter, for: [
+            .window, .space,
             .focusWindow, .resizeWindow, .listWindows,
             .minimizeWindow, .maximizeWindow, .listScreens,
             .listSpaces, .switchSpace, .moveWindowToSpace,
@@ -69,11 +75,13 @@ public final class ToolFormatterRegistry: @unchecked Sendable {
 
         // Element query tools (use standard for now)
         let elementFormatter = ElementToolFormatter(toolType: .findElement)
-        self.register(elementFormatter, for: [.findElement, .listElements, .focused])
+        self.register(
+            elementFormatter,
+            for: [.setValue, .performAction, .findElement, .listElements, .focused, .inspectUI])
 
         // Communication tools (use standard)
         let commFormatter = CommunicationToolFormatter(toolType: .taskCompleted)
-        self.register(commFormatter, for: [.taskCompleted, .needMoreInformation, .needInfo])
+        self.register(commFormatter, for: [.done, .taskCompleted, .needMoreInformation, .needInfo])
 
         // Additional tools that might not have specific formatters yet
         self.registerRemainingTools()

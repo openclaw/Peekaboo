@@ -25,7 +25,7 @@ public class VisionToolFormatter: BaseToolFormatter {
 
     override public func formatCompactSummary(arguments: [String: Any]) -> String {
         switch self.toolType {
-        case .see, .screenshot, .windowCapture:
+        case .see, .image, .screenshot, .windowCapture:
             var parts: [String] = []
 
             if let target = self.describeCaptureTarget(arguments["app_target"] as? String) {
@@ -47,6 +47,24 @@ public class VisionToolFormatter: BaseToolFormatter {
                 parts.append(filename)
             }
 
+            return parts.joined(separator: " · ")
+
+        case .capture:
+            let source = arguments["source"] as? String ?? "live"
+            if source == "video" {
+                if let input = arguments["input"] as? String {
+                    return "video \(URL(fileURLWithPath: input).lastPathComponent)"
+                }
+                return "video"
+            }
+
+            var parts = [arguments["mode"] as? String ?? "frontmost"]
+            if let app = arguments["app"] as? String {
+                parts.append(app)
+            }
+            if let title = arguments["window_title"] as? String {
+                parts.append("\"\(self.truncate(title, maxLength: 30))\"")
+            }
             return parts.joined(separator: " · ")
 
         default:

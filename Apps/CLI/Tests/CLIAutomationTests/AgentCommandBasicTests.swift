@@ -21,6 +21,15 @@ struct AgentCommandBasicTests {
         #expect(result.combinedOutput.contains("claude-sonnet-5"))
         #expect(result.combinedOutput.contains("Maximum model turns before failing (1-100, default 100)"))
         #expect(result.combinedOutput.contains("Resume the most recent session"))
+        #expect(!result.combinedOutput.contains("--realtime"))
         #expect(!result.combinedOutput.contains("use with task argument"))
+    }
+
+    @Test
+    func `Agent rejects the removed realtime flag`() async throws {
+        let result = try await InProcessCommandRunner.runShared(["agent", "--realtime"])
+
+        #expect(result.exitStatus != 0)
+        #expect(result.combinedOutput.contains("Unknown option '--realtime'"))
     }
 }

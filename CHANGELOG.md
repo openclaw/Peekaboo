@@ -7,6 +7,7 @@
 - Show recently automated app icons beside Peekaboo in the menu bar, with a settings toggle.
 
 ### Changed
+- Add rich formatter coverage for every current MCP and agent tool, and remove the non-functional agent `--realtime` flag.
 - Enrich shared tool summaries with menu counts, clicked menu paths, screenshot dimensions, app lifecycle names, screen resolutions, and clipboard actions so the agent chat and Mac activity feed regain the detail lost in the formatter unification.
 - Remove the obsolete scoped-commit helper now that agent work uses isolated worktrees.
 - Make app launch, open, relaunch, observation, capture, targeted keyboard input, and action-backed scrolling background by default; focus, global keys, synthetic scrolling, and physical pointer gestures now require explicit foreground consent.

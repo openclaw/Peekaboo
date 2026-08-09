@@ -11,23 +11,35 @@ public enum ToolType: String, CaseIterable, Sendable {
     // MARK: - Vision Tools
 
     case see
+    case image
+    case capture
+    case analyze
+
+    // Historical split-tool names retained so persisted sessions keep rich formatting.
     case screenshot
     case windowCapture = "window_capture"
-    case analyze
 
     // MARK: - UI Automation
 
     case click
     case type
+    case setValue = "set_value"
+    case performAction = "perform_action"
     case scroll
     case hotkey
     case drag
     case move
     case swipe
+    case paste
+
+    /// Historical split-tool name retained for persisted sessions.
     case press
 
     // MARK: - Application Management
 
+    case app
+
+    // Historical split-tool names retained for persisted sessions.
     case launchApp = "launch_app"
     case listApps = "list_apps"
     case quitApp = "quit_app"
@@ -38,6 +50,10 @@ public enum ToolType: String, CaseIterable, Sendable {
 
     // MARK: - Window Management
 
+    case window
+    case space
+
+    // Historical split-tool names retained for persisted sessions.
     case focusWindow = "focus_window"
     case resizeWindow = "resize_window"
     case listWindows = "list_windows"
@@ -47,6 +63,11 @@ public enum ToolType: String, CaseIterable, Sendable {
 
     // MARK: - Menu & Dialog
 
+    case menu
+    case dialog
+    case dock
+
+    // Historical split-tool names retained for persisted sessions.
     case menuClick = "menu_click"
     case listMenus = "list_menus"
     case dialogClick = "dialog_click"
@@ -54,12 +75,16 @@ public enum ToolType: String, CaseIterable, Sendable {
 
     // MARK: - Dock
 
+    // Historical split-tool names retained for persisted sessions.
     case listDock = "list_dock"
     case dockClick = "dock_click"
     case dockLaunch = "dock_launch"
 
     // MARK: - Element Query
 
+    case list
+
+    // Historical split-tool names retained for persisted sessions.
     case findElement = "find_element"
     case listElements = "list_elements"
     case focused
@@ -67,7 +92,13 @@ public enum ToolType: String, CaseIterable, Sendable {
 
     // MARK: - System
 
+    case browser
+    case permissions
+    case sleep
+    case agent
     case shell
+
+    // Historical split-tool names retained for persisted sessions.
     case wait
     case clipboard
     case copyToClipboard = "copy_to_clipboard"
@@ -78,6 +109,9 @@ public enum ToolType: String, CaseIterable, Sendable {
 
     // MARK: - Communication
 
+    case done
+
+    // Historical completion names retained for persisted sessions.
     case taskCompleted = "task_completed"
     case needMoreInformation = "need_more_information"
     case needInfo = "need_info"
@@ -87,24 +121,28 @@ public enum ToolType: String, CaseIterable, Sendable {
     /// The category this tool belongs to
     var category: ToolCategory {
         switch self {
-        case .see, .screenshot, .windowCapture, .analyze:
+        case .see, .image, .capture, .screenshot, .windowCapture, .analyze:
             .vision
-        case .click, .type, .scroll, .hotkey, .drag, .move, .swipe, .press:
+        case .click, .type, .setValue, .performAction, .scroll, .hotkey, .drag, .move, .swipe, .paste, .press:
             .ui
-        case .launchApp, .listApps, .quitApp, .focusApp, .hideApp, .unhideApp, .switchApp:
+        case .app, .launchApp, .listApps, .quitApp, .focusApp, .hideApp, .unhideApp, .switchApp:
             .app
-        case .focusWindow, .resizeWindow, .listWindows, .minimizeWindow, .maximizeWindow, .listScreens:
+        case .window, .space, .focusWindow, .resizeWindow, .listWindows, .minimizeWindow, .maximizeWindow, .listScreens:
             .window
-        case .menuClick, .listMenus, .dialogClick, .dialogInput:
+        case .menu, .dialog, .menuClick, .listMenus, .dialogClick, .dialogInput:
             .menu
-        case .listDock, .dockClick, .dockLaunch:
+        case .dock, .listDock, .dockClick, .dockLaunch:
             .dock
-        case .findElement, .listElements, .focused, .inspectUI:
+        case .list, .findElement, .listElements, .focused, .inspectUI:
             .element
-        case .shell, .wait, .clipboard, .copyToClipboard, .pasteFromClipboard, .listSpaces, .switchSpace,
+        case .browser:
+            .browser
+        case .permissions, .sleep, .agent, .shell, .wait, .clipboard, .copyToClipboard, .pasteFromClipboard,
+             .listSpaces,
+             .switchSpace,
              .moveWindowToSpace:
             .system
-        case .taskCompleted, .needMoreInformation, .needInfo:
+        case .done, .taskCompleted, .needMoreInformation, .needInfo:
             .completion
         }
     }
@@ -118,6 +156,8 @@ public enum ToolType: String, CaseIterable, Sendable {
         case .needMoreInformation, .needInfo:
             "\(AgentDisplayTokens.Status.info)"
         case .wait:
+            "\(AgentDisplayTokens.Status.time)"
+        case .sleep:
             "\(AgentDisplayTokens.Status.time)"
         case .shell:
             "[sh]"
@@ -136,6 +176,23 @@ public enum ToolType: String, CaseIterable, Sendable {
     /// Human-readable display name for the tool
     public var displayName: String {
         switch self {
+        case .image: "Capture Image"
+        case .capture: "Capture Activity"
+        case .setValue: "Set Value"
+        case .performAction: "Perform Action"
+        case .paste: "Paste"
+        case .app: "Application"
+        case .window: "Window"
+        case .space: "Space"
+        case .menu: "Menu"
+        case .dialog: "Dialog"
+        case .dock: "Dock"
+        case .list: "List System Items"
+        case .browser: "Browser"
+        case .permissions: "Check Permissions"
+        case .sleep: "Sleep"
+        case .agent: "Agent"
+        case .done: "Done"
         case .launchApp: "Launch Application"
         case .listApps: "List Applications"
         case .quitApp: "Quit Application"
@@ -181,7 +238,7 @@ public enum ToolType: String, CaseIterable, Sendable {
     /// Whether this is a communication tool that should be displayed differently
     var isCommunicationTool: Bool {
         switch self {
-        case .taskCompleted, .needMoreInformation, .needInfo:
+        case .done, .taskCompleted, .needMoreInformation, .needInfo:
             true
         default:
             false

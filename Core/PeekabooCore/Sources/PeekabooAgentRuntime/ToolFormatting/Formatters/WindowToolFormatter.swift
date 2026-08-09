@@ -10,6 +10,32 @@ import PeekabooAutomation
 public class WindowToolFormatter: BaseToolFormatter {
     override public func formatCompactSummary(arguments: [String: Any]) -> String {
         switch toolType {
+        case .window:
+            var parts = [(arguments["action"] as? String ?? "window").replacingOccurrences(of: "-", with: " ")]
+            if let app = arguments["app"] as? String {
+                parts.append(app)
+            }
+            if let title = arguments["title"] as? String {
+                parts.append("\"\(self.truncate(title, maxLength: 30))\"")
+            }
+            if let width = arguments["width"], let height = arguments["height"] {
+                parts.append("\(width)×\(height)")
+            }
+            return parts.joined(separator: " · ")
+
+        case .space:
+            let action = arguments["action"] as? String ?? "space"
+            var parts = [action.replacingOccurrences(of: "-", with: " ")]
+            if let app = arguments["app"] as? String {
+                parts.append(app)
+            }
+            if let target = arguments["to"] {
+                parts.append("to \(target)")
+            } else if arguments["to_current"] as? Bool == true {
+                parts.append("to current space")
+            }
+            return parts.joined(separator: " ")
+
         case .focusWindow:
             if let app = arguments["appName"] as? String {
                 return app

@@ -7,6 +7,37 @@ import Foundation
 
 /// Formatter for application tools with comprehensive result formatting
 public class ApplicationToolFormatter: BaseToolFormatter {
+    override public func formatCompactSummary(arguments: [String: Any]) -> String {
+        switch self.toolType {
+        case .app:
+            let action = (arguments["action"] as? String) ?? "manage"
+            let target = arguments["name"] as? String ?? arguments["bundleId"] as? String ??
+                arguments["to"] as? String
+            return [action.replacingOccurrences(of: "-", with: " "), target]
+                .compactMap(\.self)
+                .joined(separator: " ")
+        case .list:
+            switch arguments["item_type"] as? String {
+            case "application_windows":
+                if let app = arguments["app"] as? String {
+                    return "windows for \(app)"
+                }
+                return "application windows"
+            case "server_status":
+                return "server status"
+            case "running_applications":
+                return "running applications"
+            default:
+                if let app = arguments["app"] as? String {
+                    return "windows for \(app)"
+                }
+                return "running applications"
+            }
+        default:
+            return super.formatCompactSummary(arguments: arguments)
+        }
+    }
+
     override public func formatResultSummary(result: [String: Any]) -> String {
         switch toolType {
         case .listApps:

@@ -10,6 +10,40 @@ import PeekabooAutomation
 public class MenuSystemToolFormatter: BaseToolFormatter {
     override public func formatCompactSummary(arguments: [String: Any]) -> String {
         switch self.toolType {
+        case .menu:
+            let action = arguments["action"] as? String ?? "menu"
+            var parts = [action.replacingOccurrences(of: "-", with: " ")]
+            if let path = arguments["path"] as? String {
+                parts.append(self.normalizedMenuPath(path))
+            } else if let app = arguments["app"] as? String {
+                parts.append("for \(app)")
+            }
+            return parts.joined(separator: " · ")
+
+        case .dialog:
+            let action = arguments["action"] as? String ?? "dialog"
+            var parts = [action]
+            if let button = arguments["button"] as? String {
+                parts.append("\"\(button)\"")
+            } else if let field = arguments["field"] as? String {
+                parts.append("\(field) field")
+            }
+            if let app = arguments["app"] as? String {
+                parts.append("in \(app)")
+            }
+            return parts.joined(separator: " ")
+
+        case .dock:
+            let action = arguments["action"] as? String ?? "dock"
+            var parts = [action.replacingOccurrences(of: "-", with: " ")]
+            if let app = arguments["app"] as? String {
+                parts.append(app)
+            }
+            if let selection = arguments["select"] as? String {
+                parts.append("→ \(selection)")
+            }
+            return parts.joined(separator: " ")
+
         case .menuClick:
             if let path = arguments["path"] as? String {
                 return self.normalizedMenuPath(path)

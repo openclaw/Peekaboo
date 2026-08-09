@@ -9,19 +9,33 @@ import Foundation
 public class ElementToolFormatter: BaseToolFormatter {
     override public func formatCompactSummary(arguments: [String: Any]) -> String {
         switch toolType {
+        case .setValue:
+            let target = arguments["on"] as? String ?? "element"
+            if let value = arguments["value"] {
+                return "\(target) to \(self.truncate(String(describing: value), maxLength: 30))"
+            }
+            return target
+        case .performAction:
+            let action = arguments["action"] as? String ?? "action"
+            let target = arguments["on"] as? String ?? "element"
+            return "\(action) on \(target)"
         case .findElement:
-            self.compactSummaryForFind(arguments: arguments)
+            return self.compactSummaryForFind(arguments: arguments)
         case .listElements:
-            self.compactSummaryForList(arguments: arguments)
+            return self.compactSummaryForList(arguments: arguments)
         case .focused:
-            self.compactSummaryForFocused(arguments: arguments)
+            return self.compactSummaryForFocused(arguments: arguments)
         default:
-            super.formatCompactSummary(arguments: arguments)
+            return super.formatCompactSummary(arguments: arguments)
         }
     }
 
     override public func formatResultSummary(result: [String: Any]) -> String {
         switch toolType {
+        case .setValue:
+            self.formatSetValueResult(result)
+        case .performAction:
+            self.formatPerformActionResult(result)
         case .findElement:
             self.formatFindElementResult(result)
         case .listElements:
@@ -33,6 +47,24 @@ public class ElementToolFormatter: BaseToolFormatter {
         default:
             super.formatResultSummary(result: result)
         }
+    }
+
+    private func formatSetValueResult(_ result: [String: Any]) -> String {
+        guard let target = ToolResultExtractor.string("target", from: result) else { return "" }
+        if let value = ToolResultExtractor.string("new_value", from: result) ??
+            ToolResultExtractor.string("value", from: result)
+        {
+            return "→ Set \(target) to \"\(self.truncate(value, maxLength: 40))\""
+        }
+        return "→ Set value on \(target)"
+    }
+
+    private func formatPerformActionResult(_ result: [String: Any]) -> String {
+        guard let target = ToolResultExtractor.string("target", from: result) else { return "" }
+        if let action = ToolResultExtractor.string("action_name", from: result) {
+            return "→ Performed \(action) on \(target)"
+        }
+        return "→ Performed action on \(target)"
     }
 
     private func formatInspectUIResult(_ result: [String: Any]) -> String {

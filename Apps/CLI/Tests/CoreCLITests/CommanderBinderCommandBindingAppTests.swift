@@ -375,7 +375,6 @@ struct CommanderBinderAppConfigTests {
                 "listSessions",
                 "noCache",
                 "audio",
-                "realtime",
                 "simple",
                 "noColor"
             ]
@@ -393,7 +392,6 @@ struct CommanderBinderAppConfigTests {
         #expect(command.noCache == true)
         #expect(command.audio == true)
         #expect(command.audioFile == "/tmp/input.wav")
-        #expect(command.realtime == true)
         #expect(command.simple == true)
         #expect(command.noColor == true)
     }

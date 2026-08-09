@@ -9,6 +9,10 @@ import PeekabooAutomation
 /// Formatter for system tools with comprehensive result formatting
 public class SystemToolFormatter: BaseToolFormatter {
     override public func formatCompactSummary(arguments: [String: Any]) -> String {
+        if let currentToolSummary = self.formatCurrentToolCompactSummary(arguments: arguments) {
+            return currentToolSummary
+        }
+
         switch toolType {
         case .shell:
             var parts: [String] = []
@@ -64,6 +68,47 @@ public class SystemToolFormatter: BaseToolFormatter {
         default:
             return super.formatCompactSummary(arguments: arguments)
         }
+    }
+
+    private func formatCurrentToolCompactSummary(arguments: [String: Any]) -> String? {
+        switch self.toolType {
+        case .browser:
+            let action = arguments["action"] as? String ?? "browser"
+            if let url = arguments["url"] as? String {
+                return "\(action.replacingOccurrences(of: "_", with: " ")) \(self.truncate(url, maxLength: 50))"
+            }
+            if action == "call", let tool = arguments["mcp_tool"] as? String {
+                return "call \(tool)"
+            }
+            return action.replacingOccurrences(of: "_", with: " ")
+        case .permissions:
+            return "macOS automation access"
+        case .sleep:
+            if let duration = arguments["duration"] as? Double {
+                return self.formatMilliseconds(duration)
+            }
+            if let duration = arguments["duration"] as? Int {
+                return self.formatMilliseconds(Double(duration))
+            }
+            return ""
+        case .agent:
+            if arguments["listSessions"] as? Bool == true {
+                return "list sessions"
+            }
+            if let task = arguments["task"] as? String {
+                return self.truncate(task, maxLength: 60)
+            }
+            return ""
+        default:
+            return nil
+        }
+    }
+
+    private func formatMilliseconds(_ milliseconds: Double) -> String {
+        if milliseconds < 1000 {
+            return String(format: "%.0fms", milliseconds)
+        }
+        return String(format: "%.1fs", milliseconds / 1000)
     }
 
     override public func formatResultSummary(result: [String: Any]) -> String {

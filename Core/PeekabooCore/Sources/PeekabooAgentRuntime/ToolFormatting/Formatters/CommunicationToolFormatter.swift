@@ -20,7 +20,7 @@ public class CommunicationToolFormatter: BaseToolFormatter {
 
     override public func formatStarting(arguments: [String: Any]) -> String {
         switch toolType {
-        case .taskCompleted:
+        case .done, .taskCompleted:
             "Completing task..."
 
         case .needMoreInformation, .needInfo:

@@ -21,14 +21,14 @@ read_when:
 | `--list-sessions` | Print cached sessions (id, task, timestamps, message count) instead of running anything. |
 | `--no-cache` | Always create a fresh session even if one is already active. |
 | `--quiet` / `--simple` / `--no-color` / `--debug-terminal` | Control output mode; the command auto-detects terminal capabilities when you don’t override it. |
-| `--audio` / `--audio-file <path>` / `--realtime` | Use microphone input, pipe audio from disk, or enable OpenAI’s realtime audio mode. |
+| `--audio` / `--audio-file <path>` | Use microphone input or pipe audio from disk. |
 
 ## Implementation notes
 - The command resolves output “modes” (`minimal`, `compact`, `enhanced`, `quiet`, `verbose`) using terminal detection heuristics; `--simple` and `--no-color` force minimal mode, while `--quiet` suppresses progress output entirely.
 - Session metadata lives inside `agentService` (PeekabooCore). `--resume` grabs the most recent session, `--list-sessions` prints the cached list, and `--no-cache` disables reuse so each run starts clean.
 - All agent executions run under `CommandRuntime.makeDefault()`, so environment variables, credentials, and logging levels match the top-level CLI state.
 - When `--dry-run` is set the agent still reasons about the task, but tool invocations are skipped; this is useful for understanding plans without touching the UI.
-- Audio flags wire into Tachikoma’s audio stack: `--audio` opens the microphone, `--audio-file` loads a WAV/CAF file, and `--realtime` enables low-latency streaming (OpenAI-only).
+- Audio flags wire into Tachikoma’s audio stack: `--audio` opens the microphone and `--audio-file` loads a WAV/CAF file.
 - Generation uses `agent.temperature` and `agent.maxTokens` from the shared config written by the macOS Settings UI.
   Token requests are capped to model capability; unsupported temperature controls are omitted automatically.
 - A run saves its session and fails when its final permitted turn still requests tools and therefore needs another
