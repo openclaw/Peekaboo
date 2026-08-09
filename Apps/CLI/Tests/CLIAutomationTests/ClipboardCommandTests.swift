@@ -45,7 +45,7 @@ struct ClipboardCommandTests {
             services: services,
             interactionMutationTracker: tracker
         )
-        var command = try ClipboardCommand.parse(["set", "--text", "updated", "--json"])
+        var command = try ClipboardCommand.SetSubcommand.parse(["--text", "updated", "--json"])
 
         try await CommanderRuntimeExecutor.runWithImplicitSnapshotInvalidation(
             using: runtime,
@@ -85,7 +85,7 @@ struct ClipboardCommandTests {
             ),
             services: services
         )
-        var command = try ClipboardCommand.parse(["get", "--json"])
+        var command = try ClipboardCommand.GetSubcommand.parse(["--json"])
 
         try await command.run(using: runtime)
 

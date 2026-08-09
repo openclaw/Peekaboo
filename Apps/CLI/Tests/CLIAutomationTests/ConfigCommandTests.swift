@@ -69,9 +69,9 @@ struct ConfigCommandTests {
         #expect(subcommands.contains { $0 == ConfigCommand.CredentialCommand.self })
         let providerCommands = ConfigCommand.ProviderCommand.commandDescription.subcommands
         #expect(providerCommands.map(\.commandDescription.commandName) == ["add", "remove", "list", "test", "models"])
-        #expect(ConfigCommand.CredentialCommand.commandDescription.subcommands == [
-            ConfigCommand.CredentialSetCommand.self,
-        ])
+        #expect(ConfigCommand.CredentialCommand.commandDescription.subcommands.elementsEqual(
+            [ConfigCommand.CredentialSetCommand.self],
+            by: { $0 == $1 }))
     }
 
     @Test
