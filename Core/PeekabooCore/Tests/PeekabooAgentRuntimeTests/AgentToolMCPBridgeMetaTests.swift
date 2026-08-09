@@ -39,7 +39,7 @@ struct AgentToolMCPBridgeMetaTests {
     }
 
     @Test
-    func `Error response ignores metadata`() throws {
+    func `Error response becomes a structured failure and ignores arbitrary metadata`() throws {
         let response = ToolResponse.error(
             "native tool failed",
             meta: .object([
@@ -48,8 +48,12 @@ struct AgentToolMCPBridgeMetaTests {
                 ]),
             ]))
         let converted = convertToolResponseToAgentToolResult(response)
+        let payload = try #require(try converted.toJSON() as? [String: Any])
 
-        #expect(try converted.toJSON() as? String == "Error: native tool failed")
+        #expect(payload["success"] as? Bool == false)
+        #expect(payload["error"] as? String == "native tool failed")
+        #expect(payload["meta"] == nil)
+        #expect(ToolEventSummary.from(resultJSON: payload) == nil)
     }
 
     @Test
@@ -101,7 +105,7 @@ struct AgentToolMCPBridgeMetaTests {
     }
 
     @Test
-    func `Text and image content items preserve both results without metadata`() throws {
+    func `Text and invalid image content preserve text and an explicit omission`() throws {
         let imageData = "AQID"
         let response = ToolResponse(content: [
             .text(text: "annotated screenshot", annotations: nil, _meta: nil),
@@ -116,6 +120,9 @@ struct AgentToolMCPBridgeMetaTests {
 
         #expect(content.count == 2)
         #expect(content[0] as? String == "annotated screenshot")
-        #expect(content[1] as? String == "[Image: image/png, size: 4 bytes]")
+        let omitted = try #require(content[1] as? [String: Any])
+        #expect(omitted["type"] as? String == "image")
+        #expect(omitted["attached"] as? Bool == false)
+        #expect(omitted["reason"] as? String == "invalid or oversized inline data")
     }
 }
