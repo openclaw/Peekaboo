@@ -86,16 +86,3 @@ extension ApplicationResolvable {
         return app
     }
 }
-
-/// Extension for commands with positional app argument (like AppCommand subcommands)
-protocol ApplicationResolvablePositional: ApplicationResolvable {
-    /// Positional application argument captured as a non-optional string.
-    var positionalAppIdentifier: String { get }
-    var pid: Int32? { get }
-}
-
-extension ApplicationResolvablePositional {
-    var app: String? {
-        self.positionalAppIdentifier
-    }
-}

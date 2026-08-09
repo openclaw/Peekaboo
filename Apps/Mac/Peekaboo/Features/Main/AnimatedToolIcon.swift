@@ -161,20 +161,6 @@ struct StaticToolIcon: View {
     }
 }
 
-/// Tool icon that uses animation on supported platforms
-struct ToolIcon: View {
-    let toolName: String
-    let isRunning: Bool
-
-    var body: some View {
-        if #available(macOS 15.0, *) {
-            AnimatedToolIcon(toolName: self.toolName, isRunning: self.isRunning)
-        } else {
-            StaticToolIcon(toolName: self.toolName)
-        }
-    }
-}
-
 /// Enhanced tool icon that shows both animations and status overlays
 struct EnhancedToolIcon: View {
     let toolName: String

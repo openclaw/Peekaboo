@@ -57,11 +57,8 @@ public enum CaptureFocus: String, CaseIterable, Codable, Sendable, Equatable {
 // Back-compat typealiases (temporary; remove after downstream migration)
 public typealias WatchScope = CaptureScope
 public typealias WatchCaptureOptions = CaptureOptions
-public typealias WatchFrameInfo = CaptureFrameInfo
-public typealias WatchMotionInterval = CaptureMotionInterval
 public typealias WatchStats = CaptureStats
 public typealias WatchContactSheet = CaptureContactSheet
 public typealias WatchWarning = CaptureWarning
 public typealias WatchOptionsSnapshot = CaptureOptionsSnapshot
 public typealias WatchCaptureResult = CaptureSessionResult
-public typealias WatchMetaSummary = CaptureMetaSummary

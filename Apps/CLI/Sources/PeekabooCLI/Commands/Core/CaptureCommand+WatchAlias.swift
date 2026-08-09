@@ -23,6 +23,3 @@ extension CaptureWatchAlias: CommanderBindableCommand {
         try self.live.applyCommanderValues(values)
     }
 }
-
-/// Back-compat alias for tests/agents
-typealias WatchCommand = CaptureLiveCommand

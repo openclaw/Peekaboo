@@ -2,14 +2,6 @@ import CoreGraphics
 import Foundation
 import PeekabooFoundation
 
-/// Target for capture operations
-public enum CaptureTarget: Sendable {
-    case screen(index: Int?)
-    case window(app: String, index: Int?)
-    case frontmost
-    case area(CGRect)
-}
-
 /// Automation action
 public enum AutomationAction: Sendable {
     case click(target: ClickTarget, type: ClickType)

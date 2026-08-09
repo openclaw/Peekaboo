@@ -1,23 +1,6 @@
 import Foundation
 import PeekabooFoundation
 
-/// Helper class for managing JSON output and debug logs
-public class JSONOutput {
-    private var debugLogs: [String] = []
-
-    func addDebugLog(_ message: String) {
-        self.debugLogs.append(message)
-    }
-
-    func getDebugLogs() -> [String] {
-        self.debugLogs
-    }
-
-    func clearDebugLogs() {
-        self.debugLogs.removeAll()
-    }
-}
-
 /// Standard JSON response format for Peekaboo API output.
 ///
 /// This is now deprecated - use CodableJSONResponse with specific types instead
@@ -175,11 +158,6 @@ func outputError(message: String, code: ErrorCode, details: String? = nil, logge
     let error = ErrorInfo(message: message, code: code, details: details)
     let debugLogs = logger.getDebugLogs()
     outputJSON(JSONResponse(success: false, messages: nil, debugLogs: debugLogs, error: error), logger: logger)
-}
-
-func outputFailure(message: String, logger: Logger, error: (any Error)? = nil) {
-    let details = error.map { "\($0)" }
-    outputError(message: message, code: .UNKNOWN_ERROR, details: details, logger: logger)
 }
 
 /// Empty type for successful responses with no data

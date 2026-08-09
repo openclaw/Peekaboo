@@ -103,38 +103,6 @@ public struct ConversationToolCall: Identifiable, Codable, Sendable {
     }
 }
 
-// MARK: - Session Storage Protocol
-
-/// Protocol for managing conversation session storage
-public protocol ConversationSessionStorageProtocol: Sendable {
-    /// All stored sessions
-    var sessions: [ConversationSession] { get async }
-
-    /// Currently active session
-    var currentSession: ConversationSession? { get async }
-
-    /// Create a new session
-    func createSession(title: String, modelName: String) async -> ConversationSession
-
-    /// Add a message to a session
-    func addMessage(_ message: ConversationMessage, to session: ConversationSession) async
-
-    /// Update the summary of a session
-    func updateSummary(_ summary: String, for session: ConversationSession) async
-
-    /// Update the last message in a session
-    func updateLastMessage(_ message: ConversationMessage, in session: ConversationSession) async
-
-    /// Select a session as current
-    func selectSession(_ session: ConversationSession) async
-
-    /// Save all sessions to persistent storage
-    func saveSessions() async throws
-
-    /// Load sessions from persistent storage
-    func loadSessions() async throws
-}
-
 // MARK: - Session Summary
 
 /// Summary information about a conversation session

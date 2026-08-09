@@ -159,21 +159,3 @@ public enum WindowTarget: Sendable, CustomStringConvertible, Codable {
         }
     }
 }
-
-/// Result of a window operation
-public struct WindowOperationResult: Sendable, Codable {
-    /// Whether the operation succeeded
-    public let success: Bool
-
-    /// Window state after the operation
-    public let windowInfo: ServiceWindowInfo?
-
-    /// Any warnings or notes
-    public let message: String?
-
-    public init(success: Bool, windowInfo: ServiceWindowInfo? = nil, message: String? = nil) {
-        self.success = success
-        self.windowInfo = windowInfo
-        self.message = message
-    }
-}

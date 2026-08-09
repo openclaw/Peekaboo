@@ -226,30 +226,3 @@ public struct SnapshotInfo: Sendable, Codable {
         self.isActive = isActive
     }
 }
-
-/// Options for snapshot cleanup
-public struct SnapshotCleanupOptions: Sendable {
-    /// Perform dry run (don't actually delete)
-    public let dryRun: Bool
-
-    /// Only clean snapshots from inactive processes
-    public let onlyInactive: Bool
-
-    /// Maximum age in days (nil = no age limit)
-    public let maxAgeInDays: Int?
-
-    /// Maximum total size in MB (nil = no size limit)
-    public let maxTotalSizeMB: Int?
-
-    public init(
-        dryRun: Bool = false,
-        onlyInactive: Bool = true,
-        maxAgeInDays: Int? = nil,
-        maxTotalSizeMB: Int? = nil)
-    {
-        self.dryRun = dryRun
-        self.onlyInactive = onlyInactive
-        self.maxAgeInDays = maxAgeInDays
-        self.maxTotalSizeMB = maxTotalSizeMB
-    }
-}

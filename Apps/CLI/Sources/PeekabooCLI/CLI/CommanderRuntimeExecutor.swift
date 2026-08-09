@@ -2,11 +2,6 @@ import Commander
 import Foundation
 import PeekabooAutomationKit
 
-/// Commands or runtime contexts that can specify a preferred capture engine.
-protocol CaptureEngineConfigurable: AnyObject {
-    var captureEngine: String? { get }
-}
-
 enum CommanderRuntimeExecutorMessage {
     static let snapshotInvalidationWarning =
         "Warning: The requested action succeeded, but stale UI snapshots could not be invalidated after retry. " +
