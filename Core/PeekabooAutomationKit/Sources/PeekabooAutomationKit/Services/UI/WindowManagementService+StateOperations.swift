@@ -927,6 +927,19 @@ func maximizedVisibleFrame(
     }
 }
 
+func backgroundGeometryDispatchRemainsPinned(
+    expectedIdentity: WindowMutationIdentity,
+    positionSetSucceeded: Bool,
+    sizeSetSucceeded: Bool,
+    liveProcessStartIdentity: UInt64?,
+    candidateWindowID: Int?) -> Bool
+{
+    positionSetSucceeded &&
+        sizeSetSucceeded &&
+        liveProcessStartIdentity == expectedIdentity.ownerProcessStartIdentity &&
+        candidateWindowID == expectedIdentity.windowID
+}
+
 extension CGRect {
     fileprivate var area: CGFloat {
         guard !self.isNull, !self.isInfinite else { return 0 }
@@ -1124,10 +1137,17 @@ private enum BoundedBackgroundWindowAX {
                     childWindow,
                     kAXSizeAttribute as CFString,
                     sizeValue)
-                return positionResult == .success && sizeResult == .success &&
-                    SystemIdentityResolver.repinWindowMutationIdentity(
-                        expectedIdentity,
-                        expectedBounds: bounds) != nil
+                var candidateWindowID: CGWindowID = 0
+                let windowIDResult = AXWindowIDResolver.copyWindowID(
+                    childWindow,
+                    into: &candidateWindowID)
+                return backgroundGeometryDispatchRemainsPinned(
+                    expectedIdentity: expectedIdentity,
+                    positionSetSucceeded: positionResult == .success,
+                    sizeSetSucceeded: sizeResult == .success,
+                    liveProcessStartIdentity: SystemIdentityResolver.processStartIdentity(
+                        expectedIdentity.ownerProcessIdentifier),
+                    candidateWindowID: windowIDResult == .success ? Int(candidateWindowID) : nil)
             }
         }.value
     }
