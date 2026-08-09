@@ -26,6 +26,7 @@
 
 ### Fixed
 - Wait for WindowServer to settle after an exact background maximize dispatch before repinning its final bounds, avoiding false failures without relaxing owner-generation checks.
+- Preserve OpenAI Responses tool-error payloads without sending unsupported `failed` statuses that abort the next agent turn.
 - Coordinate concurrent CLI, agent, GUI-bridge, and daemon desktop reads and mutations with generation-scoped cross-process lanes, preserving parallel work across unrelated exact targets while preventing conflicting background operations from overlapping.
 - Preserve tool response metadata for native agent tools so the Mac activity feed and CLI agent chat show their short summaries, matching external MCP tools.
 - Return all content items from multi-part native tool responses (e.g. `see` with annotation, `analyze`) instead of only the first.

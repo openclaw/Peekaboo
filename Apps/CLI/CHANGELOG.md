@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Wait for WindowServer to settle after an exact background maximize dispatch before repinning its final bounds, avoiding false failures without relaxing owner-generation checks.
+- Preserve OpenAI Responses tool-error payloads without sending unsupported `failed` statuses that abort the next agent turn.
 - Refuse PID-only/app-only background coordinate clicks and require a fresh capture-owned exact-window receipt, with retry-safe pre-dispatch metadata and no mutation invalidation on validation failure.
 - Route automatic window capture around quarantined or contended in-process ScreenCaptureKit calls through a bounded isolated `screencapture` fallback, while explicit modern-only capture still fails honestly.
 - Require explicit `--foreground` before click focus flags can select the foreground path, instead of silently overriding the background default.
