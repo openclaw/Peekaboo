@@ -3,15 +3,7 @@ import Foundation
 import PeekabooFoundation
 
 @MainActor
-public protocol ObservationOutputWriting: Sendable {
-    func write(
-        capture: CaptureResult,
-        elements: ElementDetectionResult?,
-        options: DesktopObservationOutputOptions) async throws -> DesktopObservationOutputWriteResult
-}
-
-@MainActor
-public final class ObservationOutputWriter: ObservationOutputWriting {
+public final class ObservationOutputWriter {
     private let snapshotManager: (any SnapshotManagerProtocol)?
     private let annotationRenderer: ObservationAnnotationRenderer
 

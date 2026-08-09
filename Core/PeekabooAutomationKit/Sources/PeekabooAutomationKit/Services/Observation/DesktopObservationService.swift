@@ -8,7 +8,7 @@ public final class DesktopObservationService: DesktopObservationServiceProtocol 
     let screenCapture: any ScreenCaptureServiceProtocol
     let automation: any UIAutomationServiceProtocol
     let targetResolver: any ObservationTargetResolving
-    let outputWriter: any ObservationOutputWriting
+    let outputWriter: ObservationOutputWriter
     let stateSnapshotProvider: any DesktopStateSnapshotProviding
     let ocrRecognizer: any OCRRecognizing
 
@@ -33,7 +33,7 @@ public final class DesktopObservationService: DesktopObservationServiceProtocol 
         screenCapture: any ScreenCaptureServiceProtocol,
         automation: any UIAutomationServiceProtocol,
         targetResolver: any ObservationTargetResolving,
-        outputWriter: any ObservationOutputWriting = ObservationOutputWriter(),
+        outputWriter: ObservationOutputWriter = ObservationOutputWriter(),
         stateSnapshotProvider: any DesktopStateSnapshotProviding = EmptyDesktopStateSnapshotProvider(),
         ocrRecognizer: any OCRRecognizing = OCRService())
     {
