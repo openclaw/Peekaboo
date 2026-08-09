@@ -14,7 +14,7 @@ popd >/dev/null
 [[ "$MAC_RELEASE_CODESIGN_IDENTITY" == "$FOUNDATION_IDENTITY" ]]
 [[ "$MAC_RELEASE_CLI_CODESIGN_IDENTITY" == "$FOUNDATION_IDENTITY" ]]
 [[ "$MAC_RELEASE_CLI_CODESIGN_TEAM_ID" == "$FOUNDATION_TEAM" ]]
-[[ "$NOTARYTOOL_KEYCHAIN_PROFILE" == "openclaw-foundation-release-20260714" ]]
+[[ "$NOTARYTOOL_KEYCHAIN_PROFILE" == "openclaw-release" ]]
 
 policy_files=(
   "$ROOT_DIR/.mac-release.env"
