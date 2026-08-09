@@ -27,9 +27,9 @@ struct AgentCommandBasicTests {
 
     @Test
     func `Agent rejects the removed realtime flag`() async throws {
-        let result = try await InProcessCommandRunner.runShared(["agent", "--realtime"])
+        let result = try await InProcessCommandRunner.runShared(["agent", "--realtime"], allowedExitCodes: [1])
 
         #expect(result.exitStatus != 0)
-        #expect(result.combinedOutput.contains("Unknown option '--realtime'"))
+        #expect(result.combinedOutput.contains("Unknown option --realtime"))
     }
 }
