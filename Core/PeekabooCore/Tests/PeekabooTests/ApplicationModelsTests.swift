@@ -7,22 +7,6 @@ import Testing
 
 @Suite(.tags(.models, .unit))
 struct ApplicationModelsTests {
-    // MARK: - Enum Tests
-
-    @Test(.tags(.fast))
-    func `WindowDetailOption enum values and parsing`() {
-        // Test WindowDetailOption enum values
-        #expect(WindowDetailOption.off_screen.rawValue == "off_screen")
-        #expect(WindowDetailOption.bounds.rawValue == "bounds")
-        #expect(WindowDetailOption.ids.rawValue == "ids")
-
-        // Test WindowDetailOption from string
-        #expect(WindowDetailOption(rawValue: "off_screen") == .off_screen)
-        #expect(WindowDetailOption(rawValue: "bounds") == .bounds)
-        #expect(WindowDetailOption(rawValue: "ids") == .ids)
-        #expect(WindowDetailOption(rawValue: "invalid") == nil)
-    }
-
     // MARK: - Model Structure Tests
 
     @Test(.tags(.fast))
@@ -33,22 +17,6 @@ struct ApplicationModelsTests {
         #expect(bounds.y == 200)
         #expect(bounds.width == 1200)
         #expect(bounds.height == 800)
-    }
-
-    @Test(.tags(.fast))
-    func `ApplicationInfo initialization`() {
-        let appInfo = ApplicationInfo(
-            app_name: "Safari",
-            bundle_id: "com.apple.Safari",
-            pid: 1234,
-            is_active: true,
-            window_count: 2)
-
-        #expect(appInfo.app_name == "Safari")
-        #expect(appInfo.bundle_id == "com.apple.Safari")
-        #expect(appInfo.pid == 1234)
-        #expect(appInfo.is_active == true)
-        #expect(appInfo.window_count == 2)
     }
 
     @Test(.tags(.fast))
@@ -85,29 +53,6 @@ struct ApplicationModelsTests {
     }
 
     // MARK: - Collection Data Tests
-
-    @Test(.tags(.fast))
-    func `ApplicationListData contains applications`() {
-        let app1 = ApplicationInfo(
-            app_name: "Safari",
-            bundle_id: "com.apple.Safari",
-            pid: 1234,
-            is_active: true,
-            window_count: 2)
-
-        let app2 = ApplicationInfo(
-            app_name: "Terminal",
-            bundle_id: "com.apple.Terminal",
-            pid: 5678,
-            is_active: false,
-            window_count: 1)
-
-        let appListData = ApplicationListData(applications: [app1, app2])
-
-        #expect(appListData.applications.count == 2)
-        #expect(appListData.applications[0].app_name == "Safari")
-        #expect(appListData.applications[1].app_name == "Terminal")
-    }
 
     @Test(.tags(.fast))
     func `WindowListData with target application`() {

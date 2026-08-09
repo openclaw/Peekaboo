@@ -41,7 +41,7 @@ struct PIDImageCaptureTests {
             let result = try await captureWithPID(command: command, targetPID: pid)
 
             #expect(result.success == true)
-            #expect(result.data.saved_files.isEmpty == false)
+            #expect(result.data.isEmpty == false)
         } catch {
             Issue.record("Failed to capture windows by PID: \(error)")
         }
@@ -81,7 +81,7 @@ struct PIDImageCaptureTests {
             let result = try await captureWithPID(command: command, targetPID: pid)
 
             #expect(result.success == true)
-            #expect(result.data.saved_files.isEmpty == false)
+            #expect(result.data.isEmpty == false)
         } catch {
             Issue.record("Failed to capture specific instance by PID: \(error)")
         }
@@ -162,7 +162,7 @@ struct PIDImageCaptureTests {
     private func captureWithPID(
         command: ImageCommand,
         targetPID: pid_t
-    ) async throws -> CodableJSONResponse<ImageCaptureData> {
+    ) async throws -> CodableJSONResponse<[SavedFile]> {
         // In real execution, this would use WindowCapture.captureWindows
         // For testing, we simulate the response
 
@@ -179,11 +179,9 @@ struct PIDImageCaptureTests {
             mime_type: "image/png"
         )
 
-        let captureData = ImageCaptureData(saved_files: [savedFile])
-
         return CodableJSONResponse(
             success: true,
-            data: captureData,
+            data: [savedFile],
             messages: ["Captured windows for PID: \(targetPID)"],
             debug_logs: []
         )

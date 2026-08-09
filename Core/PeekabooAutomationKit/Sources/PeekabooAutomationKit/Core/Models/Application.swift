@@ -3,44 +3,6 @@ import Foundation
 
 // MARK: - Application & Window Models
 
-/// Information about a running application.
-///
-/// Contains metadata about an application including its name, bundle identifier,
-/// process ID, activation state, and number of windows.
-public struct ApplicationInfo: Codable, Sendable {
-    public let app_name: String
-    public let bundle_id: String
-    public let pid: Int32
-    public let is_active: Bool
-    public let window_count: Int
-
-    public init(
-        app_name: String,
-        bundle_id: String,
-        pid: Int32,
-        is_active: Bool,
-        window_count: Int)
-    {
-        self.app_name = app_name
-        self.bundle_id = bundle_id
-        self.pid = pid
-        self.is_active = is_active
-        self.window_count = window_count
-    }
-}
-
-/// Container for application list results.
-///
-/// Wraps an array of ApplicationInfo objects returned when listing
-/// all running applications on the system.
-public struct ApplicationListData: Codable, Sendable {
-    public let applications: [ApplicationInfo]
-
-    public init(applications: [ApplicationInfo]) {
-        self.applications = applications
-    }
-}
-
 /// Information about a window.
 ///
 /// Contains details about a window including its title, unique identifier,
@@ -138,27 +100,4 @@ public struct WindowListData: Codable, Sendable {
         self.windows = windows
         self.target_application_info = target_application_info
     }
-}
-
-// MARK: - Window Specifier
-
-/// Specifies how to identify a window for operations.
-///
-/// Windows can be identified either by their title (with fuzzy matching)
-/// or by their index in the window list.
-public enum WindowSpecifier: Sendable {
-    case title(String)
-    case index(Int)
-}
-
-// MARK: - Window Details Options
-
-/// Options for including additional window details.
-///
-/// Controls which optional window properties are included when listing windows,
-/// allowing users to request additional information like bounds or off-screen status.
-public enum WindowDetailOption: String, CaseIterable, Codable, Sendable {
-    case off_screen
-    case bounds
-    case ids
 }

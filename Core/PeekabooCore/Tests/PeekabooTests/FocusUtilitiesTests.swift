@@ -40,17 +40,6 @@ struct FocusUtilitiesTests {
         #expect(protocolOptions.bringToCurrentSpace == true)
     }
 
-    @Test
-    func `DefaultFocusOptions values`() {
-        let options = DefaultFocusOptions()
-
-        #expect(options.autoFocus == true)
-        #expect(options.focusTimeout == 5.0)
-        #expect(options.focusRetryCount == 3)
-        #expect(options.spaceSwitch == true)
-        #expect(options.bringToCurrentSpace == false)
-    }
-
     // MARK: - FocusManagementService Tests
 
     @Test

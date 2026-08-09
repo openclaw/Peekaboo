@@ -6,7 +6,7 @@ import Testing
 struct WatchCLISmokeTests {
     @Test
     func `Contact sheet sampling metadata is present`() {
-        let sheet = WatchContactSheet(
+        let sheet = CaptureContactSheet(
             path: "/tmp/contact.png",
             file: "contact.png",
             columns: 6,
@@ -19,12 +19,12 @@ struct WatchCLISmokeTests {
 
     @Test
     func `Diff metadata is carried through result`() {
-        let result = WatchCaptureResult(
+        let result = CaptureSessionResult(
             source: .live,
             videoIn: nil,
             videoOut: nil,
             frames: [],
-            contactSheet: WatchContactSheet(
+            contactSheet: CaptureContactSheet(
                 path: "/tmp/contact.png",
                 file: "contact.png",
                 columns: 1,
@@ -32,7 +32,7 @@ struct WatchCLISmokeTests {
                 thumbSize: CGSize(width: 100, height: 100),
                 sampledFrameIndexes: []),
             metadataFile: "/tmp/metadata.json",
-            stats: WatchStats(
+            stats: CaptureStats(
                 durationMs: 1000,
                 fpsIdle: 2,
                 fpsActive: 8,
@@ -41,10 +41,10 @@ struct WatchCLISmokeTests {
                 framesDropped: 0,
                 maxFramesHit: false,
                 maxMbHit: false),
-            scope: WatchScope(kind: .screen),
+            scope: CaptureScope(kind: .screen),
             diffAlgorithm: "fast",
             diffScale: "w256",
-            options: WatchOptionsSnapshot(
+            options: CaptureOptionsSnapshot(
                 duration: 60,
                 idleFps: 2,
                 activeFps: 8,
@@ -56,7 +56,7 @@ struct WatchCLISmokeTests {
                 highlightChanges: false,
                 captureFocus: CaptureFocus.auto,
                 resolutionCap: 1440,
-                diffStrategy: WatchCaptureOptions.DiffStrategy.fast,
+                diffStrategy: CaptureOptions.DiffStrategy.fast,
                 diffBudgetMs: 30),
             warnings: [])
         #expect(result.diffAlgorithm == "fast")

@@ -56,18 +56,6 @@ public protocol FocusOptionsProtocol {
     var bringToCurrentSpace: Bool { get }
 }
 
-// MARK: - Default Focus Options
-
-public struct DefaultFocusOptions: FocusOptionsProtocol {
-    public let autoFocus: Bool = true
-    public let focusTimeout: TimeInterval? = 5.0
-    public let focusRetryCount: Int? = 3
-    public let spaceSwitch: Bool = true
-    public let bringToCurrentSpace: Bool = false
-
-    public init() {}
-}
-
 // MARK: - Focus Options Value Type
 
 public struct FocusOptions: FocusOptionsProtocol {

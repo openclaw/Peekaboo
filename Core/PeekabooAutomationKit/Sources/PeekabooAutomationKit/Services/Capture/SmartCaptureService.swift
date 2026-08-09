@@ -256,31 +256,6 @@ public enum SmartCaptureMetadata: Sendable {
 
     /// Region capture around a point.
     case region(center: CGPoint, radius: CGFloat, bounds: CGRect, contextThumbnail: CGImage?)
-
-    /// Capture with detected change areas.
-    case changed(areas: [ChangeArea])
-}
-
-/// An area of the screen that changed.
-public struct ChangeArea: Sendable {
-    public let rect: CGRect
-    public let changeType: ChangeType
-    public let confidence: Float
-
-    public init(rect: CGRect, changeType: ChangeType, confidence: Float) {
-        self.rect = rect
-        self.changeType = changeType
-        self.confidence = confidence
-    }
-}
-
-/// Type of change detected in a region.
-public enum ChangeType: Sendable {
-    case contentAdded
-    case contentRemoved
-    case contentModified
-    case windowMoved
-    case dialogAppeared
 }
 
 /// Errors that can occur during smart capture operations.

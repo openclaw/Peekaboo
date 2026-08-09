@@ -70,52 +70,6 @@ extension NotFoundError: Error {
     }
 }
 
-/// Temporary struct for ValidationError migration
-public struct LegacyValidationError {
-    public let code: StandardErrorCode
-    public let userMessage: String
-    public let context: [String: String]
-
-    public init(code: StandardErrorCode, userMessage: String, context: [String: String]) {
-        self.code = code
-        self.userMessage = userMessage
-        self.context = context
-    }
-
-    public static func invalidInput(field: String, reason: String) -> PeekabooError {
-        PeekabooError.invalidInput(field: field, reason: reason)
-    }
-
-    public static func invalidCoordinates(x: Double, y: Double) -> PeekabooError {
-        PeekabooError.invalidCoordinates(x: x, y: y)
-    }
-
-    public static func ambiguousAppIdentifier(_ identifier: String, matches: [String]) -> PeekabooError {
-        PeekabooError.ambiguousAppIdentifier(identifier, matches: matches)
-    }
-}
-
-/// Make ValidationError throwable
-extension LegacyValidationError: Error {
-    public var asPeekabooError: PeekabooError {
-        switch self.code {
-        case .invalidInput:
-            return .invalidInput(self.userMessage)
-        case .invalidCoordinates:
-            return .invalidCoordinates
-        case .ambiguousAppIdentifier:
-            if let id = context["identifier"],
-               let matches = context["matches"]?.split(separator: ",").map(String.init)
-            {
-                return .ambiguousAppIdentifier(id, suggestions: matches)
-            }
-            return .operationError(message: self.userMessage)
-        default:
-            return .operationError(message: self.userMessage)
-        }
-    }
-}
-
 /// Temporary struct for PermissionError migration
 public enum PermissionError {
     public static func screenRecording() -> PeekabooError {

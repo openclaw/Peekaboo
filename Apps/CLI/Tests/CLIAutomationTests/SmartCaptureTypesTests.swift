@@ -69,31 +69,6 @@ struct SmartCaptureResultTests {
     }
 }
 
-struct ChangeAreaTests {
-    @Test
-    func `Change area stores all properties`() {
-        let rect = CGRect(x: 10, y: 20, width: 100, height: 50)
-        let area = ChangeArea(rect: rect, changeType: .contentAdded, confidence: 0.8)
-
-        #expect(area.rect == rect)
-        #expect(area.changeType == .contentAdded)
-        #expect(area.confidence == 0.8)
-    }
-
-    @Test
-    func `All change types are available`() {
-        let types: [ChangeType] = [
-            .contentAdded,
-            .contentRemoved,
-            .contentModified,
-            .windowMoved,
-            .dialogAppeared
-        ]
-
-        #expect(types.count == 5)
-    }
-}
-
 struct SmartCaptureErrorTests {
     @Test
     func `Image conversion error has description`() {

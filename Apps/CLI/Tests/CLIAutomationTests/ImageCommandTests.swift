@@ -299,35 +299,6 @@ struct ImageCommandTests {
         #expect(savedFile.mime_type == "image/png")
     }
 
-    @Test(.tags(.fast))
-    func `ImageCaptureData encoding`() throws {
-        let savedFile = SavedFile(
-            path: "/tmp/test.png",
-            item_label: "Test",
-            window_title: nil,
-            window_id: nil,
-            window_index: nil,
-            mime_type: "image/png"
-        )
-
-        let captureData = ImageCaptureData(saved_files: [savedFile])
-
-        // Test JSON encoding
-        let encoder = JSONEncoder()
-        // Properties are already in snake_case, no conversion needed
-        let data = try encoder.encode(captureData)
-
-        #expect(!data.isEmpty)
-
-        // Test decoding
-        let decoder = JSONDecoder()
-        // Properties are already in snake_case, no conversion needed
-        let decoded = try decoder.decode(ImageCaptureData.self, from: data)
-
-        #expect(decoded.saved_files.count == 1)
-        #expect(decoded.saved_files[0].path == "/tmp/test.png")
-    }
-
     // MARK: - Enum Raw Value Tests
 
     @Test(.tags(.fast))

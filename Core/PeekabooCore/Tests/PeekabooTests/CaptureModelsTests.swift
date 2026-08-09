@@ -109,25 +109,6 @@ struct CaptureModelsTests {
     }
 
     @Test
-    func `ImageCaptureData initialization and properties`() {
-        let file1 = SavedFile(path: "/tmp/file1.png", mime_type: "image/png")
-        let file2 = SavedFile(path: "/tmp/file2.jpg", mime_type: "image/jpeg")
-        let files = [file1, file2]
-
-        let captureData = ImageCaptureData(saved_files: files)
-
-        #expect(captureData.saved_files.count == 2)
-        #expect(captureData.saved_files[0].path == "/tmp/file1.png")
-        #expect(captureData.saved_files[0].mime_type == "image/png")
-        #expect(captureData.saved_files[1].path == "/tmp/file2.jpg")
-        #expect(captureData.saved_files[1].mime_type == "image/jpeg")
-
-        // Test empty files array
-        let emptyCaptureData = ImageCaptureData(saved_files: [])
-        #expect(emptyCaptureData.saved_files.isEmpty)
-    }
-
-    @Test
     func `CaptureMetadata initialization and properties`() {
         let testSize = CGSize(width: 1920, height: 1080)
         let captureTime = Date()
@@ -362,14 +343,6 @@ struct CaptureModelsTests {
         #expect(decodedFile.window_id == originalFile.window_id)
         #expect(decodedFile.window_index == originalFile.window_index)
         #expect(decodedFile.mime_type == originalFile.mime_type)
-
-        // Test ImageCaptureData encoding/decoding
-        let originalCaptureData = ImageCaptureData(saved_files: [originalFile])
-        let encodedCaptureData = try JSONEncoder().encode(originalCaptureData)
-        let decodedCaptureData = try JSONDecoder().decode(ImageCaptureData.self, from: encodedCaptureData)
-
-        #expect(decodedCaptureData.saved_files.count == 1)
-        #expect(decodedCaptureData.saved_files[0].path == originalFile.path)
     }
 
     @Test

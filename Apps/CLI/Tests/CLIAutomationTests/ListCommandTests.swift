@@ -380,55 +380,49 @@ struct ListCommandTests {
     // MARK: - Data Structure Tests
 
     @Test(.tags(.fast))
-    func `ApplicationInfo JSON encoding`() throws {
-        // Test ApplicationInfo JSON encoding
-        let appInfo = ApplicationInfo(
-            app_name: "Finder",
-            bundle_id: "com.apple.finder",
-            pid: 123,
-            is_active: true,
-            window_count: 5
+    func `ServiceApplicationInfo JSON encoding`() throws {
+        let appInfo = ServiceApplicationInfo(
+            processIdentifier: 123,
+            bundleIdentifier: "com.apple.finder",
+            name: "Finder",
+            isActive: true,
+            windowCount: 5
         )
 
         let encoder = JSONEncoder()
-        // Properties are already in snake_case, no conversion needed
-
         let data = try encoder.encode(appInfo)
         let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
 
         #expect(json != nil)
-        #expect(json?["app_name"] as? String == "Finder")
-        #expect(json?["bundle_id"] as? String == "com.apple.finder")
-        #expect(json?["pid"] as? Int32 == 123)
-        #expect(json?["is_active"] as? Bool == true)
-        #expect(json?["window_count"] as? Int == 5)
+        #expect(json?["name"] as? String == "Finder")
+        #expect(json?["bundleIdentifier"] as? String == "com.apple.finder")
+        #expect(json?["processIdentifier"] as? Int32 == 123)
+        #expect(json?["isActive"] as? Bool == true)
+        #expect(json?["windowCount"] as? Int == 5)
     }
 
     @Test(.tags(.fast))
-    func `ApplicationListData JSON encoding`() throws {
-        // Test ApplicationListData JSON encoding
-        let appData = ApplicationListData(
+    func `ServiceApplicationListData JSON encoding`() throws {
+        let appData = ServiceApplicationListData(
             applications: [
-                ApplicationInfo(
-                    app_name: "Finder",
-                    bundle_id: "com.apple.finder",
-                    pid: 123,
-                    is_active: true,
-                    window_count: 3
+                ServiceApplicationInfo(
+                    processIdentifier: 123,
+                    bundleIdentifier: "com.apple.finder",
+                    name: "Finder",
+                    isActive: true,
+                    windowCount: 3
                 ),
-                ApplicationInfo(
-                    app_name: "Safari",
-                    bundle_id: "com.apple.Safari",
-                    pid: 456,
-                    is_active: false,
-                    window_count: 2
+                ServiceApplicationInfo(
+                    processIdentifier: 456,
+                    bundleIdentifier: "com.apple.Safari",
+                    name: "Safari",
+                    isActive: false,
+                    windowCount: 2
                 ),
             ]
         )
 
         let encoder = JSONEncoder()
-        // Properties are already in snake_case, no conversion needed
-
         let data = try encoder.encode(appData)
         let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
 
@@ -564,38 +558,9 @@ struct ListCommandTests {
 
     @Test(.tags(.fast))
     func `WindowDetailOption raw values`() {
-        // Test window detail option values
-        #expect(WindowDetailOption.off_screen.rawValue == "off_screen")
-        #expect(WindowDetailOption.bounds.rawValue == "bounds")
-        #expect(WindowDetailOption.ids.rawValue == "ids")
-    }
-
-    // MARK: - Window Specifier Tests
-
-    @Test(.tags(.fast))
-    func `WindowSpecifier with title`() {
-        // Test window specifier with title
-        let specifier = WindowSpecifier.title("Documents")
-
-        switch specifier {
-        case let .title(title):
-            #expect(title == "Documents")
-        default:
-            Issue.record("Expected title specifier")
-        }
-    }
-
-    @Test(.tags(.fast))
-    func `WindowSpecifier with index`() {
-        // Test window specifier with index
-        let specifier = WindowSpecifier.index(0)
-
-        switch specifier {
-        case let .index(index):
-            #expect(index == 0)
-        default:
-            Issue.record("Expected index specifier")
-        }
+        #expect(ListCommand.WindowsSubcommand.WindowDetailOption.off_screen.rawValue == "off_screen")
+        #expect(ListCommand.WindowsSubcommand.WindowDetailOption.bounds.rawValue == "bounds")
+        #expect(ListCommand.WindowsSubcommand.WindowDetailOption.ids.rawValue == "ids")
     }
 
     // MARK: - Performance Tests
@@ -603,213 +568,21 @@ struct ListCommandTests {
     @Test(
         arguments: [10, 50, 100, 200]
     )
-    func `ApplicationListData encoding performance`(appCount: Int) throws {
-        // Test performance of encoding many applications
-        let apps = (0..<appCount).map { index -> ApplicationInfo in
-            ApplicationInfo(
-                app_name: "App\(index)",
-                bundle_id: "com.example.app\(index)",
-                pid: Int32(1000 + index),
-                is_active: index == 0,
-                window_count: index % 5
+    func `ServiceApplicationListData encoding performance`(appCount: Int) throws {
+        let apps = (0..<appCount).map { index -> ServiceApplicationInfo in
+            ServiceApplicationInfo(
+                processIdentifier: Int32(1000 + index),
+                bundleIdentifier: "com.example.app\(index)",
+                name: "App\(index)",
+                isActive: index == 0,
+                windowCount: index % 5
             )
         }
 
-        let appData = ApplicationListData(applications: apps)
+        let appData = ServiceApplicationListData(applications: apps)
         let encoder = JSONEncoder()
-        // Properties are already in snake_case, no conversion needed
-
-        // Ensure encoding works correctly
         let data = try encoder.encode(appData)
         #expect(!data.isEmpty)
-    }
-
-    // MARK: - Window Count Display Tests
-
-    @Test(
-        .tags(.fast),
-        .disabled("formatApplicationList method not found")
-    )
-    func `printApplicationList hides window count when count is 1`() {
-        // Create test applications with different window counts
-        let applications = [
-            ApplicationInfo(
-                app_name: "Single Window App",
-                bundle_id: "com.test.single",
-                pid: 123,
-                is_active: false,
-                window_count: 1
-            ),
-            ApplicationInfo(
-                app_name: "Multi Window App",
-                bundle_id: "com.test.multi",
-                pid: 456,
-                is_active: true,
-                window_count: 5
-            ),
-            ApplicationInfo(
-                app_name: "No Windows App",
-                bundle_id: "com.test.none",
-                pid: 789,
-                is_active: false,
-                window_count: 0
-            ),
-        ]
-        _ = applications
-
-        // Get formatted output using the testable method
-        // TODO: formatApplicationList method needs to be added to AppsSubcommand
-        // let command = AppsSubcommand()
-        // let output = command.formatApplicationList(applications)
-        let output = "" // Temporary placeholder
-
-        // Verify that "Windows: 1" is NOT present for single window app
-        #expect(!output.contains("Windows: 1"))
-
-        // Verify that the single window app is listed but without window count
-        #expect(output.contains("Single Window App"))
-
-        // Verify that "Windows: 5" IS present for multi window app
-        #expect(output.contains("Windows: 5"))
-
-        // Verify that "Windows: 0" IS present for no windows app
-        #expect(output.contains("Windows: 0"))
-    }
-
-    @Test(
-        .tags(.fast),
-        .disabled("formatApplicationList method not found")
-    )
-    func `printApplicationList shows window count for non-1 values`() {
-        let applications = [
-            ApplicationInfo(
-                app_name: "Zero Windows",
-                bundle_id: "com.test.zero",
-                pid: 100,
-                is_active: false,
-                window_count: 0
-            ),
-            ApplicationInfo(
-                app_name: "Two Windows",
-                bundle_id: "com.test.two",
-                pid: 200,
-                is_active: false,
-                window_count: 2
-            ),
-            ApplicationInfo(
-                app_name: "Many Windows",
-                bundle_id: "com.test.many",
-                pid: 300,
-                is_active: false,
-                window_count: 10
-            ),
-        ]
-        _ = applications
-
-        // TODO: formatApplicationList method needs to be added to AppsSubcommand
-        // let command = AppsSubcommand()
-        // let output = command.formatApplicationList(applications)
-        let output = "" // Temporary placeholder
-
-        // All these should show window counts since they're not 1
-        #expect(output.contains("Windows: 0"))
-        #expect(output.contains("Windows: 2"))
-        #expect(output.contains("Windows: 10"))
-    }
-
-    @Test(
-        .tags(.fast),
-        .disabled("formatApplicationList method not found")
-    )
-    func `printApplicationList formats output correctly`() {
-        let applications = [
-            ApplicationInfo(
-                app_name: "Test App",
-                bundle_id: "com.test.app",
-                pid: 12345,
-                is_active: true,
-                window_count: 1
-            ),
-        ]
-        _ = applications
-
-        // TODO: formatApplicationList method needs to be added to AppsSubcommand
-        // let command = AppsSubcommand()
-        // let output = command.formatApplicationList(applications)
-        let output = "" // Temporary placeholder
-
-        // Verify basic formatting is present
-        #expect(output.contains("Running Applications (1):"))
-        #expect(output.contains("1. Test App"))
-        #expect(output.contains("Bundle ID: com.test.app"))
-        #expect(output.contains("PID: 12345"))
-        #expect(output.contains("Status: Active"))
-
-        // Verify "Windows: 1" is NOT present
-        #expect(!output.contains("Windows: 1"))
-    }
-
-    @Test(.tags(.fast), .disabled("formatApplicationList method not found"))
-    func `printApplicationList edge cases`() {
-        let applications = [
-            ApplicationInfo(
-                app_name: "Edge Case 1",
-                bundle_id: "com.test.edge1",
-                pid: 1,
-                is_active: false,
-                window_count: 1
-            ),
-            ApplicationInfo(
-                app_name: "Edge Case 2",
-                bundle_id: "com.test.edge2",
-                pid: 2,
-                is_active: true,
-                window_count: 1
-            ),
-        ]
-        _ = applications
-
-        // TODO: formatApplicationList method needs to be added to AppsSubcommand
-        // let command = AppsSubcommand()
-        // let output = command.formatApplicationList(applications)
-        let output = "" // Temporary placeholder
-
-        // Both apps have 1 window, so neither should show "Windows: 1"
-        #expect(!output.contains("Windows: 1"))
-
-        // But both apps should be listed
-        #expect(output.contains("Edge Case 1"))
-        #expect(output.contains("Edge Case 2"))
-        #expect(output.contains("Status: Background"))
-        #expect(output.contains("Status: Active"))
-    }
-
-    @Test(.tags(.fast), .disabled("formatApplicationList method not found"))
-    func `printApplicationList mixed window counts`() {
-        let applications = [
-            ApplicationInfo(app_name: "App A", bundle_id: "com.a", pid: 1, is_active: false, window_count: 0),
-            ApplicationInfo(app_name: "App B", bundle_id: "com.b", pid: 2, is_active: false, window_count: 1),
-            ApplicationInfo(app_name: "App C", bundle_id: "com.c", pid: 3, is_active: false, window_count: 2),
-            ApplicationInfo(app_name: "App D", bundle_id: "com.d", pid: 4, is_active: false, window_count: 3),
-        ]
-        _ = applications
-
-        // TODO: formatApplicationList method needs to be added to AppsSubcommand
-        // let command = AppsSubcommand()
-        // let output = command.formatApplicationList(applications)
-        let output = "" // Temporary placeholder
-
-        // Should show window counts for 0, 2, and 3, but NOT for 1
-        #expect(output.contains("Windows: 0"))
-        #expect(!output.contains("Windows: 1"))
-        #expect(output.contains("Windows: 2"))
-        #expect(output.contains("Windows: 3"))
-
-        // All apps should be listed
-        #expect(output.contains("App A"))
-        #expect(output.contains("App B"))
-        #expect(output.contains("App C"))
-        #expect(output.contains("App D"))
     }
 }
 
@@ -879,21 +652,21 @@ struct ListCommandAdvancedTests {
         ]
     )
     func `Application state combinations`(active: Bool, windowCount: Int) {
-        let appInfo = ApplicationInfo(
-            app_name: "TestApp",
-            bundle_id: "com.test.app",
-            pid: 1234,
-            is_active: active,
-            window_count: windowCount
+        let appInfo = ServiceApplicationInfo(
+            processIdentifier: 1234,
+            bundleIdentifier: "com.test.app",
+            name: "TestApp",
+            isActive: active,
+            windowCount: windowCount
         )
 
-        #expect(appInfo.is_active == active)
-        #expect(appInfo.window_count == windowCount)
+        #expect(appInfo.isActive == active)
+        #expect(appInfo.windowCount == windowCount)
 
         // Logical consistency checks
         if windowCount > 0 {
             // Apps with windows can be active or inactive
-            #expect(appInfo.window_count > 0)
+            #expect(appInfo.windowCount > 0)
         }
     }
 

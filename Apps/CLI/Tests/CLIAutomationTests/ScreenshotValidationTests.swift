@@ -265,24 +265,13 @@ struct ScreenshotValidationTests {
         windowID: CGWindowID,
         path: String,
         format: ImageFormat
-    ) async throws -> ImageCaptureData {
+    ) async throws {
         // Use modern ScreenCaptureKit API instead of deprecated CGWindowListCreateImage
         let image = try await captureWindowWithScreenCaptureKit(windowID: windowID)
 
         // Save to file
         let nsImage = NSImage(cgImage: image, size: NSSize(width: image.width, height: image.height))
         try self.saveImage(nsImage, to: path, format: format)
-
-        return ImageCaptureData(saved_files: [
-            SavedFile(
-                path: path,
-                item_label: "Window \(windowID)",
-                window_title: nil,
-                window_id: nil,
-                window_index: nil,
-                mime_type: format == .png ? "image/png" : "image/jpeg"
-            ),
-        ])
     }
 
     private func captureWindowWithScreenCaptureKit(windowID: CGWindowID) async throws -> CGImage {
@@ -314,7 +303,7 @@ struct ScreenshotValidationTests {
         displayID: CGDirectDisplayID,
         path: String,
         format: ImageFormat
-    ) async throws -> ImageCaptureData {
+    ) async throws {
         let availableContent = try await SCShareableContent.current
 
         guard let scDisplay = availableContent.displays.first(where: { $0.displayID == displayID }) else {
@@ -335,17 +324,6 @@ struct ScreenshotValidationTests {
 
         let nsImage = NSImage(cgImage: image, size: NSSize(width: image.width, height: image.height))
         try self.saveImage(nsImage, to: path, format: format)
-
-        return ImageCaptureData(saved_files: [
-            SavedFile(
-                path: path,
-                item_label: "Display \(displayID)",
-                window_title: nil,
-                window_id: nil,
-                window_index: nil,
-                mime_type: format == .png ? "image/png" : "image/jpeg"
-            ),
-        ])
     }
 
     private func saveImage(_ image: NSImage, to path: String, format: ImageFormat) throws {

@@ -279,26 +279,18 @@ struct SeeCommandAnnotationTests {
             is_on_screen: true
         )
 
-        let appInfo = ApplicationInfo(
-            app_name: "TestApp",
-            bundle_id: "com.test.app",
-            pid: 1234,
-            is_active: true,
-            window_count: 1
+        let appInfo = ServiceApplicationInfo(
+            processIdentifier: 1234,
+            bundleIdentifier: "com.test.app",
+            name: "TestApp",
+            isActive: true,
+            windowCount: 1
         )
 
         let captureMetadata = CaptureMetadata(
             size: CGSize(width: 1200, height: 800),
             mode: .window,
-            applicationInfo: ServiceApplicationInfo(
-                processIdentifier: appInfo.pid,
-                bundleIdentifier: appInfo.bundle_id,
-                name: appInfo.app_name,
-                bundlePath: nil,
-                isActive: appInfo.is_active,
-                isHidden: false,
-                windowCount: 1
-            ),
+            applicationInfo: appInfo,
             windowInfo: ServiceWindowInfo(
                 windowID: Int(windowInfo.window_id ?? 0),
                 title: windowInfo.window_title,

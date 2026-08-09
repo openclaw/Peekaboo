@@ -36,28 +36,6 @@ public struct CaptureFrameInfo: Codable, Sendable, Equatable {
     }
 }
 
-public struct CaptureMotionInterval: Codable, Sendable, Equatable {
-    public let startFrameIndex: Int
-    public let endFrameIndex: Int
-    public let startMs: Int
-    public let endMs: Int
-    public let maxChangePercent: Double
-
-    public init(
-        startFrameIndex: Int,
-        endFrameIndex: Int,
-        startMs: Int,
-        endMs: Int,
-        maxChangePercent: Double)
-    {
-        self.startFrameIndex = startFrameIndex
-        self.endFrameIndex = endFrameIndex
-        self.startMs = startMs
-        self.endMs = endMs
-        self.maxChangePercent = maxChangePercent
-    }
-}
-
 public struct CaptureStats: Codable, Sendable, Equatable {
     public let durationMs: Int
     public let fpsIdle: Double

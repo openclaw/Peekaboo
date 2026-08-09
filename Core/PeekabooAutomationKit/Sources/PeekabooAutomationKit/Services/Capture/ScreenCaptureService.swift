@@ -73,23 +73,9 @@ public final class ScreenCaptureService: ScreenCaptureServiceProtocol, EngineAwa
         static func live(
             environment: [String: String] = ProcessInfo.processInfo.environment,
             applicationResolver: (any ApplicationResolving)? = nil,
-            metricsObserver: (any ScreenCaptureMetricsObserving)? = nil,
             feedbackClient: (any AutomationFeedbackClient)? = nil) -> Dependencies
         {
             let resolver = applicationResolver ?? PeekabooApplicationResolver()
-            let captureObserver: (@Sendable (String, ScreenCaptureAPI, TimeInterval, Bool, (any Error)?) -> Void)? =
-                if let metricsObserver {
-                    { operation, api, duration, success, error in
-                        metricsObserver.record(
-                            operation: operation,
-                            api: api,
-                            duration: duration,
-                            success: success,
-                            error: error)
-                    }
-                } else {
-                    nil
-                }
             let frameSourceFactory: @MainActor @Sendable (CategoryLogger) -> any CaptureFrameSource = { logger in
                 ScreenCaptureKitFrameSource(logger: logger)
             }
@@ -97,8 +83,7 @@ public final class ScreenCaptureService: ScreenCaptureServiceProtocol, EngineAwa
                 feedbackClient: feedbackClient ?? NoopAutomationFeedbackClient(),
                 permissionEvaluator: ScreenRecordingPermissionChecker(),
                 fallbackRunner: ScreenCaptureFallbackRunner(
-                    apis: ScreenCaptureAPIResolver.resolve(environment: environment),
-                    observer: captureObserver),
+                    apis: ScreenCaptureAPIResolver.resolve(environment: environment)),
                 applicationResolver: resolver,
                 makeFrameSource: frameSourceFactory,
                 makeModernOperator: { logger, visualizer in

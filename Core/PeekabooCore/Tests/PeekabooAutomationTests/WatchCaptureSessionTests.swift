@@ -164,7 +164,7 @@ struct WatchCaptureSessionTests {
         let png = Self.makePNG(size: CGSize(width: 20, height: 20))
         let capture = StubScreenCaptureService(result: png, size: CGSize(width: 20, height: 20))
         let screens = StubScreenService()
-        let scope = WatchScope(
+        let scope = CaptureScope(
             kind: .frontmost,
             screenIndex: nil,
             displayUUID: nil,
@@ -173,7 +173,7 @@ struct WatchCaptureSessionTests {
             windowIndex: nil,
             region: nil)
 
-        let options = WatchCaptureOptions(
+        let options = CaptureOptions(
             duration: 2,
             idleFps: 5,
             activeFps: 5,
@@ -212,7 +212,7 @@ struct WatchCaptureSessionTests {
         let png = Self.makePNG(size: CGSize(width: 50, height: 50))
         let capture = StubScreenCaptureService(result: png, size: CGSize(width: 50, height: 50))
         let screens = StubScreenService()
-        let scope = WatchScope(
+        let scope = CaptureScope(
             kind: .frontmost,
             screenIndex: nil,
             displayUUID: nil,
@@ -221,7 +221,7 @@ struct WatchCaptureSessionTests {
             windowIndex: nil,
             region: nil)
 
-        let options = WatchCaptureOptions(
+        let options = CaptureOptions(
             duration: 2,
             idleFps: 5,
             activeFps: 5,
@@ -263,7 +263,7 @@ struct WatchCaptureSessionTests {
             .appendingPathComponent("watch-stop-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: output) }
 
-        let options = WatchCaptureOptions(
+        let options = CaptureOptions(
             duration: 30,
             idleFps: 0.1,
             activeFps: 1,
@@ -280,7 +280,7 @@ struct WatchCaptureSessionTests {
         let session = WatchCaptureSession(
             dependencies: WatchCaptureDependencies(screenCapture: capture, screenService: screens),
             configuration: WatchCaptureConfiguration(
-                scope: WatchScope(kind: .frontmost),
+                scope: CaptureScope(kind: .frontmost),
                 options: options,
                 outputRoot: output,
                 autoclean: WatchAutocleanConfig(minutes: 1, managed: false)))
@@ -308,7 +308,7 @@ struct WatchCaptureSessionTests {
             .appendingPathComponent("watch-transient-stop-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: output) }
 
-        let options = WatchCaptureOptions(
+        let options = CaptureOptions(
             duration: 30,
             idleFps: 5,
             activeFps: 5,
@@ -325,7 +325,7 @@ struct WatchCaptureSessionTests {
         let session = WatchCaptureSession(
             dependencies: WatchCaptureDependencies(screenCapture: capture, screenService: screens),
             configuration: WatchCaptureConfiguration(
-                scope: WatchScope(kind: .frontmost),
+                scope: CaptureScope(kind: .frontmost),
                 options: options,
                 outputRoot: output,
                 autoclean: WatchAutocleanConfig(minutes: 1, managed: false)))
@@ -372,7 +372,7 @@ struct WatchCaptureSessionTests {
             .appendingPathComponent("watch-cancel-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: output) }
 
-        let options = WatchCaptureOptions(
+        let options = CaptureOptions(
             duration: 30,
             idleFps: 0.1,
             activeFps: 1,
@@ -389,7 +389,7 @@ struct WatchCaptureSessionTests {
         let session = WatchCaptureSession(
             dependencies: WatchCaptureDependencies(screenCapture: capture, screenService: screens),
             configuration: WatchCaptureConfiguration(
-                scope: WatchScope(kind: .frontmost),
+                scope: CaptureScope(kind: .frontmost),
                 options: options,
                 outputRoot: output,
                 autoclean: WatchAutocleanConfig(minutes: 1, managed: false)))
@@ -418,7 +418,7 @@ struct WatchCaptureSessionTests {
         let provider = WatchCaptureFrameProvider(
             screenCapture: capture,
             frameSource: nil,
-            scope: WatchScope(
+            scope: CaptureScope(
                 kind: .window,
                 windowId: 42,
                 applicationIdentifier: "TextEdit",
@@ -442,7 +442,7 @@ struct WatchCaptureSessionTests {
         let provider = WatchCaptureFrameProvider(
             screenCapture: capture,
             frameSource: nil,
-            scope: WatchScope(
+            scope: CaptureScope(
                 kind: .window,
                 applicationIdentifier: "TextEdit",
                 windowIndex: 3),
@@ -466,7 +466,7 @@ struct WatchCaptureSessionTests {
         let provider = WatchCaptureFrameProvider(
             screenCapture: capture,
             frameSource: nil,
-            scope: WatchScope(kind: .screen),
+            scope: CaptureScope(kind: .screen),
             options: Self.defaultWatchOptions(resolutionCap: 1440),
             regionValidator: WatchCaptureRegionValidator(screenService: screens))
 
@@ -478,8 +478,8 @@ struct WatchCaptureSessionTests {
 
     // MARK: - Helpers
 
-    private static func defaultWatchOptions(resolutionCap: CGFloat? = nil) -> WatchCaptureOptions {
-        WatchCaptureOptions(
+    private static func defaultWatchOptions(resolutionCap: CGFloat? = nil) -> CaptureOptions {
+        CaptureOptions(
             duration: 1,
             idleFps: 1,
             activeFps: 1,

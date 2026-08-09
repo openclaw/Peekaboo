@@ -27,14 +27,6 @@ public struct SavedFile: Codable, Sendable {
     }
 }
 
-public struct ImageCaptureData: Codable, Sendable {
-    public let saved_files: [SavedFile]
-
-    public init(saved_files: [SavedFile]) {
-        self.saved_files = saved_files
-    }
-}
-
 public enum CaptureMode: String, CaseIterable, Codable, Sendable, Equatable {
     case screen
     case window
@@ -55,10 +47,7 @@ public enum CaptureFocus: String, CaseIterable, Codable, Sendable, Equatable {
 }
 
 // Back-compat typealiases (temporary; remove after downstream migration)
-public typealias WatchScope = CaptureScope
 public typealias WatchCaptureOptions = CaptureOptions
 public typealias WatchStats = CaptureStats
 public typealias WatchContactSheet = CaptureContactSheet
 public typealias WatchWarning = CaptureWarning
-public typealias WatchOptionsSnapshot = CaptureOptionsSnapshot
-public typealias WatchCaptureResult = CaptureSessionResult
