@@ -19,13 +19,15 @@ extension UIAutomationService {
      * ```
      */
     public func scroll(_ request: ScrollRequest) async throws {
-        self.logger.debug("Delegating scroll to ScrollService")
-        defer { self.elementDetectionService.invalidateCache() }
-        let result = try await self.normalizingSnapshotErrors {
-            try await self.scrollService.scroll(request)
-        }
+        try await self.operationLaneCoordinator.run(scope: .global, access: .write) {
+            self.logger.debug("Delegating scroll to ScrollService")
+            defer { self.elementDetectionService.invalidateCache() }
+            let result = try await self.normalizingSnapshotErrors {
+                try await self.scrollService.scroll(request)
+            }
 
-        await self.visualizeScroll(request, actionAnchor: result.anchorPoint)
+            await self.visualizeScroll(request, actionAnchor: result.anchorPoint)
+        }
     }
 
     /// Background scrolls are AX actions scoped to a snapshot element. Do not project them onto
@@ -70,22 +72,26 @@ extension UIAutomationService {
      * ```
      */
     public func hotkey(keys: String, holdDuration: Int) async throws {
-        self.logger.debug("Delegating hotkey to HotkeyService")
-        defer { self.elementDetectionService.invalidateCache() }
-        _ = try await self.hotkeyService.hotkey(keys: keys, holdDuration: holdDuration)
+        try await self.operationLaneCoordinator.run(scope: .global, access: .write) {
+            self.logger.debug("Delegating hotkey to HotkeyService")
+            defer { self.elementDetectionService.invalidateCache() }
+            _ = try await self.hotkeyService.hotkey(keys: keys, holdDuration: holdDuration)
 
-        await self.visualizeHotkey(keys: keys, targetProcessIdentifier: nil)
+            await self.visualizeHotkey(keys: keys, targetProcessIdentifier: nil)
+        }
     }
 
     public func hotkey(keys: String, holdDuration: Int, targetProcessIdentifier: pid_t) async throws {
-        self.logger.debug("Delegating targeted hotkey to HotkeyService")
-        defer { self.elementDetectionService.invalidateCache() }
-        _ = try await self.hotkeyService.hotkey(
-            keys: keys,
-            holdDuration: holdDuration,
-            targetProcessIdentifier: targetProcessIdentifier)
+        try await self.operationLaneCoordinator.run(scope: .global, access: .write) {
+            self.logger.debug("Delegating targeted hotkey to HotkeyService")
+            defer { self.elementDetectionService.invalidateCache() }
+            _ = try await self.hotkeyService.hotkey(
+                keys: keys,
+                holdDuration: holdDuration,
+                targetProcessIdentifier: targetProcessIdentifier)
 
-        await self.visualizeHotkey(keys: keys, targetProcessIdentifier: targetProcessIdentifier)
+            await self.visualizeHotkey(keys: keys, targetProcessIdentifier: targetProcessIdentifier)
+        }
     }
 
     public func hotkey(
@@ -94,17 +100,19 @@ extension UIAutomationService {
         expectedWindowIdentity: WindowMutationIdentity,
         expectedWindowBounds: CGRect) async throws
     {
-        let validator: @MainActor @Sendable () async throws -> Void = {
-            try await self.requireExactWindowKeyboardFocus(
-                expectedWindowIdentity: expectedWindowIdentity,
-                expectedWindowBounds: expectedWindowBounds)
+        try await self.operationLaneCoordinator.run(scope: .window(expectedWindowIdentity), access: .write) {
+            let validator: @MainActor @Sendable () async throws -> Void = {
+                try await self.requireExactWindowKeyboardFocus(
+                    expectedWindowIdentity: expectedWindowIdentity,
+                    expectedWindowBounds: expectedWindowBounds)
+            }
+            defer { self.elementDetectionService.invalidateCache() }
+            _ = try await self.hotkeyService.hotkey(
+                keys: keys,
+                holdDuration: holdDuration,
+                targetProcessIdentifier: expectedWindowIdentity.ownerProcessIdentifier,
+                deliveryValidator: validator)
         }
-        defer { self.elementDetectionService.invalidateCache() }
-        _ = try await self.hotkeyService.hotkey(
-            keys: keys,
-            holdDuration: holdDuration,
-            targetProcessIdentifier: expectedWindowIdentity.ownerProcessIdentifier,
-            deliveryValidator: validator)
     }
 
     public func hotkey(
@@ -112,18 +120,20 @@ extension UIAutomationService {
         holdDuration: Int,
         target: ExactWindowKeyboardTarget) async throws
     {
-        let validator: @MainActor @Sendable () async throws -> Void = {
-            try await self.requireExactWindowKeyboardFocus(
-                expectedWindowIdentity: target.windowIdentity,
-                expectedWindowBounds: target.windowBounds,
-                expectedFocusedElement: target.focusedElement)
+        try await self.operationLaneCoordinator.run(scope: .window(target.windowIdentity), access: .write) {
+            let validator: @MainActor @Sendable () async throws -> Void = {
+                try await self.requireExactWindowKeyboardFocus(
+                    expectedWindowIdentity: target.windowIdentity,
+                    expectedWindowBounds: target.windowBounds,
+                    expectedFocusedElement: target.focusedElement)
+            }
+            defer { self.elementDetectionService.invalidateCache() }
+            _ = try await self.hotkeyService.hotkey(
+                keys: keys,
+                holdDuration: holdDuration,
+                targetProcessIdentifier: target.windowIdentity.ownerProcessIdentifier,
+                deliveryValidator: validator)
         }
-        defer { self.elementDetectionService.invalidateCache() }
-        _ = try await self.hotkeyService.hotkey(
-            keys: keys,
-            holdDuration: holdDuration,
-            targetProcessIdentifier: target.windowIdentity.ownerProcessIdentifier,
-            deliveryValidator: validator)
     }
 
     /// PID-routed hotkeys are background operations. Suppress the desktop-global overlay so they
@@ -143,22 +153,29 @@ extension UIAutomationService {
         steps: Int,
         profile: MouseMovementProfile) async throws
     {
-        self.logger.debug("Delegating swipe to GestureService")
-        defer { self.elementDetectionService.invalidateCache() }
-        try await self.gestureService.swipe(
-            from: from,
-            to: to,
-            duration: duration,
-            steps: steps,
-            profile: profile)
+        try await self.operationLaneCoordinator.run(scope: .global, access: .write) {
+            self.logger.debug("Delegating swipe to GestureService")
+            defer { self.elementDetectionService.invalidateCache() }
+            try await self.gestureService.swipe(
+                from: from,
+                to: to,
+                duration: duration,
+                steps: steps,
+                profile: profile)
 
-        _ = await self.feedbackClient.showSwipeGesture(from: from, to: to, duration: TimeInterval(duration) / 1000.0)
+            _ = await self.feedbackClient.showSwipeGesture(
+                from: from,
+                to: to,
+                duration: TimeInterval(duration) / 1000.0)
+        }
     }
 
     public func drag(_ request: DragOperationRequest) async throws {
-        self.logger.debug("Delegating drag to GestureService")
-        defer { self.elementDetectionService.invalidateCache() }
-        try await self.gestureService.drag(request)
+        try await self.operationLaneCoordinator.run(scope: .global, access: .write) {
+            self.logger.debug("Delegating drag to GestureService")
+            defer { self.elementDetectionService.invalidateCache() }
+            try await self.gestureService.drag(request)
+        }
     }
 
     public func moveMouse(
@@ -167,16 +184,18 @@ extension UIAutomationService {
         steps: Int,
         profile: MouseMovementProfile) async throws
     {
-        self.logger.debug("Delegating moveMouse to GestureService")
-        defer { self.elementDetectionService.invalidateCache() }
+        try await self.operationLaneCoordinator.run(scope: .global, access: .write) {
+            self.logger.debug("Delegating moveMouse to GestureService")
+            defer { self.elementDetectionService.invalidateCache() }
 
-        let fromPoint = InputDriver.currentLocation() ?? to
-        // Dispatch before moving so the overlay follows the real pointer instead of replaying it afterward.
-        _ = await self.feedbackClient.showMouseMovement(
-            from: fromPoint,
-            to: to,
-            duration: TimeInterval(duration) / 1000.0)
-        try await self.gestureService.moveMouse(to: to, duration: duration, steps: steps, profile: profile)
+            let fromPoint = InputDriver.currentLocation() ?? to
+            // Dispatch before moving so the overlay follows the real pointer instead of replaying it afterward.
+            _ = await self.feedbackClient.showMouseMovement(
+                from: fromPoint,
+                to: to,
+                duration: TimeInterval(duration) / 1000.0)
+            try await self.gestureService.moveMouse(to: to, duration: duration, steps: steps, profile: profile)
+        }
     }
 
     public func currentMouseLocation() -> CGPoint? {

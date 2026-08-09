@@ -152,18 +152,20 @@ extension UIAutomationService {
      * - Note: Visual feedback is automatically shown if visualizer is connected
      */
     public func click(target: ClickTarget, clickType: ClickType, snapshotId: String?) async throws {
-        self.logger.debug("Delegating click to ClickService")
-        defer { self.elementDetectionService.invalidateCache() }
-        let result = try await self.normalizingSnapshotErrors {
-            try await self.clickService.click(target: target, clickType: clickType, snapshotId: snapshotId)
-        }
+        try await self.operationLaneCoordinator.run(scope: .global, access: .write) {
+            self.logger.debug("Delegating click to ClickService")
+            defer { self.elementDetectionService.invalidateCache() }
+            let result = try await self.normalizingSnapshotErrors {
+                try await self.clickService.click(target: target, clickType: clickType, snapshotId: snapshotId)
+            }
 
-        try await self.visualizeClick(
-            target: target,
-            actionAnchor: result.anchorPoint,
-            clickType: clickType,
-            snapshotId: snapshotId,
-            targetProcessIdentifier: nil)
+            try await self.visualizeClick(
+                target: target,
+                actionAnchor: result.anchorPoint,
+                clickType: clickType,
+                snapshotId: snapshotId,
+                targetProcessIdentifier: nil)
+        }
     }
 
     public func click(
@@ -172,22 +174,24 @@ extension UIAutomationService {
         snapshotId: String?,
         targetProcessIdentifier: pid_t) async throws
     {
-        self.logger.debug("Delegating background click to ClickService")
-        defer { self.elementDetectionService.invalidateCache() }
-        let result = try await self.normalizingSnapshotErrors {
-            try await self.clickService.click(
+        try await self.operationLaneCoordinator.run(scope: .global, access: .write) {
+            self.logger.debug("Delegating background click to ClickService")
+            defer { self.elementDetectionService.invalidateCache() }
+            let result = try await self.normalizingSnapshotErrors {
+                try await self.clickService.click(
+                    target: target,
+                    clickType: clickType,
+                    snapshotId: snapshotId,
+                    targetProcessIdentifier: targetProcessIdentifier)
+            }
+
+            try await self.visualizeClick(
                 target: target,
+                actionAnchor: result.anchorPoint,
                 clickType: clickType,
                 snapshotId: snapshotId,
                 targetProcessIdentifier: targetProcessIdentifier)
         }
-
-        try await self.visualizeClick(
-            target: target,
-            actionAnchor: result.anchorPoint,
-            clickType: clickType,
-            snapshotId: snapshotId,
-            targetProcessIdentifier: targetProcessIdentifier)
     }
 
     public func click(
@@ -197,30 +201,32 @@ extension UIAutomationService {
         expectedWindowIdentity: WindowMutationIdentity,
         expectedWindowBounds: CGRect) async throws
     {
-        self.logger.debug("Delegating exact-window background click to ClickService")
-        guard self.exactWindowIdentityValidator(expectedWindowIdentity, expectedWindowBounds) else {
-            throw PeekabooError.invalidInput(
-                field: "target",
-                reason: "Exact-window click identity changed before dispatch; capture a fresh snapshot")
-        }
-        defer { self.elementDetectionService.invalidateCache() }
-        let result = try await self.normalizingSnapshotErrors {
-            try await self.clickService.click(
+        try await self.operationLaneCoordinator.run(scope: .window(expectedWindowIdentity), access: .write) {
+            self.logger.debug("Delegating exact-window background click to ClickService")
+            guard self.exactWindowIdentityValidator(expectedWindowIdentity, expectedWindowBounds) else {
+                throw PeekabooError.invalidInput(
+                    field: "target",
+                    reason: "Exact-window click identity changed before dispatch; capture a fresh snapshot")
+            }
+            defer { self.elementDetectionService.invalidateCache() }
+            let result = try await self.normalizingSnapshotErrors {
+                try await self.clickService.click(
+                    target: target,
+                    clickType: clickType,
+                    snapshotId: snapshotId,
+                    targetProcessIdentifier: expectedWindowIdentity.ownerProcessIdentifier,
+                    targetWindowID: expectedWindowIdentity.windowID,
+                    expectedWindowIdentity: expectedWindowIdentity,
+                    expectedWindowBounds: expectedWindowBounds)
+            }
+
+            try await self.visualizeClick(
                 target: target,
+                actionAnchor: result.anchorPoint,
                 clickType: clickType,
                 snapshotId: snapshotId,
-                targetProcessIdentifier: expectedWindowIdentity.ownerProcessIdentifier,
-                targetWindowID: expectedWindowIdentity.windowID,
-                expectedWindowIdentity: expectedWindowIdentity,
-                expectedWindowBounds: expectedWindowBounds)
+                targetProcessIdentifier: expectedWindowIdentity.ownerProcessIdentifier)
         }
-
-        try await self.visualizeClick(
-            target: target,
-            actionAnchor: result.anchorPoint,
-            clickType: clickType,
-            snapshotId: snapshotId,
-            targetProcessIdentifier: expectedWindowIdentity.ownerProcessIdentifier)
     }
 
     /// Background delivery must remain invisible to the foreground user. Visualizer windows are

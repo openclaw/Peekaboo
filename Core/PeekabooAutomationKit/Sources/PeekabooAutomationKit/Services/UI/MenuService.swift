@@ -16,6 +16,7 @@ public final class MenuService: MenuServiceProtocol {
     let applicationService: any ApplicationServiceProtocol
     let logger: Logger
     let feedbackClient: any AutomationFeedbackClient
+    let operationLaneCoordinator: DesktopOperationLaneCoordinator
 
     // Traversal limits to avoid unbounded menu walks
     let traversalLimits: MenuTraversalLimits
@@ -23,7 +24,7 @@ public final class MenuService: MenuServiceProtocol {
     let cacheTTL: TimeInterval
     var menuCache: [String: (expiresAt: Date, structure: MenuStructure)] = [:]
 
-    public init(
+    public convenience init(
         applicationService: (any ApplicationServiceProtocol)? = nil,
         traversalPolicy: SearchPolicy = .balanced,
         logger: Logger = Logger(subsystem: "boo.peekaboo.core", category: "MenuService"),
@@ -31,12 +32,32 @@ public final class MenuService: MenuServiceProtocol {
         partialMatchEnabled: Bool = true,
         cacheTTL: TimeInterval = 2.0)
     {
+        self.init(
+            applicationService: applicationService,
+            traversalPolicy: traversalPolicy,
+            logger: logger,
+            feedbackClient: feedbackClient,
+            partialMatchEnabled: partialMatchEnabled,
+            cacheTTL: cacheTTL,
+            operationLaneCoordinator: .shared)
+    }
+
+    init(
+        applicationService: (any ApplicationServiceProtocol)? = nil,
+        traversalPolicy: SearchPolicy = .balanced,
+        logger: Logger = Logger(subsystem: "boo.peekaboo.core", category: "MenuService"),
+        feedbackClient: any AutomationFeedbackClient = NoopAutomationFeedbackClient(),
+        partialMatchEnabled: Bool = true,
+        cacheTTL: TimeInterval = 2.0,
+        operationLaneCoordinator: DesktopOperationLaneCoordinator)
+    {
         self.applicationService = applicationService ?? ApplicationService()
         self.traversalLimits = MenuTraversalLimits.from(policy: traversalPolicy)
         self.logger = logger
         self.feedbackClient = feedbackClient
         self.partialMatchEnabled = partialMatchEnabled
         self.cacheTTL = cacheTTL
+        self.operationLaneCoordinator = operationLaneCoordinator
         self.connectFeedbackIfNeeded()
     }
 

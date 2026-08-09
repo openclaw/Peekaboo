@@ -43,14 +43,27 @@ public final class WindowManagementService: WindowManagementServiceProtocol {
     let cgInfoLookup: WindowCGInfoLookup
     let logger = Logger(subsystem: "boo.peekaboo.core", category: "WindowManagementService")
     let feedbackClient: any AutomationFeedbackClient
+    let operationLaneCoordinator: DesktopOperationLaneCoordinator
 
-    public init(
+    public convenience init(
         applicationService: (any ApplicationServiceProtocol)? = nil,
         feedbackClient: any AutomationFeedbackClient = NoopAutomationFeedbackClient())
+    {
+        self.init(
+            applicationService: applicationService,
+            feedbackClient: feedbackClient,
+            operationLaneCoordinator: .shared)
+    }
+
+    init(
+        applicationService: (any ApplicationServiceProtocol)? = nil,
+        feedbackClient: any AutomationFeedbackClient = NoopAutomationFeedbackClient(),
+        operationLaneCoordinator: DesktopOperationLaneCoordinator)
     {
         self.applicationService = applicationService ?? ApplicationService()
         self.cgInfoLookup = WindowCGInfoLookup(windowIdentityService: self.windowIdentityService)
         self.feedbackClient = feedbackClient
+        self.operationLaneCoordinator = operationLaneCoordinator
 
         // Only connect to visualizer if we're not running inside the Mac app
         // The Mac app provides the visualizer service, not consumes it

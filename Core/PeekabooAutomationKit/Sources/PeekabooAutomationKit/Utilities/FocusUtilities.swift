@@ -89,9 +89,14 @@ public final class FocusManagementService {
     private let windowIdentityService = WindowIdentityService()
     private let spaceService = SpaceManagementService()
     private let applications: any ApplicationServiceProtocol
+    private let operationLaneCoordinator: DesktopOperationLaneCoordinator
 
-    public init(applications: (any ApplicationServiceProtocol)? = nil) {
+    public init(
+        applications: (any ApplicationServiceProtocol)? = nil,
+        operationLaneCoordinator: DesktopOperationLaneCoordinator = .shared)
+    {
         self.applications = applications ?? ApplicationService()
+        self.operationLaneCoordinator = operationLaneCoordinator
     }
 
     public struct FocusOptions {
@@ -154,6 +159,12 @@ public final class FocusManagementService {
 
     /// Focus a window by its CGWindowID
     public func focusWindow(windowID: CGWindowID, options: FocusOptions = FocusOptions()) async throws {
+        try await self.operationLaneCoordinator.run(scope: .global, access: .write) {
+            try await self.focusWindowWithOwnedLane(windowID: windowID, options: options)
+        }
+    }
+
+    func focusWindowWithOwnedLane(windowID: CGWindowID, options: FocusOptions = FocusOptions()) async throws {
         // Verify window exists before any focus work starts.
         guard self.windowIdentityService.windowExists(windowID: windowID) else {
             throw FocusError.windowNotFound(windowID)
@@ -170,10 +181,6 @@ public final class FocusManagementService {
         }
 
         let runningApp = initialHandle.app.application
-
-        if let appIdentifier = runningApp.bundleIdentifier ?? runningApp.localizedName {
-            try? await self.applications.activateApplication(identifier: appIdentifier)
-        }
 
         if !runningApp.isActive {
             _ = runningApp.activate()

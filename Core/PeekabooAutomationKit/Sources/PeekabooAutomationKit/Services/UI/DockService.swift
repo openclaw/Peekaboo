@@ -38,9 +38,18 @@ public enum DockError: LocalizedError {
 public final class DockService: DockServiceProtocol {
     let feedbackClient: any AutomationFeedbackClient
     let logger = Logger(subsystem: "boo.peekaboo.core", category: "DockService")
+    let operationLaneCoordinator: DesktopOperationLaneCoordinator
 
-    public init(feedbackClient: any AutomationFeedbackClient = NoopAutomationFeedbackClient()) {
+    public convenience init(feedbackClient: any AutomationFeedbackClient = NoopAutomationFeedbackClient()) {
+        self.init(feedbackClient: feedbackClient, operationLaneCoordinator: .shared)
+    }
+
+    init(
+        feedbackClient: any AutomationFeedbackClient = NoopAutomationFeedbackClient(),
+        operationLaneCoordinator: DesktopOperationLaneCoordinator)
+    {
         self.feedbackClient = feedbackClient
+        self.operationLaneCoordinator = operationLaneCoordinator
         Task { @MainActor in
             self.feedbackClient.connect()
         }
@@ -51,27 +60,39 @@ public final class DockService: DockServiceProtocol {
     }
 
     public func launchFromDock(appName: String) async throws {
-        try await self.launchFromDockImpl(appName: appName)
+        try await self.operationLaneCoordinator.run(scope: .global, access: .write) {
+            try await self.launchFromDockImpl(appName: appName)
+        }
     }
 
     public func addToDock(path: String, persistent: Bool = true) async throws {
-        try await self.addToDockImpl(path: path, persistent: persistent)
+        try await self.operationLaneCoordinator.run(scope: .global, access: .write) {
+            try await self.addToDockImpl(path: path, persistent: persistent)
+        }
     }
 
     public func removeFromDock(appName: String) async throws {
-        try await self.removeFromDockImpl(appName: appName)
+        try await self.operationLaneCoordinator.run(scope: .global, access: .write) {
+            try await self.removeFromDockImpl(appName: appName)
+        }
     }
 
     public func rightClickDockItem(appName: String, menuItem: String?) async throws {
-        try await self.rightClickDockItemImpl(appName: appName, menuItem: menuItem)
+        try await self.operationLaneCoordinator.run(scope: .global, access: .write) {
+            try await self.rightClickDockItemImpl(appName: appName, menuItem: menuItem)
+        }
     }
 
     public func hideDock() async throws {
-        try await self.hideDockImpl()
+        try await self.operationLaneCoordinator.run(scope: .global, access: .write) {
+            try await self.hideDockImpl()
+        }
     }
 
     public func showDock() async throws {
-        try await self.showDockImpl()
+        try await self.operationLaneCoordinator.run(scope: .global, access: .write) {
+            try await self.showDockImpl()
+        }
     }
 
     public func isDockAutoHidden() async -> Bool {

@@ -54,45 +54,57 @@ extension MenuService {
 
     public func clickMenuItem(app: String, itemPath: String) async throws {
         let appInfo = try await applicationService.findApplication(identifier: app)
-
-        let pathComponents = itemPath
-            .split(separator: ">")
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .map { String($0) }
-
-        guard !pathComponents.isEmpty else {
-            throw PeekabooError.invalidInput("Menu path is empty")
+        guard let processIdentity = appInfo.processIdentity else {
+            throw PeekabooError.commandFailed(
+                "Could not capture a stable process-generation identity for \(appInfo.name)")
         }
+        try await self.operationLaneCoordinator.run(scope: .process(processIdentity), access: .write) {
+            guard SystemIdentityResolver.processStartIdentity(processIdentity.processIdentifier) ==
+                processIdentity.processStartIdentity
+            else {
+                throw PeekabooError.commandFailed(
+                    "Application PID \(processIdentity.processIdentifier) changed generation before menu dispatch")
+            }
 
-        guard pathComponents.count <= traversalLimits.maxDepth else {
-            throw PeekabooError.invalidInput(
-                "Menu path depth \(pathComponents.count) exceeds limit \(traversalLimits.maxDepth)")
+            let pathComponents = itemPath
+                .split(separator: ">")
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .map { String($0) }
+
+            guard !pathComponents.isEmpty else {
+                throw PeekabooError.invalidInput("Menu path is empty")
+            }
+
+            guard pathComponents.count <= traversalLimits.maxDepth else {
+                throw PeekabooError.invalidInput(
+                    "Menu path depth \(pathComponents.count) exceeds limit \(traversalLimits.maxDepth)")
+            }
+
+            guard let runningApp = NSRunningApplication(processIdentifier: appInfo.processIdentifier) else {
+                throw NotFoundError.application(appInfo.name)
+            }
+            let appElement = AXApp(runningApp).element
+
+            guard let menuBar = appElement.menuBar() else {
+                var context = ErrorContext()
+                context.add("application", appInfo.name)
+                throw NotFoundError(
+                    code: .menuNotFound,
+                    userMessage: "Menu bar not found for application '\(appInfo.name)'",
+                    context: context.build())
+            }
+
+            var traversalContext = MenuTraversalContext(
+                menuPath: [],
+                fullPath: itemPath,
+                appInfo: appInfo,
+                budget: MenuTraversalBudget(limits: traversalLimits))
+
+            _ = try await self.walkMenuPath(
+                startingElement: menuBar,
+                components: pathComponents,
+                context: &traversalContext)
         }
-
-        guard let runningApp = NSRunningApplication(processIdentifier: appInfo.processIdentifier) else {
-            throw NotFoundError.application(appInfo.name)
-        }
-        let appElement = AXApp(runningApp).element
-
-        guard let menuBar = appElement.menuBar() else {
-            var context = ErrorContext()
-            context.add("application", appInfo.name)
-            throw NotFoundError(
-                code: .menuNotFound,
-                userMessage: "Menu bar not found for application '\(appInfo.name)'",
-                context: context.build())
-        }
-
-        var traversalContext = MenuTraversalContext(
-            menuPath: [],
-            fullPath: itemPath,
-            appInfo: appInfo,
-            budget: MenuTraversalBudget(limits: traversalLimits))
-
-        _ = try await self.walkMenuPath(
-            startingElement: menuBar,
-            components: pathComponents,
-            context: &traversalContext)
     }
 
     public func clickMenuItemByName(app: String, itemName: String) async throws {

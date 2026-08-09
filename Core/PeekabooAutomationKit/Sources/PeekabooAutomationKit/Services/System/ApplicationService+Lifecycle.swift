@@ -82,6 +82,14 @@ extension ApplicationService {
     }
 
     private func performApplicationLaunch(_ launch: PreparedApplicationLaunch) async throws -> ServiceApplicationInfo {
+        try await self.operationLaneCoordinator.run(scope: .global, access: .write) {
+            try await self.performApplicationLaunchWithOwnedLane(launch)
+        }
+    }
+
+    private func performApplicationLaunchWithOwnedLane(
+        _ launch: PreparedApplicationLaunch) async throws -> ServiceApplicationInfo
+    {
         let config = NSWorkspace.OpenConfiguration()
         config.activates = launch.activates
         config.createsNewApplicationInstance = launch.createsNewInstance
@@ -123,7 +131,8 @@ extension ApplicationService {
         activationLease?.setTargetProcessIdentifier(runningApp.processIdentifier)
 
         if launch.activates, !runningApp.isActive, !runningApp.activate(options: []) {
-            self.logger.warning("Launch succeeded but failed to activate \(runningApp.localizedName ?? "application")")
+            self.logger
+                .warning("Launch succeeded but failed to activate \(runningApp.localizedName ?? "application")")
         }
 
         try await self.waitUntilReadyIfNeeded(runningApp, requested: launch.waitUntilReady)
@@ -189,23 +198,31 @@ extension ApplicationService {
             force: request.force,
             expectedIdentity: expectedTargetIdentity)
 
-        guard try await self.quitRelaunchTarget(quitRequest)
-        else {
-            throw PeekabooError.commandFailed("Application refused to quit")
-        }
-
-        let terminationDeadline = Date().addingTimeInterval(5)
-        while try await self.isRelaunchTargetRunning(identifier: canonicalTargetIdentifier) {
-            guard Date() < terminationDeadline else {
-                throw PeekabooError.timeout("Application did not terminate within 5 seconds")
+        return try await self.operationLaneCoordinator.run(scope: .global, access: .write) {
+            try self.validateApplicationQuitIdentity(
+                expectedTargetIdentity,
+                resolvedApplication: target)
+            guard try await self.quitRelaunchTarget(
+                quitRequest,
+                resolvedApplication: target,
+                expectedIdentity: expectedTargetIdentity)
+            else {
+                throw PeekabooError.commandFailed("Application refused to quit")
             }
-            try await Task.sleep(for: .milliseconds(100))
-        }
 
-        if request.waitSeconds > 0 {
-            try await Task.sleep(for: .seconds(request.waitSeconds))
+            let terminationDeadline = Date().addingTimeInterval(5)
+            while try await self.isRelaunchTargetRunning(identifier: canonicalTargetIdentifier) {
+                guard Date() < terminationDeadline else {
+                    throw PeekabooError.timeout("Application did not terminate within 5 seconds")
+                }
+                try await Task.sleep(for: .milliseconds(100))
+            }
+
+            if request.waitSeconds > 0 {
+                try await Task.sleep(for: .seconds(request.waitSeconds))
+            }
+            return try await self.performApplicationLaunchWithOwnedLane(preparedLaunch)
         }
-        return try await self.performApplicationLaunch(preparedLaunch)
     }
 
     private func resolveRelaunchTarget(_ identifier: String) async throws -> ServiceApplicationInfo {
@@ -215,11 +232,18 @@ extension ApplicationService {
         return try await self.findApplication(identifier: identifier)
     }
 
-    private func quitRelaunchTarget(_ request: ApplicationQuitRequest) async throws -> Bool {
+    private func quitRelaunchTarget(
+        _ request: ApplicationQuitRequest,
+        resolvedApplication: ServiceApplicationInfo,
+        expectedIdentity: ApplicationProcessIdentity) async throws -> Bool
+    {
         if let relaunchQuitHandler = self.relaunchQuitHandler {
             return try await relaunchQuitHandler(request)
         }
-        return try await self.quitApplication(request: request)
+        return try await self.quitApplicationWithOwnedLane(
+            request: request,
+            resolvedApplication: resolvedApplication,
+            expectedIdentity: expectedIdentity)
     }
 
     private func isRelaunchTargetRunning(identifier: String) async throws -> Bool {
@@ -333,26 +357,28 @@ extension ApplicationService {
     }
 
     public func activateApplication(identifier: String) async throws {
-        self.logger.info("Activating application: \(identifier)")
-        let app = try await findApplication(identifier: identifier)
+        try await self.operationLaneCoordinator.run(scope: .global, access: .write) {
+            self.logger.info("Activating application: \(identifier)")
+            let app = try await findApplication(identifier: identifier)
 
-        // Create NSRunningApplication
-        let runningApp = NSRunningApplication(processIdentifier: app.processIdentifier)
-        guard let runningApp else {
-            throw PeekabooError.operationError(
-                message: "Failed to activate application: Could not find running application process")
+            // Create NSRunningApplication
+            let runningApp = NSRunningApplication(processIdentifier: app.processIdentifier)
+            guard let runningApp else {
+                throw PeekabooError.operationError(
+                    message: "Failed to activate application: Could not find running application process")
+            }
+
+            let activated = runningApp.activate(options: [])
+
+            if !activated {
+                self.logger.error("Failed to activate application: \(app.name). Continuing without activation.")
+                return
+            }
+
+            self.logger.info("Successfully activated: \(app.name)")
+            // Wait for activation to complete
+            try await Task.sleep(nanoseconds: 100_000_000) // 0.1 seconds
         }
-
-        let activated = runningApp.activate(options: [])
-
-        if !activated {
-            self.logger.error("Failed to activate application: \(app.name). Continuing without activation.")
-            return
-        }
-
-        self.logger.info("Successfully activated: \(app.name)")
-        // Wait for activation to complete
-        try await Task.sleep(nanoseconds: 100_000_000) // 0.1 seconds
     }
 
     public func quitApplication(identifier: String, force: Bool = false) async throws -> Bool {
@@ -379,6 +405,21 @@ extension ApplicationService {
             throw PeekabooError.commandFailed(
                 "Could not capture a stable process-generation identity for \(app.name)")
         }
+        try self.validateApplicationQuitIdentity(expectedIdentity, resolvedApplication: app)
+
+        return try await self.operationLaneCoordinator.run(scope: .process(expectedIdentity), access: .write) {
+            try await self.quitApplicationWithOwnedLane(
+                request: request,
+                resolvedApplication: app,
+                expectedIdentity: expectedIdentity)
+        }
+    }
+
+    private func quitApplicationWithOwnedLane(
+        request: ApplicationQuitRequest,
+        resolvedApplication app: ServiceApplicationInfo,
+        expectedIdentity: ApplicationProcessIdentity) async throws -> Bool
+    {
         try self.validateApplicationQuitIdentity(expectedIdentity, resolvedApplication: app)
 
         // Create NSRunningApplication
@@ -443,24 +484,30 @@ extension ApplicationService {
     public func hideApplication(identifier: String) async throws {
         self.logger.info("Hiding application: \(identifier)")
         let app = try await findApplication(identifier: identifier)
-
-        guard let runningApp = NSRunningApplication(processIdentifier: app.processIdentifier) else {
-            throw NotFoundError.application(identifier)
+        guard let processIdentity = app.processIdentity else {
+            throw PeekabooError.commandFailed("Could not capture a stable process-generation identity for \(app.name)")
         }
-        let appElement = AXApp(runningApp).element
+        try await self.operationLaneCoordinator.run(scope: .process(processIdentity), access: .write) {
+            try self.validateApplicationQuitIdentity(processIdentity, resolvedApplication: app)
 
-        do {
-            try appElement.performAction(Attribute<String>("AXHide"))
-            self.logger.debug("Hidden via AX action: \(app.name)")
-        } catch {
-            // Log the error but use fallback
-            _ = error.asPeekabooError(context: "AX hide action failed for \(app.name)")
-            // Fallback to NSRunningApplication method
-            self.logger.debug("Using NSRunningApplication fallback")
-            let runningApp = NSRunningApplication(processIdentifier: app.processIdentifier)
-            if let runningApp {
-                runningApp.hide()
-                self.logger.debug("Hidden via NSRunningApplication: \(app.name)")
+            guard let runningApp = NSRunningApplication(processIdentifier: app.processIdentifier) else {
+                throw NotFoundError.application(identifier)
+            }
+            let appElement = AXApp(runningApp).element
+
+            do {
+                try appElement.performAction(Attribute<String>("AXHide"))
+                self.logger.debug("Hidden via AX action: \(app.name)")
+            } catch {
+                // Log the error but use fallback
+                _ = error.asPeekabooError(context: "AX hide action failed for \(app.name)")
+                // Fallback to NSRunningApplication method
+                self.logger.debug("Using NSRunningApplication fallback")
+                let runningApp = NSRunningApplication(processIdentifier: app.processIdentifier)
+                if let runningApp {
+                    runningApp.hide()
+                    self.logger.debug("Hidden via NSRunningApplication: \(app.name)")
+                }
             }
         }
     }
@@ -468,86 +515,96 @@ extension ApplicationService {
     public func unhideApplication(identifier: String) async throws {
         self.logger.info("Unhiding application: \(identifier)")
         let app = try await findApplication(identifier: identifier)
-
-        guard let runningApp = NSRunningApplication(processIdentifier: app.processIdentifier) else {
-            throw NotFoundError.application(identifier)
+        guard let processIdentity = app.processIdentity else {
+            throw PeekabooError.commandFailed("Could not capture a stable process-generation identity for \(app.name)")
         }
-        let requestSent = runningApp.unhide()
-        let deadline = Date().addingTimeInterval(1)
-        repeat {
-            // NSRunningApplication state is cached until the next main run-loop turn.
-            try await Task.sleep(for: .milliseconds(50))
-            guard runningApp.isHidden else {
-                self.logger.debug("Unhidden application without activation: \(app.name)")
-                return
+        try await self.operationLaneCoordinator.run(scope: .process(processIdentity), access: .write) {
+            try self.validateApplicationQuitIdentity(processIdentity, resolvedApplication: app)
+
+            guard let runningApp = NSRunningApplication(processIdentifier: app.processIdentifier) else {
+                throw NotFoundError.application(identifier)
             }
-        } while Date() < deadline
+            let requestSent = runningApp.unhide()
+            let deadline = Date().addingTimeInterval(1)
+            repeat {
+                // NSRunningApplication state is cached until the next main run-loop turn.
+                try await Task.sleep(for: .milliseconds(50))
+                guard runningApp.isHidden else {
+                    self.logger.debug("Unhidden application without activation: \(app.name)")
+                    return
+                }
+            } while Date() < deadline
 
-        if requestSent {
-            throw PeekabooError.operationError(message: "Application remained hidden: \(app.name)")
+            if requestSent {
+                throw PeekabooError.operationError(message: "Application remained hidden: \(app.name)")
+            }
+            throw PeekabooError.operationError(message: "Failed to request unhide for application: \(app.name)")
         }
-        throw PeekabooError.operationError(message: "Failed to request unhide for application: \(app.name)")
     }
 
     public func hideOtherApplications(identifier: String) async throws {
-        self.logger.info("Hiding other applications except: \(identifier)")
-        let app = try await findApplication(identifier: identifier)
+        try await self.operationLaneCoordinator.run(scope: .global, access: .write) {
+            self.logger.info("Hiding other applications except: \(identifier)")
+            let app = try await findApplication(identifier: identifier)
 
-        guard let runningApp = NSRunningApplication(processIdentifier: app.processIdentifier) else {
-            throw NotFoundError.application(identifier)
-        }
-        let appElement = AXApp(runningApp).element
-
-        do {
-            // Use custom attribute for hide others action
-            try appElement.performAction(Attribute<String>("AXHideOthers"))
-            self.logger.debug("Hidden others via AX action")
-        } catch {
-            // Log the error but use fallback
-            _ = error.asPeekabooError(context: "AX hide others action failed")
-            // Fallback: hide each app individually
-            self.logger.debug("Hiding apps individually")
-            // Already on main thread due to @MainActor on class
-            let apps = NSWorkspace.shared.runningApplications
-            var hiddenCount = 0
-            for runningApp in apps {
-                if runningApp.processIdentifier != app.processIdentifier,
-                   runningApp.activationPolicy == .regular,
-                   runningApp.bundleIdentifier != "com.apple.finder"
-                {
-                    runningApp.hide()
-                    hiddenCount += 1
-                }
+            guard let runningApp = NSRunningApplication(processIdentifier: app.processIdentifier) else {
+                throw NotFoundError.application(identifier)
             }
-            // Return value already computed
-            self.logger.debug("Hidden \(hiddenCount) other applications")
+            let appElement = AXApp(runningApp).element
+
+            do {
+                // Use custom attribute for hide others action
+                try appElement.performAction(Attribute<String>("AXHideOthers"))
+                self.logger.debug("Hidden others via AX action")
+            } catch {
+                // Log the error but use fallback
+                _ = error.asPeekabooError(context: "AX hide others action failed")
+                // Fallback: hide each app individually
+                self.logger.debug("Hiding apps individually")
+                // Already on main thread due to @MainActor on class
+                let apps = NSWorkspace.shared.runningApplications
+                var hiddenCount = 0
+                for runningApp in apps {
+                    if runningApp.processIdentifier != app.processIdentifier,
+                       runningApp.activationPolicy == .regular,
+                       runningApp.bundleIdentifier != "com.apple.finder"
+                    {
+                        runningApp.hide()
+                        hiddenCount += 1
+                    }
+                }
+                // Return value already computed
+                self.logger.debug("Hidden \(hiddenCount) other applications")
+            }
         }
     }
 
     public func showAllApplications() async throws {
-        self.logger.info("Showing all applications")
-        let systemWide = Element.systemWide()
+        try await self.operationLaneCoordinator.run(scope: .global, access: .write) {
+            self.logger.info("Showing all applications")
+            let systemWide = Element.systemWide()
 
-        do {
-            // Use custom attribute for show all action
-            try systemWide.performAction(Attribute<String>("AXShowAll"))
-            self.logger.debug("Shown all via AX action")
-        } catch {
-            // Log the error but use fallback
-            _ = error.asPeekabooError(context: "AX show all action failed")
-            // Fallback: unhide each hidden app
-            self.logger.debug("Unhiding apps individually")
-            // Already on main thread due to @MainActor on class
-            let apps = NSWorkspace.shared.runningApplications
-            var unhiddenCount = 0
-            for runningApp in apps {
-                if runningApp.isHidden, runningApp.activationPolicy == .regular {
-                    runningApp.unhide()
-                    unhiddenCount += 1
+            do {
+                // Use custom attribute for show all action
+                try systemWide.performAction(Attribute<String>("AXShowAll"))
+                self.logger.debug("Shown all via AX action")
+            } catch {
+                // Log the error but use fallback
+                _ = error.asPeekabooError(context: "AX show all action failed")
+                // Fallback: unhide each hidden app
+                self.logger.debug("Unhiding apps individually")
+                // Already on main thread due to @MainActor on class
+                let apps = NSWorkspace.shared.runningApplications
+                var unhiddenCount = 0
+                for runningApp in apps {
+                    if runningApp.isHidden, runningApp.activationPolicy == .regular {
+                        runningApp.unhide()
+                        unhiddenCount += 1
+                    }
                 }
+                // Return value already computed
+                self.logger.debug("Unhidden \(unhiddenCount) applications")
             }
-            // Return value already computed
-            self.logger.debug("Unhidden \(unhiddenCount) applications")
         }
     }
 

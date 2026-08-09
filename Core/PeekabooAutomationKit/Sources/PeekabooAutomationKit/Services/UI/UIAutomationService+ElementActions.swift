@@ -7,43 +7,45 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
         value: UIElementValue,
         snapshotId: String?) async throws -> ElementActionResult
     {
-        self.logger.debug("Set value requested - target: \(target, privacy: .public)")
-        defer { self.elementDetectionService.invalidateCache() }
-        let resolved = try await self.resolveActionTarget(target, snapshotId: snapshotId)
-        let oldValue = self.safeValueDescription(resolved.element.value)
-            ?? resolved.element.selectedValue.map(String.init)
-        let result = try await self.normalizingSnapshotErrors {
-            try await UIInputDispatcher.run(
-                verb: .setValue,
-                strategy: self.inputPolicy.strategy(for: .setValue, bundleIdentifier: resolved.bundleIdentifier),
-                bundleIdentifier: resolved.bundleIdentifier,
-                action: {
-                    do {
-                        return try self.actionInputDriver.trySetValue(element: resolved.element, value: value)
-                    } catch let error as ActionInputError where error.isUnsupportedValueMutation {
+        try await self.operationLaneCoordinator.run(scope: .global, access: .write) {
+            self.logger.debug("Set value requested - target: \(target, privacy: .public)")
+            defer { self.elementDetectionService.invalidateCache() }
+            let resolved = try await self.resolveActionTarget(target, snapshotId: snapshotId)
+            let oldValue = self.safeValueDescription(resolved.element.value)
+                ?? resolved.element.selectedValue.map(String.init)
+            let result = try await self.normalizingSnapshotErrors {
+                try await UIInputDispatcher.run(
+                    verb: .setValue,
+                    strategy: self.inputPolicy.strategy(for: .setValue, bundleIdentifier: resolved.bundleIdentifier),
+                    bundleIdentifier: resolved.bundleIdentifier,
+                    action: {
+                        do {
+                            return try self.actionInputDriver.trySetValue(element: resolved.element, value: value)
+                        } catch let error as ActionInputError where error.isUnsupportedValueMutation {
+                            throw PeekabooError.invalidInput(Self.unsupportedSetValueMessage(
+                                target: resolved.description,
+                                reason: error.localizedDescription))
+                        }
+                    },
+                    synth: {
                         throw PeekabooError.invalidInput(Self.unsupportedSetValueMessage(
                             target: resolved.description,
-                            reason: error.localizedDescription))
-                    }
-                },
-                synth: {
-                    throw PeekabooError.invalidInput(Self.unsupportedSetValueMessage(
-                        target: resolved.description,
-                        reason: "Direct value setting is not supported for this element."))
-                })
-        }
-        guard let newValue = self.safeValueDescription(resolved.element.value)
-            ?? resolved.element.selectedValue.map(String.init)
-        else {
-            throw PeekabooError.operationError(message: "Accessibility value could not be verified after setting")
-        }
+                            reason: "Direct value setting is not supported for this element."))
+                    })
+            }
+            guard let newValue = self.safeValueDescription(resolved.element.value)
+                ?? resolved.element.selectedValue.map(String.init)
+            else {
+                throw PeekabooError.operationError(message: "Accessibility value could not be verified after setting")
+            }
 
-        return ElementActionResult(
-            target: resolved.description,
-            actionName: result.actionName,
-            anchorPoint: result.anchorPoint,
-            oldValue: oldValue,
-            newValue: newValue)
+            return ElementActionResult(
+                target: resolved.description,
+                actionName: result.actionName,
+                anchorPoint: result.anchorPoint,
+                oldValue: oldValue,
+                newValue: newValue)
+        }
     }
 
     public func performAction(
@@ -51,41 +53,45 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
         actionName: String,
         snapshotId: String?) async throws -> ElementActionResult
     {
-        self.logger.debug(
-            "Perform action requested - target: \(target, privacy: .public), action: \(actionName, privacy: .public)")
-        defer { self.elementDetectionService.invalidateCache() }
-        guard Self.isValidActionName(actionName) else {
-            throw PeekabooError.invalidInput(
-                "Invalid action name '\(actionName)'. Use an accessibility action name such as AXPress.")
-        }
+        try await self.operationLaneCoordinator.run(scope: .global, access: .write) {
+            let requestDescription = "Perform action requested - target: \(target), action: \(actionName)"
+            self.logger.debug("\(requestDescription, privacy: .public)")
+            defer { self.elementDetectionService.invalidateCache() }
+            guard Self.isValidActionName(actionName) else {
+                throw PeekabooError.invalidInput(
+                    "Invalid action name '\(actionName)'. Use an accessibility action name such as AXPress.")
+            }
 
-        let resolved = try await self.resolveActionTarget(target, snapshotId: snapshotId)
-        let result = try await self.normalizingSnapshotErrors {
-            try await UIInputDispatcher.run(
-                verb: .performAction,
-                strategy: self.inputPolicy.strategy(for: .performAction, bundleIdentifier: resolved.bundleIdentifier),
-                bundleIdentifier: resolved.bundleIdentifier,
-                action: {
-                    do {
-                        return try self.actionInputDriver.tryPerformAction(
-                            element: resolved.element,
-                            actionName: actionName)
-                    } catch let error as ActionInputError where error.isUnsupportedActionInvocation {
-                        throw PeekabooError.invalidInput(Self.unsupportedActionMessage(
-                            actionName: actionName,
-                            target: resolved.description,
-                            advertisedActions: resolved.element.actionNames))
-                    }
-                },
-                synth: {
-                    throw ActionInputError.unsupported(.actionUnsupported)
-                })
-        }
+            let resolved = try await self.resolveActionTarget(target, snapshotId: snapshotId)
+            let result = try await self.normalizingSnapshotErrors {
+                try await UIInputDispatcher.run(
+                    verb: .performAction,
+                    strategy: self.inputPolicy.strategy(
+                        for: .performAction,
+                        bundleIdentifier: resolved.bundleIdentifier),
+                    bundleIdentifier: resolved.bundleIdentifier,
+                    action: {
+                        do {
+                            return try self.actionInputDriver.tryPerformAction(
+                                element: resolved.element,
+                                actionName: actionName)
+                        } catch let error as ActionInputError where error.isUnsupportedActionInvocation {
+                            throw PeekabooError.invalidInput(Self.unsupportedActionMessage(
+                                actionName: actionName,
+                                target: resolved.description,
+                                advertisedActions: resolved.element.actionNames))
+                        }
+                    },
+                    synth: {
+                        throw ActionInputError.unsupported(.actionUnsupported)
+                    })
+            }
 
-        return ElementActionResult(
-            target: resolved.description,
-            actionName: result.actionName,
-            anchorPoint: result.anchorPoint)
+            return ElementActionResult(
+                target: resolved.description,
+                actionName: result.actionName,
+                anchorPoint: result.anchorPoint)
+        }
     }
 
     private func resolveActionTarget(_ target: String, snapshotId: String?) async throws

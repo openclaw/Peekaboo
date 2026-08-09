@@ -431,6 +431,10 @@ public final class PeekabooServices {
 }
 
 extension PeekabooServices: PeekabooServiceProviding {}
-extension PeekabooServices: PeekabooBridgeServiceProviding {}
+extension PeekabooServices: PeekabooBridgeServiceProviding {
+    public var ownsDesktopOperationLanesAtNativeLeaves: Bool {
+        true
+    }
+}
 
 typealias SystemLogger = os.Logger

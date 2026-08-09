@@ -24,116 +24,121 @@ extension WindowManagementService {
         expectedIdentity: WindowMutationIdentity,
         allowForegroundFallback: Bool) async throws
     {
-        try self.validatePinnedWindowMutation(target: target, expectedIdentity: expectedIdentity)
-        let trackedWindowID = expectedIdentity.windowID
-        try Task.checkCancellation()
-        let exactTarget = WindowTarget.windowId(trackedWindowID)
-        let windowServerInfo = self.windowIdentityService
-            .getWindowServerInfo(windowID: CGWindowID(trackedWindowID))
-        guard hasSufficientMetadataForPinnedClose(
-            hasWindowServerMetadata: windowServerInfo != nil,
-            expectedMinimized: expectedIdentity.isMinimized == true)
-        else {
-            throw PeekabooError.windowNotFound(criteria: "windowId \(trackedWindowID)")
-        }
-        let windowBounds = windowServerInfo?.bounds
-
-        if minimizedCloseRequiresForegroundFallback(isMinimized: expectedIdentity.isMinimized == true),
-           !allowForegroundFallback
-        {
-            throw OperationError.interactionFailed(
-                action: "close window",
-                reason: "A minimized window cannot be closed with a verified background-only route; " +
-                    "run `peekaboo window restore` for the same exact target first, or retry with --foreground")
-        }
-
-        let backgroundAttempt: PinnedWindowCloseAttemptResult
-        if expectedIdentity.isMinimized == true {
-            backgroundAttempt = PinnedWindowCloseAttemptResult(dispatched: false, disappeared: false)
-        } else {
-            do {
-                backgroundAttempt = try await self.attemptPinnedBackgroundClose(expectedIdentity)
-            } catch {
-                throw error
+        let operationScope: DesktopOperationScope = allowForegroundFallback ? .global : .window(expectedIdentity)
+        try await self.operationLaneCoordinator.run(scope: operationScope, access: .write) {
+            try self.validatePinnedWindowMutation(target: target, expectedIdentity: expectedIdentity)
+            let trackedWindowID = expectedIdentity.windowID
+            try Task.checkCancellation()
+            let exactTarget = WindowTarget.windowId(trackedWindowID)
+            let windowServerInfo = self.windowIdentityService
+                .getWindowServerInfo(windowID: CGWindowID(trackedWindowID))
+            guard hasSufficientMetadataForPinnedClose(
+                hasWindowServerMetadata: windowServerInfo != nil,
+                expectedMinimized: expectedIdentity.isMinimized == true)
+            else {
+                throw PeekabooError.windowNotFound(criteria: "windowId \(trackedWindowID)")
             }
-        }
-        if Self.shouldShowWindowOperationFeedback(
-            operation: .close,
-            hasForegroundConsent: allowForegroundFallback)
-        {
-            self.showWindowOperation(.close, bounds: windowBounds)
-        }
-        try Task.checkCancellation()
+            let windowBounds = windowServerInfo?.bounds
 
-        if !allowForegroundFallback {
-            do {
-                try validateBackgroundCloseOutcome(
-                    dispatchSucceeded: backgroundAttempt.dispatched,
-                    disappeared: backgroundAttempt.disappeared)
-            } catch {
-                if shouldRestoreMinimizedWindowAfterCloseFailure(
-                    wasMinimized: expectedIdentity.isMinimized == true,
-                    closeCompleted: false)
-                {
-                    _ = await BoundedBackgroundWindowAX.restoreMinimizedState(expectedIdentity: expectedIdentity)
-                }
-                throw error
-            }
-            return
-        }
-
-        if backgroundAttempt.disappeared {
-            return
-        }
-
-        try Task.checkCancellation()
-        self.logger
-            .warning("Close succeeded but window still exists; trying hotkey fallbacks. windowID=\(trackedWindowID)")
-
-        try await withMinimizedWindowFailureRecovery(
-            wasMinimized: expectedIdentity.isMinimized == true,
-            restore: {
-                let restored = await BoundedBackgroundWindowAX.restoreMinimizedState(
-                    expectedIdentity: expectedIdentity)
-                if !restored {
-                    self.logger.error(
-                        "Could not restore minimized state after foreground close failure. windowID=\(trackedWindowID)")
-                }
-                return restored
-            },
-            operation: {
-                // Make the exact target key before global shortcuts; a same-process sibling must
-                // never inherit Cmd-W just because the requested focus call returned.
-                try Task.checkCancellation()
-                let window = try await self.element(for: exactTarget)
-                try self.validatePinnedWindowElement(window, expectedIdentity: expectedIdentity)
-                let focusSucceeded = window.focusWindow()
-                try await self.requirePinnedForegroundCloseReadiness(
-                    expectedIdentity,
-                    focusSucceeded: focusSucceeded)
-
-                try Task.checkCancellation()
-                try InputDriver.hotkey(keys: ["cmd", "w"], holdDuration: 0.05)
-                if try await self.pinnedWindowDisappeared(expectedIdentity) {
-                    return
-                }
-
-                // Cmd-W may surface a sheet or move key status to a sibling. Re-prove the exact
-                // target immediately before the broader Cmd-Shift-W fallback.
-                try await self.requirePinnedForegroundCloseReadiness(
-                    expectedIdentity,
-                    focusSucceeded: true)
-                try Task.checkCancellation()
-                try InputDriver.hotkey(keys: ["cmd", "shift", "w"], holdDuration: 0.05)
-                if try await self.pinnedWindowDisappeared(expectedIdentity) {
-                    return
-                }
-
+            if minimizedCloseRequiresForegroundFallback(isMinimized: expectedIdentity.isMinimized == true),
+               !allowForegroundFallback
+            {
                 throw OperationError.interactionFailed(
                     action: "close window",
-                    reason: "Foreground close completed but window remained visible " +
-                        "(windowID=\(trackedWindowID))")
-            })
+                    reason: "A minimized window cannot be closed with a verified background-only route; " +
+                        "run `peekaboo window restore` for the same exact target first, or retry with --foreground")
+            }
+
+            let backgroundAttempt: PinnedWindowCloseAttemptResult
+            if expectedIdentity.isMinimized == true {
+                backgroundAttempt = PinnedWindowCloseAttemptResult(dispatched: false, disappeared: false)
+            } else {
+                do {
+                    backgroundAttempt = try await self.attemptPinnedBackgroundClose(expectedIdentity)
+                } catch {
+                    throw error
+                }
+            }
+            if Self.shouldShowWindowOperationFeedback(
+                operation: .close,
+                hasForegroundConsent: allowForegroundFallback)
+            {
+                self.showWindowOperation(.close, bounds: windowBounds)
+            }
+            try Task.checkCancellation()
+
+            if !allowForegroundFallback {
+                do {
+                    try validateBackgroundCloseOutcome(
+                        dispatchSucceeded: backgroundAttempt.dispatched,
+                        disappeared: backgroundAttempt.disappeared)
+                } catch {
+                    if shouldRestoreMinimizedWindowAfterCloseFailure(
+                        wasMinimized: expectedIdentity.isMinimized == true,
+                        closeCompleted: false)
+                    {
+                        _ = await BoundedBackgroundWindowAX.restoreMinimizedState(expectedIdentity: expectedIdentity)
+                    }
+                    throw error
+                }
+                return
+            }
+
+            if backgroundAttempt.disappeared {
+                return
+            }
+
+            try Task.checkCancellation()
+            self.logger
+                .warning(
+                    "Close succeeded but window still exists; trying hotkey fallbacks. windowID=\(trackedWindowID)")
+
+            try await withMinimizedWindowFailureRecovery(
+                wasMinimized: expectedIdentity.isMinimized == true,
+                restore: {
+                    let restored = await BoundedBackgroundWindowAX.restoreMinimizedState(
+                        expectedIdentity: expectedIdentity)
+                    if !restored {
+                        let message = "Could not restore minimized state after foreground close failure. " +
+                            "windowID=\(trackedWindowID)"
+                        self.logger.error("\(message, privacy: .public)")
+                    }
+                    return restored
+                },
+                operation: {
+                    // Make the exact target key before global shortcuts; a same-process sibling must
+                    // never inherit Cmd-W just because the requested focus call returned.
+                    try Task.checkCancellation()
+                    let window = try await self.element(for: exactTarget)
+                    try self.validatePinnedWindowElement(window, expectedIdentity: expectedIdentity)
+                    let focusSucceeded = window.focusWindow()
+                    try await self.requirePinnedForegroundCloseReadiness(
+                        expectedIdentity,
+                        focusSucceeded: focusSucceeded)
+
+                    try Task.checkCancellation()
+                    try InputDriver.hotkey(keys: ["cmd", "w"], holdDuration: 0.05)
+                    if try await self.pinnedWindowDisappeared(expectedIdentity) {
+                        return
+                    }
+
+                    // Cmd-W may surface a sheet or move key status to a sibling. Re-prove the exact
+                    // target immediately before the broader Cmd-Shift-W fallback.
+                    try await self.requirePinnedForegroundCloseReadiness(
+                        expectedIdentity,
+                        focusSucceeded: true)
+                    try Task.checkCancellation()
+                    try InputDriver.hotkey(keys: ["cmd", "shift", "w"], holdDuration: 0.05)
+                    if try await self.pinnedWindowDisappeared(expectedIdentity) {
+                        return
+                    }
+
+                    throw OperationError.interactionFailed(
+                        action: "close window",
+                        reason: "Foreground close completed but window remained visible " +
+                            "(windowID=\(trackedWindowID))")
+                })
+        }
     }
 
     public func minimizeWindow(target: WindowTarget) async throws {
@@ -142,20 +147,22 @@ extension WindowManagementService {
     }
 
     public func minimizeWindow(target: WindowTarget, expectedIdentity: WindowMutationIdentity) async throws {
-        try self.validatePinnedWindowMutation(target: target, expectedIdentity: expectedIdentity)
-        let window = try await self.element(for: target)
-        try self.validatePinnedWindowMutation(target: target, expectedIdentity: expectedIdentity)
-        try self.validatePinnedWindowElement(window, expectedIdentity: expectedIdentity)
-        let success = window.minimizeWindow()
+        try await self.operationLaneCoordinator.run(scope: .window(expectedIdentity), access: .write) {
+            try self.validatePinnedWindowMutation(target: target, expectedIdentity: expectedIdentity)
+            let window = try await self.element(for: target)
+            try self.validatePinnedWindowMutation(target: target, expectedIdentity: expectedIdentity)
+            try self.validatePinnedWindowElement(window, expectedIdentity: expectedIdentity)
+            let success = window.minimizeWindow()
 
-        if !success {
-            throw OperationError.interactionFailed(
-                action: "minimize window",
-                reason: "Window minimize operation failed")
-        }
-        guard try await self.waitForPinnedWindowMinimized(window, expectedIdentity: expectedIdentity) else {
-            throw PeekabooError.commandFailed(
-                "Window \(expectedIdentity.windowID) did not reach verified minimized state")
+            if !success {
+                throw OperationError.interactionFailed(
+                    action: "minimize window",
+                    reason: "Window minimize operation failed")
+            }
+            guard try await self.waitForPinnedWindowMinimized(window, expectedIdentity: expectedIdentity) else {
+                throw PeekabooError.commandFailed(
+                    "Window \(expectedIdentity.windowID) did not reach verified minimized state")
+            }
         }
     }
 
@@ -165,42 +172,44 @@ extension WindowManagementService {
     }
 
     public func restoreWindow(target: WindowTarget, expectedIdentity: WindowMutationIdentity) async throws {
-        try self.validatePinnedWindowMutation(target: target, expectedIdentity: expectedIdentity)
-        if expectedIdentity.isMinimized == true {
-            guard await BoundedBackgroundWindowAX.restoreMinimizedState(expectedIdentity: expectedIdentity) else {
+        try await self.operationLaneCoordinator.run(scope: .window(expectedIdentity), access: .write) {
+            try self.validatePinnedWindowMutation(target: target, expectedIdentity: expectedIdentity)
+            if expectedIdentity.isMinimized == true {
+                guard await BoundedBackgroundWindowAX.restoreMinimizedState(expectedIdentity: expectedIdentity) else {
+                    throw OperationError.interactionFailed(
+                        action: "restore window",
+                        reason: "Window restore operation failed or the exact minimized receipt became ambiguous")
+                }
+                guard let capturedBounds = expectedIdentity.capturedBounds else {
+                    throw PeekabooError.commandFailed(
+                        "Window \(expectedIdentity.windowID) restore receipt lacks capture-time bounds")
+                }
+                _ = try await self.waitForRepinnedWindowMutation(
+                    expectedIdentity,
+                    expectedBounds: capturedBounds)
+                return
+            }
+            let window = try await self.element(for: target)
+            try self.validatePinnedWindowMutation(target: target, expectedIdentity: expectedIdentity)
+            try self.validatePinnedWindowElement(window, expectedIdentity: expectedIdentity)
+
+            if window.isMinimized() == false {
+                guard SystemIdentityResolver.validateWindowMutationIdentity(expectedIdentity) else {
+                    throw PeekabooError.commandFailed(
+                        "Window \(expectedIdentity.windowID) changed identity before restore completion")
+                }
+                return
+            }
+
+            guard window.unminimizeWindow() else {
                 throw OperationError.interactionFailed(
                     action: "restore window",
-                    reason: "Window restore operation failed or the exact minimized receipt became ambiguous")
+                    reason: "Window restore operation failed")
             }
-            guard let capturedBounds = expectedIdentity.capturedBounds else {
+            guard try await self.waitForPinnedWindowRestored(window, expectedIdentity: expectedIdentity) else {
                 throw PeekabooError.commandFailed(
-                    "Window \(expectedIdentity.windowID) restore receipt lacks capture-time bounds")
+                    "Window \(expectedIdentity.windowID) did not reach verified restored state")
             }
-            _ = try await self.waitForRepinnedWindowMutation(
-                expectedIdentity,
-                expectedBounds: capturedBounds)
-            return
-        }
-        let window = try await self.element(for: target)
-        try self.validatePinnedWindowMutation(target: target, expectedIdentity: expectedIdentity)
-        try self.validatePinnedWindowElement(window, expectedIdentity: expectedIdentity)
-
-        if window.isMinimized() == false {
-            guard SystemIdentityResolver.validateWindowMutationIdentity(expectedIdentity) else {
-                throw PeekabooError.commandFailed(
-                    "Window \(expectedIdentity.windowID) changed identity before restore completion")
-            }
-            return
-        }
-
-        guard window.unminimizeWindow() else {
-            throw OperationError.interactionFailed(
-                action: "restore window",
-                reason: "Window restore operation failed")
-        }
-        guard try await self.waitForPinnedWindowRestored(window, expectedIdentity: expectedIdentity) else {
-            throw PeekabooError.commandFailed(
-                "Window \(expectedIdentity.windowID) did not reach verified restored state")
         }
     }
 
@@ -210,44 +219,46 @@ extension WindowManagementService {
     }
 
     public func maximizeWindow(target: WindowTarget, expectedIdentity: WindowMutationIdentity) async throws {
-        try self.validatePinnedWindowMutation(target: target, expectedIdentity: expectedIdentity)
-        guard let windowInfo = try await self.listWindows(target: target).first else {
-            throw PeekabooError.windowNotFound(criteria: "No exact window identity was available for maximize")
-        }
-        try self.validatePinnedWindowMutation(target: target, expectedIdentity: expectedIdentity)
-        let desiredBounds = try self.maximizedBounds(for: windowInfo.bounds)
+        try await self.operationLaneCoordinator.run(scope: .window(expectedIdentity), access: .write) {
+            try self.validatePinnedWindowMutation(target: target, expectedIdentity: expectedIdentity)
+            guard let windowInfo = try await self.listWindows(target: target).first else {
+                throw PeekabooError.windowNotFound(criteria: "No exact window identity was available for maximize")
+            }
+            try self.validatePinnedWindowMutation(target: target, expectedIdentity: expectedIdentity)
+            let desiredBounds = try self.maximizedBounds(for: windowInfo.bounds)
 
-        if Self.windowBoundsMatch(windowInfo.bounds, desiredBounds, tolerance: 4) {
-            return
-        }
+            if Self.windowBoundsMatch(windowInfo.bounds, desiredBounds, tolerance: 4) {
+                return
+            }
 
-        guard self.windowIdentityService
-            .getWindowServerInfo(windowID: CGWindowID(windowInfo.windowID)) != nil
-        else {
-            throw PeekabooError.windowNotFound(criteria: "windowId \(windowInfo.windowID)")
-        }
-        let success = await BoundedBackgroundWindowAX.setBounds(
-            expectedIdentity: expectedIdentity,
-            bounds: desiredBounds)
+            guard self.windowIdentityService
+                .getWindowServerInfo(windowID: CGWindowID(windowInfo.windowID)) != nil
+            else {
+                throw PeekabooError.windowNotFound(criteria: "windowId \(windowInfo.windowID)")
+            }
+            let success = await BoundedBackgroundWindowAX.setBounds(
+                expectedIdentity: expectedIdentity,
+                bounds: desiredBounds)
 
-        if !success {
-            throw OperationError.interactionFailed(
-                action: "maximize window",
-                reason: "The bounded background geometry request failed")
-        }
+            if !success {
+                throw OperationError.interactionFailed(
+                    action: "maximize window",
+                    reason: "The bounded background geometry request failed")
+            }
 
-        guard try await self.waitForWindowBounds(
-            windowID: windowInfo.windowID,
-            expectedIdentity: expectedIdentity,
-            expected: desiredBounds,
-            timeoutSeconds: 2)
-        else {
-            let achieved = self.windowIdentityService
-                .getWindowServerInfo(windowID: CGWindowID(windowInfo.windowID))?.bounds
-            throw OperationError.interactionFailed(
-                action: "maximize window",
-                reason: "The window did not reach the target screen's visible bounds within 2 seconds " +
-                    "(requested: \(desiredBounds), achieved: \(String(describing: achieved)))")
+            guard try await self.waitForWindowBounds(
+                windowID: windowInfo.windowID,
+                expectedIdentity: expectedIdentity,
+                expected: desiredBounds,
+                timeoutSeconds: 2)
+            else {
+                let achieved = self.windowIdentityService
+                    .getWindowServerInfo(windowID: CGWindowID(windowInfo.windowID))?.bounds
+                throw OperationError.interactionFailed(
+                    action: "maximize window",
+                    reason: "The window did not reach the target screen's visible bounds within 2 seconds " +
+                        "(requested: \(desiredBounds), achieved: \(String(describing: achieved)))")
+            }
         }
     }
 
@@ -309,34 +320,39 @@ extension WindowManagementService {
     }
 
     public func focusWindow(target: WindowTarget) async throws {
-        self.logger.info("Attempting to focus window with target: \(target)")
-        self.logger.debug("WindowManagementService.focusWindow called with target: \(target)")
+        try await self.operationLaneCoordinator.run(scope: .global, access: .write) {
+            self.logger.info("Attempting to focus window with target: \(target)")
+            self.logger.debug("WindowManagementService.focusWindow called with target: \(target)")
 
-        let window = try await self.element(for: target)
-        let windowBounds = window.position().map { position in
-            CGRect(origin: position, size: window.size() ?? .zero)
-        }
+            let window = try await self.element(for: target)
+            let windowBounds = window.position().map { position in
+                CGRect(origin: position, size: window.size() ?? .zero)
+            }
 
-        let success: Bool
-        if let windowID = self.windowIdentityService.getWindowID(from: window) {
-            let focusService = FocusManagementService(applications: self.applicationService)
-            try await focusService.focusWindow(windowID: windowID)
-            success = true
-        } else {
-            self.logger.debug("Falling back to AXorcist focus without a CGWindowID")
-            success = window.focusWindow()
-        }
-        self.showWindowOperation(.focus, bounds: windowBounds)
+            let success: Bool
+            if let windowID = self.windowIdentityService.getWindowID(from: window) {
+                let focusService = FocusManagementService(
+                    applications: self.applicationService,
+                    operationLaneCoordinator: self.operationLaneCoordinator)
+                try await focusService.focusWindowWithOwnedLane(windowID: windowID)
+                success = true
+            } else {
+                self.logger.debug("Falling back to AXorcist focus without a CGWindowID")
+                success = window.focusWindow()
+            }
+            self.showWindowOperation(.focus, bounds: windowBounds)
 
-        guard success else {
-            let windowInfo = self.focusFailureDescription(for: target)
-            self.logger.error("Focus window failed for: \(windowInfo)")
+            guard success else {
+                let windowInfo = self.focusFailureDescription(for: target)
+                self.logger.error("Focus window failed for: \(windowInfo)")
 
-            let reason = [
-                "Failed to focus \(windowInfo).",
-                "The window may be minimized, on another Space, or the app may not be responding to focus requests.",
-            ].joined(separator: " ")
-            throw OperationError.interactionFailed(action: "focus window", reason: reason)
+                let reason = [
+                    "Failed to focus \(windowInfo).",
+                    "The window may be minimized, on another Space, " +
+                        "or the app may not be responding to focus requests.",
+                ].joined(separator: " ")
+                throw OperationError.interactionFailed(action: "focus window", reason: reason)
+            }
         }
     }
 

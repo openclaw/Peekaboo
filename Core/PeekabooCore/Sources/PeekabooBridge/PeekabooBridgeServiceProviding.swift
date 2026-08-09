@@ -17,6 +17,10 @@ public protocol PeekabooBridgeServiceProviding: AnyObject, Sendable {
     var snapshots: any SnapshotManagerProtocol { get }
     var desktopObservation: any DesktopObservationServiceProtocol { get }
 
+    /// True only when the concrete native services acquire generation-pinned operation lanes.
+    /// Test doubles and older hosts default to the Bridge's conservative global mutation gate.
+    var ownsDesktopOperationLanesAtNativeLeaves: Bool { get }
+
     func browserStatus(channel: String?) async throws -> PeekabooBridgeBrowserStatus
     func browserConnect(channel: String?) async throws -> PeekabooBridgeBrowserStatus
     func browserDisconnect() async throws
@@ -26,6 +30,10 @@ public protocol PeekabooBridgeServiceProviding: AnyObject, Sendable {
 
 @MainActor
 extension PeekabooBridgeServiceProviding {
+    public var ownsDesktopOperationLanesAtNativeLeaves: Bool {
+        false
+    }
+
     public func browserStatus(channel _: String?) async throws -> PeekabooBridgeBrowserStatus {
         throw PeekabooBridgeErrorEnvelope(
             code: .operationNotSupported,

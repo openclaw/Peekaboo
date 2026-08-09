@@ -376,16 +376,25 @@ public final class PeekabooBridgeServer {
             return try await self.handleAuthorized(request, peer: peer)
         }
 
-        try await self.desktopMutationGate.acquire()
+        let usesBridgeMutationGate = !request.nativeLeafOwnsDesktopOperationLane ||
+            !self.services.ownsDesktopOperationLanesAtNativeLeaves
+        if usesBridgeMutationGate {
+            try await self.desktopMutationGate.acquire()
+        }
+        func releaseBridgeMutationGate() async {
+            if usesBridgeMutationGate {
+                await self.desktopMutationGate.release()
+            }
+        }
         guard let desktopMutationWatermarkStore else {
             do {
                 try PeekabooBridgeRequestContext.checkRequestIsActive()
                 try self.validatePinnedWindowMutation(request)
                 let response = try await self.handleAuthorized(request, peer: peer)
-                await self.desktopMutationGate.release()
+                await releaseBridgeMutationGate()
                 return response
             } catch {
-                await self.desktopMutationGate.release()
+                await releaseBridgeMutationGate()
                 throw error
             }
         }
@@ -393,14 +402,15 @@ public final class PeekabooBridgeServer {
             try PeekabooBridgeRequestContext.checkRequestIsActive()
             try self.validatePinnedWindowMutation(request)
         } catch {
-            await self.desktopMutationGate.release()
+            await releaseBridgeMutationGate()
             throw error
         }
         let mutation: DesktopMutationWatermarkStore.PendingMutation
         do {
-            mutation = try await desktopMutationWatermarkStore.beginMutationCancellable()
+            mutation = try await desktopMutationWatermarkStore.beginMutationCancellable(
+                target: request.desktopOperationScope)
         } catch {
-            await self.desktopMutationGate.release()
+            await releaseBridgeMutationGate()
             throw PeekabooBridgeErrorEnvelope(
                 code: .internalError,
                 message: "Could not establish the desktop mutation barrier; operation was not executed",
@@ -414,13 +424,13 @@ public final class PeekabooBridgeServer {
             do {
                 try desktopMutationWatermarkStore.cancelMutation(mutation)
             } catch {
-                await self.desktopMutationGate.release()
+                await releaseBridgeMutationGate()
                 throw PeekabooBridgeErrorEnvelope(
                     code: .internalError,
                     message: "Could not cancel the desktop mutation barrier; operation was not executed",
                     details: error.localizedDescription)
             }
-            await self.desktopMutationGate.release()
+            await releaseBridgeMutationGate()
             throw error
         }
 
@@ -442,10 +452,10 @@ public final class PeekabooBridgeServer {
                 response: response,
                 store: desktopMutationWatermarkStore)
         } catch {
-            await self.desktopMutationGate.release()
+            await releaseBridgeMutationGate()
             throw error
         }
-        await self.desktopMutationGate.release()
+        await releaseBridgeMutationGate()
 
         if let operationError {
             throw operationError

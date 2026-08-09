@@ -63,6 +63,7 @@ public final class UIAutomationService: TargetedHotkeyServiceProtocol, TargetedT
     let automationElementResolver: any AutomationElementResolving
     let exactWindowFocusReader: @Sendable (pid_t) -> ExactWindowFocusSnapshot?
     let exactWindowIdentityValidator: @Sendable (WindowMutationIdentity, CGRect) -> Bool
+    let operationLaneCoordinator: DesktopOperationLaneCoordinator
 
     // Search constraints to prevent unbounded AX traversals
     var searchLimits: UIAutomationSearchLimits
@@ -122,7 +123,8 @@ public final class UIAutomationService: TargetedHotkeyServiceProtocol, TargetedT
             actionInputDriver: ActionInputDriver(),
             syntheticInputDriver: SyntheticInputDriver(),
             automationElementResolver: AutomationElementResolver(),
-            feedbackClient: feedbackClient)
+            feedbackClient: feedbackClient,
+            operationLaneCoordinator: .shared)
     }
 
     init(
@@ -137,7 +139,8 @@ public final class UIAutomationService: TargetedHotkeyServiceProtocol, TargetedT
         exactWindowFocusReader: @escaping @Sendable (pid_t) -> ExactWindowFocusSnapshot? =
             DetachedExactWindowFocusReader.read,
         exactWindowIdentityValidator: @escaping @Sendable (WindowMutationIdentity, CGRect) -> Bool =
-            SystemIdentityResolver.validateWindowMutationIdentity)
+            SystemIdentityResolver.validateWindowMutationIdentity,
+        operationLaneCoordinator: DesktopOperationLaneCoordinator = .shared)
     {
         let manager = snapshotManager ?? SnapshotManager()
         self.snapshotManager = manager
@@ -153,6 +156,7 @@ public final class UIAutomationService: TargetedHotkeyServiceProtocol, TargetedT
         self.feedbackClient = feedbackClient
         self.exactWindowFocusReader = exactWindowFocusReader
         self.exactWindowIdentityValidator = exactWindowIdentityValidator
+        self.operationLaneCoordinator = operationLaneCoordinator
 
         // Initialize specialized services
         self.elementDetectionService = ElementDetectionService(snapshotManager: manager)

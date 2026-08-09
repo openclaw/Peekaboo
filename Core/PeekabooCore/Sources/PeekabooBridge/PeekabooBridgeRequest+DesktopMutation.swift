@@ -70,6 +70,85 @@ actor PeekabooBridgeMutationGate {
 }
 
 extension PeekabooBridgeRequest {
+    /// Native services own these leases after resolving and revalidating their exact target.
+    /// Remote callers and the Bridge router must not acquire a second copy of the same lane.
+    var nativeLeafOwnsDesktopOperationLane: Bool {
+        switch self {
+        case .click,
+             .type,
+             .typeActions,
+             .targetedTypeActions,
+             .exactWindowTargetedTypeActions,
+             .setValue,
+             .performAction,
+             .scroll,
+             .targetedScroll,
+             .hotkey,
+             .targetedHotkey,
+             .exactWindowTargetedHotkey,
+             .targetedClick,
+             .swipe,
+             .drag,
+             .moveMouse,
+             .focusWindow,
+             .moveWindow,
+             .resizeWindow,
+             .setWindowBounds,
+             .closeWindow,
+             .backgroundCloseWindow,
+             .minimizeWindow,
+             .restoreWindow,
+             .maximizeWindow,
+             .launchApplication,
+             .launchApplicationWithOptions,
+             .relaunchApplicationWithOptions,
+             .activateApplication,
+             .quitApplication,
+             .hideApplication,
+             .unhideApplication,
+             .hideOtherApplications,
+             .showAllApplications,
+             .clickMenuItem,
+             .clickMenuItemByName,
+             .clickMenuExtra,
+             .clickMenuBarItemNamed,
+             .clickMenuBarItemIndex,
+             .launchDockItem,
+             .rightClickDockItem,
+             .hideDock,
+             .showDock:
+            true
+        default:
+            false
+        }
+    }
+
+    var desktopOperationScope: DesktopOperationScope {
+        switch self {
+        case let .exactWindowTargetedTypeActions(payload):
+            .window(payload.expectedWindowIdentity)
+        case let .exactWindowTargetedHotkey(payload):
+            .window(payload.expectedWindowIdentity)
+        case let .targetedClick(payload):
+            payload.expectedWindowIdentity.map(DesktopOperationScope.window) ?? .global
+        case let .backgroundCloseWindow(payload),
+             let .minimizeWindow(payload),
+             let .restoreWindow(payload),
+             let .maximizeWindow(payload):
+            payload.expectedIdentity.map(DesktopOperationScope.window) ?? .global
+        case let .moveWindow(payload):
+            payload.expectedIdentity.map(DesktopOperationScope.window) ?? .global
+        case let .resizeWindow(payload):
+            payload.expectedIdentity.map(DesktopOperationScope.window) ?? .global
+        case let .setWindowBounds(payload):
+            payload.expectedIdentity.map(DesktopOperationScope.window) ?? .global
+        case let .quitApplication(payload):
+            payload.expectedIdentity.map(DesktopOperationScope.process) ?? .global
+        default:
+            .global
+        }
+    }
+
     var requiresPinnedWindowMutationReceipt: Bool {
         switch self {
         case .moveWindow,

@@ -25,71 +25,73 @@ extension MenuService {
     }
 
     public func clickMenuExtra(title: String) async throws {
-        let systemWide = Element.systemWide()
+        try await self.operationLaneCoordinator.run(scope: .global, access: .write) {
+            let systemWide = Element.systemWide()
 
-        guard let menuBar = systemWide.menuBar() else {
-            throw PeekabooError.operationError(message: "System menu bar not found")
-        }
+            guard let menuBar = systemWide.menuBar() else {
+                throw PeekabooError.operationError(message: "System menu bar not found")
+            }
 
-        let menuBarItems = menuBar.children(strict: true) ?? []
-        guard let menuExtrasGroup = menuBarItems.last(where: { $0.role() == "AXGroup" }) else {
-            var context = ErrorContext()
-            context.add("menuExtra", title)
-            throw NotFoundError(
-                code: .menuNotFound,
-                userMessage: "Menu extras group not found in system menu bar",
-                context: context.build())
-        }
+            let menuBarItems = menuBar.children(strict: true) ?? []
+            guard let menuExtrasGroup = menuBarItems.last(where: { $0.role() == "AXGroup" }) else {
+                var context = ErrorContext()
+                context.add("menuExtra", title)
+                throw NotFoundError(
+                    code: .menuNotFound,
+                    userMessage: "Menu extras group not found in system menu bar",
+                    context: context.build())
+            }
 
-        let extras = menuExtrasGroup.children(strict: true) ?? []
-        let normalizedTarget = normalizedMenuTitle(title)
-        func candidates(for element: Element) -> [String?] {
-            [
-                element.title(),
-                element.help(),
-                element.descriptionText(),
-                element.identifier(),
-            ]
-        }
+            let extras = menuExtrasGroup.children(strict: true) ?? []
+            let normalizedTarget = normalizedMenuTitle(title)
+            @MainActor func candidates(for element: Element) -> [String?] {
+                [
+                    element.title(),
+                    element.help(),
+                    element.descriptionText(),
+                    element.identifier(),
+                ]
+            }
 
-        let menuExtra = extras.first(where: { element in
-            candidates(for: element).contains(where: {
-                titlesMatch(candidate: $0, target: title, normalizedTarget: normalizedTarget)
+            let menuExtra = extras.first(where: { element in
+                candidates(for: element).contains(where: {
+                    titlesMatch(candidate: $0, target: title, normalizedTarget: normalizedTarget)
+                })
+            }) ?? extras.first(where: { element in
+                candidates(for: element).contains(where: { menuExtraTitlesMatch(candidate: $0, target: title) })
+            }) ?? extras.first(where: { element in
+                guard self.partialMatchEnabled else { return false }
+                return candidates(for: element).contains(where: { titlesMatchPartial(
+                    candidate: $0,
+                    target: title,
+                    normalizedTarget: normalizedTarget) })
             })
-        }) ?? extras.first(where: { element in
-            candidates(for: element).contains(where: { menuExtraTitlesMatch(candidate: $0, target: title) })
-        }) ?? extras.first(where: { element in
-            guard self.partialMatchEnabled else { return false }
-            return candidates(for: element).contains(where: { titlesMatchPartial(
-                candidate: $0,
-                target: title,
-                normalizedTarget: normalizedTarget) })
-        })
 
-        guard let menuExtra else {
-            var context = ErrorContext()
-            context.add("menuExtra", title)
-            context.add("availableExtras", extras.count)
-            throw NotFoundError(
-                code: .menuNotFound,
-                userMessage: "Menu extra '\(title)' not found in system menu bar",
-                context: context.build())
-        }
+            guard let menuExtra else {
+                var context = ErrorContext()
+                context.add("menuExtra", title)
+                context.add("availableExtras", extras.count)
+                throw NotFoundError(
+                    code: .menuNotFound,
+                    userMessage: "Menu extra '\(title)' not found in system menu bar",
+                    context: context.build())
+            }
 
-        if let position = menuExtra.position(),
-           Self.isIndividuallyHiddenMenuExtra(
-               position: position,
-               allPositions: extras.compactMap { $0.position() },
-               displayBounds: self.activeDisplayBounds())
-        {
-            throw PeekabooError.operationError(
-                message: self.hiddenMenuExtraMessage(title: title))
-        }
+            if let position = menuExtra.position(),
+               Self.isIndividuallyHiddenMenuExtra(
+                   position: position,
+                   allPositions: extras.compactMap { $0.position() },
+                   displayBounds: self.activeDisplayBounds())
+            {
+                throw PeekabooError.operationError(
+                    message: self.hiddenMenuExtraMessage(title: title))
+            }
 
-        if !menuExtra.showMenu(), !menuExtra.press() {
-            throw OperationError.interactionFailed(
-                action: "click menu extra",
-                reason: "Failed to click menu extra '\(title)'")
+            if !menuExtra.showMenu(), !menuExtra.press() {
+                throw OperationError.interactionFailed(
+                    action: "click menu extra",
+                    reason: "Failed to click menu extra '\(title)'")
+            }
         }
     }
 
@@ -232,39 +234,41 @@ extension MenuService {
     }
 
     public func clickMenuBarItem(at index: Int) async throws -> ClickResult {
-        let extras = try await listMenuExtras()
+        try await self.operationLaneCoordinator.run(scope: .global, access: .write) {
+            let extras = try await listMenuExtras()
 
-        guard index >= 0, index < extras.count else {
-            throw PeekabooError
-                .invalidInput("Invalid menu bar item index: \(index). Valid range: 0-\(extras.count - 1)")
-        }
+            guard index >= 0, index < extras.count else {
+                throw PeekabooError
+                    .invalidInput("Invalid menu bar item index: \(index). Valid range: 0-\(extras.count - 1)")
+            }
 
-        let extra = extras[index]
-        guard extra.isVisible else {
-            throw PeekabooError.operationError(
-                message: self.hiddenMenuExtraMessage(title: extra.title))
-        }
-        guard let clickPoint = self.resolveMenuExtraClickPoint(for: extra) else {
-            throw PeekabooError.operationError(message: "Menu bar item has no clickable position")
-        }
-        guard self.isMenuExtraPointVisible(clickPoint) else {
-            throw PeekabooError.operationError(
-                message: self.hiddenMenuExtraMessage(title: extra.title))
-        }
+            let extra = extras[index]
+            guard extra.isVisible else {
+                throw PeekabooError.operationError(
+                    message: self.hiddenMenuExtraMessage(title: extra.title))
+            }
+            guard let clickPoint = self.resolveMenuExtraClickPoint(for: extra) else {
+                throw PeekabooError.operationError(message: "Menu bar item has no clickable position")
+            }
+            guard self.isMenuExtraPointVisible(clickPoint) else {
+                throw PeekabooError.operationError(
+                    message: self.hiddenMenuExtraMessage(title: extra.title))
+            }
 
-        try? InputDriver.move(to: clickPoint)
+            try? InputDriver.move(to: clickPoint)
 
-        if !self.tryWindowTargetedClick(extra: extra, point: clickPoint) {
-            let clickService = ClickService()
-            try await clickService.click(
-                target: .coordinates(clickPoint),
-                clickType: .single,
-                snapshotId: nil)
+            if !self.tryWindowTargetedClick(extra: extra, point: clickPoint) {
+                let clickService = ClickService()
+                try await clickService.click(
+                    target: .coordinates(clickPoint),
+                    clickType: .single,
+                    snapshotId: nil)
+            }
+
+            return ClickResult(
+                elementDescription: "Menu bar item [\(index)]: \(extra.title)",
+                location: clickPoint)
         }
-
-        return ClickResult(
-            elementDescription: "Menu bar item [\(index)]: \(extra.title)",
-            location: clickPoint)
     }
 
     private func hiddenMenuExtraMessage(title: String) -> String {

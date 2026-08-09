@@ -833,7 +833,8 @@ struct ApplicationServiceLifecycleTests {
             applicationOpenHandler: openRecorder.open,
             relaunchTargetResolver: lifecycle.resolve,
             relaunchQuitHandler: lifecycle.quit,
-            relaunchRunningHandler: lifecycle.isRunning)
+            relaunchRunningHandler: lifecycle.isRunning,
+            processStartIdentityProvider: { _ in 700 })
 
         _ = try await service.relaunchApplication(request: ApplicationRelaunchRequest(
             targetIdentifier: "  Example  ",

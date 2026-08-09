@@ -78,6 +78,7 @@ public final class ApplicationService: ApplicationServiceProtocol {
     let applicationReadinessTimeout: TimeInterval
     let backgroundLaunchActivationGraceDuration: Duration
     let backgroundOpenActivationGraceDuration: Duration
+    let operationLaneCoordinator: DesktopOperationLaneCoordinator
 
     /// Timeout for accessibility API calls to prevent hangs
     /// AX can be sluggish on some apps (e.g., Arc); allow more headroom.
@@ -90,6 +91,7 @@ public final class ApplicationService: ApplicationServiceProtocol {
         self.init(
             permissions: permissions,
             feedbackClient: feedbackClient,
+            operationLaneCoordinator: .shared,
             applicationOpenHandler: { applicationURL, openURLs, configuration in
                 if openURLs.isEmpty {
                     return try await NSWorkspace.shared.openApplication(
@@ -107,6 +109,7 @@ public final class ApplicationService: ApplicationServiceProtocol {
     init(
         permissions: PermissionsService = PermissionsService(),
         feedbackClient: any AutomationFeedbackClient = NoopAutomationFeedbackClient(),
+        operationLaneCoordinator: DesktopOperationLaneCoordinator = .shared,
         applicationOpenHandler: @escaping ApplicationOpenHandler,
         defaultApplicationOpenHandler: @escaping DefaultApplicationOpenHandler = { targetURL, configuration in
             try await NSWorkspace.shared.open(targetURL, configuration: configuration)
@@ -128,6 +131,7 @@ public final class ApplicationService: ApplicationServiceProtocol {
         AXTimeoutConfiguration.setGlobalTimeout(Self.axTimeout)
         self.permissions = permissions
         self.feedbackClient = feedbackClient
+        self.operationLaneCoordinator = operationLaneCoordinator
         self.applicationOpenHandler = applicationOpenHandler
         self.defaultApplicationOpenHandler = defaultApplicationOpenHandler
         self.relaunchTargetResolver = relaunchTargetResolver
