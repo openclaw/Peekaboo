@@ -160,6 +160,57 @@ struct RuntimeHostApplicationSelectionTests {
 
     @Test
     @MainActor
+    func `Explicit GUI host can execute pinned application quit`() async throws {
+        let socketPath = "/tmp/peekaboo-gui.sock"
+        let options = try CommanderCLIBinder.makeRuntimeOptions(
+            from: ParsedValues(
+                positional: [],
+                options: ["bridge-socket": [socketPath]],
+                flags: []
+            ),
+            commandType: AppCommand.QuitSubcommand.self
+        )
+        let environmentOptions = try CommanderCLIBinder.makeRuntimeOptions(
+            from: ParsedValues(positional: [], options: [:], flags: []),
+            commandType: AppCommand.QuitSubcommand.self,
+            environment: ["PEEKABOO_BRIDGE_SOCKET": socketPath]
+        )
+        let candidate = RuntimeHostResolver.ImplicitRemoteCandidate(
+            socketPath: socketPath,
+            requireReusableDaemon: false,
+            requiredHostKind: nil,
+            requiresValidatedHistoricalDaemon: false
+        )
+        let operations: [PeekabooBridgeOperation] = [
+            .quitApplication,
+            .invalidateImplicitLatestSnapshot,
+        ]
+        let guiHost = PeekabooBridgeHandshakeResponse(
+            negotiatedVersion: .init(major: 1, minor: 18),
+            hostKind: .gui,
+            build: nil,
+            supportedOperations: operations,
+            enabledOperations: operations
+        )
+
+        #expect(options.bridgeSocketPath == socketPath)
+        #expect(!options.requiresSurvivingApplicationHost)
+        #expect(options.requiresProcessGenerationPinnedApplicationQuit)
+        #expect(!environmentOptions.requiresSurvivingApplicationHost)
+        #expect(CommandRuntime.explicitBridgeSocket(
+            options: environmentOptions,
+            environment: ["PEEKABOO_BRIDGE_SOCKET": socketPath]
+        ) == socketPath)
+        #expect(CommandRuntime.supportsRemoteRequirements(for: guiHost, options: options))
+        #expect(await RuntimeHostResolver.validateRemoteCandidate(
+            candidate,
+            handshake: guiHost,
+            options: options
+        ) != nil)
+    }
+
+    @Test
+    @MainActor
     func `Application inventory prefers GUI host before reusable daemon`() {
         var options = CommandRuntimeOptions()
         options.requiresHostApplicationInventory = true

@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import PeekabooAutomationKit
 import PeekabooFoundation
@@ -39,6 +40,9 @@ extension PeekabooBridgeServer {
                 throw PeekabooError.invalidInput(
                     "Bridge application quit requires a process-generation identity " +
                         "(protocol 1.16 or newer); update the client")
+            }
+            guard expectedIdentity.processIdentifier != getpid() else {
+                throw PeekabooError.serviceUnavailable("A runtime host cannot quit itself")
             }
             let success = try await self.services.applications.quitApplication(request: ApplicationQuitRequest(
                 identifier: payload.identifier,

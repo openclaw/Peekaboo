@@ -128,6 +128,12 @@ enum CommanderCLIBinder {
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let hasExplicitBridgeSocket = explicitBridgeSocket?.isEmpty == false ||
             environmentBridgeSocket?.isEmpty == false
+        if commandType == AppCommand.QuitSubcommand.self, hasExplicitBridgeSocket {
+            // Implicit quit routing needs a reusable daemon so the selected host cannot be one
+            // of the applications being quit. An explicit socket is the caller's selected host;
+            // the Bridge server rejects self-quit requests before service dispatch.
+            options.requiresSurvivingApplicationHost = false
+        }
         if commandType == AgentCommand.self,
            !values.flag("no-remote"),
            !hasExplicitBridgeSocket {

@@ -151,6 +151,34 @@ struct PeekabooBridgeQuitIdentityTests {
         #expect(await MainActor.run { applications.quitRequests }.isEmpty)
     }
 
+    @Test
+    func `Bridge rejects host self quit before service dispatch`() async throws {
+        let applications = await MainActor.run { StubApplicationService() }
+        let server = await MainActor.run {
+            PeekabooBridgeServer(
+                services: StubServices(applications: applications),
+                hostKind: .gui,
+                allowlistedTeams: [],
+                allowlistedBundles: [])
+        }
+        let request = PeekabooBridgeRequest.quitApplication(PeekabooBridgeQuitAppRequest(
+            identifier: "PID:\(getpid())",
+            force: true,
+            expectedIdentity: .init(
+                processIdentifier: getpid(),
+                processStartIdentity: 456)))
+
+        let response = try await self.response(for: request, server: server)
+
+        guard case let .error(envelope) = response else {
+            Issue.record("Expected host self quit to fail, got \(response)")
+            return
+        }
+        #expect(envelope.code == .operationNotSupported)
+        #expect(envelope.message == "A runtime host cannot quit itself")
+        #expect(await MainActor.run { applications.quitRequests }.isEmpty)
+    }
+
     private func response(
         for request: PeekabooBridgeRequest,
         server: PeekabooBridgeServer) async throws -> PeekabooBridgeResponse
