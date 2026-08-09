@@ -277,6 +277,7 @@ extension PeekabooBridgeServer {
                     message: "Background typing is not supported by this bridge host")
             }
 
+            self.automationActivityObserver?(pid_t(payload.targetProcessIdentifier))
             let result = try await targetedTypeService.typeActions(
                 payload.actions,
                 cadence: payload.cadence,
@@ -293,6 +294,7 @@ extension PeekabooBridgeServer {
                     message: "Background hotkeys are not supported by this bridge host")
             }
 
+            self.automationActivityObserver?(pid_t(payload.targetProcessIdentifier))
             try await targetedHotkeyService.hotkey(
                 keys: payload.keys,
                 holdDuration: payload.holdDuration,
@@ -315,6 +317,7 @@ extension PeekabooBridgeServer {
                         code: .operationNotSupported,
                         message: "Exact-window background clicks are not supported by this bridge host")
                 }
+                self.automationActivityObserver?(pid_t(payload.targetProcessIdentifier))
                 try await exactWindowService.click(
                     target: payload.target,
                     clickType: payload.clickType,
@@ -322,6 +325,7 @@ extension PeekabooBridgeServer {
                     targetProcessIdentifier: pid_t(payload.targetProcessIdentifier),
                     targetWindowID: targetWindowID)
             } else {
+                self.automationActivityObserver?(pid_t(payload.targetProcessIdentifier))
                 try await targetedClickService.click(
                     target: payload.target,
                     clickType: payload.clickType,

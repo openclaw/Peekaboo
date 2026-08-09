@@ -196,6 +196,10 @@ final class PeekabooSettings {
         didSet { self.save() }
     }
 
+    var showAutomationTargetIcons: Bool = true {
+        didSet { self.save() }
+    }
+
     // MARK: - Visualizer Settings
 
     var visualizerEnabled: Bool = true {
@@ -518,6 +522,9 @@ extension PeekabooSettings {
         self.agentModeEnabled = self.valueOrDefault(key: "agentModeEnabled", defaultValue: false)
         self.hapticFeedbackEnabled = self.userDefaults.bool(forKey: self.namespaced("hapticFeedbackEnabled"))
         self.soundEffectsEnabled = self.userDefaults.bool(forKey: self.namespaced("soundEffectsEnabled"))
+        self.showAutomationTargetIcons = self.valueOrDefault(
+            key: "showAutomationTargetIcons",
+            defaultValue: true)
 
         self.ensureTrueFlag(markerKey: "hapticFeedbackEnabledSet", value: &self.hapticFeedbackEnabled)
         self.ensureTrueFlag(markerKey: "soundEffectsEnabledSet", value: &self.soundEffectsEnabled)
@@ -593,6 +600,9 @@ extension PeekabooSettings {
         self.userDefaults.set(self.agentModeEnabled, forKey: "\(self.keyPrefix)agentModeEnabled")
         self.userDefaults.set(self.hapticFeedbackEnabled, forKey: "\(self.keyPrefix)hapticFeedbackEnabled")
         self.userDefaults.set(self.soundEffectsEnabled, forKey: "\(self.keyPrefix)soundEffectsEnabled")
+        self.userDefaults.set(
+            self.showAutomationTargetIcons,
+            forKey: "\(self.keyPrefix)showAutomationTargetIcons")
 
         // Save visualizer settings
         self.userDefaults.set(self.visualizerEnabled, forKey: "\(self.keyPrefix)visualizerEnabled")

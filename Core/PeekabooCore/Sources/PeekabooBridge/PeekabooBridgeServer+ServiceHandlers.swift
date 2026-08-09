@@ -20,15 +20,19 @@ extension PeekabooBridgeServer {
             return .bool(running)
         case let .launchApplication(payload):
             let app = try await self.services.applications.launchApplication(identifier: payload.identifier)
+            self.automationActivityObserver?(pid_t(app.processIdentifier))
             return .application(app)
         case let .launchApplicationWithOptions(payload):
             let app = try await self.services.applications.launchApplication(request: payload)
+            self.automationActivityObserver?(pid_t(app.processIdentifier))
             return .application(app)
         case let .relaunchApplicationWithOptions(payload):
             let app = try await self.services.applications.relaunchApplication(request: payload)
+            self.automationActivityObserver?(pid_t(app.processIdentifier))
             return .application(app)
         case let .activateApplication(payload):
             try await self.services.applications.activateApplication(identifier: payload.identifier)
+            await self.reportAutomationActivity(appIdentifier: payload.identifier)
             return .ok
         case let .quitApplication(payload):
             let success = try await self.services.applications.quitApplication(
@@ -37,6 +41,7 @@ extension PeekabooBridgeServer {
             return .bool(success)
         case let .hideApplication(payload):
             try await self.services.applications.hideApplication(identifier: payload.identifier)
+            await self.reportAutomationActivity(appIdentifier: payload.identifier)
             return .ok
         case let .unhideApplication(payload):
             try await self.services.applications.unhideApplication(identifier: payload.identifier)
@@ -50,6 +55,15 @@ extension PeekabooBridgeServer {
         default:
             throw Self.invalidRequest(for: request)
         }
+    }
+
+    /// Reports app-identifier operations to the automation activity observer once the target resolves to a pid.
+    private func reportAutomationActivity(appIdentifier: String) async {
+        guard let observer = self.automationActivityObserver else { return }
+        guard let app = try? await self.services.applications.findApplication(identifier: appIdentifier) else {
+            return
+        }
+        observer(pid_t(app.processIdentifier))
     }
 
     func handleMenuRequest(_ request: PeekabooBridgeRequest) async throws -> PeekabooBridgeResponse {

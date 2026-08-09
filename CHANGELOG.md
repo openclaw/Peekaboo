@@ -4,6 +4,7 @@
 
 ### Added
 - Add a Developer-ID-signed Playground validation harness that continuously detects focus, window, cursor, clipboard, and visualizer leakage during background automation.
+- Show recently automated app icons beside Peekaboo in the menu bar, with a settings toggle.
 
 ### Changed
 - Remove the obsolete scoped-commit helper now that agent work uses isolated worktrees.

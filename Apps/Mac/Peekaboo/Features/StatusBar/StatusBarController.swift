@@ -45,8 +45,15 @@ enum StatusMenuAppearance {
 /// Manages the macOS status bar integration with animated icon states and popover UI.
 @MainActor
 final class StatusBarController: NSObject, NSMenuDelegate {
+    private struct ResolvedAutomationTarget {
+        let target: AutomationTarget
+        let icon: NSImage
+    }
+
     private static let permissionsStatusItemIdentifier = NSUserInterfaceItemIdentifier(
         "boo.peekaboo.statusMenu.permissionsStatus")
+    private static let statusIconSize = NSSize(width: 18, height: 18)
+    private static let statusIconSpacing: CGFloat = 3
 
     private let logger = Logger(subsystem: "boo.peekaboo.app", category: "StatusBar")
     private let statusItem: NSStatusItem
@@ -58,6 +65,10 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     private let permissions: Permissions
     private let settings: PeekabooSettings
     private let updater: any UpdaterProviding
+    private let automationTargetTracker: AutomationTargetTracker
+    private var latestGhostIcon: NSImage?
+    private var resolvedAutomationTargets: [ResolvedAutomationTarget] = []
+    private var appearanceObservation: NSKeyValueObservation?
 
     /// Icon animation
     private let animationController = MenuBarAnimationController()
@@ -71,12 +82,14 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         sessionStore: SessionStore,
         permissions: Permissions,
         settings: PeekabooSettings,
+        automationTargetTracker: AutomationTargetTracker = AutomationTargetTracker(),
         updater: any UpdaterProviding)
     {
         self.agent = agent
         self.sessionStore = sessionStore
         self.permissions = permissions
         self.settings = settings
+        self.automationTargetTracker = automationTargetTracker
         self.updater = updater
 
         // Create status item
@@ -87,7 +100,12 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         self.setupStatusItem()
         self.setupPopover()
         self.setupAnimationController()
+        self.observeEffectiveAppearance()
         self.observeAgentState()
+        self.automationTargetTracker.setEnabled(self.settings.showAutomationTargetIcons)
+        self.updateAutomationTargets(self.automationTargetTracker.activeTargets)
+        self.observeAutomationTargetIcons()
+        self.observeAutomationTargetIconSetting()
     }
 
     // MARK: - Setup
@@ -110,6 +128,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
             self.logger.info("MenuIcon loaded successfully: \(menuIcon.size.width)x\(menuIcon.size.height)")
             button.image = menuIcon
             button.image?.isTemplate = true
+            self.latestGhostIcon = menuIcon
         } else {
             self.logger.error("Failed to load MenuIcon - using fallback")
             // Create a simple fallback icon
@@ -121,6 +140,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
             }
             fallbackIcon.isTemplate = true
             button.image = fallbackIcon
+            self.latestGhostIcon = fallbackIcon
         }
 
         button.action = #selector(self.statusItemClicked)
@@ -136,11 +156,132 @@ final class StatusBarController: NSObject, NSMenuDelegate {
 
         // Set up callback to update icon when animation renders new frame
         self.animationController.onIconUpdateNeeded = { [weak self] icon in
-            self?.statusItem.button?.image = icon
+            guard let self else { return }
+            self.latestGhostIcon = icon
+            self.renderStatusItem()
         }
 
         // Force initial render
         self.animationController.forceRender()
+    }
+
+    private func observeAutomationTargetIcons() {
+        withObservationTracking {
+            _ = self.automationTargetTracker.activeTargets
+        } onChange: { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.updateAutomationTargets(self.automationTargetTracker.activeTargets)
+                self.observeAutomationTargetIcons()
+            }
+        }
+    }
+
+    private func observeAutomationTargetIconSetting() {
+        withObservationTracking {
+            _ = self.settings.showAutomationTargetIcons
+        } onChange: { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.automationTargetTracker.setEnabled(self.settings.showAutomationTargetIcons)
+                self.updateAutomationTargets(self.automationTargetTracker.activeTargets)
+                self.observeAutomationTargetIconSetting()
+            }
+        }
+    }
+
+    private func observeEffectiveAppearance() {
+        let application = NSApplication.shared
+        self.appearanceObservation = application.observe(\.effectiveAppearance, options: [.new]) { [weak self] _, _ in
+            Task { @MainActor [weak self] in
+                self?.renderStatusItem()
+            }
+        }
+    }
+
+    private func updateAutomationTargets(_ targets: [AutomationTarget]) {
+        self.resolvedAutomationTargets = targets.compactMap { target -> ResolvedAutomationTarget? in
+            guard let icon = self.automationTargetIcon(for: target) else { return nil }
+            return ResolvedAutomationTarget(target: target, icon: icon)
+        }
+        let resolvedTargetCount = self.resolvedAutomationTargets.count
+        self.logger.debug("Rendering status item with \(resolvedTargetCount) target icons (\(targets.count) tracked)")
+        self.renderStatusItem()
+    }
+
+    private func renderStatusItem() {
+        guard let button = self.statusItem.button, let ghostIcon = self.latestGhostIcon else { return }
+
+        guard !self.resolvedAutomationTargets.isEmpty else {
+            ghostIcon.isTemplate = true
+            button.image = ghostIcon
+            button.toolTip = "Peekaboo"
+            button.setAccessibilityLabel("Peekaboo")
+            return
+        }
+
+        let appearance = button.effectiveAppearance
+        let targetCount = self.resolvedAutomationTargets.count
+        let imageWidth = Self.statusIconSize.width * CGFloat(targetCount + 1) +
+            Self.statusIconSpacing * CGFloat(targetCount)
+        let compositeIcon = NSImage(
+            size: NSSize(width: imageWidth, height: Self.statusIconSize.height),
+            flipped: false)
+        { [resolvedAutomationTargets = self.resolvedAutomationTargets] _ in
+            let ghostRect = NSRect(origin: .zero, size: Self.statusIconSize)
+            ghostIcon.draw(in: ghostRect)
+
+            let context = NSGraphicsContext.current!.cgContext
+            context.saveGState()
+            context.setBlendMode(.sourceIn)
+            appearance.performAsCurrentDrawingAppearance {
+                context.setFillColor(NSColor.labelColor.cgColor)
+                context.fill(ghostRect)
+            }
+            context.restoreGState()
+
+            for (index, resolvedTarget) in resolvedAutomationTargets.enumerated() {
+                let x = Self.statusIconSize.width + Self.statusIconSpacing +
+                    CGFloat(index) * (Self.statusIconSize.width + Self.statusIconSpacing)
+                let iconRect = NSRect(
+                    x: x,
+                    y: 0,
+                    width: Self.statusIconSize.width,
+                    height: Self.statusIconSize.height)
+                resolvedTarget.icon.draw(in: iconRect)
+            }
+            return true
+        }
+        compositeIcon.isTemplate = false
+        button.image = compositeIcon
+
+        let names = self.resolvedAutomationTargets.map(\.target.name).joined(separator: ", ")
+        let description = "Peekaboo is automating \(names)"
+        button.toolTip = description
+        button.setAccessibilityLabel(description)
+
+        let frame = button.window?.frame ?? .zero
+        self.logger.debug(
+            "Status item visible=\(self.statusItem.isVisible) frame=\(String(describing: frame), privacy: .public)")
+    }
+
+    private func automationTargetIcon(for target: AutomationTarget) -> NSImage? {
+        let sourceIcon: NSImage? = if let runningIcon = NSRunningApplication(processIdentifier: target
+            .processIdentifier)?.icon
+        {
+            runningIcon
+        } else if let bundleIdentifier = target.bundleIdentifier,
+                  let applicationURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleIdentifier)
+        {
+            NSWorkspace.shared.icon(forFile: applicationURL.path)
+        } else {
+            nil
+        }
+
+        guard let icon = sourceIcon?.copy() as? NSImage else { return nil }
+        icon.size = Self.statusIconSize
+        icon.isTemplate = false
+        return icon
     }
 
     private func setupPopover() {

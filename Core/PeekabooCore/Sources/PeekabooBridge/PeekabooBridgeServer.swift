@@ -36,6 +36,7 @@ public final class PeekabooBridgeServer {
     let postEventAccessRequester: @MainActor @Sendable () -> Bool
     let permissionStatusEvaluator: @MainActor @Sendable (_ allowAppleScriptLaunch: Bool) -> PermissionsStatus
     let desktopMutationWatermarkStore: DesktopMutationWatermarkStore?
+    let automationActivityObserver: (@Sendable (pid_t) -> Void)?
     private let desktopMutationGate = PeekabooBridgeMutationGate()
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
@@ -53,6 +54,7 @@ public final class PeekabooBridgeServer {
         postEventAccessEvaluator: (@MainActor @Sendable () -> Bool)? = nil,
         postEventAccessRequester: (@MainActor @Sendable () -> Bool)? = nil,
         permissionStatusEvaluator: (@MainActor @Sendable (_ allowAppleScriptLaunch: Bool) -> PermissionsStatus)? = nil,
+        automationActivityObserver: (@Sendable (pid_t) -> Void)? = nil,
         encoder: JSONEncoder = .peekabooBridgeEncoder(),
         decoder: JSONDecoder = .peekabooBridgeDecoder())
     {
@@ -64,6 +66,7 @@ public final class PeekabooBridgeServer {
         self.allowedOperations = allowedOperations
         self.daemonControl = daemonControl
         self.desktopMutationWatermarkStore = desktopMutationWatermarkStore
+        self.automationActivityObserver = automationActivityObserver
         self.postEventAccessEvaluator = postEventAccessEvaluator ?? { [services] in
             services.permissions.checkPostEventPermission()
         }

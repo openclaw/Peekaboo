@@ -222,6 +222,7 @@ private struct AppStateConnectionContext {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let logger = Logger(subsystem: "boo.peekaboo.app", category: "App")
     private var statusBarController: StatusBarController?
+    private let automationTargetTracker = AutomationTargetTracker()
     let updaterController: any UpdaterProviding = makeUpdaterController()
     var windowOpener: ((String) -> Void)?
     private var bridgeHost: PeekabooBridgeHost?
@@ -270,6 +271,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 sessionStore: context.sessionStore,
                 permissions: context.permissions,
                 settings: context.settings,
+                automationTargetTracker: self.automationTargetTracker,
                 updater: self.updaterController)
         }
 
@@ -555,6 +557,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             "boo.peekaboo.mac", // GUI
         ]
         let allowlistedTeams = PeekabooBridgeConstants.trustedReleaseTeamIDs
+        let automationActivityObserver = self.makeAutomationActivityObserver()
 
         self.logger.info("Starting Peekaboo Bridge at \(PeekabooBridgeConstants.peekabooSocketPath, privacy: .public)")
         self.bridgeStartTask = Task { @MainActor [weak self] in
@@ -569,6 +572,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         socketPath: PeekabooBridgeConstants.peekabooSocketPath,
                         allowlistedTeams: allowlistedTeams,
                         allowlistedBundles: allowlistedBundles,
+                        automationActivityObserver: automationActivityObserver,
                         allowedOperations: PeekabooBridgeOperation.remoteDefaultAllowlist)
                     return
                 } catch PeekabooBridgeHostError.socketAlreadyOwned {
@@ -585,6 +589,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         .error("Failed to start Peekaboo Bridge: \(error.localizedDescription, privacy: .public)")
                     return
                 }
+            }
+        }
+    }
+
+    private func makeAutomationActivityObserver() -> @Sendable (pid_t) -> Void {
+        let tracker = self.automationTargetTracker
+        return { [weak tracker] processIdentifier in
+            Task { @MainActor in
+                tracker?.recordActivity(pid: processIdentifier)
             }
         }
     }

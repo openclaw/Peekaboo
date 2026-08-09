@@ -10,6 +10,14 @@ struct VisualizerSettingsView: View {
 
     var body: some View {
         Form {
+            Section("Menu Bar") {
+                SettingsToggleRow(
+                    title: "Show automated app icons in the menu bar",
+                    subtitle: "Show recently automated apps next to Peekaboo's menu bar icon.",
+                    systemImage: "app.badge",
+                    isOn: self.$settings.showAutomationTargetIcons)
+            }
+
             Section {
                 SettingsToggleRow(
                     title: "Enable visualizer",

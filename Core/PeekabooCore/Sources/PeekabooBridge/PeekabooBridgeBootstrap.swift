@@ -11,6 +11,7 @@ public enum PeekabooBridgeBootstrap {
         allowlistedTeams: Set<String>,
         allowlistedBundles: Set<String>,
         daemonControl: (any PeekabooDaemonControlProviding)? = nil,
+        automationActivityObserver: (@Sendable (pid_t) -> Void)? = nil,
         allowedOperations: Set<PeekabooBridgeOperation> = PeekabooBridgeOperation.remoteDefaultAllowlist,
         maxMessageBytes: Int = 64 * 1024 * 1024,
         requestTimeoutSec: TimeInterval = 10) -> PeekabooBridgeHost
@@ -22,7 +23,8 @@ public enum PeekabooBridgeBootstrap {
             allowlistedBundles: allowlistedBundles,
             allowedOperations: allowedOperations,
             daemonControl: daemonControl,
-            desktopMutationWatermarkStore: DesktopMutationWatermarkStore())
+            desktopMutationWatermarkStore: DesktopMutationWatermarkStore(),
+            automationActivityObserver: automationActivityObserver)
         let host = PeekabooBridgeHost(
             socketPath: socketPath,
             server: server,
@@ -43,6 +45,7 @@ public enum PeekabooBridgeBootstrap {
         allowlistedTeams: Set<String>,
         allowlistedBundles: Set<String>,
         daemonControl: (any PeekabooDaemonControlProviding)? = nil,
+        automationActivityObserver: (@Sendable (pid_t) -> Void)? = nil,
         allowedOperations: Set<PeekabooBridgeOperation> = PeekabooBridgeOperation.remoteDefaultAllowlist,
         maxMessageBytes: Int = 64 * 1024 * 1024,
         requestTimeoutSec: TimeInterval = 10) async throws -> PeekabooBridgeHost
@@ -54,7 +57,8 @@ public enum PeekabooBridgeBootstrap {
             allowlistedBundles: allowlistedBundles,
             allowedOperations: allowedOperations,
             daemonControl: daemonControl,
-            desktopMutationWatermarkStore: DesktopMutationWatermarkStore())
+            desktopMutationWatermarkStore: DesktopMutationWatermarkStore(),
+            automationActivityObserver: automationActivityObserver)
         let host = PeekabooBridgeHost(
             socketPath: socketPath,
             server: server,
