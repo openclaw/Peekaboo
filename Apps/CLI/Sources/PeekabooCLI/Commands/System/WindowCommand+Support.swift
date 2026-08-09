@@ -90,16 +90,12 @@ struct WindowIdentificationOptions: CommanderParsable, ApplicationResolvable {
     func requireMutationWindow(
         from windows: [ServiceWindowInfo],
         expectedApplication: ServiceApplicationInfo?,
-        action: String,
-        includeMinimizedFallback: Bool = false
+        action: String
     ) throws -> ServiceWindowInfo {
-        let selected = self.selectWindow(from: windows) ?? (includeMinimizedFallback
-            ? windows.first(where: \.isMinimized)
-            : nil)
-        guard let window = selected else {
+        guard let window = self.selectWindow(from: windows) else {
             throw PeekabooError.windowNotFound(criteria: "No matching window found to \(action)")
         }
-        if self.windowId != nil, let expectedApplication {
+        if let expectedApplication {
             guard let expectedProcessStartIdentity = expectedApplication.processStartIdentity,
                   let identity = window.mutationIdentity,
                   identity.ownerProcessIdentifier == expectedApplication.processIdentifier,

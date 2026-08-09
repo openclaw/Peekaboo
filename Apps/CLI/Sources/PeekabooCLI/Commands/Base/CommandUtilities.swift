@@ -239,8 +239,8 @@ extension WindowIdentificationOptions {
             windows.first(where: { $0.windowID == windowId })
         } else if let title = windowTitle {
             windows.first { $0.title.localizedCaseInsensitiveContains(title) }
-        } else if let index = windowIndex, index < windows.count {
-            windows[index]
+        } else if let index = windowIndex {
+            windows.indices.contains(index) ? windows[index] : nil
         } else {
             ObservationTargetResolver.bestWindow(from: windows)
         }

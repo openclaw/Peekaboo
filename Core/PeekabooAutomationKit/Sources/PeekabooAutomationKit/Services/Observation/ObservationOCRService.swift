@@ -129,97 +129,200 @@ public struct OCRService: OCRRecognizing {
 }
 
 @_spi(Testing) public enum OCRExecutionRunner {
+    @TaskLocal private static var ownsLease = false
+    private static let coordinator = OCRExecutionCoordinator()
+
     public static func run<T: Sendable>(
         seconds: TimeInterval,
         operation: @escaping @Sendable () throws -> T) async throws -> T
     {
-        guard seconds.isFinite, seconds > 0 else {
-            throw CaptureError.detectionTimedOut(seconds)
+        if self.ownsLease {
+            return try autoreleasepool(invoking: operation)
         }
-        let state = OCRExecutionState<T>()
-        return try await withTaskCancellationHandler {
-            try await withCheckedThrowingContinuation { continuation in
-                state.install(continuation)
-                let timeoutTask = Task.detached {
-                    do {
-                        try await Task.sleep(for: .seconds(seconds))
-                        state.resume(with: .failure(CaptureError.detectionTimedOut(seconds)))
-                    } catch {
-                        // Completion or caller cancellation cancels the deadline task.
-                    }
-                }
-                state.setTimeoutTask(timeoutTask)
-                DispatchQueue.global(qos: .userInitiated).async {
-                    let result: Result<T, any Error> = autoreleasepool {
-                        do {
-                            return try .success(operation())
-                        } catch {
-                            return .failure(error)
-                        }
-                    }
-                    state.resume(with: result)
-                }
-            }
-        } onCancel: {
-            state.resume(with: .failure(CancellationError()))
+        return try await self.runAsync(seconds: seconds) {
+            try autoreleasepool(invoking: operation)
         }
     }
 
-    public static func runAsync<T: Sendable>(
+    static func runAsync<T: Sendable>(
+        seconds: TimeInterval,
+        operation: @escaping @Sendable () async throws -> T) async throws -> T
+    {
+        if self.ownsLease {
+            return try await operation()
+        }
+        return try await self.coordinator.run(seconds: seconds) {
+            try await self.$ownsLease.withValue(true) {
+                try await operation()
+            }
+        }
+    }
+
+    static func isQuarantinedForTesting() async -> Bool {
+        await self.coordinator.isQuarantined
+    }
+}
+
+/// Owns the real lifetime of one OCR call, including async recognizers that ignore cancellation. A caller-visible
+/// timeout or cancellation quarantines the lease until that operation actually returns, preventing job buildup.
+actor OCRExecutionCoordinator {
+    private enum LeasePhase: Equatable {
+        case acquiring
+        case running
+        case quarantined
+    }
+
+    private struct Lease {
+        let id: UUID
+        var phase: LeasePhase
+    }
+
+    private var activeLease: Lease?
+
+    func run<T: Sendable>(
         seconds: TimeInterval,
         operation: @escaping @Sendable () async throws -> T) async throws -> T
     {
         guard seconds.isFinite, seconds > 0 else {
             throw CaptureError.detectionTimedOut(seconds)
         }
-        let state = OCRExecutionState<T>()
+        let deadline = ContinuousClock.now.advanced(by: .seconds(seconds))
+        let leaseID = try await self.reserveLease(deadline: deadline, timeoutSeconds: seconds)
+        let race = OCRExecutionRace<T>()
+
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
-                state.install(continuation)
-                let timeoutTask = Task.detached {
-                    do {
-                        try await Task.sleep(for: .seconds(seconds))
-                        state.resume(with: .failure(CaptureError.detectionTimedOut(seconds)))
-                    } catch {
-                        // Completion or caller cancellation cancels the deadline task.
-                    }
+                guard race.install(continuation) else {
+                    self.release(id: leaseID)
+                    return
                 }
-                state.setTimeoutTask(timeoutTask)
-                Task.detached {
+                guard ContinuousClock.now < deadline else {
+                    self.release(id: leaseID)
+                    race.resume(.failure(CaptureError.detectionTimedOut(seconds)))
+                    return
+                }
+
+                self.markRunning(id: leaseID)
+                let operationTask = Task.detached(priority: .userInitiated) {
+                    guard race.claimOperation() else {
+                        await self.release(id: leaseID)
+                        return
+                    }
+                    let result: Result<T, any Error>
                     do {
                         let value = try await operation()
-                        state.resume(with: .success(value))
+                        result = .success(value)
                     } catch {
-                        state.resume(with: .failure(error))
+                        result = .failure(error)
+                    }
+                    await self.release(id: leaseID)
+                    race.resume(result)
+                }
+                race.setOperationTask(operationTask)
+
+                let timeoutTask = Task.detached {
+                    do {
+                        let now = ContinuousClock.now
+                        if now < deadline {
+                            try await Task.sleep(for: now.duration(to: deadline))
+                        }
+                    } catch {
+                        return
+                    }
+                    if race.resume(.failure(CaptureError.detectionTimedOut(seconds))) {
+                        race.cancelOperation()
+                        await self.quarantine(id: leaseID)
                     }
                 }
+                race.setTimeoutTask(timeoutTask)
             }
         } onCancel: {
-            state.resume(with: .failure(CancellationError()))
+            if race.cancel() {
+                race.cancelOperation()
+                Task { await self.quarantine(id: leaseID) }
+            }
         }
+    }
+
+    var isQuarantined: Bool {
+        self.activeLease?.phase == .quarantined
+    }
+
+    private func reserveLease(
+        deadline: ContinuousClock.Instant,
+        timeoutSeconds: TimeInterval) async throws -> UUID
+    {
+        while let lease = self.activeLease {
+            if lease.phase == .quarantined {
+                throw OCRServiceError.incomplete(
+                    "OCR unavailable while a timed-out or cancelled Vision operation is still finishing")
+            }
+            try Task.checkCancellation()
+            guard ContinuousClock.now < deadline else {
+                throw CaptureError.detectionTimedOut(timeoutSeconds)
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        try Task.checkCancellation()
+        guard ContinuousClock.now < deadline else {
+            throw CaptureError.detectionTimedOut(timeoutSeconds)
+        }
+        let id = UUID()
+        self.activeLease = Lease(id: id, phase: .acquiring)
+        return id
+    }
+
+    private func markRunning(id: UUID) {
+        guard self.activeLease?.id == id else { return }
+        self.activeLease?.phase = .running
+    }
+
+    private func quarantine(id: UUID) {
+        guard self.activeLease?.id == id, self.activeLease?.phase == .running else { return }
+        self.activeLease?.phase = .quarantined
+    }
+
+    private func release(id: UUID) {
+        guard self.activeLease?.id == id else { return }
+        self.activeLease = nil
     }
 }
 
-private final class OCRExecutionState<T: Sendable>: @unchecked Sendable {
+private final class OCRExecutionRace<T: Sendable>: @unchecked Sendable {
     private let lock = NSLock()
     private var continuation: CheckedContinuation<T, any Error>?
     private var timeoutTask: Task<Void, Never>?
-    private var finished = false
+    private var operationTask: Task<Void, Never>?
+    private var terminalResult: Result<T, any Error>?
+    private var operationStarted = false
 
-    func install(_ continuation: CheckedContinuation<T, any Error>) {
-        let alreadyFinished = self.lock.withLock {
-            guard !self.finished else { return true }
+    func install(_ continuation: CheckedContinuation<T, any Error>) -> Bool {
+        let terminalResult = self.lock.withLock { () -> Result<T, any Error>? in
+            if let terminalResult = self.terminalResult {
+                return terminalResult
+            }
             self.continuation = continuation
+            return nil
+        }
+        if let terminalResult {
+            continuation.resume(with: terminalResult)
             return false
         }
-        if alreadyFinished {
-            continuation.resume(throwing: CancellationError())
+        return true
+    }
+
+    func claimOperation() -> Bool {
+        self.lock.withLock {
+            guard self.terminalResult == nil, !self.operationStarted else { return false }
+            self.operationStarted = true
+            return true
         }
     }
 
     func setTimeoutTask(_ task: Task<Void, Never>) {
         let cancel = self.lock.withLock {
-            if self.finished {
+            if self.terminalResult != nil {
                 return true
             }
             self.timeoutTask = task
@@ -230,17 +333,41 @@ private final class OCRExecutionState<T: Sendable>: @unchecked Sendable {
         }
     }
 
-    func resume(with result: Result<T, any Error>) {
+    func setOperationTask(_ task: Task<Void, Never>) {
+        let cancel = self.lock.withLock {
+            if self.terminalResult != nil {
+                return true
+            }
+            self.operationTask = task
+            return false
+        }
+        if cancel {
+            task.cancel()
+        }
+    }
+
+    func cancelOperation() {
+        self.lock.withLock { self.operationTask }?.cancel()
+    }
+
+    @discardableResult
+    func resume(_ result: Result<T, any Error>) -> Bool {
         let completion: (CheckedContinuation<T, any Error>?, Task<Void, Never>?) = self.lock.withLock {
-            guard !self.finished else { return (nil, nil) }
-            self.finished = true
+            guard self.terminalResult == nil else { return (nil, nil) }
+            self.terminalResult = result
             let completion = (self.continuation, self.timeoutTask)
             self.continuation = nil
             self.timeoutTask = nil
             return completion
         }
+        guard completion.0 != nil else { return false }
         completion.1?.cancel()
         completion.0?.resume(with: result)
+        return true
+    }
+
+    func cancel() -> Bool {
+        self.resume(.failure(CancellationError()))
     }
 }
 

@@ -39,7 +39,6 @@ enum AgentToolMCPBridge {
     static let maxImageDimension = 1600
     static let maxImageBytes = 4 * 1024 * 1024
     static let maxImagesPerResponse = 1
-    static let maxImagesPerTurn = 2
     static let maxSourceDimension = 16384
     static let maxSourceFrameCount = 32
     static let maxSourcePixelCount = 64 * 1024 * 1024
@@ -50,7 +49,8 @@ enum AgentToolMCPBridge {
 
     static func convert(
         _ response: ToolResponse,
-        allowsModelImages: Bool = true) -> AgentToolMCPBridgeResult
+        allowsModelImages: Bool = true,
+        imageOmissionReason: String? = nil) -> AgentToolMCPBridgeResult
     {
         if response.isError {
             return self.convertErrorResponse(response)
@@ -78,7 +78,7 @@ enum AgentToolMCPBridge {
             return false
         }
         let screenshotAttachmentDescription = if !allowsModelImages {
-            "not delivered to this text-only model; do not infer visual state from this result"
+            imageOmissionReason ?? "not delivered to this text-only model; do not infer visual state from this result"
         } else if preparedImages.isEmpty {
             "inline image unavailable"
         } else {
@@ -90,7 +90,7 @@ enum AgentToolMCPBridge {
             case .image:
                 guard let image = preparedImages[index] else {
                     let reason = if !allowsModelImages {
-                        "agent model does not accept images"
+                        imageOmissionReason ?? "agent model does not accept images"
                     } else if images.count >= Self.maxImagesPerResponse {
                         "per-response image limit reached"
                     } else {
@@ -446,6 +446,31 @@ enum AgentToolMCPBridge {
 }
 
 actor AgentToolMCPImageStore {
+    enum Admission: Equatable, Sendable {
+        case admitted
+        case rejected(RejectionReason)
+    }
+
+    enum RejectionReason: Equatable, Sendable {
+        case executionNotActive
+        case capacityReached
+        case duplicateKey
+        case emptyImages
+
+        var omissionReason: String {
+            switch self {
+            case .executionNotActive:
+                "image execution is not active or already closed; image omitted from model context"
+            case .capacityReached:
+                "transient image capacity reached; image omitted from model context"
+            case .duplicateKey:
+                "image result is already pending for this tool call; duplicate image omitted"
+            case .emptyImages:
+                "image result contained no deliverable image data"
+            }
+        }
+    }
+
     struct Key: Hashable, Sendable {
         let sessionID: String
         let executionID: String
@@ -453,28 +478,59 @@ actor AgentToolMCPImageStore {
         let toolCallID: String
     }
 
+    static let defaultMaximumEntries = 8
     static let shared = AgentToolMCPImageStore()
     private struct Entry {
         let images: [ModelMessage.ContentPart.ImageContent]
-        let sequence: UInt64
     }
 
     private var entries: [Key: Entry] = [:]
-    private var nextSequence: UInt64 = 0
+    private var activeExecutionIDs: Set<String> = []
+    private let maximumEntries: Int
 
-    func store(_ images: [ModelMessage.ContentPart.ImageContent], for key: Key) {
-        guard !images.isEmpty else { return }
-        while self.entries.count >= 8,
-              let oldestKey = self.entries.min(by: { $0.value.sequence < $1.value.sequence })?.key
-        {
-            self.entries.removeValue(forKey: oldestKey)
+    init(maximumEntries: Int = defaultMaximumEntries) {
+        self.maximumEntries = max(0, maximumEntries)
+    }
+
+    /// Execution IDs are UUID-unique in production. Registering an already-active ID is rejected; a closed ID may
+    /// be registered again only by explicit test code, and never by a late result because store cannot register.
+    func register(executionID: String) -> Bool {
+        self.activeExecutionIDs.insert(executionID).inserted
+    }
+
+    func isActive(executionID: String) -> Bool {
+        self.activeExecutionIDs.contains(executionID)
+    }
+
+    func store(_ images: [ModelMessage.ContentPart.ImageContent], for key: Key) -> Admission {
+        guard self.activeExecutionIDs.contains(key.executionID) else {
+            return .rejected(.executionNotActive)
         }
-        self.nextSequence &+= 1
-        self.entries[key] = Entry(images: images, sequence: self.nextSequence)
+        guard !images.isEmpty else {
+            return .rejected(.emptyImages)
+        }
+        guard self.entries[key] == nil else {
+            return .rejected(.duplicateKey)
+        }
+        guard self.entries.count < self.maximumEntries else {
+            return .rejected(.capacityReached)
+        }
+        self.entries[key] = Entry(images: images)
+        return .admitted
     }
 
     func take(for key: Key) -> [ModelMessage.ContentPart.ImageContent] {
         self.entries.removeValue(forKey: key)?.images ?? []
+    }
+
+    /// Atomically tombstones this execution for future stores and removes every pending entry it owns.
+    /// No tombstone set is retained: removing the active UUID is sufficient because production never reuses it.
+    func close(executionID: String) {
+        self.activeExecutionIDs.remove(executionID)
+        let keys = self.entries.keys.filter { $0.executionID == executionID }
+        for key in keys {
+            self.entries.removeValue(forKey: key)
+        }
     }
 }
 
@@ -484,26 +540,33 @@ extension PeekabooAgentService {
         toolCalls: [AgentToolCall],
         context: ToolHandlingContext,
         stepIndex: Int,
+        imageStore: AgentToolMCPImageStore = .shared,
         to messages: inout [ModelMessage]) async
     {
-        var images: [ModelMessage.ContentPart.ImageContent] = []
+        var delivered: [(call: AgentToolCall, images: [ModelMessage.ContentPart.ImageContent])] = []
         for call in toolCalls {
             let key = AgentToolMCPImageStore.Key(
                 sessionID: context.sessionId,
                 executionID: context.imageContextID,
                 stepIndex: stepIndex,
                 toolCallID: call.id)
-            let storedImages = await AgentToolMCPImageStore.shared.take(for: key)
-            images.append(contentsOf: storedImages)
+            let storedImages = await imageStore.take(for: key)
+            if !storedImages.isEmpty {
+                delivered.append((call: call, images: storedImages))
+            }
         }
 
-        guard context.supportsVision, !images.isEmpty else { return }
+        guard context.supportsVision, !delivered.isEmpty else { return }
         messages.removeConsumedAgentToolImageContext()
-        let boundedImages = images.prefix(AgentToolMCPBridge.maxImagesPerTurn)
-        var content: [ModelMessage.ContentPart] = [
-            .text("Visual output from the preceding Peekaboo tool result."),
-        ]
-        content.append(contentsOf: boundedImages.map(ModelMessage.ContentPart.image))
+        var content: [ModelMessage.ContentPart] = []
+        for item in delivered {
+            for (index, image) in item.images.enumerated() {
+                content.append(.text(
+                    "Visual output from Peekaboo tool '\(item.call.name)' " +
+                        "(call ID \(item.call.id)), image \(index + 1) of \(item.images.count)."))
+                content.append(.image(image))
+            }
+        }
         messages.append(ModelMessage(
             role: .user,
             content: content,
@@ -540,12 +603,16 @@ func convertToolResponseToAgentToolResultAsync(_ response: ToolResponse) async -
 @preconcurrency
 func convertToolResponseToAgentToolResultAsync(
     _ response: ToolResponse,
-    executionContext: ToolExecutionContext) async -> AnyAgentToolValue
+    executionContext: ToolExecutionContext,
+    imageStore: AgentToolMCPImageStore = .shared) async -> AnyAgentToolValue
 {
-    let allowsModelImages = executionContext.metadata["supportsVision"] != "false"
+    let toolCallID = executionContext.metadata["toolCallId"]
+    let executionID = executionContext.metadata["imageContextId"]
+    let allowsModelImages = executionContext.metadata["supportsVision"] != "false" &&
+        toolCallID != nil && executionID != nil
     let result = AgentToolMCPBridge.convert(response, allowsModelImages: allowsModelImages)
-    if let toolCallID = executionContext.metadata["toolCallId"],
-       let executionID = executionContext.metadata["imageContextId"],
+    if let toolCallID,
+       let executionID,
        !result.images.isEmpty
     {
         let key = AgentToolMCPImageStore.Key(
@@ -553,7 +620,18 @@ func convertToolResponseToAgentToolResultAsync(
             executionID: executionID,
             stepIndex: executionContext.stepIndex,
             toolCallID: toolCallID)
-        await AgentToolMCPImageStore.shared.store(result.images, for: key)
+        let admission = await imageStore.store(result.images, for: key)
+        guard case .admitted = admission else {
+            let reason: String = if case let .rejected(rejection) = admission {
+                rejection.omissionReason
+            } else {
+                "image omitted from model context"
+            }
+            return AgentToolMCPBridge.convert(
+                response,
+                allowsModelImages: false,
+                imageOmissionReason: reason).value
+        }
     }
     return result.value
 }

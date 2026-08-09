@@ -39,8 +39,9 @@ public struct SystemWindowIdentity: Sendable, Equatable {
     }
 }
 
-/// Native process/window identity lookups used when a numeric identifier must not
-/// silently retarget after macOS recycles it.
+/// Native process/window identity lookups used when a numeric identifier must not silently retarget.
+/// PIDs are generation-bound because they are recycled; CGWindowID is Apple's session-scoped
+/// WindowServer identifier, with owner generation and bounds retained as fail-closed change evidence.
 public enum SystemIdentityResolver {
     struct WindowMutationIdentityProviders {
         let processStartIdentity: (pid_t) -> UInt64?
@@ -254,7 +255,8 @@ public enum SystemIdentityResolver {
     }
 
     /// Revalidates only the owner process generation. This is a prerequisite for a bounded AX scan,
-    /// not sufficient evidence that a recyclable window identifier still names the captured window.
+    /// not sufficient evidence that a session-scoped window ID still names the captured target because
+    /// the public API provides no stronger window-incarnation token.
     public static func validateWindowMutationOwnerGeneration(_ expected: WindowMutationIdentity) -> Bool {
         expected.windowID > 0 &&
             expected.ownerProcessIdentifier > 0 &&

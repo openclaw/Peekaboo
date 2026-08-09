@@ -1220,6 +1220,12 @@ final class MockScreenCaptureService: ScreenCaptureServiceProtocol {
         self.metadata = nil
     }
 
+    init(screenRecordingGranted: Bool, metadata: CaptureMetadata) {
+        self.screenRecordingGranted = screenRecordingGranted
+        self.imageData = Self.validPNGData
+        self.metadata = metadata
+    }
+
     init(screenRecordingGranted: Bool, imageData: Data, metadata: CaptureMetadata? = nil) {
         self.screenRecordingGranted = screenRecordingGranted
         self.imageData = imageData

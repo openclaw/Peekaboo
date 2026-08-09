@@ -163,6 +163,82 @@ struct WindowTargetCreationTests {
     }
 
     @Test
+    @MainActor
+    func `mutation selection never substitutes an unrelated minimized window`() {
+        var options = WindowIdentificationOptions()
+        options.app = "Fixture"
+        options.windowTitle = "Requested"
+        let unrelated = ServiceWindowInfo(
+            windowID: 678,
+            title: "Unrelated",
+            bounds: CGRect(x: 0, y: 0, width: 100, height: 100),
+            isMinimized: true
+        )
+
+        #expect(throws: (any Error).self) {
+            try options.requireMutationWindow(
+                from: [unrelated],
+                expectedApplication: nil,
+                action: "restore"
+            )
+        }
+    }
+
+    @Test
+    @MainActor
+    func `out of range mutation index never falls back to another window`() {
+        var options = WindowIdentificationOptions()
+        options.app = "Fixture"
+        options.windowIndex = 4
+        let onlyWindow = ServiceWindowInfo(
+            windowID: 678,
+            title: "Only",
+            bounds: CGRect(x: 0, y: 0, width: 100, height: 100),
+            isMinimized: true
+        )
+
+        #expect(throws: (any Error).self) {
+            try options.requireMutationWindow(
+                from: [onlyWindow],
+                expectedApplication: nil,
+                action: "restore"
+            )
+        }
+    }
+
+    @Test
+    @MainActor
+    func `application mutation selector rejects inventory from another owner`() {
+        var options = WindowIdentificationOptions()
+        options.app = "Fixture"
+        let wrongOwner = ServiceWindowInfo(
+            windowID: 678,
+            title: "Only",
+            bounds: CGRect(x: 0, y: 0, width: 100, height: 100),
+            mutationIdentity: WindowMutationIdentity(
+                windowID: 678,
+                ownerProcessIdentifier: 99,
+                ownerProcessStartIdentity: 8,
+                capturedBounds: CGRect(x: 0, y: 0, width: 100, height: 100)
+            )
+        )
+        let application = ServiceApplicationInfo(
+            processIdentifier: 42,
+            processStartIdentity: 7,
+            bundleIdentifier: "example.fixture",
+            name: "Fixture"
+        )
+
+        #expect(throws: (any Error).self) {
+            try options.requireMutationWindow(
+                from: [wrongOwner],
+                expectedApplication: application,
+                action: "close"
+            )
+        }
+    }
+
+    @Test
     func `validation can allow snapshot-only focus target`() throws {
         var options = WindowIdentificationOptions()
         try options.validate(allowMissingTarget: true)

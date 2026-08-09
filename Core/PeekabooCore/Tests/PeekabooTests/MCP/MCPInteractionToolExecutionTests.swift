@@ -331,7 +331,7 @@ extension MCPToolExecutionTests {
         await UISnapshotManager.shared.removeAllSnapshots()
         let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
         let context = await MCPToolTestHelpers.makeContext(automation: automation)
-        let explicitSnapshot = await UISnapshotManager.shared.createSnapshot()
+        let explicitSnapshot = await Self.makeCoordinateSnapshot()
         let explicitSnapshotId = await explicitSnapshot.id
         let latestSnapshot = await UISnapshotManager.shared.createSnapshot()
         let latestSnapshotId = await latestSnapshot.id
@@ -354,6 +354,101 @@ extension MCPToolExecutionTests {
         #expect(implicitLatest == nil)
         #expect(MCPResponseMeta.requiresFreshObservation(response))
         #expect(!MCPResponseMeta.hasRequiresFreshSee(response))
+    }
+
+    @Test
+    func `foreground global coordinates remain snapshot-free`() async throws {
+        await UISnapshotManager.shared.removeAllSnapshots()
+        let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
+        let context = await MCPToolTestHelpers.makeContext(automation: automation)
+
+        let response = try await ClickTool(context: context).execute(arguments: ToolArguments(raw: [
+            "coords": "40,50",
+            "foreground": true,
+        ]))
+
+        #expect(response.isError == false)
+        guard case let .coordinates(point) = try #require(await MainActor.run { automation.clickCalls.first }).target
+        else {
+            Issue.record("Expected a global coordinate click")
+            return
+        }
+        #expect(point == CGPoint(x: 40, y: 50))
+    }
+
+    @Test
+    func `referenced foreground global coordinates validate context before using raw points`() async throws {
+        await UISnapshotManager.shared.removeAllSnapshots()
+        let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
+        let context = await MCPToolTestHelpers.makeContext(automation: automation)
+        let snapshot = await Self.makeCoordinateSnapshot()
+        let snapshotID = await snapshot.id
+
+        let response = try await ClickTool(context: context).execute(arguments: ToolArguments(raw: [
+            "coords": "140,150",
+            "coordinate_reference": snapshotID,
+            "foreground": true,
+        ]))
+
+        #expect(response.isError == false)
+        guard case let .coordinates(point) = try #require(await MainActor.run { automation.clickCalls.first }).target
+        else {
+            Issue.record("Expected a referenced global coordinate click")
+            return
+        }
+        #expect(point == CGPoint(x: 140, y: 150))
+    }
+
+    @Test
+    func `referenced foreground globals reject stale moved and reused windows`() async throws {
+        await UISnapshotManager.shared.removeAllSnapshots()
+        let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
+        let (movedSnapshot, capturedWindow) = await Self.makeExactCoordinateSnapshot()
+        let movedSnapshotID = await movedSnapshot.id
+        let movedWindow = ServiceWindowInfo(
+            windowID: capturedWindow.windowID,
+            title: capturedWindow.title,
+            bounds: capturedWindow.bounds.offsetBy(dx: 10, dy: 0),
+            mutationIdentity: capturedWindow.mutationIdentity)
+        let movedContext = await MCPToolTestHelpers.makeContext(
+            automation: automation,
+            windows: PointerPolicyWindowService(window: movedWindow))
+        let moved = try await ClickTool(context: movedContext).execute(arguments: ToolArguments(raw: [
+            "coords": "200,200",
+            "snapshot": movedSnapshotID,
+            "foreground": true,
+        ]))
+
+        let (reusedSnapshot, reusedCapturedWindow) = await Self.makeExactCoordinateSnapshot()
+        let reusedSnapshotID = await reusedSnapshot.id
+        let reusedWindow = ServiceWindowInfo(
+            windowID: reusedCapturedWindow.windowID,
+            title: reusedCapturedWindow.title,
+            bounds: reusedCapturedWindow.bounds,
+            mutationIdentity: WindowMutationIdentity(
+                windowID: reusedCapturedWindow.windowID,
+                ownerProcessIdentifier: 111,
+                ownerProcessStartIdentity: 8,
+                capturedBounds: reusedCapturedWindow.bounds))
+        let reusedContext = await MCPToolTestHelpers.makeContext(
+            automation: automation,
+            windows: PointerPolicyWindowService(window: reusedWindow))
+        let reused = try await ClickTool(context: reusedContext).execute(arguments: ToolArguments(raw: [
+            "coords": "200,200",
+            "coordinate_reference": reusedSnapshotID,
+            "foreground": true,
+        ]))
+
+        let stale = try await ClickTool(context: movedContext).execute(arguments: ToolArguments(raw: [
+            "coords": "200,200",
+            "snapshot": "missing-snapshot",
+            "foreground": true,
+        ]))
+
+        #expect(moved.isError)
+        #expect(reused.isError)
+        #expect(stale.isError)
+        #expect(await MainActor.run { automation.clickCalls.isEmpty })
     }
 
     @Test
@@ -669,14 +764,16 @@ extension MCPToolExecutionTests {
     }
 
     private static func makeExactCoordinateSnapshot() async -> (UISnapshot, ServiceWindowInfo) {
+        let bounds = CGRect(x: 100, y: 50, width: 1000, height: 500)
         let identity = WindowMutationIdentity(
             windowID: 42,
             ownerProcessIdentifier: 111,
-            ownerProcessStartIdentity: 7)
+            ownerProcessStartIdentity: 7,
+            capturedBounds: bounds)
         let window = ServiceWindowInfo(
             windowID: 42,
             title: "Coordinate Window",
-            bounds: CGRect(x: 100, y: 50, width: 1000, height: 500),
+            bounds: bounds,
             index: 0,
             mutationIdentity: identity)
         let snapshot = await UISnapshotManager.shared.createSnapshot()

@@ -312,22 +312,6 @@ public struct ClickTool: MCPTool {
 
     private func resolveCoordinates(_ raw: String, request: ClickRequest) async throws -> ClickResolution {
         let point = try self.parseCoordinates(raw)
-        if request.deliveryMode == .foreground, request.coordinateSpace == nil {
-            let snapshot: UISnapshot? = if let snapshotId = request.snapshotId {
-                try await self.requireExplicitSnapshot(id: snapshotId)
-            } else {
-                nil
-            }
-            return ClickResolution(
-                location: point,
-                automationTarget: .coordinates(point),
-                elementDescription: nil,
-                targetApp: snapshot?.applicationName,
-                windowTitle: snapshot?.windowTitle,
-                targetProcessIdentifier: request.pid ?? snapshot?.applicationProcessId,
-                snapshotId: snapshot?.id,
-                snapshotIdToInvalidate: request.snapshotId)
-        }
         let referenceID = request.coordinateReference ?? request.snapshotId
         guard let referenceID else {
             guard request.deliveryMode == .foreground else {
@@ -381,7 +365,7 @@ public struct ClickTool: MCPTool {
             expectedWindowBounds: captured.bounds,
             snapshotId: captured.snapshot.id,
             coordinateSpace: request.coordinateSpace,
-            coordinateReference: request.coordinateReference)
+            coordinateReference: referenceID)
     }
 
     private func requireCapturedCoordinateSnapshot(
@@ -432,13 +416,6 @@ public struct ClickTool: MCPTool {
             processIdentifier: processIdentifier,
             identity: identity,
             bounds: bounds)
-    }
-
-    private func requireExplicitSnapshot(id: String) async throws -> UISnapshot {
-        guard let snapshot = await self.getSnapshot(id: id) else {
-            throw ClickToolError("Snapshot '\(id)' is stale or unavailable.")
-        }
-        return snapshot
     }
 
     private func validateForegroundCoordinateContext(_ captured: CapturedCoordinateSnapshot) async throws {
@@ -558,9 +535,6 @@ private struct ClickRequest {
 
         if let coords = Self.nonEmptyString(arguments.getString("coords")) {
             self.target = .coordinates(coords)
-            if coordinateSpace == nil, coordinateReference != nil {
-                throw ClickToolError("coordinate_reference requires coordinate_space.")
-            }
             if let coordinateSpace, coordinateSpace.requiresReference, coordinateReference == nil {
                 throw ClickToolError("\(coordinateSpace.rawValue) coordinates require coordinate_reference from see.")
             }

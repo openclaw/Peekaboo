@@ -149,7 +149,7 @@ final class DesktopObservationServiceTests: XCTestCase {
         XCTAssertNil(automation.lastWindowContext?.windowMutationIdentity)
     }
 
-    func testCaptureWithoutReceiptDropsPreCaptureActionIdentity() async throws {
+    func testCaptureWithoutMatchingReceiptFailsInsteadOfRetargeting() async throws {
         let application = ServiceApplicationInfo(
             processIdentifier: 123,
             processStartIdentity: 700,
@@ -176,13 +176,19 @@ final class DesktopObservationServiceTests: XCTestCase {
             applications: applications,
             exactWindowMetadataProvider: StableExactWindowMetadataProvider())
 
-        let result = try await service.observe(DesktopObservationRequest(
-            target: .pid(123, window: .id(42)),
-            detection: DesktopDetectionOptions(mode: .accessibility)))
+        do {
+            _ = try await service.observe(DesktopObservationRequest(
+                target: .pid(123, window: .id(42)),
+                detection: DesktopDetectionOptions(mode: .accessibility)))
+            XCTFail("Expected capture metadata from a replacement process to fail closed")
+        } catch let error as DesktopObservationError {
+            guard case .targetChanged = error else {
+                XCTFail("Expected targetChanged, got \(error)")
+                return
+            }
+        }
 
         XCTAssertEqual(capture.operations, [.windowID(42, .logical1x, .auto)])
-        XCTAssertEqual(result.target.app?.processStartIdentity, 800)
-        XCTAssertNil(result.target.detectionContext?.windowMutationIdentity)
         XCTAssertNil(automation.lastWindowContext?.windowMutationIdentity)
     }
 
@@ -614,8 +620,7 @@ final class DesktopObservationServiceTests: XCTestCase {
             id: 105,
             title: "OCR timeout",
             bounds: CGRect(x: 100, y: 100, width: 500, height: 400))
-        let ocr = NoncooperativeOCRRecognizer()
-        defer { ocr.release() }
+        let ocr = TimedOutOCRRecognizer()
         let service = DesktopObservationService(
             screenCapture: RecordingScreenCaptureService(result: Self.captureResult(app: app, window: window)),
             automation: RecordingUIAutomationService(),
@@ -845,6 +850,36 @@ final class DesktopObservationServiceTests: XCTestCase {
         }
         return png
     }
+}
+
+@MainActor
+func makeOCRObservationServiceForTesting(_ recognizer: any OCRRecognizing) -> DesktopObservationService {
+    let app = ServiceApplicationInfo(
+        processIdentifier: 123,
+        bundleIdentifier: "com.example.fixture",
+        name: "Fixture",
+        windowCount: 1)
+    let window = ServiceWindowInfo(
+        windowID: 105,
+        title: "OCR fixture",
+        bounds: CGRect(x: 100, y: 100, width: 500, height: 400),
+        windowLevel: 0,
+        alpha: 1,
+        layer: 0,
+        isOnScreen: true,
+        sharingState: .readOnly)
+    let capture = CaptureResult(
+        imageData: Data([9]),
+        metadata: CaptureMetadata(
+            size: window.bounds.size,
+            mode: .window,
+            applicationInfo: app,
+            windowInfo: window))
+    return DesktopObservationService(
+        screenCapture: RecordingScreenCaptureService(result: capture),
+        automation: RecordingUIAutomationService(),
+        applications: RecordingApplicationService(applications: [app], windows: [window]),
+        ocrRecognizer: recognizer)
 }
 
 private struct ReusedExactWindowMetadataProvider: ExactWindowMetadataProviding {
@@ -1164,9 +1199,8 @@ private final class RecordingOCRRecognizer: OCRRecognizing, @unchecked Sendable 
     }
 }
 
-private final class NoncooperativeOCRRecognizer: OCRRecognizing, @unchecked Sendable {
+private final class TimedOutOCRRecognizer: OCRRecognizing, @unchecked Sendable {
     private let lock = NSLock()
-    private var continuation: CheckedContinuation<Void, Never>?
     private var timeout: TimeInterval = 0
 
     var receivedTimeout: TimeInterval {
@@ -1175,18 +1209,6 @@ private final class NoncooperativeOCRRecognizer: OCRRecognizing, @unchecked Send
 
     func recognizeText(in _: Data, timeoutSeconds: TimeInterval) async throws -> OCRTextResult {
         self.lock.withLock { self.timeout = timeoutSeconds }
-        await withCheckedContinuation { continuation in
-            self.lock.withLock { self.continuation = continuation }
-        }
-        return OCRTextResult(observations: [], imageSize: CGSize(width: 1, height: 1))
-    }
-
-    func release() {
-        let continuation = self.lock.withLock {
-            let continuation = self.continuation
-            self.continuation = nil
-            return continuation
-        }
-        continuation?.resume()
+        throw CaptureError.detectionTimedOut(timeoutSeconds)
     }
 }

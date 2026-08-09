@@ -38,7 +38,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Return launch-bound process-generation receipts and refreshed exact window IDs from launch/open/relaunch readiness, reject PID reuse before returning a launch result, verify process termination before reporting quit success, pin application quit to the resolved PID/process generation, and accept saved generation receipts for race-free cleanup.
 - Make maximize a bounded exact-window geometry operation that cannot activate or enter full screen, and require exact WindowServer disappearance before close succeeds.
 - Pin destructive window mutations to the selected owner PID/process generation through Bridge admission and correct minimized-window inventory with AX state.
-- Bind destructive window mutations to immutable capture-time bounds, reject same-process CGWindowID reuse, repin intended geometry transitions, and refuse Bridge hosts that would ignore the stronger receipt.
+- Bind destructive window mutations to immutable capture-time bounds, reject owner-generation or bounds drift, repin intended geometry transitions, and refuse Bridge hosts that would ignore the stronger receipt.
+- Fail closed when exact window selection or capture receipts drift, remove bounds-only minimized-window fallbacks, quarantine timed-out OCR until native work exits, and keep transient agent images correlated and execution-owned.
 - Keep minimized exact PID/window-ID targets addressable through bounded AX inventory, add native background `window restore` to CLI/MCP/Bridge, and make default minimized close return restore-or-`--foreground` guidance.
 - Treat WindowServer disappearance as valid after AX-verified minimize and close minimized exact windows through a bounded non-activating AX restore/close path.
 - Re-minimize a temporarily restored exact window before returning any failed or indeterminate minimized-close result.

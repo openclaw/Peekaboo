@@ -342,10 +342,10 @@ public enum WindowSharingState: Int, Codable, Sendable {
 
 /// Pins a destructive window mutation to one WindowServer ID and one process generation.
 ///
-/// A numeric CGWindowID and PID can both be recycled. Callers must retain this receipt from the
-/// window-selection result and hosts must revalidate its immutable capture-time bounds after
-/// mutation admission and immediately before native dispatch. `isMinimized` is only a state hint;
-/// it is never identity evidence.
+/// A PID can be recycled, so its process-start generation is required. CGWindowID is Apple's
+/// session-scoped WindowServer identifier and has no stronger public incarnation token; callers retain
+/// owner generation and immutable capture-time bounds as fail-closed change evidence. `isMinimized` is
+/// only a state hint and is never identity evidence.
 public struct WindowMutationIdentity: Sendable, Codable, Equatable {
     public let windowID: Int
     public let ownerProcessIdentifier: Int32

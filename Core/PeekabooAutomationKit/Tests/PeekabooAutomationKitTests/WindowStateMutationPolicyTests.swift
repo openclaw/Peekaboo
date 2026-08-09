@@ -213,6 +213,46 @@ struct WindowStateMutationPolicyTests {
     }
 
     @Test
+    func `minimized restoration rejects a sibling with identical bounds`() {
+        #expect(!exactMinimizedRestoreCandidateIsValid(
+            expectedIdentity: self.identity.withMinimizedState(true),
+            liveProcessStartIdentity: 7,
+            candidateWindowID: 925,
+            candidateBounds: self.identity.capturedBounds,
+            candidateIsMinimized: true))
+    }
+
+    @Test
+    func `minimized restoration rejects a candidate without an exact window ID`() {
+        #expect(!exactMinimizedRestoreCandidateIsValid(
+            expectedIdentity: self.identity.withMinimizedState(true),
+            liveProcessStartIdentity: 7,
+            candidateWindowID: nil,
+            candidateBounds: self.identity.capturedBounds,
+            candidateIsMinimized: true))
+    }
+
+    @Test
+    func `exact minimized restoration accepts matching ID generation and bounds`() {
+        #expect(exactMinimizedRestoreCandidateIsValid(
+            expectedIdentity: self.identity.withMinimizedState(true),
+            liveProcessStartIdentity: 7,
+            candidateWindowID: 924,
+            candidateBounds: self.identity.capturedBounds,
+            candidateIsMinimized: true))
+    }
+
+    @Test
+    func `minimized restoration rejects process generation change`() {
+        #expect(!exactMinimizedRestoreCandidateIsValid(
+            expectedIdentity: self.identity.withMinimizedState(true),
+            liveProcessStartIdentity: 8,
+            candidateWindowID: 924,
+            candidateBounds: self.identity.capturedBounds,
+            candidateIsMinimized: true))
+    }
+
+    @Test
     func `AX-only minimized inventory carries owner generation mutation receipt`() throws {
         let window = ServiceWindowInfo(
             windowID: 924,

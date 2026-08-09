@@ -128,6 +128,38 @@ extension DesktopObservationService {
             warning: capture.warning)
     }
 
+    nonisolated static func validateCaptureReceipt(
+        _ capture: CaptureResult,
+        for target: ResolvedObservationTarget) throws
+    {
+        guard let expected = target.detectionContext?.windowMutationIdentity else {
+            return
+        }
+        guard let expectedBounds = expected.capturedBounds,
+              let resolvedApplication = target.app,
+              resolvedApplication.processIdentifier == expected.ownerProcessIdentifier,
+              resolvedApplication.processStartIdentity == expected.ownerProcessStartIdentity,
+              let resolvedWindow = target.window,
+              resolvedWindow.windowID == expected.windowID,
+              resolvedWindow.bounds == expectedBounds,
+              let capturedApplication = capture.metadata.applicationInfo,
+              capturedApplication.processIdentifier == expected.ownerProcessIdentifier,
+              capturedApplication.processStartIdentity == expected.ownerProcessStartIdentity,
+              let capturedWindow = capture.metadata.windowInfo,
+              capturedWindow.windowID == expected.windowID,
+              capturedWindow.bounds == expectedBounds,
+              let capturedIdentity = capturedWindow.mutationIdentity,
+              capturedIdentity.windowID == expected.windowID,
+              capturedIdentity.ownerProcessIdentifier == expected.ownerProcessIdentifier,
+              capturedIdentity.ownerProcessStartIdentity == expected.ownerProcessStartIdentity,
+              capturedIdentity.capturedBounds == expectedBounds
+        else {
+            throw DesktopObservationError.targetChanged(
+                "the captured application generation, exact window ID, owner receipt, or bounds no longer " +
+                    "matched the resolved target")
+        }
+    }
+
     static func bindingCaptureReceipt(
         to target: ResolvedObservationTarget,
         capture: CaptureResult) -> ResolvedObservationTarget

@@ -132,21 +132,6 @@ extension WindowManagementService {
                         bounds: snapshot.bounds,
                         isMinimized: snapshot.isMinimized)]
                 }
-                if let snapshot = await Task.detached(priority: .userInitiated, operation: {
-                    BoundedAXWindowIdentityScanner.findUnique(
-                        windowID: id,
-                        ownerProcessIdentifier: ownerPID,
-                        expectedBounds: windowInfo.bounds,
-                        timeout: 1)
-                }).value,
-                    snapshot.ownerProcessStartIdentity == originalIdentity.ownerProcessStartIdentity,
-                    SystemIdentityResolver.processStartIdentity(ownerPID) == snapshot.ownerProcessStartIdentity
-                {
-                    return [windowInfo.withExactAXState(
-                        title: snapshot.title,
-                        bounds: snapshot.bounds,
-                        isMinimized: snapshot.isMinimized)]
-                }
             }
             return [windowInfo]
         }
@@ -406,67 +391,6 @@ enum BoundedAXWindowIdentityScanner {
             }
         }
         return nil
-    }
-
-    static func findUnique(
-        windowID: Int,
-        ownerProcessIdentifier: pid_t,
-        expectedBounds: CGRect,
-        timeout: TimeInterval,
-        processStartIdentityProvider: @Sendable (pid_t) -> UInt64? =
-            SystemIdentityResolver.processStartIdentity) -> BoundedAXWindowIdentitySnapshot?
-    {
-        guard let processStartIdentity = processStartIdentityProvider(ownerProcessIdentifier) else { return nil }
-        let application = AXUIElementCreateApplication(ownerProcessIdentifier)
-        let deadline = ContinuousClock.now.advanced(by: .seconds(timeout))
-        guard let callTimeout = self.remainingCallTimeout(until: deadline) else { return nil }
-        let windows: [AXUIElement]? = AXChildWindowMessagingTimeout.perform(
-            on: application,
-            timeout: callTimeout)
-        { applicationElement in
-            var windowsValue: CFTypeRef?
-            guard AXUIElementCopyAttributeValue(
-                applicationElement,
-                kAXWindowsAttribute as CFString,
-                &windowsValue) == .success
-            else {
-                return nil
-            }
-            return windowsValue as? [AXUIElement]
-        }
-        guard let windows else { return nil }
-
-        var matches: [BoundedAXWindowIdentitySnapshot] = []
-        for window in windows {
-            guard let windowTimeout = self.remainingCallTimeout(until: deadline) else { return nil }
-            let snapshot = AXChildWindowMessagingTimeout.perform(
-                on: window,
-                timeout: windowTimeout)
-            { childWindow -> BoundedAXWindowIdentitySnapshot? in
-                guard let position = self.pointAttribute(kAXPositionAttribute, of: childWindow),
-                      let size = self.sizeAttribute(kAXSizeAttribute, of: childWindow),
-                      CGRect(origin: position, size: size) == expectedBounds
-                else {
-                    return nil
-                }
-                return BoundedAXWindowIdentitySnapshot(
-                    windowID: windowID,
-                    ownerProcessIdentifier: ownerProcessIdentifier,
-                    ownerProcessStartIdentity: processStartIdentity,
-                    title: self.stringAttribute(kAXTitleAttribute, of: childWindow) ?? "",
-                    bounds: expectedBounds,
-                    isMinimized: self.boolAttribute(kAXMinimizedAttribute, of: childWindow) == true)
-            }
-            if let snapshot {
-                matches.append(snapshot)
-            }
-        }
-        guard matches.count == 1,
-              processStartIdentityProvider(ownerProcessIdentifier) == processStartIdentity
-        else {
-            return nil
-        }
-        return matches[0]
     }
 
     private static func scanProcess(

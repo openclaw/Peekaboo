@@ -325,6 +325,7 @@ struct AgentToolMCPBridgeTests {
             eventHandler: nil,
             sessionId: "multimodal-test")
         var messages: [ModelMessage] = []
+        #expect(await AgentToolMCPImageStore.shared.register(executionID: context.imageContextID))
 
         let step = try await service.handleToolCalls(
             stepText: "",
@@ -341,9 +342,16 @@ struct AgentToolMCPBridgeTests {
         }
         #expect(imageParts?.count == 1)
         #expect(imageParts?.first?.data == imageData.base64EncodedString())
+        let attribution = messages.last?.content.compactMap { part -> String? in
+            guard case let .text(text) = part else { return nil }
+            return text
+        }.joined(separator: "\n")
+        #expect(attribution?.contains("bridge_probe") == true)
+        #expect(attribution?.contains("probe-call") == true)
 
         messages.removeConsumedAgentToolImageContext()
         #expect(messages.map(\.role) == [.assistant, .tool])
+        await AgentToolMCPImageStore.shared.close(executionID: context.imageContextID)
     }
 
     @Test
@@ -430,6 +438,7 @@ struct AgentToolMCPBridgeTests {
 
     @Test
     func `Transient image store isolates concurrent executions of the same session`() async {
+        let store = AgentToolMCPImageStore()
         let firstImage = ModelMessage.ContentPart.ImageContent(data: "first", mimeType: "image/png")
         let secondImage = ModelMessage.ContentPart.ImageContent(data: "second", mimeType: "image/png")
         let firstKey = AgentToolMCPImageStore.Key(
@@ -443,38 +452,221 @@ struct AgentToolMCPBridgeTests {
             stepIndex: 0,
             toolCallID: "reused-call-id")
 
-        await AgentToolMCPImageStore.shared.store([firstImage], for: firstKey)
-        await AgentToolMCPImageStore.shared.store([secondImage], for: secondKey)
+        #expect(await store.register(executionID: firstKey.executionID))
+        #expect(await store.register(executionID: secondKey.executionID))
+        #expect(await store.store([firstImage], for: firstKey) == .admitted)
+        #expect(await store.store([secondImage], for: secondKey) == .admitted)
 
-        let storedFirstImage = await AgentToolMCPImageStore.shared.take(for: firstKey)
-        let storedSecondImage = await AgentToolMCPImageStore.shared.take(for: secondKey)
+        let storedFirstImage = await store.take(for: firstKey)
+        let storedSecondImage = await store.take(for: secondKey)
         #expect(storedFirstImage == [firstImage])
         #expect(storedSecondImage == [secondImage])
     }
 
     @Test
-    func `Transient image store evicts the oldest insertion deterministically`() async {
-        let store = AgentToolMCPImageStore()
-        let image = ModelMessage.ContentPart.ImageContent(data: "pixels", mimeType: "image/png")
-        let keys = (0..<9).map { index in
+    func `full image store preserves pending entries and explicitly omits the current response`() async throws {
+        let capacity = 3
+        let store = AgentToolMCPImageStore(maximumEntries: capacity)
+        let imageData = Self.makePNGData(width: 2, height: 2).base64EncodedString()
+        let response = ToolResponse.multiContent([
+            .text(text: "Screenshot: /tmp/pending.png", annotations: nil, _meta: nil),
+            .image(data: imageData, mimeType: "image/png", annotations: nil, _meta: nil),
+        ])
+        let executionID = "bounded-execution"
+        let keys = (0...(capacity + 1)).map { index in
             AgentToolMCPImageStore.Key(
-                sessionID: "eviction-session",
-                executionID: "execution-\(index)",
-                stepIndex: index,
+                sessionID: "bounded-session",
+                executionID: executionID,
+                stepIndex: 0,
                 toolCallID: "call-\(index)")
         }
-        for key in keys {
-            await store.store([image], for: key)
+        #expect(await store.register(executionID: executionID))
+        for index in 0..<capacity {
+            let value = await convertToolResponseToAgentToolResultAsync(
+                response,
+                executionContext: Self.imageExecutionContext(key: keys[index]),
+                imageStore: store)
+            #expect(value.stringValue?.contains("inline image attached") == true)
         }
 
-        #expect(await store.take(for: keys[0]).isEmpty)
-        for key in keys.dropFirst() {
-            #expect(await store.take(for: key) == [image])
+        let overflow = await convertToolResponseToAgentToolResultAsync(
+            response,
+            executionContext: Self.imageExecutionContext(key: keys[capacity]),
+            imageStore: store)
+        let overflowJSON = try Self.jsonString(overflow)
+        #expect(overflowJSON.contains("transient image capacity reached"))
+        #expect(overflowJSON.contains("\"attached\":false"))
+        #expect(!overflowJSON.contains("inline image attached"))
+        #expect(await store.take(for: keys[capacity]).isEmpty)
+
+        #expect(await store.take(for: keys[0]).map(\.data) == [imageData])
+        let admittedAfterConsumption = await convertToolResponseToAgentToolResultAsync(
+            response,
+            executionContext: Self.imageExecutionContext(key: keys[capacity + 1]),
+            imageStore: store)
+        #expect(admittedAfterConsumption.stringValue?.contains("inline image attached") == true)
+
+        for key in [keys[1], keys[2], keys[capacity + 1]] {
+            #expect(await store.take(for: key).map(\.data) == [imageData])
         }
     }
 
     @Test
+    func `image result before registration is explicitly omitted and never stored`() async throws {
+        let store = AgentToolMCPImageStore(maximumEntries: 1)
+        let imageData = Self.makePNGData(width: 2, height: 2).base64EncodedString()
+        let response = ToolResponse.multiContent([
+            .text(text: "Screenshot: /tmp/late.png", annotations: nil, _meta: nil),
+            .image(data: imageData, mimeType: "image/png", annotations: nil, _meta: nil),
+        ])
+        let key = AgentToolMCPImageStore.Key(
+            sessionID: "closed-session",
+            executionID: "never-registered",
+            stepIndex: 0,
+            toolCallID: "late-call")
+
+        let value = await convertToolResponseToAgentToolResultAsync(
+            response,
+            executionContext: Self.imageExecutionContext(key: key),
+            imageStore: store)
+        let json = try Self.jsonString(value)
+
+        #expect(json.contains("image execution is not active or already closed"))
+        #expect(json.contains("\"attached\":false"))
+        #expect(!json.contains("inline image attached"))
+        #expect(await store.take(for: key).isEmpty)
+    }
+
+    @Test
+    func `live admitted image remains deliverable until consumed`() async throws {
+        let store = AgentToolMCPImageStore(maximumEntries: 1)
+        let image = ModelMessage.ContentPart.ImageContent(data: "live", mimeType: "image/png")
+        let key = AgentToolMCPImageStore.Key(
+            sessionID: "live-session",
+            executionID: "live-execution",
+            stepIndex: 0,
+            toolCallID: "live-call")
+
+        #expect(await store.register(executionID: key.executionID))
+        #expect(await store.store([image], for: key) == .admitted)
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(await store.take(for: key) == [image])
+    }
+
+    @Test
+    func `close removes only its execution and preserves other sessions`() async {
+        let store = AgentToolMCPImageStore(maximumEntries: 4)
+        let image = ModelMessage.ContentPart.ImageContent(data: "pending", mimeType: "image/png")
+        let discardedKeys = (0..<2).map { index in
+            AgentToolMCPImageStore.Key(
+                sessionID: "first-session",
+                executionID: "discarded-execution",
+                stepIndex: index,
+                toolCallID: "discarded-\(index)")
+        }
+        let sameSessionKey = AgentToolMCPImageStore.Key(
+            sessionID: "first-session",
+            executionID: "retained-execution",
+            stepIndex: 0,
+            toolCallID: "same-session")
+        let otherSessionKey = AgentToolMCPImageStore.Key(
+            sessionID: "second-session",
+            executionID: "other-session-execution",
+            stepIndex: 0,
+            toolCallID: "other-session")
+        for executionID in ["discarded-execution", "retained-execution", "other-session-execution"] {
+            #expect(await store.register(executionID: executionID))
+        }
+        for key in discardedKeys + [sameSessionKey, otherSessionKey] {
+            #expect(await store.store([image], for: key) == .admitted)
+        }
+
+        await store.close(executionID: "discarded-execution")
+        for key in discardedKeys {
+            #expect(await store.take(for: key).isEmpty)
+        }
+        #expect(await store.store([image], for: discardedKeys[0]) == .rejected(.executionNotActive))
+        let replacementKey = AgentToolMCPImageStore.Key(
+            sessionID: "replacement-session",
+            executionID: "replacement-execution",
+            stepIndex: 0,
+            toolCallID: "replacement")
+        #expect(await store.register(executionID: replacementKey.executionID))
+        #expect(await store.store([image], for: replacementKey) == .admitted)
+        #expect(await store.take(for: sameSessionKey) == [image])
+        #expect(await store.take(for: otherSessionKey) == [image])
+        #expect(await store.take(for: replacementKey) == [image])
+    }
+
+    @Test
+    func `three read-only image calls retain ordered tool and call attribution without turn truncation`() async throws {
+        let store = AgentToolMCPImageStore(maximumEntries: 3)
+        let service = try PeekabooAgentService(services: PeekabooServices())
+        let context = PeekabooAgentService.ToolHandlingContext(
+            model: .anthropic(.sonnet45),
+            tools: [],
+            eventHandler: nil,
+            sessionId: "three-image-calls")
+        let calls = [
+            AgentToolCall(id: "see-1", name: "see", arguments: [:]),
+            AgentToolCall(id: "image-2", name: "image", arguments: [:]),
+            AgentToolCall(id: "inspect-3", name: "inspect_ui", arguments: [:]),
+        ]
+        #expect(await store.register(executionID: context.imageContextID))
+        for (index, call) in calls.enumerated() {
+            let key = AgentToolMCPImageStore.Key(
+                sessionID: context.sessionId,
+                executionID: context.imageContextID,
+                stepIndex: 4,
+                toolCallID: call.id)
+            #expect(await store.store([
+                ModelMessage.ContentPart.ImageContent(data: "pixels-\(index)", mimeType: "image/png"),
+            ], for: key) == .admitted)
+        }
+        var messages: [ModelMessage] = []
+
+        await service.appendAgentToolImageContext(
+            toolCalls: calls,
+            context: context,
+            stepIndex: 4,
+            imageStore: store,
+            to: &messages)
+
+        let message = try #require(messages.last)
+        let deliveredImages = message.content.compactMap { part -> ModelMessage.ContentPart.ImageContent? in
+            guard case let .image(image) = part else { return nil }
+            return image
+        }
+        let attribution = message.content.compactMap { part -> String? in
+            guard case let .text(text) = part else { return nil }
+            return text
+        }.joined(separator: "\n")
+        #expect(deliveredImages.map(\.data) == ["pixels-0", "pixels-1", "pixels-2"])
+        #expect(attribution.contains("'see' (call ID see-1)"))
+        #expect(attribution.contains("'image' (call ID image-2)"))
+        #expect(attribution.contains("'inspect_ui' (call ID inspect-3)"))
+    }
+
+    @Test
+    func `multiple images in one result explicitly mark bounded omission`() throws {
+        let imageData = Self.makePNGData(width: 2, height: 2).base64EncodedString()
+        let bridged = AgentToolMCPBridge.convert(ToolResponse.multiContent([
+            .text(text: "Screenshot: /tmp/result.png", annotations: nil, _meta: nil),
+            .image(data: imageData, mimeType: "image/png", annotations: nil, _meta: nil),
+            .image(data: imageData, mimeType: "image/png", annotations: nil, _meta: nil),
+        ]))
+
+        #expect(bridged.images.count == 1)
+        let json = try JSONSerialization.data(withJSONObject: bridged.value.toJSON())
+        let description = try #require(String(data: json, encoding: .utf8))
+        #expect(description.contains("inline image attached"))
+        #expect(description.contains("per-response image limit reached"))
+        #expect(description.contains("\"attached\":false"))
+    }
+
+    @Test
     func `Text-only OpenRouter model does not receive provider-wide vision payloads`() async throws {
+        let store = AgentToolMCPImageStore()
         let service = try PeekabooAgentService(services: PeekabooServices())
         let context = PeekabooAgentService.ToolHandlingContext(
             model: .openRouter(modelId: "text-only-model"),
@@ -489,13 +681,15 @@ struct AgentToolMCPBridgeTests {
             executionID: context.imageContextID,
             stepIndex: 0,
             toolCallID: toolCall.id)
-        await AgentToolMCPImageStore.shared.store([image], for: key)
+        #expect(await store.register(executionID: context.imageContextID))
+        #expect(await store.store([image], for: key) == .admitted)
         var messages: [ModelMessage] = []
 
         await service.appendAgentToolImageContext(
             toolCalls: [toolCall],
             context: context,
             stepIndex: 0,
+            imageStore: store,
             to: &messages)
 
         #expect(!context.supportsVision)
@@ -534,6 +728,22 @@ struct AgentToolMCPBridgeTests {
         #expect(values.first?.stringValue?.contains("not delivered to this text-only model") == true)
         #expect(values.first?.stringValue?.contains(AgentToolMCPBridge.incompleteVisualEvidenceMarker) == true)
         #expect(messages.map(\.role) == [.assistant, .tool])
+    }
+
+    private static func imageExecutionContext(key: AgentToolMCPImageStore.Key) -> ToolExecutionContext {
+        ToolExecutionContext(
+            sessionId: key.sessionID,
+            stepIndex: key.stepIndex,
+            metadata: [
+                "toolCallId": key.toolCallID,
+                "imageContextId": key.executionID,
+                "supportsVision": "true",
+            ])
+    }
+
+    private static func jsonString(_ value: AnyAgentToolValue) throws -> String {
+        let data = try JSONSerialization.data(withJSONObject: value.toJSON(), options: [.sortedKeys])
+        return try #require(String(data: data, encoding: .utf8))
     }
 
     private static func makePNGData(width: Int, height: Int) -> Data {

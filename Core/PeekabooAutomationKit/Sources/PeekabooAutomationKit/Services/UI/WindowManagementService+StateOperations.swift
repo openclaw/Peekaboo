@@ -425,7 +425,7 @@ extension WindowManagementService {
             } ?? true
             guard ownerGenerationMatches else {
                 throw PeekabooError.commandFailed(
-                    "Window \(expectedIdentity.windowID) was recycled during close")
+                    "Window \(expectedIdentity.windowID) changed owner identity during close")
             }
             let windowServerMatchesReceipt = windowServerIdentity.map { identity in
                 identity.ownerProcessIdentifier == expectedIdentity.ownerProcessIdentifier &&
@@ -443,7 +443,7 @@ extension WindowManagementService {
                 expectedMinimized: expectedIdentity.isMinimized == true)
             if disposition == .replacement {
                 throw PeekabooError.commandFailed(
-                    "Window \(expectedIdentity.windowID) was recycled during close")
+                    "Window \(expectedIdentity.windowID) changed identity during close")
             }
 
             let decision = verification.observe(
@@ -980,14 +980,15 @@ private enum BoundedBackgroundWindowAX {
     static func restoreMinimizedState(expectedIdentity: WindowMutationIdentity) async -> Bool {
         await Task.detached(priority: .userInitiated) {
             guard expectedIdentity.isMinimized == true,
-                  SystemIdentityResolver.validateWindowMutationIdentity(expectedIdentity),
                   let capturedBounds = expectedIdentity.capturedBounds,
                   let windowID = CGWindowID(exactly: expectedIdentity.windowID),
+                  SystemIdentityResolver.validateWindowMutationOwnerGeneration(expectedIdentity),
+                  self.windowServerAllowsExactMinimizedRestore(
+                      expectedIdentity: expectedIdentity,
+                      windowID: windowID),
                   let rawWindow = self.exactWindow(
                       windowID: windowID,
-                      ownerPID: expectedIdentity.ownerProcessIdentifier) ?? self.uniqueWindow(
-                      ownerPID: expectedIdentity.ownerProcessIdentifier,
-                      bounds: capturedBounds)
+                      ownerPID: expectedIdentity.ownerProcessIdentifier)
             else {
                 return false
             }
@@ -995,8 +996,17 @@ private enum BoundedBackgroundWindowAX {
                 on: rawWindow,
                 timeout: self.messagingTimeout)
             { childWindow in
-                guard SystemIdentityResolver.validateWindowMutationOwnerGeneration(expectedIdentity),
-                      self.bounds(of: childWindow) == capturedBounds
+                var candidateID: CGWindowID = 0
+                guard self.copyWindowID(childWindow, &candidateID) == .success,
+                      exactMinimizedRestoreCandidateIsValid(
+                          expectedIdentity: expectedIdentity,
+                          liveProcessStartIdentity: SystemIdentityResolver.processStartIdentity(
+                              expectedIdentity.ownerProcessIdentifier),
+                          candidateWindowID: candidateID,
+                          candidateBounds: self.bounds(of: childWindow),
+                          candidateIsMinimized: self.boolAttribute(
+                              kAXMinimizedAttribute as String,
+                              of: childWindow))
                 else {
                     return false
                 }
@@ -1004,8 +1014,12 @@ private enum BoundedBackgroundWindowAX {
                     childWindow,
                     kAXMinimizedAttribute as CFString,
                     kCFBooleanFalse) == .success,
-                    SystemIdentityResolver.validateWindowMutationOwnerGeneration(expectedIdentity),
-                    self.bounds(of: childWindow) == capturedBounds
+                    SystemIdentityResolver.processStartIdentity(expectedIdentity.ownerProcessIdentifier) ==
+                    expectedIdentity.ownerProcessStartIdentity,
+                    self.copyWindowID(childWindow, &candidateID) == .success,
+                    candidateID == windowID,
+                    self.bounds(of: childWindow) == capturedBounds,
+                    self.boolAttribute(kAXMinimizedAttribute as String, of: childWindow) == false
                 else {
                     return false
                 }
@@ -1151,30 +1165,14 @@ private enum BoundedBackgroundWindowAX {
         return nil
     }
 
-    private static func uniqueWindow(ownerPID: pid_t, bounds: CGRect) -> AXUIElement? {
-        let application = AXUIElementCreateApplication(ownerPID)
-        AXUIElementSetMessagingTimeout(application, self.messagingTimeout)
-        defer { AXUIElementSetMessagingTimeout(application, 0) }
-
-        var windowsValue: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(
-            application,
-            kAXWindowsAttribute as CFString,
-            &windowsValue) == .success,
-            let windows = windowsValue as? [AXUIElement]
-        else {
-            return nil
+    private static func windowServerAllowsExactMinimizedRestore(
+        expectedIdentity: WindowMutationIdentity,
+        windowID: CGWindowID) -> Bool
+    {
+        if SystemIdentityResolver.windowIdentity(windowID) == nil {
+            return true
         }
-        let matches = windows.filter { window in
-            AXChildWindowMessagingTimeout.perform(
-                on: window,
-                timeout: self.messagingTimeout)
-            { childWindow in
-                self.bounds(of: childWindow) == bounds &&
-                    self.boolAttribute(kAXMinimizedAttribute as String, of: childWindow) == true
-            }
-        }
-        return matches.count == 1 ? matches[0] : nil
+        return SystemIdentityResolver.validateWindowMutationIdentity(expectedIdentity)
     }
 
     private static func windowPresenceScan(
@@ -1267,6 +1265,25 @@ private enum BoundedBackgroundWindowAX {
         guard AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success else { return nil }
         return (value as? NSNumber)?.boolValue
     }
+}
+
+func exactMinimizedRestoreCandidateIsValid(
+    expectedIdentity: WindowMutationIdentity,
+    liveProcessStartIdentity: UInt64?,
+    candidateWindowID: CGWindowID?,
+    candidateBounds: CGRect?,
+    candidateIsMinimized: Bool?) -> Bool
+{
+    guard expectedIdentity.isMinimized == true,
+          let expectedBounds = expectedIdentity.capturedBounds,
+          liveProcessStartIdentity == expectedIdentity.ownerProcessStartIdentity,
+          candidateWindowID.map(Int.init) == expectedIdentity.windowID,
+          candidateBounds == expectedBounds,
+          candidateIsMinimized == true
+    else {
+        return false
+    }
+    return true
 }
 
 private enum BoundedBackgroundWindowCloseAction: Sendable {

@@ -453,17 +453,40 @@ extension PeekabooAgentService {
         configuration: StreamingLoopConfiguration,
         maxSteps: Int,
         initialMessages: [ModelMessage],
+        imageContextID: String = UUID().uuidString,
+        imageStore: AgentToolMCPImageStore = .shared,
         onCheckpoint: ((StreamingLoopOutcome) -> Void)? = nil) async throws -> StreamingLoopOutcome
     {
-        var state = StreamingLoopState(messages: initialMessages)
         let toolContext = ToolHandlingContext(
             model: configuration.model,
             providerSupportsVision: configuration.provider.capabilities.supportsVision,
             tools: configuration.tools,
             eventHandler: configuration.eventHandler,
             sessionId: configuration.sessionId,
+            imageContextID: imageContextID,
             initialMessages: initialMessages,
             enhancementOptions: configuration.enhancementOptions)
+        return try await self.withAgentToolImageLifecycle(
+            executionID: imageContextID,
+            imageStore: imageStore)
+        {
+            try await self.runGenerationLoopBody(
+                configuration: configuration,
+                maxSteps: maxSteps,
+                initialMessages: initialMessages,
+                toolContext: toolContext,
+                onCheckpoint: onCheckpoint)
+        }
+    }
+
+    private func runGenerationLoopBody(
+        configuration: StreamingLoopConfiguration,
+        maxSteps: Int,
+        initialMessages: [ModelMessage],
+        toolContext: ToolHandlingContext,
+        onCheckpoint: ((StreamingLoopOutcome) -> Void)?) async throws -> StreamingLoopOutcome
+    {
+        var state = StreamingLoopState(messages: initialMessages)
 
         let resolvedConfiguration = TachikomaConfiguration.resolve(.current)
         let provider = configuration.provider

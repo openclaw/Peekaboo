@@ -77,7 +77,7 @@ extension PeekabooAgentService {
         let tools: [AgentTool]
         let eventHandler: EventHandler?
         let sessionId: String
-        let imageContextID = UUID().uuidString
+        let imageContextID: String
         let turnBoundary: AgentTurnBoundary
         let enhancementOptions: AgentEnhancementOptions?
 
@@ -87,6 +87,7 @@ extension PeekabooAgentService {
             tools: [AgentTool],
             eventHandler: EventHandler?,
             sessionId: String,
+            imageContextID: String = UUID().uuidString,
             initialMessages: [ModelMessage] = [],
             enhancementOptions: AgentEnhancementOptions? = nil)
         {
@@ -95,6 +96,7 @@ extension PeekabooAgentService {
             self.tools = tools
             self.eventHandler = eventHandler
             self.sessionId = sessionId
+            self.imageContextID = imageContextID
             self.turnBoundary = PeekabooAgentService.restoredTurnBoundary(from: initialMessages)
             self.enhancementOptions = enhancementOptions
         }
@@ -142,68 +144,52 @@ extension PeekabooAgentService {
         }
     }
 
-    func isAgentCancellation(_ error: any Error) -> Bool {
-        if Task.isCancelled || error is CancellationError {
-            return true
-        }
-        if (error as? URLError)?.code == .cancelled {
-            return true
-        }
-
-        let nsError = error as NSError
-        if nsError.domain == NSURLErrorDomain, nsError.code == NSURLErrorCancelled {
-            return true
-        }
-
-        if let tachikomaError = error as? TachikomaError {
-            switch tachikomaError {
-            case let .networkError(underlyingError):
-                return self.isAgentCancellation(underlyingError)
-            case let .retryError(retryError):
-                if let lastError = retryError.lastError,
-                   self.isAgentCancellation(lastError)
-                {
-                    return true
-                }
-                return retryError.errors.contains { self.isAgentCancellation($0) }
-            default:
-                break
-            }
-        }
-
-        if let unifiedError = error as? TachikomaUnifiedError,
-           let underlyingError = unifiedError.underlyingError
-        {
-            return self.isAgentCancellation(underlyingError)
-        }
-
-        if let modelError = error as? ModelError,
-           case let .networkError(underlyingError) = modelError
-        {
-            return self.isAgentCancellation(underlyingError)
-        }
-
-        return false
-    }
-
     func runStreamingLoop(
         configuration: StreamingLoopConfiguration,
         maxSteps: Int,
         initialMessages: [ModelMessage],
         queueMode: QueueMode = .oneAtATime,
         pendingUserMessages: [ModelMessage] = [],
+        imageContextID: String = UUID().uuidString,
+        imageStore: AgentToolMCPImageStore = .shared,
         onCheckpoint: ((StreamingLoopOutcome) -> Void)? = nil) async throws -> StreamingLoopOutcome
     {
-        var state = StreamingLoopState(messages: initialMessages)
-        let resolvedConfiguration = TachikomaConfiguration.resolve(.current)
         let toolContext = ToolHandlingContext(
             model: configuration.model,
             providerSupportsVision: configuration.provider.capabilities.supportsVision,
             tools: configuration.tools,
             eventHandler: configuration.eventHandler,
             sessionId: configuration.sessionId,
+            imageContextID: imageContextID,
             initialMessages: initialMessages,
             enhancementOptions: configuration.enhancementOptions)
+        return try await self.withAgentToolImageLifecycle(
+            executionID: imageContextID,
+            imageStore: imageStore)
+        {
+            try await self.runStreamingLoopBody(
+                configuration: configuration,
+                maxSteps: maxSteps,
+                initialMessages: initialMessages,
+                queueMode: queueMode,
+                pendingUserMessages: pendingUserMessages,
+                toolContext: toolContext,
+                onCheckpoint: onCheckpoint)
+        }
+    }
+
+    // swiftlint:disable:next function_parameter_count
+    private func runStreamingLoopBody(
+        configuration: StreamingLoopConfiguration,
+        maxSteps: Int,
+        initialMessages: [ModelMessage],
+        queueMode: QueueMode,
+        pendingUserMessages: [ModelMessage],
+        toolContext: ToolHandlingContext,
+        onCheckpoint: ((StreamingLoopOutcome) -> Void)?) async throws -> StreamingLoopOutcome
+    {
+        var state = StreamingLoopState(messages: initialMessages)
+        let resolvedConfiguration = TachikomaConfiguration.resolve(.current)
 
         // Queue of pending user messages (set by caller). For now, this is empty
         // and will be injected by higher-level chat loop when we add that support.
@@ -355,32 +341,6 @@ extension PeekabooAgentService {
         }
 
         return self.makeLoopOutcome(state: state, reachedStepLimit: reachedStepLimit)
-    }
-
-    func makeLoopOutcome(
-        state: StreamingLoopState,
-        reachedStepLimit: Bool) -> StreamingLoopOutcome
-    {
-        StreamingLoopOutcome(
-            content: state.content,
-            messages: state.messages.removingConsumedAgentToolImageContext(),
-            steps: state.steps,
-            usage: state.usage,
-            toolCallCount: state.toolCallCount,
-            reachedStepLimit: reachedStepLimit)
-    }
-
-    func logStreamingStepStart(_ stepIndex: Int, tools: [AgentTool]) {
-        guard self.isVerbose else { return }
-
-        self.logger.debug("Step \(stepIndex): Passing \(tools.count) tools to streamText")
-        if tools.isEmpty {
-            self.logger.warning("No tools available!")
-            return
-        }
-
-        let toolNames = tools.map(\.name).joined(separator: ", ")
-        self.logger.debug("Available tools: \(toolNames)")
     }
 
     func validateToolContinuationFinishReason(

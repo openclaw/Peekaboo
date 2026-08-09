@@ -33,8 +33,7 @@ extension WindowCommand {
                 let windowInfo = try self.windowOptions.requireMutationWindow(
                     from: windows,
                     expectedApplication: appInfo,
-                    action: "close",
-                    includeMinimizedFallback: true
+                    action: "close"
                 )
                 let exactTarget = WindowTarget.windowId(windowInfo.windowID)
                 guard let mutationIdentity = windowInfo.mutationIdentity else {
@@ -105,8 +104,7 @@ extension WindowCommand {
                 let windowInfo = try self.windowOptions.requireMutationWindow(
                     from: windows,
                     expectedApplication: appInfo,
-                    action: "minimize",
-                    includeMinimizedFallback: true
+                    action: "minimize"
                 )
                 let exactTarget = WindowTarget.windowId(windowInfo.windowID)
                 guard let mutationIdentity = windowInfo.mutationIdentity else {
@@ -173,8 +171,7 @@ extension WindowCommand {
                 let windowInfo = try self.windowOptions.requireMutationWindow(
                     from: windows,
                     expectedApplication: appInfo,
-                    action: "restore",
-                    includeMinimizedFallback: true
+                    action: "restore"
                 )
                 guard let mutationIdentity = windowInfo.mutationIdentity else {
                     throw PeekabooError.commandFailed(
@@ -240,8 +237,7 @@ extension WindowCommand {
                 let windowInfo = try self.windowOptions.requireMutationWindow(
                     from: windows,
                     expectedApplication: appInfo,
-                    action: "maximize",
-                    includeMinimizedFallback: true
+                    action: "maximize"
                 )
                 let exactTarget = WindowTarget.windowId(windowInfo.windowID)
                 guard let mutationIdentity = windowInfo.mutationIdentity else {

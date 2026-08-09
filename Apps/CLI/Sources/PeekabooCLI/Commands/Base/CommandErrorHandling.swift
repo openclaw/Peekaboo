@@ -68,7 +68,7 @@ extension ErrorHandlingCommand {
 
     private func mapObservationErrorToCode(_ error: DesktopObservationError) -> ErrorCode {
         switch error {
-        case .targetNotFound:
+        case .targetNotFound, .targetChanged:
             .WINDOW_NOT_FOUND
         case .ambiguousWindowTitle:
             .INVALID_ARGUMENT

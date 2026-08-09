@@ -59,6 +59,11 @@ extension DesktopObservationService {
                     imageSize: capture.metadata.size,
                     deadlineReached: true,
                     reason: "OCR incomplete: deadline reached after \(seconds)s; missing text does not prove absence")
+            } catch let OCRServiceError.incomplete(reason) {
+                return OCRTextResult.incomplete(
+                    imageSize: capture.metadata.size,
+                    deadlineReached: false,
+                    reason: "OCR incomplete: \(reason); missing text does not prove absence")
             }
         }
     }

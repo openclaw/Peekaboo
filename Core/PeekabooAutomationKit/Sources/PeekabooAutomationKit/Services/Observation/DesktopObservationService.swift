@@ -88,6 +88,7 @@ public final class DesktopObservationService: DesktopObservationServiceProtocol 
                     let rawCapture = try await tracer.span("capture.\(Self.captureSpanName(for: target.kind))") {
                         try await self.capture(target, options: request.capture, snapshot: stateSnapshot)
                     }
+                    try Self.validateCaptureReceipt(rawCapture, for: target)
                     let capture = Self.normalize(capture: rawCapture, for: target)
                     let captureBoundTarget = Self.bindingCaptureReceipt(to: target, capture: capture)
                     let detection: ElementDetectionResult? = if serializesDetection {

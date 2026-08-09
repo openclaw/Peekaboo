@@ -33,7 +33,7 @@ struct VerifyStateWindowReceiptTests {
 
         #expect(Self.stringMeta("status", response) == "unknown")
         #expect(Self.stringMeta("reason", response)?.contains("verification receipt changed") == true)
-        #expect(Self.stringMeta("reason", response)?.contains("recycled") == true)
+        #expect(Self.stringMeta("reason", response)?.contains("no stronger window-incarnation token") == true)
         #expect(Self.intMeta("stable_samples", response) == 0)
     }
 

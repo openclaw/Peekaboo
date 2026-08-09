@@ -210,7 +210,7 @@ struct WindowRoutedPointerDriverTests {
 
     @Test
     @MainActor
-    func `wrong owner or recycled window receipt is refused before posting`() async {
+    func `wrong owner or changed window receipt is refused before posting`() async {
         var posted = 0
         let requested = Self.receipt()
         let wrongOwner = WindowRoutedPointerDriver.RouteReceipt(

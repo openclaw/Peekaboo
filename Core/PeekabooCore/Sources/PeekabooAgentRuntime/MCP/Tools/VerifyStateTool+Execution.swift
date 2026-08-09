@@ -772,7 +772,7 @@ final class VerifyStateTargetIdentityTracker {
                 "Pinned window \(pinnedWindowReceipt.windowID) verification receipt changed because " +
                     "\(changedDiscriminator) from " +
                     "\(pinnedWindowReceipt.description) to \(observed.description); " +
-                    "the numeric window ID may have been recycled")
+                    "the public WindowServer API exposes no stronger window-incarnation token")
         }
         return nil
     }
@@ -783,7 +783,7 @@ final class VerifyStateTargetIdentityTracker {
     }
 }
 
-/// Immutable evidence that a numeric WindowServer ID still names the same logical window.
+/// Fail-closed evidence that a session-scoped WindowServer ID still names the captured target.
 /// Title, minimized/on-screen state, layer, and alpha are intentionally excluded because they
 /// are mutable window state. Bounds are the strongest stable same-owner discriminator exposed
 /// by the public WindowServer catalog.

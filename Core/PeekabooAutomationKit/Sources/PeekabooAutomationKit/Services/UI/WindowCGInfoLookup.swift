@@ -53,8 +53,8 @@ struct WindowCGInfoLookup {
         let sharingState = sharingRaw.flatMap { WindowSharingState(rawValue: $0) }
         let isMainWindow = isMainWindowProvider(cgWindowID)
 
-        // Bind the receipt to this exact dictionary. Numeric IDs can be recycled between catalog
-        // reads, so a changed owner, process generation, or frame rejects the entire stale entry.
+        // Bind the receipt to this exact session-scoped WindowServer entry. The public API exposes no
+        // stronger incarnation token, so a changed owner generation or frame rejects the stale entry.
         guard let mutationIdentity = SystemIdentityResolver.windowMutationIdentity(
             snapshot: SystemIdentityResolver.WindowMutationSnapshot(
                 windowID: cgWindowID,

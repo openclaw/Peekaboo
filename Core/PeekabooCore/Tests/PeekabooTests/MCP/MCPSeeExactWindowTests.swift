@@ -33,7 +33,26 @@ struct MCPSeeExactWindowTests {
                 foreignApp.bundleIdentifier ?? foreignApp.name: [foreignWindow],
             ])
         }
-        let screenCapture = await MainActor.run { MockScreenCaptureService(screenRecordingGranted: true) }
+        let exactIdentity = WindowMutationIdentity(
+            windowID: 42,
+            ownerProcessIdentifier: app.processIdentifier,
+            ownerProcessStartIdentity: 700,
+            capturedBounds: windows[2].bounds)
+        let capturedWindow = ServiceWindowInfo(
+            windowID: 42,
+            title: windows[2].title,
+            bounds: windows[2].bounds,
+            index: windows[2].index,
+            mutationIdentity: exactIdentity)
+        let screenCapture = await MainActor.run {
+            MockScreenCaptureService(
+                screenRecordingGranted: true,
+                metadata: CaptureMetadata(
+                    size: capturedWindow.bounds.size,
+                    mode: .window,
+                    applicationInfo: app,
+                    windowInfo: capturedWindow))
+        }
         let context = await MCPToolTestHelpers.makeContext(
             automation: automation,
             screenCapture: screenCapture,

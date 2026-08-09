@@ -54,7 +54,7 @@ struct RemoteWindowManagementServiceTests {
         let pinnedMutations = await windows.pinnedMutations
         #expect(legacyMutations.isEmpty)
         #expect(pinnedMutations.map(\.operation) == [
-            "background-close",
+            "close",
             "close",
             "minimize",
             "restore",
@@ -65,6 +65,42 @@ struct RemoteWindowManagementServiceTests {
         ])
         #expect(pinnedMutations.allSatisfy { $0.target == "windowId(77)" })
         #expect(pinnedMutations.allSatisfy { $0.identity == self.identity })
+        await host.stop()
+    }
+
+    @Test
+    func `default close forwards foreground compatibility while strict close requires capability`() async throws {
+        let socketPath = "/tmp/peekaboo-remote-window-close-compat-\(UUID().uuidString).sock"
+        let windows = RemoteWindowMutationFixture(identity: self.identity)
+        let server = PeekabooBridgeServer(
+            services: StubServices(windows: windows),
+            allowlistedTeams: [],
+            allowlistedBundles: [],
+            allowedOperations: [.listWindows, .closeWindow],
+            windowOwnerProcessIdentifierProvider: { _ in 420 },
+            windowBoundsProvider: { _ in CGRect(x: 0, y: 0, width: 100, height: 100) },
+            processStartIdentityProvider: { _ in 9001 })
+        let host = PeekabooBridgeHost(
+            socketPath: socketPath,
+            server: server,
+            allowedTeamIDs: [],
+            requestTimeoutSec: 2)
+        try await host.startChecked()
+        defer { Task { await host.stop() } }
+
+        let remote = RemoteWindowManagementService(
+            client: PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 2),
+            supportsBackgroundClose: false,
+            supportsPinnedWindowMutations: true)
+        try await remote.closeWindow(target: .title("Fixture"))
+
+        do {
+            try await remote.closeWindow(target: .title("Fixture"), allowForegroundFallback: false)
+            Issue.record("Expected strict background close to require the advertised capability")
+        } catch let error as PeekabooBridgeErrorEnvelope {
+            #expect(error.code == .operationNotSupported)
+        }
+        #expect(await windows.pinnedMutations.map(\.operation) == ["close"])
         await host.stop()
     }
 
