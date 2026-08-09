@@ -5,7 +5,7 @@ import PeekabooCore
 import TachikomaMCP
 
 @MainActor
-struct ToolsCommand: OutputFormattable, RuntimeOptionsConfigurable {
+struct ToolsCommand: OutputFormattable, RuntimeBackedCommand {
     private static let abstractText = "List the MCP/agent tool catalog"
     private static let descriptionText = "Tools command for listing the MCP/agent tool catalog"
 
@@ -29,26 +29,7 @@ struct ToolsCommand: OutputFormattable, RuntimeOptionsConfigurable {
     var noSort = false
 
     var runtimeOptions = CommandRuntimeOptions()
-    @RuntimeStorage private var runtime: CommandRuntime?
-
-    private var resolvedRuntime: CommandRuntime {
-        guard let runtime else {
-            preconditionFailure("CommandRuntime must be configured before accessing runtime resources")
-        }
-        return runtime
-    }
-
-    private var services: any PeekabooServiceProviding {
-        self.resolvedRuntime.services
-    }
-
-    private var logger: Logger {
-        self.resolvedRuntime.logger
-    }
-
-    var outputLogger: Logger {
-        self.logger
-    }
+    @RuntimeStorage var runtime: CommandRuntime?
 
     var description: String {
         Self.descriptionText
@@ -56,10 +37,6 @@ struct ToolsCommand: OutputFormattable, RuntimeOptionsConfigurable {
 
     var verbose: Bool {
         self.runtime?.configuration.verbose ?? self.runtimeOptions.verbose
-    }
-
-    var jsonOutput: Bool {
-        self.runtime?.configuration.jsonOutput ?? self.runtimeOptions.jsonOutput
     }
 
     private var showDetailedInfo: Bool {

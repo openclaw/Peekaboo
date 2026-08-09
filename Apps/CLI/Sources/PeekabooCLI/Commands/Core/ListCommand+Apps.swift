@@ -3,39 +3,15 @@ import PeekabooCore
 
 extension ListCommand {
     @MainActor
-    struct AppsSubcommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConfigurable {
+    struct AppsSubcommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedCommand {
         @Flag(help: "Accepted for parity with 'app list'; 'list apps' already includes hidden apps")
         var includeHidden = false
 
         @Flag(help: "Accepted for parity with 'app list'; 'list apps' already includes background apps")
         var includeBackground = false
 
-        @RuntimeStorage private var runtime: CommandRuntime?
+        @RuntimeStorage var runtime: CommandRuntime?
         var runtimeOptions = CommandRuntimeOptions()
-
-        private var resolvedRuntime: CommandRuntime {
-            guard let runtime else {
-                preconditionFailure("CommandRuntime must be configured before accessing runtime resources")
-            }
-            return runtime
-        }
-
-        private var services: any PeekabooServiceProviding {
-            self.resolvedRuntime.services
-        }
-
-        private var logger: Logger {
-            self.resolvedRuntime.logger
-        }
-
-        var outputLogger: Logger {
-            self.logger
-        }
-
-        var jsonOutput: Bool {
-            // Tests read jsonOutput on parsed values before the runtime is injected.
-            self.runtime?.configuration.jsonOutput ?? self.runtimeOptions.jsonOutput
-        }
 
         @MainActor
         mutating func run(using runtime: CommandRuntime) async throws {

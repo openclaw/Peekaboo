@@ -6,7 +6,7 @@ import PeekabooCore
 extension ListCommand {
     @MainActor
     struct WindowsSubcommand: ErrorHandlingCommand, OutputFormattable, ApplicationResolvable,
-    RuntimeOptionsConfigurable {
+    RuntimeBackedCommand {
         @Option(name: .long, help: "Target application name, bundle ID, or 'PID:12345'")
         var app: String?
 
@@ -15,32 +15,8 @@ extension ListCommand {
 
         @Option(name: .long, help: "Additional details (comma-separated: off_screen,bounds,ids)")
         var includeDetails: String?
-        @RuntimeStorage private var runtime: CommandRuntime?
+        @RuntimeStorage var runtime: CommandRuntime?
         var runtimeOptions = CommandRuntimeOptions()
-
-        private var resolvedRuntime: CommandRuntime {
-            guard let runtime else {
-                preconditionFailure("CommandRuntime must be configured before accessing runtime resources")
-            }
-            return runtime
-        }
-
-        private var services: any PeekabooServiceProviding {
-            self.resolvedRuntime.services
-        }
-
-        private var logger: Logger {
-            self.resolvedRuntime.logger
-        }
-
-        var outputLogger: Logger {
-            self.logger
-        }
-
-        var jsonOutput: Bool {
-            // PIDWindowsSubcommandTests read jsonOutput immediately after parsing.
-            self.runtime?.configuration.jsonOutput ?? self.runtimeOptions.jsonOutput
-        }
 
         enum WindowDetailOption: String, ExpressibleFromArgument {
             case ids

@@ -7,7 +7,7 @@ import PeekabooFoundation
 /// Click on UI elements identified in the current snapshot using intelligent element finding and smart waiting.
 @available(macOS 14.0, *)
 @MainActor
-struct ClickCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConfigurable {
+struct ClickCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedCommand {
     @Argument(help: "Element text or query to click")
     var query: String?
 
@@ -45,31 +45,8 @@ struct ClickCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
 
     @OptionGroup var focusOptions: FocusCommandOptions
 
-    @RuntimeStorage private var runtime: CommandRuntime?
+    @RuntimeStorage var runtime: CommandRuntime?
     var runtimeOptions = CommandRuntimeOptions()
-
-    private var resolvedRuntime: CommandRuntime {
-        guard let runtime else {
-            preconditionFailure("CommandRuntime must be configured before accessing runtime resources")
-        }
-        return runtime
-    }
-
-    var services: any PeekabooServiceProviding {
-        self.resolvedRuntime.services
-    }
-
-    private var logger: Logger {
-        self.resolvedRuntime.logger
-    }
-
-    var outputLogger: Logger {
-        self.logger
-    }
-
-    var jsonOutput: Bool {
-        self.runtime?.configuration.jsonOutput ?? self.runtimeOptions.jsonOutput
-    }
 
     private var deliveryMode: ClickDeliveryMode {
         if self.focusOptions.backgroundDeliveryExplicitlyRequested {

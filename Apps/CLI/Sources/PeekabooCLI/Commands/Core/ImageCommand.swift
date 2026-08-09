@@ -8,7 +8,7 @@ private typealias ImageFormat = PeekabooCore.ImageFormat
 private typealias CaptureFocus = PeekabooCore.CaptureFocus
 
 @MainActor
-struct ImageCommand: ApplicationResolvable, ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConfigurable {
+struct ImageCommand: ApplicationResolvable, ErrorHandlingCommand, OutputFormattable, RuntimeBackedCommand {
     @Option(name: .long, help: "Target application name, bundle ID, 'PID:12345', 'menubar', or 'frontmost'")
     var app: String?
 
@@ -63,34 +63,11 @@ struct ImageCommand: ApplicationResolvable, ErrorHandlingCommand, OutputFormatta
 
     @Option(name: .long, help: "Analyze the captured image with AI")
     var analyze: String?
-    @RuntimeStorage private var runtime: CommandRuntime?
+    @RuntimeStorage var runtime: CommandRuntime?
     var runtimeOptions = CommandRuntimeOptions()
-
-    private var resolvedRuntime: CommandRuntime {
-        guard let runtime else {
-            preconditionFailure("CommandRuntime must be configured before accessing runtime resources")
-        }
-        return runtime
-    }
-
-    private var logger: Logger {
-        self.resolvedRuntime.logger
-    }
-
-    var services: any PeekabooServiceProviding {
-        self.resolvedRuntime.services
-    }
 
     func withCaptureFocusMutation(_ operation: () async throws -> Void) async rethrows {
         try await self.resolvedRuntime.withCaptureFocusMutation(operation)
-    }
-
-    var jsonOutput: Bool {
-        self.runtime?.configuration.jsonOutput ?? self.runtimeOptions.jsonOutput
-    }
-
-    var outputLogger: Logger {
-        self.logger
     }
 
     var configuredCaptureEnginePreference: String? {

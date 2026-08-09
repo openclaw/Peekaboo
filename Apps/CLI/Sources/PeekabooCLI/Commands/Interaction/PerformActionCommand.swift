@@ -5,7 +5,7 @@ import PeekabooCore
 
 @available(macOS 14.0, *)
 @MainActor
-struct PerformActionCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConfigurable {
+struct PerformActionCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedCommand {
     @Option(help: "Element ID or query to act on")
     var on: String?
 
@@ -15,31 +15,8 @@ struct PerformActionCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOpt
     @Option(help: "Snapshot ID, or 'latest' (uses latest if not specified)")
     var snapshot: String?
 
-    @RuntimeStorage private var runtime: CommandRuntime?
+    @RuntimeStorage var runtime: CommandRuntime?
     var runtimeOptions = CommandRuntimeOptions()
-
-    private var resolvedRuntime: CommandRuntime {
-        guard let runtime else {
-            preconditionFailure("CommandRuntime must be configured before accessing runtime resources")
-        }
-        return runtime
-    }
-
-    private var services: any PeekabooServiceProviding {
-        self.resolvedRuntime.services
-    }
-
-    private var logger: Logger {
-        self.resolvedRuntime.logger
-    }
-
-    var outputLogger: Logger {
-        self.logger
-    }
-
-    var jsonOutput: Bool {
-        self.runtime?.configuration.jsonOutput ?? self.runtimeOptions.jsonOutput
-    }
 
     @MainActor
     mutating func run(using runtime: CommandRuntime) async throws {

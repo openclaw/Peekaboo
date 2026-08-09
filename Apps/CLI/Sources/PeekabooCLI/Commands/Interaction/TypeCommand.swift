@@ -6,7 +6,7 @@ import PeekabooFoundation
 /// Types text into focused elements or sends keyboard input using the UIAutomationService.
 @available(macOS 14.0, *)
 @MainActor
-struct TypeCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConfigurable {
+struct TypeCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedCommand {
     @Argument(help: "Text to type")
     var text: String?
 
@@ -46,31 +46,8 @@ struct TypeCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConfi
     @OptionGroup var target: InteractionTargetOptions
 
     @OptionGroup var focusOptions: FocusCommandOptions
-    @RuntimeStorage private var runtime: CommandRuntime?
+    @RuntimeStorage var runtime: CommandRuntime?
     var runtimeOptions = CommandRuntimeOptions()
-
-    private var resolvedRuntime: CommandRuntime {
-        guard let runtime else {
-            preconditionFailure("CommandRuntime must be configured before accessing runtime resources")
-        }
-        return runtime
-    }
-
-    private var services: any PeekabooServiceProviding {
-        self.resolvedRuntime.services
-    }
-
-    private var logger: Logger {
-        self.resolvedRuntime.logger
-    }
-
-    var outputLogger: Logger {
-        self.logger
-    }
-
-    var jsonOutput: Bool {
-        self.runtime?.configuration.jsonOutput ?? self.runtimeOptions.jsonOutput
-    }
 
     private var resolvedText: String? {
         if let primary = text, !primary.isEmpty {

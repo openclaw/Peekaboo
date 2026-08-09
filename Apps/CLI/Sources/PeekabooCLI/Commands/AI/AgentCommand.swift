@@ -44,7 +44,7 @@ func iconForTool(_ toolName: String) -> String {
 
 /// AI Agent command that uses new Chat Completions API architecture
 @available(macOS 14.0, *)
-struct AgentCommand: RuntimeOptionsConfigurable {
+struct AgentCommand: RuntimeBackedCommand {
     private static let loggingBootstrapState = OSAllocatedUnfairLock(initialState: false)
 
     static let commandDescription = CommandDescription(
@@ -154,7 +154,7 @@ struct AgentCommand: RuntimeOptionsConfigurable {
         return capabilities.recommendedOutputMode
     }
 
-    @RuntimeStorage private var runtime: CommandRuntime?
+    @RuntimeStorage var runtime: CommandRuntime?
     var runtimeOptions: CommandRuntimeOptions = {
         var options = CommandRuntimeOptions()
         // Remote GUI bridge mode is optional and can fail to expose auth state.
@@ -162,22 +162,6 @@ struct AgentCommand: RuntimeOptionsConfigurable {
         options.preferRemote = false
         return options
     }()
-
-    private var resolvedRuntime: CommandRuntime {
-        guard let runtime else {
-            preconditionFailure("CommandRuntime must be configured before accessing runtime resources")
-        }
-        return runtime
-    }
-
-    @MainActor
-    var services: any PeekabooServiceProviding {
-        self.resolvedRuntime.services
-    }
-
-    var jsonOutput: Bool {
-        self.runtime?.configuration.jsonOutput ?? self.runtimeOptions.jsonOutput
-    }
 
     var verbose: Bool {
         self.runtime?.configuration.verbose ?? self.runtimeOptions.verbose

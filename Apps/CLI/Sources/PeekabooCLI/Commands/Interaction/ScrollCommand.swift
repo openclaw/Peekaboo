@@ -8,7 +8,7 @@ import PeekabooFoundation
 /// Supports scrolling on specific elements or at the current mouse position.
 @available(macOS 14.0, *)
 @MainActor
-struct ScrollCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConfigurable {
+struct ScrollCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedCommand {
     @Option(help: "Scroll direction: up, down, left, or right")
     var direction: String
 
@@ -33,31 +33,8 @@ struct ScrollCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsCon
     @OptionGroup var target: InteractionTargetOptions
 
     @OptionGroup var focusOptions: FocusCommandOptions
-    @RuntimeStorage private var runtime: CommandRuntime?
+    @RuntimeStorage var runtime: CommandRuntime?
     var runtimeOptions = CommandRuntimeOptions()
-
-    private var resolvedRuntime: CommandRuntime {
-        guard let runtime else {
-            preconditionFailure("CommandRuntime must be configured before accessing runtime resources")
-        }
-        return runtime
-    }
-
-    private var services: any PeekabooServiceProviding {
-        self.resolvedRuntime.services
-    }
-
-    private var logger: Logger {
-        self.resolvedRuntime.logger
-    }
-
-    var outputLogger: Logger {
-        self.logger
-    }
-
-    var jsonOutput: Bool {
-        self.runtime?.configuration.jsonOutput ?? self.runtimeOptions.jsonOutput
-    }
 
     @MainActor
     mutating func run(using runtime: CommandRuntime) async throws {

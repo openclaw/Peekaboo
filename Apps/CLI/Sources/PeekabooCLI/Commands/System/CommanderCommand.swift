@@ -4,28 +4,9 @@ import PeekabooFoundation
 
 @MainActor
 
-struct CommanderCommand: OutputFormattable, RuntimeOptionsConfigurable {
-    @RuntimeStorage private var runtime: CommandRuntime?
+struct CommanderCommand: OutputFormattable, RuntimeBackedCommand {
+    @RuntimeStorage var runtime: CommandRuntime?
     var runtimeOptions = CommandRuntimeOptions()
-
-    private var resolvedRuntime: CommandRuntime {
-        guard let runtime else {
-            preconditionFailure("CommandRuntime must be configured before accessing runtime resources")
-        }
-        return runtime
-    }
-
-    private var logger: Logger {
-        self.resolvedRuntime.logger
-    }
-
-    var outputLogger: Logger {
-        self.logger
-    }
-
-    var jsonOutput: Bool {
-        self.runtime?.configuration.jsonOutput ?? self.runtimeOptions.jsonOutput
-    }
 
     static var commandDescription: CommandDescription {
         CommandDescription(

@@ -5,7 +5,7 @@ import PeekabooFoundation
 
 /// Capture a screenshot and build an interactive UI map
 @available(macOS 14.0, *)
-struct SeeCommand: ApplicationResolvable, ErrorHandlingCommand, RuntimeOptionsConfigurable {
+struct SeeCommand: ApplicationResolvable, ErrorHandlingCommand, RuntimeBackedCommand {
     @Option(help: "Application name to capture, or special values: 'menubar', 'frontmost'")
     var app: String?
 
@@ -79,34 +79,11 @@ struct SeeCommand: ApplicationResolvable, ErrorHandlingCommand, RuntimeOptionsCo
     @Option(name: .long, help: "Maximum AX children per node (env: PEEKABOO_AX_MAX_CHILDREN)")
     var maxChildren: Int?
 
-    @RuntimeStorage private var runtime: CommandRuntime?
+    @RuntimeStorage var runtime: CommandRuntime?
     var runtimeOptions = CommandRuntimeOptions()
-
-    var resolvedRuntime: CommandRuntime {
-        guard let runtime else {
-            preconditionFailure("CommandRuntime must be configured before accessing runtime resources")
-        }
-        return runtime
-    }
-
-    var jsonOutput: Bool {
-        self.runtime?.configuration.jsonOutput ?? self.runtimeOptions.jsonOutput
-    }
 
     var verbose: Bool {
         self.runtime?.configuration.verbose ?? self.runtimeOptions.verbose
-    }
-
-    var logger: Logger {
-        self.resolvedRuntime.logger
-    }
-
-    var services: any PeekabooServiceProviding {
-        self.resolvedRuntime.services
-    }
-
-    var outputLogger: Logger {
-        self.logger
     }
 
     var configuredCaptureEnginePreference: String? {

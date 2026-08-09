@@ -5,7 +5,7 @@ import PeekabooFoundation
 
 @available(macOS 14.0, *)
 @MainActor
-struct OpenCommand: ParsableCommand, OutputFormattable, ErrorHandlingCommand, RuntimeOptionsConfigurable {
+struct OpenCommand: ParsableCommand, OutputFormattable, ErrorHandlingCommand, RuntimeBackedCommand {
     nonisolated(unsafe) static var commandDescription: CommandDescription {
         MainActorCommandDescription.describe {
             CommandDescription(
@@ -49,31 +49,8 @@ struct OpenCommand: ParsableCommand, OutputFormattable, ErrorHandlingCommand, Ru
     @Flag(name: .customLong("no-focus"), help: "Deprecated compatibility flag; background open is now the default")
     var noFocus = false
 
-    @RuntimeStorage private var runtime: CommandRuntime?
+    @RuntimeStorage var runtime: CommandRuntime?
     var runtimeOptions = CommandRuntimeOptions()
-
-    private var resolvedRuntime: CommandRuntime {
-        guard let runtime else {
-            preconditionFailure("CommandRuntime must be configured before accessing runtime resources")
-        }
-        return runtime
-    }
-
-    private var logger: Logger {
-        self.resolvedRuntime.logger
-    }
-
-    private var services: any PeekabooServiceProviding {
-        self.resolvedRuntime.services
-    }
-
-    var outputLogger: Logger {
-        self.logger
-    }
-
-    var jsonOutput: Bool {
-        self.runtime?.configuration.jsonOutput ?? self.runtimeOptions.jsonOutput
-    }
 
     private var shouldFocus: Bool {
         self.foreground

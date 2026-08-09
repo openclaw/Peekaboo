@@ -11,32 +11,9 @@ extension ListCommand {
     // MARK: - Screens
 
     @MainActor
-    struct ScreensSubcommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConfigurable {
-        @RuntimeStorage private var runtime: CommandRuntime?
+    struct ScreensSubcommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedCommand {
+        @RuntimeStorage var runtime: CommandRuntime?
         var runtimeOptions = CommandRuntimeOptions()
-
-        private var resolvedRuntime: CommandRuntime {
-            guard let runtime else {
-                preconditionFailure("CommandRuntime must be configured before accessing runtime resources")
-            }
-            return runtime
-        }
-
-        private var services: any PeekabooServiceProviding {
-            self.resolvedRuntime.services
-        }
-
-        private var logger: Logger {
-            self.resolvedRuntime.logger
-        }
-
-        var outputLogger: Logger {
-            self.logger
-        }
-
-        var jsonOutput: Bool {
-            self.runtime?.configuration.jsonOutput ?? self.runtimeOptions.jsonOutput
-        }
 
         @MainActor
         mutating func run(using runtime: CommandRuntime) async throws {

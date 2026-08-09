@@ -7,7 +7,7 @@ import UniformTypeIdentifiers
 /// Pastes text through background typing when targeted, otherwise uses clipboard + Cmd+V.
 @available(macOS 14.0, *)
 @MainActor
-struct PasteCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConfigurable {
+struct PasteCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedCommand {
     @Argument(help: "Text to paste")
     var text: String?
 
@@ -43,31 +43,8 @@ struct PasteCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
     @Flag(help: "Focus target and send foreground/global Cmd+V")
     var foreground = false
 
-    @RuntimeStorage private var runtime: CommandRuntime?
+    @RuntimeStorage var runtime: CommandRuntime?
     var runtimeOptions = CommandRuntimeOptions()
-
-    private var resolvedRuntime: CommandRuntime {
-        guard let runtime else {
-            preconditionFailure("CommandRuntime must be configured before accessing runtime resources")
-        }
-        return runtime
-    }
-
-    private var services: any PeekabooServiceProviding {
-        self.resolvedRuntime.services
-    }
-
-    private var logger: Logger {
-        self.resolvedRuntime.logger
-    }
-
-    var outputLogger: Logger {
-        self.logger
-    }
-
-    var jsonOutput: Bool {
-        self.runtime?.configuration.jsonOutput ?? self.runtimeOptions.jsonOutput
-    }
 
     private var resolvedText: String? {
         if let primary = self.text, !primary.isEmpty {

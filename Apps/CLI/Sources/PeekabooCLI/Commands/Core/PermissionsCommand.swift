@@ -24,8 +24,8 @@ struct PermissionsCommand: ParsableCommand {
 
 extension PermissionsCommand {
     @MainActor
-    struct StatusSubcommand: OutputFormattable, RuntimeOptionsConfigurable {
-        @RuntimeStorage private var runtime: CommandRuntime?
+    struct StatusSubcommand: OutputFormattable, RuntimeBackedCommand {
+        @RuntimeStorage var runtime: CommandRuntime?
         var runtimeOptions = CommandRuntimeOptions()
 
         @Flag(name: .customLong("no-remote"), help: "Skip remote hosts and query permissions locally")
@@ -39,21 +39,6 @@ extension PermissionsCommand {
             help: "Override the Peekaboo Bridge socket path for permission checks"
         )
         var bridgeSocket: String?
-
-        private var resolvedRuntime: CommandRuntime {
-            guard let runtime else {
-                preconditionFailure("CommandRuntime must be configured before accessing runtime resources")
-            }
-            return runtime
-        }
-
-        var outputLogger: Logger {
-            self.resolvedRuntime.logger
-        }
-
-        var jsonOutput: Bool {
-            self.runtime?.configuration.jsonOutput ?? self.runtimeOptions.jsonOutput
-        }
 
         @MainActor
         mutating func run(using runtime: CommandRuntime) async throws {
@@ -100,25 +85,9 @@ extension PermissionsCommand {
     }
 
     @MainActor
-    struct GrantSubcommand: OutputFormattable, RuntimeOptionsConfigurable {
-        @RuntimeStorage private var runtime: CommandRuntime?
+    struct GrantSubcommand: OutputFormattable, RuntimeBackedCommand {
+        @RuntimeStorage var runtime: CommandRuntime?
         var runtimeOptions = CommandRuntimeOptions()
-
-        private var resolvedRuntime: CommandRuntime {
-            guard let runtime else {
-                preconditionFailure("CommandRuntime must be configured before accessing runtime resources")
-            }
-            return runtime
-        }
-
-        var outputLogger: Logger {
-            self.resolvedRuntime.logger
-        }
-
-        var jsonOutput: Bool {
-            self.runtime?.configuration.jsonOutput ?? self.runtimeOptions.jsonOutput
-        }
-
         @MainActor
         mutating func run(using runtime: CommandRuntime) async throws {
             self.runtime = runtime
@@ -136,30 +105,14 @@ extension PermissionsCommand {
     }
 
     @MainActor
-    struct RequestScreenRecordingSubcommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConfigurable {
+    struct RequestScreenRecordingSubcommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedCommand {
         struct Result: Codable {
             let action: String
             let granted: Bool
         }
 
-        @RuntimeStorage private var runtime: CommandRuntime?
+        @RuntimeStorage var runtime: CommandRuntime?
         var runtimeOptions = CommandRuntimeOptions()
-
-        private var resolvedRuntime: CommandRuntime {
-            guard let runtime else {
-                preconditionFailure("CommandRuntime must be configured before accessing runtime resources")
-            }
-            return runtime
-        }
-
-        var outputLogger: Logger {
-            self.resolvedRuntime.logger
-        }
-
-        var jsonOutput: Bool {
-            self.runtime?.configuration.jsonOutput ?? self.runtimeOptions.jsonOutput
-        }
-
         @MainActor
         mutating func run(using runtime: CommandRuntime) async throws {
             self.runtime = runtime
@@ -187,25 +140,9 @@ extension PermissionsCommand {
     }
 
     @MainActor
-    struct RequestEventSynthesizingSubcommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConfigurable {
-        @RuntimeStorage private var runtime: CommandRuntime?
+    struct RequestEventSynthesizingSubcommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedCommand {
+        @RuntimeStorage var runtime: CommandRuntime?
         var runtimeOptions = CommandRuntimeOptions()
-
-        private var resolvedRuntime: CommandRuntime {
-            guard let runtime else {
-                preconditionFailure("CommandRuntime must be configured before accessing runtime resources")
-            }
-            return runtime
-        }
-
-        var outputLogger: Logger {
-            self.resolvedRuntime.logger
-        }
-
-        var jsonOutput: Bool {
-            self.runtime?.configuration.jsonOutput ?? self.runtimeOptions.jsonOutput
-        }
-
         @MainActor
         mutating func run(using runtime: CommandRuntime) async throws {
             self.runtime = runtime
