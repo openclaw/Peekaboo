@@ -1,312 +1,154 @@
 ---
-summary: 'Review Peekaboo Error Handling Guide guidance'
+summary: 'Use PeekabooError and StandardErrorCode consistently'
 read_when:
-  - 'planning work related to peekaboo error handling guide'
-  - 'debugging or extending features described here'
+  - 'adding or mapping errors in Peekaboo services'
+  - 'debugging CLI text or JSON error output'
 ---
 
 # Peekaboo Error Handling Guide
 
-This guide describes the unified error handling system in PeekabooCore, designed to provide consistent, user-friendly error messages across all services.
+This guide describes the shared error primitives in `PeekabooFoundation` and how the CLI maps them to user-facing output.
 
 ## Overview
 
-The error handling system consists of three main components:
+The error handling system has three main pieces:
 
-1. **Standardized Errors** - Consistent error types and codes
-2. **Error Formatting** - Unified presentation for CLI, JSON, and logs
-3. **Error Recovery** - Automatic retry and graceful degradation
+1. **`PeekabooError`** — the shared `LocalizedError` used by services.
+2. **`StandardErrorCode`** — stable codes exposed by `StandardizedError`.
+3. **CLI mapping** — `ErrorHandlingCommand` maps service errors to the CLI's JSON `ErrorCode` values.
 
 ## Error Types
 
 ### Standard Error Codes
 
-All errors in Peekaboo use standardized error codes for consistency:
+`StandardErrorCode` covers permission, lookup, operation, validation, system, and AI failures. Representative values are:
 
 ```swift
-// Permission errors
 case screenRecordingPermissionDenied = "PERMISSION_DENIED_SCREEN_RECORDING"
 case accessibilityPermissionDenied = "PERMISSION_DENIED_ACCESSIBILITY"
-
-// Not found errors
 case applicationNotFound = "APP_NOT_FOUND"
 case windowNotFound = "WINDOW_NOT_FOUND"
 case elementNotFound = "ELEMENT_NOT_FOUND"
-
-// Operation errors
 case captureFailed = "CAPTURE_FAILED"
 case interactionFailed = "INTERACTION_FAILED"
 case timeout = "TIMEOUT"
+case invalidInput = "INVALID_INPUT"
 ```
+
+`PeekabooError.code` returns one of these values. It also supplies `userMessage`, string-valued `context`, and a recovery suggestion for the cases where the repository defines one.
 
 ### Error Categories
 
-Errors are grouped into categories:
-- **Permission**: Access control issues
-- **Not Found**: Missing resources
-- **Operation**: Execution failures
-- **Validation**: Input errors
-- **System**: Infrastructure issues
-- **AI**: AI provider problems
+`PeekabooError.category` groups errors into `permissions`, `automation`, `session`, `io`, `validation`, `ai`, `configuration`, `network`, or `unknown`.
 
 ## Using the Error System
 
 ### Creating Errors
 
-Use the predefined error types for consistency:
+Use a concrete `PeekabooError` case or one of its convenience factories:
 
 ```swift
-// Permission errors
-throw PermissionError.screenRecording()
-throw PermissionError.accessibility()
-
-// Not found errors
-throw NotFoundError.application("Safari")
-throw NotFoundError.window(app: "Finder", index: 2)
-throw NotFoundError.element("Submit button")
-
-// Operation errors
-throw OperationError.captureFailed(reason: "Display disconnected")
-throw OperationError.timeout(operation: "screenshot", duration: 30)
-
-// Validation errors
-throw ValidationError.invalidInput(field: "coordinates", reason: "Outside screen bounds")
-throw ValidationError.ambiguousAppIdentifier("Safari", matches: ["Safari", "Safari Technology Preview"])
+throw PeekabooError.permissionDeniedScreenRecording
+throw PeekabooError.appNotFound("Safari")
+throw PeekabooError.windowNotFound(criteria: "Finder window 2")
+throw PeekabooError.elementNotFound("Submit button")
+throw PeekabooError.captureFailed("Display disconnected")
+throw PeekabooError.timeout(operation: "screenshot", duration: 30)
+throw PeekabooError.invalidInput(field: "coordinates", reason: "Outside screen bounds")
+throw PeekabooError.ambiguousAppIdentifier(
+    "Safari",
+    matches: ["Safari", "Safari Technology Preview"])
 ```
 
-### Formatting Errors
+`OperationError` is a typealias for `PeekabooError`; there are no separate `PermissionError`, `NotFoundError`, or `ValidationError` families in `PeekabooFoundation`.
 
-Use `ErrorFormatter` for consistent presentation:
+### Standardizing Other Errors
+
+`ErrorStandardizer.standardize(_:)` preserves errors that already conform to `StandardizedError`, converts missing-file Cocoa errors to `PeekabooError.fileIOError`, and wraps other errors as `PeekabooError.operationError`.
 
 ```swift
-// For CLI output
-let message = ErrorFormatter.formatForCLI(error, verbose: true)
-
-// For JSON responses
-let json = ErrorFormatter.formatForJSON(error)
-
-// For logging
-let logMessage = ErrorFormatter.formatForLog(error)
-
-// For multiple errors
-let summary = ErrorFormatter.formatMultipleErrors(errors)
+let standardized = ErrorStandardizer.standardize(error)
+print(standardized.code.rawValue)
+print(standardized.userMessage)
 ```
 
-## Error Recovery
+## Recovery Suggestions
 
-### Retry Policies
-
-Configure automatic retry behavior:
+`StandardizedError.recoverySuggestion` is currently defined for Screen Recording, Accessibility, event-synthesizing permission, missing apps/windows, timeouts, and ambiguous app identifiers. `PeekabooError.suggestedAction` additionally covers a small set of session, AI, and service cases.
 
 ```swift
-// Use standard retry policy (3 attempts, exponential backoff)
-let result = try await RetryHandler.withRetry {
-    try await captureScreen()
-}
-
-// Custom retry policy
-let policy = RetryPolicy(
-    maxAttempts: 5,
-    initialDelay: 0.1,
-    delayMultiplier: 2.0,
-    retryableErrors: [.timeout, .captureFailed]
-)
-
-let result = try await RetryHandler.withRetry(policy: policy) {
-    try await performOperation()
-}
-```
-
-### Recovery Suggestions
-
-Errors include recovery suggestions:
-
-```swift
-let error = PermissionError.screenRecording()
+let error = PeekabooError.permissionDeniedScreenRecording
 if let suggestion = error.recoverySuggestion {
     print("Suggestion: \(suggestion)")
-    // Output: "Grant Screen Recording permission in System Settings"
 }
-```
-
-### Graceful Degradation
-
-Handle partial failures:
-
-```swift
-let options = DegradationOptions(
-    allowPartialResults: true,
-    fallbackToDefaults: true,
-    skipNonCritical: true
-)
-
-// Operations can return degraded results
-let result = DegradedResult(
-    value: partialData,
-    errors: [minorError],
-    warnings: ["Some features unavailable"],
-    isPartial: true
-)
 ```
 
 ## Service Integration
 
 ### Example: ScreenCaptureService
 
+`ScreenCaptureServiceProtocol` is `@MainActor` and returns `CaptureResult`. The convenience overload supplies screenshot-flash visualization and logical 1x scaling:
+
 ```swift
-public func captureScreen(displayIndex: Int? = nil) async throws -> CaptureResult {
-    // Check permissions
-    guard hasScreenRecordingPermission() else {
-        throw PermissionError.screenRecording()
-    }
-    
-    // Validate input
-    if let index = displayIndex, index < 0 || index >= screenCount {
-        throw ValidationError.invalidInput(
-            field: "displayIndex",
-            reason: "Must be between 0 and \(screenCount - 1)"
-        )
-    }
-    
-    // Perform capture with retry
-    return try await RetryHandler.withRetry(policy: .standard) {
-        guard let image = performCapture() else {
-            throw OperationError.captureFailed(
-                reason: "Unable to capture display"
-            )
-        }
-        return CaptureResult(image: image)
-    }
-}
+let result = try await services.screenCapture.captureScreen(displayIndex: nil)
 ```
+
+The full signature is:
+
+```swift
+func captureScreen(
+    displayIndex: Int?,
+    visualizerMode: CaptureVisualizerMode,
+    scale: CaptureScalePreference
+) async throws -> CaptureResult
+```
+
+Window capture supports either `appIdentifier` plus `windowIndex`, or a concrete `CGWindowID`.
 
 ## CLI Integration
 
 ### Error Output
 
-The CLI automatically formats errors based on output mode:
+Commands conforming to `ErrorHandlingCommand` call `handleError(_:customCode:)`. Text mode writes `Error: <localized message>` to stderr. JSON mode emits the standard response shape:
 
-```bash
-# Normal mode - user-friendly message
-$ peekaboo capture
-Error: Screen Recording permission is required. Please grant permission in System Settings > Privacy & Security > Screen Recording.
-
-Suggestion: Grant Screen Recording permission in System Settings
-
-# Verbose mode - includes context
-$ peekaboo capture --verbose
-Error: Screen Recording permission is required...
-
-Suggestion: Grant Screen Recording permission in System Settings
-
-Context:
-  permission: screen_recording
-
-# JSON mode - structured output
-$ peekaboo capture --json
+```json
 {
   "success": false,
+  "debug_logs": [],
   "error": {
-    "error_code": "PERMISSION_DENIED_SCREEN_RECORDING",
-    "message": "Screen Recording permission is required...",
-    "recovery_suggestion": "Grant Screen Recording permission in System Settings",
-    "context": {
-      "permission": "screen_recording"
-    }
+    "message": "Screen Recording permission is required",
+    "code": "PERMISSION_ERROR_SCREEN_RECORDING"
   }
 }
 ```
 
+The CLI's `ErrorCode` names are an output contract separate from `StandardErrorCode`; `CommandErrorHandling.swift` owns the explicit mapping between them.
+
 ## Best Practices
 
-### 1. Use Standardized Errors
-Always use the predefined error types instead of creating custom errors:
+### 1. Use the Shared Cases
+
+Prefer a specific `PeekabooError` over a generic `NSError` when a shared case fits.
+
+### 2. Preserve Context
+
+Use associated values for the resource, identifier, or reason that helps the caller recover:
 
 ```swift
-// ✅ Good
-throw NotFoundError.application("TextEdit")
-
-// ❌ Avoid
-throw NSError(domain: "PeekabooError", code: 404, userInfo: nil)
+throw PeekabooError.captureFailed("No shareable window matched \(appName)")
 ```
 
-### 2. Provide Context
-Include relevant context in errors:
+### 3. Map at the Output Boundary
 
-```swift
-throw ValidationError.invalidCoordinates(x: 5000, y: 3000)
-// Error includes the invalid coordinates in context
-```
-
-### 3. Use Appropriate Retry Policies
-Choose retry policies based on operation type:
-
-```swift
-// Network operations - aggressive retry
-RetryPolicy.aggressive
-
-// User interactions - conservative retry
-RetryPolicy.conservative
-
-// Critical operations - no retry
-RetryPolicy.noRetry
-```
-
-### 4. Handle Degraded Results
-Design services to continue with partial data when appropriate:
-
-```swift
-// Allow partial window list if some windows fail
-let windows = await collectWindows(options: .lenient)
-if windows.isPartial {
-    logger.warning("Some windows could not be accessed")
-}
-```
-
-## Migration Guide
-
-To migrate existing error handling:
-
-1. Replace custom errors with standardized types
-2. Update error formatting to use `ErrorFormatter`
-3. Add retry logic where appropriate
-4. Implement recovery suggestions
-
-Example migration:
-
-```swift
-// Before
-throw NSError(domain: "Peekaboo", code: 1, userInfo: [
-    NSLocalizedDescriptionKey: "App not found"
-])
-
-// After
-throw NotFoundError.application(appName)
-```
+Services should throw domain errors. CLI commands map those errors to text or JSON at their output boundary rather than embedding terminal formatting in service code.
 
 ## Testing Errors
 
-Test error handling comprehensively:
+Test the case, standardized code, localized message, context, and CLI mapping that matter for the behavior:
 
 ```swift
-@Test
-func testPermissionError() async throws {
-    let error = PermissionError.screenRecording()
-    
-    #expect(error.code == .screenRecordingPermissionDenied)
-    #expect(error.userMessage.contains("Screen Recording"))
-    #expect(error.recoverySuggestion \!= nil)
-    
-    let json = ErrorFormatter.formatForJSON(error)
-    #expect(json["error_code"] as? String == "PERMISSION_DENIED_SCREEN_RECORDING")
-}
+let error = PeekabooError.appNotFound("TextEdit")
+#expect(error.code == .applicationNotFound)
+#expect(error.userMessage == "Application 'TextEdit' not found")
+#expect(error.context["app"] == "TextEdit")
 ```
-
-## Future Enhancements
-
-Planned improvements:
-- Localization support for error messages
-- Error analytics and reporting
-- Advanced recovery strategies
-- Error aggregation for batch operations
-EOF < /dev/null

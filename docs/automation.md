@@ -64,7 +64,7 @@ peekaboo type "github.com/openclaw/Peekaboo" --app Safari --return --foreground
 | [perform-action](commands/perform-action.md) | trigger any AX action (`AXPress`, `AXShowMenu`, …) |
 | [sleep](commands/sleep.md) | wait between steps with deterministic timing |
 
-For UX parity with humans (jitter, easing, dwell), see [human-typing.md](human-typing.md) and [human-mouse-move.md](human-mouse-move.md).
+For UX parity with humans (jitter, easing, dwell), see [human-mouse-move.md](human-mouse-move.md) and the input profiles in the command docs.
 
 ## Surfaces
 

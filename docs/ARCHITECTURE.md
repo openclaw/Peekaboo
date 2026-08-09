@@ -31,8 +31,14 @@ This document provides a high-level overview of how Tachikoma and PeekabooCore w
                   └─────────────┘        └──────────────┘
 ```
 
-- **PeekabooAutomation** – houses *all* automation-facing code (configuration, capture, application/menu/window services, snapshot management, typed models). Anything that touches Accessibility, ScreenCaptureKit, or on-host configuration lives here.
+- **PeekabooFoundation** – shared errors and low-level value types used across packages.
+- **PeekabooProtocols** – cross-module protocols and transport-safe model contracts.
+- **PeekabooExternalDependencies** – central package boundary for AXorcist, Swift Algorithms, Swift Log, Swift System, Commander, and Collections.
+- **PeekabooAutomationKit** – owns capture, observation, input, application/menu/window services, snapshot management, and typed automation models.
+- **PeekabooAutomation** – re-exports `PeekabooAutomationKit` and adds Peekaboo configuration, Tachikoma model resolution, and visualizer feedback adapters.
+- **PeekabooBridge** – request/response transport and host/client plumbing for permission-bearing runtimes.
 - **PeekabooVisualizer** – standalone visual feedback layer (`VisualizationClient`, event store, presets) used by automation and apps.
+- **PeekabooUICore** – shared SwiftUI inspector and overlay components used by app surfaces.
 - **PeekabooAgentRuntime** – MCP tools, ToolRegistry/formatters, and the agent service itself. Depends on `PeekabooAutomation` for services/data models and on `PeekabooVisualizer` for status tokens.
 - **PeekabooCore** – thin umbrella (`_exported` imports + `PeekabooServices` convenience container). Apps/CLI keep importing `PeekabooCore`, but large features can now link the more focused products directly. Whoever instantiates `PeekabooServices` is responsible for calling `installAgentRuntimeDefaults()` so MCP tools and the ToolRegistry share that instance.
 - **Tachikoma** – still the AI provider surface that the runtime modules call through. See
@@ -59,14 +65,17 @@ atomically, and removes only the filesystem object it owns. See [daemon.md](daem
 ### Dependency Flow
 
 **Tachikoma** (AI Model Management)
-- Provides `AIModelProvider` for dependency injection.
-- Manages provider/model registry, model selection, and capability metadata.
-- Handles API configuration and credential management.
+- Provides `LanguageModel`, the `ModelProvider` protocol, provider parsers, and `Tachikoma.generateText`.
+- `TachikomaConfiguration` supplies provider credentials and endpoint configuration.
+- `PeekabooAIService` resolves configured model strings and calls Tachikoma with the selected `LanguageModel`.
+
+**PeekabooAutomationKit**
+- Exposes automation protocols and concrete implementations such as `ScreenCaptureService`, `UIAutomationService`, `MenuService`, and `ProcessService`.
+- Owns capture, observation, input, window filtering, snapshot persistence, and their typed models.
 
 **PeekabooAutomation**
-- Depends on Tachikoma for provider metadata and `PeekabooVisualizer` for optional UI feedback.
-- Exposes pure Swift protocols (`ApplicationServiceProtocol`, `LoggingServiceProtocol`, etc.) plus concrete implementations (MenuService, ScreenCaptureService, ProcessService, etc.).
-- Owns persisted models such as `CaptureTarget`, `AutomationAction`, `UIElement`, `SnapshotInfo`, and shared helper utilities.
+- Re-exports `PeekabooAutomationKit` and adds `ConfigurationManager`, `PeekabooAIService`, and `VisualizerAutomationFeedbackClient`.
+- Depends on Tachikoma for provider/model execution and on `PeekabooVisualizer` for optional UI feedback.
 
 **PeekabooAgentRuntime**
 - Imports `PeekabooAutomation` for services/models and hosts MCP/agent tooling (`PeekabooAgentService`, `MCPToolContext`, `ToolRegistry`, CLI/MCP formatters).
@@ -78,35 +87,29 @@ atomically, and removes only the filesystem object it owns. See [daemon.md](daem
 
 ## Tachikoma: AI Model Management
 
-### Architecture Pattern: Dependency Injection
+### Architecture Pattern: Explicit Model Selection
 
-Tachikoma has migrated from a singleton pattern to dependency injection for better testability and flexibility:
+Peekaboo resolves configured provider strings into Tachikoma `LanguageModel` values before executing requests:
 
 ```swift
-// Old (deprecated)
-let model = try await Tachikoma.shared.getModel("gpt-4.1")
-
-// New (recommended)
-let provider = try AIConfiguration.fromEnvironment()
-let model = try provider.getModel("gpt-4.1")
+let ai = PeekabooAIService(configuration: .shared)
+let model = ai.resolveConfiguredModel("openai/gpt-5.6")
+let text = try await ai.generateText(prompt: "Describe this workflow", model: model)
 ```
 
 ### Key Components
 
-#### AIModelProvider
-- **Role**: Central registry for AI model instances
-- **Pattern**: Immutable collection with functional updates
-- **Thread Safety**: Full concurrent access support
+#### LanguageModel
+- **Role**: Typed model selection with provider identity and capability metadata.
+- **Resolution**: `ProviderParser`, `AIProviderParser`, and `LanguageModel.parse(from:)` turn configuration strings into model values.
 
-#### AIModelFactory
-- **Role**: Factory methods for creating model instances
-- **Supported Providers**: See [providers.md](providers.md) for the current provider reference
-- **Configuration**: Handles API keys, base URLs, and model-specific parameters
+#### ModelProvider
+- **Role**: Provider execution protocol used by Tachikoma and Peekaboo's custom compatible-provider adapter.
+- **Supported Providers**: See [providers.md](providers.md) for the current provider reference.
 
-#### AIConfiguration
-- **Role**: Environment-based automatic configuration
-- **Sources**: Environment variables and `~/.tachikoma/credentials` file
-- **Auto-Discovery**: Automatically registers all available models
+#### TachikomaConfiguration
+- **Role**: Provider keys, endpoints, and request configuration for Tachikoma calls.
+- **Sources**: Peekaboo's `ConfigurationManager` loads `~/.peekaboo/config.json`, `~/.peekaboo/credentials`, and environment variables, then applies those values to Tachikoma.
 
 ## PeekabooCore: Automation Engine
 
@@ -164,11 +167,11 @@ public final class UIAutomationService: UIAutomationServiceProtocol {
 PeekabooCore integrates with Tachikoma through `PeekabooAgentService`:
 
 ```swift
-let modelProvider = try AIConfiguration.fromEnvironment()
-let agent = PeekabooAgentService(
-    services: PeekabooServices(),
-    modelProvider: modelProvider
-)
+let services = PeekabooServices()
+services.installAgentRuntimeDefaults()
+let ai = PeekabooAIService(configuration: services.configuration)
+let model = ai.resolveConfiguredModel("anthropic/claude-opus-4-8") ?? .anthropic(.opus48)
+let agent = try PeekabooAgentService(services: services, defaultModel: model)
 ```
 
 #### Visual Feedback Integration

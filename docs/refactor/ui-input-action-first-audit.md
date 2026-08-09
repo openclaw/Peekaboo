@@ -94,7 +94,7 @@ No remaining item blocks completion.
 | Version mismatch asks user/model to relaunch host app | `PeekabooBridgeServer+Handshake.swift`; `PeekabooBridgeTests` | Done |
 | Docs for config and tools | `docs/configuration.md`; `docs/MCP.md`; `docs/commands/set-value.md`; `docs/commands/perform-action.md` | Done |
 | Unit tests listed in the plan | `InputConfigTests`, `UIInputDispatcherTests`, `ActionInputDriverTests`, MCP/bridge tests | Done |
-| Input automation cannot type into arbitrary active apps by accident | `InputAutomationSafety` frontmost bundle allow-list; `InputAutomationSafetyTests`; `docs/remote-testing.md` | Done |
+| Input automation cannot type into arbitrary active apps by accident | `InputAutomationSafety` frontmost bundle allow-list; `InputAutomationSafetyTests` | Done |
 | GUI automation: AXPress native button | `.artifacts/ui-input-action-first/20260508-014638/action-click.json`; `click.log` confirms the Playground button action fired | Done |
 | GUI automation: direct value set text field | `.artifacts/ui-input-action-first/20260508-014638/action-set-value-live.json`; `see-text-after-setvalue.json` confirms `basic-text-field` label changed to `action value 20260508 live` | Done |
 | GUI automation: menu-item hotkey invocation | `.artifacts/ui-input-action-first/20260508-014638/action-hotkey-menu-fixed.json`; `menu.log` confirms `Test Action 1 clicked` | Done |

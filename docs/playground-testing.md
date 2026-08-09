@@ -26,24 +26,25 @@ When testing Peekaboo CLI tools with the Playground app, we follow a systematic 
 
 Before starting tests:
 - Build the CLI (`pnpm run build:cli`) so you test fresh bits
+- Resolve it once with `PEEKABOO_BIN="$(swift build --package-path Apps/CLI --show-bin-path)/peekaboo"`
 - Build and launch Playground app
 - Clear any previous test artifacts
 - Open terminal for log monitoring
-- Run `peekaboo visualizer` with Peekaboo.app open to confirm visual feedback is working (treat this as part of the pre-flight check).
+- Run `"$PEEKABOO_BIN" visualizer` with Peekaboo.app open to confirm visual feedback is working (treat this as part of the pre-flight check).
 
 ### 2. For Each Command
 
 #### A. Documentation Review
 ```bash
 # Always start with help documentation
-./scripts/peekaboo-wait.sh <command> --help
+"$PEEKABOO_BIN" help <command>
 
 # Review what parameters are available
 # Note any confusing or inconsistent naming
 ```
 
 #### B. Source Code Analysis
-- Read the command implementation in `Apps/CLI/Sources/peekaboo/Commands/`
+- Read the command implementation in `Apps/CLI/Sources/PeekabooCLI/Commands/`
 - Understand:
   - Expected parameter types and formats
   - Error handling logic
@@ -53,7 +54,7 @@ Before starting tests:
 #### C. Basic Functionality Testing
 ```bash
 # Test the primary use case
-./scripts/peekaboo-wait.sh <command> <basic-args>
+"$PEEKABOO_BIN" <command> <basic-args>
 
 # Verify in logs
 ./Apps/Playground/scripts/playground-log.sh -n 20
@@ -104,7 +105,7 @@ When issues are found, document in `PLAYGROUND_TEST.md`:
 ```markdown
 ### ❌ [Command Name] - [Brief Description]
 
-**Test Case**: `./scripts/peekaboo-wait.sh [exact command]`
+**Test Case**: `"$PEEKABOO_BIN" [exact command]`
 
 **Expected**: [What should happen]
 
@@ -179,27 +180,27 @@ cat ~/.peekaboo/snapshots/<snapshot-id>/snapshot.json | jq .
 ### 1. UI Element Interaction
 ```bash
 # Capture UI first
-./scripts/peekaboo-wait.sh see --app Playground
+"$PEEKABOO_BIN" see --app Playground
 
 # Then interact with elements
-./scripts/peekaboo-wait.sh click "Button Text"
-./scripts/peekaboo-wait.sh type "Hello World"
+"$PEEKABOO_BIN" click "Button Text"
+"$PEEKABOO_BIN" type "Hello World"
 ```
 
 ### 2. Window Management
 ```bash
 # List windows
-./scripts/peekaboo-wait.sh list windows --app Playground
+"$PEEKABOO_BIN" list windows --app Playground
 
 # Manipulate windows
-./scripts/peekaboo-wait.sh window focus --app Playground
-./scripts/peekaboo-wait.sh window minimize --app Playground
+"$PEEKABOO_BIN" window focus --app Playground
+"$PEEKABOO_BIN" window minimize --app Playground
 ```
 
 ### 3. Menu Interaction
 ```bash
 # Click menu items
-./scripts/peekaboo-wait.sh menu click "Test Menu" "Test Action 1"
+"$PEEKABOO_BIN" menu click --app Playground --path "Test Menu>Test Action 1"
 ```
 
 ## Fix and Retest Cycle
@@ -239,7 +240,7 @@ For each command, use this checklist:
 
 ## Best Practices
 
-1. **Always use the wrapper script**: `./scripts/peekaboo-wait.sh`
+1. **Pin the binary under test**: resolve `PEEKABOO_BIN` after each rebuild and invoke it directly
 2. **Test incrementally**: Start simple, add complexity
 3. **Document everything**: Even minor observations might be valuable
 4. **Think like a user**: Would this behavior surprise someone?

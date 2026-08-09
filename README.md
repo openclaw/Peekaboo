@@ -98,7 +98,7 @@ Shell completions for zsh, bash, and fish come from `peekaboo completions`; see 
 - [Building from source](docs/building.md)
 - [Testing](docs/testing/tools.md)
 - [Agent chat loop](docs/agent-chat.md)
-- [Service API](docs/service-api-reference.md)
+- [Command reference](docs/cli-command-reference.md)
 
 ## Community
 

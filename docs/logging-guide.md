@@ -1,31 +1,35 @@
 ---
-summary: 'Review Peekaboo Logging Guide guidance'
+summary: 'Use and interpret Peekaboo CLI logging'
 read_when:
-  - 'planning work related to peekaboo logging guide'
-  - 'debugging or extending features described here'
+  - 'debugging CLI execution or structured output'
+  - 'adding log levels, categories, or performance timers'
 ---
 
 # Peekaboo Logging Guide
 
 ## Overview
 
-Peekaboo implements a comprehensive logging system designed to help developers and users debug automation scripts, understand performance characteristics, and troubleshoot issues. The logging system provides structured, timestamped output with multiple log levels and categories.
+The CLI logger writes timestamped diagnostic messages to stderr in text mode and buffers the same messages for `debug_logs` in JSON mode. It supports free-form categories and key/value metadata.
 
 ## Log Levels
 
-Peekaboo supports the following log levels (from most to least verbose):
+Peekaboo supports these levels from most to least verbose:
 
-- **VERBOSE**: Detailed information about internal operations, decision-making, and timing
-- **DEBUG**: Debugging information useful for development
-- **INFO**: General informational messages
-- **WARN**: Warning messages for potentially problematic situations
-- **ERROR**: Error messages for failures and exceptions
+- **TRACE**
+- **VERBOSE**
+- **DEBUG**
+- **INFO**
+- **WARN**
+- **ERROR**
+- **CRITICAL**
+
+The default minimum is `warning` unless `PEEKABOO_LOG_LEVEL` overrides it.
 
 ## Enabling Verbose Logging
 
 ### Command Line Flag
 
-Use the `--verbose` or `-v` flag with any command:
+Use `--verbose` or `-v` on commands that expose the global runtime options:
 
 ```bash
 peekaboo see --app Safari --verbose
@@ -34,165 +38,80 @@ peekaboo click --on "$ELEMENT_ID" --verbose
 
 ### Environment Variable
 
-Set the `PEEKABOO_LOG_LEVEL` environment variable:
-
 ```bash
-export PEEKABOO_LOG_LEVEL=verbose
-peekaboo see --app Safari
+PEEKABOO_LOG_LEVEL=debug peekaboo see --app Safari
 ```
 
-Valid values: `verbose`, `trace`, `debug`, `info`, `warning`, `warn`, `error`
+Accepted values are `trace`, `verbose`, `debug`, `info`, `warning`/`warn`, `error`, and `critical`.
 
 ## Log Output Format
 
-When verbose logging is enabled, messages are output to stderr in the following format:
+The CLI logger formats text as:
 
-```
-[2025-01-06T08:05:23.123Z] VERBOSE: Message here
-[2025-01-06T08:05:23.456Z] VERBOSE [Category]: Message with category
-[2025-01-06T08:05:23.789Z] VERBOSE [Performance]: Timer 'operation' completed {duration_ms=234}
+```text
+[2026-08-08T12:34:56.789Z] VERBOSE: Message
+[2026-08-08T12:34:56.789Z] VERBOSE [Capture]: Message {app=Safari, mode=window}
 ```
 
-### Components:
-- **Timestamp**: ISO 8601 format with milliseconds
-- **Level**: Log level (VERBOSE, DEBUG, INFO, WARN, ERROR)
-- **Category** (optional): Logical grouping of related messages
-- **Message**: The log message
-- **Metadata** (optional): Additional structured data in key=value format
+The timestamp is ISO 8601 with fractional seconds. Category and metadata are optional. Metadata ordering is not an API contract because it comes from a Swift dictionary.
 
 ## Log Categories
 
-Common log categories used throughout Peekaboo:
+Categories are strings supplied by call sites rather than a central enum. Current CLI code uses categories including `AI`, `Automation`, `Bridge`, `Capture`, `Commander`, `Menu`, `MultiScreen`, `Operation`, and `Performance`.
 
-- **Permissions**: Permission checking and status
-- **Capture**: Screenshot capture operations
-- **WindowSearch**: Window finding and matching
-- **ElementDetection**: UI element detection and analysis
-- **Snapshot**: Snapshot cache management operations
-- **Performance**: Performance timing and metrics
-- **Operation**: High-level operation tracking
-- **AI**: AI provider operations and analysis
+The separate automation event logger uses Apple's unified logging for command activity; it does not change the stderr/JSON format above.
 
 ## Performance Tracking
 
-Verbose mode automatically tracks and reports performance metrics:
+`Logger.startTimer(_:)` records a start time. `stopTimer(_:threshold:)` prepares a `Performance` message when verbose mode is active or a supplied threshold is exceeded; the configured minimum level still controls whether that verbose message is emitted:
 
-```
-[2025-01-06T08:05:23.123Z] VERBOSE [Performance]: Starting timer 'screen_capture'
-[2025-01-06T08:05:23.456Z] VERBOSE [Performance]: Timer 'screen_capture' completed {duration_ms=333}
-```
-
-This helps identify performance bottlenecks and slow operations.
-
-## Examples
-
-### Basic Verbose Output
-
-```bash
-$ peekaboo see --app Safari --verbose
-[2025-01-06T08:05:23.123Z] VERBOSE: Verbose logging enabled
-[2025-01-06T08:05:23.124Z] VERBOSE [Operation]: Starting operation {operation=see_command, app=Safari, mode=auto, annotate=false, hasAnalyzePrompt=false}
-[2025-01-06T08:05:23.125Z] VERBOSE [Permissions]: Checking screen recording permissions
-[2025-01-06T08:05:23.200Z] VERBOSE [Permissions]: Screen recording permission granted
-[2025-01-06T08:05:23.201Z] VERBOSE [Capture]: Starting capture and detection phase
-[2025-01-06T08:05:23.202Z] VERBOSE [Capture]: Determined capture mode {mode=window}
-[2025-01-06T08:05:23.203Z] VERBOSE [Capture]: Initiating window capture {app=Safari, windowTitle=any}
-[2025-01-06T08:05:23.204Z] VERBOSE [Performance]: Starting timer 'window_capture'
-[2025-01-06T08:05:23.537Z] VERBOSE [Performance]: Timer 'window_capture' completed {duration_ms=333}
-[2025-01-06T08:05:23.538Z] VERBOSE [Capture]: Capture completed successfully {snapshotId=12345, elementCount=42, screenshotSize=524288}
-[2025-01-06T08:05:23.750Z] VERBOSE [Operation]: Operation completed {operation=see_command, success=true, executionTimeMs=627}
+```text
+[2026-08-08T12:34:56.789Z] VERBOSE [Performance]: Starting timer 'screen_capture'
+[2026-08-08T12:34:57.122Z] VERBOSE [Performance]: Timer 'screen_capture' completed {duration_ms=333}
 ```
 
-### Debugging Element Not Found
-
-```bash
-$ peekaboo click --on "$ELEMENT_ID" --verbose
-[2025-01-06T08:05:24.123Z] VERBOSE [Snapshot]: Resolving snapshot {explicitId=null}
-[2025-01-06T08:05:24.124Z] VERBOSE [Snapshot]: Found valid snapshots {count=1, latest=12345}
-[2025-01-06T08:05:24.125Z] VERBOSE [ElementSearch]: Looking for element {id=<element-id>, snapshotId=12345}
-[2025-01-06T08:05:24.126Z] VERBOSE [ElementSearch]: Loading snapshot map from cache
-[2025-01-06T08:05:24.127Z] ERROR [ElementSearch]: Element not found in snapshot {id=<element-id>}
-```
-
-### Performance Analysis
-
-```bash
-$ peekaboo see --mode screen --annotate --verbose
-[2025-01-06T08:05:25.123Z] VERBOSE [Performance]: Starting timer 'screen_capture'
-[2025-01-06T08:05:26.456Z] VERBOSE [Performance]: Timer 'screen_capture' completed {duration_ms=1333}
-[2025-01-06T08:05:26.457Z] VERBOSE [Performance]: Starting timer 'element_detection'
-[2025-01-06T08:05:27.234Z] VERBOSE [Performance]: Timer 'element_detection' completed {duration_ms=777}
-[2025-01-06T08:05:27.235Z] VERBOSE [Performance]: Starting timer 'generate_annotations'
-[2025-01-06T08:05:27.567Z] VERBOSE [Performance]: Timer 'generate_annotations' completed {duration_ms=332}
-```
+`operationStart` and `operationComplete` wrap this timer behavior and add `Operation` metadata.
 
 ## JSON Output Mode
 
-When using `--json`, verbose logs are collected in the `debug_logs` array:
+When a command enables JSON output, the logger buffers messages instead of writing them beside the JSON document. Standard CLI response types include those buffered strings in `debug_logs`:
 
 ```json
 {
   "success": true,
-  "data": {
-    "snapshot_id": "12345"
-  },
-  "debug_logs": [
-    "[2025-01-06T08:05:23.123Z] VERBOSE: Verbose logging enabled",
-    "[2025-01-06T08:05:23.124Z] VERBOSE [Operation]: Starting operation {operation=see_command}"
-  ]
+  "data": {},
+  "debug_logs": []
 }
 ```
 
+`--json-output` does not automatically lower the log threshold. Combine it with `--verbose` or `PEEKABOO_LOG_LEVEL` when detailed buffered logs are needed.
+
 ## Best Practices
 
-1. **Use verbose mode when debugging** automation scripts to understand why elements aren't found or operations fail
-
-2. **Check performance logs** to identify slow operations that might benefit from optimization
-
-3. **Look for error patterns** in categories like WindowSearch or ElementDetection to understand common issues
-
-4. **Use environment variables** for consistent logging across multiple commands in scripts
-
-5. **Filter logs by category** when troubleshooting specific subsystems
+1. Use verbose or debug logging while reproducing automation failures.
+2. Add a category only when it helps isolate an owning subsystem.
+3. Keep metadata small and non-sensitive; it is printed in text mode and returned in JSON mode.
+4. Use timers for measured operations, not as a substitute for profiling.
 
 ## Integration with Other Tools
 
 ### Filtering Logs
 
-Use standard Unix tools to filter verbose output:
-
 ```bash
-# Show only Performance logs
-peekaboo see --verbose 2>&1 | grep "Performance"
-
-# Show only errors
-peekaboo see --verbose 2>&1 | grep "ERROR"
-
-# Save logs to file
-peekaboo see --verbose 2> peekaboo.log
+peekaboo see --verbose 2>&1 | rg 'Performance'
+peekaboo see --verbose 2>peekaboo.log
 ```
 
-### Structured Log Processing
-
-The consistent format makes it easy to process logs programmatically:
+For JSON output, inspect `.debug_logs` instead of mixing diagnostics into stdout:
 
 ```bash
-# Extract all operation durations
-peekaboo see --verbose 2>&1 | grep "duration_ms" | sed 's/.*duration_ms=\([0-9]*\).*/\1/'
+peekaboo see --app Safari --json-output --verbose | jq '.debug_logs'
 ```
 
 ## Troubleshooting
 
 ### No Verbose Output
 
-If you don't see verbose output:
-1. Ensure you're using `--verbose` flag or set `PEEKABOO_LOG_LEVEL=verbose`
-2. Check that output isn't being redirected (logs go to stderr, not stdout)
-3. Verify you're not using `--json` (logs go to debug_logs array in JSON mode)
-
-### Performance Issues
-
-If verbose logging shows slow operations:
-1. Check "Timer completed" messages for operations taking >1000ms
-2. Look for repeated operations that could be optimized
-3. Consider using more specific targeting (e.g., window title) to reduce search time
+1. Confirm the command accepts `--verbose`, or set `PEEKABOO_LOG_LEVEL=verbose`.
+2. In text mode, check stderr rather than stdout.
+3. In JSON mode, inspect `debug_logs`.

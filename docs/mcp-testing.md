@@ -1,292 +1,130 @@
 ---
-summary: 'Review MCP Server Testing Guide guidance'
+summary: 'Test the Peekaboo MCP server from the current CLI build'
 read_when:
-  - 'planning work related to mcp server testing guide'
-  - 'debugging or extending features described here'
+  - 'changing MCP tools, schemas, transports, or startup'
+  - 'verifying a local MCP build with Inspector or mcporter'
 ---
 
 # MCP Server Testing Guide
 
-This guide explains how to test the Peekaboo MCP (Model Context Protocol) server during development using various tools and approaches.
+This guide explains how to test the MCP server shipped by `peekaboo mcp`. The same executable accepts `peekaboo mcp serve` explicitly.
 
-## Overview
+## Build the Server Under Test
 
-The Peekaboo MCP server ships with the CLI (`peekaboo mcp`) and provides AI assistants with direct access to macOS automation capabilities through a standardized protocol. Testing this server effectively requires tools that can simulate MCP client interactions and allow rapid iteration during development.
+Build once and resolve the binary from SwiftPM:
+
+```bash
+pnpm run build:cli
+PEEKABOO_BIN="$(swift build --package-path Apps/CLI --show-bin-path)/peekaboo"
+"$PEEKABOO_BIN" --version
+```
+
+Use that absolute path throughout a run so an installed `peekaboo` cannot shadow the fresh build.
 
 ## Testing Approaches
 
-### 1. MCP Inspector (Official Tool)
+### 1. MCP Inspector
 
-The official MCP Inspector provides a web-based interface for testing MCP servers:
+The official Inspector provides interactive schema and tool-call testing:
 
 ```bash
-# Test the installed CLI
-npx @modelcontextprotocol/inspector peekaboo mcp
-
-# Test a local build
-pnpm run build:cli
-PEEKABOO_BIN="$(swift build --show-bin-path --package-path Apps/CLI)/peekaboo"
 npx @modelcontextprotocol/inspector "$PEEKABOO_BIN" mcp
-
-# Test with specific AI provider
-PEEKABOO_AI_PROVIDERS="ollama/llama3.3" npx @modelcontextprotocol/inspector peekaboo mcp
 ```
 
-**Features:**
-- Visual interface showing available tools, resources, and prompts
-- Interactive tool calling with parameter inputs
-- Real-time response visualization
-- Session history tracking
+Use it to inspect the tool list, validate inputs, call read-only tools first, and then exercise permission-bound automation.
 
-### 2. Reloaderoo (Development Proxy)
+### 2. mcporter CLI
 
-Reloaderoo is a powerful MCP development tool that provides both CLI testing and hot-reload capabilities. Due to npm package issues, it should be built from source.
-
-#### Installation
+`mcporter` is useful for repeatable stdio smoke tests:
 
 ```bash
-# Clone and build from source
-git clone https://github.com/cameroncooke/reloaderoo.git
-cd reloaderoo
-npm install
-npm run build
+mcporter list peekaboo-local --stdio "$PEEKABOO_BIN mcp" --timeout 20000 --schema
+mcporter call peekaboo-local.permissions --stdio "$PEEKABOO_BIN mcp" --timeout 15000
 ```
 
-#### CLI Mode (Direct Testing)
+These commands start a fresh stdio server, perform the MCP initialize handshake, and then list or call tools without a repository wrapper.
+
+### 3. Claude Code Integration
+
+Register the absolute local build for a production-like client test:
 
 ```bash
-# Build the CLI once and set the binary path
-pnpm run build:cli
-export PEEKABOO_BIN="$(swift build --show-bin-path --package-path Apps/CLI)/peekaboo"
-
-# List available tools
-node reloaderoo/dist/bin/reloaderoo.js inspect list-tools -- "$PEEKABOO_BIN" mcp
-
-# Call a specific tool
-node reloaderoo/dist/bin/reloaderoo.js inspect call-tool image --params '{"format": "data", "app_target": "Safari"}' -- "$PEEKABOO_BIN" mcp
-node reloaderoo/dist/bin/reloaderoo.js inspect call-tool image --params '{"format": "data", "app_target": "Safari:1", "scale": "native"}' -- "$PEEKABOO_BIN" mcp
-node reloaderoo/dist/bin/reloaderoo.js inspect call-tool see --params '{"app_target": "PID:1234:2"}' -- "$PEEKABOO_BIN" mcp
-
-# Get server information
-node reloaderoo/dist/bin/reloaderoo.js inspect server-info -- "$PEEKABOO_BIN" mcp
-
-# List resources
-node reloaderoo/dist/bin/reloaderoo.js inspect list-resources -- "$PEEKABOO_BIN" mcp
-
-# List prompts
-node reloaderoo/dist/bin/reloaderoo.js inspect list-prompts -- "$PEEKABOO_BIN" mcp
-
-# Test with AI provider
-PEEKABOO_AI_PROVIDERS="anthropic/claude-opus-4-8" node reloaderoo/dist/bin/reloaderoo.js inspect call-tool analyze --params '{"image_path": "/tmp/screenshot.png", "question": "What is shown in this image?"}' -- "$PEEKABOO_BIN" mcp
-```
-
-#### Proxy Mode (Hot-Reload Development)
-
-```bash
-# Start Reloaderoo as a proxy (for manual testing)
-node reloaderoo/dist/bin/reloaderoo.js proxy -- "$PEEKABOO_BIN" mcp
-
-# Configure in Claude Code for hot-reload development with local build
-claude mcp add peekaboo-local node $PWD/reloaderoo/dist/bin/reloaderoo.js proxy -- "$PEEKABOO_BIN" mcp
-
-# The proxy adds a 'restart_server' tool that can be called from within Claude Code:
-# "Please restart the MCP server" - This will reload your local changes without losing session context
-```
-
-**Benefits:**
-- Test MCP servers without full client setup
-- Hot-reload servers during development without losing AI session context
-- Direct command-line access for CI/CD integration
-- Transparent protocol forwarding with debug logging
-- Built-in `restart_server` tool for seamless reloading
-
-### 3. Direct Claude Code Integration
-
-For production-like testing, integrate directly with Claude Code:
-
-```bash
-# Add the MCP server to Claude Code (local scope)
-claude mcp add peekaboo peekaboo mcp
-
-# Add with environment variables
-claude mcp add peekaboo peekaboo mcp \
-  -e PEEKABOO_AI_PROVIDERS="anthropic/claude-opus-4-8"
-
-# List configured servers
+claude mcp add peekaboo-local -- "$PEEKABOO_BIN" mcp
 claude mcp list
-
-# Remove server
-claude mcp remove peekaboo
 ```
 
-### 4. Manual Testing with curl
-
-For low-level protocol testing, you can interact with the MCP server directly:
-
-```bash
-# Start the server in stdio mode
-peekaboo mcp
-
-# Send JSON-RPC requests via stdin
-echo '{"jsonrpc":"2.0","method":"tools/list","id":1}' | peekaboo mcp
-```
+Remove or replace that registration after the test so future sessions do not silently keep using an old debug binary.
 
 ## Development Workflow
 
 ### Recommended Testing Cycle
 
-1. **Initial Development:**
-   - Use MCP Inspector for interactive testing
-   - Verify tool schemas and responses
-   - Test error handling with invalid inputs
-
-2. **Integration Testing:**
-   - Configure in Claude Code for real-world usage
-   - Test tool interactions in actual AI conversations
-   - Verify resource access and permissions
-
-3. **Continuous Development with Reloaderoo:**
-   - Start with Reloaderoo proxy in Claude Code
-   - Make changes to the Swift CLI/Core code
-   - Run `pnpm run build:cli` to compile changes
-   - In Claude Code, ask: "Please restart the MCP server"
-   - The proxy reloads with your new code while maintaining session context
-   - Continue testing without losing conversation history
-
-### Hot-Reload Example Workflow
-
-```bash
-# Terminal 1: Set up Reloaderoo with local server
-cd ~/Projects/Peekaboo
-PEEKABOO_BIN="$(swift build --show-bin-path --package-path Apps/CLI)/peekaboo"
-claude mcp add peekaboo-local node $PWD/reloaderoo/dist/bin/reloaderoo.js proxy -- "$PEEKABOO_BIN" mcp
-
-# Terminal 2: Watch for changes and rebuild
-pnpm run build:cli  # Rebuild after changes (or use your local watcher)
-
-# In Claude Code:
-# 1. Test current functionality: "Take a screenshot of Safari"
-# 2. Make changes in Apps/CLI or Core/PeekabooCore
-# 3. Run: pnpm run build:cli
-# 4. Tell Claude: "Please restart the MCP server"
-# 5. Test new functionality without losing context
-```
+1. Run `pnpm run build:cli` and resolve `PEEKABOO_BIN`.
+2. Use Inspector or `mcporter list ... --schema` to confirm initialization and schemas.
+3. Call `permissions`, `list`, or another read-only tool.
+4. Exercise the changed tool against the Playground fixture when behavior requires real UI.
+5. Rebuild after source changes and restart the client/server process; the MCP server does not hot-reload itself.
 
 ### Environment Configuration
 
+Set provider selection before starting the server when testing `agent` or `analyze`:
+
 ```bash
-# Set AI provider for agent tools
-export PEEKABOO_AI_PROVIDERS="anthropic/claude-opus-4-8"
-
-# Enable debug logging
-export DEBUG="peekaboo:*"
-
-# Configure credentials
-./scripts/peekaboo-wait.sh config set-credential ANTHROPIC_API_KEY sk-ant-...
+PEEKABOO_AI_PROVIDERS="ollama/<model>" npx @modelcontextprotocol/inspector "$PEEKABOO_BIN" mcp
 ```
+
+Credential storage uses the normal CLI:
+
+```bash
+"$PEEKABOO_BIN" config set-credential ANTHROPIC_API_KEY <value>
+```
+
+Do not paste live credential values into test logs or committed fixtures.
 
 ## Common Testing Scenarios
 
-### 1. Tool Discovery
-Test that all tools are properly exposed:
-- List all available tools
-- Verify tool descriptions are clear
-- Check parameter schemas are complete
+### Tool Discovery
 
-### 2. Screenshot Capabilities
-```javascript
-// Expected tool: captureScreen
-{
-  "app": "Safari",
-  "savePath": "/tmp/screenshot.png",
-  "format": "png"
-}
-```
+- Confirm the changed tool appears once.
+- Inspect its description, required properties, and enum values.
+- Compare the schema with the corresponding implementation under `Core/PeekabooCore/Sources/PeekabooAgentRuntime/MCP/Tools`.
 
-### 3. UI Automation
-```javascript
-// Expected tool: click
-{
-  "elementDescription": "Submit button"
-}
+### Screenshot and Observation
 
-// Expected tool: type
-{
-  "text": "Hello, World!"
-}
-```
+Call `image` or `see` against a known Playground fixture and confirm the response metadata identifies the intended app/window.
 
-### 4. Agent Integration
-```javascript
-// Expected tool: runAgent
-{
-  "task": "Take a screenshot of the current window",
-  "provider": "anthropic/claude-opus-4-8"
-}
-```
+### UI Automation
+
+Capture a fresh `see` snapshot, then call `click`, `type`, or another interaction tool with an identifier from that snapshot. Verify the result in Playground's OSLog output.
+
+### Agent Integration
+
+Provider-backed `agent` and `analyze` calls require configuration at server startup. Test missing-credential and invalid-model failures as well as the successful path.
 
 ## Troubleshooting
 
 ### Server Won't Start
-- Check Node.js version (requires 18+)
-- Verify all dependencies are installed
-- Ensure no port conflicts for SSE/HTTP modes
+
+- Run `"$PEEKABOO_BIN" mcp` directly and inspect stderr.
+- Confirm the CLI was rebuilt and the absolute binary path exists.
+- Check Screen Recording and Accessibility with `"$PEEKABOO_BIN" permissions status`.
 
 ### Tools Not Available
-- Verify Peekaboo CLI is built and accessible
-- Check PATH includes Peekaboo binary location
-- Ensure proper permissions for screen recording and accessibility
+
+- Re-run the schema listing against the same absolute binary.
+- Confirm the tool is registered in `MCPToolRegistry`.
+- Restart clients after rebuilding.
 
 ### Connection Issues
-- For stdio mode: Ensure proper JSON-RPC formatting
-- For SSE mode: Check firewall settings
-- For HTTP mode: Verify CORS configuration
+
+- Keep stdout reserved for MCP protocol traffic; diagnostics belong on stderr.
+- Prefer Inspector or mcporter over hand-written JSON-RPC because clients must perform the initialize handshake.
+- Increase the client timeout for first startup if the embedded daemon is cold.
 
 ## Best Practices
 
-1. **Version Testing:**
-   - Always test with specific versions (`@beta`, `@latest`)
-   - Document which version was tested
-   - Test upgrade paths between versions
-
-2. **Error Handling:**
-   - Test with invalid parameters
-   - Verify graceful degradation
-   - Check timeout handling
-
-3. **Performance Testing:**
-   - Monitor response times for tools
-   - Test with rapid sequential calls
-   - Verify memory usage over time
-
-4. **Security Testing:**
-   - Validate input sanitization
-   - Test path traversal prevention
-   - Verify credential handling
-
-## Future Improvements
-
-1. **Automated Testing Suite:**
-   - Create comprehensive test cases
-   - Implement CI/CD integration
-   - Add performance benchmarks
-
-2. **Mock MCP Client:**
-   - Build lightweight testing client
-   - Support scripted test scenarios
-   - Enable regression testing
-
-3. **Debug Mode Enhancements:**
-   - Add detailed protocol logging
-   - Implement request/response recording
-   - Create replay functionality
-
-## Recent test snapshot (Nov 2025)
-- Hot-reload via Reloaderoo works against a local Server build when proxied through Claude Code.
-- `image` tool captures frontmost window with correct metadata; `list` returns apps/windows/status.
-- `analyze` requires `PEEKABOO_AI_PROVIDERS` at server start; no per-call provider override yet.
-- Confirmed tool inventory: image, analyze, list, see, click, type, scroll, hotkey, swipe, run, sleep, clean, agent, app, window, menu, permissions, move, drag, dialog, space, dock.
-
-## Conclusion
-
-Testing MCP servers effectively requires a combination of tools and approaches. While the MCP Inspector provides excellent interactive testing, tools like Reloaderoo (once installation issues are resolved) will enable more efficient development workflows with hot-reload capabilities. Direct integration with Claude Code remains the gold standard for production testing.
+1. Record the exact binary version and command used.
+2. Test invalid parameters and permission failures, not only success.
+3. Use deterministic Playground fixtures for UI mutations.
+4. Keep provider credentials and captured desktop data out of committed artifacts.
+5. Run the repository's focused unit tests alongside live MCP smoke tests.

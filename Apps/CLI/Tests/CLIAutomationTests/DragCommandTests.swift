@@ -358,6 +358,6 @@ extension DragCommandTests {
 
 #else
 #if !PEEKABOO_SKIP_AUTOMATION
-// Drag automation tests disabled pending Swift compiler fixes (docs/silgen-crash-debug.md).
+// Drag automation tests remain disabled pending Swift compiler fixes.
 #endif
 #endif

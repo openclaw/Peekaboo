@@ -38,7 +38,7 @@ Not in scope: backwards compatibility with pre-3.0 CLIs, legacy argument parser 
 | Surface | Entry point | Purpose | Notes |
 | --- | --- | --- | --- |
 | CLI | `peekaboo …` | Primary automation surface with Commander-based command tree, JSON outputs, and agent-friendly logging. | Default actor is `@MainActor`. Commands live under `Apps/CLI/Sources/PeekabooCLI/Commands`. |
-| Peekaboo.app | `Apps/Peekaboo` | Menu-bar UI + inspector. Shares `PeekabooServices()` with CLI and registers defaults via `services.installAgentRuntimeDefaults()`. | Launch the app alongside the CLI binary during local development. |
+| Peekaboo.app | `Apps/Mac` | Menu-bar UI, permission onboarding, visualizer feedback, and inspector surfaces. Shares `PeekabooServices()` with CLI and registers defaults via `services.installAgentRuntimeDefaults()`. | Launch the app alongside the CLI binary during local development. |
 | Visualizer | `PeekabooVisualizer` target | Animations, overlays, and progress indicators consumed by both CLI and app. | Communicates through the service layer (no direct AppKit glue inside commands). |
 | Agent runtime | `PeekabooAgentRuntime` + Tachikoma | Implements `peekaboo agent`, GPT‑5/Sonnet integrations, dry-run planners, audio input, and MCP tools. | System prompt + tool descriptions live in `PeekabooAgentService.generateSystemPrompt()` and `create*Tool()` helpers. |
 | MCP server | `peekaboo mcp` | Exposes native tools via Model Context Protocol. | Uses `PeekabooMCPServer`. |
@@ -56,7 +56,7 @@ Not in scope: backwards compatibility with pre-3.0 CLIs, legacy argument parser 
 ### 3.2 PeekabooAgentRuntime
 - `PeekabooAgentService`: orchestrates tools, system prompt, MCP tool registry.
 - `AgentDisplayTokens`: maps tool names to icons/text for progress output.
-- Tachikoma integrations for GPT‑5, Claude, Grok, Ollama, including audio streams (`--audio`, `--audio-file`, `--realtime`).
+- Tachikoma integrations for GPT‑5, Claude, Grok, and Ollama. `--audio` and `--audio-file` transcribe input before running the agent; `--realtime` is still accepted by the parser but currently has no execution path pending a product decision.
 
 ### 3.3 PeekabooVisualizer
 - Animation + overlay payloads for CLI/app progress indicators.
@@ -64,7 +64,8 @@ Not in scope: backwards compatibility with pre-3.0 CLIs, legacy argument parser 
 
 ### 3.4 Command Runtime (`Apps/CLI/Sources/PeekabooCLI/Commands/Base`)
 - `CommandRuntime` wires Commander parsing to the services layer.
-- Global options (verbose/log-level/json) are hydrated in `CommandRuntimeOptions` and made available through `RuntimeOptionsConfigurable`.
+- `InjectedRuntimeBackedCommand` owns the shared runtime/service/logger accessors; `RuntimeBackedCommand` adds `RuntimeOptionsConfigurable` fallback for commands that expose global options before runtime injection.
+- Global options (verbose/log-level/json) are hydrated in `CommandRuntimeOptions`.
 - `FocusCommandOptions` and `WindowIdentificationOptions` are reusable option groups; they map CLI flags to strongly typed structs used by automation services.
 
 ### 3.5 PeekabooServices lifecycle
@@ -106,9 +107,9 @@ Common helpers:
 
 ## 6. Peekaboo.app & Visualizer
 
-- SwiftUI menu-bar app housed in `Apps/Peekaboo`. Maintains a long-lived `@State private var services = PeekabooServices()` and registers runtime defaults immediately.
-- Presents chat/voice UI tied to `PeekabooAgentService`, progress timeline (Visualizer feed), and inspector overlays.
-- Shares the same logging + configuration stack as the CLI; `PeekabooServices` guarantees parity between app and CLI behaviors.
+- SwiftUI menu-bar app housed in `Apps/Mac`. Maintains a long-lived `@State private var services = PeekabooServices()` and registers runtime defaults immediately.
+- Presents permission onboarding, visualizer feedback, session activity, and inspector overlays. The removed realtime-voice surface is not part of the shipped app architecture.
+- Shares `PeekabooServices` and configuration with the CLI. The app writes through OSLog while the CLI has its own stderr/JSON diagnostic logger.
 - Visualizer target listens for events (captures, element highlights, agent step updates) and renders them both in the app and as CLI overlays when supported.
 
 ---

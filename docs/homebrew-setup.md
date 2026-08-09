@@ -1,173 +1,107 @@
 ---
-summary: 'Review Setting Up Homebrew Tap for Peekaboo guidance'
+summary: 'Maintain the Peekaboo formula in steipete/homebrew-tap'
 read_when:
-  - 'planning work related to setting up homebrew tap for peekaboo'
-  - 'debugging or extending features described here'
+  - 'publishing or repairing the Peekaboo Homebrew formula'
+  - 'testing a release archive through Homebrew'
 ---
 
 # Setting Up Homebrew Tap for Peekaboo
 
-This guide explains how to set up and maintain the Homebrew tap for Peekaboo distribution.
+This guide explains how the shipped universal CLI archive reaches the Peekaboo formula in [github.com/steipete/homebrew-tap](https://github.com/steipete/homebrew-tap).
 
 ## Repository Structure
 
-The Homebrew tap is hosted at [github.com/steipete/homebrew-tap](https://github.com/steipete/homebrew-tap).
+The tap owns the installable `Formula/peekaboo.rb`. This repository keeps `homebrew/peekaboo.rb` as the formula template and includes:
 
-### Key Files
-
-- **Formula/peekaboo.rb**: The Homebrew formula that defines how to install Peekaboo
-- **.github/workflows/update-formula.yml**: GitHub Action to update the formula when new releases are published
-- **README.md**: User-facing documentation for the tap
-
-## Initial Setup (Already Complete)
-
-The tap repository has been created and initialized with:
-- Initial formula at `Formula/peekaboo.rb`
-- GitHub Action workflow for automated updates
-- README with installation instructions
-
-### Setting Up GitHub Token
-
-For automated updates from the main repository:
-
-1. Go to https://github.com/settings/tokens/new
-2. Create a token with `repo` scope
-3. Name it `HOMEBREW_TAP_TOKEN`
-4. Add to main repo secrets: Settings → Secrets → Actions → New repository secret
+- `scripts/update-homebrew-formula.sh` for a manual version/SHA update.
+- `.github/workflows/update-homebrew.yml`, which dispatches the tap's `update-formula.yml` workflow after a GitHub Release is published.
+- `peekaboo-macos-universal.tar.gz` as the release artifact consumed by the formula.
 
 ## Usage
 
 ### Installing Peekaboo via Homebrew
 
-Users can now install Peekaboo with:
-
 ```bash
-brew tap steipete/tap
-brew install peekaboo
+brew install steipete/tap/peekaboo
 ```
 
 ### Updating Peekaboo
 
 ```bash
 brew update
-brew upgrade peekaboo
+brew upgrade steipete/tap/peekaboo
 ```
 
 ## Release Process
 
 ### Automated (Recommended)
 
-When you create a GitHub release, the workflow automatically:
-1. Downloads the release artifact
-2. Calculates SHA256
-3. Updates the formula in both repos
-4. Creates a PR in the main repo
+Publishing a GitHub Release runs `.github/workflows/update-homebrew.yml`. The workflow:
+
+1. Resolves the published `v<version>` tag.
+2. Dispatches `steipete/homebrew-tap`'s `update-formula.yml` with the source repository, tag, formula name, and `peekaboo-macos-universal.tar.gz` asset.
+3. Locates the exact dispatched run and waits for it to finish.
+
+`HOMEBREW_TAP_TOKEN` must have workflow access to `steipete/homebrew-tap`.
 
 ### Manual Update
 
-If needed, update the formula manually:
+If the dispatch needs repair, calculate the SHA-256 of the final universal archive and update the template:
 
 ```bash
-# After building release artifacts
-./scripts/release-binaries.sh
-
-# Get the SHA256
-shasum -a 256 release/peekaboo-macos-arm64.tar.gz
-
-# Update formula
-./scripts/update-homebrew-formula.sh 2.0.1 <sha256>
-
-# Push to tap
-cd /path/to/homebrew-tap
-git pull
-cp /path/to/peekaboo/homebrew/peekaboo.rb Formula/
-git add Formula/peekaboo.rb
-git commit -m "Update to v2.0.1"
-git push
+shasum -a 256 release/peekaboo-macos-universal.tar.gz
+./scripts/update-homebrew-formula.sh 3.10.0 <sha256>
 ```
+
+The helper updates the formula URL, `sha256`, and `version` for `v3.10.0`. Review the diff, then copy the resulting `homebrew/peekaboo.rb` to `Formula/peekaboo.rb` in the tap and commit it there.
 
 ## Testing
 
 ### Test Installation
 
 ```bash
-# Test from your tap
-brew tap steipete/tap
-brew install --verbose --debug peekaboo
-brew test peekaboo
+brew uninstall peekaboo 2>/dev/null || true
+brew install --verbose --debug steipete/tap/peekaboo
+brew test steipete/tap/peekaboo
+peekaboo --version
 ```
 
 ### Test Formula Locally
 
 ```bash
-# Direct install from formula file
 brew install --build-from-source ./homebrew/peekaboo.rb
 ```
 
 ## Troubleshooting
 
-### Common Issues
+### SHA256 Mismatch
 
-1. **SHA256 Mismatch**
-   - Ensure you're using the final release artifact
-   - Use `shasum -a 256` on macOS
+- Hash the exact `peekaboo-macos-universal.tar.gz` uploaded to the published release.
+- Confirm the formula URL and version point at the same tag.
 
-2. **Download Failures**
-   - Check the URL is correct
-   - Ensure the release is published (not draft)
+### Download Failures
 
-3. **Permission Errors**
-   - The formula includes post_install to ensure executable permissions
+- Confirm the release is published rather than draft.
+- Confirm the release contains `peekaboo-macos-universal.tar.gz`.
 
 ### Debugging
 
 ```bash
-# Verbose installation
-brew install --verbose --debug peekaboo
-
-# Check tap
-brew tap-info steipete/peekaboo
-
-# Audit formula
-brew audit --strict steipete/peekaboo/peekaboo
+brew tap-info steipete/tap
+brew audit --strict steipete/tap/peekaboo
 ```
 
 ## Maintenance
 
-### Updating Dependencies
+The checked-in formula currently requires macOS Sequoia or later:
 
-If macOS requirements change:
 ```ruby
-depends_on macos: :ventura  # For macOS 13+
+depends_on macos: :sequoia
 ```
 
-### Adding Cask (Future)
-
-For a full GUI app distribution:
-```ruby
-cask "peekaboo" do
-  version "2.0.0"
-  sha256 "..."
-  
-  url "https://github.com/openclaw/Peekaboo/releases/download/v#{version}/Peekaboo.app.zip"
-  name "Peekaboo"
-  desc "Screenshot and AI analysis tool"
-  homepage "https://github.com/openclaw/Peekaboo"
-  
-  app "Peekaboo.app"
-end
-```
-
-## Best Practices
-
-1. **Version Tags**: Always use `v` prefix (e.g., `v2.0.0`)
-2. **Testing**: Test formula locally before pushing
-3. **Checksums**: Always verify SHA256 after building
-4. **Release Notes**: Update formula caveats for major changes
-5. **Compatibility**: Test on both Intel and Apple Silicon
+When the minimum changes, update both the formula and the public platform documentation, then test the release archive on every supported architecture.
 
 ## References
 
 - [Homebrew Formula Cookbook](https://docs.brew.sh/Formula-Cookbook)
 - [Homebrew Taps](https://docs.brew.sh/Taps)
-- [GitHub Actions for Homebrew](https://brew.sh/2020/11/18/homebrew-tap-with-bottles-uploaded-to-github-releases/)

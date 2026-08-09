@@ -40,7 +40,7 @@ struct MenuCommandTests {
         let subcommands = MenuCommand.commandDescription.subcommands
         #expect(subcommands.count == 4)
 
-        var names: [String] = [] // Key-path map here trips SILGen; keep loop (docs/silgen-crash-debug.md).
+        var names: [String] = [] // Key-path map here trips SILGen; keep the explicit loop.
         names.reserveCapacity(subcommands.count)
         for descriptor in subcommands {
             guard let name = descriptor.commandDescription.commandName else { continue }

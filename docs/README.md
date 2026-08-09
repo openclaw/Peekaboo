@@ -9,7 +9,7 @@ read_when:
 
 - **Commands** — `commands/README.md` plus one page per CLI command.
 - **Providers** — `providers.md` for the central provider list; `providers/README.md` for deep links.
-- **Architecture & specs** — `ARCHITECTURE.md`, `spec.md`, `module-architecture-refactoring.md`, `service-api-reference.md`.
+- **Architecture & specs** — `ARCHITECTURE.md` and `spec.md`.
 - **Testing & QA** — `testing/` plans and manual guides, `reports/` results.
 - **References** — `references/` for external API reference excerpts (e.g., Swift toolchain/testing).
 - **Research & design notes** — `research/` deep dives and spike notes.
