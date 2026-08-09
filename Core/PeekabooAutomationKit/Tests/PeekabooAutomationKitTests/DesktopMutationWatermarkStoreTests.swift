@@ -532,11 +532,37 @@ struct DesktopMutationWatermarkStoreTests {
     }
 
     @Test
+    func `Expired generation entries compact to a conservative global tombstone`() throws {
+        let root = Self.temporaryDirectory(named: "target-pruning")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = DesktopMutationWatermarkStore(directoryURL: root)
+        let oldProcess = ApplicationProcessIdentity(processIdentifier: 860, processStartIdentity: 10)
+        let recentProcess = ApplicationProcessIdentity(processIdentifier: 861, processStartIdentity: 20)
+        let unrelatedProcess = ApplicationProcessIdentity(processIdentifier: 862, processStartIdentity: 30)
+        let oldWindow = Self.window(windowID: 1, process: oldProcess)
+        let recentWindow = Self.window(windowID: 2, process: recentProcess)
+        let unrelatedWindow = Self.window(windowID: 3, process: unrelatedProcess)
+        let oldCutoff = Date().addingTimeInterval(-7200)
+        let preMutationSnapshotDate = oldCutoff.addingTimeInterval(-1)
+
+        _ = try store.advance(through: oldCutoff, target: .window(oldWindow))
+        let recentCutoff = try store.advance(through: Date(), target: .window(recentWindow))
+
+        let restarted = DesktopMutationWatermarkStore(directoryURL: root)
+        let compactedCutoff = try #require(restarted.effectiveWatermark(for: .window(oldWindow)))
+        #expect(compactedCutoff >= oldCutoff)
+        #expect(preMutationSnapshotDate <= compactedCutoff)
+        #expect(restarted.effectiveWatermark(for: .process(oldProcess)) == compactedCutoff)
+        #expect(restarted.effectiveWatermark(for: .window(unrelatedWindow)) == compactedCutoff)
+        #expect(restarted.effectiveWatermark(for: .window(recentWindow)) == recentCutoff)
+    }
+
+    @Test
     func `Default watermark root is fixed runtime coordination storage`() {
         let store = DesktopMutationWatermarkStore()
 
         #expect(store.directoryURL == DesktopCoordinationRuntimeRoot.defaultURL)
-        #expect(!store.directoryURL.path.contains(".peekaboo"))
+        #expect(store.directoryURL.lastPathComponent == ".peekaboo")
     }
 
     @Test

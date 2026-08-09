@@ -18,6 +18,7 @@ struct PeekabooBridgeTargetedClickTests {
     }
 
     @Test
+    @MainActor
     func `targeted click operation reflects exact window requirement`() {
         let processRequest = PeekabooBridgeRequest.targetedClick(.init(
             target: .elementId("B1"),
@@ -35,6 +36,10 @@ struct PeekabooBridgeTargetedClickTests {
 
         #expect(processRequest.operation == .targetedClick)
         #expect(windowRequest.operation == .exactWindowTargetedClick)
+
+        let services = PeekabooServices()
+        #expect(services.ownsDesktopOperationLane(for: processRequest.operation))
+        #expect(services.ownsDesktopOperationLane(for: windowRequest.operation))
     }
 
     @Test

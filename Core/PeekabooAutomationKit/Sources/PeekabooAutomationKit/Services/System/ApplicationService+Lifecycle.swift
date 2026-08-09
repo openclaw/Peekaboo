@@ -105,51 +105,55 @@ extension ApplicationService {
             : self.backgroundOpenActivationGraceDuration
         let activationLease = launch.activates ? nil : BackgroundLaunchActivationLease(
             activationGraceDuration: backgroundActivationGraceDuration)
-        var activationProtectionCompleted = false
-        defer { activationLease?.finish(protectionCompleted: activationProtectionCompleted) }
 
-        let runningApp: NSRunningApplication
-        if let applicationURL = launch.applicationURL {
-            if launch.disablesRunningApplicationSubstitution {
-                config.allowsRunningApplicationSubstitution = false
+        do {
+            let runningApp: NSRunningApplication
+            if let applicationURL = launch.applicationURL {
+                if launch.disablesRunningApplicationSubstitution {
+                    config.allowsRunningApplicationSubstitution = false
+                }
+                self.logger.debug("Launching app from URL: \(applicationURL.path)")
+
+                if launch.activates {
+                    let appName = applicationURL.deletingPathExtension().lastPathComponent
+                    let iconPath = applicationURL.appendingPathComponent("Contents/Resources/AppIcon.icns").path
+                    let hasIcon = FileManager.default.fileExists(atPath: iconPath)
+                    _ = await self.feedbackClient.showAppLaunch(appName: appName, iconPath: hasIcon ? iconPath : nil)
+                }
+
+                runningApp = try await self.applicationOpenHandler(applicationURL, launch.openURLs, config)
+            } else {
+                let targetURL = launch.openURLs[0]
+                runningApp = try await self.defaultApplicationOpenHandler(targetURL, config)
             }
-            self.logger.debug("Launching app from URL: \(applicationURL.path)")
+            let launchProcessIdentity = try self.captureLaunchProcessIdentity(runningApp)
+            activationLease?.setTargetProcessIdentifier(runningApp.processIdentifier)
 
-            if launch.activates {
-                let appName = applicationURL.deletingPathExtension().lastPathComponent
-                let iconPath = applicationURL.appendingPathComponent("Contents/Resources/AppIcon.icns").path
-                let hasIcon = FileManager.default.fileExists(atPath: iconPath)
-                _ = await self.feedbackClient.showAppLaunch(appName: appName, iconPath: hasIcon ? iconPath : nil)
+            if launch.activates, !runningApp.isActive, !runningApp.activate(options: []) {
+                self.logger
+                    .warning("Launch succeeded but failed to activate \(runningApp.localizedName ?? "application")")
             }
 
-            runningApp = try await self.applicationOpenHandler(applicationURL, launch.openURLs, config)
-        } else {
-            let targetURL = launch.openURLs[0]
-            runningApp = try await self.defaultApplicationOpenHandler(targetURL, config)
-        }
-        let launchProcessIdentity = try self.captureLaunchProcessIdentity(runningApp)
-        activationLease?.setTargetProcessIdentifier(runningApp.processIdentifier)
+            try await self.waitUntilReadyIfNeeded(runningApp, requested: launch.waitUntilReady)
+            try await self.waitForWindowIfNeeded(runningApp, requested: launch.waitForWindow)
+            try await self.waitUntilActiveIfNeeded(runningApp, requested: launch.activates)
+            try await activationLease?.holdThroughInitialActivationWindow()
 
-        if launch.activates, !runningApp.isActive, !runningApp.activate(options: []) {
-            self.logger
-                .warning("Launch succeeded but failed to activate \(runningApp.localizedName ?? "application")")
+            let launchMessage =
+                "Successfully launched: \(runningApp.localizedName ?? "Unknown") (PID: \(runningApp.processIdentifier))"
+            self.logger.info("\(launchMessage)")
+            let application = self.createApplicationInfo(from: runningApp)
+            guard application.processIdentity == launchProcessIdentity else {
+                throw PeekabooError.commandFailed(
+                    "Launched application process generation changed before its receipt could be returned")
+            }
+            activationLease?.finish(protectionCompleted: true)
+            return application
+        } catch {
+            activationLease?.finish(protectionCompleted: false)
+            await activationLease?.waitForProtectionHeartbeat()
+            throw error
         }
-
-        try await self.waitUntilReadyIfNeeded(runningApp, requested: launch.waitUntilReady)
-        try await self.waitForWindowIfNeeded(runningApp, requested: launch.waitForWindow)
-        try await self.waitUntilActiveIfNeeded(runningApp, requested: launch.activates)
-        try await activationLease?.holdThroughInitialActivationWindow()
-        activationProtectionCompleted = true
-
-        let launchMessage =
-            "Successfully launched: \(runningApp.localizedName ?? "Unknown") (PID: \(runningApp.processIdentifier))"
-        self.logger.info("\(launchMessage)")
-        let application = self.createApplicationInfo(from: runningApp)
-        guard application.processIdentity == launchProcessIdentity else {
-            throw PeekabooError.commandFailed(
-                "Launched application process generation changed before its receipt could be returned")
-        }
-        return application
     }
 
     /// Capture the process generation while the exact `NSRunningApplication` selected by

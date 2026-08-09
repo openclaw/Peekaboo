@@ -25,7 +25,7 @@ extension DialogService {
                     self.matchesDialogWindowTitle($0.title, expectedTitle: windowTitle)
                 }) {
                     self.logger.info("Focusing dialog candidate '\(window.title)' from \(app.name)")
-                    try await self.focusService.focusWindow(
+                    try await self.focusService.focusWindowWithOwnedLane(
                         windowID: CGWindowID(window.windowID),
                         options: FocusManagementService.FocusOptions(
                             timeout: 1.0,

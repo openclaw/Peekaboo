@@ -115,6 +115,9 @@ public final class PeekabooServices {
     /// Browser MCP client for Chrome DevTools automation
     public let browser: any BrowserMCPClientProviding
 
+    /// Operations whose concrete native service owns the desktop lane at its dispatch leaf.
+    private let nativeDesktopOperationLaneOperations: Set<PeekabooBridgeOperation>
+
     // Model provider is now handled internally by Tachikoma
 
     /// Intelligent automation agent service for natural language task execution
@@ -226,6 +229,7 @@ public final class PeekabooServices {
 
         // Agent service will be initialized by createShared method
         self.agent = nil
+        self.nativeDesktopOperationLaneOperations = Self.defaultNativeDesktopOperationLaneOperations
 
         self.logger.debug("✨ PeekabooServices initialization complete")
         self.refreshAgentService()
@@ -320,7 +324,8 @@ public final class PeekabooServices {
             browser: BrowserMCPService(),
             configuration: configuration,
             agent: nil,
-            screens: screens)
+            screens: screens,
+            nativeDesktopOperationLaneOperations: Self.defaultNativeDesktopOperationLaneOperations)
 
         logger.debug("✨ PeekabooServices initialization complete (custom snapshots)")
         self.refreshAgentService()
@@ -346,7 +351,8 @@ public final class PeekabooServices {
         browser: (any BrowserMCPClientProviding)? = nil,
         agent: (any AgentServiceProtocol)? = nil,
         configuration: ConfigurationManager? = nil,
-        screens: (any ScreenServiceProtocol)? = nil)
+        screens: (any ScreenServiceProtocol)? = nil,
+        nativeDesktopOperationLaneOperations: Set<PeekabooBridgeOperation> = [])
     {
         self.logger.debug("🚀 Initializing PeekabooServices with custom implementations")
         self.logging = logging ?? LoggingService()
@@ -375,6 +381,7 @@ public final class PeekabooServices {
         self.agent = agent
         self.configuration = configuration ?? ConfigurationManager.shared
         self.screens = screenSvc
+        self.nativeDesktopOperationLaneOperations = nativeDesktopOperationLaneOperations.union([.desktopObservation])
         // Model provider is now handled internally by Tachikoma
 
         self.logger.debug("✨ PeekabooServices initialization complete (custom)")
@@ -399,7 +406,8 @@ public final class PeekabooServices {
         browser: any BrowserMCPClientProviding,
         configuration: ConfigurationManager,
         agent: (any AgentServiceProtocol)?,
-        screens: any ScreenServiceProtocol)
+        screens: any ScreenServiceProtocol,
+        nativeDesktopOperationLaneOperations: Set<PeekabooBridgeOperation>)
     {
         self.logging = logging
         self.screenCapture = screenCapture
@@ -426,15 +434,73 @@ public final class PeekabooServices {
         self.configuration = configuration
         self.agent = agent
         self.screens = screens
+        self.nativeDesktopOperationLaneOperations = nativeDesktopOperationLaneOperations
         // Model provider is now handled internally by Tachikoma
     }
 }
 
 extension PeekabooServices: PeekabooServiceProviding {}
 extension PeekabooServices: PeekabooBridgeServiceProviding {
-    public var ownsDesktopOperationLanesAtNativeLeaves: Bool {
-        true
+    public func ownsDesktopOperationLane(for operation: PeekabooBridgeOperation) -> Bool {
+        self.nativeDesktopOperationLaneOperations.contains(operation)
     }
+}
+
+extension PeekabooServices {
+    private static let defaultNativeDesktopOperationLaneOperations: Set<PeekabooBridgeOperation> = [
+        .click,
+        .type,
+        .typeActions,
+        .targetedTypeActions,
+        .exactWindowTargetedTypeActions,
+        .setValue,
+        .performAction,
+        .scroll,
+        .targetedScroll,
+        .hotkey,
+        .targetedHotkey,
+        .exactWindowTargetedHotkey,
+        .targetedClick,
+        .exactWindowTargetedClick,
+        .swipe,
+        .drag,
+        .moveMouse,
+        .focusWindow,
+        .moveWindow,
+        .resizeWindow,
+        .setWindowBounds,
+        .closeWindow,
+        .backgroundCloseWindow,
+        .minimizeWindow,
+        .restoreWindow,
+        .maximizeWindow,
+        .launchApplication,
+        .launchApplicationWithOptions,
+        .relaunchApplicationWithOptions,
+        .activateApplication,
+        .quitApplication,
+        .hideApplication,
+        .unhideApplication,
+        .hideOtherApplications,
+        .showAllApplications,
+        .clickMenuItem,
+        .clickMenuItemByName,
+        .clickMenuExtra,
+        .clickMenuBarItemNamed,
+        .clickMenuBarItemIndex,
+        .launchDockItem,
+        .rightClickDockItem,
+        .hideDock,
+        .showDock,
+        .dialogFindActive,
+        .dialogClickButton,
+        .backgroundDialogClickButton,
+        .dialogEnterText,
+        .dialogHandleFile,
+        .dialogDismiss,
+        .dialogListElements,
+        .desktopObservation,
+    ]
 }
 
 typealias SystemLogger = os.Logger

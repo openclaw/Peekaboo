@@ -12,63 +12,6 @@ enum PeekabooBridgeRequestContext {
     }
 }
 
-actor PeekabooBridgeMutationGate {
-    private struct Waiter {
-        let id: UUID
-        let continuation: CheckedContinuation<Bool, Never>
-    }
-
-    private var locked = false
-    private var waiters: [Waiter] = []
-
-    var waitingCount: Int {
-        self.waiters.count
-    }
-
-    func acquire() async throws {
-        try Task.checkCancellation()
-
-        let waiterID = UUID()
-        let acquired = await withTaskCancellationHandler {
-            await withCheckedContinuation { continuation in
-                self.enqueue(waiterID, continuation: continuation)
-            }
-        } onCancel: {
-            Task { await self.cancel(waiterID) }
-        }
-
-        guard acquired else {
-            throw CancellationError()
-        }
-        if Task.isCancelled {
-            self.release()
-            throw CancellationError()
-        }
-    }
-
-    func release() {
-        guard !self.waiters.isEmpty else {
-            self.locked = false
-            return
-        }
-        self.waiters.removeFirst().continuation.resume(returning: true)
-    }
-
-    private func enqueue(_ id: UUID, continuation: CheckedContinuation<Bool, Never>) {
-        guard self.locked else {
-            self.locked = true
-            continuation.resume(returning: true)
-            return
-        }
-        self.waiters.append(Waiter(id: id, continuation: continuation))
-    }
-
-    private func cancel(_ id: UUID) {
-        guard let index = self.waiters.firstIndex(where: { $0.id == id }) else { return }
-        self.waiters.remove(at: index).continuation.resume(returning: false)
-    }
-}
-
 extension PeekabooBridgeRequest {
     /// Native services own these leases after resolving and revalidating their exact target.
     /// Remote callers and the Bridge router must not acquire a second copy of the same lane.
@@ -116,7 +59,15 @@ extension PeekabooBridgeRequest {
              .launchDockItem,
              .rightClickDockItem,
              .hideDock,
-             .showDock:
+             .showDock,
+             .dialogFindActive,
+             .dialogClickButton,
+             .backgroundDialogClickButton,
+             .dialogEnterText,
+             .dialogHandleFile,
+             .dialogDismiss,
+             .dialogListElements,
+             .desktopObservation:
             true
         default:
             false
@@ -126,11 +77,25 @@ extension PeekabooBridgeRequest {
     var desktopOperationScope: DesktopOperationScope {
         switch self {
         case let .exactWindowTargetedTypeActions(payload):
-            .window(payload.expectedWindowIdentity)
+            .process(ApplicationProcessIdentity(
+                processIdentifier: payload.expectedWindowIdentity.ownerProcessIdentifier,
+                processStartIdentity: payload.expectedWindowIdentity.ownerProcessStartIdentity))
         case let .exactWindowTargetedHotkey(payload):
-            .window(payload.expectedWindowIdentity)
+            .process(ApplicationProcessIdentity(
+                processIdentifier: payload.expectedWindowIdentity.ownerProcessIdentifier,
+                processStartIdentity: payload.expectedWindowIdentity.ownerProcessStartIdentity))
         case let .targetedClick(payload):
-            payload.expectedWindowIdentity.map(DesktopOperationScope.window) ?? .global
+            if let targetWindowID = payload.targetWindowID,
+               let identity = payload.expectedWindowIdentity,
+               payload.expectedWindowBounds != nil,
+               identity.windowID == targetWindowID
+            {
+                .process(ApplicationProcessIdentity(
+                    processIdentifier: identity.ownerProcessIdentifier,
+                    processStartIdentity: identity.ownerProcessStartIdentity))
+            } else {
+                .global
+            }
         case let .backgroundCloseWindow(payload),
              let .minimizeWindow(payload),
              let .restoreWindow(payload),
@@ -147,6 +112,79 @@ extension PeekabooBridgeRequest {
         default:
             .global
         }
+    }
+
+    /// Bridge-owned coordination for native desktop reads and mutation paths whose concrete
+    /// service provider does not own a leaf lease. Unresolved reads take the exclusive global
+    /// lane so they cannot observe a partially completed scoped mutation.
+    var desktopReadOperationLane: (scope: DesktopOperationScope, access: DesktopOperationAccess)? {
+        guard !self.mayMutateDesktop else { return nil }
+        switch self {
+        case .detectElements:
+            // Detection publishes into the requested snapshot before returning. Keep the whole
+            // operation globally exclusive so a generation-drift retry cannot expose stale data.
+            return (.global, .write)
+        case let .inspectAccessibilityTree(request):
+            return Self.exactWindowReadLane(for: request.windowContext)
+        case .captureScreen,
+             .captureWindow,
+             .captureFrontmost,
+             .captureArea,
+             .desktopObservation,
+             .getFocusedElement,
+             .waitForElement,
+             .listWindows,
+             .getFocusedWindow,
+             .listApplications,
+             .findApplication,
+             .getFrontmostApplication,
+             .isApplicationRunning,
+             .listMenus,
+             .listFrontmostMenus,
+             .listMenuExtras,
+             .menuExtraOpenMenuFrame,
+             .listMenuBarItems,
+             .listDockItems,
+             .isDockHidden,
+             .findDockItem,
+             .dialogFindActive,
+             .dialogListElements:
+            return (.global, .write)
+        default:
+            return nil
+        }
+    }
+
+    var exactWindowReadIdentity: WindowMutationIdentity? {
+        let context: WindowContext? = switch self {
+        case let .inspectAccessibilityTree(request): request.windowContext
+        default: nil
+        }
+        guard let context,
+              let identity = context.windowMutationIdentity,
+              let windowID = context.windowID,
+              let processID = context.applicationProcessId,
+              windowID == identity.windowID,
+              processID == identity.ownerProcessIdentifier
+        else {
+            return nil
+        }
+        return identity
+    }
+
+    private static func exactWindowReadLane(
+        for context: WindowContext?) -> (scope: DesktopOperationScope, access: DesktopOperationAccess)
+    {
+        guard let context,
+              let identity = context.windowMutationIdentity,
+              let windowID = context.windowID,
+              let processID = context.applicationProcessId,
+              windowID == identity.windowID,
+              processID == identity.ownerProcessIdentifier
+        else {
+            return (.global, .write)
+        }
+        return (.window(identity), .read)
     }
 
     var requiresPinnedWindowMutationReceipt: Bool {

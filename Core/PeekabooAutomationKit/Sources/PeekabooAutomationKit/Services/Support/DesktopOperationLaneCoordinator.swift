@@ -34,6 +34,7 @@ public enum DesktopOperationLaneError: LocalizedError, Sendable {
     case systemCall(operation: String, path: String, code: Int32)
     case unsafeDirectory(path: String)
     case unsafeLockFile(path: String)
+    case nestedAcquisition(domain: String)
 
     public var errorDescription: String? {
         switch self {
@@ -46,6 +47,9 @@ public enum DesktopOperationLaneError: LocalizedError, Sendable {
             "Desktop operation coordination directory is unsafe: \(path)"
         case let .unsafeLockFile(path):
             "Desktop operation coordination lock is not a regular file owned by the current user: \(path)"
+        case let .nestedAcquisition(domain):
+            "Desktop operation attempted a nested lane acquisition in \(domain); " +
+                "the execution owner must acquire once and call an owned-leaf helper"
         }
     }
 }
@@ -57,6 +61,7 @@ public enum DesktopOperationLaneError: LocalizedError, Sendable {
 /// the operation body actually returns, including when caller cancellation is ignored by an in-flight native call.
 public actor DesktopOperationLaneCoordinator {
     public static let shared = DesktopOperationLaneCoordinator()
+    @TaskLocal private static var activeCoordinationDomains: Set<String> = []
 
     private struct Claim: Sendable {
         let fileName: String
@@ -67,17 +72,34 @@ public actor DesktopOperationLaneCoordinator {
         let descriptor: Int32
     }
 
-    private let coordinationRootURL: URL
+    private nonisolated let coordinationRootURL: URL
+    private nonisolated let coordinationDomain: String
 
     public init() {
         self.coordinationRootURL = DesktopCoordinationRuntimeRoot.defaultURL
+        self.coordinationDomain = DesktopCoordinationRuntimeRoot.defaultURL.path
     }
 
     init(coordinationRootURL: URL) {
         self.coordinationRootURL = coordinationRootURL.standardizedFileURL
+        self.coordinationDomain = coordinationRootURL.standardizedFileURL.path
     }
 
     public nonisolated func run<T: Sendable>(
+        scope: DesktopOperationScope,
+        access: DesktopOperationAccess,
+        operation: () async throws -> T) async throws -> T
+    {
+        guard !Self.activeCoordinationDomains.contains(self.coordinationDomain) else {
+            throw DesktopOperationLaneError.nestedAcquisition(domain: self.coordinationDomain)
+        }
+        let activeDomains = Self.activeCoordinationDomains.union([self.coordinationDomain])
+        return try await Self.$activeCoordinationDomains.withValue(activeDomains) {
+            try await self.runOutermost(scope: scope, access: access, operation: operation)
+        }
+    }
+
+    private nonisolated func runOutermost<T: Sendable>(
         scope: DesktopOperationScope,
         access: DesktopOperationAccess,
         operation: () async throws -> T) async throws -> T
@@ -125,16 +147,37 @@ public actor DesktopOperationLaneCoordinator {
         do {
             for claim in claims {
                 try Task.checkCancellation()
+                let turnstileURL = self.coordinationRootURL.appendingPathComponent(
+                    Self.turnstileFileName(for: claim.fileName),
+                    isDirectory: false)
+                let turnstileDescriptor = try self.openLockDescriptor(at: turnstileURL)
+                do {
+                    try await self.acquireFileLock(
+                        descriptor: turnstileDescriptor,
+                        path: turnstileURL.path,
+                        access: .write)
+                } catch {
+                    close(turnstileDescriptor)
+                    throw error
+                }
                 let url = self.coordinationRootURL.appendingPathComponent(claim.fileName, isDirectory: false)
-                let descriptor = try self.openLockDescriptor(at: url)
+                let descriptor: Int32
+                do {
+                    descriptor = try self.openLockDescriptor(at: url)
+                } catch {
+                    self.releaseDescriptor(turnstileDescriptor)
+                    throw error
+                }
                 do {
                     try await self.acquireFileLock(
                         descriptor: descriptor,
                         path: url.path,
                         access: claim.access)
                     heldClaims.append(HeldClaim(descriptor: descriptor))
+                    self.releaseDescriptor(turnstileDescriptor)
                 } catch {
                     close(descriptor)
+                    self.releaseDescriptor(turnstileDescriptor)
                     throw error
                 }
             }
@@ -164,9 +207,13 @@ public actor DesktopOperationLaneCoordinator {
 
     private func release(_ heldClaims: [HeldClaim]) {
         for claim in heldClaims.reversed() {
-            _ = flock(claim.descriptor, LOCK_UN)
-            close(claim.descriptor)
+            self.releaseDescriptor(claim.descriptor)
         }
+    }
+
+    private func releaseDescriptor(_ descriptor: Int32) {
+        _ = flock(descriptor, LOCK_UN)
+        close(descriptor)
     }
 
     private func prepareCoordinationRoot() throws {
@@ -241,16 +288,19 @@ public actor DesktopOperationLaneCoordinator {
     private static func windowFileName(_ identity: WindowMutationIdentity) -> String {
         "window-\(identity.ownerProcessIdentifier)-\(identity.ownerProcessStartIdentity)-\(identity.windowID).lock"
     }
+
+    private static func turnstileFileName(for laneFileName: String) -> String {
+        laneFileName.replacingOccurrences(of: ".lock", with: ".turnstile.lock")
+    }
 }
 
 enum DesktopCoordinationRuntimeRoot {
     static var defaultURL: URL {
+        // Keep the legacy default journal location so already-running pre-lane hosts and new
+        // processes share watermark/pending records. Unlike the legacy resolver, this physical
+        // per-UID path never follows PEEKABOO_CONFIG_DIR or an environment-overridden home.
         self.physicalHomeDirectoryURL
-            .appendingPathComponent("Library", isDirectory: true)
-            .appendingPathComponent("Application Support", isDirectory: true)
-            .appendingPathComponent("Peekaboo", isDirectory: true)
-            .appendingPathComponent("Runtime", isDirectory: true)
-            .appendingPathComponent("Coordination", isDirectory: true)
+            .appendingPathComponent(".peekaboo", isDirectory: true)
             .standardizedFileURL
     }
 

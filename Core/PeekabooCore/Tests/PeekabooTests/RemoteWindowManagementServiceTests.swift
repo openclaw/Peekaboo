@@ -134,7 +134,8 @@ struct RemoteWindowManagementServiceTests {
                 target: .title("Fixture"),
                 to: CGSize(width: 200, height: 100))
         }
-        try await Self.waitForListCount(1, windows: windows)
+        // The unresolved list read is globally exclusive, so it must queue behind the active
+        // exact-window mutation instead of observing a partially completed operation.
         try await Self.waitForConnectionCount(2, host: host)
 
         identityState.processStartIdentity = 9002
@@ -147,6 +148,7 @@ struct RemoteWindowManagementServiceTests {
         } catch let error as PeekabooBridgeErrorEnvelope {
             #expect(error.code == .invalidRequest)
         }
+        #expect(await windows.listCount == 1)
         #expect(await !((windows.pinnedMutations).contains { $0.operation == "resize" }))
         await host.stop()
     }
@@ -163,18 +165,6 @@ struct RemoteWindowManagementServiceTests {
         .restoreWindow,
         .maximizeWindow,
     ]
-
-    private static func waitForListCount(
-        _ expectedCount: Int,
-        windows: RemoteWindowMutationFixture) async throws
-    {
-        let clock = ContinuousClock()
-        let deadline = clock.now.advanced(by: .seconds(1))
-        while await windows.listCount < expectedCount {
-            guard clock.now < deadline else { throw RemoteWindowTestError.timedOut }
-            try await Task.sleep(for: .milliseconds(5))
-        }
-    }
 
     private static func waitForConnectionCount(
         _ expectedCount: Int,

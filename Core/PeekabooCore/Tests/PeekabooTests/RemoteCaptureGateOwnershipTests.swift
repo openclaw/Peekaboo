@@ -19,4 +19,38 @@ struct RemoteCaptureGateOwnershipTests {
         #expect(
             legacyObservation.screenCapture.captureTransactionGateOwner == CaptureTransactionGateOwner.service)
     }
+
+    @Test
+    func `legacy remote observation does not hold a client desktop lane across capture RPC`() async throws {
+        let socketPath = "/tmp/peekaboo-remote-observation-lane-\(UUID().uuidString).sock"
+        let server = PeekabooBridgeServer(
+            services: StubServices(),
+            allowlistedTeams: [],
+            allowlistedBundles: [],
+            allowedOperations: [.captureScreen],
+            permissionStatusEvaluator: { _ in
+                PermissionsStatus(
+                    screenRecording: true,
+                    accessibility: true,
+                    appleScript: true,
+                    postEvent: true)
+            })
+        let host = PeekabooBridgeHost(
+            socketPath: socketPath,
+            server: server,
+            allowedTeamIDs: [],
+            requestTimeoutSec: 1)
+        try await host.startChecked()
+        defer { Task { await host.stop() } }
+        let remote = RemotePeekabooServices(
+            client: PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 1),
+            supportsDesktopObservation: false)
+
+        let result = try await remote.desktopObservation.observe(DesktopObservationRequest(
+            target: .screen(index: 0),
+            detection: DesktopDetectionOptions(mode: .none)))
+
+        #expect(result.capture.imageData == StubScreenCaptureService.sampleData)
+        await host.stop()
+    }
 }

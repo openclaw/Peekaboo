@@ -95,6 +95,7 @@ public final class DesktopMutationWatermarkStore: @unchecked Sendable {
     private static let lockFileName = "desktop-mutation-watermark.lock"
     private static let pendingDirectoryName = "desktop-mutation-pending"
     private static let scopedLedgerFileName = "desktop-mutation-targets.json"
+    private static let scopedEntryRetentionSeconds: TimeInterval = 3600
     @TaskLocal private static var visiblePendingMutationIDs: Set<UUID> = []
 
     private let logger = Logger(subsystem: "boo.peekaboo.core", category: "DesktopMutationWatermark")
@@ -460,6 +461,8 @@ public final class DesktopMutationWatermarkStore: @unchecked Sendable {
     }
 
     private func writeScopedLedgerUnlocked(_ ledger: ScopedLedger) throws {
+        var ledger = ledger
+        self.pruneScopedEntries(in: &ledger)
         let data = try JSONEncoder().encode(ledger)
         try data.write(to: self.scopedLedgerURL, options: .atomic)
         try FileManager.default.setAttributes(
@@ -580,6 +583,11 @@ public final class DesktopMutationWatermarkStore: @unchecked Sendable {
 
     private static func processKey(_ identity: ApplicationProcessIdentity) -> String {
         "\(identity.processIdentifier):\(identity.processStartIdentity)"
+    }
+
+    private static func processKey(fromWindowKey key: String) -> String? {
+        guard let separator = key.lastIndex(of: ":"), separator != key.startIndex else { return nil }
+        return String(key[..<separator])
     }
 
     private static func windowKey(_ identity: WindowMutationIdentity) -> String {
@@ -893,5 +901,45 @@ public final class DesktopMutationWatermarkStore: @unchecked Sendable {
             domain: NSPOSIXErrorDomain,
             code: Int(code),
             userInfo: [NSFilePathErrorKey: self.lockURL.path])
+    }
+}
+
+extension DesktopMutationWatermarkStore {
+    private func pruneScopedEntries(in ledger: inout ScopedLedger, now: Date = Date()) {
+        let cutoff = now.addingTimeInterval(-Self.scopedEntryRetentionSeconds)
+        var processTombstones: [String: ScopedMark] = [:]
+        var globalTombstone = ledger.globalExclusive
+        ledger.windows = ledger.windows.filter { key, mark in
+            guard mark.cutoff < cutoff else { return true }
+            guard let processKey = Self.processKey(fromWindowKey: key) else {
+                globalTombstone = Self.mergingOptional(globalTombstone, mark)
+                return false
+            }
+            processTombstones[processKey] = Self.mergingOptional(processTombstones[processKey], mark)
+            return false
+        }
+        for (key, tombstone) in processTombstones {
+            var marks = ledger.processes[key] ?? ScopedProcessMarks(direct: nil, aggregate: nil)
+            // Once the per-window key is discarded, retain its boundary at the narrowest safe
+            // ancestor. `direct` keeps every window in the process behind the old mutation, while
+            // `aggregate` preserves process-level snapshot invalidation.
+            marks.direct = Self.mergingOptional(marks.direct, tombstone)
+            marks.aggregate = Self.mergingOptional(marks.aggregate, tombstone)
+            ledger.processes[key] = marks
+        }
+
+        ledger.processes = ledger.processes.compactMapValues { marks in
+            let direct = marks.direct.flatMap { $0.cutoff >= cutoff ? $0 : nil }
+            let aggregate = marks.aggregate.flatMap { $0.cutoff >= cutoff ? $0 : nil }
+            if direct == nil, let expired = marks.direct {
+                globalTombstone = Self.mergingOptional(globalTombstone, expired)
+            }
+            if aggregate == nil, let expired = marks.aggregate {
+                globalTombstone = Self.mergingOptional(globalTombstone, expired)
+            }
+            guard direct != nil || aggregate != nil else { return nil }
+            return ScopedProcessMarks(direct: direct, aggregate: aggregate)
+        }
+        ledger.globalExclusive = globalTombstone
     }
 }

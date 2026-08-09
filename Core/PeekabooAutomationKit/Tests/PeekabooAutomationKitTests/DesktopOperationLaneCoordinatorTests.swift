@@ -327,6 +327,63 @@ struct DesktopOperationLaneCoordinatorTests {
         #expect(await !(hardlinkDispatch.isOpen))
     }
 
+    @Test
+    func `Nested acquisition fails instead of deadlocking`() async throws {
+        let root = Self.temporaryDirectory(named: "nested")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let coordinator = DesktopOperationLaneCoordinator(coordinationRootURL: root)
+
+        await #expect(throws: DesktopOperationLaneError.self) {
+            try await coordinator.run(scope: .global, access: .write) {
+                try await coordinator.run(scope: .window(Self.window(windowID: 101)), access: .write) {}
+            }
+        }
+        try await coordinator.run(scope: .global, access: .write) {}
+    }
+
+    @Test
+    func `Queued global writer closes the turnstile to later scoped readers`() async throws {
+        let root = Self.temporaryDirectory(named: "writer-turnstile")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let coordinator = DesktopOperationLaneCoordinator(coordinationRootURL: root)
+        let ownerStarted = AsyncTestLatch()
+        let ownerRelease = AsyncTestLatch()
+        let writerStarted = AsyncTestLatch()
+        let writerRelease = AsyncTestLatch()
+        let laterReaderStarted = AsyncTestLatch()
+
+        let owner = Task {
+            try await coordinator.run(scope: .global, access: .read) {
+                await ownerStarted.open()
+                await ownerRelease.wait()
+            }
+        }
+        await ownerStarted.wait()
+        let writer = Task {
+            try await coordinator.run(scope: .global, access: .write) {
+                await writerStarted.open()
+                await writerRelease.wait()
+            }
+        }
+        try await Task.sleep(for: .milliseconds(100))
+        let reader = Task {
+            let process = ApplicationProcessIdentity(processIdentifier: 910, processStartIdentity: 1)
+            try await coordinator.run(scope: .process(process), access: .read) {
+                await laterReaderStarted.open()
+            }
+        }
+
+        await ownerRelease.open()
+        #expect(await writerStarted.opensWithin(.seconds(1)))
+        #expect(await !(laterReaderStarted.opensWithin(.milliseconds(100))))
+        await writerRelease.open()
+
+        try await owner.value
+        try await writer.value
+        try await reader.value
+        #expect(await laterReaderStarted.isOpen)
+    }
+
     private static func window(
         windowID: Int,
         process: ApplicationProcessIdentity = .init(processIdentifier: 600, processStartIdentity: 10),

@@ -17,6 +17,7 @@
 - Add strict bridge 1.11 capabilities for background scrolling, dialog buttons, and window close so stale hosts fail before unsafe fallback dispatch.
 
 ### Fixed
+- Coordinate concurrent CLI, agent, GUI-bridge, and daemon desktop reads and mutations with generation-scoped cross-process lanes, preserving parallel work across unrelated exact targets while preventing conflicting background operations from overlapping.
 - Preserve tool response metadata for native agent tools so the Mac activity feed and CLI agent chat show their short summaries, matching external MCP tools.
 - Return all content items from multi-part native tool responses (e.g. `see` with annotation, `analyze`) instead of only the first.
 - Refuse PID-only/app-only background coordinate clicks and require a fresh capture-owned exact-window receipt, with retry-safe pre-dispatch metadata and no mutation invalidation on validation failure.

@@ -5,6 +5,8 @@ import PeekabooAutomationKit
 import PeekabooFoundation
 import Security
 
+private struct ExactWindowReadLaneIdentityChanged: Error {}
+
 public struct PeekabooBridgePeer: Sendable {
     public let processIdentifier: pid_t
     public let userIdentifier: uid_t?
@@ -40,8 +42,8 @@ public final class PeekabooBridgeServer {
     let windowBoundsProvider: @Sendable (CGWindowID) -> CGRect?
     let processStartIdentityProvider: @Sendable (pid_t) -> UInt64?
     let desktopMutationWatermarkStore: DesktopMutationWatermarkStore?
+    let desktopOperationLaneCoordinator: DesktopOperationLaneCoordinator
     let automationActivityObserver: (@Sendable (pid_t) -> Void)?
-    private let desktopMutationGate = PeekabooBridgeMutationGate()
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
     let logger = Logger(subsystem: "boo.peekaboo.bridge", category: "server")
@@ -55,6 +57,7 @@ public final class PeekabooBridgeServer {
         allowedOperations: Set<PeekabooBridgeOperation> = PeekabooBridgeOperation.remoteDefaultAllowlist,
         daemonControl: (any PeekabooDaemonControlProviding)? = nil,
         desktopMutationWatermarkStore: DesktopMutationWatermarkStore? = nil,
+        desktopOperationLaneCoordinator: DesktopOperationLaneCoordinator = .shared,
         postEventAccessEvaluator: (@MainActor @Sendable () -> Bool)? = nil,
         postEventAccessRequester: (@MainActor @Sendable () -> Bool)? = nil,
         permissionStatusEvaluator: (@MainActor @Sendable (_ allowAppleScriptLaunch: Bool) -> PermissionsStatus)? = nil,
@@ -77,6 +80,7 @@ public final class PeekabooBridgeServer {
         self.allowedOperations = allowedOperations
         self.daemonControl = daemonControl
         self.desktopMutationWatermarkStore = desktopMutationWatermarkStore
+        self.desktopOperationLaneCoordinator = desktopOperationLaneCoordinator
         self.automationActivityObserver = automationActivityObserver
         self.windowOwnerProcessIdentifierProvider = windowOwnerProcessIdentifierProvider
         self.windowBoundsProvider = windowBoundsProvider
@@ -372,45 +376,48 @@ public final class PeekabooBridgeServer {
         _ request: PeekabooBridgeRequest,
         peer: PeekabooBridgePeer?) async throws -> PeekabooBridgeResponse
     {
+        let nativeLeafOwnsLane = request.nativeLeafOwnsDesktopOperationLane &&
+            self.services.ownsDesktopOperationLane(for: request.operation)
+        if let proposedReadLane = request.desktopReadOperationLane, !nativeLeafOwnsLane {
+            return try await self.withValidatedDesktopReadOperationLane(
+                for: request,
+                proposed: proposedReadLane)
+            {
+                try await self.handleAuthorizedWithOwnedDesktopOperationLane(request, peer: peer)
+            }
+        }
+
+        if request.mayMutateDesktop, !nativeLeafOwnsLane {
+            return try await self.desktopOperationLaneCoordinator.run(
+                scope: request.desktopOperationScope,
+                access: .write)
+            {
+                try await self.handleAuthorizedWithOwnedDesktopOperationLane(request, peer: peer)
+            }
+        }
+        return try await self.handleAuthorizedWithOwnedDesktopOperationLane(request, peer: peer)
+    }
+
+    private func handleAuthorizedWithOwnedDesktopOperationLane(
+        _ request: PeekabooBridgeRequest,
+        peer: PeekabooBridgePeer?) async throws -> PeekabooBridgeResponse
+    {
         guard request.mayMutateDesktop else {
             return try await self.handleAuthorized(request, peer: peer)
         }
 
-        let usesBridgeMutationGate = !request.nativeLeafOwnsDesktopOperationLane ||
-            !self.services.ownsDesktopOperationLanesAtNativeLeaves
-        if usesBridgeMutationGate {
-            try await self.desktopMutationGate.acquire()
-        }
-        func releaseBridgeMutationGate() async {
-            if usesBridgeMutationGate {
-                await self.desktopMutationGate.release()
-            }
-        }
         guard let desktopMutationWatermarkStore else {
-            do {
-                try PeekabooBridgeRequestContext.checkRequestIsActive()
-                try self.validatePinnedWindowMutation(request)
-                let response = try await self.handleAuthorized(request, peer: peer)
-                await releaseBridgeMutationGate()
-                return response
-            } catch {
-                await releaseBridgeMutationGate()
-                throw error
-            }
-        }
-        do {
             try PeekabooBridgeRequestContext.checkRequestIsActive()
             try self.validatePinnedWindowMutation(request)
-        } catch {
-            await releaseBridgeMutationGate()
-            throw error
+            return try await self.handleAuthorized(request, peer: peer)
         }
+        try PeekabooBridgeRequestContext.checkRequestIsActive()
+        try self.validatePinnedWindowMutation(request)
         let mutation: DesktopMutationWatermarkStore.PendingMutation
         do {
             mutation = try await desktopMutationWatermarkStore.beginMutationCancellable(
                 target: request.desktopOperationScope)
         } catch {
-            await releaseBridgeMutationGate()
             throw PeekabooBridgeErrorEnvelope(
                 code: .internalError,
                 message: "Could not establish the desktop mutation barrier; operation was not executed",
@@ -424,13 +431,11 @@ public final class PeekabooBridgeServer {
             do {
                 try desktopMutationWatermarkStore.cancelMutation(mutation)
             } catch {
-                await releaseBridgeMutationGate()
                 throw PeekabooBridgeErrorEnvelope(
                     code: .internalError,
                     message: "Could not cancel the desktop mutation barrier; operation was not executed",
                     details: error.localizedDescription)
             }
-            await releaseBridgeMutationGate()
             throw error
         }
 
@@ -452,10 +457,8 @@ public final class PeekabooBridgeServer {
                 response: response,
                 store: desktopMutationWatermarkStore)
         } catch {
-            await releaseBridgeMutationGate()
             throw error
         }
-        await releaseBridgeMutationGate()
 
         if let operationError {
             throw operationError
@@ -492,6 +495,61 @@ public final class PeekabooBridgeServer {
                 code: .invalidRequest,
                 message: "Pinned window target disappeared or changed owner/process generation/bounds")
         }
+    }
+
+    func validatedDesktopReadOperationLane(
+        for request: PeekabooBridgeRequest,
+        proposed: (scope: DesktopOperationScope, access: DesktopOperationAccess))
+        -> (scope: DesktopOperationScope, access: DesktopOperationAccess)
+    {
+        guard case .window = proposed.scope else { return proposed }
+        guard self.exactWindowReadIdentityIsCurrent(for: request) else {
+            return (.global, .write)
+        }
+        return proposed
+    }
+
+    func withValidatedDesktopReadOperationLane<T: Sendable>(
+        for request: PeekabooBridgeRequest,
+        proposed: (scope: DesktopOperationScope, access: DesktopOperationAccess),
+        operation: () async throws -> T) async throws -> T
+    {
+        let readLane = self.validatedDesktopReadOperationLane(for: request, proposed: proposed)
+        do {
+            return try await self.desktopOperationLaneCoordinator.run(
+                scope: readLane.scope,
+                access: readLane.access)
+            {
+                if case .window = readLane.scope,
+                   !self.exactWindowReadIdentityIsCurrent(for: request)
+                {
+                    throw ExactWindowReadLaneIdentityChanged()
+                }
+                let result = try await operation()
+                if case .window = readLane.scope,
+                   !self.exactWindowReadIdentityIsCurrent(for: request)
+                {
+                    throw ExactWindowReadLaneIdentityChanged()
+                }
+                return result
+            }
+        } catch is ExactWindowReadLaneIdentityChanged {
+            return try await self.desktopOperationLaneCoordinator.run(scope: .global, access: .write) {
+                try await operation()
+            }
+        }
+    }
+
+    private func exactWindowReadIdentityIsCurrent(for request: PeekabooBridgeRequest) -> Bool {
+        guard let identity = request.exactWindowReadIdentity,
+              let windowID = CGWindowID(exactly: identity.windowID),
+              self.windowOwnerProcessIdentifierProvider(windowID) == identity.ownerProcessIdentifier,
+              self.processStartIdentityProvider(identity.ownerProcessIdentifier) ==
+              identity.ownerProcessStartIdentity
+        else {
+            return false
+        }
+        return true
     }
 
     private func completeDesktopMutation(

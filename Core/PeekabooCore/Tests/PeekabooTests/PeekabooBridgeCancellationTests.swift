@@ -190,35 +190,6 @@ struct PeekabooBridgeCancellationTests {
     }
 
     @Test
-    func `cancelled mutation waiter is removed without consuming the lock`() async throws {
-        let gate = PeekabooBridgeMutationGate()
-        try await gate.acquire()
-
-        let cancelledWaiter = Task {
-            try await gate.acquire()
-        }
-        try await Self.waitForWaiterCount(1, gate: gate)
-
-        let followingWaiter = Task {
-            try await gate.acquire()
-        }
-        try await Self.waitForWaiterCount(2, gate: gate)
-
-        cancelledWaiter.cancel()
-        do {
-            try await cancelledWaiter.value
-            Issue.record("Expected the queued acquisition to be cancelled")
-        } catch is CancellationError {
-            // Expected.
-        }
-        try await Self.waitForWaiterCount(1, gate: gate)
-
-        await gate.release()
-        try await followingWaiter.value
-        await gate.release()
-    }
-
-    @Test
     @MainActor
     func `timed out bridge client cannot execute its queued desktop mutation`() async throws {
         let root = FileManager.default.temporaryDirectory
@@ -589,20 +560,6 @@ struct PeekabooBridgeCancellationTests {
             capture: DesktopCaptureOptions(focus: .background),
             detection: DesktopDetectionOptions(mode: .accessibility, allowWebFocusFallback: false),
             output: DesktopObservationOutputOptions(snapshotID: snapshotID))
-    }
-
-    private static func waitForWaiterCount(
-        _ expectedCount: Int,
-        gate: PeekabooBridgeMutationGate) async throws
-    {
-        let clock = ContinuousClock()
-        let deadline = clock.now.advanced(by: .seconds(1))
-        while await gate.waitingCount != expectedCount {
-            guard clock.now < deadline else {
-                throw CancellationTestError.timedOutWaitingForCondition
-            }
-            try await Task.sleep(for: .milliseconds(5))
-        }
     }
 
     private static func waitForActiveRequestCount(

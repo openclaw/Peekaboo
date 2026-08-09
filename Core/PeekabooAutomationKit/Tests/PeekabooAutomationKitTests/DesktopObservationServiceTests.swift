@@ -733,7 +733,7 @@ final class DesktopObservationServiceTests: XCTestCase {
         _ = try await secondObservation.value
     }
 
-    func testServiceOwnedCaptureTransactionDoesNotAcquireCallerGate() async throws {
+    func testServiceOwnedCaptureDelegatesDesktopOperationLaneToExecutionHost() async throws {
         let app = Self.app()
         let window = Self.window(
             id: 103,
@@ -747,12 +747,17 @@ final class DesktopObservationServiceTests: XCTestCase {
             screenCapture: RecordingScreenCaptureService(result: Self.captureResult(app: app, window: window)),
             automation: RecordingUIAutomationService(detectionSuspension: allowLocalDetectionToFinish),
             applications: RecordingApplicationService(applications: [app], windows: [window]))
-        let remoteCaptureStarted = expectation(description: "service-owned capture skips the caller transaction gate")
+        let remoteCaptureBeforeRelease = expectation(
+            description: "service-owned capture delegates the desktop lane to its execution host")
         let remoteService = DesktopObservationService(
             screenCapture: RecordingScreenCaptureService(
                 result: Self.captureResult(app: app, window: window),
                 captureTransactionGateOwner: .service,
-                onCapture: { remoteCaptureStarted.fulfill() }),
+                onCapture: {
+                    if !allowLocalDetectionToFinish.isReleased {
+                        remoteCaptureBeforeRelease.fulfill()
+                    }
+                }),
             automation: RecordingUIAutomationService(),
             applications: RecordingApplicationService(applications: [app], windows: [window]))
         defer { allowLocalDetectionToFinish.release() }
@@ -771,7 +776,7 @@ final class DesktopObservationServiceTests: XCTestCase {
                 target: .app(identifier: "Fixture", window: .automatic),
                 detection: DesktopDetectionOptions(mode: .none)))
         }
-        await fulfillment(of: [remoteCaptureStarted], timeout: 2)
+        await fulfillment(of: [remoteCaptureBeforeRelease], timeout: 2)
 
         allowLocalDetectionToFinish.release()
         _ = try await localObservation.value

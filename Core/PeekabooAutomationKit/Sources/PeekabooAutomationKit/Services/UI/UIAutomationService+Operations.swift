@@ -201,7 +201,10 @@ extension UIAutomationService {
         expectedWindowIdentity: WindowMutationIdentity,
         expectedWindowBounds: CGRect) async throws
     {
-        try await self.operationLaneCoordinator.run(scope: .window(expectedWindowIdentity), access: .write) {
+        let processIdentity = ApplicationProcessIdentity(
+            processIdentifier: expectedWindowIdentity.ownerProcessIdentifier,
+            processStartIdentity: expectedWindowIdentity.ownerProcessStartIdentity)
+        try await self.operationLaneCoordinator.run(scope: .process(processIdentity), access: .write) {
             self.logger.debug("Delegating exact-window background click to ClickService")
             guard self.exactWindowIdentityValidator(expectedWindowIdentity, expectedWindowBounds) else {
                 throw PeekabooError.invalidInput(

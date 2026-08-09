@@ -76,7 +76,11 @@ extension ObservationTargetResolver {
             throw DesktopObservationError.targetNotFound("menu bar popover click hint")
         }
 
-        let clickResult = try await menu.clickMenuBarItem(named: hint)
+        let clickResult = if let ownedMenu = menu as? MenuService {
+            try await ownedMenu.clickMenuBarItemWithOwnedLane(named: hint)
+        } else {
+            try await menu.clickMenuBarItem(named: hint)
+        }
         if options.settleDelayNanoseconds > 0 {
             try await Task.sleep(nanoseconds: options.settleDelayNanoseconds)
         }

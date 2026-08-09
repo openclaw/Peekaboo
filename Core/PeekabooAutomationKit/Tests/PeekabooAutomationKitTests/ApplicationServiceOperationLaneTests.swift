@@ -54,11 +54,61 @@ struct ApplicationServiceOperationLaneTests {
         }
         #expect(terminationCalls == 0)
     }
+
+    @Test
+    @MainActor
+    func `Cancelled background launch retains global lane through activation heartbeat`() async throws {
+        let runningApplication = try #require(NSWorkspace.shared.runningApplications.first {
+            $0.processIdentifier > 0 && !$0.isTerminated && $0.isFinishedLaunching
+        })
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekaboo-launch-lane-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let coordinator = DesktopOperationLaneCoordinator(coordinationRootURL: root)
+        let launchWaiting = ApplicationOperationLatch()
+        let contenderStarted = ApplicationOperationLatch()
+        let generation = SystemIdentityResolver.processStartIdentity(runningApplication.processIdentifier) ?? 70
+        let service = ApplicationService(
+            operationLaneCoordinator: coordinator,
+            applicationOpenHandler: { _, _, _ in runningApplication },
+            applicationReadinessHandler: { _ in
+                Task { await launchWaiting.open() }
+                return false
+            },
+            processStartIdentityProvider: { _ in generation },
+            applicationReadinessTimeout: 5,
+            backgroundLaunchActivationGraceDuration: .milliseconds(250))
+
+        let launch = Task { @MainActor in
+            try await service.launchApplication(request: ApplicationLaunchRequest(
+                applicationIdentifier: "Finder",
+                activates: false,
+                waitForWindow: true))
+        }
+        await launchWaiting.wait()
+        launch.cancel()
+        let contender = Task {
+            try await coordinator.run(scope: .global, access: .write) {
+                await contenderStarted.open()
+            }
+        }
+
+        #expect(await !(contenderStarted.opensWithin(.milliseconds(100))))
+        await #expect(throws: CancellationError.self) {
+            try await launch.value
+        }
+        try await contender.value
+        #expect(await contenderStarted.isOpen)
+    }
 }
 
 private actor ApplicationOperationLatch {
     private var opened = false
     private var continuations: [CheckedContinuation<Void, Never>] = []
+
+    var isOpen: Bool {
+        self.opened
+    }
 
     func open() {
         guard !self.opened else { return }
@@ -71,6 +121,14 @@ private actor ApplicationOperationLatch {
     func wait() async {
         guard !self.opened else { return }
         await withCheckedContinuation { self.continuations.append($0) }
+    }
+
+    func opensWithin(_ duration: Duration) async -> Bool {
+        let deadline = ContinuousClock.now.advanced(by: duration)
+        while !self.opened, ContinuousClock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+        return self.opened
     }
 }
 

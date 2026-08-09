@@ -6,6 +6,12 @@ import PeekabooFoundation
 @MainActor
 extension DialogService {
     public func findActiveDialog(windowTitle: String?, appName: String?) async throws -> DialogInfo {
+        try await self.operationLaneCoordinator.run(scope: .global, access: .write) {
+            try await self.findActiveDialogWithOwnedLane(windowTitle: windowTitle, appName: appName)
+        }
+    }
+
+    func findActiveDialogWithOwnedLane(windowTitle: String?, appName: String?) async throws -> DialogInfo {
         self.logger.info("Finding active dialog")
         if let title = windowTitle {
             self.logger.debug("Looking for window with title: \(title)")
@@ -48,17 +54,19 @@ extension DialogService {
         appName: String?,
         allowGlobalFallback: Bool) async throws -> DialogActionResult
     {
-        self.logger.info("Clicking button: \(buttonText)")
-        if let title = windowTitle {
-            self.logger.debug("In window: \(title)")
-        }
+        try await self.operationLaneCoordinator.run(scope: .global, access: .write) {
+            self.logger.info("Clicking button: \(buttonText)")
+            if let title = windowTitle {
+                self.logger.debug("In window: \(title)")
+            }
 
-        let dialog = try await self.resolveDialogElement(windowTitle: windowTitle, appName: appName)
-        return try await self.clickButton(
-            in: dialog,
-            buttonText: buttonText,
-            allowFallbackToDefaultAction: false,
-            allowGlobalFallback: allowGlobalFallback)
+            let dialog = try await self.resolveDialogElement(windowTitle: windowTitle, appName: appName)
+            return try await self.clickButton(
+                in: dialog,
+                buttonText: buttonText,
+                allowFallbackToDefaultAction: false,
+                allowGlobalFallback: allowGlobalFallback)
+        }
     }
 
     public func enterText(
@@ -68,114 +76,120 @@ extension DialogService {
         windowTitle: String?,
         appName: String?) async throws -> DialogActionResult
     {
-        self.logger.info("Entering text into dialog field")
-        self.logger.debug("Text length: \(text.count) chars, clear existing: \(clearExisting)")
-        if let identifier = fieldIdentifier {
-            self.logger.debug("Target field: \(identifier)")
+        try await self.operationLaneCoordinator.run(scope: .global, access: .write) {
+            self.logger.info("Entering text into dialog field")
+            self.logger.debug("Text length: \(text.count) chars, clear existing: \(clearExisting)")
+            if let identifier = fieldIdentifier {
+                self.logger.debug("Target field: \(identifier)")
+            }
+
+            let dialog = try await self.resolveDialogElement(windowTitle: windowTitle, appName: appName)
+            let targetField = try self.textField(in: dialog, identifier: fieldIdentifier)
+
+            await self.highlightDialogElement(
+                element: .textField,
+                bounds: self.elementBounds(for: targetField),
+                action: .enterText)
+
+            self.focusTextField(targetField)
+            try self.clearFieldIfNeeded(targetField, shouldClear: clearExisting)
+            try self.typeTextValue(text, delay: 10000)
+
+            let result = DialogActionResult(
+                success: true,
+                action: .enterText,
+                details: [
+                    "field": targetField.title() ?? "Text Field",
+                    "text_length": String(text.count),
+                    "cleared": String(clearExisting),
+                ])
+
+            self.logger.info("\(AgentDisplayTokens.Status.success) Successfully entered text into field")
+            return result
         }
-
-        let dialog = try await self.resolveDialogElement(windowTitle: windowTitle, appName: appName)
-        let targetField = try self.textField(in: dialog, identifier: fieldIdentifier)
-
-        await self.highlightDialogElement(
-            element: .textField,
-            bounds: self.elementBounds(for: targetField),
-            action: .enterText)
-
-        self.focusTextField(targetField)
-        try self.clearFieldIfNeeded(targetField, shouldClear: clearExisting)
-        try self.typeTextValue(text, delay: 10000)
-
-        let result = DialogActionResult(
-            success: true,
-            action: .enterText,
-            details: [
-                "field": targetField.title() ?? "Text Field",
-                "text_length": String(text.count),
-                "cleared": String(clearExisting),
-            ])
-
-        self.logger.info("\(AgentDisplayTokens.Status.success) Successfully entered text into field")
-        return result
     }
 
     public func dismissDialog(force: Bool, windowTitle: String?, appName: String?) async throws -> DialogActionResult {
-        self.logger.info("Dismissing dialog (force: \(force))")
+        try await self.operationLaneCoordinator.run(scope: .global, access: .write) {
+            self.logger.info("Dismissing dialog (force: \(force))")
 
-        if force {
-            self.logger.debug("Force dismissing with Escape key")
-            try? InputDriver.tapKey(.escape)
+            if force {
+                self.logger.debug("Force dismissing with Escape key")
+                try? InputDriver.tapKey(.escape)
 
-            self.logger.info("\(AgentDisplayTokens.Status.success) Dialog dismissed with Escape key")
-            return DialogActionResult(
-                success: true,
-                action: .dismiss,
-                details: ["method": "escape"])
-        }
-
-        self.logger.debug("Looking for dismiss button")
-        let dialog = try await self.resolveDialogElement(windowTitle: windowTitle, appName: appName)
-        let buttons = dialog.children()?.filter { $0.role() == "AXButton" } ?? []
-        self.logger.debug("Found \(buttons.count) buttons in dialog")
-
-        let dismissButtons = ["Cancel", "Close", "Dismiss", "No", "Don't Save"]
-        self.logger.debug("Looking for dismiss buttons: \(dismissButtons.joined(separator: ", "))")
-
-        for buttonName in dismissButtons {
-            if let button = buttons.first(where: { $0.title() == buttonName }) {
-                self.logger.debug("Found dismiss button: \(buttonName)")
-                try button.performAction(.press)
-
-                self.logger.info("\(AgentDisplayTokens.Status.success) Dialog dismissed by clicking: \(buttonName)")
+                self.logger.info("\(AgentDisplayTokens.Status.success) Dialog dismissed with Escape key")
                 return DialogActionResult(
                     success: true,
                     action: .dismiss,
-                    details: [
-                        "method": "button",
-                        "button": buttonName,
-                    ])
+                    details: ["method": "escape"])
             }
-        }
 
-        self.logger.error("No dismiss button found in dialog")
-        throw DialogError.noDismissButton
+            self.logger.debug("Looking for dismiss button")
+            let dialog = try await self.resolveDialogElement(windowTitle: windowTitle, appName: appName)
+            let buttons = dialog.children()?.filter { $0.role() == "AXButton" } ?? []
+            self.logger.debug("Found \(buttons.count) buttons in dialog")
+
+            let dismissButtons = ["Cancel", "Close", "Dismiss", "No", "Don't Save"]
+            self.logger.debug("Looking for dismiss buttons: \(dismissButtons.joined(separator: ", "))")
+
+            for buttonName in dismissButtons {
+                if let button = buttons.first(where: { $0.title() == buttonName }) {
+                    self.logger.debug("Found dismiss button: \(buttonName)")
+                    try button.performAction(.press)
+
+                    self.logger.info("\(AgentDisplayTokens.Status.success) Dialog dismissed by clicking: \(buttonName)")
+                    return DialogActionResult(
+                        success: true,
+                        action: .dismiss,
+                        details: [
+                            "method": "button",
+                            "button": buttonName,
+                        ])
+                }
+            }
+
+            self.logger.error("No dismiss button found in dialog")
+            throw DialogError.noDismissButton
+        }
     }
 
     public func listDialogElements(windowTitle: String?, appName: String?) async throws -> DialogElements {
-        self.logger.info("Listing dialog elements")
-        if let title = windowTitle {
-            self.logger.debug("For window: \(title)")
-        }
+        try await self.operationLaneCoordinator.run(scope: .global, access: .write) {
+            self.logger.info("Listing dialog elements")
+            if let title = windowTitle {
+                self.logger.debug("For window: \(title)")
+            }
 
-        let dialogInfo = try await findActiveDialog(windowTitle: windowTitle, appName: appName)
-        let dialog = try await self.resolveDialogElement(windowTitle: windowTitle, appName: appName)
+            let dialogInfo = try await self.findActiveDialogWithOwnedLane(windowTitle: windowTitle, appName: appName)
+            let dialog = try await self.resolveDialogElement(windowTitle: windowTitle, appName: appName)
 
-        let buttons = self.dialogButtons(from: dialog)
-        let textFields = self.dialogTextFields(from: dialog)
-        let staticTexts = self.dialogStaticTexts(from: dialog)
-        let otherElements = self.dialogOtherElements(from: dialog)
+            let buttons = self.dialogButtons(from: dialog)
+            let textFields = self.dialogTextFields(from: dialog)
+            let staticTexts = self.dialogStaticTexts(from: dialog)
+            let otherElements = self.dialogOtherElements(from: dialog)
 
-        try self.validateDialogElementList(
-            DialogElementListValidation(
-                dialog: dialog,
+            try self.validateDialogElementList(
+                DialogElementListValidation(
+                    dialog: dialog,
+                    dialogInfo: dialogInfo,
+                    windowTitle: windowTitle,
+                    buttons: buttons,
+                    textFields: textFields,
+                    staticTexts: staticTexts,
+                    otherElements: otherElements))
+
+            let elements = DialogElements(
                 dialogInfo: dialogInfo,
-                windowTitle: windowTitle,
                 buttons: buttons,
                 textFields: textFields,
                 staticTexts: staticTexts,
-                otherElements: otherElements))
+                otherElements: otherElements)
 
-        let elements = DialogElements(
-            dialogInfo: dialogInfo,
-            buttons: buttons,
-            textFields: textFields,
-            staticTexts: staticTexts,
-            otherElements: otherElements)
-
-        let summary = "\(AgentDisplayTokens.Status.success) Listed \(buttons.count) buttons, " +
-            "\(textFields.count) fields, \(staticTexts.count) texts"
-        self.logger.info("\(summary, privacy: .public)")
-        return elements
+            let summary = "\(AgentDisplayTokens.Status.success) Listed \(buttons.count) buttons, " +
+                "\(textFields.count) fields, \(staticTexts.count) texts"
+            self.logger.info("\(summary, privacy: .public)")
+            return elements
+        }
     }
 
     private func textField(in dialog: Element, identifier: String?) throws -> Element {

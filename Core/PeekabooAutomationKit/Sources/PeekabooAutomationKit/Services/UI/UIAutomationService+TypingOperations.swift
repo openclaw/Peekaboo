@@ -141,7 +141,10 @@ extension UIAutomationService {
         expectedWindowIdentity: WindowMutationIdentity,
         expectedWindowBounds: CGRect) async throws -> TypeResult
     {
-        try await self.operationLaneCoordinator.run(scope: .window(expectedWindowIdentity), access: .write) {
+        let processIdentity = ApplicationProcessIdentity(
+            processIdentifier: expectedWindowIdentity.ownerProcessIdentifier,
+            processStartIdentity: expectedWindowIdentity.ownerProcessStartIdentity)
+        return try await self.operationLaneCoordinator.run(scope: .process(processIdentity), access: .write) {
             let validator: @MainActor @Sendable () async throws -> Void = {
                 try await self.requireExactWindowKeyboardFocus(
                     expectedWindowIdentity: expectedWindowIdentity,
@@ -166,7 +169,10 @@ extension UIAutomationService {
         snapshotId: String?,
         target: ExactWindowKeyboardTarget) async throws -> TypeResult
     {
-        try await self.operationLaneCoordinator.run(scope: .window(target.windowIdentity), access: .write) {
+        let processIdentity = ApplicationProcessIdentity(
+            processIdentifier: target.windowIdentity.ownerProcessIdentifier,
+            processStartIdentity: target.windowIdentity.ownerProcessStartIdentity)
+        return try await self.operationLaneCoordinator.run(scope: .process(processIdentity), access: .write) {
             let validator: @MainActor @Sendable () async throws -> Void = {
                 try await self.requireExactWindowKeyboardFocus(
                     expectedWindowIdentity: target.windowIdentity,
