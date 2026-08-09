@@ -22,9 +22,11 @@ struct PerformActionCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBac
     mutating func run(using runtime: CommandRuntime) async throws {
         self.runtime = runtime
         try await ElementActionCommandExecutor.execute(
-            runtime: runtime,
-            snapshot: self.snapshot,
-            invalidationReason: "perform-action",
+            context: ElementActionCommandContext(
+                runtime: runtime,
+                snapshot: self.snapshot,
+                invalidationReason: "perform-action"
+            ),
             prepare: {
                 try (self.requireTarget(), self.requireAction())
             },

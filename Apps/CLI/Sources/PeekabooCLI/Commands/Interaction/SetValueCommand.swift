@@ -22,9 +22,11 @@ struct SetValueCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedCo
     mutating func run(using runtime: CommandRuntime) async throws {
         self.runtime = runtime
         try await ElementActionCommandExecutor.execute(
-            runtime: runtime,
-            snapshot: self.snapshot,
-            invalidationReason: "set-value",
+            context: ElementActionCommandContext(
+                runtime: runtime,
+                snapshot: self.snapshot,
+                invalidationReason: "set-value"
+            ),
             prepare: {
                 try (self.requireTarget(), self.requireValue())
             },
@@ -120,12 +122,16 @@ struct ElementActionCommandResult: Codable {
     let executionTime: TimeInterval
 }
 
+struct ElementActionCommandContext {
+    let runtime: CommandRuntime
+    let snapshot: String?
+    let invalidationReason: String
+}
+
 @MainActor
 enum ElementActionCommandExecutor {
     static func execute<Prepared>(
-        runtime: CommandRuntime,
-        snapshot: String?,
-        invalidationReason: String,
+        context: ElementActionCommandContext,
         prepare: () throws -> (target: String, value: Prepared),
         operation: (
             _ automation: any UIAutomationServiceProtocol,
@@ -136,6 +142,7 @@ enum ElementActionCommandExecutor {
         render: (_ result: ElementActionResult, _ output: ElementActionCommandResult, _ value: Prepared) -> Void,
         handleError: (any Error) -> Void
     ) async throws {
+        let runtime = context.runtime
         let services = runtime.services
         let logger = runtime.logger
         logger.setJsonOutputMode(runtime.configuration.jsonOutput)
@@ -143,7 +150,7 @@ enum ElementActionCommandExecutor {
         do {
             let prepared = try prepare()
             let observation = await InteractionObservationContext.resolve(
-                explicitSnapshot: snapshot,
+                explicitSnapshot: context.snapshot,
                 fallbackToLatest: true,
                 snapshots: services.snapshots
             )
@@ -159,7 +166,7 @@ enum ElementActionCommandExecutor {
             await InteractionObservationInvalidator.invalidateAfterMutation(
                 targets: runtime.interactionMutationTargets,
                 logger: logger,
-                reason: invalidationReason
+                reason: context.invalidationReason
             )
 
             let output = ElementActionCommandResult(
