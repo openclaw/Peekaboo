@@ -7,7 +7,7 @@ extension DialogCommand {
     // MARK: - Handle File Dialog
 
     @MainActor
-    struct FileSubcommand {
+    struct FileSubcommand: InjectedRuntimeBackedCommand {
         static let commandDescription = CommandDescription(
             commandName: "file",
             abstract: "Handle file save/open dialogs using DialogService"
@@ -33,125 +33,71 @@ extension DialogCommand {
 
         @OptionGroup var target: InteractionTargetOptions
         @OptionGroup var focusOptions: FocusCommandOptions
-        @RuntimeStorage private var runtime: CommandRuntime?
-
-        private var resolvedRuntime: CommandRuntime {
-            guard let runtime else {
-                preconditionFailure("CommandRuntime must be configured before accessing runtime resources")
-            }
-            return runtime
-        }
-
-        private var services: any PeekabooServiceProviding {
-            self.resolvedRuntime.services
-        }
-
-        private var logger: Logger {
-            self.resolvedRuntime.logger
-        }
-
-        var outputLogger: Logger {
-            self.logger
-        }
-
-        var jsonOutput: Bool {
-            self.resolvedRuntime.configuration.jsonOutput
-        }
+        @RuntimeStorage var runtime: CommandRuntime?
 
         @MainActor
         mutating func run(using runtime: CommandRuntime) async throws {
             self.runtime = runtime
-            self.logger.setJsonOutputMode(self.jsonOutput)
+            let path = self.path
+            let name = self.name
+            let select = self.select
+            let ensureExpanded = self.ensureExpanded
+            try await DialogCommand.execute(
+                runtime: runtime,
+                target: self.target,
+                focus: .required(self.focusOptions),
+                resolveWindowTitle: false,
+                handlesPeekabooError: true,
+                validate: {
+                    guard self.foreground else {
+                        throw ValidationError(
+                            "dialog file uses keyboard/coordinate interaction and requires --foreground"
+                        )
+                    }
+                },
+                operation: { context in
+                    let result = try await withMainActorCommandTimeout(
+                        seconds: self.timeoutSeconds,
+                        operationName: "dialog file",
+                        desktopMutationWatermarkStore: DesktopMutationWatermarkStore()
+                    ) {
+                        try await context.services.dialogs.handleFileDialog(
+                            path: path,
+                            filename: name,
+                            actionButton: select,
+                            ensureExpanded: ensureExpanded,
+                            appName: context.appHint
+                        )
+                    }
 
-            do {
-                try self.target.validate()
-                guard self.foreground else {
-                    throw ValidationError("dialog file uses keyboard/coordinate interaction and requires --foreground")
-                }
-                if self.focusOptions.autoFocus {
-                    self.resolvedRuntime.beginInteractionMutation()
-                }
-                try await ensureFocused(
-                    snapshotId: nil,
-                    target: self.target,
-                    options: self.focusOptions,
-                    services: self.services
-                )
-
-                let appHint = try await DialogCommand.resolveDialogAppHint(target: self.target, services: self.services)
-                let dialogs = self.services.dialogs
-                let path = self.path
-                let name = self.name
-                let select = self.select
-                let ensureExpanded = self.ensureExpanded
-
-                self.resolvedRuntime.beginInteractionMutation()
-                let result = try await withMainActorCommandTimeout(
-                    seconds: self.timeoutSeconds,
-                    operationName: "dialog file",
-                    desktopMutationWatermarkStore: DesktopMutationWatermarkStore()
-                ) {
-                    try await dialogs.handleFileDialog(
-                        path: path,
-                        filename: name,
-                        actionButton: select,
-                        ensureExpanded: ensureExpanded,
-                        appName: appHint
+                    if self.jsonOutput {
+                        outputSuccessCodable(data: self.makeOutput(from: result), logger: self.outputLogger)
+                    } else {
+                        print("✓ Handled file dialog")
+                        if let path = result.details["path"] {
+                            print("  Path: \(path)")
+                        }
+                        if let name = result.details["filename"] {
+                            print("  Name: \(name)")
+                        }
+                        print("  Action: \(result.details["button_clicked"] ?? self.select ?? "default")")
+                        if let savedPath = result.details["saved_path"], result.details["saved_path_exists"] == "true" {
+                            print("  Saved: \(savedPath)")
+                        }
+                    }
+                    let resolvedPath = result.details["path"] ?? self.path ?? "unknown"
+                    let resolvedName = result.details["filename"] ?? self.name ?? "unknown"
+                    let buttonClicked = result.details["button_clicked"] ?? self.select ?? "default"
+                    let savedPath = result.details["saved_path"] ?? "unknown"
+                    let savedPathVerified = result.details["saved_path_exists"] ?? "unknown"
+                    AutomationEventLogger.log(
+                        .dialog,
+                        "action=file path='\(resolvedPath)' name='\(resolvedName)' "
+                            + "button='\(buttonClicked)' saved_path='\(savedPath)' "
+                            + "saved_path_verified=\(savedPathVerified) app='\(context.appHint ?? "unknown")'"
                     )
                 }
-
-                if self.jsonOutput {
-                    outputSuccessCodable(data: self.makeOutput(from: result), logger: self.outputLogger)
-                } else {
-                    print("✓ Handled file dialog")
-                    if let path = result.details["path"] {
-                        print("  Path: \(path)")
-                    }
-                    if let name = result.details["filename"] {
-                        print("  Name: \(name)")
-                    }
-                    print("  Action: \(result.details["button_clicked"] ?? self.select ?? "default")")
-                    if let savedPath = result.details["saved_path"], result.details["saved_path_exists"] == "true" {
-                        print("  Saved: \(savedPath)")
-                    }
-                }
-                let resolvedPath = result.details["path"] ?? self.path ?? "unknown"
-                let resolvedName = result.details["filename"] ?? self.name ?? "unknown"
-                let buttonClicked = result.details["button_clicked"] ?? self.select ?? "default"
-                let savedPath = result.details["saved_path"] ?? "unknown"
-                let savedPathVerified = result.details["saved_path_exists"] ?? "unknown"
-                AutomationEventLogger.log(
-                    .dialog,
-                    "action=file path='\(resolvedPath)' name='\(resolvedName)' "
-                        + "button='\(buttonClicked)' saved_path='\(savedPath)' "
-                        + "saved_path_verified=\(savedPathVerified) app='\(appHint ?? "unknown")'"
-                )
-
-            } catch let error as Commander.ValidationError {
-                handleDialogValidationError(error, jsonOutput: self.jsonOutput, logger: self.outputLogger)
-                throw ExitCode(1)
-            } catch let error as DialogError {
-                handleDialogServiceError(error, jsonOutput: self.jsonOutput, logger: self.outputLogger)
-                throw ExitCode(1)
-            } catch let error as PeekabooError {
-                let code: ErrorCode = switch error {
-                case .timeout:
-                    .TIMEOUT
-                case .invalidInput:
-                    .INVALID_INPUT
-                default:
-                    .UNKNOWN_ERROR
-                }
-                if self.jsonOutput {
-                    outputError(message: error.localizedDescription, code: code, logger: self.outputLogger)
-                } else {
-                    fputs("❌ \(error.localizedDescription)\n", stderr)
-                }
-                throw ExitCode(1)
-            } catch {
-                handleGenericError(error, jsonOutput: self.jsonOutput, logger: self.outputLogger)
-                throw ExitCode(1)
-            }
+            )
         }
 
         private func makeOutput(from result: DialogActionResult) -> FileDialogResult {

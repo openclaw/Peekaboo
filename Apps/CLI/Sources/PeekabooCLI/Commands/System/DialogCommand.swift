@@ -6,6 +6,18 @@ import PeekabooFoundation
 /// Interact with system dialogs and alerts
 @MainActor
 struct DialogCommand: ParsableCommand {
+    enum ExecutionFocus {
+        case none
+        case whenRequested(Bool, FocusCommandOptions)
+        case required(FocusCommandOptions)
+    }
+
+    struct ExecutionContext {
+        let services: any PeekabooServiceProviding
+        let windowTitle: String?
+        let appHint: String?
+    }
+
     static let commandDescription = CommandDescription(
         commandName: "dialog",
         abstract: "Interact with system dialogs and alerts",
@@ -56,6 +68,105 @@ struct DialogCommand: ParsableCommand {
         }
 
         return match.bundleIdentifier ?? match.name
+    }
+
+    static func execute(
+        runtime: CommandRuntime,
+        target: InteractionTargetOptions,
+        focus: ExecutionFocus,
+        resolveWindowTitle: Bool = true,
+        beginsInteractionMutation: Bool = true,
+        handlesValidationError: Bool = true,
+        handlesPeekabooError: Bool = false,
+        validate: () throws -> Void = {},
+        operation: (ExecutionContext) async throws -> Void
+    ) async throws {
+        var target = target
+        let logger = runtime.logger
+        let jsonOutput = runtime.configuration.jsonOutput
+        logger.setJsonOutputMode(jsonOutput)
+
+        do {
+            try target.validate()
+            try validate()
+
+            switch focus {
+            case .none:
+                break
+            case let .whenRequested(foreground, options):
+                if foreground {
+                    if options.autoFocus {
+                        runtime.beginInteractionMutation()
+                    }
+                    try await ensureFocused(
+                        snapshotId: nil,
+                        target: target,
+                        options: options,
+                        services: runtime.services
+                    )
+                }
+            case let .required(options):
+                if options.autoFocus {
+                    runtime.beginInteractionMutation()
+                }
+                try await ensureFocused(
+                    snapshotId: nil,
+                    target: target,
+                    options: options,
+                    services: runtime.services
+                )
+            }
+
+            let windowTitle: String? = if resolveWindowTitle {
+                try await target.resolveWindowTitleOptional(services: runtime.services)
+            } else {
+                nil
+            }
+            let appHint = try await self.resolveDialogAppHint(target: target, services: runtime.services)
+
+            if beginsInteractionMutation {
+                runtime.beginInteractionMutation()
+            }
+            try await operation(
+                ExecutionContext(
+                    services: runtime.services,
+                    windowTitle: windowTitle,
+                    appHint: appHint
+                )
+            )
+        } catch let error as Commander.ValidationError {
+            if handlesValidationError {
+                handleDialogValidationError(error, jsonOutput: jsonOutput, logger: logger)
+            } else {
+                handleGenericError(error, jsonOutput: jsonOutput, logger: logger)
+            }
+            throw ExitCode(1)
+        } catch let error as DialogError {
+            handleDialogServiceError(error, jsonOutput: jsonOutput, logger: logger)
+            throw ExitCode(1)
+        } catch let error as PeekabooError {
+            guard handlesPeekabooError else {
+                handleGenericError(error, jsonOutput: jsonOutput, logger: logger)
+                throw ExitCode(1)
+            }
+            let code: ErrorCode = switch error {
+            case .timeout:
+                .TIMEOUT
+            case .invalidInput:
+                .INVALID_INPUT
+            default:
+                .UNKNOWN_ERROR
+            }
+            if jsonOutput {
+                outputError(message: error.localizedDescription, code: code, logger: logger)
+            } else {
+                fputs("❌ \(error.localizedDescription)\n", stderr)
+            }
+            throw ExitCode(1)
+        } catch {
+            handleGenericError(error, jsonOutput: jsonOutput, logger: logger)
+            throw ExitCode(1)
+        }
     }
 }
 

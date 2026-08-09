@@ -9,29 +9,11 @@ import PeekabooCore
 import PeekabooFoundation
 
 @MainActor
-protocol ConfigRuntimeCommand {
-    var runtime: CommandRuntime? { get set }
-
+protocol ConfigRuntimeCommand: InjectedRuntimeBackedCommand {
     mutating func prepare(using runtime: CommandRuntime)
 }
 
 extension ConfigRuntimeCommand {
-    /// Lazily unwrap the command runtime or crash fast during development.
-    var resolvedRuntime: CommandRuntime {
-        guard let runtime else {
-            preconditionFailure("CommandRuntime must be configured before accessing runtime resources")
-        }
-        return runtime
-    }
-
-    var logger: Logger {
-        self.resolvedRuntime.logger
-    }
-
-    var jsonOutput: Bool {
-        self.resolvedRuntime.configuration.jsonOutput
-    }
-
     mutating func prepare(using runtime: CommandRuntime) {
         self.runtime = runtime
         self.logger.setJsonOutputMode(self.jsonOutput)

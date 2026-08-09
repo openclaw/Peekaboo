@@ -7,7 +7,7 @@ import PeekabooFoundation
 /// Perform drag and drop operations using intelligent element finding
 @available(macOS 14.0, *)
 @MainActor
-struct DragCommand: ErrorHandlingCommand, OutputFormattable {
+struct DragCommand: ErrorHandlingCommand, OutputFormattable, InjectedRuntimeBackedCommand {
     @OptionGroup var target: InteractionTargetOptions
 
     @Option(help: "Starting element ID from snapshot")
@@ -43,30 +43,7 @@ struct DragCommand: ErrorHandlingCommand, OutputFormattable {
 
     @Flag(help: "Confirm foreground pointer movement and focus the target when specified")
     var foreground = false
-    @RuntimeStorage private var runtime: CommandRuntime?
-
-    private var resolvedRuntime: CommandRuntime {
-        guard let runtime else {
-            preconditionFailure("CommandRuntime must be configured before accessing runtime resources")
-        }
-        return runtime
-    }
-
-    var services: any PeekabooServiceProviding {
-        self.resolvedRuntime.services
-    }
-
-    private var logger: Logger {
-        self.resolvedRuntime.logger
-    }
-
-    var outputLogger: Logger {
-        self.logger
-    }
-
-    var jsonOutput: Bool {
-        self.resolvedRuntime.configuration.jsonOutput
-    }
+    @RuntimeStorage var runtime: CommandRuntime?
 
     @MainActor
     mutating func run(using runtime: CommandRuntime) async throws {

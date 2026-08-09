@@ -8,7 +8,7 @@ extension AppCommand {
     // MARK: - Quit Application
 
     @MainActor
-    struct QuitSubcommand {
+    struct QuitSubcommand: InjectedRuntimeBackedCommand {
         static let commandDescription = CommandDescription(
             commandName: "quit",
             abstract: "Quit one or more applications"
@@ -28,30 +28,7 @@ extension AppCommand {
 
         @Flag(help: "Force quit (doesn't save changes)")
         var force = false
-        @RuntimeStorage private var runtime: CommandRuntime?
-
-        private var resolvedRuntime: CommandRuntime {
-            guard let runtime else {
-                preconditionFailure("CommandRuntime must be configured before accessing runtime resources")
-            }
-            return runtime
-        }
-
-        private var logger: Logger {
-            self.resolvedRuntime.logger
-        }
-
-        @MainActor private var services: any PeekabooServiceProviding {
-            self.resolvedRuntime.services
-        }
-
-        var outputLogger: Logger {
-            self.logger
-        }
-
-        var jsonOutput: Bool {
-            self.resolvedRuntime.configuration.jsonOutput
-        }
+        @RuntimeStorage var runtime: CommandRuntime?
 
         /// Resolve the targeted applications, issue quit or force-quit requests, and report results per app.
         @MainActor

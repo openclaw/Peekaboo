@@ -6,7 +6,7 @@ import PeekabooFoundation
 
 @MainActor
 struct CaptureActionCommand: ApplicationResolvable, ErrorHandlingCommand, OutputFormattable,
-RuntimeOptionsConfigurable {
+RuntimeOptionsConfigurable, InjectedRuntimeBackedCommand {
     var app: String?
     var pid: Int32?
     var mode: String?
@@ -38,7 +38,7 @@ RuntimeOptionsConfigurable {
     var videoOut: String?
     var command: [String] = []
 
-    @RuntimeStorage private var runtime: CommandRuntime?
+    @RuntimeStorage var runtime: CommandRuntime?
     var runtimeOptions = CommandRuntimeOptions()
 
     nonisolated(unsafe) static var commandDescription: CommandDescription {
@@ -59,31 +59,8 @@ RuntimeOptionsConfigurable {
         }
     }
 
-    private var resolvedRuntime: CommandRuntime {
-        guard let runtime else {
-            preconditionFailure("CommandRuntime must be configured before accessing runtime resources")
-        }
-        return runtime
-    }
-
-    private var logger: Logger {
-        self.resolvedRuntime.logger
-    }
-
-    var services: any PeekabooServiceProviding {
-        self.resolvedRuntime.services
-    }
-
     func withCaptureFocusMutation(_ operation: () async throws -> Void) async rethrows {
         try await self.resolvedRuntime.withCaptureFocusMutation(operation)
-    }
-
-    var jsonOutput: Bool {
-        self.resolvedRuntime.configuration.jsonOutput
-    }
-
-    var outputLogger: Logger {
-        self.logger
     }
 
     mutating func run(using runtime: CommandRuntime) async throws {

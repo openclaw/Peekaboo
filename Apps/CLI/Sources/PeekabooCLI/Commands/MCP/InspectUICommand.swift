@@ -4,7 +4,8 @@ import PeekabooCore
 import TachikomaMCP
 
 @MainActor
-struct InspectUICommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConfigurable {
+struct InspectUICommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConfigurable,
+InjectedRuntimeBackedCommand {
     var appTarget: String?
     var snapshot: String?
     var maxDepth: Int?
@@ -18,7 +19,7 @@ struct InspectUICommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptions
         return options
     }()
 
-    @RuntimeStorage private var runtime: CommandRuntime?
+    @RuntimeStorage var runtime: CommandRuntime?
 
     static let commandDescription = CommandDescription(
         commandName: "inspect-ui",
@@ -32,29 +33,6 @@ struct InspectUICommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptions
           peekaboo inspect-ui --snapshot 1234 --max-elements 200 --json
         """
     )
-
-    private var resolvedRuntime: CommandRuntime {
-        guard let runtime else {
-            preconditionFailure("CommandRuntime must be configured before accessing runtime resources")
-        }
-        return runtime
-    }
-
-    private var services: any PeekabooServiceProviding {
-        self.resolvedRuntime.services
-    }
-
-    private var logger: Logger {
-        self.resolvedRuntime.logger
-    }
-
-    var jsonOutput: Bool {
-        self.resolvedRuntime.configuration.jsonOutput
-    }
-
-    var outputLogger: Logger {
-        self.logger
-    }
 
     mutating func setRuntimeOptions(_ options: CommandRuntimeOptions) {
         var options = options

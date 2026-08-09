@@ -6,7 +6,7 @@ import PeekabooFoundation
 
 /// Command for interacting with macOS menu bar items (status items).
 @MainActor
-struct MenuBarCommand: ParsableCommand, ErrorHandlingCommand, OutputFormattable {
+struct MenuBarCommand: ParsableCommand, ErrorHandlingCommand, OutputFormattable, InjectedRuntimeBackedCommand {
     nonisolated(unsafe) static var commandDescription: CommandDescription {
         MainActorCommandDescription.describe {
             CommandDescription(
@@ -58,33 +58,10 @@ struct MenuBarCommand: ParsableCommand, ErrorHandlingCommand, OutputFormattable 
 
     @Flag(help: "Verify the click by checking for a matching popover window")
     var verify: Bool = false
-    @RuntimeStorage private var runtime: CommandRuntime?
-
-    private var resolvedRuntime: CommandRuntime {
-        guard let runtime else {
-            preconditionFailure("CommandRuntime must be configured before accessing runtime resources")
-        }
-        return runtime
-    }
-
-    private var services: any PeekabooServiceProviding {
-        self.resolvedRuntime.services
-    }
-
-    private var logger: Logger {
-        self.resolvedRuntime.logger
-    }
-
-    var outputLogger: Logger {
-        self.logger
-    }
+    @RuntimeStorage var runtime: CommandRuntime?
 
     private var configuration: CommandRuntime.Configuration {
         self.resolvedRuntime.configuration
-    }
-
-    var jsonOutput: Bool {
-        self.configuration.jsonOutput
     }
 
     private var isVerbose: Bool {

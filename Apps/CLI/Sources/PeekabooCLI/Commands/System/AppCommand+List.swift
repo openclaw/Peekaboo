@@ -9,7 +9,7 @@ extension AppCommand {
 
     @MainActor
 
-    struct ListSubcommand {
+    struct ListSubcommand: InjectedRuntimeBackedCommand {
         static let commandDescription = CommandDescription(
             commandName: "list",
             abstract: "List running applications",
@@ -27,30 +27,7 @@ extension AppCommand {
 
         @Flag(help: "Include background apps")
         var includeBackground = false
-        @RuntimeStorage private var runtime: CommandRuntime?
-
-        private var resolvedRuntime: CommandRuntime {
-            guard let runtime else {
-                preconditionFailure("CommandRuntime must be configured before accessing runtime resources")
-            }
-            return runtime
-        }
-
-        private var logger: Logger {
-            self.resolvedRuntime.logger
-        }
-
-        @MainActor private var services: any PeekabooServiceProviding {
-            self.resolvedRuntime.services
-        }
-
-        var outputLogger: Logger {
-            self.logger
-        }
-
-        var jsonOutput: Bool {
-            self.resolvedRuntime.configuration.jsonOutput
-        }
+        @RuntimeStorage var runtime: CommandRuntime?
 
         static func filteredApplications(
             _ applications: [ServiceApplicationInfo],

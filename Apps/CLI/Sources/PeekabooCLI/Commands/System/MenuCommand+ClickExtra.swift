@@ -7,7 +7,7 @@ extension MenuCommand {
     // MARK: - Click System Menu Extra
 
     @MainActor
-    struct ClickExtraSubcommand: OutputFormattable {
+    struct ClickExtraSubcommand: OutputFormattable, InjectedRuntimeBackedCommand {
         @Option(help: "Title of the menu extra (e.g., 'WiFi', 'Bluetooth')")
         var title: String
 
@@ -16,30 +16,7 @@ extension MenuCommand {
 
         @Flag(help: "Verify the menu extra popover opens after clicking")
         var verify: Bool = false
-        @RuntimeStorage private var runtime: CommandRuntime?
-
-        private var resolvedRuntime: CommandRuntime {
-            guard let runtime else {
-                preconditionFailure("CommandRuntime must be configured before accessing runtime resources")
-            }
-            return runtime
-        }
-
-        private var services: any PeekabooServiceProviding {
-            self.resolvedRuntime.services
-        }
-
-        private var logger: Logger {
-            self.resolvedRuntime.logger
-        }
-
-        var outputLogger: Logger {
-            self.logger
-        }
-
-        var jsonOutput: Bool {
-            self.resolvedRuntime.configuration.jsonOutput
-        }
+        @RuntimeStorage var runtime: CommandRuntime?
 
         @MainActor
         mutating func run(using runtime: CommandRuntime) async throws {

@@ -7,7 +7,7 @@ import PeekabooFoundation
 /// Moves the mouse cursor to specific coordinates or UI elements.
 @available(macOS 14.0, *)
 @MainActor
-struct MoveCommand: ErrorHandlingCommand, OutputFormattable {
+struct MoveCommand: ErrorHandlingCommand, OutputFormattable, InjectedRuntimeBackedCommand {
     @Argument(help: "Coordinates as x,y (e.g., 100,200)")
     var coordinates: String?
 
@@ -46,30 +46,7 @@ struct MoveCommand: ErrorHandlingCommand, OutputFormattable {
 
     @Option(help: "Snapshot ID for element resolution, or 'latest'")
     var snapshot: String?
-    @RuntimeStorage private var runtime: CommandRuntime?
-
-    private var resolvedRuntime: CommandRuntime {
-        guard let runtime else {
-            preconditionFailure("CommandRuntime must be configured before accessing runtime resources")
-        }
-        return runtime
-    }
-
-    private var services: any PeekabooServiceProviding {
-        self.resolvedRuntime.services
-    }
-
-    private var logger: Logger {
-        self.resolvedRuntime.logger
-    }
-
-    var outputLogger: Logger {
-        self.logger
-    }
-
-    var jsonOutput: Bool {
-        self.resolvedRuntime.configuration.jsonOutput
-    }
+    @RuntimeStorage var runtime: CommandRuntime?
 
     private var resolvedCoordinates: String? {
         self.coordinates ?? self.coords

@@ -8,7 +8,8 @@ import PeekabooFoundation
 // MARK: Video capture
 
 @MainActor
-struct CaptureVideoCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConfigurable {
+struct CaptureVideoCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConfigurable,
+InjectedRuntimeBackedCommand {
     @Argument(help: "Input video file") var input: String
     @Option(name: .long, help: "Sample FPS (default 2). Mutually exclusive with --every-ms") var sampleFps: Double?
     @Option(name: .long, help: "Sample every N milliseconds (mutually exclusive with --sample-fps)") var everyMs: Int?
@@ -24,31 +25,8 @@ struct CaptureVideoCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOpti
     @Option(name: .long, help: "Minutes before temp sessions auto-clean (default 120)") var autocleanMinutes: Int?
     @Option(name: .long, help: "Optional MP4 output path (built from kept frames)") var videoOut: String?
 
-    @RuntimeStorage private var runtime: CommandRuntime?
+    @RuntimeStorage var runtime: CommandRuntime?
     var runtimeOptions = CommandRuntimeOptions()
-
-    private var resolvedRuntime: CommandRuntime {
-        guard let runtime else {
-            preconditionFailure("CommandRuntime must be configured before accessing runtime resources")
-        }
-        return runtime
-    }
-
-    private var logger: Logger {
-        self.resolvedRuntime.logger
-    }
-
-    private var services: any PeekabooServiceProviding {
-        self.resolvedRuntime.services
-    }
-
-    var jsonOutput: Bool {
-        self.resolvedRuntime.configuration.jsonOutput
-    }
-
-    var outputLogger: Logger {
-        self.logger
-    }
 
     mutating func run(using runtime: CommandRuntime) async throws {
         self.runtime = runtime

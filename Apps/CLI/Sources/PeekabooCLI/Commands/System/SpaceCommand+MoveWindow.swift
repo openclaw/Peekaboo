@@ -5,7 +5,8 @@ import PeekabooCore
 // MARK: - Move Window to Space
 
 @MainActor
-struct MoveWindowSubcommand: ApplicationResolvable, ErrorHandlingCommand, OutputFormattable {
+struct MoveWindowSubcommand: ApplicationResolvable, ErrorHandlingCommand, OutputFormattable,
+InjectedRuntimeBackedCommand {
     @Option(name: .long, help: "Target application name, bundle ID, or 'PID:12345'")
     var app: String?
 
@@ -26,30 +27,7 @@ struct MoveWindowSubcommand: ApplicationResolvable, ErrorHandlingCommand, Output
 
     @Flag(name: .long, help: "Switch to the target Space after moving")
     var follow = false
-    @RuntimeStorage private var runtime: CommandRuntime?
-
-    private var resolvedRuntime: CommandRuntime {
-        guard let runtime else {
-            preconditionFailure("CommandRuntime must be configured before accessing runtime resources")
-        }
-        return runtime
-    }
-
-    private var services: any PeekabooServiceProviding {
-        self.resolvedRuntime.services
-    }
-
-    private var logger: Logger {
-        self.resolvedRuntime.logger
-    }
-
-    var outputLogger: Logger {
-        self.logger
-    }
-
-    var jsonOutput: Bool {
-        self.resolvedRuntime.configuration.jsonOutput
-    }
+    @RuntimeStorage var runtime: CommandRuntime?
 
     mutating func validate() throws {
         _ = try self.resolveApplicationIdentifier()

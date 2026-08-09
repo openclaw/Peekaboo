@@ -21,43 +21,28 @@ struct PerformActionCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBac
     @MainActor
     mutating func run(using runtime: CommandRuntime) async throws {
         self.runtime = runtime
-        self.logger.setJsonOutputMode(self.jsonOutput)
-
-        do {
-            let target = try self.requireTarget()
-            let actionName = try self.requireAction()
-            let observation = await self.resolveObservationContext()
-            try await observation.validateIfExplicit(using: self.services.snapshots)
-            let startTime = Date()
-            self.resolvedRuntime.beginInteractionMutation()
-            let result = try await AutomationServiceBridge.performAction(
-                automation: self.services.automation,
-                target: target,
-                actionName: actionName,
-                snapshotId: observation.snapshotId
-            )
-            await InteractionObservationInvalidator.invalidateAfterMutation(
-                targets: self.resolvedRuntime.interactionMutationTargets,
-                logger: self.logger,
-                reason: "perform-action"
-            )
-
-            let outputPayload = ElementActionCommandResult(
-                success: true,
-                target: result.target,
-                actionName: result.actionName,
-                oldValue: result.oldValue,
-                newValue: result.newValue,
-                executionTime: Date().timeIntervalSince(startTime)
-            )
-
-            self.output(outputPayload) {
-                print("✅ Performed \(result.actionName ?? actionName) on \(result.target)")
-            }
-        } catch {
-            self.handleError(error)
-            throw ExitCode.failure
-        }
+        try await ElementActionCommandExecutor.execute(
+            runtime: runtime,
+            snapshot: self.snapshot,
+            invalidationReason: "perform-action",
+            prepare: {
+                try (self.requireTarget(), self.requireAction())
+            },
+            operation: { automation, target, actionName, snapshotId in
+                try await AutomationServiceBridge.performAction(
+                    automation: automation,
+                    target: target,
+                    actionName: actionName,
+                    snapshotId: snapshotId
+                )
+            },
+            render: { result, outputPayload, actionName in
+                self.output(outputPayload) {
+                    print("✅ Performed \(result.actionName ?? actionName) on \(result.target)")
+                }
+            },
+            handleError: { self.handleError($0) }
+        )
     }
 
     private func requireTarget() throws -> String {
@@ -72,14 +57,6 @@ struct PerformActionCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBac
             throw ValidationError("--action is required")
         }
         return action
-    }
-
-    private func resolveObservationContext() async -> InteractionObservationContext {
-        await InteractionObservationContext.resolve(
-            explicitSnapshot: self.snapshot,
-            fallbackToLatest: true,
-            snapshots: self.services.snapshots
-        )
     }
 }
 

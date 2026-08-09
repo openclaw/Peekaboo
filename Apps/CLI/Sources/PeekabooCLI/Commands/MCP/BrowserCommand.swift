@@ -4,7 +4,8 @@ import PeekabooCore
 import TachikomaMCP
 
 @MainActor
-struct BrowserCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConfigurable {
+struct BrowserCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConfigurable,
+InjectedRuntimeBackedCommand {
     var action = "status"
     var channel: String?
     var pageId: Int?
@@ -49,7 +50,7 @@ struct BrowserCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsCo
         return options
     }()
 
-    @RuntimeStorage private var runtime: CommandRuntime?
+    @RuntimeStorage var runtime: CommandRuntime?
 
     static let commandDescription = CommandDescription(
         commandName: "browser",
@@ -66,29 +67,6 @@ struct BrowserCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsCo
           peekaboo browser snapshot --path /tmp/page.txt
         """
     )
-
-    private var resolvedRuntime: CommandRuntime {
-        guard let runtime else {
-            preconditionFailure("CommandRuntime must be configured before accessing runtime resources")
-        }
-        return runtime
-    }
-
-    private var services: any PeekabooServiceProviding {
-        self.resolvedRuntime.services
-    }
-
-    private var logger: Logger {
-        self.resolvedRuntime.logger
-    }
-
-    var jsonOutput: Bool {
-        self.resolvedRuntime.configuration.jsonOutput
-    }
-
-    var outputLogger: Logger {
-        self.logger
-    }
 
     mutating func setRuntimeOptions(_ options: CommandRuntimeOptions) {
         var options = options

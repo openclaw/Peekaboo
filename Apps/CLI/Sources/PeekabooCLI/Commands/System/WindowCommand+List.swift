@@ -7,36 +7,14 @@ extension WindowCommand {
     // MARK: - List Command
 
     @MainActor
-    struct WindowListSubcommand: ErrorHandlingCommand, OutputFormattable, ApplicationResolvable {
+    struct WindowListSubcommand: ErrorHandlingCommand, OutputFormattable, ApplicationResolvable,
+    InjectedRuntimeBackedCommand {
         @Option(name: .long, help: "Target application name, bundle ID, or 'PID:12345'")
         var app: String?
 
         @Option(name: .long, help: "Target application by process ID")
         var pid: Int32?
-        @RuntimeStorage private var runtime: CommandRuntime?
-
-        private var resolvedRuntime: CommandRuntime {
-            guard let runtime else {
-                preconditionFailure("CommandRuntime must be configured before accessing runtime resources")
-            }
-            return runtime
-        }
-
-        private var services: any PeekabooServiceProviding {
-            self.resolvedRuntime.services
-        }
-
-        private var logger: Logger {
-            self.resolvedRuntime.logger
-        }
-
-        var outputLogger: Logger {
-            self.logger
-        }
-
-        var jsonOutput: Bool {
-            self.resolvedRuntime.configuration.jsonOutput
-        }
+        @RuntimeStorage var runtime: CommandRuntime?
 
         @Flag(name: .long, help: "Group windows by Space (virtual desktop)")
         var groupBySpace = false

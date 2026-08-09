@@ -8,7 +8,7 @@ extension WindowCommand {
     // MARK: - Move Command
 
     @MainActor
-    struct MoveSubcommand: ErrorHandlingCommand, OutputFormattable {
+    struct MoveSubcommand: ErrorHandlingCommand, OutputFormattable, InjectedRuntimeBackedCommand {
         @OptionGroup var windowOptions: WindowIdentificationOptions
 
         @Option(name: .customShort("x", allowingJoined: false), help: "New X coordinate")
@@ -16,30 +16,7 @@ extension WindowCommand {
 
         @Option(name: .customShort("y", allowingJoined: false), help: "New Y coordinate")
         var y: Int
-        @RuntimeStorage private var runtime: CommandRuntime?
-
-        private var resolvedRuntime: CommandRuntime {
-            guard let runtime else {
-                preconditionFailure("CommandRuntime must be configured before accessing runtime resources")
-            }
-            return runtime
-        }
-
-        private var services: any PeekabooServiceProviding {
-            self.resolvedRuntime.services
-        }
-
-        private var logger: Logger {
-            self.resolvedRuntime.logger
-        }
-
-        var outputLogger: Logger {
-            self.logger
-        }
-
-        var jsonOutput: Bool {
-            self.resolvedRuntime.configuration.jsonOutput
-        }
+        @RuntimeStorage var runtime: CommandRuntime?
 
         /// Move the window to the absolute screen coordinates provided by the user.
         @MainActor
@@ -117,7 +94,7 @@ extension WindowCommand {
     // MARK: - Resize Command
 
     @MainActor
-    struct ResizeSubcommand: ErrorHandlingCommand, OutputFormattable {
+    struct ResizeSubcommand: ErrorHandlingCommand, OutputFormattable, InjectedRuntimeBackedCommand {
         @OptionGroup var windowOptions: WindowIdentificationOptions
 
         @Option(name: .customShort("w", allowingJoined: false), help: "New width")
@@ -125,30 +102,7 @@ extension WindowCommand {
 
         @Option(name: .long, help: "New height")
         var height: Int
-        @RuntimeStorage private var runtime: CommandRuntime?
-
-        private var resolvedRuntime: CommandRuntime {
-            guard let runtime else {
-                preconditionFailure("CommandRuntime must be configured before accessing runtime resources")
-            }
-            return runtime
-        }
-
-        private var services: any PeekabooServiceProviding {
-            self.resolvedRuntime.services
-        }
-
-        private var logger: Logger {
-            self.resolvedRuntime.logger
-        }
-
-        var outputLogger: Logger {
-            self.logger
-        }
-
-        var jsonOutput: Bool {
-            self.resolvedRuntime.configuration.jsonOutput
-        }
+        @RuntimeStorage var runtime: CommandRuntime?
 
         /// Resize the window to the supplied dimensions, preserving its origin.
         @MainActor
@@ -226,7 +180,7 @@ extension WindowCommand {
     // MARK: - Set Bounds Command
 
     @MainActor
-    struct SetBoundsSubcommand: ErrorHandlingCommand, OutputFormattable {
+    struct SetBoundsSubcommand: ErrorHandlingCommand, OutputFormattable, InjectedRuntimeBackedCommand {
         @OptionGroup var windowOptions: WindowIdentificationOptions
 
         @Option(name: .customShort("x", allowingJoined: false), help: "New X coordinate")
@@ -240,30 +194,7 @@ extension WindowCommand {
 
         @Option(name: .long, help: "New height")
         var height: Int
-        @RuntimeStorage private var runtime: CommandRuntime?
-
-        private var resolvedRuntime: CommandRuntime {
-            guard let runtime else {
-                preconditionFailure("CommandRuntime must be configured before accessing runtime resources")
-            }
-            return runtime
-        }
-
-        private var services: any PeekabooServiceProviding {
-            self.resolvedRuntime.services
-        }
-
-        private var logger: Logger {
-            self.resolvedRuntime.logger
-        }
-
-        var outputLogger: Logger {
-            self.logger
-        }
-
-        var jsonOutput: Bool {
-            self.resolvedRuntime.configuration.jsonOutput
-        }
+        @RuntimeStorage var runtime: CommandRuntime?
 
         /// Set both position and size for the window in a single operation, then confirm the new bounds.
         @MainActor

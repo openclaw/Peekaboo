@@ -4,7 +4,8 @@ import PeekabooCore
 import PeekabooFoundation
 
 @MainActor
-struct CaptureLiveCommand: ApplicationResolvable, ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConfigurable {
+struct CaptureLiveCommand: ApplicationResolvable, ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConfigurable,
+InjectedRuntimeBackedCommand {
     // Targeting
     @Option(name: .long, help: "Target application name, bundle ID, or 'PID:12345'") var app: String?
     @Option(name: .long, help: "Target application by process ID") var pid: Int32?
@@ -55,34 +56,11 @@ struct CaptureLiveCommand: ApplicationResolvable, ErrorHandlingCommand, OutputFo
     @Option(name: .long, help: "Minutes before temp sessions auto-clean (default 120)") var autocleanMinutes: Int?
     @Option(name: .long, help: "Optional MP4 output path (built from kept frames)") var videoOut: String?
 
-    @RuntimeStorage private var runtime: CommandRuntime?
+    @RuntimeStorage var runtime: CommandRuntime?
     var runtimeOptions = CommandRuntimeOptions()
-
-    private var resolvedRuntime: CommandRuntime {
-        guard let runtime else {
-            preconditionFailure("CommandRuntime must be configured before accessing runtime resources")
-        }
-        return runtime
-    }
-
-    private var logger: Logger {
-        self.resolvedRuntime.logger
-    }
-
-    var services: any PeekabooServiceProviding {
-        self.resolvedRuntime.services
-    }
 
     func withCaptureFocusMutation(_ operation: () async throws -> Void) async rethrows {
         try await self.resolvedRuntime.withCaptureFocusMutation(operation)
-    }
-
-    var jsonOutput: Bool {
-        self.resolvedRuntime.configuration.jsonOutput
-    }
-
-    var outputLogger: Logger {
-        self.logger
     }
 
     mutating func run(using runtime: CommandRuntime) async throws {

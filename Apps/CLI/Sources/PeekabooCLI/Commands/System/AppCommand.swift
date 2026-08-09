@@ -49,7 +49,7 @@ struct AppCommand: ParsableCommand {
 
     @MainActor
 
-    struct HideSubcommand {
+    struct HideSubcommand: InjectedRuntimeBackedCommand {
         static let commandDescription = CommandDescription(
             commandName: "hide",
             abstract: "Hide an application"
@@ -60,30 +60,7 @@ struct AppCommand: ParsableCommand {
 
         @Option(name: .long, help: "Target application by process ID")
         var pid: Int32?
-        @RuntimeStorage private var runtime: CommandRuntime?
-
-        private var resolvedRuntime: CommandRuntime {
-            guard let runtime else {
-                preconditionFailure("CommandRuntime must be configured before accessing runtime resources")
-            }
-            return runtime
-        }
-
-        private var logger: Logger {
-            self.resolvedRuntime.logger
-        }
-
-        var outputLogger: Logger {
-            self.logger
-        }
-
-        @MainActor private var services: any PeekabooServiceProviding {
-            self.resolvedRuntime.services
-        }
-
-        var jsonOutput: Bool {
-            self.resolvedRuntime.configuration.jsonOutput
-        }
+        @RuntimeStorage var runtime: CommandRuntime?
 
         /// Hide the specified application and emit confirmation in either text or JSON form.
         @MainActor
@@ -123,7 +100,7 @@ struct AppCommand: ParsableCommand {
 
     @MainActor
 
-    struct UnhideSubcommand {
+    struct UnhideSubcommand: InjectedRuntimeBackedCommand {
         static let commandDescription = CommandDescription(
             commandName: "unhide",
             abstract: "Show a hidden application"
@@ -137,30 +114,7 @@ struct AppCommand: ParsableCommand {
 
         @Flag(help: "Bring to front after unhiding")
         var activate = false
-        @RuntimeStorage private var runtime: CommandRuntime?
-
-        private var resolvedRuntime: CommandRuntime {
-            guard let runtime else {
-                preconditionFailure("CommandRuntime must be configured before accessing runtime resources")
-            }
-            return runtime
-        }
-
-        private var logger: Logger {
-            self.resolvedRuntime.logger
-        }
-
-        var outputLogger: Logger {
-            self.logger
-        }
-
-        @MainActor private var services: any PeekabooServiceProviding {
-            self.resolvedRuntime.services
-        }
-
-        var jsonOutput: Bool {
-            self.resolvedRuntime.configuration.jsonOutput
-        }
+        @RuntimeStorage var runtime: CommandRuntime?
 
         /// Unhide the target application and optionally re-activate its main window.
         @MainActor
@@ -216,7 +170,7 @@ struct AppCommand: ParsableCommand {
 
     @MainActor
 
-    struct SwitchSubcommand {
+    struct SwitchSubcommand: InjectedRuntimeBackedCommand {
         static let commandDescription = CommandDescription(
             commandName: "switch",
             abstract: "Switch to another application"
@@ -230,30 +184,7 @@ struct AppCommand: ParsableCommand {
 
         @Flag(help: "Verify the target app becomes frontmost")
         var verify = false
-        @RuntimeStorage private var runtime: CommandRuntime?
-
-        private var resolvedRuntime: CommandRuntime {
-            guard let runtime else {
-                preconditionFailure("CommandRuntime must be configured before accessing runtime resources")
-            }
-            return runtime
-        }
-
-        private var logger: Logger {
-            self.resolvedRuntime.logger
-        }
-
-        var outputLogger: Logger {
-            self.logger
-        }
-
-        @MainActor private var services: any PeekabooServiceProviding {
-            self.resolvedRuntime.services
-        }
-
-        var jsonOutput: Bool {
-            self.resolvedRuntime.configuration.jsonOutput
-        }
+        @RuntimeStorage var runtime: CommandRuntime?
 
         /// Switch focus either by cycling (Cmd+Tab) or by activating a specific application.
         @MainActor

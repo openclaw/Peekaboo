@@ -5,7 +5,7 @@ import PeekabooFoundation
 
 extension DaemonCommand {
     @MainActor
-    struct Stop: OutputFormattable, RuntimeOptionsConfigurable {
+    struct Stop: OutputFormattable, RuntimeOptionsConfigurable, InjectedRuntimeBackedCommand {
         nonisolated(unsafe) static var commandDescription: CommandDescription {
             MainActorCommandDescription.describe {
                 CommandDescription(
@@ -21,27 +21,8 @@ extension DaemonCommand {
         @Option(name: .long, help: "Seconds to wait for daemon shutdown (default 12)")
         var waitSeconds: Int = DaemonControlClient.defaultShutdownWaitSeconds
 
-        @RuntimeStorage private var runtime: CommandRuntime?
+        @RuntimeStorage var runtime: CommandRuntime?
         var runtimeOptions = CommandRuntimeOptions()
-
-        private var resolvedRuntime: CommandRuntime {
-            guard let runtime else {
-                preconditionFailure("CommandRuntime must be configured before accessing runtime resources")
-            }
-            return runtime
-        }
-
-        private var logger: Logger {
-            self.resolvedRuntime.logger
-        }
-
-        var outputLogger: Logger {
-            self.logger
-        }
-
-        var jsonOutput: Bool {
-            self.resolvedRuntime.configuration.jsonOutput
-        }
 
         mutating func run(using runtime: CommandRuntime) async throws {
             self.runtime = runtime

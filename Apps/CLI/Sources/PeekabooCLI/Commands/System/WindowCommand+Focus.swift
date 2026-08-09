@@ -6,7 +6,7 @@ import PeekabooFoundation
 
 extension WindowCommand {
     @MainActor
-    struct FocusSubcommand: ErrorHandlingCommand, OutputFormattable {
+    struct FocusSubcommand: ErrorHandlingCommand, OutputFormattable, InjectedRuntimeBackedCommand {
         @OptionGroup var windowOptions: WindowIdentificationOptions
 
         @OptionGroup var focusOptions: FocusCommandOptions
@@ -16,30 +16,7 @@ extension WindowCommand {
 
         @Flag(help: "Verify the window is focused after the action")
         var verify = false
-        @RuntimeStorage private var runtime: CommandRuntime?
-
-        private var resolvedRuntime: CommandRuntime {
-            guard let runtime else {
-                preconditionFailure("CommandRuntime must be configured before accessing runtime resources")
-            }
-            return runtime
-        }
-
-        private var services: any PeekabooServiceProviding {
-            self.resolvedRuntime.services
-        }
-
-        private var logger: Logger {
-            self.resolvedRuntime.logger
-        }
-
-        var outputLogger: Logger {
-            self.logger
-        }
-
-        var jsonOutput: Bool {
-            self.resolvedRuntime.configuration.jsonOutput
-        }
+        @RuntimeStorage var runtime: CommandRuntime?
 
         /// Focus the targeted window, handling Space switches or relocation according to the provided options.
         @MainActor

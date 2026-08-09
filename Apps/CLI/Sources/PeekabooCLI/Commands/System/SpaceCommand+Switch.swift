@@ -4,29 +4,10 @@ import PeekabooCore
 // MARK: - Switch Space
 
 @MainActor
-struct SwitchSubcommand: ErrorHandlingCommand, OutputFormattable {
+struct SwitchSubcommand: ErrorHandlingCommand, OutputFormattable, InjectedRuntimeBackedCommand {
     @Option(name: .long, help: "Space number to switch to (1-based)")
     var to: Int
-    @RuntimeStorage private var runtime: CommandRuntime?
-
-    private var resolvedRuntime: CommandRuntime {
-        guard let runtime else {
-            preconditionFailure("CommandRuntime must be configured before accessing runtime resources")
-        }
-        return runtime
-    }
-
-    private var logger: Logger {
-        self.resolvedRuntime.logger
-    }
-
-    var outputLogger: Logger {
-        self.logger
-    }
-
-    var jsonOutput: Bool {
-        self.resolvedRuntime.configuration.jsonOutput
-    }
+    @RuntimeStorage var runtime: CommandRuntime?
 
     /// Validate the requested Space index, switch to it, and report the outcome.
     @MainActor

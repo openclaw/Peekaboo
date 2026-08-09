@@ -4,7 +4,7 @@ import PeekabooCore
 import PeekabooFoundation
 
 extension PermissionCommand {
-    struct StatusSubcommand: OutputFormattable {
+    struct StatusSubcommand: OutputFormattable, InjectedRuntimeBackedCommand {
         nonisolated(unsafe) static var commandDescription: CommandDescription {
             MainActorCommandDescription.describe {
                 CommandDescription(
@@ -14,30 +14,7 @@ extension PermissionCommand {
             }
         }
 
-        @RuntimeStorage private var runtime: CommandRuntime?
-
-        private var resolvedRuntime: CommandRuntime {
-            guard let runtime else {
-                preconditionFailure("CommandRuntime must be configured before accessing runtime resources")
-            }
-            return runtime
-        }
-
-        private var services: any PeekabooServiceProviding {
-            self.resolvedRuntime.services
-        }
-
-        private var logger: Logger {
-            self.resolvedRuntime.logger
-        }
-
-        var outputLogger: Logger {
-            self.logger
-        }
-
-        var jsonOutput: Bool {
-            self.resolvedRuntime.configuration.jsonOutput
-        }
+        @RuntimeStorage var runtime: CommandRuntime?
 
         /// Summarize the current permission state for the agent-centric workflow.
         @MainActor

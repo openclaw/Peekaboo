@@ -7,7 +7,7 @@ extension MenuCommand {
     // MARK: - List Menu Items
 
     @MainActor
-    struct ListSubcommand: OutputFormattable {
+    struct ListSubcommand: OutputFormattable, InjectedRuntimeBackedCommand {
         @OptionGroup var target: InteractionTargetOptions
 
         @Flag(help: "Include disabled menu items")
@@ -17,30 +17,7 @@ extension MenuCommand {
         var foreground = false
 
         @OptionGroup var focusOptions: FocusCommandOptions
-        @RuntimeStorage private var runtime: CommandRuntime?
-
-        private var resolvedRuntime: CommandRuntime {
-            guard let runtime else {
-                preconditionFailure("CommandRuntime must be configured before accessing runtime resources")
-            }
-            return runtime
-        }
-
-        private var services: any PeekabooServiceProviding {
-            self.resolvedRuntime.services
-        }
-
-        private var logger: Logger {
-            self.resolvedRuntime.logger
-        }
-
-        var outputLogger: Logger {
-            self.logger
-        }
-
-        var jsonOutput: Bool {
-            self.resolvedRuntime.configuration.jsonOutput
-        }
+        @RuntimeStorage var runtime: CommandRuntime?
 
         @MainActor
         mutating func run(using runtime: CommandRuntime) async throws {
@@ -141,36 +118,13 @@ extension MenuCommand {
     // MARK: - List All Menu Bar Items
 
     @MainActor
-    struct ListAllSubcommand: OutputFormattable {
+    struct ListAllSubcommand: OutputFormattable, InjectedRuntimeBackedCommand {
         @Flag(help: "Include disabled menu items")
         var includeDisabled = false
 
         @Flag(help: "Include item frames (pixel positions)")
         var includeFrames = false
-        @RuntimeStorage private var runtime: CommandRuntime?
-
-        private var resolvedRuntime: CommandRuntime {
-            guard let runtime else {
-                preconditionFailure("CommandRuntime must be configured before accessing runtime resources")
-            }
-            return runtime
-        }
-
-        private var services: any PeekabooServiceProviding {
-            self.resolvedRuntime.services
-        }
-
-        private var logger: Logger {
-            self.resolvedRuntime.logger
-        }
-
-        var outputLogger: Logger {
-            self.logger
-        }
-
-        var jsonOutput: Bool {
-            self.resolvedRuntime.configuration.jsonOutput
-        }
+        @RuntimeStorage var runtime: CommandRuntime?
 
         @MainActor
         mutating func run(using runtime: CommandRuntime) async throws {

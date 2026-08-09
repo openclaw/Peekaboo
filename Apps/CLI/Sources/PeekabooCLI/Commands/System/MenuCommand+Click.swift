@@ -7,7 +7,7 @@ extension MenuCommand {
     // MARK: - Click Menu Item
 
     @MainActor
-    struct ClickSubcommand: OutputFormattable {
+    struct ClickSubcommand: OutputFormattable, InjectedRuntimeBackedCommand {
         @OptionGroup var target: InteractionTargetOptions
 
         @Option(help: "Menu item to click (for simple, non-nested items)")
@@ -20,30 +20,7 @@ extension MenuCommand {
         var foreground = false
 
         @OptionGroup var focusOptions: FocusCommandOptions
-        @RuntimeStorage private var runtime: CommandRuntime?
-
-        private var resolvedRuntime: CommandRuntime {
-            guard let runtime else {
-                preconditionFailure("CommandRuntime must be configured before accessing runtime resources")
-            }
-            return runtime
-        }
-
-        private var services: any PeekabooServiceProviding {
-            self.resolvedRuntime.services
-        }
-
-        private var logger: Logger {
-            self.resolvedRuntime.logger
-        }
-
-        var outputLogger: Logger {
-            self.logger
-        }
-
-        var jsonOutput: Bool {
-            self.resolvedRuntime.configuration.jsonOutput
-        }
+        @RuntimeStorage var runtime: CommandRuntime?
 
         @MainActor
         mutating func run(using runtime: CommandRuntime) async throws {

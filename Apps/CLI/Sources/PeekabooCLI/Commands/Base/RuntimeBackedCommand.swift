@@ -2,11 +2,11 @@ import PeekabooCore
 import PeekabooFoundation
 
 @MainActor
-protocol RuntimeBackedCommand: RuntimeOptionsConfigurable {
+protocol InjectedRuntimeBackedCommand {
     var runtime: CommandRuntime? { get set }
 }
 
-extension RuntimeBackedCommand {
+extension InjectedRuntimeBackedCommand {
     var resolvedRuntime: CommandRuntime {
         guard let runtime else {
             preconditionFailure("CommandRuntime must be configured before accessing runtime resources")
@@ -26,6 +26,15 @@ extension RuntimeBackedCommand {
         self.logger
     }
 
+    var jsonOutput: Bool {
+        self.resolvedRuntime.configuration.jsonOutput
+    }
+}
+
+@MainActor
+protocol RuntimeBackedCommand: InjectedRuntimeBackedCommand, RuntimeOptionsConfigurable {}
+
+extension RuntimeBackedCommand {
     var jsonOutput: Bool {
         self.runtime?.configuration.jsonOutput ?? self.runtimeOptions.jsonOutput
     }

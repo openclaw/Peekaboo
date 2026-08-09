@@ -29,7 +29,7 @@ struct BridgeCommand: ParsableCommand {
 
 extension BridgeCommand {
     @MainActor
-    struct StatusSubcommand: OutputFormattable, RuntimeOptionsConfigurable {
+    struct StatusSubcommand: OutputFormattable, RuntimeBackedCommand {
         nonisolated(unsafe) static var commandDescription: CommandDescription {
             MainActorCommandDescription.describe {
                 CommandDescription(
@@ -39,33 +39,14 @@ extension BridgeCommand {
             }
         }
 
-        @RuntimeStorage private var runtime: CommandRuntime?
+        @RuntimeStorage var runtime: CommandRuntime?
         var runtimeOptions = CommandRuntimeOptions()
-
-        private var resolvedRuntime: CommandRuntime {
-            guard let runtime else {
-                preconditionFailure("CommandRuntime must be configured before accessing runtime resources")
-            }
-            return runtime
-        }
 
         private var configuration: CommandRuntime.Configuration {
             if let runtime {
                 return runtime.configuration
             }
             return self.runtimeOptions.makeConfiguration()
-        }
-
-        private var logger: Logger {
-            self.resolvedRuntime.logger
-        }
-
-        var outputLogger: Logger {
-            self.logger
-        }
-
-        var jsonOutput: Bool {
-            self.configuration.jsonOutput
         }
 
         private var verbose: Bool {

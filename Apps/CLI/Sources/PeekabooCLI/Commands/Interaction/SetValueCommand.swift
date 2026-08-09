@@ -21,46 +21,31 @@ struct SetValueCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedCo
     @MainActor
     mutating func run(using runtime: CommandRuntime) async throws {
         self.runtime = runtime
-        self.logger.setJsonOutputMode(self.jsonOutput)
-
-        do {
-            let target = try self.requireTarget()
-            let value = try self.requireValue()
-            let observation = await self.resolveObservationContext()
-            try await observation.validateIfExplicit(using: self.services.snapshots)
-            let startTime = Date()
-            self.resolvedRuntime.beginInteractionMutation()
-            let result = try await AutomationServiceBridge.setValue(
-                automation: self.services.automation,
-                target: target,
-                value: .string(value),
-                snapshotId: observation.snapshotId
-            )
-            await InteractionObservationInvalidator.invalidateAfterMutation(
-                targets: self.resolvedRuntime.interactionMutationTargets,
-                logger: self.logger,
-                reason: "set-value"
-            )
-
-            let outputPayload = ElementActionCommandResult(
-                success: true,
-                target: result.target,
-                actionName: result.actionName,
-                oldValue: result.oldValue,
-                newValue: result.newValue,
-                executionTime: Date().timeIntervalSince(startTime)
-            )
-
-            self.output(outputPayload) {
-                print("✅ Set value on \(result.target)")
-                if let newValue = result.newValue {
-                    print("📝 New value: \(newValue)")
+        try await ElementActionCommandExecutor.execute(
+            runtime: runtime,
+            snapshot: self.snapshot,
+            invalidationReason: "set-value",
+            prepare: {
+                try (self.requireTarget(), self.requireValue())
+            },
+            operation: { automation, target, value, snapshotId in
+                try await AutomationServiceBridge.setValue(
+                    automation: automation,
+                    target: target,
+                    value: .string(value),
+                    snapshotId: snapshotId
+                )
+            },
+            render: { result, outputPayload, _ in
+                self.output(outputPayload) {
+                    print("✅ Set value on \(result.target)")
+                    if let newValue = result.newValue {
+                        print("📝 New value: \(newValue)")
+                    }
                 }
-            }
-        } catch {
-            self.handleError(error)
-            throw ExitCode.failure
-        }
+            },
+            handleError: { self.handleError($0) }
+        )
     }
 
     private func requireTarget() throws -> String {
@@ -75,14 +60,6 @@ struct SetValueCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedCo
             throw ValidationError("Value is required")
         }
         return value
-    }
-
-    private func resolveObservationContext() async -> InteractionObservationContext {
-        await InteractionObservationContext.resolve(
-            explicitSnapshot: self.snapshot,
-            fallbackToLatest: true,
-            snapshots: self.services.snapshots
-        )
     }
 }
 
@@ -141,4 +118,62 @@ struct ElementActionCommandResult: Codable {
     let oldValue: String?
     let newValue: String?
     let executionTime: TimeInterval
+}
+
+@MainActor
+enum ElementActionCommandExecutor {
+    static func execute<Prepared>(
+        runtime: CommandRuntime,
+        snapshot: String?,
+        invalidationReason: String,
+        prepare: () throws -> (target: String, value: Prepared),
+        operation: (
+            _ automation: any UIAutomationServiceProtocol,
+            _ target: String,
+            _ value: Prepared,
+            _ snapshotId: String?
+        ) async throws -> ElementActionResult,
+        render: (_ result: ElementActionResult, _ output: ElementActionCommandResult, _ value: Prepared) -> Void,
+        handleError: (any Error) -> Void
+    ) async throws {
+        let services = runtime.services
+        let logger = runtime.logger
+        logger.setJsonOutputMode(runtime.configuration.jsonOutput)
+
+        do {
+            let prepared = try prepare()
+            let observation = await InteractionObservationContext.resolve(
+                explicitSnapshot: snapshot,
+                fallbackToLatest: true,
+                snapshots: services.snapshots
+            )
+            try await observation.validateIfExplicit(using: services.snapshots)
+            let startTime = Date()
+            runtime.beginInteractionMutation()
+            let result = try await operation(
+                services.automation,
+                prepared.target,
+                prepared.value,
+                observation.snapshotId
+            )
+            await InteractionObservationInvalidator.invalidateAfterMutation(
+                targets: runtime.interactionMutationTargets,
+                logger: logger,
+                reason: invalidationReason
+            )
+
+            let output = ElementActionCommandResult(
+                success: true,
+                target: result.target,
+                actionName: result.actionName,
+                oldValue: result.oldValue,
+                newValue: result.newValue,
+                executionTime: Date().timeIntervalSince(startTime)
+            )
+            render(result, output, prepared.value)
+        } catch {
+            handleError(error)
+            throw ExitCode.failure
+        }
+    }
 }

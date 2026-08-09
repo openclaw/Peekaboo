@@ -7,7 +7,7 @@ import PeekabooFoundation
 import PeekabooVisualizer
 
 @MainActor
-struct VisualizerCommand: RuntimeOptionsConfigurable, OutputFormattable, ErrorHandlingCommand {
+struct VisualizerCommand: RuntimeBackedCommand, OutputFormattable, ErrorHandlingCommand {
     nonisolated(unsafe) static var commandDescription: CommandDescription {
         MainActorCommandDescription.describe {
             CommandDescription(
@@ -22,34 +22,8 @@ struct VisualizerCommand: RuntimeOptionsConfigurable, OutputFormattable, ErrorHa
         }
     }
 
-    @RuntimeStorage private var runtime: CommandRuntime?
+    @RuntimeStorage var runtime: CommandRuntime?
     var runtimeOptions = CommandRuntimeOptions()
-
-    private var resolvedRuntime: CommandRuntime {
-        guard let runtime else {
-            preconditionFailure("CommandRuntime must be configured before accessing runtime resources")
-        }
-        return runtime
-    }
-
-    private var configuration: CommandRuntime.Configuration {
-        if let runtime {
-            return runtime.configuration
-        }
-        return self.runtimeOptions.makeConfiguration()
-    }
-
-    private var logger: Logger {
-        self.resolvedRuntime.logger
-    }
-
-    var outputLogger: Logger {
-        self.logger
-    }
-
-    var jsonOutput: Bool {
-        self.configuration.jsonOutput
-    }
 
     mutating func run(using runtime: CommandRuntime) async throws {
         self.runtime = runtime

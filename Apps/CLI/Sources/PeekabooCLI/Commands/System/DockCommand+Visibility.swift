@@ -5,31 +5,8 @@ extension DockCommand {
     // MARK: - Hide Dock
 
     @MainActor
-    struct HideSubcommand: ErrorHandlingCommand, OutputFormattable {
-        @RuntimeStorage private var runtime: CommandRuntime?
-
-        private var resolvedRuntime: CommandRuntime {
-            guard let runtime else {
-                preconditionFailure("CommandRuntime must be configured before accessing runtime resources")
-            }
-            return runtime
-        }
-
-        private var services: any PeekabooServiceProviding {
-            self.resolvedRuntime.services
-        }
-
-        private var logger: Logger {
-            self.resolvedRuntime.logger
-        }
-
-        var outputLogger: Logger {
-            self.logger
-        }
-
-        var jsonOutput: Bool {
-            self.resolvedRuntime.configuration.jsonOutput
-        }
+    struct HideSubcommand: ErrorHandlingCommand, OutputFormattable, InjectedRuntimeBackedCommand {
+        @RuntimeStorage var runtime: CommandRuntime?
 
         @MainActor
         mutating func run(using runtime: CommandRuntime) async throws {
@@ -60,31 +37,8 @@ extension DockCommand {
     // MARK: - Show Dock
 
     @MainActor
-    struct ShowSubcommand: ErrorHandlingCommand, OutputFormattable {
-        @RuntimeStorage private var runtime: CommandRuntime?
-
-        private var resolvedRuntime: CommandRuntime {
-            guard let runtime else {
-                preconditionFailure("CommandRuntime must be configured before accessing runtime resources")
-            }
-            return runtime
-        }
-
-        private var services: any PeekabooServiceProviding {
-            self.resolvedRuntime.services
-        }
-
-        private var logger: Logger {
-            self.resolvedRuntime.logger
-        }
-
-        var outputLogger: Logger {
-            self.logger
-        }
-
-        var jsonOutput: Bool {
-            self.resolvedRuntime.configuration.jsonOutput
-        }
+    struct ShowSubcommand: ErrorHandlingCommand, OutputFormattable, InjectedRuntimeBackedCommand {
+        @RuntimeStorage var runtime: CommandRuntime?
 
         @MainActor
         mutating func run(using runtime: CommandRuntime) async throws {

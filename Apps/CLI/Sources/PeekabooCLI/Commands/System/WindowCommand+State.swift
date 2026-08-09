@@ -6,35 +6,12 @@ import PeekabooFoundation
 
 extension WindowCommand {
     @MainActor
-    struct CloseSubcommand: ErrorHandlingCommand, OutputFormattable {
+    struct CloseSubcommand: ErrorHandlingCommand, OutputFormattable, InjectedRuntimeBackedCommand {
         @OptionGroup var windowOptions: WindowIdentificationOptions
 
         @Flag(help: "Allow focused/global fallback if AX close does not dismiss the window")
         var foreground = false
-        @RuntimeStorage private var runtime: CommandRuntime?
-
-        private var resolvedRuntime: CommandRuntime {
-            guard let runtime else {
-                preconditionFailure("CommandRuntime must be configured before accessing runtime resources")
-            }
-            return runtime
-        }
-
-        private var services: any PeekabooServiceProviding {
-            self.resolvedRuntime.services
-        }
-
-        private var logger: Logger {
-            self.resolvedRuntime.logger
-        }
-
-        var outputLogger: Logger {
-            self.logger
-        }
-
-        var jsonOutput: Bool {
-            self.resolvedRuntime.configuration.jsonOutput
-        }
+        @RuntimeStorage var runtime: CommandRuntime?
 
         /// Resolve the target window, close it, and surface the outcome in JSON or text form.
         @MainActor
@@ -95,32 +72,9 @@ extension WindowCommand {
     }
 
     @MainActor
-    struct MinimizeSubcommand: ErrorHandlingCommand, OutputFormattable {
+    struct MinimizeSubcommand: ErrorHandlingCommand, OutputFormattable, InjectedRuntimeBackedCommand {
         @OptionGroup var windowOptions: WindowIdentificationOptions
-        @RuntimeStorage private var runtime: CommandRuntime?
-
-        private var resolvedRuntime: CommandRuntime {
-            guard let runtime else {
-                preconditionFailure("CommandRuntime must be configured before accessing runtime resources")
-            }
-            return runtime
-        }
-
-        private var services: any PeekabooServiceProviding {
-            self.resolvedRuntime.services
-        }
-
-        private var logger: Logger {
-            self.resolvedRuntime.logger
-        }
-
-        var outputLogger: Logger {
-            self.logger
-        }
-
-        var jsonOutput: Bool {
-            self.resolvedRuntime.configuration.jsonOutput
-        }
+        @RuntimeStorage var runtime: CommandRuntime?
 
         /// Resolve the target window, minimize it to the Dock, and report the action.
         @MainActor
@@ -176,32 +130,9 @@ extension WindowCommand {
     }
 
     @MainActor
-    struct MaximizeSubcommand: ErrorHandlingCommand, OutputFormattable {
+    struct MaximizeSubcommand: ErrorHandlingCommand, OutputFormattable, InjectedRuntimeBackedCommand {
         @OptionGroup var windowOptions: WindowIdentificationOptions
-        @RuntimeStorage private var runtime: CommandRuntime?
-
-        private var resolvedRuntime: CommandRuntime {
-            guard let runtime else {
-                preconditionFailure("CommandRuntime must be configured before accessing runtime resources")
-            }
-            return runtime
-        }
-
-        private var services: any PeekabooServiceProviding {
-            self.resolvedRuntime.services
-        }
-
-        private var logger: Logger {
-            self.resolvedRuntime.logger
-        }
-
-        var outputLogger: Logger {
-            self.logger
-        }
-
-        var jsonOutput: Bool {
-            self.resolvedRuntime.configuration.jsonOutput
-        }
+        @RuntimeStorage var runtime: CommandRuntime?
 
         /// Expand the resolved window to fill the available screen real estate and share the updated frame.
         @MainActor

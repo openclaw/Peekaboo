@@ -8,7 +8,7 @@ extension AppCommand {
     // MARK: - Launch Application
 
     @MainActor
-    struct LaunchSubcommand {
+    struct LaunchSubcommand: InjectedRuntimeBackedCommand {
         static let commandDescription = CommandDescription(
             commandName: "launch",
             abstract: "Launch an application",
@@ -52,30 +52,7 @@ extension AppCommand {
             parsing: .upToNextOption
         )
         var openTargets: [String] = []
-        @RuntimeStorage private var runtime: CommandRuntime?
-
-        private var resolvedRuntime: CommandRuntime {
-            guard let runtime else {
-                preconditionFailure("CommandRuntime must be configured before accessing runtime resources")
-            }
-            return runtime
-        }
-
-        @MainActor private var logger: Logger {
-            self.resolvedRuntime.logger
-        }
-
-        @MainActor private var services: any PeekabooServiceProviding {
-            self.resolvedRuntime.services
-        }
-
-        var outputLogger: Logger {
-            self.logger
-        }
-
-        var jsonOutput: Bool {
-            self.resolvedRuntime.configuration.jsonOutput
-        }
+        @RuntimeStorage var runtime: CommandRuntime?
 
         var shouldFocusAfterLaunch: Bool {
             self.foreground

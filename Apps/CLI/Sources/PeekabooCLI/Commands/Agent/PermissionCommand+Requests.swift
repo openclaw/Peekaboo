@@ -5,7 +5,7 @@ import PeekabooCore
 import PeekabooFoundation
 
 extension PermissionCommand {
-    struct RequestScreenRecordingSubcommand: OutputFormattable {
+    struct RequestScreenRecordingSubcommand: OutputFormattable, InjectedRuntimeBackedCommand {
         nonisolated(unsafe) static var commandDescription: CommandDescription {
             MainActorCommandDescription.describe {
                 CommandDescription(
@@ -15,30 +15,7 @@ extension PermissionCommand {
             }
         }
 
-        @RuntimeStorage private var runtime: CommandRuntime?
-
-        private var resolvedRuntime: CommandRuntime {
-            guard let runtime else {
-                preconditionFailure("CommandRuntime must be configured before accessing runtime resources")
-            }
-            return runtime
-        }
-
-        private var services: any PeekabooServiceProviding {
-            self.resolvedRuntime.services
-        }
-
-        private var logger: Logger {
-            self.resolvedRuntime.logger
-        }
-
-        var outputLogger: Logger {
-            self.logger
-        }
-
-        var jsonOutput: Bool {
-            self.resolvedRuntime.configuration.jsonOutput
-        }
+        @RuntimeStorage var runtime: CommandRuntime?
 
         /// Trigger the screen recording permission prompt using the best available mechanism.
         @MainActor
@@ -125,7 +102,7 @@ extension PermissionCommand {
         }
     }
 
-    struct RequestAccessibilitySubcommand: OutputFormattable {
+    struct RequestAccessibilitySubcommand: OutputFormattable, InjectedRuntimeBackedCommand {
         nonisolated(unsafe) static var commandDescription: CommandDescription {
             MainActorCommandDescription.describe {
                 CommandDescription(
@@ -135,30 +112,7 @@ extension PermissionCommand {
             }
         }
 
-        @RuntimeStorage private var runtime: CommandRuntime?
-
-        private var resolvedRuntime: CommandRuntime {
-            guard let runtime else {
-                preconditionFailure("CommandRuntime must be configured before accessing runtime resources")
-            }
-            return runtime
-        }
-
-        private var services: any PeekabooServiceProviding {
-            self.resolvedRuntime.services
-        }
-
-        private var logger: Logger {
-            self.resolvedRuntime.logger
-        }
-
-        var outputLogger: Logger {
-            self.logger
-        }
-
-        var jsonOutput: Bool {
-            self.resolvedRuntime.configuration.jsonOutput
-        }
+        @RuntimeStorage var runtime: CommandRuntime?
 
         /// Prompt the user to grant accessibility permission and open the relevant System Settings pane.
         @MainActor
@@ -234,7 +188,8 @@ extension PermissionCommand {
         }
     }
 
-    struct RequestEventSynthesizingSubcommand: ErrorHandlingCommand, OutputFormattable {
+    struct RequestEventSynthesizingSubcommand: ErrorHandlingCommand, OutputFormattable,
+    InjectedRuntimeBackedCommand {
         nonisolated(unsafe) static var commandDescription: CommandDescription {
             MainActorCommandDescription.describe {
                 CommandDescription(
@@ -244,30 +199,7 @@ extension PermissionCommand {
             }
         }
 
-        @RuntimeStorage private var runtime: CommandRuntime?
-
-        private var resolvedRuntime: CommandRuntime {
-            guard let runtime else {
-                preconditionFailure("CommandRuntime must be configured before accessing runtime resources")
-            }
-            return runtime
-        }
-
-        private var services: any PeekabooServiceProviding {
-            self.resolvedRuntime.services
-        }
-
-        private var logger: Logger {
-            self.resolvedRuntime.logger
-        }
-
-        var outputLogger: Logger {
-            self.logger
-        }
-
-        var jsonOutput: Bool {
-            self.resolvedRuntime.configuration.jsonOutput
-        }
+        @RuntimeStorage var runtime: CommandRuntime?
 
         /// Prompt macOS for event-posting access used by process-targeted hotkeys.
         @MainActor

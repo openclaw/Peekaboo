@@ -6,7 +6,7 @@ import PeekabooFoundation
 /// Presses key combinations like Cmd+C, Ctrl+A, etc. using the UIAutomationService.
 @available(macOS 14.0, *)
 @MainActor
-struct HotkeyCommand: ErrorHandlingCommand, OutputFormattable {
+struct HotkeyCommand: ErrorHandlingCommand, OutputFormattable, InjectedRuntimeBackedCommand {
     @Argument(help: "Keys to press (comma-, plus-, or space-separated)")
     var keysArgument: String?
 
@@ -28,30 +28,7 @@ struct HotkeyCommand: ErrorHandlingCommand, OutputFormattable {
     var foreground = false
 
     @OptionGroup var focusOptions: FocusCommandOptions
-    @RuntimeStorage private var runtime: CommandRuntime?
-
-    private var resolvedRuntime: CommandRuntime {
-        guard let runtime else {
-            preconditionFailure("CommandRuntime must be configured before accessing runtime resources")
-        }
-        return runtime
-    }
-
-    private var services: any PeekabooServiceProviding {
-        self.resolvedRuntime.services
-    }
-
-    private var logger: Logger {
-        self.resolvedRuntime.logger
-    }
-
-    var outputLogger: Logger {
-        self.logger
-    }
-
-    var jsonOutput: Bool {
-        self.resolvedRuntime.configuration.jsonOutput
-    }
+    @RuntimeStorage var runtime: CommandRuntime?
 
     /// Keys after resolving positional/option input and trimming whitespace. Nil when missing/empty.
     var resolvedKeys: String? {

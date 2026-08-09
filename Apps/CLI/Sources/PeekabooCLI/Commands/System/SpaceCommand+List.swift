@@ -5,33 +5,10 @@ import PeekabooCore
 // MARK: - List Spaces
 
 @MainActor
-struct ListSubcommand: ErrorHandlingCommand, OutputFormattable {
+struct ListSubcommand: ErrorHandlingCommand, OutputFormattable, InjectedRuntimeBackedCommand {
     @Flag(name: .long, help: "Include detailed window information")
     var detailed = false
-    @RuntimeStorage private var runtime: CommandRuntime?
-
-    private var resolvedRuntime: CommandRuntime {
-        guard let runtime else {
-            preconditionFailure("CommandRuntime must be configured before accessing runtime resources")
-        }
-        return runtime
-    }
-
-    private var services: any PeekabooServiceProviding {
-        self.resolvedRuntime.services
-    }
-
-    private var logger: Logger {
-        self.resolvedRuntime.logger
-    }
-
-    var outputLogger: Logger {
-        self.logger
-    }
-
-    var jsonOutput: Bool {
-        self.resolvedRuntime.configuration.jsonOutput
-    }
+    @RuntimeStorage var runtime: CommandRuntime?
 
     @MainActor
     mutating func run(using runtime: CommandRuntime) async throws {

@@ -5,36 +5,13 @@ extension DockCommand {
     // MARK: - Right-Click Dock Item
 
     @MainActor
-    struct RightClickSubcommand: OutputFormattable {
+    struct RightClickSubcommand: OutputFormattable, InjectedRuntimeBackedCommand {
         @Option(help: "Application name in the Dock")
         var app: String
 
         @Option(help: "Menu item to select after right-clicking")
         var select: String?
-        @RuntimeStorage private var runtime: CommandRuntime?
-
-        private var resolvedRuntime: CommandRuntime {
-            guard let runtime else {
-                preconditionFailure("CommandRuntime must be configured before accessing runtime resources")
-            }
-            return runtime
-        }
-
-        private var services: any PeekabooServiceProviding {
-            self.resolvedRuntime.services
-        }
-
-        private var logger: Logger {
-            self.resolvedRuntime.logger
-        }
-
-        var outputLogger: Logger {
-            self.logger
-        }
-
-        var jsonOutput: Bool {
-            self.resolvedRuntime.configuration.jsonOutput
-        }
+        @RuntimeStorage var runtime: CommandRuntime?
 
         @MainActor
         mutating func run(using runtime: CommandRuntime) async throws {

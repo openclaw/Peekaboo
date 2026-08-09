@@ -8,7 +8,7 @@ extension AppCommand {
     // MARK: - Relaunch Application
 
     @MainActor
-    struct RelaunchSubcommand {
+    struct RelaunchSubcommand: InjectedRuntimeBackedCommand {
         static let commandDescription = CommandDescription(
             commandName: "relaunch",
             abstract: "Quit and relaunch an application"
@@ -31,30 +31,7 @@ extension AppCommand {
 
         @Flag(help: "Bring the app to the foreground after relaunching")
         var foreground = false
-        @RuntimeStorage private var runtime: CommandRuntime?
-
-        private var resolvedRuntime: CommandRuntime {
-            guard let runtime else {
-                preconditionFailure("CommandRuntime must be configured before accessing runtime resources")
-            }
-            return runtime
-        }
-
-        private var logger: Logger {
-            self.resolvedRuntime.logger
-        }
-
-        @MainActor private var services: any PeekabooServiceProviding {
-            self.resolvedRuntime.services
-        }
-
-        var outputLogger: Logger {
-            self.logger
-        }
-
-        var jsonOutput: Bool {
-            self.resolvedRuntime.configuration.jsonOutput
-        }
+        @RuntimeStorage var runtime: CommandRuntime?
 
         /// Quit the target app, wait if requested, relaunch it, and report success metrics.
         @MainActor
