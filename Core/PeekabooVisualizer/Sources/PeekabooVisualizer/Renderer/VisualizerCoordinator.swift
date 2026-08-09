@@ -75,7 +75,9 @@ public final class VisualizerCoordinator {
 
     enum OverlayPadding {
         static let watchHUD: CGFloat = 16
-        static let agentCursor: CGFloat = 36
+        // Must cover the cursor path's maximum curve excursion (bend/2 = 27pt,
+        // see AgentCursorPath) plus the glyph+halo envelope (~24pt from hotspot).
+        static let agentCursor: CGFloat = 56
         static let elementHighlight: CGFloat = 32
         static let annotatedScreenshot: CGFloat = 64
     }
