@@ -407,23 +407,116 @@ struct AppCommandLaunchFlowTests {
 }
 
 @MainActor
+struct MenuCommandTargetConsentTests {
+    @Test(arguments: ["path", "item"])
+    func `Targetless background click refuses before lookup or dispatch`(_ selectionKind: String) async {
+        let fixture = self.makeFixture()
+        var command = MenuCommand.ClickSubcommand()
+        if selectionKind == "path" {
+            command.path = "File > Close"
+        } else {
+            command.item = "Close"
+        }
+        let tracker = InteractionMutationTracker()
+        let runtime = self.makeRuntime(fixture: fixture, tracker: tracker)
+
+        await #expect(throws: ExitCode.self) {
+            try await command.run(using: runtime)
+        }
+
+        #expect(fixture.applications.frontmostCallCount == 0)
+        #expect(fixture.menu.operationCallCount == 0)
+        #expect(!tracker.hasPendingDurableMutation)
+    }
+
+    @Test
+    func `Explicit app preserves background menu dispatch`() async throws {
+        let fixture = self.makeFixture()
+        var command = MenuCommand.ClickSubcommand()
+        command.target.app = "Finder"
+        command.item = "Close"
+
+        try await command.run(using: self.makeRuntime(fixture: fixture))
+
+        #expect(fixture.applications.frontmostCallCount == 0)
+        let click = try #require(fixture.menu.clickedItems.first)
+        #expect(fixture.menu.clickedItems.count == 1)
+        #expect(click.app == "Finder")
+        #expect(click.item == "Close")
+    }
+
+    @Test
+    func `Explicit foreground preserves intentional frontmost menu dispatch`() async throws {
+        let fixture = self.makeFixture()
+        var command = MenuCommand.ClickSubcommand()
+        command.item = "Close"
+        command.foreground = true
+        command.focusOptions.noAutoFocus = true
+
+        try await command.run(using: self.makeRuntime(fixture: fixture))
+
+        #expect(fixture.applications.frontmostCallCount == 1)
+        let click = try #require(fixture.menu.clickedItems.first)
+        #expect(fixture.menu.clickedItems.count == 1)
+        #expect(click.app == "com.apple.finder")
+        #expect(click.item == "Close")
+    }
+
+    private func makeFixture() -> MenuConsentFixture {
+        let app = ServiceApplicationInfo(
+            processIdentifier: 101,
+            processStartIdentity: 1,
+            bundleIdentifier: "com.apple.finder",
+            name: "Finder"
+        )
+        return MenuConsentFixture(
+            applications: RecordingApplicationService(applications: [app]),
+            menu: RecordingMenuConsentService(application: app)
+        )
+    }
+
+    private func makeRuntime(
+        fixture: MenuConsentFixture,
+        tracker: InteractionMutationTracker = InteractionMutationTracker()
+    ) -> CommandRuntime {
+        CommandRuntime(
+            configuration: .init(verbose: false, jsonOutput: false, logLevel: nil),
+            services: ServicesWithApplicationStub(
+                applications: fixture.applications,
+                menu: fixture.menu
+            ),
+            interactionMutationTracker: tracker
+        )
+    }
+}
+
+@MainActor
+private struct MenuConsentFixture {
+    let applications: RecordingApplicationService
+    let menu: RecordingMenuConsentService
+}
+
+@MainActor
 private final class ServicesWithApplicationStub: PeekabooServiceProviding {
     private let base = PeekabooServices(snapshotManager: InMemorySnapshotManager())
     private let stubApplications: any ApplicationServiceProtocol
     private let stubAutomation: any UIAutomationServiceProtocol
     private let stubScreenCapture: any ScreenCaptureServiceProtocol
     private let stubSnapshots: any SnapshotManagerProtocol
+    private let stubMenu: any MenuServiceProtocol
 
     init(
         applications: any ApplicationServiceProtocol,
         automation: (any UIAutomationServiceProtocol)? = nil,
         screenCapture: (any ScreenCaptureServiceProtocol)? = nil,
-        snapshots: (any SnapshotManagerProtocol)? = nil
+        snapshots: (any SnapshotManagerProtocol)? = nil,
+        menu: (any MenuServiceProtocol)? = nil
     ) {
         self.stubApplications = applications
         self.stubAutomation = automation ?? self.base.automation
         self.stubScreenCapture = screenCapture ?? self.base.screenCapture
         self.stubSnapshots = snapshots ?? self.base.snapshots
+        self.stubMenu = menu ?? self.base.menu
     }
 
     func ensureVisualizerConnection() {
@@ -451,7 +544,7 @@ private final class ServicesWithApplicationStub: PeekabooServiceProviding {
     }
 
     var menu: any MenuServiceProtocol {
-        self.base.menu
+        self.stubMenu
     }
 
     var dock: any DockServiceProtocol {
@@ -572,6 +665,7 @@ private final class RecordingApplicationService: ApplicationServiceProtocol {
     private(set) var quitRequests: [ApplicationQuitRequest] = []
     private(set) var findCalls: [String] = []
     private(set) var listCallCount = 0
+    private(set) var frontmostCallCount = 0
 
     init(applications: [ServiceApplicationInfo], launchResponse: ServiceApplicationInfo? = nil) {
         self.applications = applications
@@ -625,6 +719,7 @@ private final class RecordingApplicationService: ApplicationServiceProtocol {
     }
 
     func getFrontmostApplication() async throws -> ServiceApplicationInfo {
+        self.frontmostCallCount += 1
         guard let first = applications.first else {
             throw PeekabooError.appNotFound("frontmost")
         }
@@ -694,6 +789,70 @@ private final class RecordingApplicationService: ApplicationServiceProtocol {
     private static func parsePID(_ identifier: String) -> Int32? {
         guard identifier.uppercased().hasPrefix("PID:") else { return nil }
         return Int32(identifier.dropFirst(4))
+    }
+}
+
+@MainActor
+private final class RecordingMenuConsentService: MenuServiceProtocol {
+    private let application: ServiceApplicationInfo
+    private(set) var clickedItems: [(app: String, item: String)] = []
+    private(set) var operationCallCount = 0
+
+    init(application: ServiceApplicationInfo) {
+        self.application = application
+    }
+
+    func listMenus(for _: String) async throws -> MenuStructure {
+        self.operationCallCount += 1
+        return MenuStructure(application: self.application, menus: [])
+    }
+
+    func listFrontmostMenus() async throws -> MenuStructure {
+        self.operationCallCount += 1
+        return MenuStructure(application: self.application, menus: [])
+    }
+
+    func clickMenuItem(app _: String, itemPath _: String) async throws {
+        self.operationCallCount += 1
+    }
+
+    func clickMenuItemByName(app: String, itemName: String) async throws {
+        self.operationCallCount += 1
+        self.clickedItems.append((app, itemName))
+    }
+
+    func clickMenuExtra(title _: String) async throws {
+        self.operationCallCount += 1
+    }
+
+    func isMenuExtraMenuOpen(title _: String, ownerPID _: pid_t?) async throws -> Bool {
+        self.operationCallCount += 1
+        return false
+    }
+
+    func menuExtraOpenMenuFrame(title _: String, ownerPID _: pid_t?) async throws -> CGRect? {
+        self.operationCallCount += 1
+        return nil
+    }
+
+    func listMenuExtras() async throws -> [MenuExtraInfo] {
+        self.operationCallCount += 1
+        return []
+    }
+
+    func listMenuBarItems(includeRaw _: Bool) async throws -> [MenuBarItemInfo] {
+        self.operationCallCount += 1
+        return []
+    }
+
+    func clickMenuBarItem(named _: String) async throws -> PeekabooCore.ClickResult {
+        self.operationCallCount += 1
+        return PeekabooCore.ClickResult(elementDescription: "unused", location: nil)
+    }
+
+    func clickMenuBarItem(at _: Int) async throws -> PeekabooCore.ClickResult {
+        self.operationCallCount += 1
+        return PeekabooCore.ClickResult(elementDescription: "unused", location: nil)
     }
 }
 

@@ -50,6 +50,10 @@ struct MenuCommand: ParsableCommand {
 
                   # List all menu items for an app
                   peekaboo menu list --app Finder
+
+                TARGETING:
+                  Background clicks require --app or --pid.
+                  Use --foreground to intentionally target the frontmost application's menu.
                 """,
                 subcommands: [
                     ClickSubcommand.self,

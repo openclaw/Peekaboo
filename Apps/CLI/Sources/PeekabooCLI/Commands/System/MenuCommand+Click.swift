@@ -55,6 +55,7 @@ extension MenuCommand {
             do {
                 try self.target.validate()
                 try self.validateForegroundOptions()
+                try self.validateTargetConsent()
                 let appIdentifier = try await self.resolveTargetApplicationIdentifier()
                 if self.foreground {
                     let windowID = try await self.target.resolveWindowID(services: self.services)
@@ -156,6 +157,14 @@ extension MenuCommand {
         private func validateForegroundOptions() throws {
             guard self.foreground || !self.focusOptions.hasForegroundFocusOverrides else {
                 throw ValidationError("Menu focus options require --foreground")
+            }
+        }
+
+        private func validateTargetConsent() throws {
+            guard self.target.app != nil || self.target.pid != nil || self.foreground else {
+                throw ValidationError(
+                    "Background menu click requires --app or --pid; use --foreground to target the frontmost app"
+                )
             }
         }
     }

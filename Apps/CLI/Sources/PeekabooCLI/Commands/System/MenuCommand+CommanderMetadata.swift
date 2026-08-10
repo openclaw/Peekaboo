@@ -18,7 +18,7 @@ extension MenuCommand.ClickSubcommand: CommanderSignatureProviding {
             flags: [
                 .commandFlag(
                     "foreground",
-                    help: "Focus the target before using its menu",
+                    help: "Allow frontmost-menu targeting or focus a target; background clicks require --app/--pid",
                     long: "foreground"
                 ),
             ],
