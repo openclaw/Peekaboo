@@ -56,6 +56,18 @@ struct PeekabooBridgeOperationScopeTests {
     }
 
     @Test
+    func `Generation-pinned hotkeys publish their application process scope`() {
+        let targeted = PeekabooBridgeRequest.targetedHotkey(.init(
+            keys: "cmd,a",
+            holdDuration: 10,
+            targetProcessIdentifier: self.process.processIdentifier,
+            expectedProcessIdentity: self.process))
+
+        #expect(targeted.desktopOperationScope == .process(self.process))
+        #expect(targeted.nativeLeafOwnsDesktopOperationLane)
+    }
+
+    @Test
     func `Background close and quit preserve generation-pinned scope`() {
         let identity = self.window(windowID: 73)
         let close = PeekabooBridgeRequest.backgroundCloseWindow(.init(

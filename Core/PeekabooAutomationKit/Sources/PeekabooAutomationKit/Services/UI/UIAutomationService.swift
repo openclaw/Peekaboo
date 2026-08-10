@@ -42,6 +42,7 @@ public final class UIAutomationService: TargetedHotkeyServiceProtocol, TargetedT
     ExactWindowTargetedClickServiceProtocol, TargetedFocusedElementServiceProtocol,
     ExactWindowTargetedKeyboardServiceProtocol
 {
+    public let supportsProcessGenerationPinnedHotkeys = true
     public let supportsExactWindowTargetedKeyboard = true
     public let exactWindowTargetedKeyboardUnavailableReason: String? = nil
     let logger = Logger(subsystem: "boo.peekaboo.core", category: "UIAutomationService")
@@ -63,6 +64,7 @@ public final class UIAutomationService: TargetedHotkeyServiceProtocol, TargetedT
     let automationElementResolver: any AutomationElementResolving
     let exactWindowFocusReader: @Sendable (pid_t) -> ExactWindowFocusSnapshot?
     let exactWindowIdentityValidator: @Sendable (WindowMutationIdentity, CGRect) -> Bool
+    let processStartIdentityProvider: @Sendable (pid_t) -> UInt64?
     let operationLaneCoordinator: DesktopOperationLaneCoordinator
 
     // Search constraints to prevent unbounded AX traversals
@@ -135,11 +137,14 @@ public final class UIAutomationService: TargetedHotkeyServiceProtocol, TargetedT
         actionInputDriver: any ActionInputDriving,
         syntheticInputDriver: any SyntheticInputDriving = SyntheticInputDriver(),
         automationElementResolver: any AutomationElementResolving,
+        hotkeyService: HotkeyService? = nil,
         feedbackClient: any AutomationFeedbackClient = NoopAutomationFeedbackClient(),
         exactWindowFocusReader: @escaping @Sendable (pid_t) -> ExactWindowFocusSnapshot? =
             DetachedExactWindowFocusReader.read,
         exactWindowIdentityValidator: @escaping @Sendable (WindowMutationIdentity, CGRect) -> Bool =
             SystemIdentityResolver.validateWindowMutationIdentity,
+        processStartIdentityProvider: @escaping @Sendable (pid_t) -> UInt64? =
+            SystemIdentityResolver.processStartIdentity,
         operationLaneCoordinator: DesktopOperationLaneCoordinator = .shared)
     {
         let manager = snapshotManager ?? SnapshotManager()
@@ -156,6 +161,7 @@ public final class UIAutomationService: TargetedHotkeyServiceProtocol, TargetedT
         self.feedbackClient = feedbackClient
         self.exactWindowFocusReader = exactWindowFocusReader
         self.exactWindowIdentityValidator = exactWindowIdentityValidator
+        self.processStartIdentityProvider = processStartIdentityProvider
         self.operationLaneCoordinator = operationLaneCoordinator
 
         // Initialize specialized services
@@ -181,7 +187,7 @@ public final class UIAutomationService: TargetedHotkeyServiceProtocol, TargetedT
             actionInputDriver: actionInputDriver,
             syntheticInputDriver: syntheticInputDriver,
             automationElementResolver: automationElementResolver)
-        self.hotkeyService = HotkeyService(
+        self.hotkeyService = hotkeyService ?? HotkeyService(
             inputPolicy: inputPolicy,
             actionInputDriver: actionInputDriver)
         self.gestureService = GestureService()

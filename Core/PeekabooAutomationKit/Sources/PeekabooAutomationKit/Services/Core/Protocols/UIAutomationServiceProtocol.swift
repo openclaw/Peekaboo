@@ -241,15 +241,25 @@ public protocol DetectElementsRequestTimeoutAdjusting: UIAutomationServiceProtoc
 @MainActor
 public protocol TargetedHotkeyServiceProtocol: UIAutomationServiceProtocol {
     var supportsTargetedHotkeys: Bool { get }
+    var supportsProcessGenerationPinnedHotkeys: Bool { get }
     var targetedHotkeyUnavailableReason: String? { get }
     var targetedHotkeyRequiresEventSynthesizingPermission: Bool { get }
 
     func hotkey(keys: String, holdDuration: Int, targetProcessIdentifier: pid_t) async throws
+
+    func hotkey(
+        keys: String,
+        holdDuration: Int,
+        expectedProcessIdentity: ApplicationProcessIdentity) async throws
 }
 
 extension TargetedHotkeyServiceProtocol {
     public var supportsTargetedHotkeys: Bool {
         true
+    }
+
+    public var supportsProcessGenerationPinnedHotkeys: Bool {
+        false
     }
 
     public var targetedHotkeyUnavailableReason: String? {
@@ -258,6 +268,15 @@ extension TargetedHotkeyServiceProtocol {
 
     public var targetedHotkeyRequiresEventSynthesizingPermission: Bool {
         false
+    }
+
+    public func hotkey(
+        keys _: String,
+        holdDuration _: Int,
+        expectedProcessIdentity _: ApplicationProcessIdentity) async throws
+    {
+        throw PeekabooError.serviceUnavailable(
+            "This automation service does not support process-generation-pinned hotkeys")
     }
 }
 

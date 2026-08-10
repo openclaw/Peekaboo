@@ -189,6 +189,19 @@ extension PeekabooBridgeClient {
     public func hotkey(
         keys: String,
         holdDuration: Int,
+        expectedProcessIdentity: ApplicationProcessIdentity) async throws
+    {
+        try await self.sendExpectOK(
+            .targetedHotkey(PeekabooBridgeTargetedHotkeyRequest(
+                keys: keys,
+                holdDuration: holdDuration,
+                targetProcessIdentifier: expectedProcessIdentity.processIdentifier,
+                expectedProcessIdentity: expectedProcessIdentity)))
+    }
+
+    public func hotkey(
+        keys: String,
+        holdDuration: Int,
         expectedWindowIdentity: WindowMutationIdentity,
         expectedWindowBounds: CGRect) async throws
     {

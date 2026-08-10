@@ -76,7 +76,8 @@ struct PressCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
             )
             try await observation.validateIfExplicit(using: self.services.snapshots)
 
-            let targetPID = try await self.backgroundProcessIdentifier(snapshotId: observation.snapshotId)
+            let targetIdentity = try await self.backgroundProcessIdentity(snapshotId: observation.snapshotId)
+            let targetPID = targetIdentity?.processIdentifier
             self.resolvedRuntime.beginInteractionMutation()
             if targetPID == nil {
                 try await ensureFocused(
@@ -90,30 +91,43 @@ struct PressCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
             let parsedChords = try self.parsedChords()
             var completedPresses = 0
 
-            for repetition in 0..<self.count {
-                for (index, chord) in parsedChords.indexed() {
-                    if let targetPID {
-                        try await AutomationServiceBridge.hotkey(
-                            automation: self.services.automation,
-                            keys: chord.serviceKeys,
-                            holdDuration: self.hold.roundedMilliseconds,
-                            targetProcessIdentifier: targetPID
-                        )
-                    } else {
-                        try await AutomationServiceBridge.hotkey(
-                            automation: self.services.automation,
-                            keys: chord.serviceKeys,
-                            holdDuration: self.hold.roundedMilliseconds
-                        )
-                    }
-                    completedPresses += 1
+            do {
+                for repetition in 0..<self.count {
+                    for (index, chord) in parsedChords.indexed() {
+                        try Task.checkCancellation()
+                        if let targetIdentity {
+                            try await AutomationServiceBridge.hotkey(
+                                automation: self.services.automation,
+                                keys: chord.serviceKeys,
+                                holdDuration: self.hold.roundedMilliseconds,
+                                expectedProcessIdentity: targetIdentity
+                            )
+                        } else {
+                            try await AutomationServiceBridge.hotkey(
+                                automation: self.services.automation,
+                                keys: chord.serviceKeys,
+                                holdDuration: self.hold.roundedMilliseconds
+                            )
+                        }
+                        completedPresses += 1
+                        try Task.checkCancellation()
 
-                    let isLastKey = index == parsedChords.count - 1
-                    let isLastRepetition = repetition == self.count - 1
-                    if self.delay.milliseconds > 0, !(isLastKey && isLastRepetition) {
-                        try await Task.sleep(for: .seconds(self.delay.seconds))
+                        let isLastKey = index == parsedChords.count - 1
+                        let isLastRepetition = repetition == self.count - 1
+                        if self.delay.milliseconds > 0, !(isLastKey && isLastRepetition) {
+                            try await Task.sleep(for: .seconds(self.delay.seconds))
+                        }
                     }
                 }
+            } catch let error as InputDeliveryIndeterminateError {
+                throw error
+            } catch {
+                guard completedPresses > 0 else { throw error }
+                throw InputDeliveryIndeterminateError(
+                    operation: .hotkey,
+                    emittedUnitCount: completedPresses,
+                    causeDescription: error.localizedDescription
+                )
             }
 
             await InteractionObservationInvalidator.invalidateAfterMutation(
@@ -176,12 +190,12 @@ struct PressCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
         }
     }
 
-    private func backgroundProcessIdentifier(snapshotId: String?) async throws -> pid_t? {
+    private func backgroundProcessIdentity(snapshotId: String?) async throws -> ApplicationProcessIdentity? {
         guard !self.focusOptions.foreground else {
             return nil
         }
 
-        return try await KeyboardDeliverySupport.requireBackgroundProcessIdentifier(
+        return try await KeyboardDeliverySupport.requireBackgroundProcessIdentity(
             target: self.target,
             snapshotId: snapshotId,
             services: self.services

@@ -14,6 +14,7 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
 {
     let client: PeekabooBridgeClient
     public let supportsTargetedHotkeys: Bool
+    public let supportsProcessGenerationPinnedHotkeys: Bool
     public let targetedHotkeyUnavailableReason: String?
     public let targetedHotkeyRequiresEventSynthesizingPermission: Bool
     public let supportsTargetedTypeActions: Bool
@@ -32,6 +33,7 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
     public init(
         client: PeekabooBridgeClient,
         supportsTargetedHotkeys: Bool = false,
+        supportsProcessGenerationPinnedHotkeys: Bool = false,
         targetedHotkeyUnavailableReason: String? = nil,
         targetedHotkeyRequiresEventSynthesizingPermission: Bool = false,
         supportsTargetedTypeActions: Bool = false,
@@ -49,6 +51,7 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
     {
         self.client = client
         self.supportsTargetedHotkeys = supportsTargetedHotkeys
+        self.supportsProcessGenerationPinnedHotkeys = supportsProcessGenerationPinnedHotkeys
         self.targetedHotkeyUnavailableReason = targetedHotkeyUnavailableReason
         self.targetedHotkeyRequiresEventSynthesizingPermission = targetedHotkeyRequiresEventSynthesizingPermission
         self.supportsTargetedTypeActions = supportsTargetedTypeActions
@@ -254,6 +257,39 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
                 keys: keys,
                 holdDuration: holdDuration,
                 targetProcessIdentifier: targetProcessIdentifier)
+        } catch let envelope as PeekabooBridgeErrorEnvelope {
+            if envelope.operationMayHaveCompleted {
+                throw Self.inputDeliveryIndeterminateError(for: envelope, operation: .hotkey)
+            }
+            switch envelope.code {
+            case .permissionDenied:
+                throw Self.permissionDeniedError(for: envelope)
+            case .invalidRequest:
+                throw PeekabooError.invalidInput(envelope.message)
+            case .operationNotSupported:
+                throw PeekabooError.serviceUnavailable(envelope.message)
+            default:
+                throw envelope
+            }
+        }
+    }
+
+    public func hotkey(
+        keys: String,
+        holdDuration: Int,
+        expectedProcessIdentity: ApplicationProcessIdentity) async throws
+    {
+        guard self.supportsProcessGenerationPinnedHotkeys else {
+            throw PeekabooError.serviceUnavailable(
+                "Remote bridge host does not support process-generation-pinned background hotkeys; " +
+                    "use --no-remote or update the host")
+        }
+
+        do {
+            try await self.client.hotkey(
+                keys: keys,
+                holdDuration: holdDuration,
+                expectedProcessIdentity: expectedProcessIdentity)
         } catch let envelope as PeekabooBridgeErrorEnvelope {
             if envelope.operationMayHaveCompleted {
                 throw Self.inputDeliveryIndeterminateError(for: envelope, operation: .hotkey)

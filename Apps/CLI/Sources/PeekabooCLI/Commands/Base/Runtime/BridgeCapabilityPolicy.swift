@@ -70,6 +70,11 @@ enum BridgeCapabilityPolicy {
             return false
         }
 
+        if options.requiresProcessGenerationPinnedHotkeys,
+           !self.supportsProcessGenerationPinnedHotkeys(for: handshake) {
+            return false
+        }
+
         if options.requiresHostApplicationInventory, !self.supportsHostApplicationInventory(for: handshake) {
             return false
         }
@@ -305,6 +310,13 @@ enum BridgeCapabilityPolicy {
     ) -> Bool {
         handshake.negotiatedVersion >= PeekabooBridgeConstants.processGenerationPinnedApplicationQuitVersion &&
             self.supportsOperation(.quitApplication, for: handshake)
+    }
+
+    static func supportsProcessGenerationPinnedHotkeys(
+        for handshake: PeekabooBridgeHandshakeResponse
+    ) -> Bool {
+        handshake.negotiatedVersion >= PeekabooBridgeConstants.processGenerationPinnedHotkeyVersion &&
+            self.supportsOperation(.targetedHotkey, for: handshake)
     }
 
     static func supportsInspectAccessibilityTree(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {

@@ -324,21 +324,7 @@ extension PeekabooBridgeServer {
             }
             return .typeResult(result)
         case let .targetedHotkey(payload):
-            guard
-                let targetedHotkeyService = self.services.automation as? any TargetedHotkeyServiceProtocol,
-                targetedHotkeyService.supportsTargetedHotkeys
-            else {
-                throw PeekabooBridgeErrorEnvelope(
-                    code: .operationNotSupported,
-                    message: "Background hotkeys are not supported by this bridge host")
-            }
-
-            self.automationActivityObserver?(pid_t(payload.targetProcessIdentifier))
-            try await targetedHotkeyService.hotkey(
-                keys: payload.keys,
-                holdDuration: payload.holdDuration,
-                targetProcessIdentifier: pid_t(payload.targetProcessIdentifier))
-            return .ok
+            return try await self.handleTargetedHotkey(payload)
         case let .exactWindowTargetedHotkey(payload):
             guard let service = self.services.automation as? any ExactWindowTargetedKeyboardServiceProtocol,
                   service.supportsExactWindowTargetedKeyboard
@@ -416,6 +402,43 @@ extension PeekabooBridgeServer {
         default:
             throw Self.invalidRequest(for: request)
         }
+    }
+
+    private func handleTargetedHotkey(
+        _ payload: PeekabooBridgeTargetedHotkeyRequest) async throws -> PeekabooBridgeResponse
+    {
+        guard
+            let service = self.services.automation as? any TargetedHotkeyServiceProtocol,
+            service.supportsTargetedHotkeys
+        else {
+            throw PeekabooBridgeErrorEnvelope(
+                code: .operationNotSupported,
+                message: "Background hotkeys are not supported by this bridge host")
+        }
+
+        self.automationActivityObserver?(pid_t(payload.targetProcessIdentifier))
+        if let expectedIdentity = payload.expectedProcessIdentity {
+            guard expectedIdentity.processIdentifier == payload.targetProcessIdentifier else {
+                throw PeekabooBridgeErrorEnvelope(
+                    code: .invalidRequest,
+                    message: "Targeted hotkey PID does not match its process-generation receipt")
+            }
+            guard service.supportsProcessGenerationPinnedHotkeys else {
+                throw PeekabooBridgeErrorEnvelope(
+                    code: .operationNotSupported,
+                    message: "Process-generation-pinned background hotkeys are not supported by this bridge host")
+            }
+            try await service.hotkey(
+                keys: payload.keys,
+                holdDuration: payload.holdDuration,
+                expectedProcessIdentity: expectedIdentity)
+        } else {
+            try await service.hotkey(
+                keys: payload.keys,
+                holdDuration: payload.holdDuration,
+                targetProcessIdentifier: pid_t(payload.targetProcessIdentifier))
+        }
+        return .ok
     }
 
     private func handleWindowRequest(_ request: PeekabooBridgeRequest) async throws -> PeekabooBridgeResponse {

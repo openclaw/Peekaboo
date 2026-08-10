@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add actionable text and JSON migration hints for removed v4 commands and flags, reject ambiguous press input shapes, and align `see`/`type`/`press` help with the accepted grammar.
 - Reject conflicting app/PID and window selectors across interaction CLI and MCP entry points before focus, observation, or mutation.
 - Require explicit `--foreground` for long-press clicks so the shared physical cursor cannot be used through an implicit delivery-mode promotion.
+- Pin background `press` sequences to one process generation, stop before a recycled PID can receive later chords, and report partial delivery as retry-unsafe.
 - Preserve stable `verify_state` proof for a directly matched exact AX identifier/value when only unrelated accessibility siblings are unreadable, while keeping absence, mismatch, ambiguity, and target drift fail-closed.
 - Wait for WindowServer to settle after an exact background maximize dispatch before repinning its final bounds, avoiding false failures without relaxing owner-generation checks.
 - Preserve OpenAI Responses tool-error payloads without sending unsupported `failed` statuses that abort the next agent turn.

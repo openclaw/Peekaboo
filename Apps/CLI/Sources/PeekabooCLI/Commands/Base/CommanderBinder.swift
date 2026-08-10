@@ -53,6 +53,8 @@ enum CommanderCLIBinder {
         options.requiresApplicationRelaunch = commandType == AppCommand.RelaunchSubcommand.self
         options.requiresSurvivingApplicationHost = commandType == AppCommand.QuitSubcommand.self
         options.requiresProcessGenerationPinnedApplicationQuit = commandType == AppCommand.QuitSubcommand.self
+        options.requiresProcessGenerationPinnedHotkeys = commandType == PressCommand.self &&
+            !CommanderBindableValues(parsedValues: parsedValues).flag("foreground")
         options.requiresHostApplicationInventory = Self.requiresHostApplicationInventory(commandType)
         options.requiresImplicitSnapshotInvalidation = Self.requiresImplicitSnapshotInvalidation(
             commandType,

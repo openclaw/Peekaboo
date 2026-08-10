@@ -109,6 +109,29 @@ extension UIAutomationService {
     public func hotkey(
         keys: String,
         holdDuration: Int,
+        expectedProcessIdentity: ApplicationProcessIdentity) async throws
+    {
+        try await self.operationLaneCoordinator.run(scope: .process(expectedProcessIdentity), access: .write) {
+            let validator: @MainActor @Sendable () async throws -> Void = {
+                guard self.processStartIdentityProvider(expectedProcessIdentity.processIdentifier) ==
+                    expectedProcessIdentity.processStartIdentity
+                else {
+                    throw PeekabooError.invalidInput(
+                        "Background hotkey target process exited or changed process generation")
+                }
+            }
+            defer { self.elementDetectionService.invalidateCache() }
+            _ = try await self.hotkeyService.hotkey(
+                keys: keys,
+                holdDuration: holdDuration,
+                targetProcessIdentifier: expectedProcessIdentity.processIdentifier,
+                deliveryValidator: validator)
+        }
+    }
+
+    public func hotkey(
+        keys: String,
+        holdDuration: Int,
         expectedWindowIdentity: WindowMutationIdentity,
         expectedWindowBounds: CGRect) async throws
     {

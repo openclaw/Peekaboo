@@ -205,6 +205,31 @@ enum AutomationServiceBridge {
         }.value
     }
 
+    static func hotkey(
+        automation: any UIAutomationServiceProtocol,
+        keys: String,
+        holdDuration: Int,
+        expectedProcessIdentity: ApplicationProcessIdentity
+    ) async throws {
+        try await Task { @MainActor in
+            try BackgroundHotkeyPolicy.validate(keys: keys)
+
+            guard let targetedHotkeyService = automation as? any TargetedHotkeyServiceProtocol,
+                  targetedHotkeyService.supportsProcessGenerationPinnedHotkeys
+            else {
+                throw PeekabooError.serviceUnavailable(
+                    "Background hotkeys require process-generation-pinned delivery; update the runtime host"
+                )
+            }
+
+            try await targetedHotkeyService.hotkey(
+                keys: keys,
+                holdDuration: holdDuration,
+                expectedProcessIdentity: expectedProcessIdentity
+            )
+        }.value
+    }
+
     private static func targetedHotkeyUnavailableError(service: any TargetedHotkeyServiceProtocol) -> PeekabooError {
         if service.targetedHotkeyRequiresEventSynthesizingPermission {
             return .permissionDeniedEventSynthesizing

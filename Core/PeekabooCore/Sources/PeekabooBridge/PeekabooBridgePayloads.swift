@@ -182,11 +182,18 @@ public struct PeekabooBridgeTargetedHotkeyRequest: Codable, Sendable {
     public let keys: String
     public let holdDuration: Int
     public let targetProcessIdentifier: Int32
+    public let expectedProcessIdentity: ApplicationProcessIdentity?
 
-    public init(keys: String, holdDuration: Int, targetProcessIdentifier: Int32) {
+    public init(
+        keys: String,
+        holdDuration: Int,
+        targetProcessIdentifier: Int32,
+        expectedProcessIdentity: ApplicationProcessIdentity? = nil)
+    {
         self.keys = keys
         self.holdDuration = holdDuration
         self.targetProcessIdentifier = targetProcessIdentifier
+        self.expectedProcessIdentity = expectedProcessIdentity
     }
 }
 

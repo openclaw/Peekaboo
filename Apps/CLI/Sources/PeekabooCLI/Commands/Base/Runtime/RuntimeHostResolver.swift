@@ -506,6 +506,8 @@ enum RuntimeHostResolver {
                     services: RemotePeekabooServices(
                         client: client,
                         supportsTargetedHotkeys: targetedHotkeyAvailability.isEnabled,
+                        supportsProcessGenerationPinnedHotkeys:
+                        BridgeCapabilityPolicy.supportsProcessGenerationPinnedHotkeys(for: handshake),
                         targetedHotkeyUnavailableReason: targetedHotkeyAvailability.unavailableReason,
                         targetedHotkeyRequiresEventSynthesizingPermission:
                         targetedHotkeyAvailability.missingPermissions.contains(.postEvent),

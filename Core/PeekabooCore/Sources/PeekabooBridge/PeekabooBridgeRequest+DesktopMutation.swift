@@ -84,6 +84,8 @@ extension PeekabooBridgeRequest {
             .process(ApplicationProcessIdentity(
                 processIdentifier: payload.expectedWindowIdentity.ownerProcessIdentifier,
                 processStartIdentity: payload.expectedWindowIdentity.ownerProcessStartIdentity))
+        case let .targetedHotkey(payload):
+            payload.expectedProcessIdentity.map(DesktopOperationScope.process) ?? .global
         case let .targetedClick(payload):
             if let targetWindowID = payload.targetWindowID,
                let identity = payload.expectedWindowIdentity,

@@ -33,6 +33,7 @@ public final class RemotePeekabooServices: PeekabooServiceProviding {
     public init(
         client: PeekabooBridgeClient,
         supportsTargetedHotkeys: Bool = false,
+        supportsProcessGenerationPinnedHotkeys: Bool = false,
         targetedHotkeyUnavailableReason: String? = nil,
         targetedHotkeyRequiresEventSynthesizingPermission: Bool = false,
         supportsTargetedTypeActions: Bool = false,
@@ -80,6 +81,7 @@ public final class RemotePeekabooServices: PeekabooServiceProviding {
             RemoteElementActionUIAutomationService(
                 client: client,
                 supportsTargetedHotkeys: supportsTargetedHotkeys,
+                supportsProcessGenerationPinnedHotkeys: supportsProcessGenerationPinnedHotkeys,
                 targetedHotkeyUnavailableReason: targetedHotkeyUnavailableReason,
                 targetedHotkeyRequiresEventSynthesizingPermission: targetedHotkeyRequiresEventSynthesizingPermission,
                 supportsTargetedTypeActions: supportsTargetedTypeActions,
@@ -98,6 +100,7 @@ public final class RemotePeekabooServices: PeekabooServiceProviding {
             RemoteUIAutomationService(
                 client: client,
                 supportsTargetedHotkeys: supportsTargetedHotkeys,
+                supportsProcessGenerationPinnedHotkeys: supportsProcessGenerationPinnedHotkeys,
                 targetedHotkeyUnavailableReason: targetedHotkeyUnavailableReason,
                 targetedHotkeyRequiresEventSynthesizingPermission: targetedHotkeyRequiresEventSynthesizingPermission,
                 supportsTargetedTypeActions: supportsTargetedTypeActions,

@@ -28,11 +28,15 @@ public enum PeekabooBridgeConstants {
     }
 
     /// Current protocol version supported by this build.
-    public static let protocolVersion = PeekabooBridgeProtocolVersion(major: 1, minor: 18)
+    public static let protocolVersion = PeekabooBridgeProtocolVersion(major: 1, minor: 19)
 
     /// First protocol that carries an application process-generation receipt with quit requests.
     public static let processGenerationPinnedApplicationQuitVersion =
         PeekabooBridgeProtocolVersion(major: 1, minor: 16)
+
+    /// First protocol that carries a process-generation receipt with targeted hotkey requests.
+    public static let processGenerationPinnedHotkeyVersion =
+        PeekabooBridgeProtocolVersion(major: 1, minor: 19)
 
     /// Oldest protocol version this build can serve without changing request semantics.
     public static let minimumProtocolVersion = PeekabooBridgeProtocolVersion(major: 1, minor: 0)

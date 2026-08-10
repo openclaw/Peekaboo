@@ -33,6 +33,8 @@ struct CommandRuntimeOptions {
     var requiresSurvivingApplicationHost = false
     /// Protocol 1.16 carries a process-generation receipt with application quit requests.
     var requiresProcessGenerationPinnedApplicationQuit = false
+    /// Protocol 1.19 carries a process-generation receipt with targeted hotkey requests.
+    var requiresProcessGenerationPinnedHotkeys = false
     var requiresHostApplicationInventory = false
     var requiresImplicitSnapshotInvalidation = false
     var requiresCallerDesktopMutationBarrier = false

@@ -885,6 +885,50 @@ struct PeekabooBridgeTests {
         #expect(lastHotkey?.keys == "cmd,l")
         #expect(lastHotkey?.holdDuration == 50)
         #expect(lastHotkey?.targetProcessIdentifier == 9001)
+        #expect(lastHotkey?.expectedProcessIdentity == nil)
+    }
+
+    @Test
+    func `automation targeted hotkey forwards process-generation receipt`() async throws {
+        let stub = await MainActor.run { StubServices() }
+        let server = await MainActor.run {
+            PeekabooBridgeServer(
+                services: stub,
+                hostKind: .gui,
+                allowlistedTeams: [],
+                allowlistedBundles: [],
+                postEventAccessEvaluator: { true })
+        }
+        let identity = ApplicationProcessIdentity(processIdentifier: 9001, processStartIdentity: 1234)
+        let request = PeekabooBridgeRequest.targetedHotkey(.init(
+            keys: "cmd,l",
+            holdDuration: 50,
+            targetProcessIdentifier: identity.processIdentifier,
+            expectedProcessIdentity: identity))
+
+        let response = try await self.decode(server.decodeAndHandle(
+            JSONEncoder.peekabooBridgeEncoder().encode(request),
+            peer: nil))
+
+        guard case .ok = response else {
+            Issue.record("Expected ok response, got \(response)")
+            return
+        }
+        let lastHotkey = await stub.automationStub.lastProcessTargetedHotkey
+        #expect(lastHotkey?.expectedProcessIdentity == identity)
+    }
+
+    @Test
+    func `legacy targeted hotkey payload decodes without process receipt`() throws {
+        let data = Data(
+            #"{"keys":"cmd,l","holdDuration":50,"targetProcessIdentifier":9001}"#.utf8)
+
+        let payload = try JSONDecoder.peekabooBridgeDecoder().decode(
+            PeekabooBridgeTargetedHotkeyRequest.self,
+            from: data)
+
+        #expect(payload.targetProcessIdentifier == 9001)
+        #expect(payload.expectedProcessIdentity == nil)
     }
 
     @Test
@@ -1886,6 +1930,7 @@ final class StubAutomationService: TargetedHotkeyServiceProtocol, TargetedTypeSe
     ElementActionAutomationServiceProtocol, TargetedFocusedElementServiceProtocol,
     ExactWindowTargetedKeyboardServiceProtocol
 {
+    let supportsProcessGenerationPinnedHotkeys = true
     let supportsExactWindowTargetedKeyboard = true
     let exactWindowTargetedKeyboardUnavailableReason: String? = nil
     struct Click { let target: ClickTarget; let type: ClickType }
@@ -1893,6 +1938,7 @@ final class StubAutomationService: TargetedHotkeyServiceProtocol, TargetedTypeSe
         let keys: String
         let holdDuration: Int
         let targetProcessIdentifier: pid_t?
+        let expectedProcessIdentity: ApplicationProcessIdentity?
     }
 
     struct TargetedClick {
@@ -2128,7 +2174,24 @@ final class StubAutomationService: TargetedHotkeyServiceProtocol, TargetedTypeSe
         self.lastProcessTargetedHotkey = TargetedHotkey(
             keys: keys,
             holdDuration: holdDuration,
-            targetProcessIdentifier: targetProcessIdentifier)
+            targetProcessIdentifier: targetProcessIdentifier,
+            expectedProcessIdentity: nil)
+    }
+
+    func hotkey(
+        keys: String,
+        holdDuration: Int,
+        expectedProcessIdentity: ApplicationProcessIdentity) async throws
+    {
+        if let targetedHotkeyError {
+            throw targetedHotkeyError
+        }
+
+        self.lastProcessTargetedHotkey = TargetedHotkey(
+            keys: keys,
+            holdDuration: holdDuration,
+            targetProcessIdentifier: expectedProcessIdentity.processIdentifier,
+            expectedProcessIdentity: expectedProcessIdentity)
     }
 
     func swipe(from _: CGPoint, to _: CGPoint, duration _: Int, steps _: Int, profile _: MouseMovementProfile) async

@@ -169,6 +169,7 @@ ExactWindowTargetedClickServiceProtocol {
         let keys: String
         let holdDuration: Int
         let targetProcessIdentifier: pid_t
+        let expectedProcessIdentity: ApplicationProcessIdentity?
     }
 
     struct TargetedTypeActionsCall {
@@ -212,10 +213,13 @@ ExactWindowTargetedClickServiceProtocol {
     var waitForElementCalls: [WaitForElementCall] = []
     var detectElementsCalls: [(imageData: Data, snapshotId: String?, windowContext: WindowContext?)] = []
     var supportsTargetedHotkeys = true
+    var supportsProcessGenerationPinnedHotkeys = true
     var targetedHotkeyUnavailableReason: String?
     var targetedHotkeyRequiresEventSynthesizingPermission = false
     var hotkeyError: (any Error)?
     var targetedHotkeyError: (any Error)?
+    var currentHotkeyProcessIdentity: ((pid_t) -> ApplicationProcessIdentity?)?
+    var afterPinnedHotkey: (() -> Void)?
     var supportsTargetedTypeActions = true
     var targetedTypeUnavailableReason: String?
     var targetedTypeRequiresEventSynthesizingPermission = false
@@ -401,11 +405,35 @@ ExactWindowTargetedClickServiceProtocol {
         self.targetedHotkeyCalls.append(TargetedHotkeyCall(
             keys: keys,
             holdDuration: holdDuration,
-            targetProcessIdentifier: targetProcessIdentifier
+            targetProcessIdentifier: targetProcessIdentifier,
+            expectedProcessIdentity: nil
         ))
         if let targetedHotkeyError {
             throw targetedHotkeyError
         }
+    }
+
+    func hotkey(
+        keys: String,
+        holdDuration: Int,
+        expectedProcessIdentity: ApplicationProcessIdentity
+    ) async throws {
+        if let currentHotkeyProcessIdentity,
+           currentHotkeyProcessIdentity(expectedProcessIdentity.processIdentifier) != expectedProcessIdentity {
+            throw PeekabooError.invalidInput(
+                "Background hotkey target process exited or changed process generation"
+            )
+        }
+        self.targetedHotkeyCalls.append(TargetedHotkeyCall(
+            keys: keys,
+            holdDuration: holdDuration,
+            targetProcessIdentifier: expectedProcessIdentity.processIdentifier,
+            expectedProcessIdentity: expectedProcessIdentity
+        ))
+        if let targetedHotkeyError {
+            throw targetedHotkeyError
+        }
+        self.afterPinnedHotkey?()
     }
 
     func swipe(from: CGPoint, to: CGPoint, duration: Int, steps: Int, profile: MouseMovementProfile) async throws {

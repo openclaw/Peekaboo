@@ -560,6 +560,42 @@ struct CommanderBinderTests {
     }
 
     @Test
+    func `Background press requires process-generation-pinned Bridge hotkeys`() throws {
+        let background = try CommanderCLIBinder.makeRuntimeOptions(
+            from: ParsedValues(positional: ["a"], options: ["pid": ["42"]], flags: []),
+            commandType: PressCommand.self
+        )
+        let foreground = try CommanderCLIBinder.makeRuntimeOptions(
+            from: ParsedValues(positional: ["a"], options: [:], flags: ["foreground"]),
+            commandType: PressCommand.self
+        )
+        let operations: [PeekabooBridgeOperation] = [
+            .targetedHotkey,
+            .invalidateImplicitLatestSnapshot,
+        ]
+        let legacy = PeekabooBridgeHandshakeResponse(
+            negotiatedVersion: .init(major: 1, minor: 18),
+            hostKind: .onDemand,
+            build: nil,
+            supportedOperations: operations,
+            enabledOperations: operations
+        )
+        let current = PeekabooBridgeHandshakeResponse(
+            negotiatedVersion: PeekabooBridgeConstants.processGenerationPinnedHotkeyVersion,
+            hostKind: .onDemand,
+            build: nil,
+            supportedOperations: operations,
+            enabledOperations: operations
+        )
+
+        #expect(background.requiresProcessGenerationPinnedHotkeys)
+        #expect(!foreground.requiresProcessGenerationPinnedHotkeys)
+        #expect(!CommandRuntime.supportsRemoteRequirements(for: legacy, options: background))
+        #expect(CommandRuntime.supportsRemoteRequirements(for: current, options: background))
+        #expect(CommandRuntime.supportsRemoteRequirements(for: legacy, options: foreground))
+    }
+
+    @Test
     func `Click delivery selects the permission required by its actual path`() throws {
         let coordinate = try CommanderCLIBinder.makeRuntimeOptions(
             from: ParsedValues(
