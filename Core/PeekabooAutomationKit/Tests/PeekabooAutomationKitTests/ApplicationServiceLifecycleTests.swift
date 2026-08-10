@@ -672,6 +672,29 @@ extension ApplicationServiceLifecycleTests {
 
     @Test
     @MainActor
+    func `candidate PID reuse after native rejection stops before AX fallback`() async throws {
+        let candidate = try self.runningApplication()
+        let targetPID = self.syntheticTargetPID()
+        let probe = BackgroundRestorationProbe(frontmostProcessIdentifier: candidate.processIdentifier)
+        probe.processStartIdentities[candidate.processIdentifier] = 70
+        probe.processStartIdentities[targetPID] = 70
+        probe.nativeRequestAccepted = false
+        probe.onNativeActivation = { _ in
+            probe.processStartIdentities[candidate.processIdentifier] = 71
+        }
+        let lease = probe.makeLease(previousApplication: candidate, confirmationTimeout: .milliseconds(100))
+
+        #expect(lease.setTargetProcessIdentifier(targetPID))
+        probe.frontmostProcessIdentifier = targetPID
+
+        #expect(await lease.waitForReconciliation() == .targetStillFrontmost)
+        #expect(probe.nativeActivationRequests == [candidate.processIdentifier])
+        #expect(probe.accessibilityActivationRequests.isEmpty)
+        #expect(probe.confirmationSleepDurations == [.milliseconds(100)])
+    }
+
+    @Test
+    @MainActor
     func `terminated restoration candidate fails boundedly without activation`() async throws {
         let candidate = try self.runningApplication()
         let targetPID = self.syntheticTargetPID()
@@ -817,6 +840,25 @@ extension ApplicationServiceLifecycleTests {
         #expect(probe.nativeActivationRequests == [candidate.processIdentifier])
         #expect(probe.accessibilityActivationRequests.isEmpty)
         #expect(probe.confirmationSleepDurations.isEmpty)
+    }
+
+    @Test
+    @MainActor
+    func `reused candidate PID is never activated as the previous application`() async throws {
+        let candidate = try self.runningApplication()
+        let targetPID = self.syntheticTargetPID()
+        let probe = BackgroundRestorationProbe(frontmostProcessIdentifier: candidate.processIdentifier)
+        probe.processStartIdentities[candidate.processIdentifier] = 70
+        probe.processStartIdentities[targetPID] = 70
+        let lease = probe.makeLease(previousApplication: candidate, confirmationTimeout: .milliseconds(100))
+        probe.processStartIdentities[candidate.processIdentifier] = 71
+        probe.frontmostProcessIdentifier = targetPID
+
+        #expect(lease.setTargetProcessIdentifier(targetPID))
+
+        #expect(await lease.waitForReconciliation() == .targetStillFrontmost)
+        #expect(probe.nativeActivationRequests.isEmpty)
+        #expect(probe.accessibilityActivationRequests.isEmpty)
     }
 
     @Test
@@ -1226,6 +1268,7 @@ private final class BackgroundRestorationProbe {
     var activeProcessIdentifiers: Set<pid_t> = []
     var terminatedProcessIdentifiers: Set<pid_t> = []
     var processStartIdentity: UInt64? = 70
+    var processStartIdentities: [pid_t: UInt64] = [:]
     var nativeRequestAccepted = true
     var onNativeActivation: ((NSRunningApplication) -> Void)?
     var onAccessibilityActivation: ((pid_t) -> Void)?
@@ -1271,7 +1314,9 @@ private final class BackgroundRestorationProbe {
                     self.terminatedProcessIdentifiers.contains(application.processIdentifier)
                 },
                 frontmostProcessIdentifierProvider: { self.frontmostProcessIdentifier },
-                processStartIdentityProvider: { _ in self.processStartIdentity },
+                processStartIdentityProvider: { processIdentifier in
+                    self.processStartIdentities[processIdentifier] ?? self.processStartIdentity
+                },
                 confirmationSleepHandler: { duration in
                     self.confirmationSleepDurations.append(duration)
                     self.now = self.now.advanced(by: duration)

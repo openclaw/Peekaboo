@@ -3,6 +3,7 @@
 ## [4.0.1] - Unreleased
 
 ### Fixed
+- Keep background app launch/open ownership through verified focus reconciliation, restoring only the exact prior process generation while treating transient frontmost uncertainty and later user foreground choices conservatively.
 - Stop `peekaboo learn` from presenting `shell` as a CLI command: it remains a built-in Agent capability but is not in the MCP catalog and has no `peekaboo shell` CLI root; guard both curated Agent overrides and rendered CLI roots against future drift.
 - Ensure action-command JSON validation failures before dispatch report
   `effect: refused`, including parser and binding errors.
