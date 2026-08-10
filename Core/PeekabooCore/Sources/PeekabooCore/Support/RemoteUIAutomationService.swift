@@ -100,7 +100,22 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
 
         return try await self.client.inspectAccessibilityTree(
             windowContext: windowContext,
-            requestTimeoutSec: 30)
+            requestTimeoutSec: Self.inspectAccessibilityTreeRequestTimeoutSeconds(
+                accessibilityTimeoutSeconds: windowContext?.accessibilityTimeoutSeconds))
+    }
+
+    nonisolated static func inspectAccessibilityTreeRequestTimeoutSeconds(
+        accessibilityTimeoutSeconds: TimeInterval?) -> TimeInterval
+    {
+        let defaultTimeout: TimeInterval = 30
+        let completionGrace: TimeInterval = 5
+        guard let accessibilityTimeoutSeconds,
+              accessibilityTimeoutSeconds.isFinite,
+              accessibilityTimeoutSeconds > 0
+        else {
+            return defaultTimeout
+        }
+        return max(defaultTimeout, accessibilityTimeoutSeconds + completionGrace)
     }
 
     public func click(target: ClickTarget, clickType: ClickType, snapshotId: String?) async throws {

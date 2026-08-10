@@ -6,9 +6,15 @@ import PeekabooFoundation
 @available(macOS 14.0, *)
 @MainActor
 extension SeeCommand {
-    func performCaptureWithDetection(snapshotID: String) async throws -> CaptureAndDetectionResult {
+    func performCaptureWithDetection(
+        snapshotID: String,
+        observationTimeoutSeconds: TimeInterval
+    ) async throws -> CaptureAndDetectionResult {
         if self.noScreenshot {
-            return try await self.performTreeOnlyDetection(snapshotID: snapshotID)
+            return try await self.performTreeOnlyDetection(
+                snapshotID: snapshotID,
+                observationTimeoutSeconds: observationTimeoutSeconds
+            )
         }
 
         if let observationResult = try await self.performObservationCaptureWithDetectionIfPossible(
@@ -82,7 +88,11 @@ extension SeeCommand {
         )
     }
 
-    private func performTreeOnlyDetection(snapshotID: String) async throws -> CaptureAndDetectionResult {
+    private func performTreeOnlyDetection(
+        snapshotID: String,
+        observationTimeoutSeconds: TimeInterval
+    ) async throws -> CaptureAndDetectionResult {
+        let observationDeadline = Date().addingTimeInterval(max(observationTimeoutSeconds, 0.001))
         if self.app != nil, self.pid != nil {
             throw ValidationError("Use either --app or --pid, not both")
         }
@@ -91,16 +101,20 @@ extension SeeCommand {
         } else {
             self.app
         }
+        let windowID = try await self.resolvedTreeWindowID()
+        let accessibilityTimeoutSeconds = max(0.001, observationDeadline.timeIntervalSinceNow)
         let result = try await self.services.automation.inspectAccessibilityTree(
             windowContext: WindowContext(
                 applicationName: appName,
                 applicationProcessId: self.pid,
                 windowTitle: self.windowTitle,
-                windowID: self.resolvedTreeWindowID(),
+                windowID: windowID,
                 shouldFocusWebContent: self.webFocus,
-                traversalBudget: self.axTraversalBudget()
+                traversalBudget: self.axTraversalBudget(),
+                accessibilityTimeoutSeconds: accessibilityTimeoutSeconds
             )
         )
+        try self.requireUsableTreeOnlyEvidence(result)
         let bound = ElementDetectionResult(
             snapshotId: snapshotID,
             screenshotPath: "",
@@ -116,6 +130,22 @@ extension SeeCommand {
             metadata: bound.metadata,
             observation: nil,
             coordinateContext: nil
+        )
+    }
+
+    private func requireUsableTreeOnlyEvidence(_ result: ElementDetectionResult) throws {
+        guard result.elements.all.isEmpty,
+              let truncationInfo = result.metadata.truncationInfo,
+              truncationInfo.isTruncated
+        else { return }
+
+        if truncationInfo.deadlineReached {
+            throw CaptureError.detectionTimedOut(self.overallTimeoutSeconds)
+        }
+        throw PeekabooError.operationError(
+            message: truncationInfo.remediationMessage(
+                budget: result.metadata.windowContext?.traversalBudget
+            )
         )
     }
 

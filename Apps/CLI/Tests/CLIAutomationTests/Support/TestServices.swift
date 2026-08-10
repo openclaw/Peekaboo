@@ -212,6 +212,7 @@ ExactWindowTargetedClickServiceProtocol {
     var targetedClickCalls: [TargetedClickCall] = []
     var waitForElementCalls: [WaitForElementCall] = []
     var detectElementsCalls: [(imageData: Data, snapshotId: String?, windowContext: WindowContext?)] = []
+    var inspectAccessibilityTreeCalls: [WindowContext?] = []
     var supportsTargetedHotkeys = true
     var supportsProcessGenerationPinnedHotkeys = true
     var targetedHotkeyUnavailableReason: String?
@@ -233,6 +234,7 @@ ExactWindowTargetedClickServiceProtocol {
     var waitForElementProvider: ((ClickTarget, TimeInterval, String?) -> WaitForElementResult)?
     private var waitForElementResults: [WaitTargetKey: WaitForElementResult] = [:]
     var detectElementsHandler: ((Data, String?, WindowContext?) async throws -> ElementDetectionResult)?
+    var inspectAccessibilityTreeHandler: ((WindowContext?) async throws -> ElementDetectionResult)?
     var nextDetectionResult: ElementDetectionResult?
     var stubCurrentMouseLocation: CGPoint?
 
@@ -256,6 +258,14 @@ ExactWindowTargetedClickServiceProtocol {
         }
 
         throw TestStubError.unimplemented(#function)
+    }
+
+    func inspectAccessibilityTree(windowContext: WindowContext?) async throws -> ElementDetectionResult {
+        self.inspectAccessibilityTreeCalls.append(windowContext)
+        guard let inspectAccessibilityTreeHandler else {
+            throw TestStubError.unimplemented(#function)
+        }
+        return try await inspectAccessibilityTreeHandler(windowContext)
     }
 
     func click(target: ClickTarget, clickType: ClickType, snapshotId: String?) async throws {

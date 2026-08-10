@@ -209,7 +209,8 @@ struct SeeCommand: ApplicationResolvable, ErrorHandlingCommand, RuntimeBackedCom
                     try await commandCopy.prepareResult(
                         startTime: commandStartedAt,
                         logger: logger,
-                        snapshotID: snapshotID
+                        snapshotID: snapshotID,
+                        observationTimeoutSeconds: preparationTimeout
                     )
                 }
                 observationCompleted = true
@@ -432,14 +433,18 @@ struct SeeCommand: ApplicationResolvable, ErrorHandlingCommand, RuntimeBackedCom
     private func prepareResult(
         startTime: Date,
         logger: Logger,
-        snapshotID: String
+        snapshotID: String,
+        observationTimeoutSeconds: TimeInterval
     ) async throws -> SeeCommandRenderContext {
         // ScreenCaptureService performs the authoritative permission check inside each capture path.
         // Avoid duplicating that TCC probe here; `see` is often called in latency-sensitive loops.
 
         // Perform capture and element detection
         logger.verbose("Starting capture and detection phase", category: "Capture")
-        let captureResult = try await performCaptureWithDetection(snapshotID: snapshotID)
+        let captureResult = try await performCaptureWithDetection(
+            snapshotID: snapshotID,
+            observationTimeoutSeconds: observationTimeoutSeconds
+        )
         try Task.checkCancellation()
         logger.verbose("Capture completed successfully", category: "Capture", metadata: [
             "snapshotId": captureResult.snapshotId,

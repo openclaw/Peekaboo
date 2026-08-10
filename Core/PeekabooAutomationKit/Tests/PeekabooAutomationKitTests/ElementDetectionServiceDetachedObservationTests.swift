@@ -9,7 +9,7 @@ import Testing
 @MainActor
 struct ElementDetectionServiceDetachedObservationTests {
     @Test
-    func `cooperative AX deadline returns partial evidence before the hard escape timer`() async throws {
+    func `worker cooperative deadline returns structured evidence before the hard escape timer`() async throws {
         let request = RunnerState().makeRequest(timeoutSeconds: 1)
         let result = try await ElementDetectionTimeoutRunner.runDetached(
             targetProcessIdentifier: request.processIdentifier,
@@ -23,6 +23,22 @@ struct ElementDetectionServiceDetachedObservationTests {
 
         #expect(result.truncationInfo?.deadlineReached == true)
         #expect(result.truncationInfo?.incompleteAccessibilityRead == false)
+    }
+
+    @Test
+    func `cooperative AX deadline returns partial evidence before the hard escape timer`() async throws {
+        let request = RunnerState().makeRequest(timeoutSeconds: 1)
+        let result = try await ElementDetectionTimeoutRunner.runDetached(
+            targetProcessIdentifier: request.processIdentifier,
+            targetProcessStartIdentity: request.expectedProcessStartIdentity,
+            seconds: request.timing.hardTimeoutSeconds)
+        {
+            Self.partialDeadlineResult(request)
+        }
+
+        #expect(result.truncationInfo?.deadlineReached == true)
+        #expect(result.truncationInfo?.incompleteAccessibilityRead == false)
+        #expect(result.elements.map(\.id) == [Self.partialElement.id])
     }
 
     @Test
@@ -165,6 +181,29 @@ struct ElementDetectionServiceDetachedObservationTests {
             },
             validateIdentity: { _ in })
     }
+
+    private nonisolated static func partialDeadlineResult(
+        _ request: DetachedAXObservationRequest) -> DetachedAXObservationResult
+    {
+        Thread.sleep(forTimeInterval: request.timing.cooperativeDeadlineSeconds + 0.02)
+        return DetachedAXObservationResult(
+            elements: [self.partialElement],
+            windowID: request.windowID,
+            windowTitle: "Injected fixture",
+            windowBounds: request.expectedWindowBounds,
+            isDialog: false,
+            truncationInfo: DetectionTruncationInfo(deadlineReached: true))
+    }
+
+    private nonisolated static let partialElement = DetectedElement(
+        id: "elem_partial",
+        type: .button,
+        label: "Partial",
+        value: nil,
+        bounds: CGRect(x: 30, y: 40, width: 100, height: 30),
+        isEnabled: true,
+        isSelected: nil,
+        attributes: [:])
 
     private nonisolated static func completeResult(
         _ request: DetachedAXObservationRequest) -> DetachedAXObservationResult

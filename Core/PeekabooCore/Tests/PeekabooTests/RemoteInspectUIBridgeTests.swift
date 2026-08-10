@@ -1,12 +1,26 @@
 import Foundation
 import PeekabooAutomationKit
 import PeekabooBridge
-import PeekabooCore
 import PeekabooFoundation
 import Testing
+@testable import PeekabooCore
 
 @Suite(.serialized)
 struct RemoteInspectUIBridgeTests {
+    @Test
+    func `remote inspect timeout follows explicit accessibility budget with completion grace`() {
+        #expect(RemoteUIAutomationService.inspectAccessibilityTreeRequestTimeoutSeconds(
+            accessibilityTimeoutSeconds: nil) == 30)
+        #expect(RemoteUIAutomationService.inspectAccessibilityTreeRequestTimeoutSeconds(
+            accessibilityTimeoutSeconds: 20) == 30)
+        #expect(RemoteUIAutomationService.inspectAccessibilityTreeRequestTimeoutSeconds(
+            accessibilityTimeoutSeconds: 60) == 65)
+        #expect(RemoteUIAutomationService.inspectAccessibilityTreeRequestTimeoutSeconds(
+            accessibilityTimeoutSeconds: .infinity) == 30)
+        #expect(RemoteUIAutomationService.inspectAccessibilityTreeRequestTimeoutSeconds(
+            accessibilityTimeoutSeconds: -1) == 30)
+    }
+
     @Test
     func `remote inspect accessibility tree routes through bridge without screenshot payload`() async throws {
         let socketPath = "/tmp/peekaboo-bridge-client-\(UUID().uuidString).sock"
@@ -53,7 +67,10 @@ struct RemoteInspectUIBridgeTests {
                 RemoteUIAutomationService(client: client, supportsInspectAccessibilityTree: true)
             }
             let result = try await remote.inspectAccessibilityTree(
-                windowContext: WindowContext(applicationName: "Safari", windowTitle: "Main"))
+                windowContext: WindowContext(
+                    applicationName: "Safari",
+                    windowTitle: "Main",
+                    accessibilityTimeoutSeconds: 60))
 
             #expect(result.snapshotId == "s")
             let recorded = await MainActor.run {
@@ -66,6 +83,7 @@ struct RemoteInspectUIBridgeTests {
             #expect(recorded.1 == nil)
             #expect(recorded.2?.applicationName == "Safari")
             #expect(recorded.2?.windowTitle == "Main")
+            #expect(recorded.2?.accessibilityTimeoutSeconds == 60)
             await host.stop()
         } catch {
             await host.stop()

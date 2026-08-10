@@ -238,6 +238,134 @@ struct SeeCommandTests {
 struct SeeCommandRuntimeTests {
     @Test
     @MainActor
+    func `tree only See propagates its remaining timeout to accessibility inspection`() async throws {
+        try await self.withTempConfigEnv { _ in
+            let fixture = Self.makeSeeCommandRuntimeFixture()
+            let automation = StubAutomationService()
+            automation.inspectAccessibilityTreeHandler = { _ in fixture.detectionResult }
+            let (context, _) = Self.makeSeeCommandRuntimeContext(
+                automation: automation,
+                screenCapture: fixture.screenCapture,
+                applicationInfo: fixture.applicationInfo,
+                windowInfo: fixture.windowInfo
+            )
+
+            let result = try await InProcessCommandRunner.run(
+                [
+                    "see",
+                    "--app", fixture.applicationInfo.name,
+                    "--tree",
+                    "--no-screenshot",
+                    "--timeout", "60s",
+                    "--json",
+                ],
+                services: context.services
+            )
+
+            #expect(result.exitStatus == 0)
+            let inspectionContext = try #require(automation.inspectAccessibilityTreeCalls.compactMap(\.self).first)
+            let timeout = try #require(inspectionContext.accessibilityTimeoutSeconds)
+            #expect(timeout > 50)
+            #expect(timeout < 60)
+        }
+    }
+
+    @Test
+    @MainActor
+    func `tree only See fails instead of publishing an empty deadline result`() async throws {
+        try await self.withTempConfigEnv { _ in
+            let fixture = Self.makeSeeCommandRuntimeFixture()
+            let automation = StubAutomationService()
+            automation.inspectAccessibilityTreeHandler = { context in
+                let timeout = try #require(context?.accessibilityTimeoutSeconds)
+                #expect(timeout > 4)
+                #expect(timeout <= 5)
+                return ElementDetectionResult(
+                    snapshotId: "system-settings-empty-deadline",
+                    screenshotPath: "",
+                    elements: DetectedElements(),
+                    metadata: DetectionMetadata(
+                        detectionTime: 0.288,
+                        elementCount: 0,
+                        method: "AXorcist",
+                        truncationInfo: DetectionTruncationInfo(deadlineReached: true)
+                    )
+                )
+            }
+            let (context, _) = Self.makeSeeCommandRuntimeContext(
+                automation: automation,
+                screenCapture: fixture.screenCapture,
+                applicationInfo: fixture.applicationInfo,
+                windowInfo: fixture.windowInfo
+            )
+
+            let result = try await InProcessCommandRunner.run(
+                [
+                    "see",
+                    "--app", fixture.applicationInfo.name,
+                    "--tree",
+                    "--no-screenshot",
+                    "--timeout", "5s",
+                    "--json",
+                ],
+                services: context.services
+            )
+
+            #expect(result.exitStatus == 1)
+            #expect(result.combinedOutput.contains("Element detection timed out after 5s"))
+            #expect(!result.combinedOutput.contains("\"snapshot_id\""))
+            #expect(try await context.snapshots.listSnapshots().isEmpty)
+        }
+    }
+
+    @Test
+    @MainActor
+    func `tree only See preserves useful partial evidence at its deadline`() async throws {
+        try await self.withTempConfigEnv { _ in
+            let fixture = Self.makeSeeCommandRuntimeFixture()
+            let automation = StubAutomationService()
+            let partialElement = try #require(fixture.detectionResult.elements.all.first)
+            automation.inspectAccessibilityTreeHandler = { _ in
+                ElementDetectionResult(
+                    snapshotId: "partial-deadline",
+                    screenshotPath: "",
+                    elements: DetectedElements(buttons: [partialElement]),
+                    metadata: DetectionMetadata(
+                        detectionTime: 4.75,
+                        elementCount: 1,
+                        method: "AXorcist",
+                        truncationInfo: DetectionTruncationInfo(deadlineReached: true)
+                    )
+                )
+            }
+            let (context, _) = Self.makeSeeCommandRuntimeContext(
+                automation: automation,
+                screenCapture: fixture.screenCapture,
+                applicationInfo: fixture.applicationInfo,
+                windowInfo: fixture.windowInfo
+            )
+
+            let result = try await InProcessCommandRunner.run(
+                [
+                    "see",
+                    "--app", fixture.applicationInfo.name,
+                    "--tree",
+                    "--no-screenshot",
+                    "--timeout", "5s",
+                    "--json",
+                ],
+                services: context.services
+            )
+
+            #expect(result.exitStatus == 0)
+            #expect(result.combinedOutput.contains(partialElement.id))
+            #expect(result.combinedOutput.contains("\"deadline_reached\" : true") ||
+                result.combinedOutput.contains("\"deadline_reached\":true"))
+        }
+    }
+
+    @Test
+    @MainActor
     func `Remote See publishes a host-certified observation without a caller barrier`() async throws {
         try await self.withTempConfigEnv { tempDir in
             let fixture = Self.makeSeeCommandRuntimeFixture()

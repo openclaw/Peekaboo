@@ -145,6 +145,72 @@ struct InspectUIToolExecutionTests {
     }
 
     @Test
+    func `Inspect UI rejects an empty truncated AX result`() async throws {
+        let detectionResult = ElementDetectionResult(
+            snapshotId: "snapshot-inspect-empty-deadline",
+            screenshotPath: "",
+            elements: DetectedElements(),
+            metadata: DetectionMetadata(
+                detectionTime: 0.288,
+                elementCount: 0,
+                method: "AXorcist",
+                truncationInfo: DetectionTruncationInfo(deadlineReached: true)))
+        let automation = await MainActor.run {
+            InspectUITestAutomationService(
+                accessibilityGranted: true,
+                detectionResult: detectionResult)
+        }
+        let snapshots = await MainActor.run { InMemorySnapshotManager() }
+        let context = await Self.makeContext(automation: automation, snapshots: snapshots)
+
+        let response = try await InspectUITool(context: context).execute(arguments: ToolArguments(raw: [:]))
+
+        #expect(response.isError)
+        guard case let .text(text: output, annotations: _, _meta: _) = response.content.first else {
+            Issue.record("Expected text response for inspect_ui error")
+            return
+        }
+        #expect(output.contains("Failed to inspect UI"))
+        #expect(output.contains("time deadline"))
+        #expect(try await snapshots.listSnapshots().isEmpty)
+    }
+
+    @Test
+    func `Inspect UI preserves useful partial AX evidence at its deadline`() async throws {
+        let base = Self.emptyDetectionResult(id: "partial-deadline")
+        let element = DetectedElement(
+            id: "B1",
+            type: .button,
+            label: "Partial",
+            bounds: CGRect(x: 10, y: 10, width: 80, height: 32))
+        let detectionResult = ElementDetectionResult(
+            snapshotId: base.snapshotId,
+            screenshotPath: "",
+            elements: DetectedElements(buttons: [element]),
+            metadata: DetectionMetadata(
+                detectionTime: 1,
+                elementCount: 1,
+                method: "AXorcist",
+                truncationInfo: DetectionTruncationInfo(deadlineReached: true)))
+        let automation = await MainActor.run {
+            InspectUITestAutomationService(
+                accessibilityGranted: true,
+                detectionResult: detectionResult)
+        }
+        let context = await Self.makeContext(automation: automation)
+
+        let response = try await InspectUITool(context: context).execute(arguments: ToolArguments(raw: [:]))
+
+        #expect(response.isError == false)
+        guard case let .text(text: output, annotations: _, _meta: _) = response.content.first else {
+            Issue.record("Expected text response for inspect_ui output")
+            return
+        }
+        #expect(output.contains("B1"))
+        #expect(output.contains("time deadline"))
+    }
+
+    @Test
     func `Inspect UI tool annotates cached AX results`() async throws {
         let detectionResult = ElementDetectionResult(
             snapshotId: "snapshot-inspect-cached",
