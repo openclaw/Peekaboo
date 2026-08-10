@@ -163,6 +163,17 @@ extension DetectionTruncationInfo {
     }
 
     public func remediationMessage(budget: AXTraversalBudget?) -> String {
+        self.remediationMessage(budget: budget, style: .commandLine)
+    }
+
+    public func automationToolRemediationMessage(budget: AXTraversalBudget?) -> String {
+        self.remediationMessage(budget: budget, style: .automationTool)
+    }
+
+    private func remediationMessage(
+        budget: AXTraversalBudget?,
+        style: DetectionRemediationStyle) -> String
+    {
         let budget = budget ?? AXTraversalBudget()
         var limits: [String] = []
         if self.maxDepthReached {
@@ -183,27 +194,62 @@ extension DetectionTruncationInfo {
 
         let limitSummary = limits.isEmpty ? "the AX traversal budget" : limits.joined(separator: ", ")
         if self.incompleteAccessibilityRead {
-            return "Warning: AX tree incomplete at \(limitSummary). Retry once; if this persists, the target may " +
-                "not expose a readable Accessibility tree. Use a narrower window target or screenshot/OCR; " +
-                "increase the timeout only when the app is slow to respond."
+            return switch style {
+            case .commandLine:
+                "Warning: AX tree incomplete at \(limitSummary). Retry once; if this persists, the target may " +
+                    "not expose a readable Accessibility tree. Use a narrower window target or screenshot/OCR; " +
+                    "increase the timeout only when the app is slow to respond."
+            case .automationTool:
+                "Warning: AX tree incomplete at \(limitSummary). Retry once with an exact app_target and " +
+                    "window_id. If this persists, the target may not expose a readable Accessibility tree; " +
+                    "use screenshot/OCR evidence instead."
+            }
         }
         if self.deadlineReached {
-            let structuralLimits: [String] = ([
-                self.maxDepthReached ? "--depth" : nil,
-                self.maxElementCountReached ? "--max-elements" : nil,
-                self.maxChildrenPerNodeReached ? "--max-children" : nil,
-            ] as [String?]).compactMap(\.self)
+            let structuralLimits = self.structuralLimitControls(style: style)
             let structuralGuidance = structuralLimits.isEmpty
                 ? ""
                 : " The result also reached \(structuralLimits.joined(separator: ", ")); " +
                 "use larger AX traversal limits only for those reported caps."
-            return "Warning: AX tree truncated at \(limitSummary). Retry with a longer caller timeout or a " +
-                "narrower target.\(structuralGuidance)"
+            let retryGuidance = switch style {
+            case .commandLine:
+                "Retry with a longer caller timeout or a narrower target."
+            case .automationTool:
+                "Retry with an exact app_target and window_id; this tool does not expose a timeout argument."
+            }
+            return "Warning: AX tree truncated at \(limitSummary). \(retryGuidance)\(structuralGuidance)"
         }
-        return "Warning: AX tree truncated at \(limitSummary). Retry with larger --depth, --max-elements, " +
-            "or --max-children values, or set \(AXTraversalBudget.maxDepthEnvironmentKey), " +
-            "\(AXTraversalBudget.maxElementCountEnvironmentKey), or " +
-            "\(AXTraversalBudget.maxChildrenPerNodeEnvironmentKey)."
+
+        switch style {
+        case .commandLine:
+            return "Warning: AX tree truncated at \(limitSummary). Retry with larger --depth, --max-elements, " +
+                "or --max-children values, or set \(AXTraversalBudget.maxDepthEnvironmentKey), " +
+                "\(AXTraversalBudget.maxElementCountEnvironmentKey), or " +
+                "\(AXTraversalBudget.maxChildrenPerNodeEnvironmentKey)."
+        case .automationTool:
+            let controls = self.structuralLimitControls(style: style)
+            let guidance = controls.isEmpty
+                ? "max_depth, max_elements, or max_children"
+                : controls.joined(separator: ", ")
+            return "Warning: AX tree truncated at \(limitSummary). Retry with larger \(guidance) tool arguments."
+        }
+    }
+
+    private func structuralLimitControls(style: DetectionRemediationStyle) -> [String] {
+        switch style {
+        case .commandLine:
+            ([
+                self.maxDepthReached ? "--depth" : nil,
+                self.maxElementCountReached ? "--max-elements" : nil,
+                self.maxChildrenPerNodeReached ? "--max-children" : nil,
+            ] as [String?]).compactMap(\.self)
+        case .automationTool:
+            ([
+                self.maxDepthReached ? "max_depth" : nil,
+                self.maxElementCountReached ? "max_elements" : nil,
+                self.maxChildrenPerNodeReached ? "max_children" : nil,
+            ] as [String?]).compactMap(\.self)
+        }
     }
 
     static func merge(
@@ -219,6 +265,11 @@ extension DetectionTruncationInfo {
             incompleteAccessibilityRead: lhs?.incompleteAccessibilityRead == true ||
                 rhs?.incompleteAccessibilityRead == true)
     }
+}
+
+private enum DetectionRemediationStyle {
+    case commandLine
+    case automationTool
 }
 
 public struct DesktopDetectionOptions: Sendable, Codable, Equatable {

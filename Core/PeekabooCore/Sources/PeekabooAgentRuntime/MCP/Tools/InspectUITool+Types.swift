@@ -99,7 +99,8 @@ struct InspectUISummaryBuilder {
         guard let truncationInfo = self.result.metadata.truncationInfo, truncationInfo.isTruncated else {
             return []
         }
-        return [truncationInfo.remediationMessage(budget: self.result.metadata.windowContext?.traversalBudget)]
+        return [truncationInfo.automationToolRemediationMessage(
+            budget: self.result.metadata.windowContext?.traversalBudget)]
     }
 
     private func roleHeader(role: String, elements: [DetectedElement]) -> String {

@@ -171,7 +171,7 @@ struct SeeSummaryBuilder {
 
     private func truncationWarningLines() -> [String] {
         guard let truncationInfo, truncationInfo.isTruncated else { return [] }
-        return ["", truncationInfo.remediationMessage(budget: self.traversalBudget)]
+        return ["", truncationInfo.automationToolRemediationMessage(budget: self.traversalBudget)]
     }
 
     private func describeElement(_ element: UIElement) -> String {

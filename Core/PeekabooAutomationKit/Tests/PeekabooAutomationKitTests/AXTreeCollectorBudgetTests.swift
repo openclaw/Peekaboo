@@ -93,6 +93,31 @@ final class AXTreeCollectorBudgetTests: XCTestCase {
         XCTAssertTrue(info.isTruncated)
     }
 
+    func testAutomationToolDeadlineRemediationNamesOnlyAvailableControls() {
+        let info = DetectionTruncationInfo(maxDepthReached: true, deadlineReached: true)
+
+        let message = info.automationToolRemediationMessage(budget: AXTraversalBudget(maxDepth: 4))
+
+        XCTAssertTrue(message.contains("app_target"))
+        XCTAssertTrue(message.contains("window_id"))
+        XCTAssertTrue(message.contains("max_depth"))
+        XCTAssertTrue(message.contains("does not expose a timeout argument"))
+        XCTAssertFalse(message.contains("--depth"))
+        XCTAssertFalse(message.contains("longer caller timeout"))
+        XCTAssertFalse(message.contains(AXTraversalBudget.maxDepthEnvironmentKey))
+    }
+
+    func testAutomationToolIncompleteRemediationDoesNotInventTimeoutControl() {
+        let info = DetectionTruncationInfo(incompleteAccessibilityRead: true)
+
+        let message = info.automationToolRemediationMessage(budget: nil)
+
+        XCTAssertTrue(message.contains("app_target"))
+        XCTAssertTrue(message.contains("window_id"))
+        XCTAssertFalse(message.contains("increase the timeout"))
+        XCTAssertFalse(message.contains("--"))
+    }
+
     func testMaxDepthOneStopsAtRoot() throws {
         guard let window = self.frontmostWindowElement() else {
             throw XCTSkip("No frontmost window available for AX testing")
