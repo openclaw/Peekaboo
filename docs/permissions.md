@@ -9,7 +9,7 @@ read_when:
 
 ## 3.9.6 signing migration
 
-Peekaboo 3.9.6 completes the move from Peter Steinberger's Developer ID team to `Developer ID Application: OpenClaw Foundation (FWJYW4S8P8)` for every shipped macOS executable. Bundle identifiers and the Sparkle update key are unchanged, but macOS still treats the newly signed CLI as a different TCC client. After updating, re-grant Screen Recording, Accessibility, and any Automation permissions your workflows use.
+Peekaboo 3.9.6 completes the move from Peter Steinberger's Developer ID team to `Developer ID Application: OpenClaw Foundation (FWJYW4S8P8)` for every shipped macOS executable. Bundle identifiers and the Sparkle update key are unchanged, but macOS still treats the newly signed CLI as a different TCC client. After updating, re-grant Screen Recording and Accessibility; grant Event Synthesizing only when background keyboard delivery is needed. Peekaboo does not require Apple Events Automation permission.
 
 Peekaboo.app reopens its permission checklist once when required grants are missing. You can also open Peekaboo.app → Settings → Permissions, choose Permissions… from the menu bar item (its status line links straight to the checklist while grants are missing), or run:
 

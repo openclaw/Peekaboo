@@ -309,6 +309,14 @@ verify_app_payload() {
   file "$executable_path" | grep -q 'Mach-O' ||
     fail "Main executable is not a Mach-O binary: $executable_path"
 
+  if /usr/libexec/PlistBuddy -c 'Print :NSAppleEventsUsageDescription' \
+    "$app_path/Contents/Info.plist" >/dev/null 2>&1; then
+    fail "App unexpectedly embeds NSAppleEventsUsageDescription: $app_path"
+  fi
+  if nm -u "$executable_path" | grep -F 'NSAppleScript' >/dev/null; then
+    fail "App main executable imports NSAppleScript: $executable_path"
+  fi
+
   local sparkle_binary="$app_path/Contents/Frameworks/Sparkle.framework/Sparkle"
   if [[ -e "$sparkle_binary" ]]; then
     [[ -x "$sparkle_binary" ]] || fail "Sparkle framework binary is not executable: $sparkle_binary"
@@ -327,8 +335,9 @@ verify_app_entitlements() {
   local entitlements
 
   entitlements="$(codesign -d --entitlements :- "$app_path" 2>/dev/null || true)"
-  printf '%s\n' "$entitlements" | grep -q 'com.apple.security.automation.apple-events' ||
-    fail "Signed app is missing AppleEvents entitlement: $app_path"
+  if printf '%s\n' "$entitlements" | grep 'com.apple.security.automation.apple-events' >/dev/null; then
+    fail "Signed app unexpectedly retains the AppleEvents entitlement: $app_path"
+  fi
 }
 
 verify_developer_id_signature() {

@@ -48,8 +48,6 @@
 			</dict>
 		</dict>
 	</dict>
-	<key>NSAppleEventsUsageDescription</key>
-	<string>Peekaboo needs to control applications to automate your Mac and execute commands.</string>
 	<key>NSScreenCaptureUsageDescription</key>
 	<string>Peekaboo needs screen recording permission to capture screenshots and analyze your screen content.</string>
 	<key>SUEnableAutomaticChecks</key>

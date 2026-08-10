@@ -72,11 +72,13 @@ struct PeekabooDaemonTests {
 
     @Test
     func `daemon status only advertises operations decodable by every supported client`() async throws {
+        var requestedOperations = PeekabooBridgeOperation.remoteDefaultAllowlist
+        requestedOperations.insert(._appleScriptProbe)
         let daemon = PeekabooDaemon(configuration: .init(
             mode: .manual,
             bridgeSocketPath: "/tmp/peekaboo-test.sock",
             allowlistedTeams: [],
-            allowedOperations: PeekabooBridgeOperation.remoteDefaultAllowlist,
+            allowedOperations: requestedOperations,
             windowTrackingEnabled: false,
             hostKind: .onDemand))
 
@@ -87,10 +89,12 @@ struct PeekabooDaemonTests {
         #expect(!operations.contains(.requestPostEventPermission))
         #expect(!operations.contains(.launchApplicationWithOptions))
         #expect(!operations.contains(.invalidateImplicitLatestSnapshot))
+        #expect(!operations.contains(._appleScriptProbe))
         #expect(bridge.availableOperationNames?.contains(PeekabooBridgeOperation.launchApplicationWithOptions.rawValue)
             == true)
         #expect(bridge.availableOperationNames?.contains(
             PeekabooBridgeOperation.invalidateImplicitLatestSnapshot.rawValue) == true)
+        #expect(bridge.availableOperationNames?.contains(PeekabooBridgeOperation._appleScriptProbe.rawValue) == false)
 
         let data = try JSONEncoder.peekabooBridgeEncoder().encode(bridge)
         let legacy = try JSONDecoder.peekabooBridgeDecoder().decode(LegacyBridgeStatus.self, from: data)

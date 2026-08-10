@@ -9,13 +9,20 @@ struct PeekabooBridgeAppleScriptCompatibilityTests {
     }
 
     @Test
-    func `Current handshake omits legacy AppleScript capability and permission`() async throws {
+    func `Current handshake disables legacy AppleScript capability and permission`() async throws {
         let server = await MainActor.run {
             PeekabooBridgeServer(
                 services: PeekabooServices(),
                 allowlistedTeams: [],
                 allowlistedBundles: [],
-                allowedOperations: [.permissionsStatus, ._appleScriptProbe])
+                allowedOperations: [.permissionsStatus, ._appleScriptProbe],
+                permissionStatusEvaluator: { _ in
+                    PermissionsStatus(
+                        screenRecording: true,
+                        accessibility: true,
+                        appleScript: true,
+                        postEvent: true)
+                })
         }
         let identity = PeekabooBridgeClientIdentity(
             bundleIdentifier: "dev.peekaboo.tests",
@@ -37,6 +44,17 @@ struct PeekabooBridgeAppleScriptCompatibilityTests {
         #expect(!handshake.supportedOperations.contains(._appleScriptProbe))
         #expect(handshake.enabledOperations?.contains(._appleScriptProbe) != true)
         #expect(handshake.permissions?.appleScript == false)
+        #expect(handshake.permissionTags[PeekabooBridgeOperation._appleScriptProbe.rawValue] == nil)
+        #expect(!handshake.permissionTags.values.flatMap(\.self).contains(.appleScript))
+
+        let permissionsResponse = try await self.decode(server.decodeAndHandle(
+            JSONEncoder.peekabooBridgeEncoder().encode(PeekabooBridgeRequest.permissionsStatus),
+            peer: nil))
+        guard case let .permissionsStatus(permissions) = permissionsResponse else {
+            Issue.record("Expected permissions response, got \(permissionsResponse)")
+            return
+        }
+        #expect(permissions.appleScript == false)
     }
 
     @Test
@@ -48,7 +66,7 @@ struct PeekabooBridgeAppleScriptCompatibilityTests {
                 allowlistedBundles: [],
                 allowedOperations: [._appleScriptProbe])
         }
-        let requestData = try JSONEncoder.peekabooBridgeEncoder().encode(PeekabooBridgeRequest.appleScriptProbe)
+        let requestData = Data(#"{"appleScriptProbe":{}}"#.utf8)
         let response = try await self.decode(server.decodeAndHandle(requestData, peer: nil))
 
         guard case let .error(envelope) = response else {

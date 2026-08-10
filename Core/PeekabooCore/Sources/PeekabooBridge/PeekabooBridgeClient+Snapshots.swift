@@ -109,7 +109,10 @@ extension PeekabooBridgeClient {
         }
     }
 
+    @available(*, deprecated, message: "AppleScript probing is no longer supported")
     public func appleScriptProbe() async throws {
-        try await self.sendExpectOK(.appleScriptProbe)
+        throw PeekabooBridgeErrorEnvelope(
+            code: .operationNotSupported,
+            message: "AppleScript probing is no longer supported; current operations use native macOS APIs")
     }
 }

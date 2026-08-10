@@ -77,7 +77,7 @@ public final class PeekabooBridgeServer {
         self.allowlistedTeams = allowlistedTeams
         self.allowlistedBundles = allowlistedBundles
         self.supportedVersions = supportedVersions
-        self.allowedOperations = allowedOperations
+        self.allowedOperations = allowedOperations.subtracting([._appleScriptProbe])
         self.daemonControl = daemonControl
         self.desktopMutationWatermarkStore = desktopMutationWatermarkStore
         self.desktopOperationLaneCoordinator = desktopOperationLaneCoordinator

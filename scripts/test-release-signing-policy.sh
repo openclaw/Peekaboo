@@ -39,6 +39,11 @@ rg -Fq -- '--check-notarization -R=notarized' "$ROOT_DIR/scripts/release-binarie
 rg -Fq -- '--check-notarization -R=notarized' "$ROOT_DIR/scripts/release-macos-app.sh"
 rg -Fq -- '--check-notarization -R=notarized' "$ROOT_DIR/scripts/create-release-dmg.sh"
 rg -Fq 'com.apple.security.get-task-allow' "$ROOT_DIR/scripts/release-binaries.sh"
+rg -Fq 'com.apple.security.automation.apple-events' "$ROOT_DIR/scripts/release-binaries.sh"
+rg -Fq 'embeds NSAppleEventsUsageDescription' "$ROOT_DIR/scripts/release-binaries.sh"
+rg -Fq 'imports NSAppleScript' "$ROOT_DIR/scripts/release-binaries.sh"
+rg -Fq 'embeds NSAppleEventsUsageDescription' "$ROOT_DIR/scripts/release-macos-app.sh"
+rg -Fq 'imports NSAppleScript' "$ROOT_DIR/scripts/release-macos-app.sh"
 rg -Fq 'verify-swift-runtime-libraries.sh' "$ROOT_DIR/scripts/release-binaries.sh"
 rg -Fq 'libswiftCompatibility*.dylib' "$ROOT_DIR/package.json"
 rg -Fq 'libswiftCompatibility*.dylib' "$ROOT_DIR/homebrew/peekaboo.rb"
@@ -54,6 +59,31 @@ for release_build in \
   fi
 done
 rg -Fq -- '--entitlements "$ENTITLEMENTS_PATH"' "$ROOT_DIR/scripts/build-swift-debug.sh"
+rg -Fq 'unexpectedly retains the AppleEvents entitlement' "$ROOT_DIR/scripts/release-macos-app.sh"
+
+while IFS= read -r native_only_surface; do
+  if rg -n 'NSAppleEventsUsageDescription|com\.apple\.security\.automation\.apple-events' \
+    "$ROOT_DIR/$native_only_surface"; then
+    printf 'Apple Events permission metadata remains in native-only surface: %s\n' "$native_only_surface" >&2
+    exit 1
+  fi
+done < <(git -C "$ROOT_DIR" ls-files '*.plist' '*.entitlements' '*.pbxproj')
+
+if rg -n 'NSAppleScript' \
+  "$ROOT_DIR/Apps" \
+  "$ROOT_DIR/Core" \
+  "$ROOT_DIR/AXorcist/Sources" \
+  --glob '*.swift'; then
+  printf 'Production Swift source still compiles NSAppleScript\n' >&2
+  exit 1
+fi
+
+for obsolete_binary in Apps/peekaboo; do
+  if git -C "$ROOT_DIR" ls-files --error-unmatch "$obsolete_binary" >/dev/null 2>&1; then
+    printf 'Stale built binary remains tracked: %s\n' "$obsolete_binary" >&2
+    exit 1
+  fi
+done
 
 for project in \
   "$ROOT_DIR/Apps/Mac/Peekaboo.xcodeproj/project.pbxproj" \

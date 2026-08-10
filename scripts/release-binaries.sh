@@ -51,10 +51,27 @@ import plistlib
 import sys
 
 raw = sys.stdin.buffer.read().strip()
-if raw and plistlib.loads(raw).get("com.apple.security.get-task-allow") is True:
-    raise SystemExit(1)
+entitlements = plistlib.loads(raw) if raw else {}
+for forbidden in (
+    "com.apple.security.get-task-allow",
+    "com.apple.security.automation.apple-events",
+):
+    if entitlements.get(forbidden) is True:
+        raise SystemExit(1)
 '; then
-        fail "$label requests com.apple.security.get-task-allow; release binaries must not use debug entitlements"
+        fail "$label requests forbidden debug or Apple Events entitlements"
+    fi
+}
+
+verify_release_binary_apple_events_policy() {
+    local binary_path="$1"
+    local label="$2"
+
+    if strings "$binary_path" | grep -F 'NSAppleEventsUsageDescription' >/dev/null; then
+        fail "$label embeds NSAppleEventsUsageDescription"
+    fi
+    if nm -u "$binary_path" | grep -F 'NSAppleScript' >/dev/null; then
+        fail "$label imports NSAppleScript"
     fi
 }
 
@@ -74,6 +91,7 @@ verify_binary_artifact() {
     codesign --verify --strict --verbose=2 "$binary_path"
     codesign --verify --strict -R="$CLI_SIGN_REQUIREMENT" "$binary_path"
     verify_release_binary_entitlements "$binary_path" "$label"
+    verify_release_binary_apple_events_policy "$binary_path" "$label"
     MAC_RELEASE_CODESIGN_IDENTITY="$CLI_SIGN_IDENTITY" \
         MAC_RELEASE_CODESIGN_TEAM_ID="$CLI_SIGN_TEAM_ID" \
         "$PROJECT_ROOT/scripts/verify-swift-runtime-libraries.sh" "$binary_path" "$(dirname "$binary_path")"

@@ -16,8 +16,6 @@
 	<true/>
 	<key>NSAccessibilityUsageDescription</key>
 	<string>Peekaboo needs accessibility permission to interact with user interface elements.</string>
-	<key>NSAppleEventsUsageDescription</key>
-	<string>Peekaboo needs to send Apple events to control applications and automate tasks.</string>
 	<key>NSHumanReadableCopyright</key>
 	<string>Copyright © 2025 Peter Steinberger. All rights reserved.</string>
 	<key>NSScreenCaptureUsageDescription</key>

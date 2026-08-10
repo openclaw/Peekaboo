@@ -46,7 +46,7 @@ Shows:
 - running state + PID
 - bridge socket + host kind
 - activity state (active requests, last activity, idle timeout/deadline)
-- permissions (screen recording / accessibility / automation)
+- permissions (screen recording / accessibility / event synthesizing)
 - snapshot cache summary
 - window tracker stats (tracked windows, last event, polling)
 - browser MCP state (connected, tool count, detected Chrome count)

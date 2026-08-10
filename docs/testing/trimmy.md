@@ -49,8 +49,8 @@ Goal: Validate Trimmy’s clipboard flattening with direct `peekaboo clipboard` 
 8) Paste Trimmed vs Original  
    - Frontmost TextEdit: `open -a TextEdit`.  
    - Seed multi-line command.  
-   - Menubar click → “Paste Trimmed to TextEdit”; verify via `osascript -e 'tell app "TextEdit" to get text of document 1'`.  
-   - Menubar click → “Paste Original …”; verify untrimmed text and clipboard restored (`peekaboo clipboard get` matches original).
+   - Menubar click → “Paste Trimmed to TextEdit”; verify with `peekaboo see --app TextEdit --tree --no-screenshot --json` and inspect the native AX text value.
+   - Menubar click → “Paste Original …”; verify the untrimmed AX text value the same way and confirm the clipboard was restored (`peekaboo clipboard get` matches the original).
 
 9) Clipboard slots  
    - `peekaboo clipboard save --slot original`

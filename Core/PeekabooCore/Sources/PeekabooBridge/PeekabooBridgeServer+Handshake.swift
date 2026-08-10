@@ -184,9 +184,6 @@ extension PeekabooBridgeServer {
         if permissions.accessibility {
             granted.insert(.accessibility)
         }
-        if permissions.appleScript {
-            granted.insert(.appleScript)
-        }
         if permissions.postEvent {
             granted.insert(.postEvent)
         }
@@ -195,8 +192,12 @@ extension PeekabooBridgeServer {
     }
 
     func currentPermissions() -> PermissionsStatus {
-        self.permissionStatusEvaluator(false)
-            .withPostEvent(self.postEventAccessEvaluator())
+        let permissions = self.permissionStatusEvaluator(false)
+        return PermissionsStatus(
+            screenRecording: permissions.screenRecording,
+            accessibility: permissions.accessibility,
+            appleScript: false,
+            postEvent: self.postEventAccessEvaluator())
     }
 
     static func bridgePermission(for error: PeekabooError) -> PeekabooBridgePermissionKind? {

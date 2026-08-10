@@ -37,7 +37,7 @@ public final class PeekabooDaemon: PeekabooConditionalDaemonControlProviding {
             self.bridgeHostingEnabled = bridgeHostingEnabled
             self.allowlistedTeams = allowlistedTeams
             self.allowlistedBundles = allowlistedBundles
-            self.allowedOperations = allowedOperations
+            self.allowedOperations = allowedOperations.subtracting([._appleScriptProbe])
             self.windowTrackingEnabled = windowTrackingEnabled
             self.windowPollInterval = windowPollInterval
             self.hostKind = hostKind

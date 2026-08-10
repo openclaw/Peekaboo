@@ -78,7 +78,7 @@ Older daemons may still occupy Peekaboo.app's `bridge.sock`. Current daemon cont
 - PID, start time, lifecycle mode, and socket path
 - Bridge protocol version, host kind, and advertised operations
 - active requests, last activity, idle timeout, and idle deadline
-- Screen Recording, Accessibility, and Automation permissions
+- Screen Recording, Accessibility, and Event Synthesizing permissions
 - snapshot count and last access
 - tracked windows, AX observers, and poll interval
 - browser MCP connection, tool count, and detected browsers
