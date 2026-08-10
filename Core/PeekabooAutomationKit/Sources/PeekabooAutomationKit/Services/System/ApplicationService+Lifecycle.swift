@@ -109,20 +109,25 @@ extension ApplicationService {
             : self.backgroundActivationLeaseFactory(backgroundActivationGraceDuration)
 
         do {
-            let runningApp: NSRunningApplication
-            if let applicationURL = launch.applicationURL {
-                if launch.disablesRunningApplicationSubstitution {
-                    config.allowsRunningApplicationSubstitution = false
-                }
-                self.logger.debug("Launching app from URL: \(applicationURL.path)")
+            // LaunchServices may continue opening an application after its caller is cancelled. Keep
+            // ownership of that native operation until it returns a PID so the activation guard and
+            // global desktop lane cannot be abandoned while the app may still activate later.
+            let openTask = Task { @MainActor in
+                if let applicationURL = launch.applicationURL {
+                    if launch.disablesRunningApplicationSubstitution {
+                        config.allowsRunningApplicationSubstitution = false
+                    }
+                    self.logger.debug("Launching app from URL: \(applicationURL.path)")
 
-                runningApp = try await self.applicationOpenHandler(applicationURL, launch.openURLs, config)
-            } else {
+                    return try await self.applicationOpenHandler(applicationURL, launch.openURLs, config)
+                }
                 let targetURL = launch.openURLs[0]
-                runningApp = try await self.defaultApplicationOpenHandler(targetURL, config)
+                return try await self.defaultApplicationOpenHandler(targetURL, config)
             }
+            let runningApp = try await openTask.value
             let launchProcessIdentity = try self.captureLaunchProcessIdentity(runningApp)
             activationLease?.setTargetProcessIdentifier(runningApp.processIdentifier)
+            try Task.checkCancellation()
 
             if launch.activates, !runningApp.isActive, !runningApp.activate(options: []) {
                 self.logger

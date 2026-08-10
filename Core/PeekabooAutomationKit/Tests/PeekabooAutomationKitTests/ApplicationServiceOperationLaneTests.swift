@@ -117,6 +117,73 @@ struct ApplicationServiceOperationLaneTests {
         try await contender.value
         #expect(await contenderStarted.isOpen)
     }
+
+    @Test
+    @MainActor
+    func `Cancelled in-flight open retains lane until target receipt and heartbeat`() async throws {
+        let runningApplication = try #require(NSWorkspace.shared.runningApplications.first {
+            $0.processIdentifier > 0 && !$0.isTerminated && $0.isFinishedLaunching
+        })
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekaboo-open-lane-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let coordinator = DesktopOperationLaneCoordinator(coordinationRootURL: root)
+        let openStarted = ApplicationOperationLatch()
+        let openRelease = ApplicationOperationLatch()
+        let heartbeatStarted = ApplicationOperationLatch()
+        let heartbeatRelease = ApplicationOperationLatch()
+        let contenderStarted = ApplicationOperationLatch()
+        let generation = SystemIdentityResolver.processStartIdentity(runningApplication.processIdentifier) ?? 70
+        let activationNow = ContinuousClock.now
+        var openObservedCancellation = false
+        let service = ApplicationService(
+            operationLaneCoordinator: coordinator,
+            applicationOpenHandler: { _, _, _ in
+                await openStarted.open()
+                await openRelease.wait()
+                openObservedCancellation = Task.isCancelled
+                return runningApplication
+            },
+            processStartIdentityProvider: { _ in generation },
+            backgroundLaunchActivationGraceDuration: .milliseconds(250),
+            backgroundActivationLeaseFactory: { duration in
+                BackgroundLaunchActivationLease(
+                    observeActivations: false,
+                    activationGraceDuration: duration,
+                    nowProvider: { activationNow },
+                    sleepHandler: { _ in
+                        await heartbeatStarted.open()
+                        await heartbeatRelease.wait()
+                    },
+                    frontmostProcessIdentifierProvider: { nil },
+                    restorationHandler: { _ in })
+            })
+
+        let launch = Task { @MainActor in
+            try await service.launchApplication(request: ApplicationLaunchRequest(
+                applicationIdentifier: "Finder",
+                activates: false))
+        }
+        await openStarted.wait()
+        launch.cancel()
+        let contender = Task {
+            try await coordinator.run(scope: .global, access: .write) {
+                await contenderStarted.open()
+            }
+        }
+
+        #expect(await !(contenderStarted.opensWithin(.milliseconds(100))))
+        await openRelease.open()
+        await heartbeatStarted.wait()
+        #expect(!openObservedCancellation)
+        #expect(await !contenderStarted.isOpen)
+        await heartbeatRelease.open()
+        await #expect(throws: CancellationError.self) {
+            try await launch.value
+        }
+        try await contender.value
+        #expect(await contenderStarted.isOpen)
+    }
 }
 
 private actor ApplicationOperationLatch {
