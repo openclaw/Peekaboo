@@ -425,8 +425,8 @@
 - **Artifacts**: `.artifacts/playground-tools/20251116-141824-menubar-list.json`
 - **Commands**:
   1. `polter peekaboo -- menubar list --json-output`
-  2. `polter peekaboo -- menubar click "Wi-Fi"`
-  3. `polter peekaboo -- menubar click --index 2`
+  2. `polter peekaboo -- menubar click "Wi-Fi" --foreground`
+  3. `polter peekaboo -- menubar click --index 2 --foreground`
 - **Notes**: CLI output confirms the clicked items (Wi-Fi by title, Control Center by index). Still no dedicated menubar logger—`playground-log.sh -c Menu` remains empty for these operations, so rely on CLI artifacts for evidence.
 
 

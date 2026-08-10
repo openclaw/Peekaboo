@@ -24,8 +24,25 @@ extension ConfirmedActionOutputFormattable { var defaultEffect: ActionEffect? {
 } }
 
 nonisolated protocol ResultEnvelopeError: Error, Sendable {
+    var envelopeCode: ErrorCode? { get }
     var envelopeEffect: ActionEffect? { get }
     var envelopeHint: String? { get }
+    var envelopeRetrySafe: Bool? { get }
+    var envelopeMutationDispatched: Bool? { get }
+}
+
+extension ResultEnvelopeError {
+    nonisolated var envelopeCode: ErrorCode? {
+        nil
+    }
+
+    nonisolated var envelopeRetrySafe: Bool? {
+        nil
+    }
+
+    nonisolated var envelopeMutationDispatched: Bool? {
+        nil
+    }
 }
 
 struct ActionRefusalError: LocalizedError, ResultEnvelopeError {
@@ -42,6 +59,36 @@ struct ActionRefusalError: LocalizedError, ResultEnvelopeError {
 
     nonisolated var envelopeHint: String? {
         self.hint
+    }
+}
+
+struct PreDispatchActionError: LocalizedError, ResultEnvelopeError {
+    let message: String
+    let code: ErrorCode
+    let hint: String?
+
+    nonisolated var errorDescription: String? {
+        self.message
+    }
+
+    nonisolated var envelopeCode: ErrorCode? {
+        self.code
+    }
+
+    nonisolated var envelopeEffect: ActionEffect? {
+        .refused
+    }
+
+    nonisolated var envelopeHint: String? {
+        self.hint
+    }
+
+    nonisolated var envelopeRetrySafe: Bool? {
+        true
+    }
+
+    nonisolated var envelopeMutationDispatched: Bool? {
+        false
     }
 }
 
@@ -128,7 +175,7 @@ func splitErrorHint(from text: String) -> (message: String, hint: String?) {
     return (text, nil)
 }
 
-enum ErrorCode: String, Codable {
+nonisolated enum ErrorCode: String, Codable, Sendable {
     case PERMISSION_ERROR_SCREEN_RECORDING, PERMISSION_ERROR_ACCESSIBILITY
     case PERMISSION_ERROR_EVENT_SYNTHESIZING, PERMISSION_ERROR_APPLESCRIPT, PERMISSION_DENIED
     case APP_NOT_FOUND, AMBIGUOUS_APP_IDENTIFIER, WINDOW_NOT_FOUND, CAPTURE_FAILED, FILE_IO_ERROR

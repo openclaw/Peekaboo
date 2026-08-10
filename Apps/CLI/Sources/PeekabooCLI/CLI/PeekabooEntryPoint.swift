@@ -77,20 +77,31 @@ private func printCommanderError(_ error: CommanderProgramError, jsonOutput: Boo
 }
 
 private func printGenericError(_ error: any Error, jsonOutput: Bool) {
-    let code: ErrorCode = if error is CommanderBindingError || error is CommanderUsageError {
+    let envelopeError = error as? any ResultEnvelopeError
+    let fallbackCode: ErrorCode = if error is CommanderBindingError || error is CommanderUsageError {
         .INVALID_ARGUMENT
     } else if error is Commander.ValidationError {
         .VALIDATION_ERROR
     } else {
         .UNKNOWN_ERROR
     }
+    let code = envelopeError?.envelopeCode ?? fallbackCode
 
     guard jsonOutput else {
-        fputs("Error: \(error.localizedDescription)\n", stderr)
+        let hint = envelopeError?.envelopeHint.map { " Hint: \($0)" } ?? ""
+        fputs("Error: \(error.localizedDescription)\(hint)\n", stderr)
         return
     }
 
     let logger = Logger.shared
     logger.setJsonOutputMode(true)
-    outputError(message: error.localizedDescription, code: code, logger: logger)
+    outputError(
+        message: error.localizedDescription,
+        code: code,
+        hint: envelopeError?.envelopeHint,
+        effect: envelopeError?.envelopeEffect,
+        retrySafe: envelopeError?.envelopeRetrySafe,
+        mutationDispatched: envelopeError?.envelopeMutationDispatched,
+        logger: logger
+    )
 }

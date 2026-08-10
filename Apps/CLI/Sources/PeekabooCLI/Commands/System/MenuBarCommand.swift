@@ -4,6 +4,23 @@ import Foundation
 import PeekabooCore
 import PeekabooFoundation
 
+private enum MenuBarClickPreflight {
+    static let foregroundConsentRequired = PreDispatchActionError(
+        message: "Menu bar clicks require --foreground because status items open global UI.",
+        code: .VALIDATION_ERROR,
+        hint: "Re-run with --foreground only when interrupting the user's menu bar is acceptable. " +
+            "Use 'peekaboo menubar list' for read-only discovery."
+    )
+
+    static func itemNotFound(_ item: String, hint: String) -> PreDispatchActionError {
+        PreDispatchActionError(
+            message: "Menu bar item not found: \(item)",
+            code: .MENU_ITEM_NOT_FOUND,
+            hint: hint
+        )
+    }
+}
+
 /// Command for interacting with macOS menu bar items (status items).
 @MainActor
 struct MenuBarActionCommand: ErrorHandlingCommand, OutputFormattable, InjectedRuntimeBackedCommand {
@@ -20,6 +37,9 @@ struct MenuBarActionCommand: ErrorHandlingCommand, OutputFormattable, InjectedRu
 
     @Flag(help: "Verify the click by checking for a matching popover window")
     var verify: Bool = false
+
+    @Flag(help: "Allow opening global menu bar UI (required for click)")
+    var foreground: Bool = false
     @RuntimeStorage var runtime: CommandRuntime?
 
     private var configuration: CommandRuntime.Configuration {
@@ -71,18 +91,28 @@ struct MenuBarActionCommand: ErrorHandlingCommand, OutputFormattable, InjectedRu
         let startTime = Date()
 
         do {
-            let verifyTarget = try await self.resolveVerificationTargetIfNeeded()
+            guard self.foreground else {
+                throw MenuBarClickPreflight.foregroundConsentRequired
+            }
+
+            let resolvedItem = try await self.resolveClickTarget()
+            let verifyTarget = self.verify ? Self.makeVerificationTarget(from: resolvedItem) : nil
             let verifier = MenuBarClickVerifier(services: self.services)
             let focusSnapshot = self.verify ? try await verifier.captureFocusSnapshot() : nil
+            self.resolvedRuntime.beginInteractionMutation()
             let result: PeekabooCore.ClickResult
             if let idx = self.index {
-                self.resolvedRuntime.beginInteractionMutation()
                 result = try await MenuServiceBridge.clickMenuBarItem(at: idx, menu: self.services.menu)
             } else if let name = self.itemName {
-                self.resolvedRuntime.beginInteractionMutation()
+                // Keep name-based dispatch bound to the name. Reusing the preflight index
+                // could click a different global item if status items reorder between calls.
                 result = try await MenuServiceBridge.clickMenuBarItem(named: name, menu: self.services.menu)
             } else {
-                throw PeekabooError.invalidInput("Please provide either a menu bar item name or use --index")
+                throw PreDispatchActionError(
+                    message: "Provide a menu bar item name or use --index.",
+                    code: .VALIDATION_ERROR,
+                    hint: "Run 'peekaboo menubar list' to discover available status items."
+                )
             }
 
             let verification: MenuBarClickVerification?
@@ -122,57 +152,57 @@ struct MenuBarActionCommand: ErrorHandlingCommand, OutputFormattable, InjectedRu
                 }
             }
         } catch {
-            if self.jsonOutput {
-                self.handleError(error)
-                throw ExitCode(1)
-            } else {
-                // Provide helpful hints for common errors
-                if error.localizedDescription.contains("not found") {
-                    print("❌ Error: \(error.localizedDescription)")
-                    print("\n💡 Hints:")
-                    print("  • Menu bar items often require clicking on their icon coordinates")
-                    print("  • Try 'peekaboo see' first to get element IDs")
-                    print("  • Use 'peekaboo menubar list' to see available items")
-                    throw ExitCode(1)
-                } else {
-                    throw error
-                }
-            }
+            self.handleError(error)
+            throw ExitCode(1)
         }
     }
 
-    private func resolveVerificationTargetIfNeeded() async throws -> MenuBarVerifyTarget? {
-        guard self.verify else { return nil }
+    private func resolveClickTarget() async throws -> MenuBarItemInfo {
+        let requestedName: String?
+        if self.index == nil {
+            guard let name = self.itemName?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !name.isEmpty
+            else {
+                throw PreDispatchActionError(
+                    message: "Provide a menu bar item name or use --index.",
+                    code: .VALIDATION_ERROR,
+                    hint: "Run 'peekaboo menubar list' to discover available status items."
+                )
+            }
+            requestedName = name
+        } else {
+            requestedName = nil
+        }
 
         let items = try await MenuServiceBridge.listMenuBarItems(
             menu: self.services.menu,
-            includeRaw: true
+            includeRaw: self.verify
         )
 
         if let idx = self.index {
             guard let item = items.first(where: { $0.index == idx }) else {
-                throw PeekabooError.invalidInput("Menu bar item index \(idx) is out of range")
+                throw MenuBarClickPreflight.itemNotFound(
+                    "index \(idx)",
+                    hint: "Run 'peekaboo menubar list' and retry with a current index."
+                )
             }
-            return MenuBarVerifyTarget(
-                title: item.title ?? item.rawTitle,
-                ownerPID: item.rawOwnerPID,
-                ownerName: item.ownerName,
-                bundleIdentifier: item.bundleIdentifier,
-                preferredX: item.frame?.midX
+            return item
+        }
+
+        let name = requestedName ?? ""
+        guard let item = matchMenuBarItem(named: name, items: items) else {
+            throw MenuBarClickPreflight.itemNotFound(
+                name,
+                hint: "Run 'peekaboo menubar list' and retry with an exact current name or index."
             )
         }
 
-        guard let name = self.itemName?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !name.isEmpty else {
-            throw PeekabooError.invalidInput("Please provide a menu bar item name or use --index")
-        }
+        return item
+    }
 
-        guard let item = matchMenuBarItem(named: name, items: items) else {
-            throw PeekabooError.operationError(message: "Unable to resolve '\(name)' for verification")
-        }
-
-        return MenuBarVerifyTarget(
-            title: item.title ?? item.rawTitle ?? name,
+    private static func makeVerificationTarget(from item: MenuBarItemInfo) -> MenuBarVerifyTarget {
+        MenuBarVerifyTarget(
+            title: item.title ?? item.rawTitle,
             ownerPID: item.rawOwnerPID,
             ownerName: item.ownerName,
             bundleIdentifier: item.bundleIdentifier,
@@ -198,6 +228,7 @@ struct MenuBarCommand: ParsableCommand {
                 discussion: """
                 List status items or click one by fuzzy title match or list index.
                 Application menus such as File and Edit are handled by `peekaboo menu`.
+                Clicking a status item requires explicit `--foreground` consent because it opens global UI.
                 """,
                 subcommands: [ListSubcommand.self, ClickSubcommand.self],
                 showHelpOnEmptyInvocation: true
@@ -239,6 +270,9 @@ struct MenuBarCommand: ParsableCommand {
         @Flag(name: .long, help: "Verify the click by checking for a matching popover window")
         var verify = false
 
+        @Flag(name: .long, help: "Allow opening global menu bar UI (required)")
+        var foreground = false
+
         @RuntimeStorage var runtime: CommandRuntime?
         var runtimeOptions = CommandRuntimeOptions()
 
@@ -247,6 +281,7 @@ struct MenuBarCommand: ParsableCommand {
             command.itemName = self.itemName
             command.index = self.index
             command.verify = self.verify
+            command.foreground = self.foreground
             try await command.run(using: runtime)
         }
     }
@@ -268,6 +303,7 @@ extension MenuBarCommand.ClickSubcommand: CommanderBindableCommand {
         self.itemName = try values.decodeOptionalPositional(0, label: "itemName")
         self.index = try values.decodeOption("index", as: Int.self)
         self.verify = values.flag("verify")
+        self.foreground = values.flag("foreground")
         if self.itemName != nil, self.index != nil {
             throw CommanderBindingError.invalidArgument(
                 label: "item-name or --index",
@@ -277,6 +313,9 @@ extension MenuBarCommand.ClickSubcommand: CommanderBindableCommand {
         }
         guard self.itemName != nil || self.index != nil else {
             throw CommanderBindingError.missingArgument(label: "item-name or --index")
+        }
+        guard self.foreground else {
+            throw MenuBarClickPreflight.foregroundConsentRequired
         }
     }
 }

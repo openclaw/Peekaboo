@@ -31,7 +31,7 @@ bespoke ones. Full rationale: `docs/v4-cli-plan.md`.
 | `peekaboo commander` | removed (internal diagnostics) |
 | `peekaboo agent permission …` | `permissions …` |
 | `peekaboo capture watch …` | `capture live …` |
-| `peekaboo menu click-extra <item>` | `menubar click <item>` |
+| `peekaboo menu click-extra <item>` | `menubar click <item> --foreground` |
 | `peekaboo menu list-all` | `menu list` for application menus plus `menubar list` for status items |
 
 ## Restructured commands
@@ -40,7 +40,7 @@ bespoke ones. Full rationale: `docs/v4-cli-plan.md`.
 |---|---|
 | `clipboard --action <verb>` / `clipboard -a <verb>` / positional actions | `clipboard get\|set\|clear\|save\|restore` |
 | `clipboard load <path>` | `clipboard set --file-path <path>` |
-| `menubar <action> [item]` | `menubar list` / `menubar click <item>` |
+| `menubar <action> [item]` | `menubar list` / `menubar click <item> --foreground` |
 | `config add-provider` | `config provider add` |
 | `config remove-provider` | `config provider remove` |
 | `config list-providers` | `config provider list` |

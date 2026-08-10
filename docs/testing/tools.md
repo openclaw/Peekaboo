@@ -397,8 +397,8 @@ The following subsections spell out the concrete steps, required Playground surf
 - **Target**: macOS status items (Wi-Fi, Battery) or custom extras.
 - **Test cases**:
   1. `peekaboo menubar list --json-output > .artifacts/playground-tools/20251116-141824-menubar-list.json`.
-  2. `peekaboo menubar click "Wi-Fi"` (or `--index 9`) and close Control Center manually afterward.
-  3. `peekaboo menubar click --index 2` to exercise Control Center by index.
+  2. `peekaboo menubar click "Wi-Fi" --foreground` (or `--index 9 --foreground`) and close Control Center manually afterward.
+  3. `peekaboo menubar click --index 2 --foreground` to exercise Control Center by index.
 - **2025-11-16 run**: Commands above succeeded; no dedicated Playground log yet (menu bar actions don’t flow through the app logger). The new list artifact reflects the current order, and the CLI output confirms the clicked items (Wi-Fi and Control Center).
 
 #### `app`

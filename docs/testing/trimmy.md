@@ -22,7 +22,7 @@ Goal: Validate Trimmy’s clipboard flattening with direct `peekaboo clipboard` 
    - Wait ~0.3s; `peekaboo clipboard get` → expect `ls | wc -l`.
 
 2) Auto-Trim OFF path  
-   - `peekaboo menubar click --index <idx>` → `peekaboo click "Auto-Trim"` (toggle off).  
+   - `peekaboo menubar click --index <idx> --foreground` → `peekaboo click "Auto-Trim"` (toggle off).
    - Reseat text as above; wait; `get` should stay multi-line.  
    - Toggle Auto-Trim back on.
 

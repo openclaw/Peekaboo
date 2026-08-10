@@ -16,7 +16,8 @@ extension ErrorHandlingCommand {
     /// Handle errors with appropriate output format
     func handleError(_ error: any Error, customCode: ErrorCode? = nil) {
         if jsonOutput {
-            let errorCode = customCode ?? self.mapErrorToCode(error)
+            let envelopeError = error as? any ResultEnvelopeError
+            let errorCode = customCode ?? envelopeError?.envelopeCode ?? self.mapErrorToCode(error)
             let captureReceipt = self.captureFailureReceipt(for: error)
             let logger: Logger = if let formattable = self as? any OutputFormattable {
                 formattable.outputLogger
@@ -26,16 +27,16 @@ extension ErrorHandlingCommand {
             outputError(
                 message: errorMessage(for: error),
                 code: errorCode,
-                hint: (error as? any ResultEnvelopeError)?.envelopeHint,
+                hint: envelopeError?.envelopeHint,
                 details: errorDetails(for: error),
                 effect: captureReceipt?.mutationDispatched == true
                     ? .partial
-                    : (error as? any ResultEnvelopeError)?.envelopeEffect ??
+                    : envelopeError?.envelopeEffect ??
                     ((self as? any ActionOutputFormattable)?.defaultEffect == nil
                         ? nil
                         : defaultActionErrorEffect(errorCode)),
-                retrySafe: captureReceipt?.retrySafe,
-                mutationDispatched: captureReceipt?.mutationDispatched,
+                retrySafe: captureReceipt?.retrySafe ?? envelopeError?.envelopeRetrySafe,
+                mutationDispatched: captureReceipt?.mutationDispatched ?? envelopeError?.envelopeMutationDispatched,
                 logger: logger
             )
         } else {

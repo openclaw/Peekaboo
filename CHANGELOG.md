@@ -12,7 +12,7 @@
 - Default new agent configurations to GPT-5.6 and Claude Opus 5 while keeping credential-only Anthropic discovery on Opus 4.8 for zero-retention compatibility and preserving explicit model selections.
 
 ### Fixed
-- Require explicit foreground consent before Dock launch/context-menu actions or targetless frontmost application-menu clicks; CLI and MCP refuse before lookup or dispatch by default.
+- Require explicit foreground consent before Dock/menu-bar global UI or targetless frontmost application-menu clicks; keep discovery read-only/background and return typed refusals before lookup or dispatch.
 - Keep background app launch/open ownership through verified focus reconciliation, restoring only the exact prior process generation while treating transient frontmost uncertainty and later user foreground choices conservatively.
 - Stop probing, requesting, advertising, or showing AppleScript Automation permission now that application, Dock, and UI operations use native macOS APIs; remove the stale checked-in CLI binary and AppleScript code from shipped executables while retaining legacy wire/error decoding for older Bridge hosts.
 - Return generation-pinned CG window inventory promptly when AX enrichment stalls; detached per-process enrichment now times out without holding the Bridge request or desktop lane after its caller disconnects.
