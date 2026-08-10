@@ -75,12 +75,6 @@ extension AppToolActions {
     }
 
     func identifier(for app: ServiceApplicationInfo) -> String {
-        if let bundleId = app.bundleIdentifier, !bundleId.isEmpty {
-            return bundleId
-        }
-        if !app.name.isEmpty {
-            return app.name
-        }
-        return "PID:\(app.processIdentifier)"
+        "PID:\(app.processIdentifier)"
     }
 }

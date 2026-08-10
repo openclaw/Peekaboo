@@ -8,6 +8,33 @@ import Testing
 struct AppToolLifecyclePinningTests {
     @Test
     @MainActor
+    func `focus activates the exact process selected before mutation`() async throws {
+        let service = LifecyclePinningApplicationService(applications: [
+            ServiceApplicationInfo(
+                processIdentifier: 4070,
+                processStartIdentity: 70,
+                bundleIdentifier: "com.apple.TextEdit",
+                name: "TextEdit"),
+            ServiceApplicationInfo(
+                processIdentifier: 4071,
+                processStartIdentity: 71,
+                bundleIdentifier: "com.apple.TextEdit",
+                name: "TextEdit"),
+        ])
+        let actions = AppToolActions(
+            service: service,
+            automation: MockAutomationService(accessibilityGranted: true),
+            logger: Logger(subsystem: "boo.peekaboo.tests", category: "AppToolLifecyclePinning"))
+
+        _ = try await actions.perform(
+            action: "focus",
+            request: Self.request(name: "PID:4071"))
+
+        #expect(service.activationCalls == ["PID:4071"])
+    }
+
+    @Test
+    @MainActor
     func `single quit pins the process resolved before mutation`() async throws {
         let service = LifecyclePinningApplicationService(applications: [
             ServiceApplicationInfo(
@@ -112,6 +139,7 @@ private final class LifecyclePinningApplicationService: ApplicationServiceProtoc
     let applications: [ServiceApplicationInfo]
     private var currentProcessGenerations: [Int32: UInt64]
     private(set) var quitCalls: [ApplicationQuitRequest] = []
+    private(set) var activationCalls: [String] = []
     private(set) var terminationCount = 0
 
     init(applications: [ServiceApplicationInfo]) {
@@ -177,8 +205,8 @@ private final class LifecyclePinningApplicationService: ApplicationServiceProtoc
         throw UnexpectedLifecycleCall()
     }
 
-    func activateApplication(identifier _: String) async throws {
-        throw UnexpectedLifecycleCall()
+    func activateApplication(identifier: String) async throws {
+        self.activationCalls.append(identifier)
     }
 
     func hideApplication(identifier _: String) async throws {

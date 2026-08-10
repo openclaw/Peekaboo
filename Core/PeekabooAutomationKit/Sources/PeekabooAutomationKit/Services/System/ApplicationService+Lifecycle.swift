@@ -1,4 +1,5 @@
 import AppKit
+import ApplicationServices
 import AXorcist
 import Foundation
 import os.log
@@ -365,17 +366,124 @@ extension ApplicationService {
                     message: "Failed to activate application: Could not find running application process")
             }
 
-            let activated = runningApp.activate(options: [])
+            try await self.requestVerifiedActivation(runningApp, applicationName: app.name)
+            self.logger.info("Successfully activated and verified frontmost: \(app.name)")
+        }
+    }
 
-            if !activated {
-                self.logger.error("Failed to activate application: \(app.name). Continuing without activation.")
+    private func requestVerifiedActivation(
+        _ application: NSRunningApplication,
+        applicationName: String) async throws
+    {
+        let processIdentifier = application.processIdentifier
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: self.applicationActivationTimeout)
+        var shouldUseAccessibilityFallback = false
+        var nativeRequestAccepted = false
+        var accessibilityRequestAccepted = false
+
+        repeat {
+            try Task.checkCancellation()
+            guard !application.isTerminated else {
+                throw PeekabooError.operationError(
+                    message: "Failed to activate \(applicationName): application terminated during activation")
+            }
+            if self.isVerifiedActive(application, processIdentifier: processIdentifier) {
                 return
             }
 
-            self.logger.info("Successfully activated: \(app.name)")
-            // Wait for activation to complete
-            try await Task.sleep(nanoseconds: 100_000_000) // 0.1 seconds
+            let accepted = self.applicationActivationHandler(application)
+            nativeRequestAccepted = nativeRequestAccepted || accepted
+            if shouldUseAccessibilityFallback || !accepted {
+                accessibilityRequestAccepted = self.applicationAccessibilityActivationHandler(processIdentifier) ||
+                    accessibilityRequestAccepted
+            }
+
+            if self.isVerifiedActive(application, processIdentifier: processIdentifier) {
+                return
+            }
+
+            let now = clock.now
+            guard now < deadline else { break }
+            try await self.applicationActivationSleepHandler(min(.milliseconds(100), now.duration(to: deadline)))
+            shouldUseAccessibilityFallback = true
+        } while true
+
+        let frontmostDescription = NSWorkspace.shared.frontmostApplication.map {
+            "\($0.localizedName ?? "unknown") (PID: \($0.processIdentifier))"
+        } ?? "none"
+        let windowServerState = self.windowServerActivationStateProvider(processIdentifier)
+        let frontmostWindowDescription = windowServerState.frontmostWindowProcessIdentifier
+            .map(String.init) ?? "none"
+        let diagnostic = "Activation verification failed for \(applicationName) " +
+            "(native accepted: \(nativeRequestAccepted), AX accepted: \(accessibilityRequestAccepted), " +
+            "frontmost: \(frontmostDescription), frontmost window PID: \(frontmostWindowDescription))"
+        self.logger.error("\(diagnostic, privacy: .public)")
+        throw PeekabooError.timeout(
+            "Application did not become active and frontmost: \(applicationName). " +
+                "Frontmost application: \(frontmostDescription). " +
+                "Frontmost window PID: \(frontmostWindowDescription)")
+    }
+
+    private func isVerifiedActive(
+        _ application: NSRunningApplication,
+        processIdentifier: pid_t) -> Bool
+    {
+        let windowServerState = self.windowServerActivationStateProvider(processIdentifier)
+        return Self.isVerifiedApplicationActivation(
+            processIdentifier: processIdentifier,
+            isActive: self.applicationActiveProvider(application),
+            frontmostProcessIdentifier: self.frontmostProcessIdentifierProvider(),
+            targetHasVisibleWindow: windowServerState.targetHasVisibleWindow,
+            frontmostWindowProcessIdentifier: windowServerState.frontmostWindowProcessIdentifier)
+    }
+
+    static func isVerifiedApplicationActivation(
+        processIdentifier: pid_t,
+        isActive: Bool,
+        frontmostProcessIdentifier: pid_t?,
+        targetHasVisibleWindow: Bool,
+        frontmostWindowProcessIdentifier: pid_t?) -> Bool
+    {
+        guard isActive, frontmostProcessIdentifier == processIdentifier else {
+            return false
         }
+        return !targetHasVisibleWindow || frontmostWindowProcessIdentifier == processIdentifier
+    }
+
+    static func windowServerActivationState(processIdentifier: pid_t) -> WindowServerActivationState {
+        let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
+        let windows = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] ?? []
+        var frontmostWindowProcessIdentifier: pid_t?
+        var targetHasVisibleWindow = false
+
+        for window in windows {
+            guard let ownerProcessIdentifier =
+                (window[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value,
+                (window[kCGWindowLayer as String] as? NSNumber)?.intValue == 0,
+                ((window[kCGWindowAlpha as String] as? NSNumber)?.doubleValue ?? 1) > 0
+            else {
+                continue
+            }
+            if frontmostWindowProcessIdentifier == nil {
+                frontmostWindowProcessIdentifier = ownerProcessIdentifier
+            }
+            if ownerProcessIdentifier == processIdentifier {
+                targetHasVisibleWindow = true
+            }
+        }
+
+        return WindowServerActivationState(
+            targetHasVisibleWindow: targetHasVisibleWindow,
+            frontmostWindowProcessIdentifier: frontmostWindowProcessIdentifier)
+    }
+
+    static func requestAccessibilityActivation(processIdentifier: pid_t) -> Bool {
+        let applicationElement = AXUIElementCreateApplication(processIdentifier)
+        return AXUIElementSetAttributeValue(
+            applicationElement,
+            kAXFrontmostAttribute as CFString,
+            kCFBooleanTrue) == .success
     }
 
     public func quitApplication(identifier: String, force: Bool = false) async throws -> Bool {

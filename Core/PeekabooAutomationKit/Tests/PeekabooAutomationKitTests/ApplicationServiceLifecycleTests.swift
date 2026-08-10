@@ -7,6 +7,109 @@ import Testing
 struct ApplicationServiceLifecycleTests {
     @Test
     @MainActor
+    func `application activation retries until exact PID owns Workspace and frontmost window`() async throws {
+        let runningApplication = try #require(NSWorkspace.shared.runningApplications.first {
+            $0.activationPolicy == .regular && !$0.isTerminated
+        })
+        let targetProcessIdentifier = runningApplication.processIdentifier
+        var nativeActivationCount = 0
+        var accessibilityActivationCount = 0
+        var sleepCount = 0
+        var isActive = false
+        var frontmostProcessIdentifier: pid_t?
+        var windowServerState = ApplicationService.WindowServerActivationState(
+            targetHasVisibleWindow: true,
+            frontmostWindowProcessIdentifier: nil)
+        let service = ApplicationService(
+            applicationOpenHandler: { _, _, _ in runningApplication },
+            applicationActivationHandler: { _ in
+                nativeActivationCount += 1
+                return true
+            },
+            applicationAccessibilityActivationHandler: { processIdentifier in
+                accessibilityActivationCount += 1
+                #expect(processIdentifier == targetProcessIdentifier)
+                isActive = true
+                frontmostProcessIdentifier = processIdentifier
+                windowServerState = ApplicationService.WindowServerActivationState(
+                    targetHasVisibleWindow: true,
+                    frontmostWindowProcessIdentifier: processIdentifier)
+                return true
+            },
+            applicationActiveProvider: { _ in isActive },
+            frontmostProcessIdentifierProvider: { frontmostProcessIdentifier },
+            windowServerActivationStateProvider: { _ in windowServerState },
+            applicationActivationSleepHandler: { _ in sleepCount += 1 },
+            applicationActivationTimeout: .seconds(1))
+
+        try await service.activateApplication(identifier: "PID:\(targetProcessIdentifier)")
+
+        #expect(nativeActivationCount == 2)
+        #expect(accessibilityActivationCount == 1)
+        #expect(sleepCount == 1)
+    }
+
+    @Test
+    @MainActor
+    func `application activation verification requires exact Workspace and visible window owners`() {
+        #expect(ApplicationService.isVerifiedApplicationActivation(
+            processIdentifier: 42,
+            isActive: true,
+            frontmostProcessIdentifier: 42,
+            targetHasVisibleWindow: true,
+            frontmostWindowProcessIdentifier: 42))
+        #expect(!ApplicationService.isVerifiedApplicationActivation(
+            processIdentifier: 42,
+            isActive: false,
+            frontmostProcessIdentifier: 42,
+            targetHasVisibleWindow: true,
+            frontmostWindowProcessIdentifier: 42))
+        #expect(!ApplicationService.isVerifiedApplicationActivation(
+            processIdentifier: 42,
+            isActive: true,
+            frontmostProcessIdentifier: 43,
+            targetHasVisibleWindow: true,
+            frontmostWindowProcessIdentifier: 42))
+        #expect(!ApplicationService.isVerifiedApplicationActivation(
+            processIdentifier: 42,
+            isActive: true,
+            frontmostProcessIdentifier: 42,
+            targetHasVisibleWindow: true,
+            frontmostWindowProcessIdentifier: 43))
+        #expect(ApplicationService.isVerifiedApplicationActivation(
+            processIdentifier: 42,
+            isActive: true,
+            frontmostProcessIdentifier: 42,
+            targetHasVisibleWindow: false,
+            frontmostWindowProcessIdentifier: 43))
+    }
+
+    @Test
+    @MainActor
+    func `application activation rejects an accepted request that never becomes frontmost`() async throws {
+        let runningApplication = try #require(NSWorkspace.shared.runningApplications.first {
+            $0.activationPolicy == .regular && !$0.isTerminated
+        })
+        let service = ApplicationService(
+            applicationOpenHandler: { _, _, _ in runningApplication },
+            applicationActivationHandler: { _ in true },
+            applicationAccessibilityActivationHandler: { _ in true },
+            applicationActiveProvider: { _ in true },
+            frontmostProcessIdentifierProvider: { runningApplication.processIdentifier + 1 },
+            windowServerActivationStateProvider: { _ in
+                ApplicationService.WindowServerActivationState(
+                    targetHasVisibleWindow: true,
+                    frontmostWindowProcessIdentifier: runningApplication.processIdentifier + 1)
+            },
+            applicationActivationTimeout: .zero)
+
+        await #expect(throws: PeekabooError.self) {
+            try await service.activateApplication(identifier: "PID:\(runningApplication.processIdentifier)")
+        }
+    }
+
+    @Test
+    @MainActor
     func `quit verification waits until the process is actually terminated`() async throws {
         var checks = 0
         let terminated = try await waitForApplicationTermination(

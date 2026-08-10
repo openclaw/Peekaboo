@@ -49,6 +49,11 @@ public final class ApplicationService: ApplicationServiceProtocol {
     public let supportsApplicationRelaunch = true
     public let supportsProcessGenerationPinnedApplicationQuit = true
 
+    struct WindowServerActivationState: Equatable, Sendable {
+        let targetHasVisibleWindow: Bool
+        let frontmostWindowProcessIdentifier: pid_t?
+    }
+
     typealias ApplicationOpenHandler = @MainActor (
         _ applicationURL: URL,
         _ openURLs: [URL],
@@ -60,6 +65,13 @@ public final class ApplicationService: ApplicationServiceProtocol {
     typealias RelaunchQuitHandler = @MainActor (_ request: ApplicationQuitRequest) async throws -> Bool
     typealias RelaunchRunningHandler = @MainActor (_ identifier: String) async throws -> Bool
     typealias ApplicationReadinessHandler = @MainActor (_ application: NSRunningApplication) -> Bool
+    typealias ApplicationActivationHandler = @MainActor (_ application: NSRunningApplication) -> Bool
+    typealias ApplicationAccessibilityActivationHandler = @MainActor (_ processIdentifier: pid_t) -> Bool
+    typealias ApplicationActiveProvider = @MainActor (_ application: NSRunningApplication) -> Bool
+    typealias FrontmostProcessIdentifierProvider = @MainActor () -> pid_t?
+    typealias WindowServerActivationStateProvider = @MainActor (_ processIdentifier: pid_t)
+        -> WindowServerActivationState
+    typealias ApplicationActivationSleepHandler = @MainActor (_ duration: Duration) async throws -> Void
     typealias ProcessStartIdentityProvider = @MainActor (_ processIdentifier: pid_t) -> UInt64?
     typealias ApplicationQuitHandler = @MainActor (_ application: NSRunningApplication, _ force: Bool) -> Bool
 
@@ -73,9 +85,16 @@ public final class ApplicationService: ApplicationServiceProtocol {
     let relaunchQuitHandler: RelaunchQuitHandler?
     let relaunchRunningHandler: RelaunchRunningHandler?
     let applicationReadinessHandler: ApplicationReadinessHandler
+    let applicationActivationHandler: ApplicationActivationHandler
+    let applicationAccessibilityActivationHandler: ApplicationAccessibilityActivationHandler
+    let applicationActiveProvider: ApplicationActiveProvider
+    let frontmostProcessIdentifierProvider: FrontmostProcessIdentifierProvider
+    let windowServerActivationStateProvider: WindowServerActivationStateProvider
+    let applicationActivationSleepHandler: ApplicationActivationSleepHandler
     let processStartIdentityProvider: ProcessStartIdentityProvider
     let applicationQuitHandler: ApplicationQuitHandler
     let applicationReadinessTimeout: TimeInterval
+    let applicationActivationTimeout: Duration
     let backgroundLaunchActivationGraceDuration: Duration
     let backgroundOpenActivationGraceDuration: Duration
     let operationLaneCoordinator: DesktopOperationLaneCoordinator
@@ -118,12 +137,27 @@ public final class ApplicationService: ApplicationServiceProtocol {
         relaunchQuitHandler: RelaunchQuitHandler? = nil,
         relaunchRunningHandler: RelaunchRunningHandler? = nil,
         applicationReadinessHandler: @escaping ApplicationReadinessHandler = ApplicationService.isReadyForAutomation,
+        applicationActivationHandler: @escaping ApplicationActivationHandler = { application in
+            application.activate(options: [.activateAllWindows])
+        },
+        applicationAccessibilityActivationHandler: @escaping ApplicationAccessibilityActivationHandler =
+            ApplicationService.requestAccessibilityActivation,
+        applicationActiveProvider: @escaping ApplicationActiveProvider = { $0.isActive },
+        frontmostProcessIdentifierProvider: @escaping FrontmostProcessIdentifierProvider = {
+            NSWorkspace.shared.frontmostApplication?.processIdentifier
+        },
+        windowServerActivationStateProvider: @escaping WindowServerActivationStateProvider =
+            ApplicationService.windowServerActivationState,
+        applicationActivationSleepHandler: @escaping ApplicationActivationSleepHandler = { duration in
+            try await Task.sleep(for: duration)
+        },
         processStartIdentityProvider: @escaping ProcessStartIdentityProvider = SystemIdentityResolver
             .processStartIdentity,
         applicationQuitHandler: @escaping ApplicationQuitHandler = { application, force in
             force ? application.forceTerminate() : application.terminate()
         },
         applicationReadinessTimeout: TimeInterval = 10,
+        applicationActivationTimeout: Duration = .seconds(2),
         backgroundLaunchActivationGraceDuration: Duration = .milliseconds(500),
         backgroundOpenActivationGraceDuration: Duration = .seconds(2))
     {
@@ -138,9 +172,16 @@ public final class ApplicationService: ApplicationServiceProtocol {
         self.relaunchQuitHandler = relaunchQuitHandler
         self.relaunchRunningHandler = relaunchRunningHandler
         self.applicationReadinessHandler = applicationReadinessHandler
+        self.applicationActivationHandler = applicationActivationHandler
+        self.applicationAccessibilityActivationHandler = applicationAccessibilityActivationHandler
+        self.applicationActiveProvider = applicationActiveProvider
+        self.frontmostProcessIdentifierProvider = frontmostProcessIdentifierProvider
+        self.windowServerActivationStateProvider = windowServerActivationStateProvider
+        self.applicationActivationSleepHandler = applicationActivationSleepHandler
         self.processStartIdentityProvider = processStartIdentityProvider
         self.applicationQuitHandler = applicationQuitHandler
         self.applicationReadinessTimeout = applicationReadinessTimeout
+        self.applicationActivationTimeout = applicationActivationTimeout
         self.backgroundLaunchActivationGraceDuration = backgroundLaunchActivationGraceDuration
         self.backgroundOpenActivationGraceDuration = backgroundOpenActivationGraceDuration
 

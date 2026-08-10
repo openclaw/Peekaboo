@@ -28,7 +28,13 @@ read_when:
 - Quit mode supports `--all` plus `--except`, automatically ignoring core system processes (`Finder`, `Dock`, `SystemUIServer`, `WindowServer`). Controlled cleanup can pair `--pid` with `--expected-process-start-identity`; Peekaboo atomically rejects a recycled PID instead of terminating its replacement. When quits fail, the command prints hints about unsaved changes and suggests `--force`.
 - Hide/unhide uses `NSRunningApplication.hide()` / `.unhide()` and surfaces JSON output with per-app success data.
 - `switch --cycle` synthesizes Cmd+Tab events using `CGEvent` so it behaves like the real keyboard shortcut; `switch --to` activates the exact PID resolved via AX.
-- `switch --verify` confirms the requested app is frontmost after activation (not supported with `--cycle`).
+- App activation is successful only after the exact resolved PID reports active and Workspace-frontmost. When the
+  target owns visible ordinary windows, the frontmost WindowServer window must also belong to that PID. Peekaboo
+  first uses native application activation, then falls back to the application's AX frontmost attribute when macOS
+  accepts the request without completing it. Multi-window apps activate all of their windows; use `window focus`
+  when one specific window must become key.
+- `switch --verify` performs an additional command-level confirmation after the shared verified activation path (not
+  supported with `--cycle`).
 - Supplying both the positional app and its named flag is accepted only when the values match; conflicting values fail before dispatch.
 - `relaunch` sends the initially selected PID/process-generation receipt, quit, termination polling (up to 5 s), the requested delay, and launch as one daemon-held transaction, so even a short daemon idle timeout cannot strand the app closed. The host rejects PID reuse before quit. It refuses to relaunch its own daemon, launches via bundle ID or bundle path, stays backgrounded unless `--foreground` is set, can wait for `isFinishedLaunching`, and returns the new process generation for race-free follow-up cleanup.
 - `app list` filters hidden/background apps unless `--include-hidden` or `--include-background` is passed and emits its established `data.apps` payload.
