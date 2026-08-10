@@ -12,7 +12,7 @@ struct MenuBarActionCommand: ErrorHandlingCommand, OutputFormattable, InjectedRu
     @Argument(help: "Name of the menu bar item to click (for click action)")
     var itemName: String?
 
-    @Option(help: "0-based index shown by 'peekaboo menubar list' or 'peekaboo list menubar'")
+    @Option(help: "0-based index shown by 'peekaboo menubar list'")
     var index: Int?
 
     @Flag(help: "Include raw debug fields (window owner/layer) in JSON output")

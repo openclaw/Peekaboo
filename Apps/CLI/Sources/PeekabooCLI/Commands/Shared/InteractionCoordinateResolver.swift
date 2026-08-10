@@ -12,6 +12,7 @@ enum InteractionCoordinateResolver {
         services: any PeekabooServiceProviding,
         forceGlobal: Bool = false
     ) async throws -> InteractionCoordinateResolution {
+        try target.validate()
         guard target.hasAnyTarget else {
             return InteractionCoordinateResolution(
                 inputPoint: inputPoint,

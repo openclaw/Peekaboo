@@ -381,7 +381,7 @@ if "$PROBE_BIN" find-app --bundle-id "$PLAYGROUND_BUNDLE_ID" >/dev/null 2>&1; th
         > "$ARTIFACT_ROOT/playground-quit-existing.json" || true
 fi
 
-pb app launch "$PLAYGROUND_APP" --wait-until-ready --json \
+pb app launch "$PLAYGROUND_APP" --wait-ready --json \
     > "$ARTIFACT_ROOT/playground-launch.json"
 if ! read_launch_process_receipt "$ARTIFACT_ROOT/playground-launch.json" || \
    ! refresh_playground_process_receipt \
@@ -394,7 +394,7 @@ if ! kill -0 "$PLAYGROUND_PID" 2>/dev/null; then
     exit 1
 fi
 
-pb app launch --bundle-id "$SENTINEL_BUNDLE_ID" --wait-until-ready --foreground --json \
+pb app launch --bundle-id "$SENTINEL_BUNDLE_ID" --wait-ready --foreground --json \
     > "$ARTIFACT_ROOT/sentinel-launch.json"
 sleep 0.2
 "$PROBE_BIN" sample --output "$ARTIFACT_ROOT/sentinel.json"
@@ -612,7 +612,6 @@ LIFECYCLE_PROCESS_START_IDENTITY=""
 run_checked_case lifecycle-launch-maximize-close unchanged success \
     app launch TextEdit --new-instance --wait-for-window || true
 if read_lifecycle_launch_receipt lifecycle-launch-maximize-close "$LAST_RESULT"; then
-    MAXIMIZE_TEXTEDIT_PID="$LIFECYCLE_PID"
     MAXIMIZE_TEXTEDIT_WINDOW_ID="$LIFECYCLE_WINDOW_ID"
     run_checked_case lifecycle-maximize unchanged success \
         window maximize --window-id "$MAXIMIZE_TEXTEDIT_WINDOW_ID" || true
@@ -644,11 +643,11 @@ open_fixture() {
     local key="$1"
     local title="$2"
     local slug="$3"
-    run_checked_case "hotkey-open-$slug" unchanged success \
-        hotkey "cmd,ctrl,$key" --pid "$PLAYGROUND_PID" || true
-    assert_background_delivery "hotkey-open-$slug" "$LAST_RESULT" || true
+    run_checked_case "press-open-$slug" unchanged success \
+        press "cmd+ctrl+$key" --pid "$PLAYGROUND_PID" || true
+    assert_background_delivery "press-open-$slug" "$LAST_RESULT" || true
     run_checked_case "list-window-$slug" unchanged success \
-        list windows --pid "$PLAYGROUND_PID" --include-details bounds,ids || true
+        window list --pid "$PLAYGROUND_PID" || true
     OPENED_WINDOW_ID="$(window_id_from_result "$LAST_RESULT" "$title")"
     if [[ -z "$OPENED_WINDOW_ID" ]]; then
         record_failure "$slug fixture did not open in the background"
@@ -677,16 +676,17 @@ if [[ -z "$TEXT_SNAPSHOT" || -z "$BASIC_FIELD_ID" || -z "$FOCUS_BUTTON_ID" ]]; t
 fi
 
 run_checked_case inspect-text unchanged success \
-    inspect-ui --app "PID:$PLAYGROUND_PID" --max-elements 300 || true
+    see --tree --no-screenshot --pid "$PLAYGROUND_PID" --window-id "$TEXT_WINDOW_ID" \
+    --max-elements 300 || true
 assert_result_contains inspect-text "$LAST_RESULT" "Basic Text Field" || true
 
-run_checked_case image-text unchanged success \
-    image --pid "$PLAYGROUND_PID" --window-id "$TEXT_WINDOW_ID" \
-    --path "$ARTIFACT_ROOT/text-image.png" || true
+run_checked_case screenshot-text unchanged success \
+    see --no-elements --pid "$PLAYGROUND_PID" --window-id "$TEXT_WINDOW_ID" \
+    --path "$ARTIFACT_ROOT/text-screenshot.png" || true
 
 run_checked_case capture-text unchanged success \
     capture live --pid "$PLAYGROUND_PID" --window-title "Text Fixture" --mode window \
-    --duration 1 --idle-fps 2 --active-fps 2 --path "$ARTIFACT_ROOT/text-capture" || true
+    --duration 1s --idle-fps 2 --active-fps 2 --path "$ARTIFACT_ROOT/text-capture" || true
 
 run_checked_case focus-basic-field unchanged success \
     click --on "$FOCUS_BUTTON_ID" --snapshot "$TEXT_SNAPSHOT" \
@@ -770,17 +770,17 @@ run_checked_case see-click-for-action unchanged success \
 CLICK_SNAPSHOT="$(snapshot_id_from_result "$LAST_RESULT")"
 SINGLE_CLICK_ID="$(element_id_from_result "$LAST_RESULT" single-click-button)"
 
-run_checked_case perform-action unchanged success \
-    perform-action --on "$SINGLE_CLICK_ID" --action AXPress --snapshot "$CLICK_SNAPSHOT" || true
+run_checked_case action unchanged success \
+    action AXPress --on "$SINGLE_CLICK_ID" --snapshot "$CLICK_SNAPSHOT" || true
 run_checked_case see-click-after-action unchanged success \
     see --pid "$PLAYGROUND_PID" --window-id "$CLICK_WINDOW_ID" \
     --path "$ARTIFACT_ROOT/click-after-action.png" || true
-assert_result_contains perform-action-state "$LAST_RESULT" "2 total clicks" || true
+assert_result_contains action-state "$LAST_RESULT" "2 total clicks" || true
 
 CLICK_SNAPSHOT="$(snapshot_id_from_result "$LAST_RESULT")"
 SINGLE_CLICK_ID="$(element_id_from_result "$LAST_RESULT" single-click-button)"
 run_checked_case unsupported-action unchanged failure \
-    perform-action --on "$SINGLE_CLICK_ID" --action AXDefinitelyUnsupported --snapshot "$CLICK_SNAPSHOT" || true
+    action AXDefinitelyUnsupported --on "$SINGLE_CLICK_ID" --snapshot "$CLICK_SNAPSHOT" || true
 
 run_checked_case see-scroll unchanged success \
     see --pid "$PLAYGROUND_PID" --window-id "$SCROLL_WINDOW_ID" \
@@ -791,7 +791,7 @@ if [[ -z "$SCROLL_SNAPSHOT" || -z "$VERTICAL_SCROLL_ID" ]]; then
     record_failure "scroll fixture snapshot was missing the vertical scroll target"
 else
     run_checked_case scroll-action-unsupported unchanged failure \
-        scroll --direction down --amount 1 --delay 0 --on "$VERTICAL_SCROLL_ID" \
+        scroll --direction down --amount 1 --delay 0ms --on "$VERTICAL_SCROLL_ID" \
         --snapshot "$SCROLL_SNAPSHOT" --pid "$PLAYGROUND_PID" --window-id "$SCROLL_WINDOW_ID" || true
     assert_result_contains scroll-action-unsupported "$LAST_RESULT" "Accessibility-only" || true
 fi
@@ -819,7 +819,7 @@ if $RUN_FOREGROUND_PHASE; then
         > "$FOREGROUND_DIR/scroll-down.json"
     pb scroll --direction up --amount 1 --foreground --json \
         > "$FOREGROUND_DIR/scroll-up.json"
-    pb move --coords "$ORIGINAL_CURSOR" --foreground --json \
+    pb move --at "$ORIGINAL_CURSOR" --foreground --json \
         > "$FOREGROUND_DIR/restore-cursor.json"
 
     # Relaunching the controlled fixture resets any visual/scroll state from this explicit phase.

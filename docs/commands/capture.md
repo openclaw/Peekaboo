@@ -85,5 +85,5 @@ peekaboo capture video /path/to/demo.mov --every 500ms --no-diff
 - In SSH, LaunchAgent, Codex, and other background launchd sessions, prefer a Bridge host with Screen Recording.
   Legacy screen/area capture now rejects wallpaper-only or redacted false-success frames instead of writing them as
   valid output. Use `--no-remote --capture-engine cg` only when the caller is in the active Aqua session and has TCC.
-- Confirm your target (app/window/selector) with `peekaboo list`/`peekaboo see` before rerunning.
+- Confirm your process with `peekaboo app list`, its exact window with `peekaboo window list`, and current UI with `peekaboo see` before rerunning.
 - Re-run with `--json` or `--verbose` to surface detailed errors.

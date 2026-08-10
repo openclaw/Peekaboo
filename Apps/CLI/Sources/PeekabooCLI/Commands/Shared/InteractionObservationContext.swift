@@ -456,6 +456,7 @@ enum InteractionObservationRefresher {
 
 extension InteractionTargetOptions {
     func observationTargetRequest() throws -> DesktopObservationTargetRequest {
+        try self.validate()
         if let windowId {
             return .windowID(CGWindowID(windowId))
         }

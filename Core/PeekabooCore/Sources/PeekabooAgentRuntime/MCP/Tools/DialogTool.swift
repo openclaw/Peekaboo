@@ -24,6 +24,7 @@ public struct DialogTool: MCPTool {
 
         Targeting (recommended for determinism):
         - Provide app/pid and optionally window_id/window_title/window_index to resolve the dialog in the background.
+        - app and pid are alternatives. Provide at most one window selector; title/index require app or pid.
         - Set foreground=true only for keyboard/file interaction or an explicit global fallback.
 
         Examples:
@@ -101,7 +102,7 @@ public struct DialogTool: MCPTool {
                 throw DialogToolInputError.foregroundRequired(action)
             }
 
-            let target = MCPInteractionTarget(
+            let target = try MCPInteractionTarget(
                 app: inputs.app,
                 pid: inputs.pid,
                 windowTitle: inputs.windowTitle,

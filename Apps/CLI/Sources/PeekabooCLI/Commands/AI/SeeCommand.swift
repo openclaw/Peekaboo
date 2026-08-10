@@ -299,14 +299,9 @@ struct SeeCommand: ApplicationResolvable, ErrorHandlingCommand, RuntimeBackedCom
         if self.region != nil, self.mode != nil, self.mode != .area {
             throw ValidationError("--region can only be combined with --mode area")
         }
-        if self.app != nil, self.pid != nil {
-            throw ValidationError("Use either --app or --pid, not both")
-        }
+        try self.validateInteractionTargetSelectors()
         let windowSelectorCount = [self.windowTitle != nil, self.windowIndex != nil, self.windowId != nil]
             .count(where: { $0 })
-        if windowSelectorCount > 1 {
-            throw ValidationError("Use only one of --window-title, --window-index, or --window-id")
-        }
         if let appAlias = self.app?.lowercased(), appAlias == "frontmost" || appAlias == "menubar" {
             let allowedModes: Set<PeekabooCore.CaptureMode> = appAlias == "frontmost"
                 ? [.window, .frontmost]
@@ -355,6 +350,16 @@ struct SeeCommand: ApplicationResolvable, ErrorHandlingCommand, RuntimeBackedCom
                 )
             }
         }
+    }
+
+    func validateInteractionTargetSelectors() throws {
+        try InteractionTargetSelectorValidator.validateCLI(
+            hasApplication: self.app != nil,
+            hasProcessIdentifier: self.pid != nil,
+            hasWindowID: self.windowId != nil,
+            hasWindowTitle: self.windowTitle != nil,
+            hasWindowIndex: self.windowIndex != nil
+        )
     }
 
     private func runPixelOnlyCapture() async throws {

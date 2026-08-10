@@ -272,7 +272,7 @@ extension DragCommand: ParsableCommand {
                   peekaboo drag --from "$SOURCE_ID" --to "$TARGET_ID" --foreground
                   peekaboo drag --from "100,200" --to "400,300" --foreground
                   peekaboo drag --from "$SOURCE_ID" --to-app Trash --foreground
-                  peekaboo drag --from "$SOURCE_ID" --to "500,250" --duration 2000 --foreground
+                  peekaboo drag --from "$SOURCE_ID" --to "500,250" --duration 2s --foreground
                   peekaboo drag --from "$SOURCE_ID" --to "$TARGET_ID" --modifiers shift --foreground
                   peekaboo drag --from "100,200" --to "400,300" --button right --foreground
 

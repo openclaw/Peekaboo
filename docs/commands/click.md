@@ -53,31 +53,37 @@ peekaboo click --on "$ELEMENT_ID"
 # Fuzzy search + extra wait for a slow dialog using foreground delivery
 peekaboo click "Allow" --foreground --wait-for 8s --space-switch
 
-# Issue a background right-click in an exact window without moving the cursor
-peekaboo click --window-id 59620 --at 420,180 --right
+# Resolve one exact window and capture a fresh coordinate reference
+peekaboo window list --app Safari --json
+peekaboo see --window-id "$WINDOW_ID" --no-elements --json
+
+# Issue a background right-click in that exact window without moving the cursor
+peekaboo click --window-id "$WINDOW_ID" --snapshot "$SNAPSHOT_ID" --at 420,180 --right
 
 # Trigger a SwiftUI long-press gesture
-peekaboo click --at 640,420 --long-press
+peekaboo click --window-id "$WINDOW_ID" --snapshot "$SNAPSHOT_ID" --at 640,420 --long-press
 
-# Click 20,40 inside a resolved app window
-peekaboo click --app Safari --at 20,40
+# Click 20,40 inside the freshly captured window
+peekaboo click --window-id "$WINDOW_ID" --snapshot "$SNAPSHOT_ID" --at 20,40
 
 # Force global screen coordinates while still focusing a target first
-peekaboo click --window-id 59620 --at 1024,88 --global --foreground
+peekaboo click --window-id "$WINDOW_ID" --snapshot "$SNAPSHOT_ID" --at 1024,88 --global --foreground
 
 # Click captured Safari coordinates without activating Safari
-peekaboo see --app Safari --json
-peekaboo click --at 420,180 --app Safari --global --snapshot "$SNAPSHOT_ID"
+peekaboo see --window-id "$WINDOW_ID" --no-elements --json
+peekaboo click --window-id "$WINDOW_ID" --snapshot "$SNAPSHOT_ID" --at 420,180
 
 # Browser fallback when web content has no actionable accessibility descendants
 peekaboo screen list --json
 peekaboo window list --app "Google Chrome" --json
-peekaboo click --window-id 59620 --at 420,180 --foreground --input-strategy synthOnly
+peekaboo see --window-id "$WINDOW_ID" --no-elements --json
+peekaboo click --window-id "$WINDOW_ID" --snapshot "$SNAPSHOT_ID" --at 420,180 \
+  --foreground --input-strategy synthOnly
 ```
 
 ## Troubleshooting
 - Verify Screen Recording + Accessibility permissions (`peekaboo permissions status`).
-- Confirm your target (app/window/selector) with `peekaboo list`/`peekaboo see` before rerunning.
+- Confirm your process with `peekaboo app list`, its exact window with `peekaboo window list`, and current UI with `peekaboo see` before rerunning.
 - If you see `SNAPSHOT_NOT_FOUND`, regenerate the snapshot with `peekaboo see` (or omit `--snapshot` to use the most recent one). Cleaned/expired snapshots cannot be reused.
 - Re-run with `--json` or `--verbose` to surface detailed errors.
 - Chromium browsers can expose menus plus generic web-area/layout containers while omitting actionable web-content descendants from `see --annotate`. This is a browser accessibility limitation, not proof that the page is empty. Use `screen list` and `window list` to map the intended display/window, then use `--foreground --input-strategy synthOnly` with window-relative coordinates. For already-focused browser automation, targetless `--global` is also valid.

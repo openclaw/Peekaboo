@@ -17,7 +17,7 @@ read_when:
 | `move` | Move the window to new coordinates. | `-x <int>` / `-y <int>` specify the new origin. |
 | `resize` | Adjust width/height while keeping the origin. | `-w <int>` / `--height <int>`. |
 | `set-bounds` | Set both origin and size in one go. | `--x`, `--y`, `--width`, `--height`. |
-| `list` | Lists an app's renderable windows (filtered view of `list windows`). | Same targeting flags; adds `--group-by-space`. |
+| `list` | Lists an app's renderable windows with canonical IDs and indexes for interaction targeting. | `--app` or `--pid`; adds `--group-by-space`. |
 
 ## Implementation notes
 - Every action validates that at least an app, PID, or window ID is supplied; optional `--window-title` and `--window-index` disambiguate when multiple windows exist.
@@ -65,5 +65,5 @@ peekaboo window focus --app Terminal --verify
 
 ## Troubleshooting
 - Verify Screen Recording + Accessibility permissions (`peekaboo permissions status`).
-- Confirm your target (app/window/selector) with `peekaboo list`/`peekaboo see` before rerunning.
+- Confirm your process with `peekaboo app list`, its exact window with `peekaboo window list`, and current UI with `peekaboo see` before rerunning.
 - Re-run with `--json` or `--verbose` to surface detailed errors.

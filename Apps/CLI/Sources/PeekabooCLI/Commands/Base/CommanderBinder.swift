@@ -620,6 +620,7 @@ extension CommanderBindableValues {
         if let index: Int = try decodeOption("windowIndex", as: Int.self) {
             options.windowIndex = index
         }
+        try options.validate()
     }
 
     func makeFocusOptions(includeBackgroundDelivery: Bool = false) throws -> FocusCommandOptions {

@@ -3,6 +3,7 @@ import CoreGraphics
 import Foundation
 import PeekabooAutomationKit
 import PeekabooCore
+import PeekabooFoundation
 
 @available(macOS 14.0, *)
 @MainActor
@@ -23,6 +24,7 @@ extension SeeCommand {
     }
 
     func observationTargetForCaptureWithDetectionIfPossible() throws -> DesktopObservationTargetRequest? {
+        try self.validateInteractionTargetSelectors()
         if self.menubar {
             let hint = self.menuBarAppHint()
             return .menubarPopover(

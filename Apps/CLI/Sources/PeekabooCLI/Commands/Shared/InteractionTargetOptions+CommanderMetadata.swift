@@ -6,27 +6,27 @@ extension InteractionTargetOptions {
             options: [
                 .commandOption(
                     "app",
-                    help: "Target application name, bundle ID, or 'PID:12345'",
+                    help: "Target application name, bundle ID, or 'PID:12345' (alternative to --pid)",
                     long: "app"
                 ),
                 .commandOption(
                     "pid",
-                    help: "Target application by process ID",
+                    help: "Target application by process ID (alternative to --app)",
                     long: "pid"
                 ),
                 .commandOption(
                     "windowId",
-                    help: "Target window by CoreGraphics window id (window_id)",
+                    help: "Target by window id; cannot be combined with another window selector",
                     long: "window-id"
                 ),
                 .commandOption(
                     "windowTitle",
-                    help: "Target window by title (partial match supported)",
+                    help: "Target by title; requires --app/--pid and excludes other window selectors",
                     long: "window-title"
                 ),
                 .commandOption(
                     "windowIndex",
-                    help: "Target window by index (0-based, frontmost is 0)",
+                    help: "Target by index; requires --app/--pid and excludes other window selectors",
                     long: "window-index"
                 ),
             ]

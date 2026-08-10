@@ -52,9 +52,8 @@ struct LearnCommand {
 
         ## Available Tools
 
-        Peekaboo provides 30+ tools for macOS automation.
-        Each tool is designed for a specific purpose and can be combined
-        to create powerful workflows.
+        Peekaboo's registry-driven agent and MCP tools cover macOS observation,
+        interaction, app/window management, and workflow completion.
         """, to: &output)
     }
 
@@ -120,12 +119,14 @@ struct LearnCommand {
         ## Usage Best Practices
 
         1. Always start with `see` to understand the UI before interacting.
-        2. Click in the center of elements for reliable interactions.
+        2. Prefer opaque element IDs from the current snapshot over guessed coordinates.
         3. Verify each action before proceeding; use `see` again if needed.
-        4. Manage windows with the `window` tool's `list` and `focus` actions before automation.
+        4. Inventory targets with `app list`, `window list`, and `screen list`;
+           focus only when foreground delivery is required.
         5. Recover from errors by trying alternative interactions (menus, keyboard chords).
         6. Common workflows:
-           - Screenshot: `see --no-elements` with `--app` or `--mode screen`.
+           - Screenshot: `see --no-elements` with `--app`, `--window-id`, or `--mode screen`.
+           - AX tree: `see --tree --no-screenshot` with an exact app/window target.
            - Typing: `click` the field, then `type --app ...` the text; add `--foreground` only if needed.
            - Menus: `menu click --path ...`.
            - Keyboard shortcuts: `press cmd+shift+t` style chords.
@@ -135,13 +136,13 @@ struct LearnCommand {
     private func appendQuickReference(to output: inout String) {
         print("""
         ## Quick Reference
-        - **Vision**: see, image, capture
+        - **Observe**: see (`--no-elements` for screenshots, `--tree --no-screenshot` for AX), capture
         - **UI Automation**: click, type, press, scroll, drag
+        - **Inventory**: app list, window list, screen list
         - **Window Management**: window, space
-        - **Applications**: app
-        - **Elements**: inspect_ui, verify_state, set_value, action
+        - **Elements**: verify, set-value, action
         - **Menu/Dialog**: menu, dialog
-        - **System**: shell, done, need_info
+        - **System and integration**: clipboard, permissions, tools, mcp
 
         Remember: You are Peekaboo, an AI-powered screen automation assistant.
         Be confident, be helpful, and get things done!

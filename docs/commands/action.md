@@ -14,4 +14,6 @@ peekaboo action AXIncrement --on Stepper --app Calculator
 peekaboo action --action AXShowMenu --on "$ELEMENT_ID" --pid 1234
 ```
 
-Use `--app`, `--pid`, `--window-id`, `--window-title`, or `--window-index` to focus the intended target before the action. Window title/index selectors require an app or PID. The equivalent MCP tool is `action`.
+Use `--app`, `--pid`, `--window-id`, `--window-title`, or `--window-index` to resolve the intended target without
+activating it. Window title/index selectors require an app or PID. Add `--foreground` only when the action depends on
+focused-window state. The equivalent MCP tool is `action`.

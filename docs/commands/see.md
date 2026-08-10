@@ -29,8 +29,8 @@ peekaboo see --app "Google Chrome" --window-title "Login" --json --path /tmp/chr
 
 | Flag | Description |
 | --- | --- |
-| `--app`, `--window-title`, `--pid` | Limit capture to a known app/window/process. |
-| `--window-id <id>` | Observe one exact WindowServer window. Pair it with `--app` or `--pid` to require that owner. It cannot be combined with `--window-title`. |
+| `--app`, `--window-title`, `--pid` | Limit capture to a known app/window/process. Use either `--app` or `--pid`; title requires one of them. |
+| `--window-id <id>` | Observe one exact WindowServer window. Pair it with `--app` or `--pid` to require that owner. Use at most one of `--window-id`, `--window-title`, or `--window-index`. |
 | `--mode screen|window|frontmost|multi|area` | Override the target picker. `multi` captures every screen; `area` uses `--region`. |
 | `--region x,y,width,height` | Capture a rectangular region (`area` mode is inferred). |
 | `--format png|jpg` / `--retina` | Select the image encoding and native display scale. |

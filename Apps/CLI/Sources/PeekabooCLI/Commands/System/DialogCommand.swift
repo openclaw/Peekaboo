@@ -81,7 +81,7 @@ struct DialogCommand: ParsableCommand {
         validate: () throws -> Void = {},
         operation: (ExecutionContext) async throws -> Void
     ) async throws {
-        var target = target
+        let target = target
         let logger = runtime.logger
         let jsonOutput = runtime.configuration.jsonOutput
         logger.setJsonOutputMode(jsonOutput)

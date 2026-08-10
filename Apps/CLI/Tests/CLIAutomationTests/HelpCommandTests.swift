@@ -14,11 +14,16 @@ struct HelpCommandTests {
         #expect(output.contains("Usage"))
         #expect(output.contains("peekaboo <command>"))
         #expect(output.contains("Core Commands"))
-        #expect(output.contains("image"))
+        #expect(output.contains("see"))
         #expect(output.contains("screen"))
+        #expect(output.contains("press"))
+        #expect(output.contains("action"))
         #expect(output.contains("agent"))
         #expect(output.contains("Global Runtime Flags"))
         #expect(output.contains("--json/-j"))
+        #expect(!output.contains("\n  image "))
+        #expect(!output.contains("\n  hotkey "))
+        #expect(!output.contains("\n  perform-action "))
     }
 
     @Test
@@ -33,7 +38,6 @@ struct HelpCommandTests {
     @Test
     func `help subcommand for each tool`() async throws {
         let subcommands = [
-            "image",
             "screen",
             "config",
             "permissions",
@@ -41,6 +45,8 @@ struct HelpCommandTests {
             "click",
             "type",
             "scroll",
+            "press",
+            "action",
             "drag",
             "move",
             "clean",
@@ -100,7 +106,7 @@ struct HelpCommandTests {
     @Test
     func `Subcommand --help flag`() async throws {
         // Test that each subcommand's --help flag works
-        let subcommands = ["image", "screen", "config", "agent", "see", "click"]
+        let subcommands = ["screen", "config", "agent", "see", "click", "press", "action"]
 
         for subcommand in subcommands {
             let output = try await runPeekaboo([subcommand, "--help"]).stdout
@@ -120,6 +126,37 @@ struct HelpCommandTests {
         let maximizeHelp = try await runPeekaboo(["window", "maximize", "--help"]).stdout
         #expect(maximizeHelp.contains("without entering full screen"))
         #expect(!maximizeHelp.contains("Maximize a window (full screen)"))
+    }
+
+    @Test
+    func `V4 inventory and interaction help omit removed CLI forms`() async throws {
+        let helpPaths = [
+            ["app", "list", "--help"],
+            ["window", "list", "--help"],
+            ["screen", "list", "--help"],
+            ["see", "--help"],
+            ["click", "--help"],
+            ["drag", "--help"],
+        ]
+        let removedForms = [
+            "peekaboo image",
+            "peekaboo list apps",
+            "peekaboo list windows",
+            "peekaboo hotkey",
+            "peekaboo inspect-ui",
+            "peekaboo perform-action",
+            "peekaboo swipe",
+            "--coords",
+            "--from-coords",
+            "--to-coords",
+        ]
+
+        for path in helpPaths {
+            let output = try await runPeekaboo(path).stdout
+            for removed in removedForms {
+                #expect(!output.contains(removed), "\(path.joined(separator: " ")) help contains \(removed)")
+            }
+        }
     }
 
     // MARK: - Helper Methods

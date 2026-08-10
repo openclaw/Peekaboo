@@ -57,11 +57,10 @@ extension WindowCommand.WindowListSubcommand: ParsableCommand {
                 commandName: "list",
                 abstract: "List renderable windows for an application",
                 discussion: """
-                Lists windows suitable for interaction targeting. It uses the same window IDs
-                and indexes as `peekaboo list windows`, but filters out non-renderable entries
-                such as non-zero layer, tiny, transparent, or Windows-menu-excluded windows.
-
-                Use `peekaboo list windows --app <app>` when you need the full enumeration.
+                Lists renderable windows suitable for interaction targeting. This is the canonical
+                v4 window inventory command and returns the IDs/indexes used by `--window-id` and
+                `--window-index`. Non-zero layer, tiny, transparent, and Windows-menu-excluded
+                entries are omitted.
                 """
             )
         }

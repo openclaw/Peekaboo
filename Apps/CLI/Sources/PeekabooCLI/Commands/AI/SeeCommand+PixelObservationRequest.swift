@@ -11,7 +11,8 @@ struct ImageWindowObservationTarget {
 
 @MainActor
 extension SeeCommand {
-    var observationWindowSelection: WindowSelection {
+    func observationWindowSelection() throws -> WindowSelection {
+        try self.validateInteractionTargetSelectors()
         if let windowTitle {
             return .title(windowTitle)
         }
@@ -24,7 +25,8 @@ extension SeeCommand {
     func observationApplicationTargetForWindowCapture(
         selection: WindowSelection? = nil
     ) throws -> ImageWindowObservationTarget {
-        let resolvedSelection = selection ?? self.observationWindowSelection
+        try self.validateInteractionTargetSelectors()
+        let resolvedSelection = try selection ?? self.observationWindowSelection()
         if let pid = try self.resolveExplicitPIDObservationTarget() {
             let identifier = "PID:\(pid)"
             return ImageWindowObservationTarget(
@@ -43,9 +45,7 @@ extension SeeCommand {
     }
 
     func observationTargetForExactWindowCapture(_ windowID: Int) throws -> DesktopObservationTargetRequest {
-        guard self.windowTitle == nil, self.windowIndex == nil else {
-            throw ValidationError("--window-id cannot be combined with --window-title or --window-index")
-        }
+        try self.validateInteractionTargetSelectors()
         let selection = WindowSelection.id(CGWindowID(windowID))
         if self.app != nil || self.pid != nil {
             return try self.observationApplicationTargetForWindowCapture(selection: selection).target

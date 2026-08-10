@@ -1,10 +1,14 @@
 import CoreGraphics
 import Foundation
 import PeekabooAutomation
+import PeekabooFoundation
 
-enum MCPInteractionTargetError: LocalizedError {
-    case windowIndexRequiresApp
+enum MCPInteractionTargetError: LocalizedError, Equatable {
+    case applicationAndProcessIdentifier
+    case multipleWindowSelectors
+    case windowSelectorRequiresApp
     case invalidWindowId
+    case invalidWindowIndex
     case invalidProcessIdentifier
     case backgroundTargetRequired
     case backgroundWindowTargetUnsupported
@@ -12,10 +16,16 @@ enum MCPInteractionTargetError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .windowIndexRequiresApp:
-            "window_index requires app (or pid) so the index can be resolved deterministically."
+        case .applicationAndProcessIdentifier:
+            "app and pid are mutually exclusive; provide exactly one process selector."
+        case .multipleWindowSelectors:
+            "window_id, window_title, and window_index are mutually exclusive; provide at most one."
+        case .windowSelectorRequiresApp:
+            "window_title and window_index require app or pid so the window can be resolved deterministically."
         case .invalidWindowId:
-            "window_id must be a positive integer."
+            "window_id must be between 1 and \(UInt32.max)."
+        case .invalidWindowIndex:
+            "window_index must be 0 or greater."
         case .invalidProcessIdentifier:
             "pid must be a positive 32-bit integer."
         case .backgroundTargetRequired:
@@ -38,6 +48,21 @@ struct MCPInteractionTarget {
     let windowIndex: Int?
     let windowId: Int?
 
+    init(
+        app: String?,
+        pid: Int?,
+        windowTitle: String?,
+        windowIndex: Int?,
+        windowId: Int?) throws
+    {
+        self.app = app
+        self.pid = pid
+        self.windowTitle = windowTitle
+        self.windowIndex = windowIndex
+        self.windowId = windowId
+        try self.validate()
+    }
+
     var appIdentifier: String? {
         if let pid {
             return "PID:\(pid)"
@@ -46,17 +71,34 @@ struct MCPInteractionTarget {
     }
 
     func validate() throws {
-        if let pid, pid <= 0 {
+        do {
+            try InteractionTargetSelectorValidator.validate(
+                hasApplication: self.app != nil,
+                hasProcessIdentifier: self.pid != nil,
+                hasWindowID: self.windowId != nil,
+                hasWindowTitle: self.windowTitle != nil,
+                hasWindowIndex: self.windowIndex != nil)
+        } catch let error as InteractionTargetSelectorValidationError {
+            switch error {
+            case .applicationAndProcessIdentifier:
+                throw MCPInteractionTargetError.applicationAndProcessIdentifier
+            case .multipleWindowSelectors:
+                throw MCPInteractionTargetError.multipleWindowSelectors
+            case .windowSelectorRequiresApplication:
+                throw MCPInteractionTargetError.windowSelectorRequiresApp
+            }
+        }
+
+        if let pid, pid <= 0 || Int32(exactly: pid) == nil {
             throw MCPInteractionTargetError.invalidProcessIdentifier
         }
 
-        if let windowId, windowId <= 0 {
+        if let windowId, windowId <= 0 || CGWindowID(exactly: windowId) == nil {
             throw MCPInteractionTargetError.invalidWindowId
         }
 
-        let hasTitle = !(self.windowTitle?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
-        if self.windowIndex != nil, !hasTitle, self.appIdentifier?.isEmpty ?? true {
-            throw MCPInteractionTargetError.windowIndexRequiresApp
+        if let windowIndex, windowIndex < 0 {
+            throw MCPInteractionTargetError.invalidWindowIndex
         }
     }
 

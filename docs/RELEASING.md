@@ -32,6 +32,18 @@ pnpm run test:safe
 pnpm run prepare-release
 ```
 
+While the version/changelog decision is still in progress, run the deterministic subset without registry, git-fetch,
+or artifact work:
+
+```bash
+pnpm run build:cli
+pnpm run prepare-release -- --dry-run --bin Apps/CLI/.build/debug/peekaboo
+```
+
+The dry run validates metadata consistency, docs/links, generated v4 help, retired-command rejection, and the
+`app list`/`window list`/`screen list` JSON contracts. It is intentionally not release-readiness proof; the full
+preflight remains required after the version is final and the tree is clean.
+
 Run `pnpm run test:automation` and live provider tests when the release changes those surfaces. Before committing,
 run the repository autoreview workflow until no accepted actionable findings remain.
 

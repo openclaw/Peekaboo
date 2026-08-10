@@ -5,20 +5,61 @@
  * 
  * This script performs comprehensive checks before release:
  * 1. Git status checks (branch, uncommitted files, sync with origin)
- * 2. TypeScript/Node.js checks (lint, type check, tests)
+ * 2. Metadata and documentation contract checks
  * 3. Swift checks (format, lint, tests)
- * 4. Build and package verification
+ * 4. Build, CLI contract, and package verification
  */
 
-import { execSync } from 'child_process';
-import { readFileSync, existsSync, rmSync } from 'fs';
-import { join } from 'path';
+import { execSync, spawnSync } from 'child_process';
+import { readFileSync, existsSync } from 'fs';
+import { dirname, isAbsolute, join, resolve } from 'path';
 import { fileURLToPath } from 'url';
-import { dirname } from 'path';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const projectRoot = join(__dirname, '..');
+const cliArguments = process.argv.slice(2);
+let dryRun = false;
+let force = false;
+let binaryOverride = null;
+
+for (let index = 0; index < cliArguments.length; index += 1) {
+  const argument = cliArguments[index];
+  switch (argument) {
+    case '--':
+      break;
+    case '--dry-run':
+      dryRun = true;
+      break;
+    case '--force':
+      force = true;
+      break;
+    case '--bin': {
+      const value = cliArguments[index + 1];
+      if (!value) {
+        console.error('--bin requires a path');
+        process.exit(2);
+      }
+      binaryOverride = isAbsolute(value) ? value : resolve(projectRoot, value);
+      index += 1;
+      break;
+    }
+    case '-h':
+    case '--help':
+      console.log(`Usage: node scripts/prepare-release.js [options]
+
+Options:
+  --dry-run   Run deterministic metadata, docs, and CLI-contract checks only
+  --bin PATH  CLI binary for --dry-run (default: repo debug binary, then ./peekaboo)
+  --force     Allow a non-main branch during the full release preflight
+  -h, --help  Show this help`);
+      process.exit(0);
+      break;
+    default:
+      console.error(`Unknown option: ${argument}`);
+      process.exit(2);
+  }
+}
 
 // ANSI color codes
 const colors = {
@@ -105,8 +146,7 @@ function checkGitStatus() {
   const currentBranch = exec('git branch --show-current');
   if (currentBranch !== 'main') {
     logWarning(`Currently on branch '${currentBranch}', not 'main'`);
-    const proceed = process.argv.includes('--force');
-    if (!proceed) {
+    if (!force) {
       logError('Switch to main branch before releasing (use --force to override)');
       return false;
     }
@@ -157,34 +197,13 @@ function checkDependencies() {
   return true;
 }
 
-function checkTypeScript() {
-  logStep('TypeScript Checks');
-
-  // Clean build directory
-  log('Cleaning build directory...', colors.cyan);
-  rmSync(join(projectRoot, 'dist'), { recursive: true, force: true });
-
-  // Run ESLint
-  if (!execWithOutput('pnpm run lint', 'ESLint')) {
-    logError('ESLint found violations');
+function checkDocs() {
+  logStep('Documentation Contract Checks');
+  if (!execWithOutput('node scripts/docs-lint.mjs', 'documentation lint')) {
+    logError('Documentation contract checks failed');
     return false;
   }
-  logSuccess('ESLint passed');
-
-  // Type check
-  if (!execWithOutput('pnpm run build', 'TypeScript compilation')) {
-    logError('TypeScript compilation failed');
-    return false;
-  }
-  logSuccess('TypeScript compilation successful');
-
-  // Run TypeScript tests
-  if (!execWithOutput('pnpm test', 'TypeScript tests')) {
-    logError('TypeScript tests failed');
-    return false;
-  }
-  logSuccess('TypeScript tests passed');
-
+  logSuccess('Documentation contract checks passed');
   return true;
 }
 
@@ -317,45 +336,6 @@ function checkChangelog() {
   return true;
 }
 
-function checkSecurityAudit() {
-  logStep('Security Audit');
-
-  log('Running npm audit...', colors.cyan);
-  
-  const auditResult = exec('npm audit --json', { allowFailure: true });
-  
-  if (auditResult) {
-    try {
-      const audit = JSON.parse(auditResult);
-      const vulnCount = audit.metadata?.vulnerabilities || {};
-      const total = Object.values(vulnCount).reduce((sum, count) => sum + count, 0);
-      
-      if (total > 0) {
-        logWarning(`Found ${total} vulnerabilities:`);
-        if (vulnCount.critical > 0) logError(`  Critical: ${vulnCount.critical}`);
-        if (vulnCount.high > 0) logError(`  High: ${vulnCount.high}`);
-        if (vulnCount.moderate > 0) logWarning(`  Moderate: ${vulnCount.moderate}`);
-        if (vulnCount.low > 0) log(`  Low: ${vulnCount.low}`, colors.yellow);
-        
-        if (vulnCount.critical > 0 || vulnCount.high > 0) {
-          logError('Critical or high severity vulnerabilities found. Please fix before releasing.');
-          return false;
-        }
-        
-        logWarning('Non-critical vulnerabilities found. Consider fixing before release.');
-      } else {
-        logSuccess('No security vulnerabilities found');
-      }
-    } catch (e) {
-      logWarning('Could not parse npm audit results');
-    }
-  } else {
-    logSuccess('No security vulnerabilities found');
-  }
-  
-  return true;
-}
-
 function checkPackageSize() {
   logStep('Package Size Check');
 
@@ -394,227 +374,93 @@ function checkPackageSize() {
   return true;
 }
 
-function checkTypeScriptDeclarations() {
-  logStep('TypeScript Declarations Check');
+function checkSwiftCLIIntegration(binaryPath) {
+  logStep('Swift CLI Contract Tests');
 
-  // Check if .d.ts files are generated
-  const distPath = join(projectRoot, 'dist');
-  
-  if (!existsSync(distPath)) {
-    logError('dist/ directory not found. Please build the project first.');
+  if (!existsSync(binaryPath)) {
+    logError(`Peekaboo binary not found: ${binaryPath}`);
     return false;
   }
-  
-  // Look for .d.ts files
-  const dtsFiles = exec(`find "${distPath}" -name "*.d.ts" -type f`, { allowFailure: true });
-  
-  if (!dtsFiles || dtsFiles.trim() === '') {
-    logError('No TypeScript declaration files (.d.ts) found in dist/');
-    logError('Ensure TypeScript is configured to generate declarations');
-    return false;
-  }
-  
-  const declarationFiles = dtsFiles.split('\n').filter(f => f.trim());
-  log(`Found ${declarationFiles.length} TypeScript declaration files`, colors.cyan);
-  
-  // Check for main declaration file
-  const mainDtsPath = join(distPath, 'index.d.ts');
-  if (!existsSync(mainDtsPath)) {
-    logError('Missing main declaration file: dist/index.d.ts');
-    return false;
-  }
-  
-  logSuccess('TypeScript declarations are properly generated');
-  return true;
-}
 
-function checkMCPServerSmoke() {
-  logStep('MCP Server Smoke Test');
+  const run = (args) => spawnSync(binaryPath, args, {
+    cwd: projectRoot,
+    encoding: 'utf8',
+    stdio: 'pipe'
+  });
+  const combinedOutput = (result) => `${result.stdout || ''}\n${result.stderr || ''}`;
 
-  const serverPath = join(projectRoot, 'dist', 'index.js');
-  
-  if (!existsSync(serverPath)) {
-    logError('Server not built. Please run build first.');
+  const invalid = run(['invalid-command']);
+  if (invalid.status === 0 || !combinedOutput(invalid).includes("Unknown command 'invalid-command'")) {
+    logError('Unknown commands must fail with the Commander unknown-command diagnostic');
     return false;
   }
-  
-  log('Testing MCP server with simple JSON-RPC request...', colors.cyan);
-  
-  try {
-    // Test with a simple tools/list request
-    const testRequest = '{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}';
-    const result = exec(`echo '${testRequest}' | node "${serverPath}"`, { allowFailure: true });
-    
-    if (!result) {
-      logError('MCP server failed to respond');
-      return false;
-    }
-    
-    // Parse and validate response
-    const lines = result.split('\n').filter(line => line.trim());
-    const response = lines[lines.length - 1]; // Get last line (the actual response)
-    
-    try {
-      const parsed = JSON.parse(response);
-      
-      if (parsed.error) {
-        logError(`MCP server returned error: ${parsed.error.message}`);
-        return false;
-      }
-      
-      if (!parsed.result || !parsed.result.tools) {
-        logError('MCP server response missing expected tools array');
-        return false;
-      }
-      
-      const toolCount = parsed.result.tools.length;
-      log(`MCP server responded successfully with ${toolCount} tools`, colors.cyan);
-      
-    } catch (e) {
-      logError('Failed to parse MCP server response');
-      logError(`Response: ${response}`);
-      return false;
-    }
-    
-  } catch (error) {
-    logError(`MCP server smoke test failed: ${error.message}`);
-    return false;
-  }
-  
-  logSuccess('MCP server smoke test passed');
-  return true;
-}
 
-function checkSwiftCLIIntegration() {
-  logStep('Swift CLI Integration Tests');
-  
-  log('Testing Swift CLI error handling and edge cases...', colors.cyan);
-  
-  // Test 1: Invalid command (since image is default, this gets interpreted as image subcommand argument)
-  let invalidOutput;
-  try {
-    execSync('./peekaboo invalid-command 2>&1', { 
-      cwd: projectRoot,
-      encoding: 'utf8',
-      stdio: 'pipe'
-    });
-    logError('Swift CLI should fail for invalid command');
-    return false;
-  } catch (error) {
-    invalidOutput = error.stdout || error.stderr || error.toString();
-  }
-  
-  if (!invalidOutput.includes('Unexpected argument')) {
-    logError('Swift CLI should show proper error for invalid command');
-    return false;
-  }
-  
-  // Test 2: Missing required arguments for window mode
-  let missingArgsOutput;
-  try {
-    missingArgsOutput = execSync('./peekaboo image --mode window --json 2>&1', { 
-      cwd: projectRoot,
-      encoding: 'utf8',
-      stdio: 'pipe'
-    });
-  } catch (error) {
-    // Command fails with non-zero exit code, but we want the output
-    missingArgsOutput = error.stdout || error.stderr || '';
-  }
-  
-  if (!missingArgsOutput) {
-    logError('Swift CLI should produce output for missing --app with window mode');
-    return false;
-  }
-  
-  try {
-    const errorData = JSON.parse(missingArgsOutput);
-    if (!errorData.error || errorData.success !== false) {
-      logError('Swift CLI should return error JSON for missing --app with window mode');
-      return false;
-    }
-  } catch (e) {
-    logError('Swift CLI should return valid JSON for missing --app error');
-    return false;
-  }
-  
-  // Test 3: Invalid window index
-  let invalidWindowOutput;
-  try {
-    execSync('./peekaboo image --mode window --app Finder --window-index abc --json 2>&1', { 
-      cwd: projectRoot,
-      encoding: 'utf8',
-      stdio: 'pipe'
-    });
-    logError('Swift CLI should fail for invalid window index');
-    return false;
-  } catch (error) {
-    invalidWindowOutput = error.stdout || error.stderr || error.toString();
-  }
-  
-  if (!invalidWindowOutput.includes('invalid for') || !invalidWindowOutput.includes('window-index')) {
-    logError('Swift CLI should show error for invalid window index');
-    return false;
-  }
-  
-  // Test 4: Test all subcommands are available
-  const subcommands = ['list', 'image'];
-  for (const cmd of subcommands) {
-    const helpOutput = exec(`./peekaboo ${cmd} --help`, { allowFailure: true });
-    if (!helpOutput || !helpOutput.includes('USAGE')) {
-      logError(`Swift CLI ${cmd} command help not available`);
+  const removedCommands = ['image', 'list', 'hotkey', 'inspect-ui', 'perform-action', 'swipe'];
+  for (const command of removedCommands) {
+    const result = run([command, '--help']);
+    if (result.status === 0 || !combinedOutput(result).includes(`Unknown command '${command}'`)) {
+      logError(`Removed command unexpectedly resolved: peekaboo ${command}`);
       return false;
     }
   }
-  
-  // Test 5: JSON output format validation
-  const formats = [
-    { cmd: './peekaboo list apps --json', required: ['success', 'data'] }
+
+  const helpContracts = [
+    { args: ['see', '--help'], required: ['--no-elements', '--tree', '--no-screenshot'] },
+    { args: ['click', '--help'], required: ['--at', '--wait-for', '--long-press'] },
+    { args: ['press', '--help'], required: ['--delay', '--hold', 'cmd+shift+t'] },
+    { args: ['action', '--help'], required: ['AXPress', '--on'] },
+    { args: ['drag', '--help'], required: ['--from', '--to', '--button', '--duration'] },
+    { args: ['move', '--help'], required: ['--at', '--on', '--foreground'] },
+    { args: ['app', 'list', '--help'], required: ['peekaboo app list', '--include-hidden'] },
+    { args: ['window', 'list', '--help'], required: ['peekaboo window list', '--group-by-space'] },
+    { args: ['screen', 'list', '--help'], required: ['peekaboo screen list'] }
   ];
-  
-  for (const { cmd, required } of formats) {
-    const output = exec(cmd, { allowFailure: true });
-    if (!output) {
-      logError(`Command failed: ${cmd}`);
+  const staleHelp = [
+    'peekaboo image',
+    'peekaboo list apps',
+    'peekaboo list windows',
+    'peekaboo hotkey',
+    'peekaboo inspect-ui',
+    'peekaboo perform-action',
+    'peekaboo swipe',
+    '--coords',
+    '--from-coords',
+    '--to-coords'
+  ];
+
+  for (const contract of helpContracts) {
+    const result = run(contract.args);
+    const output = combinedOutput(result);
+    if (result.status !== 0 || !contract.required.every((token) => output.includes(token))) {
+      logError(`CLI help contract failed: peekaboo ${contract.args.join(' ')}`);
       return false;
     }
-    
-    try {
-      const response = JSON.parse(output);
-      for (const field of required) {
-        if (!(field in response)) {
-          logError(`Missing required field '${field}' in: ${cmd}`);
-          return false;
-        }
-      }
-      // For list apps, also check data.applications exists
-      if (cmd.includes('list apps') && (!response.data || !response.data.applications)) {
-        logError(`Missing data.applications in: ${cmd}`);
-        return false;
-      }
-    } catch (e) {
-      logError(`Invalid JSON from: ${cmd}`);
+    const stale = staleHelp.find((token) => output.includes(token));
+    if (stale) {
+      logError(`CLI help contains removed form '${stale}': peekaboo ${contract.args.join(' ')}`);
       return false;
     }
   }
-  
-  // Test 6: Permission info in error messages
-  // Try to capture without permissions (this is just a smoke test, actual permission errors depend on system state)
-  const captureTest = exec('./peekaboo image --mode screen --json', { allowFailure: true });
-  if (captureTest) {
+
+  const jsonContracts = [
+    { args: ['app', 'list', '--json', '--no-remote'], field: 'apps' },
+    { args: ['window', 'list', '--app', 'Finder', '--json', '--no-remote'], field: 'windows' },
+    { args: ['screen', 'list', '--json', '--no-remote'], field: 'screens' }
+  ];
+  for (const contract of jsonContracts) {
+    const result = run(contract.args);
     try {
-      const result = JSON.parse(captureTest);
-      if (result.success) {
-        log('Screen capture succeeded (permissions granted)', colors.cyan);
-      } else if (result.error && result.error.code === 'PERMISSION_DENIED_SCREEN_RECORDING') {
-        log('Screen recording permission correctly detected as missing', colors.cyan);
+      const payload = JSON.parse(result.stdout);
+      if (result.status !== 0 || payload.success !== true || !(contract.field in payload.data)) {
+        throw new Error(`missing data.${contract.field}`);
       }
-    } catch (e) {
-      // Not JSON, might be a different error
+    } catch (error) {
+      logError(`CLI JSON contract failed for '${contract.args.join(' ')}': ${error.message}`);
+      return false;
     }
   }
-  
-  logSuccess('Swift CLI integration tests passed');
+
+  logSuccess('Swift CLI v4 command, help, and inventory contracts passed');
   return true;
 }
 
@@ -827,7 +673,31 @@ function buildAndVerifyPackage() {
 
 // Main execution
 async function main() {
-  console.log(`\n${colors.bright}🚀 Peekaboo MCP Release Preparation${colors.reset}\n`);
+  console.log(`\n${colors.bright}🚀 Peekaboo Release Preparation${colors.reset}\n`);
+
+  if (dryRun) {
+    const debugBinary = join(projectRoot, 'Apps', 'CLI', '.build', 'debug', 'peekaboo');
+    const packagedBinary = join(projectRoot, 'peekaboo');
+    const binaryPath = binaryOverride ?? (existsSync(debugBinary) ? debugBinary : packagedBinary);
+    const checks = [
+      checkRequiredFields,
+      checkVersionConsistency,
+      checkChangelog,
+      checkDocs,
+      () => checkSwiftCLIIntegration(binaryPath)
+    ];
+
+    for (const check of checks) {
+      if (!check()) {
+        console.log(`\n${colors.red}${colors.bright}❌ Release dry-run checks failed!${colors.reset}\n`);
+        process.exit(1);
+      }
+    }
+
+    console.log(`\n${colors.green}${colors.bright}✅ Deterministic release dry-run checks passed.${colors.reset}`);
+    console.log(`${colors.yellow}This mode does not prove git cleanliness, registry availability, tests, or release artifacts.${colors.reset}\n`);
+    return;
+  }
 
   const checks = [
     checkGitStatus,
@@ -836,8 +706,10 @@ async function main() {
     checkVersionAvailability,
     checkVersionConsistency,
     checkChangelog,
+    checkDocs,
     checkSwift,
     buildAndVerifyPackage,
+    () => checkSwiftCLIIntegration(binaryOverride ?? join(projectRoot, 'peekaboo')),
     checkPackageSize
   ];
 
@@ -848,17 +720,9 @@ async function main() {
     }
   }
 
-  console.log(`\n${colors.green}${colors.bright}✅ All checks passed! Ready to release! 🎉${colors.reset}\n`);
-  
-  const packageJson = JSON.parse(readFileSync(join(projectRoot, 'package.json'), 'utf8'));
-  console.log(`${colors.cyan}Next steps:${colors.reset}`);
-  console.log(`1. Update version in package.json (current: ${packageJson.version})`);
-  console.log(`2. Update CHANGELOG.md`);
-  console.log(`3. Commit version bump: git commit -am "Release v<version>"`);
-  console.log(`4. Create tag: git tag v<version>`);
-  console.log(`5. Push changes: git push origin main --tags`);
-  console.log(`6. Publish to npm: npm publish [--tag beta]`);
-  console.log(`7. Create GitHub release\n`);
+  console.log(`\n${colors.green}${colors.bright}✅ All checks passed! Ready for the release workflow. 🎉${colors.reset}\n`);
+  console.log(`Follow docs/RELEASING.md and run scripts/release-binaries.sh with the intended publish flags.`);
+  console.log(`This preflight does not tag, publish, notarize, or create a GitHub release.\n`);
 }
 
 // Run the script

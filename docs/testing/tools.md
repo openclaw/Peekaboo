@@ -82,12 +82,12 @@ physical-pointer phase), use [Background computer-use validation](background-com
 | `press` | Keyboard Fixture window and menu shortcuts | `Keyboard` & `Menu` | `peekaboo press cmd+1` | Covers bare keys, repeats, and xdotool-style chords | Historical keypress/hotkey logs remain valid evidence. |
 | `scroll` | Scroll Fixture window | `Scroll` | `peekaboo scroll --direction down --amount 8 --on vertical-scroll --snapshot <id>` | Verified – scroll offsets logged (2025-12-18) | `.artifacts/playground-tools/20251218-012323-scroll.log` |
 | `drag` | Drag Fixture and gesture area | `Drag` / `Gesture` | `peekaboo drag --from <id-or-x,y> --to <id-or-x,y> --snapshot <id>` | Covers element/coordinate endpoints and left/right buttons | Historical drag/swipe logs remain valid evidence. |
-| `move` | Click Fixture mouse probe | `Control` | `peekaboo move --on <elem> --snapshot <id> --smooth` | Verified – cursor movement emits deterministic probe logs (2025-12-17) | `.artifacts/playground-tools/20251217-153107-control.log` |
+| `move` | Click Fixture mouse probe | `Control` | `peekaboo move --on <elem> --snapshot <id> --smooth --foreground` | Verified – cursor movement emits deterministic probe logs (2025-12-17) | `.artifacts/playground-tools/20251217-153107-control.log` |
 
 ### Windows, Menus, Apps
 | Tool | Playground validation target | Log category | Sample CLI | Status | Latest log |
 | --- | --- | --- | --- | --- | --- |
-| `window` | Window Fixture window + `list windows` bounds | `Window` | `peekaboo window move --app boo.peekaboo.playground.debug --window-title "Window Fixture"` | Verified – focus/move/resize + minimize/maximize covered (2025-12-17) | `.artifacts/playground-tools/20251217-183242-window.log` |
+| `window` | Window Fixture window + `window list` bounds | `Window` | `peekaboo window move --app boo.peekaboo.playground.debug --window-title "Window Fixture"` | Verified – focus/move/resize + minimize/maximize covered (2025-12-17) | `.artifacts/playground-tools/20251217-183242-window.log` |
 | `space` | macOS Spaces while Playground anchored on Space 1 | `Space` | `peekaboo space list --detailed` | Verified – list/switch/move now emit `[Space]` logs (instr. added 2025-11-16) | `.artifacts/playground-tools/20251116-205548-space.log` |
 | `menu` | Playground “Test Menu” | `Menu` | `peekaboo menu click --app boo.peekaboo.playground.debug --path "Test Menu>Submenu>Nested Action A"` | Verified – nested menu click logged (2025-12-18) | `.artifacts/playground-tools/20251218-002308-menu.log` |
 | `menubar` | macOS menu extras (Wi-Fi, Clock) plus Playground status icons | `Menu` (system) | `peekaboo menubar list --json-output` | Verified – list + click captured; logs via Control Center predicate | `.artifacts/playground-tools/20251116-053932-menubar.log` |
@@ -114,17 +114,17 @@ The following subsections spell out the concrete steps, required Playground surf
 - **View**: Any (start with ClickTestingView to guarantee clear elements).
 - **Steps**:
   1. Bring Playground to front (`peekaboo app switch --to Playground`).
-  2. `peekaboo see --app Playground --output "$LOG_ROOT/see-playground.png"`.
-  3. Record snapshot ID printed to stdout, verify `~/.peekaboo/snapshots/<id>/map.json` references Playground elements (`single-click-button`, etc.).
+  2. `peekaboo see --app Playground --path "$LOG_ROOT/see-playground.png"`.
+  3. Record the snapshot ID printed to stdout, then verify `~/.peekaboo/snapshots/<id>/snapshot.json` references Playground elements (`single-click-button`, etc.).
 - **Log capture**: Optional `Click` capture if you immediately chain interactions with the new snapshot; otherwise store the PNG + snapshot metadata path.
 - **Pass criteria**: Snapshot folder exists, UI map contains Playground identifiers, CLI exits 0.
 - **2025-11-16 verification**: Re-enabled the ScreenCaptureKit path inside `Core/PeekabooCore/Sources/PeekabooAutomation/Services/Capture/ScreenCaptureService.swift` so the modern API runs before falling back to CGWindowList. `peekaboo see --app Playground --json-output --path .artifacts/playground-tools/20251116-082056-see-playground.png` now succeeds (snapshot `5B5A2C09-4F4C-4893-B096-C7B4EB38E614`) and drops `.artifacts/playground-tools/20251116-082056-see-playground.{json,png}`.
-- **2025-12-17 rerun**: `pnpm run peekaboo -- see --app Playground --path .artifacts/playground-tools/20251217-132837-see-playground.png --json-output > .artifacts/playground-tools/20251217-132837-see-playground.json` succeeded (Peekaboo `main/842434be-dirty`).
-#### `image`
+- **2025-12-17 rerun**: `Apps/CLI/.build/debug/peekaboo see --app Playground --path .artifacts/playground-tools/20251217-132837-see-playground.png --json > .artifacts/playground-tools/20251217-132837-see-playground.json` succeeded (Peekaboo `main/842434be-dirty`).
+#### Screenshot-only `see`
 - **View**: Keep Playground on ScrollTestingView to capture dynamic content.
 - **Steps**:
-  1. `peekaboo image window --app Playground --output "$LOG_ROOT/image-playground.png"`.
-  2. Repeat with `--screen main --bounds 100,100,800,600` to cover coordinate cropping.
+  1. `peekaboo see --no-elements --app Playground --mode window --path "$LOG_ROOT/screenshot-playground.png"`.
+  2. Repeat with `--mode area --region 100,100,800,600 --path "$LOG_ROOT/screenshot-area.png"` to cover coordinate cropping.
 - **2025-11-16 verification**: After restoring the ScreenCaptureKit → CGWindowList fallback order, both window and screen captures succeed. Saved `.artifacts/playground-tools/20251116-082109-image-window-playground.{json,png}` and `.artifacts/playground-tools/20251116-082125-image-screen0.{json,png}`; CLI debug logs still note tiny background windows but the primary Playground window captures at 1200×852.
 
 #### `capture`
@@ -146,12 +146,12 @@ The following subsections spell out the concrete steps, required Playground surf
   - Live window capture (Playground) completed successfully and respects short durations again (no longer stalls ~10s on the ScreenCaptureKit→CG fallback path): `.artifacts/playground-tools/20251218-024517-capture-live-window-fast.json` and `.artifacts/playground-tools/20251218-024517-capture-live-window-fast/`.
   - Video ingest (synthetic `ffmpeg testsrc2`, `--sample-fps 4 --no-diff`) produced 9 kept frames + contact sheet: `.artifacts/playground-tools/20251218-022826-capture-video.json` and `.artifacts/playground-tools/20251218-022826-capture-video/`.
 
-#### `list`
-- **Scenarios**: `list apps`, `list windows --app Playground`, `list screens`, `list menubar`, `list permissions`.
+#### Noun-based inventories
+- **Scenarios**: `app list`, `window list --app Playground`, `screen list`, `menubar list`, `permissions status`.
 - **Steps**:
   1. With Playground running, execute each subcommand and ensure Playground appears with expected bundle ID/window title.
-  2. For `list windows`, compare returned bounds vs. WindowTestingView readout.
-  3. For `list menubar`, capture the result and cross-check with actual status items.
+  2. For `window list`, compare returned bounds vs. WindowTestingView readout.
+  3. For `menubar list`, capture the result and cross-check with actual status items.
 - **Logs**: Use `playground-log` `Window` category when forcing focus changes to validate `app switch` interplay.
 #### `tools`
 - **Steps**:
@@ -173,9 +173,7 @@ The following subsections spell out the concrete steps, required Playground surf
     - `.artifacts/playground-tools/20251217-201134-move-snapshot-missing.json`
     - `.artifacts/playground-tools/20251217-201134-scroll-snapshot-missing.json`
     - `.artifacts/playground-tools/20251217-202239-snapshot-missing-drag.json`
-    - `.artifacts/playground-tools/20251217-202239-snapshot-missing-swipe.json`
     - `.artifacts/playground-tools/20251217-202239-snapshot-missing-type.json`
-    - `.artifacts/playground-tools/20251217-202239-snapshot-missing-hotkey.json`
     - `.artifacts/playground-tools/20251217-202239-snapshot-missing-press.json`
 
 #### `clipboard`
@@ -228,8 +226,8 @@ The following subsections spell out the concrete steps, required Playground surf
 - **Test cases**:
   1. Query-based click: `peekaboo click "Single Click"` (expect `Click` log + counter increment).
   2. ID-based click: copy the opaque ID from current `see` output, then run `peekaboo click --on "$ELEMENT_ID" --snapshot <id>` targeting `single-click-button`.
-  3. Coordinate click: `peekaboo click --at 400,400 --foreground` hitting the nested area.
-  4. Coordinate validation: `peekaboo click --at , --json-output` should fail with `VALIDATION_ERROR` (no crash).
+  3. Coordinate click: run an exact-window `see`, then use its receipts with `peekaboo click --window-id "$WINDOW_ID" --snapshot "$SNAPSHOT_ID" --at 400,400` to hit the nested area without moving focus.
+  4. Coordinate validation: `peekaboo click --window-id "$WINDOW_ID" --snapshot "$SNAPSHOT_ID" --at , --json` should fail with `VALIDATION_ERROR` (no crash).
   5. Error path: attempt to click disabled button and confirm descriptive `elementNotFound` guidance.
 - **Verification**: Playground counter increments, log file shows `[Click] Single click...` entries.
 - **2025-11-16 run**:
@@ -237,7 +235,7 @@ The following subsections spell out the concrete steps, required Playground surf
   - Generated fresh snapshot `263F8CD6-E809-4AC6-A7B3-604704095011` via `see` (`.artifacts/playground-tools/20251116-051120-click-see.{json,png}`).
   - `peekaboo click "Single Click" --snapshot <legacy snapshot>` succeeded but targeted Ghostty (click hit terminal input); highlighting importance of focusing Playground first.
   - `peekaboo app switch --to Playground` followed by `peekaboo click --on elem_6 --snapshot 263F8CD6-...` successfully hit the “View Logs” button (Playground log recorded the click).
-  - Coordinate click `--at 600,500` succeeded (see log); attempting `--on elem_disabled` produced expected `elementNotFound` error.
+  - Coordinate click `--window-id "$WINDOW_ID" --snapshot "$SNAPSHOT_ID" --at 600,500` succeeded (see log); attempting the disabled element ID produced the expected `elementNotFound` error.
   - Element IDs are opaque and unstable; always copy the exact ID from current `see` output.
 - **2025-12-17 Controls Fixture add-on**:
   - Open “Controls Fixture” via `⌘⌃3`, then drive checkboxes + segmented control by clicking snapshot IDs (`--on elem_…`) captured from `see`.
@@ -248,16 +246,16 @@ The following subsections spell out the concrete steps, required Playground surf
 - **View**: TextInputView.
 - **Log capture**: `Text` + `Focus` categories.
 - **Test cases**:
-  1. `peekaboo type "Hello Playground" --query "Basic"` to fill the basic field.
-  2. Use `--clear` then `--append` flows to verify editing.
-  3. Tab-step typing with `--tabs 2` into the secure field.
+  1. Use a fresh `see`, then `click --on "$FIELD_ID" --snapshot "$SNAPSHOT_ID"` to select the basic field.
+  2. Run `peekaboo type "Hello Playground" --clear --pid "$PLAYGROUND_PID"`, then type more text to verify appending.
+  3. Run `peekaboo press Tab --count 2 --pid "$PLAYGROUND_PID"` to reach the secure field.
   4. Unicode input (emoji) to ensure no crash.
 - **Verification**: Field contents update, log shows `[Text] Basic field changed` entries.
 - **2025-11-16 run**:
   - Logged `.artifacts/playground-tools/20251116-051202-text.log`.
   - Focused field via `peekaboo click "Focus Basic Field" --snapshot 263F8CD6-…` (snapshot from `.artifacts/playground-tools/20251116-051120-click-see.json`).
   - `peekaboo type "Hello Playground" --clear --snapshot 263F8CD6-…` updated the Basic Text Field (log shows “Basic text changed …”).
-  - `peekaboo type --tab 1 --snapshot 263F8CD6-…` advanced focus to the Number field, followed by `peekaboo type "42" --snapshot 263F8CD6-…`.
+  - `peekaboo press Tab --snapshot 263F8CD6-…` advanced focus to the Number field, followed by `peekaboo type "42" --snapshot 263F8CD6-…`.
   - Validation error confirmed via `peekaboo type "bad" --profile warp` (proper error message).
   - Note: prefer `--app`, `--pid`, `--window-id`, or `--snapshot` so `type` can use background delivery; use helper buttons and `click` to set field focus when a view requires it. Legacy `--on` / `--query` flags no longer exist.
 
@@ -268,25 +266,25 @@ The following subsections spell out the concrete steps, required Playground surf
   2. `peekaboo press up --count 3 --snapshot <id>` to ensure repeated presses log individually.
   3. Invalid key handling (`peekaboo press foo`) should error.
 - **2025-11-16 verification**:
-  - Switched to the Keyboard tab via `peekaboo press cmd+option+7 --foreground`, captured `.artifacts/playground-tools/20251116-090141-see-keyboardtab.{json,png}` (snapshot `C106D508-930C-4996-A4F4-A50E2E0BA91A`), and focused the “Press keys here…” field with a coordinate click (`--at 760,300`).
+  - Switched to the Keyboard tab via `peekaboo press cmd+option+7 --foreground`, captured `.artifacts/playground-tools/20251116-090141-see-keyboardtab.{json,png}` (snapshot `C106D508-930C-4996-A4F4-A50E2E0BA91A`), and focused the “Press keys here…” field with the exact capture receipt (`click --window-id "$WINDOW_ID" --snapshot "$SNAPSHOT_ID" --at 760,300`).
   - `peekaboo press return --snapshot C106D508-…` and `peekaboo press up --count 3 --snapshot C106D508-…` produced `[boo.peekaboo.playground:Keyboard] Key pressed: …` entries in `.artifacts/playground-tools/20251116-090455-keyboard.log`.
   - `peekaboo press foo` reports `Unknown key: 'foo'. Run 'peekaboo press --help' for available keys.` confirming validation and documenting the negative path.
 
-#### `hotkey`
-- **View**: KeyboardView hotkey demo or main window (use `cmd+shift+l` to open log viewer).
+#### `press` chord sequences
+- **View**: KeyboardView chord demo or main window (use `cmd+shift+l` to open the log viewer).
 - **Test cases**:
-  1. `peekaboo hotkey cmd,shift,l` should toggle the “Clear All Logs” command (log viewer clears entries).
-  2. `peekaboo hotkey cmd,1` to trigger Test Menu action; watch `Menu` logs.
+  1. `peekaboo press cmd+shift+l --pid "$PLAYGROUND_PID"` should toggle the “Clear All Logs” command (log viewer clears entries).
+  2. `peekaboo press cmd+1 --pid "$PLAYGROUND_PID"` triggers the Test Menu action; watch `Menu` logs.
   3. Negative test: provide invalid chord order to ensure validation message.
 - **Verification**: Playground `Keyboard` log file shows the keystrokes fired.
 - **2025-11-16 run**:
-  - Logs stored at `.artifacts/playground-tools/20251116-051654-keyboard-hotkey.log` (contains entries for `L` and `1` corresponding to the combos).
-  - `peekaboo hotkey --keys "cmd,shift,l" --snapshot 11227301-05DE-4540-8BE7-617F99A74156` (clears logs via shortcut).
-  - `peekaboo hotkey --keys "cmd,1" --snapshot …` switches Playground tabs.
-  - `peekaboo hotkey --keys "foo,bar"` correctly fails with `Unknown key: 'foo'`.
+  - The archived keyboard chord log contains entries for `L` and `1` corresponding to both combinations.
+  - `peekaboo press --key cmd+shift+l --snapshot 11227301-05DE-4540-8BE7-617F99A74156` clears logs via the shortcut.
+  - `peekaboo press --key cmd+1 --snapshot "$SNAPSHOT_ID"` switches Playground tabs.
+  - `peekaboo press foo+bar --pid "$PLAYGROUND_PID"` correctly fails with an unknown-key error.
 
 #### `scroll`
-- **View**: ScrollTestingView vertical/horizontal sections (switch using `peekaboo hotkey --keys "cmd,option,4"` to trigger the new Test Menu shortcut).
+- **View**: ScrollTestingView vertical/horizontal sections (switch using `peekaboo press cmd+option+4 --pid "$PLAYGROUND_PID"` to trigger the Test Menu shortcut).
 - **Test cases**:
   1. `peekaboo scroll --direction down --amount 6 --snapshot <id>` for vertical movement.
   2. `peekaboo scroll --direction right --amount 4 --smooth --snapshot <id>` for horizontal smooth scrolling.
@@ -304,12 +302,12 @@ The following subsections spell out the concrete steps, required Playground surf
     - `.artifacts/playground-tools/20251218-012323-click-scroll-{top,middle,bottom}.json` (Clicking fixture buttons via snapshot IDs).
     - `.artifacts/playground-tools/20251218-012323-scroll-{vertical-down,vertical-up,horizontal-right,horizontal-left,nested-outer-down,nested-inner-down}.json` (CLI evidence per scroll variant).
 
-#### `swipe`
+#### `drag` gesture coverage
 - **View**: Gesture Testing area.
 - **Test cases**:
   1. `peekaboo drag --from 1100,520 --to 700,520 --duration 600ms --foreground`.
   2. `peekaboo drag --from 850,600 --to 850,350 --duration 800ms --profile human --foreground`.
-  3. Negative test: `peekaboo swipe … --right-button` should error.
+  3. Negative test: `peekaboo drag --from 900,520 --to 700,520 --button middle --foreground` should error.
 - **2025-11-16 verification**:
   - Used snapshot `DBFDD053-4513-4603-B7C3-9170E7386BA7` (see `.artifacts/playground-tools/20251116-085714-see-scrolltab.{json,png}`) to keep the tab selection stable.
   - Horizontal and vertical commands above completed successfully; Playground log `.artifacts/playground-tools/20251116-090041-gesture.log` shows `[boo.peekaboo.playground:Gesture]` entries with exact coordinates, profiles, and step counts.

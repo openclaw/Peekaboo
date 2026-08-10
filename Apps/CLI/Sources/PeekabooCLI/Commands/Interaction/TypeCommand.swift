@@ -289,8 +289,8 @@ extension TypeCommand: ParsableCommand {
                     EXAMPLES:
                       peekaboo type "Hello World" --app TextEdit # Background-target TextEdit
                       peekaboo type "user@example.com" --foreground
-                      peekaboo type "text" --app TextEdit --delay 0
-                      peekaboo type "text" --app TextEdit --delay 50
+                      peekaboo type "text" --app TextEdit --delay 0ms
+                      peekaboo type "text" --app TextEdit --delay 50ms
                       peekaboo type "text" --app TextEdit --wpm 150
                       peekaboo type "text" --app TextEdit --clear
                       peekaboo type "Line 1\nLine 2" --app TextEdit

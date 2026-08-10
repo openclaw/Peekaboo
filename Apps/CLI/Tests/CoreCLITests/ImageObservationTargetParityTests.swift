@@ -1,3 +1,4 @@
+import Commander
 import PeekabooCore
 import Testing
 @testable import PeekabooAgentRuntime
@@ -7,7 +8,7 @@ import Testing
 @MainActor
 struct ImageObservationTargetParityTests {
     @Test(.tags(.fast))
-    func `image window selection prefers title over index`() throws {
+    func `image window selection rejects title and index`() throws {
         let command = try SeeCommand.parse([
             "--mode", "window",
             "--app", "Safari",
@@ -15,7 +16,9 @@ struct ImageObservationTargetParityTests {
             "--window-index", "2",
         ])
 
-        #expect(command.observationWindowSelection == .title("Inbox"))
+        #expect(throws: ValidationError.self) {
+            try command.observationWindowSelection()
+        }
     }
 
     @Test(.tags(.fast))

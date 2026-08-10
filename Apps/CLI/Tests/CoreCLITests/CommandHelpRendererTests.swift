@@ -29,6 +29,33 @@ struct CommandHelpRendererTests {
             #expect(help.range(of: #"\b[BTMS]\d+\b"#, options: .regularExpression) == nil)
         }
     }
+
+    @Test
+    func `V4 generated help uses canonical commands and explicit duration units`() {
+        let help = [
+            AppCommand.helpMessage(),
+            AppCommand.ListSubcommand.helpMessage(),
+            WindowCommand.WindowListSubcommand.helpMessage(),
+            ClickCommand.helpMessage(),
+            DragCommand.helpMessage(),
+            TypeCommand.helpMessage(),
+        ].joined(separator: "\n")
+
+        for removed in [
+            "peekaboo image",
+            "peekaboo list apps",
+            "peekaboo list windows",
+            "peekaboo hotkey",
+            "peekaboo inspect-ui",
+            "peekaboo perform-action",
+            "peekaboo swipe",
+        ] {
+            #expect(!help.contains(removed), "Generated help contains removed CLI form: \(removed)")
+        }
+        #expect(help.contains("--wait 3s"))
+        #expect(help.contains("--duration 2s"))
+        #expect(help.contains("--delay 50ms"))
+    }
 }
 
 private struct SampleHelpCommand: ParsableCommand {

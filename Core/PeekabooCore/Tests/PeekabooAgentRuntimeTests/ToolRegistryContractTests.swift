@@ -12,6 +12,21 @@ struct ToolRegistryContractTests {
 
         let tools = ToolRegistry.allTools(using: services)
         #expect(!tools.isEmpty)
+
+        let names = Set(tools.map(\.name))
+        #expect(names.isSuperset(of: [
+            "see",
+            "click",
+            "type",
+            "scroll",
+            "press",
+            "action",
+            "drag",
+            "move",
+            "app",
+            "window",
+        ]))
+        #expect(names.isDisjoint(with: ["hotkey", "launch_app", "list"]))
     }
 
     @Test

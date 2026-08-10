@@ -10,6 +10,8 @@ const docsRoot = path.resolve('docs');
 const failures = [];
 const extraMarkdownFiles = [path.resolve('README.md')];
 const skillMarkdownFiles = [path.resolve('skills/peekaboo/SKILL.md')];
+const sourceContractFiles = [path.resolve('scripts/test-background-computer-use.sh')];
+const sourceCliDocsFiles = [path.resolve('scripts/release-binaries.sh')];
 const staleCliPatterns = [
   [/peekaboo capture --output\b/, 'use `peekaboo see --no-elements --path` or `peekaboo capture live --path`'],
   [/peekaboo capture --window-focused\b/, 'use `peekaboo see --no-elements --mode frontmost`'],
@@ -19,6 +21,7 @@ const staleCliPatterns = [
   [/peekaboo swipe\b/, 'use `peekaboo drag`'],
   [/peekaboo inspect-ui\b/, 'use `peekaboo see --tree --no-screenshot`'],
   [/peekaboo perform-action\b/, 'use `peekaboo action`'],
+  [/peekaboo list\b/, 'use noun-based `app list`, `window list`, or `screen list`'],
   [/--(?:from|to)-coords\b/, 'pass coordinates directly to `--from` or `--to`'],
   [/--max-depth\b/, 'use `--depth`'],
   [/peekaboo type[^\n]*--(?:return|escape|delete|tab)\b/, 'chain `peekaboo press` for key input'],
@@ -44,8 +47,29 @@ const staleCliPatterns = [
   [/--repeat\b/, 'use `--count`'],
   [/--label\b/, 'use positional query text or `--on`'],
   [/--ticks\b/, 'use `--amount`'],
+  [/docs\/commands\/run\.md/, 'link to the current command that owns the workflow'],
+  [/peekaboo space (?:current|where-is)\b/, 'use `peekaboo space list --detailed`'],
+  [/--space-switch\s+(?:always|never)\b/, 'use boolean `--space-switch`'],
+  [/--(?:move-here|no-verify)\b/, 'use `--bring-to-current-space` or `--verify`'],
+  [/peekaboo space list --all\b/, 'use `peekaboo space list --detailed`'],
+  [/peekaboo space switch[^\n]*--no-wait\b/, 'remove the retired `--no-wait` flag'],
+  [/peekaboo (?:capture|drag|move)[^\n]*--duration\s+\d+(?:\.\d+)?(?:\s|$)/,
+    'add an explicit `ms` or `s` duration suffix'],
+  [/peekaboo (?:click|press|type)[^\n]*--(?:delay|hold|wait-for)\s+\d+(?:\.\d+)?(?:\s|$)/,
+    'add an explicit `ms` or `s` timing suffix'],
   [/--(?:on|from|to)\s+[`"']?[BTMS]\d+\b/, 'use an opaque element ID copied from current output'],
-  [/element IDs?[^\n]*[`"']?[BTMS]\d+\b/i, 'describe element IDs as opaque'],
+  [/element IDs?\s+(?:(?:such as|like|for example)\s+)?[`"']?[BTMS]\d+\b/i,
+    'describe element IDs as opaque'],
+];
+const staleHarnessPatterns = [
+  [/^\s*hotkey\s/m, 'use `press`'],
+  [/^\s*inspect-ui\s/m, 'use `see --tree --no-screenshot`'],
+  [/^\s*image\s/m, 'use `see --no-elements`'],
+  [/^\s*perform-action\s/m, 'use `action`'],
+  [/^\s*list\s+(?:apps|windows|screens)\b/m, 'use noun-based inventory commands'],
+  [/\bapp launch[^\n]*--wait-until-ready\b/, 'use `app launch --wait-ready`'],
+  [/--coords\b/, 'use `--at`'],
+  [/--duration\s+\d+(?:\.\d+)?(?:\s|\\|$)/, 'add an explicit `ms` or `s` duration suffix'],
 ];
 const staleDocsPatterns = [
   [/mcp-capture-meta/i, 'remove stale native MCP capture metadata references'],
@@ -104,6 +128,14 @@ async function checkFile(file) {
         failures.push(`${file}: stale CLI example ${pattern}; ${replacement}`);
       }
     }
+    await checkLocalLinks(file, text);
+
+    for (const line of text.split('\n')) {
+      if (/peekaboo click\b.*--at\b/.test(line) &&
+          (!/--window-id\b/.test(line) || !/--snapshot\b/.test(line))) {
+        failures.push(`${file}: coordinate click must include a fresh snapshot and exact --window-id target`);
+      }
+    }
   }
 
   if (shouldCheckCurrentDocsDrift(file)) {
@@ -115,13 +147,54 @@ async function checkFile(file) {
   }
 }
 
+async function checkLocalLinks(file, text) {
+  const links = text.matchAll(/!?\[[^\]]*\]\(([^)\s]+)(?:\s+['"][^)]*)?\)/g);
+  for (const match of links) {
+    const rawTarget = match[1];
+    if (/^(?:https?:|mailto:|#)/.test(rawTarget)) continue;
+    const target = rawTarget.split('#', 1)[0].split('?', 1)[0];
+    if (!target) continue;
+    const resolved = path.resolve(path.dirname(file), decodeURIComponent(target));
+    try {
+      await fs.access(resolved);
+    } catch {
+      failures.push(`${file}: broken local link ${rawTarget}`);
+    }
+  }
+}
+
 function shouldCheckCurrentCliExamples(file) {
   const relative = path.relative(process.cwd(), file);
   if (relative === 'README.md') return true;
-  if (relative === 'docs/quickstart.md' || relative === 'docs/automation.md') return true;
+  if ([
+    'docs/quickstart.md',
+    'docs/automation.md',
+    'docs/cli-command-reference.md',
+    'docs/focus.md',
+    'docs/testing/background-computer-use.md',
+    'docs/testing/tools.md',
+  ].includes(relative)) return true;
   if (relative === 'docs/commands/README.md') return true;
   if (relative.startsWith('docs/commands/') && relative.endsWith('.md')) return true;
   return false;
+}
+
+async function checkSourceContractFile(file) {
+  const text = await fs.readFile(file, 'utf8');
+  for (const [pattern, replacement] of staleHarnessPatterns) {
+    if (pattern.test(text)) {
+      failures.push(`${file}: stale v4 harness form ${pattern}; ${replacement}`);
+    }
+  }
+}
+
+async function checkSourceCliDocsFile(file) {
+  const text = await fs.readFile(file, 'utf8');
+  for (const [pattern, replacement] of staleCliPatterns) {
+    if (pattern.test(text)) {
+      failures.push(`${file}: stale generated CLI docs ${pattern}; ${replacement}`);
+    }
+  }
 }
 
 function shouldCheckCurrentDocsDrift(file) {
@@ -166,6 +239,12 @@ for (const file of extraMarkdownFiles) {
 }
 for (const file of skillMarkdownFiles) {
   await checkSkillFile(file);
+}
+for (const file of sourceContractFiles) {
+  await checkSourceContractFile(file);
+}
+for (const file of sourceCliDocsFiles) {
+  await checkSourceCliDocsFile(file);
 }
 
 if (failures.length) {

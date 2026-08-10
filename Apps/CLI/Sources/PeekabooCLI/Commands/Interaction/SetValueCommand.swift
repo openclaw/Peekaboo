@@ -161,7 +161,7 @@ enum ElementActionCommandExecutor {
         logger.setJsonOutputMode(runtime.configuration.jsonOutput)
 
         do {
-            var target = context.target
+            let target = context.target
             try target.validate()
             let prepared = try prepare()
             var observation = await InteractionObservationContext.resolve(

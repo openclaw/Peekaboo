@@ -17,7 +17,8 @@ public struct TypeTool: MCPTool {
         Types text into UI elements or a targeted app process.
         Supports human typing (--wpm) or fixed-delay (--delay) pacing. Use `press` for key presses and chords.
         Background delivery requires an element/snapshot/app/pid target. Set `foreground=true` for intentional input
-        at the current keyboard focus or when the app must be focused first.
+        at the current keyboard focus or when the app must be focused first. app and pid are alternatives; provide at
+        most one window selector, and pair window_title/window_index with app or pid.
         \(PeekabooMCPVersion.banner) using openai/gpt-5.5
         and anthropic/claude-opus-4-8
         """
@@ -87,7 +88,7 @@ public struct TypeTool: MCPTool {
     private func parseRequest(arguments: ToolArguments) throws -> TypeRequest {
         let wordsPerMinute = arguments.getNumber("wpm").map { Int($0) }
         let profile = try self.parseProfile(arguments.getString("profile"), wordsPerMinute: wordsPerMinute)
-        let target = MCPInteractionTarget(
+        let target = try MCPInteractionTarget(
             app: arguments.getString("app"),
             pid: arguments.getInt("pid"),
             windowTitle: arguments.getString("window_title"),

@@ -49,6 +49,9 @@ For full release automation (tarballs, npm package, checksums), follow [RELEASIN
 # Validate + prep
 pnpm run prepare-release
 
+# Deterministic metadata/docs/CLI contract only (no registry or artifact checks)
+pnpm run prepare-release -- --dry-run --bin Apps/CLI/.build/debug/peekaboo
+
 # Generate artifacts / publish
 ./scripts/release-binaries.sh --create-github-release --publish-npm
 ```

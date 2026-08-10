@@ -32,5 +32,5 @@ peekaboo learn | awk '/^## Commander/,0'
 
 ## Troubleshooting
 - Verify Screen Recording + Accessibility permissions (`peekaboo permissions status`).
-- Confirm your target (app/window/selector) with `peekaboo list`/`peekaboo see` before rerunning.
+- Confirm your process with `peekaboo app list`, its exact window with `peekaboo window list`, and current UI with `peekaboo see` before rerunning.
 - Re-run with `--json` or `--verbose` to surface detailed errors.

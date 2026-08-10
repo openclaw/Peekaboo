@@ -62,7 +62,7 @@ public enum UIAutomationToolDefinitions {
         abstract: "Click on UI elements or coordinates",
         discussion: """
         Clicks on UI elements or coordinates. Supports element queries,
-        specific IDs from `see` or `inspect_ui`, or coordinates. CLI coordinate
+        specific IDs from `see`, or coordinates. CLI coordinate
         clicks are target-window-relative when app/window target flags are supplied.
         Background delivery is the default; pass `--foreground` for focused foreground clicks.
         """,
@@ -76,12 +76,12 @@ public enum UIAutomationToolDefinitions {
             ParameterDefinition(
                 name: "on",
                 type: .string,
-                description: "Opaque element ID copied exactly from current `see` or `inspect_ui` output",
+                description: "Opaque element ID copied exactly from current `see` output",
                 required: false),
             ParameterDefinition(
-                name: "coords",
+                name: "at",
                 type: .string,
-                description: "Click at coordinates in format 'x,y'",
+                description: "Click at coordinates in format 'x,y'; target-relative with window flags",
                 required: false),
             ParameterDefinition(
                 name: "double",
