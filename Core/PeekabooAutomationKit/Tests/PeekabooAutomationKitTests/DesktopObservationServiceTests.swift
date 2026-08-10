@@ -399,6 +399,12 @@ extension DesktopObservationServiceTests {
             detection: DesktopDetectionOptions(mode: .accessibility)))
 
         XCTAssertEqual(ocr.recognizeCalls, 1)
+        XCTAssertEqual(ocr.targetedRegions.count, 1)
+        XCTAssertEqual(ocr.targetedRegions.first?.normalizedBounds, CGRect(
+            x: 0.06,
+            y: 0.42,
+            width: 0.58,
+            height: 0.46))
         XCTAssertEqual(result.elements?.elements.buttons.first?.label, "Don't Allow")
         XCTAssertEqual(result.elements?.elements.buttons.first?.attributes["labelSource"], "ocr")
         XCTAssertEqual(result.elements?.metadata.method, "fake+OCR")
@@ -1450,6 +1456,11 @@ private final class RecordingOCRRecognizer: OCRRecognizing, @unchecked Sendable 
     private let lock = NSLock()
     private let result: OCRTextResult
     var recognizeCalls = 0
+    private var recordedTargetedRegions: [OCRRecognitionRegion] = []
+
+    var targetedRegions: [OCRRecognitionRegion] {
+        self.lock.withLock { self.recordedTargetedRegions }
+    }
 
     init(result: OCRTextResult) {
         self.result = result
@@ -1457,6 +1468,18 @@ private final class RecordingOCRRecognizer: OCRRecognizing, @unchecked Sendable 
 
     func recognizeText(in _: Data, timeoutSeconds _: TimeInterval) async throws -> OCRTextResult {
         self.lock.withLock { self.recognizeCalls += 1 }
+        return self.result
+    }
+
+    func recognizeText(
+        in _: Data,
+        timeoutSeconds _: TimeInterval,
+        regions: [OCRRecognitionRegion]) async throws -> OCRTextResult
+    {
+        self.lock.withLock {
+            self.recognizeCalls += 1
+            self.recordedTargetedRegions = regions
+        }
         return self.result
     }
 }

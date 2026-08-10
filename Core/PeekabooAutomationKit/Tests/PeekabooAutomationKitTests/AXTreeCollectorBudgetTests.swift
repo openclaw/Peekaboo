@@ -430,4 +430,15 @@ final class AXTreeCollectorBudgetTests: XCTestCase {
         XCTAssertEqual(recovered.buttons[1].label, "Save")
         XCTAssertNil(recovered.buttons[1].attributes["labelSource"])
     }
+
+    func testTargetedOCRMapsCropBoundsBackToFullImageCoordinates() {
+        let mapped = OCRService.fullImageBoundingBox(
+            CGRect(x: 0.1, y: 0.2, width: 0.3, height: 0.4),
+            region: CGRect(x: 0.25, y: 0.5, width: 0.25, height: 0.25))
+
+        XCTAssertEqual(mapped.origin.x, 0.275, accuracy: 0.000_001)
+        XCTAssertEqual(mapped.origin.y, 0.3, accuracy: 0.000_001)
+        XCTAssertEqual(mapped.width, 0.075, accuracy: 0.000_001)
+        XCTAssertEqual(mapped.height, 0.1, accuracy: 0.000_001)
+    }
 }

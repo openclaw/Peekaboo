@@ -82,6 +82,29 @@ extension OCRServiceError: LocalizedError {
 
 public protocol OCRRecognizing: Sendable {
     func recognizeText(in imageData: Data, timeoutSeconds: TimeInterval) async throws -> OCRTextResult
+    func recognizeText(
+        in imageData: Data,
+        timeoutSeconds: TimeInterval,
+        regions: [OCRRecognitionRegion]) async throws -> OCRTextResult
+}
+
+extension OCRRecognizing {
+    public func recognizeText(
+        in imageData: Data,
+        timeoutSeconds: TimeInterval,
+        regions _: [OCRRecognitionRegion]) async throws -> OCRTextResult
+    {
+        try await self.recognizeText(in: imageData, timeoutSeconds: timeoutSeconds)
+    }
+}
+
+public struct OCRRecognitionRegion: Sendable, Equatable {
+    /// Top-left-origin bounds normalized to the full captured image.
+    public let normalizedBounds: CGRect
+
+    public init(normalizedBounds: CGRect) {
+        self.normalizedBounds = normalizedBounds
+    }
 }
 
 public struct OCRService: OCRRecognizing {
@@ -95,6 +118,19 @@ public struct OCRService: OCRRecognizing {
     {
         try await OCRExecutionRunner.run(seconds: timeoutSeconds) {
             try Self.performRecognition(in: imageData)
+        }
+    }
+
+    public nonisolated func recognizeText(
+        in imageData: Data,
+        timeoutSeconds: TimeInterval,
+        regions: [OCRRecognitionRegion]) async throws -> OCRTextResult
+    {
+        guard !regions.isEmpty else {
+            return try await self.recognizeText(in: imageData, timeoutSeconds: timeoutSeconds)
+        }
+        return try await OCRExecutionRunner.run(seconds: timeoutSeconds) {
+            try Self.performTargetedRecognition(in: imageData, regions: regions)
         }
     }
 
@@ -125,6 +161,90 @@ public struct OCRService: OCRRecognizing {
         return OCRTextResult(
             observations: observations,
             imageSize: CGSize(width: image.width, height: image.height))
+    }
+
+    private nonisolated static func performTargetedRecognition(
+        in imageData: Data,
+        regions: [OCRRecognitionRegion]) throws -> OCRTextResult
+    {
+        guard let source = CGImageSourceCreateWithData(imageData as CFData, nil),
+              let image = CGImageSourceCreateImageAtIndex(source, 0, nil)
+        else {
+            throw OCRServiceError.invalidImageData
+        }
+
+        var observations: [OCRTextObservation] = []
+        for region in regions {
+            guard let crop = self.targetedCrop(region.normalizedBounds, from: image) else { continue }
+            let request = VNRecognizeTextRequest()
+            request.recognitionLevel = .fast
+            request.usesLanguageCorrection = false
+            try VNImageRequestHandler(cgImage: crop.image, options: [:]).perform([request])
+            observations.append(contentsOf: (request.results ?? []).compactMap { observation in
+                guard let candidate = observation.topCandidates(1).first else { return nil }
+                let text = candidate.string.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !text.isEmpty else { return nil }
+                return OCRTextObservation(
+                    text: text,
+                    confidence: candidate.confidence,
+                    boundingBox: self.fullImageBoundingBox(
+                        observation.boundingBox,
+                        region: crop.normalizedBounds))
+            })
+        }
+
+        return OCRTextResult(
+            observations: observations,
+            imageSize: CGSize(width: image.width, height: image.height))
+    }
+
+    private nonisolated static func targetedCrop(
+        _ normalizedBounds: CGRect,
+        from image: CGImage) -> (image: CGImage, normalizedBounds: CGRect)?
+    {
+        let unitBounds = CGRect(x: 0, y: 0, width: 1, height: 1)
+        let normalized = normalizedBounds.standardized.intersection(unitBounds)
+        guard !normalized.isNull, normalized.width > 0, normalized.height > 0 else { return nil }
+        let imageBounds = CGRect(x: 0, y: 0, width: image.width, height: image.height)
+        let pixelBounds = CGRect(
+            x: normalized.minX * imageBounds.width,
+            y: normalized.minY * imageBounds.height,
+            width: normalized.width * imageBounds.width,
+            height: normalized.height * imageBounds.height)
+            .integral
+            .intersection(imageBounds)
+        guard !pixelBounds.isNull,
+              let cropped = image.cropping(to: pixelBounds),
+              let context = CGContext(
+                  data: nil,
+                  width: cropped.width * 4,
+                  height: cropped.height * 4,
+                  bitsPerComponent: 8,
+                  bytesPerRow: 0,
+                  space: CGColorSpaceCreateDeviceRGB(),
+                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+        else {
+            return nil
+        }
+        context.interpolationQuality = .high
+        context.draw(cropped, in: CGRect(x: 0, y: 0, width: context.width, height: context.height))
+        guard let scaled = context.makeImage() else { return nil }
+        return (scaled, CGRect(
+            x: pixelBounds.minX / imageBounds.width,
+            y: pixelBounds.minY / imageBounds.height,
+            width: pixelBounds.width / imageBounds.width,
+            height: pixelBounds.height / imageBounds.height))
+    }
+
+    @_spi(Testing) public nonisolated static func fullImageBoundingBox(
+        _ localVisionBounds: CGRect,
+        region: CGRect) -> CGRect
+    {
+        CGRect(
+            x: region.minX + localVisionBounds.minX * region.width,
+            y: 1 - region.maxY + localVisionBounds.minY * region.height,
+            width: localVisionBounds.width * region.width,
+            height: localVisionBounds.height * region.height)
     }
 }
 
@@ -376,6 +496,24 @@ public enum ObservationOCRMapper {
     /// Those controls need pixel text to avoid presenting an identifier-derived guess as their visible label.
     public static func needsSemanticLabelRecovery(in detectionResult: ElementDetectionResult?) -> Bool {
         detectionResult?.elements.buttons.contains(where: self.needsSemanticLabelRecovery) == true
+    }
+
+    public static func semanticLabelRecognitionRegions(
+        in detectionResult: ElementDetectionResult?,
+        windowBounds: CGRect,
+        padding: CGFloat = 8) -> [OCRRecognitionRegion]
+    {
+        guard let detectionResult, windowBounds.width > 0, windowBounds.height > 0 else { return [] }
+        return detectionResult.elements.buttons.compactMap { element in
+            guard self.needsSemanticLabelRecovery(element) else { return nil }
+            let padded = element.bounds.insetBy(dx: -padding, dy: -padding).intersection(windowBounds)
+            guard !padded.isNull, padded.width > 0, padded.height > 0 else { return nil }
+            return OCRRecognitionRegion(normalizedBounds: CGRect(
+                x: (padded.minX - windowBounds.minX) / windowBounds.width,
+                y: (padded.minY - windowBounds.minY) / windowBounds.height,
+                width: padded.width / windowBounds.width,
+                height: padded.height / windowBounds.height))
+        }
     }
 
     public static func matches(_ result: OCRTextResult, hints: [String]) -> Bool {
