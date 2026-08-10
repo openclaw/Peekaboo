@@ -1,7 +1,7 @@
 ---
 title: Migrating to Peekaboo 4
 summary: 'Complete old-to-new mapping for every command, flag, and tool removed or renamed in the v4 CLI redesign.'
-description: What changed in Peekaboo 4 and what to use instead — commands, flags, MCP tools, JSON output.
+description: What changes in the upcoming Peekaboo 4 release and what to use instead — commands, flags, MCP tools, JSON output.
 read_when:
   - 'updating scripts, agents, or docs that used a Peekaboo 3 command or flag'
   - 'encountering an unknown-command or unknown-option error after upgrading'
@@ -9,10 +9,11 @@ read_when:
 
 # Migrating to Peekaboo 4
 
-Peekaboo 4 assumes your automation runs in a shell: anything a stock macOS tool already
-does well was removed, every operation has exactly one spelling, and familiar grammars
-(xdotool chords, coreutils-style durations) replace bespoke ones. Full rationale:
-`docs/v4-cli-plan.md`.
+Peekaboo 4 is not published yet; this guide describes the current source-tree contract
+for the upcoming release. Peekaboo 4 assumes your automation runs in a shell: anything
+a stock macOS tool already does well was removed, every operation has exactly one
+spelling, and familiar grammars (xdotool chords, coreutils-style durations) replace
+bespoke ones. Full rationale: `docs/v4-cli-plan.md`.
 
 ## Removed commands
 
@@ -37,29 +38,57 @@ does well was removed, every operation has exactly one spelling, and familiar gr
 
 | Peekaboo 3 | Peekaboo 4 |
 |---|---|
-| `clipboard -a get` / positional actions / `load` | `clipboard get\|set\|clear\|save\|restore` (`load` = `set --file-path`) |
+| `clipboard --action <verb>` / `clipboard -a <verb>` / positional actions | `clipboard get\|set\|clear\|save\|restore` |
+| `clipboard load <path>` | `clipboard set --file-path <path>` |
 | `menubar <action> [item]` | `menubar list` / `menubar click <item>` |
-| `config add-provider` etc. | `config provider add\|remove\|list\|test\|models` |
+| `config add-provider` | `config provider add` |
+| `config remove-provider` | `config provider remove` |
+| `config list-providers` | `config provider list` |
+| `config test-provider` | `config provider test` |
+| `config models-provider` | `config provider models` |
 | `config set-credential`, `config add` | `config credential set` |
-| `agent --resume [--resume-session ID]` | `agent resume [ID]` |
+| `agent --resume` | `agent resume` |
+| `agent --resume-session ID` | `agent resume ID` |
 | `agent --list-sessions` | `agent sessions` |
 | `agent --chat` | `agent chat` |
-| `permissions request-screen-recording` etc. | `permissions request screen-recording\|accessibility\|event-synthesizing` |
+| `permissions request-screen-recording` | `permissions request screen-recording` |
+| `permissions request-accessibility` | `permissions request accessibility` |
+| `permissions request-event-synthesizing` | `permissions request event-synthesizing` |
 | `app quit --app X` (only form) | positional works everywhere: `app quit X`, `app focus X` (new) |
 
-## Renamed flags
+## Renamed and removed flags
 
 | Peekaboo 3 | Peekaboo 4 |
 |---|---|
-| `--coords x,y` | `--at x,y` |
-| `--global-coords` | `--global` |
-| `--id <el>` (click/move) | `--on <el>` |
-| `--timeout-seconds N` | `--timeout N[s\|ms]` (bare = ms) |
-| `--focus-timeout-seconds` | `--focus-timeout` |
-| `--restore-delay-ms` | `--restore-delay` |
-| `--hold-duration` | `--hold` |
-| `--image-path` | `--file-path` |
 | `--app-target` | `--app` |
+| `--autoclean-minutes` | `--autoclean` |
+| `--coords x,y` | `--at x,y` |
+| `--delay-ms` | `--delay` |
+| `--diff-budget-ms` | `--diff-budget` |
+| `--end-ms` | `--end` |
+| `--every-ms` | `--every` |
+| `--focus-timeout-seconds` | `--focus-timeout` |
+| `--from-coords` | `--from` |
+| `--global-coords` | `--global` |
+| `--heartbeat-sec` | `--heartbeat` |
+| `--hold-duration` | `--hold` |
+| `--id <el>` (click/move) | `--on <el>` |
+| `--idle-timeout-seconds` | `--idle-timeout` |
+| `--image-path` | `--file-path` |
+| `--keys` | positional xdotool chord syntax, for example `peekaboo press cmd+c` |
+| `--label` | positional query text or `--on` |
+| `--max-depth` | `--depth` |
+| `--poll-interval-ms` | `--poll-interval` |
+| `--post-roll-ms` | `--post-roll` |
+| `--pre-roll-ms` | `--pre-roll` |
+| `--quiet-ms` | `--quiet` |
+| `--repeat` | `--count` |
+| `--restore-delay-ms` | `--restore-delay` |
+| `--start-ms` | `--start` |
+| `--ticks` | `--amount` |
+| `--timeout-seconds N` | `--timeout N[s\|ms]` (bare = ms) |
+| `--to-coords` | `--to` |
+| `--wait-seconds` | `--wait` |
 | `type --return/--escape/--delete/--tab` | `type "text"` then `press Return` / `press Escape` / … |
 
 All duration flags accept `500`, `500ms`, or `2s`; bare numbers are milliseconds.
@@ -71,8 +100,10 @@ Modifier lists are comma-separated: `--modifiers cmd,shift`.
   (ternary result; replaces sleep-polling). Exit 0 satisfied / 1 unsatisfied / 2 unknown.
 - `tools describe <name>` — one tool's schema on demand.
 - `app launch --wait-ready --open <target>`, `window restore`, `window` tool `list` action.
-- JSON envelope: action commands report `effect: confirmed|partial|unverifiable|suspected_noop|refused`
-  and errors carry `hint` with the actionable next step. (Phase 6)
+- JSON envelope: after an action request has been parsed and classified, its result reports
+  `effect: confirmed|partial|unverifiable|suspected_noop|refused` and errors carry `hint`
+  with the actionable next step. Pre-dispatch argument parse/bind failures happen before
+  that classification and may omit `effect`. (Phase 6)
 
 ## MCP / agent tool changes
 
@@ -85,6 +116,9 @@ Modifier lists are comma-separated: `--modifiers cmd,shift`.
 
 ## Visualizer
 
-Overlays were redesigned: an agent cursor with natural motion, an input HUD anchored to
-the target window (nothing renders when the target is not visibly frontmost), subtle
-click pulses, and thin-border capture indicators. Settings collapsed to three toggles.
+Overlays were redesigned around three feedback categories: an agent cursor with natural
+motion and subtle click pulses, an input HUD, and thin-border capture indicators. All
+targeted background input stays overlay-free even when the target window is visible or
+frontmost; only untargeted or explicitly foreground input may show the cursor or HUD.
+Peekaboo.app keeps a visualizer master switch and playback controls around the three
+category switches; those categories are not the entire settings surface.

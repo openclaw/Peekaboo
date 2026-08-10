@@ -7,7 +7,7 @@ read_when:
 
 # Command docs index
 
-Every current root command has one page here:
+All 33 current root commands have one page here:
 
 - Core: [`bridge`](bridge.md), [`capture`](capture.md), [`clean`](clean.md), [`completions`](completions.md), [`config`](config.md), [`daemon`](daemon.md), [`learn`](learn.md), [`permissions`](permissions.md), [`screen`](screen.md), [`tools`](tools.md).
 - Interaction: [`action`](action.md), [`click`](click.md), [`drag`](drag.md), [`move`](move.md), [`paste`](paste.md), [`press`](press.md), [`scroll`](scroll.md), [`set-value`](set-value.md), [`type`](type.md).

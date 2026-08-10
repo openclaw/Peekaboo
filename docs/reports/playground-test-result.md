@@ -7,6 +7,9 @@ read_when:
 
 # Peekaboo CLI Comprehensive Testing Report
 
+> **Historical record:** Commands and outputs are preserved as observed when this report was written. See the
+> [Peekaboo 4 migration guide](../v4-migration.md) for current CLI syntax.
+
 This document tracks comprehensive testing of all Peekaboo CLI commands using the Playground app as a test target.
 
 ## Testing Methodology
@@ -34,7 +37,7 @@ This document tracks comprehensive testing of all Peekaboo CLI commands using th
 **Help Output**:
 ```
 OVERVIEW: Capture screenshots
-USAGE: peekaboo see [options]
+USAGE: peekaboo image [--app <app>] [--window-id <window-id>] [--window-title <window-title>] [--pid <pid>] [--mode <mode>] [--path <path>] [--format <format>] [--quality <quality>] [--json-output]
 ```
 
 **Testing Results**:
@@ -52,7 +55,7 @@ USAGE: peekaboo see [options]
 **Help Output**:
 ```
 OVERVIEW: List running applications, windows, or check permissions
-USAGE: peekaboo app|window|screen|menubar list [options]
+USAGE: peekaboo list <subcommand>
 SUBCOMMANDS:
   apps                    List all running applications
   windows                 List windows for an application
@@ -93,7 +96,7 @@ USAGE: peekaboo see [--app <app>] [--window-id <window-id>] [--window-title <win
 **Help Output**:
 ```
 OVERVIEW: Click on UI elements or coordinates
-USAGE: peekaboo click [query] [--snapshot <snapshot>] [--on <on>] [--at <x,y>] [--wait-for <duration>] [--double] [--right] [--json]
+USAGE: peekaboo click [<query>] [--snapshot <snapshot>] [--on <on>] [--coords <coords>] [--wait-for <wait-for>] [--double] [--right] [--json-output]
 ```
 
 **Testing Results**:
@@ -168,7 +171,7 @@ USAGE: peekaboo scroll --direction <direction> [--amount <amount>] [--on <on>] [
 **Help Output**:
 ```
 OVERVIEW: Press keyboard shortcuts and key combinations
-USAGE: peekaboo press [chords] [--hold <duration>] [--snapshot <snapshot>] [--json]
+USAGE: peekaboo hotkey --keys <keys> [--hold-duration <hold-duration>] [--snapshot <snapshot>] [--json-output]
 ```
 
 **Testing Results**:
@@ -276,7 +279,7 @@ USAGE: peekaboo move [<coordinates>] [--to <to>] [--id <id>] [--center] [--smoot
 **Help Output**:
 ```
 OVERVIEW: Pause execution for a specified duration
-USAGE: /bin/sleep <seconds>
+USAGE: peekaboo sleep <duration> [--json-output]
 ```
 
 **Testing Results**:
@@ -440,7 +443,7 @@ Configuration locations:
   - Uses JSONC format with comment support
 
 **Parameter Observations**:
-- Clear subcommands (`init`, `show`, `edit`, `validate`, `credential set`)
+- Clear subcommands (init, show, edit, validate, set-credential)
 - Proper separation of config and credentials
 - Environment variable expansion support
 
@@ -478,8 +481,8 @@ Uses OpenAI Chat Completions API to break down and execute complex automation ta
   - **Note**: Model configuration warning appears when PEEKABOO_AI_PROVIDERS differs from config.json
 
 **Key Features**:
-- Resume sessions with `agent resume [session-id]`
-- List available sessions with `agent sessions`
+- Resume sessions with --resume or --resume-session
+- List available sessions with --list-sessions
 - Dry-run mode for testing
 - Max steps limit for safety
 

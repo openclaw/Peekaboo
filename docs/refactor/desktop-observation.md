@@ -10,6 +10,9 @@ read_when:
 
 # Desktop Observation Refactor
 
+> **Historical record:** Commands and outputs are preserved as observed when this document was written. See the
+> [Peekaboo 4 migration guide](../v4-migration.md) for current CLI syntax.
+
 ## Thesis
 
 Peekaboo should have one product-level answer to this question:
@@ -84,7 +87,7 @@ Landed:
 - Dialog service keeps construction/errors, public operations, button action resolution, element extraction, target resolution, classification, and file-dialog flows in focused files.
 - Process command models keep enum cases, interaction parameters, system parameters, and output DTOs in focused files.
 - Observation-backed CLI/MCP structured timings and diagnostics.
-- `peekaboo see --json` includes per-file observation diagnostics with timing spans, state snapshot summaries, warnings, and resolved target metadata.
+- `peekaboo image --json` includes per-file observation diagnostics with timing spans, state snapshot summaries, warnings, and resolved target metadata.
 - Observation target selection for remaining CLI app-window filtering in `image`, live `capture`, and `window list`.
 - Observation-backed menu-bar strip capture for CLI `image --app menubar` and MCP `image`.
 - Observation-backed menu-bar popover window-list resolution and capture.
@@ -98,7 +101,7 @@ Landed:
 - ScreenCaptureKit area captures now use the single-shot frame source because fast-stream display sessions returned full-display frames for area source rectangles.
 - `peekaboo see --mode area` now fails during command binding/target selection instead of silently entering the legacy capture bridge; area capture remains an `image`/service-level feature until `see` exposes rectangle inputs.
 - CLI `see` no longer carries legacy window/frontmost capture fallback code; observation-backed targets now own those paths, and the remaining fallback handles only all-screen/multi capture plus menu-bar popover recovery.
-- Commander binding now wires `see --capture-engine`, `see --capture-engine`, and `see --timeout` into the command structs that build observation requests.
+- Commander binding now wires `see --capture-engine`, `image --capture-engine`, and `see --timeout-seconds` into the command structs that build observation requests.
 - CLI `image --mode area --region x,y,width,height` now routes explicit desktop-region capture through observation-backed area targets.
 - CLI `image --help` now advertises the full observation-backed mode set, including `multi` and `area`.
 - CLI `capture live --region x,y,width,height` now infers area mode, `--mode area` is canonical, `region` remains an alias, and invalid mode/region inputs fail before capture starts.
@@ -108,15 +111,15 @@ Landed:
 - Popover-specific OCR selection now lives in observation via shared candidate-window, preferred-area, and AX-menu-frame matching helpers.
 - Menu-bar popover click-to-open capture now lives behind the typed observation target option `openIfNeeded`.
 - Menu-bar strip and popover observation diagnostics now share typed target-resolution metadata for source, bounds, hints, window IDs, and click-open fallbacks.
-- `peekaboo menubar list` and `peekaboo menubar list` now share the same JSON payload and text list formatting.
+- `peekaboo menubar list` and `peekaboo list menubar` now share the same JSON payload and text list formatting.
 - CLI `see` all-screens capture now uses the shared screen inventory instead of command-local ScreenCaptureKit display enumeration.
-- `peekaboo see` builds desktop observation requests through a dedicated command-support adapter.
+- `peekaboo image` builds desktop observation requests through a dedicated command-support adapter.
 - `peekaboo see` builds desktop observation requests through a dedicated command-support adapter.
 - `peekaboo see --mode screen --screen-index <n>` and screen analysis captures now route through desktop observation; all-screen capture remains on the legacy multi-file path until observation grows multi-artifact output.
 - `peekaboo see --json` now reports an annotated screenshot path only when an annotated file actually exists.
 - `peekaboo see` support types, output rendering, and screen helpers are split out of the primary command file.
 - `peekaboo see` legacy capture/detection fallback now lives in a dedicated detection-pipeline adapter, putting the main command shell under the target size.
-- `peekaboo see` capture orchestration, output models, analysis rendering, filename planning, and focus helpers are split out of the primary command file.
+- `peekaboo image` capture orchestration, output models, analysis rendering, filename planning, and focus helpers are split out of the primary command file.
 - `peekaboo app` launch, quit, and relaunch implementations now live in focused support files, leaving `AppCommand.swift` under the target size.
 - `peekaboo menu` list output filtering, typed JSON conversion, and text rendering now share one command-support helper.
 - `peekaboo menu` subcommands now share one error-output mapper for JSON error codes and stderr rendering.
@@ -232,7 +235,7 @@ Landed:
 - `TypeService` now keeps target resolution, typing cadence, and special-key synthesis in focused helper files; special-key synthesis now honors the documented `SpecialKey` raw values for keypad Enter, forward delete, caps lock, clear, and help.
 - Gesture service internals now keep path generation and humanized mouse-movement synthesis in a focused companion while swipe/drag/move orchestration stays in the primary service.
 - Snapshot management now keeps screenshot persistence, element lookup, and the JSON storage actor in focused support files while the primary manager owns lifecycle, listing, cleanup, and detection-result conversion.
-- `peekaboo see` capture orchestration now keeps saved-file/path planning and app-focus policy in focused command-support files.
+- `peekaboo image` capture orchestration now keeps saved-file/path planning and app-focus policy in focused command-support files.
 - `peekaboo capture live` now keeps scope resolution, option normalization, output rendering, focus policy, and Commander binding in focused command-support files.
 - `peekaboo capture live` now applies the resolution cap consistently to live frames whose source images lack reusable color-space metadata.
 - `peekaboo see --mode screen --json` now suppresses human screen-summary lines so stdout remains a single JSON document.
@@ -256,8 +259,8 @@ Landed:
 - MCP `AppTool` action handlers now live in a focused companion file, leaving the primary tool file as request parsing and dispatch.
 - MCP `SpaceTool` action handlers now live in a focused companion file, leaving the primary tool file as schema, request parsing, and dispatch.
 - MCP `DialogTool` input parsing and response formatting now live in focused companion files, leaving the primary tool to own schema, targeting, and service dispatch.
-- `peekaboo screen list` implementation and screen payload models are split out of the primary list command file.
-- `peekaboo app list` and `peekaboo window list` implementations are split out of the primary list command shell.
+- `peekaboo list screens` implementation and screen payload models are split out of the primary list command file.
+- `peekaboo list apps` and `peekaboo list windows` implementations are split out of the primary list command shell.
 - `peekaboo clipboard` Commander binding and output DTOs are split from clipboard action logic.
 - `peekaboo bridge status` diagnostics and report DTOs are split from the command UI shell.
 - Commander runtime help rendering and theming are split from command resolution and alias routing.
@@ -265,7 +268,7 @@ Landed:
 - `peekaboo capture video` is split out of the primary capture command file.
 - `peekaboo agent permission` status and request flows are split into focused companion files.
 - `peekaboo agent permission ...` now resolves as nested permission subcommands before the agent free-form task argument.
-- Interactive `peekaboo agent chat` TUI code now keeps chat shell, input/loader components, and event translation in focused files.
+- Interactive `peekaboo agent --chat` TUI code now keeps chat shell, input/loader components, and event translation in focused files.
 
 Current status:
 
@@ -1209,9 +1212,9 @@ Recommended order:
 Live check, May 7, 2026:
 
 ```bash
-./Apps/CLI/.build/debug/peekaboo window list --app Ghostty --json-output
-./Apps/CLI/.build/debug/peekaboo see --window-id 7565 --path /tmp/peekaboo-live-no-retina.png --json-output
-./Apps/CLI/.build/debug/peekaboo see --window-id 7565 --retina --path /tmp/peekaboo-live-retina.png --json-output
+./Apps/CLI/.build/debug/peekaboo list windows --app Ghostty --json-output
+./Apps/CLI/.build/debug/peekaboo image --window-id 7565 --path /tmp/peekaboo-live-no-retina.png --json-output
+./Apps/CLI/.build/debug/peekaboo image --window-id 7565 --retina --path /tmp/peekaboo-live-retina.png --json-output
 screencapture -l 7565 -o -x /tmp/peekaboo-live-native.png
 sips -g pixelWidth -g pixelHeight /tmp/peekaboo-live-no-retina.png /tmp/peekaboo-live-retina.png /tmp/peekaboo-live-native.png
 ```
@@ -1398,15 +1401,15 @@ Live verification, May 7, 2026:
 
 ```bash
 ./Apps/CLI/.build/debug/peekaboo permissions status --json --no-remote
-./Apps/CLI/.build/debug/peekaboo window list --app TextEdit --json --no-remote
-./Apps/CLI/.build/debug/peekaboo window list --app "Google Chrome" --json --no-remote
-./Apps/CLI/.build/debug/peekaboo window list --app PeekabooInspector --json --no-remote
-./Apps/CLI/.build/debug/peekaboo see --window-id 13441 --path .artifacts/live-e2e/2026-05-07T1118Z/textedit-window.png --json --no-remote
-./Apps/CLI/.build/debug/peekaboo see --app TextEdit --path .artifacts/live-e2e/2026-05-07T1118Z/textedit-app-fixed.png --json --no-remote
-./Apps/CLI/.build/debug/peekaboo see --window-id 12438 --path .artifacts/live-e2e/2026-05-07T1118Z/chrome-window.png --json --no-remote
-./Apps/CLI/.build/debug/peekaboo see --app "Google Chrome" --path .artifacts/live-e2e/2026-05-07T1118Z/chrome-app-fixed.png --json --no-remote
-./Apps/CLI/.build/debug/peekaboo see --window-id 13665 --path .artifacts/live-e2e/2026-05-07T1118Z/inspector-window.png --json --no-remote
-./Apps/CLI/.build/debug/peekaboo see --app PeekabooInspector --path .artifacts/live-e2e/2026-05-07T1118Z/inspector-app-fixed.png --json --no-remote
+./Apps/CLI/.build/debug/peekaboo list windows --app TextEdit --json --no-remote
+./Apps/CLI/.build/debug/peekaboo list windows --app "Google Chrome" --json --no-remote
+./Apps/CLI/.build/debug/peekaboo list windows --app PeekabooInspector --json --no-remote
+./Apps/CLI/.build/debug/peekaboo image --window-id 13441 --path .artifacts/live-e2e/2026-05-07T1118Z/textedit-window.png --json --no-remote
+./Apps/CLI/.build/debug/peekaboo image --app TextEdit --path .artifacts/live-e2e/2026-05-07T1118Z/textedit-app-fixed.png --json --no-remote
+./Apps/CLI/.build/debug/peekaboo image --window-id 12438 --path .artifacts/live-e2e/2026-05-07T1118Z/chrome-window.png --json --no-remote
+./Apps/CLI/.build/debug/peekaboo image --app "Google Chrome" --path .artifacts/live-e2e/2026-05-07T1118Z/chrome-app-fixed.png --json --no-remote
+./Apps/CLI/.build/debug/peekaboo image --window-id 13665 --path .artifacts/live-e2e/2026-05-07T1118Z/inspector-window.png --json --no-remote
+./Apps/CLI/.build/debug/peekaboo image --app PeekabooInspector --path .artifacts/live-e2e/2026-05-07T1118Z/inspector-app-fixed.png --json --no-remote
 ./Apps/CLI/.build/debug/peekaboo see --window-id 13441 --path .artifacts/live-e2e/2026-05-07T1118Z/textedit-see-window.png --json --no-remote
 ./Apps/CLI/.build/debug/peekaboo see --app TextEdit --path .artifacts/live-e2e/2026-05-07T1118Z/textedit-see-app.png --json --no-remote
 ./Apps/CLI/.build/debug/peekaboo see --window-id 12438 --path .artifacts/live-e2e/2026-05-07T1118Z/chrome-see-window.png --json --no-remote
@@ -1431,19 +1434,19 @@ pnpm run format
 pnpm run lint
 pnpm run test:safe
 ./Apps/CLI/.build/debug/peekaboo permissions status --json
-./Apps/CLI/.build/debug/peekaboo app list --json
-./Apps/CLI/.build/debug/peekaboo screen list --json
-./Apps/CLI/.build/debug/peekaboo window list --app Finder --json
-./Apps/CLI/.build/debug/peekaboo see --mode screen --path /tmp/peekaboo-live-screen.png --json
+./Apps/CLI/.build/debug/peekaboo list apps --json
+./Apps/CLI/.build/debug/peekaboo list screens --json
+./Apps/CLI/.build/debug/peekaboo list windows --app Finder --json
+./Apps/CLI/.build/debug/peekaboo image --mode screen --path /tmp/peekaboo-live-screen.png --json
 ./Apps/CLI/.build/debug/peekaboo see --app frontmost --path /tmp/peekaboo-live-see-frontmost.png --annotate --json
-./Apps/CLI/.build/debug/peekaboo click --at 500,1000 --no-auto-focus --json
-./Apps/CLI/.build/debug/peekaboo move --at 520,1000 --json
+./Apps/CLI/.build/debug/peekaboo click --coords 500,1000 --no-auto-focus --json
+./Apps/CLI/.build/debug/peekaboo move --coords 520,1000 --json
 ./Apps/CLI/.build/debug/peekaboo see --app TextEdit --path /tmp/peekaboo-live-textedit-before.png --annotate --json
 ./Apps/CLI/.build/debug/peekaboo click --on elem_2 --snapshot 1ACF34FD-8EA8-4419-B0FA-73689AA4936B --app TextEdit --json
 ./Apps/CLI/.build/debug/peekaboo type PEEKABOO_LIVE_TYPE_1778155880 --clear --app TextEdit --delay 0 --profile linear --json
-./Apps/CLI/.build/debug/peekaboo see --app TextEdit --path /tmp/peekaboo-live-textedit-after.png --json
-./Apps/CLI/.build/debug/peekaboo see --app "Google Chrome" --path /tmp/peekaboo-live-chrome-app.png --json
-./Apps/CLI/.build/debug/peekaboo see --window-id 12438 --path /tmp/peekaboo-live-chrome-window.png --json
+./Apps/CLI/.build/debug/peekaboo image --app TextEdit --path /tmp/peekaboo-live-textedit-after.png --json
+./Apps/CLI/.build/debug/peekaboo image --app "Google Chrome" --path /tmp/peekaboo-live-chrome-app.png --json
+./Apps/CLI/.build/debug/peekaboo image --window-id 12438 --path /tmp/peekaboo-live-chrome-window.png --json
 ./Apps/CLI/.build/debug/peekaboo see --app "Google Chrome" --path /tmp/peekaboo-live-chrome-see.png --annotate --json
 ```
 
@@ -1464,18 +1467,18 @@ CLI JSON envelope sweep, May 7, 2026:
 
 ```bash
 ./Apps/CLI/.build/debug/peekaboo permissions status --json
-./Apps/CLI/.build/debug/peekaboo app list --json
-./Apps/CLI/.build/debug/peekaboo screen list --json
-./Apps/CLI/.build/debug/peekaboo menubar list --json
-./Apps/CLI/.build/debug/peekaboo window list --app Finder --json
+./Apps/CLI/.build/debug/peekaboo list apps --json
+./Apps/CLI/.build/debug/peekaboo list screens --json
+./Apps/CLI/.build/debug/peekaboo list menubar --json
+./Apps/CLI/.build/debug/peekaboo list windows --app Finder --json
 ./Apps/CLI/.build/debug/peekaboo dock list --json
 ./Apps/CLI/.build/debug/peekaboo dialog list --json
 ./Apps/CLI/.build/debug/peekaboo space list --json
 ./Apps/CLI/.build/debug/peekaboo window list --app Finder --json
 ./Apps/CLI/.build/debug/peekaboo tools --json
 ./Apps/CLI/.build/debug/peekaboo commander --json
-/bin/sleep 1
-./Apps/CLI/.build/debug/peekaboo see --app frontmost --path /tmp/peekaboo-sweep-frontmost.png --json
+./Apps/CLI/.build/debug/peekaboo sleep 1 --json
+./Apps/CLI/.build/debug/peekaboo image --app frontmost --path /tmp/peekaboo-sweep-frontmost.png --json
 ./Apps/CLI/.build/debug/peekaboo see --app frontmost --path /tmp/peekaboo-sweep-see.png --json
 ```
 
@@ -1490,25 +1493,25 @@ Live verification after service split cleanup, May 7, 2026:
 
 ```bash
 ./Apps/CLI/.build/debug/peekaboo permissions status --json --no-remote
-./Apps/CLI/.build/debug/peekaboo app list --json --no-remote
-./Apps/CLI/.build/debug/peekaboo screen list --json --no-remote
-./Apps/CLI/.build/debug/peekaboo window list --app TextEdit --json --no-remote
-./Apps/CLI/.build/debug/peekaboo window list --app "Google Chrome" --json --no-remote
-./Apps/CLI/.build/debug/peekaboo see --window-id 13441 --path .artifacts/live-e2e/2026-05-07T174032Z/textedit-window.png --json --no-remote
-./Apps/CLI/.build/debug/peekaboo see --app TextEdit --path .artifacts/live-e2e/2026-05-07T174032Z/textedit-app.png --json --no-remote
-./Apps/CLI/.build/debug/peekaboo see --window-id 13441 --retina --path .artifacts/live-e2e/2026-05-07T174032Z/textedit-retina.png --json --no-remote
+./Apps/CLI/.build/debug/peekaboo list apps --json --no-remote
+./Apps/CLI/.build/debug/peekaboo list screens --json --no-remote
+./Apps/CLI/.build/debug/peekaboo list windows --app TextEdit --json --no-remote
+./Apps/CLI/.build/debug/peekaboo list windows --app "Google Chrome" --json --no-remote
+./Apps/CLI/.build/debug/peekaboo image --window-id 13441 --path .artifacts/live-e2e/2026-05-07T174032Z/textedit-window.png --json --no-remote
+./Apps/CLI/.build/debug/peekaboo image --app TextEdit --path .artifacts/live-e2e/2026-05-07T174032Z/textedit-app.png --json --no-remote
+./Apps/CLI/.build/debug/peekaboo image --window-id 13441 --retina --path .artifacts/live-e2e/2026-05-07T174032Z/textedit-retina.png --json --no-remote
 screencapture -l 13441 -o -x .artifacts/live-e2e/2026-05-07T174032Z/textedit-native.png
 ./Apps/CLI/.build/debug/peekaboo see --window-id 13441 --path .artifacts/live-e2e/2026-05-07T174032Z/textedit-see-window.png --annotate --json --no-remote
 ./Apps/CLI/.build/debug/peekaboo see --app TextEdit --path .artifacts/live-e2e/2026-05-07T174032Z/textedit-see-app.png --annotate --json --no-remote
-./Apps/CLI/.build/debug/peekaboo see --window-id 13977 --path .artifacts/live-e2e/2026-05-07T174032Z/chrome-window.png --json --no-remote
-./Apps/CLI/.build/debug/peekaboo see --app "Google Chrome" --path .artifacts/live-e2e/2026-05-07T174032Z/chrome-app.png --json --no-remote
-./Apps/CLI/.build/debug/peekaboo see --window-id 13977 --retina --path .artifacts/live-e2e/2026-05-07T174032Z/chrome-retina.png --json --no-remote
+./Apps/CLI/.build/debug/peekaboo image --window-id 13977 --path .artifacts/live-e2e/2026-05-07T174032Z/chrome-window.png --json --no-remote
+./Apps/CLI/.build/debug/peekaboo image --app "Google Chrome" --path .artifacts/live-e2e/2026-05-07T174032Z/chrome-app.png --json --no-remote
+./Apps/CLI/.build/debug/peekaboo image --window-id 13977 --retina --path .artifacts/live-e2e/2026-05-07T174032Z/chrome-retina.png --json --no-remote
 screencapture -l 13977 -o -x .artifacts/live-e2e/2026-05-07T174032Z/chrome-native.png
 ./Apps/CLI/.build/debug/peekaboo see --window-id 13977 --path .artifacts/live-e2e/2026-05-07T174032Z/chrome-see-window.png --annotate --json --no-remote
 ./Apps/CLI/.build/debug/peekaboo see --app "Google Chrome" --path .artifacts/live-e2e/2026-05-07T174032Z/chrome-see-app.png --annotate --json --no-remote
-./Apps/CLI/.build/debug/peekaboo click --at 536,293 --no-auto-focus --json --no-remote
+./Apps/CLI/.build/debug/peekaboo click --coords 536,293 --no-auto-focus --json --no-remote
 ./Apps/CLI/.build/debug/peekaboo type PEEKABOO_E2E_174150 --clear --app TextEdit --delay 0 --profile linear --json --no-remote
-./Apps/CLI/.build/debug/peekaboo see --window-id 13983 --path .artifacts/live-e2e/2026-05-07T174032Z/textedit-controlled-after.png --json --no-remote
+./Apps/CLI/.build/debug/peekaboo image --window-id 13983 --path .artifacts/live-e2e/2026-05-07T174032Z/textedit-controlled-after.png --json --no-remote
 ./Apps/CLI/.build/debug/peekaboo see --window-id 13983 --path .artifacts/live-e2e/2026-05-07T174032Z/textedit-controlled-see-after.png --annotate --json --no-remote
 ```
 
@@ -1524,20 +1527,20 @@ Results:
 - controlled TextEdit interaction used a temp document under the artifact directory, clicked inside the document in `0.16s`, typed `PEEKABOO_E2E_174150` in `0.55s`, and recaptured the marker in a `656x422` screenshot;
 - follow-up `see` on the controlled TextEdit window completed in `0.93s`, found the marker in JSON, and reported `395` elements / `303` interactables;
 - screenshots were inspected with local image vision: TextEdit marker visible, Chrome annotated screenshot nonblank with labels aligned to visible UI.
-- `peekaboo see --app TextEdit --path . --json` was run from `/tmp/peekaboo-path-dot.51XoMS` and wrote `TextEdit_2026-05-07T17:53:30Z.png` inside that directory, verifying the directory-like output path fix.
+- `peekaboo image --app TextEdit --path . --json` was run from `/tmp/peekaboo-path-dot.51XoMS` and wrote `TextEdit_2026-05-07T17:53:30Z.png` inside that directory, verifying the directory-like output path fix.
 - `peekaboo see --app TextEdit --path . --json` was run from `/tmp/peekaboo-see-path-dot.ZPHsAQ` and wrote `peekaboo_see_1778176668.png` inside that directory in `0.89s`, verifying the same policy for `see`.
 
 Live verification after path/span cleanup, May 7, 2026:
 
 ```bash
 ./Apps/CLI/.build/debug/peekaboo permissions status --json --no-remote
-./Apps/CLI/.build/debug/peekaboo app list --json --no-remote
-./Apps/CLI/.build/debug/peekaboo screen list --json --no-remote
-./Apps/CLI/.build/debug/peekaboo window list --app TextEdit --json --no-remote
-./Apps/CLI/.build/debug/peekaboo window list --app "Google Chrome" --json --no-remote
-./Apps/CLI/.build/debug/peekaboo see --app frontmost --path "$TMPDIR/frontmost.png" --json --no-remote
-./Apps/CLI/.build/debug/peekaboo see --app TextEdit --path "$TMPDIR/textedit.png" --json --no-remote
-./Apps/CLI/.build/debug/peekaboo see --app "Google Chrome" --path "$TMPDIR/chrome.png" --json --no-remote
+./Apps/CLI/.build/debug/peekaboo list apps --json --no-remote
+./Apps/CLI/.build/debug/peekaboo list screens --json --no-remote
+./Apps/CLI/.build/debug/peekaboo list windows --app TextEdit --json --no-remote
+./Apps/CLI/.build/debug/peekaboo list windows --app "Google Chrome" --json --no-remote
+./Apps/CLI/.build/debug/peekaboo image --app frontmost --path "$TMPDIR/frontmost.png" --json --no-remote
+./Apps/CLI/.build/debug/peekaboo image --app TextEdit --path "$TMPDIR/textedit.png" --json --no-remote
+./Apps/CLI/.build/debug/peekaboo image --app "Google Chrome" --path "$TMPDIR/chrome.png" --json --no-remote
 ./Apps/CLI/.build/debug/peekaboo see --app TextEdit --path "$TMPDIR/textedit-see.png" --json --no-remote
 ./Apps/CLI/.build/debug/peekaboo see --app "Google Chrome" --path "$TMPDIR/chrome-see.png" --json --no-remote
 ./Apps/CLI/.build/debug/peekaboo see --app TextEdit --path /tmp/peekaboo-span-check.png --json --no-remote
@@ -1559,13 +1562,13 @@ Live verification after private ScreenCaptureKit fallback controls, May 7, 2026:
 swift build --package-path Apps/CLI
 swift build --package-path Apps/CLI -Xswiftc -DPEEKABOO_DISABLE_PRIVATE_SCK_WINDOW_LOOKUP
 swift build --package-path Apps/CLI
-./Apps/CLI/.build/debug/peekaboo see --window-id 13441 --retina --path .artifacts/live-e2e/2026-05-07T221125Z-fallback-switch/text-private-on.png --json --no-remote
-PEEKABOO_DISABLE_PRIVATE_SCK_WINDOW_LOOKUP=1 ./Apps/CLI/.build/debug/peekaboo see --window-id 13441 --retina --path .artifacts/live-e2e/2026-05-07T221125Z-fallback-switch/text-private-off.png --json --no-remote
-./Apps/CLI/.build/debug/peekaboo see --app TextEdit --path .artifacts/live-e2e/2026-05-07T221125Z-fallback-switch/text-app.png --json --no-remote
+./Apps/CLI/.build/debug/peekaboo image --window-id 13441 --retina --path .artifacts/live-e2e/2026-05-07T221125Z-fallback-switch/text-private-on.png --json --no-remote
+PEEKABOO_DISABLE_PRIVATE_SCK_WINDOW_LOOKUP=1 ./Apps/CLI/.build/debug/peekaboo image --window-id 13441 --retina --path .artifacts/live-e2e/2026-05-07T221125Z-fallback-switch/text-private-off.png --json --no-remote
+./Apps/CLI/.build/debug/peekaboo image --app TextEdit --path .artifacts/live-e2e/2026-05-07T221125Z-fallback-switch/text-app.png --json --no-remote
 ./Apps/CLI/.build/debug/peekaboo see --app TextEdit --path .artifacts/live-e2e/2026-05-07T221125Z-fallback-switch/text-see.png --json --no-remote
-./Apps/CLI/.build/debug/peekaboo see --window-id 13977 --retina --path .artifacts/live-e2e/2026-05-07T221125Z-fallback-switch/chrome-private-on.png --json --no-remote
-PEEKABOO_USE_PRIVATE_SCK_WINDOW_LOOKUP=false ./Apps/CLI/.build/debug/peekaboo see --window-id 13977 --retina --path .artifacts/live-e2e/2026-05-07T221125Z-fallback-switch/chrome-private-off.png --json --no-remote
-./Apps/CLI/.build/debug/peekaboo see --app "Google Chrome" --path .artifacts/live-e2e/2026-05-07T221125Z-fallback-switch/chrome-app.png --json --no-remote
+./Apps/CLI/.build/debug/peekaboo image --window-id 13977 --retina --path .artifacts/live-e2e/2026-05-07T221125Z-fallback-switch/chrome-private-on.png --json --no-remote
+PEEKABOO_USE_PRIVATE_SCK_WINDOW_LOOKUP=false ./Apps/CLI/.build/debug/peekaboo image --window-id 13977 --retina --path .artifacts/live-e2e/2026-05-07T221125Z-fallback-switch/chrome-private-off.png --json --no-remote
+./Apps/CLI/.build/debug/peekaboo image --app "Google Chrome" --path .artifacts/live-e2e/2026-05-07T221125Z-fallback-switch/chrome-app.png --json --no-remote
 ./Apps/CLI/.build/debug/peekaboo see --app "Google Chrome" --path .artifacts/live-e2e/2026-05-07T221125Z-fallback-switch/chrome-see.png --json --no-remote
 screencapture -l 13441 -o -x .artifacts/live-e2e/2026-05-07T221125Z-fallback-switch/text-native.png
 screencapture -l 13977 -o -x .artifacts/live-e2e/2026-05-07T221125Z-fallback-switch/chrome-native.png

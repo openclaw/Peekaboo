@@ -15,9 +15,10 @@ Every shipped macOS code object uses `Developer ID Application: OpenClaw Foundat
 
 - Confirm `main` is clean, current, and all submodules are at the intended commits.
 - Update `package.json`, both `version.json` files, `Apps/CLI/Sources/Resources/Info.plist`,
-  `Apps/CLI/TestHost/Info.plist`, `PeekabooMCPVersion.current`, the README badge, and `MARKETING_VERSION` in the Mac,
-  Inspector, and Playground Xcode projects.
-- Move release changes into matching dated sections in `CHANGELOG.md` and `Apps/CLI/CHANGELOG.md`.
+  `Apps/CLI/TestHost/Info.plist`, `PeekabooMCPVersion.current`, the README release-status copy, and
+  `MARKETING_VERSION` in the Mac, Inspector, and Playground Xcode projects.
+- Keep the candidate sections in `CHANGELOG.md` and `Apps/CLI/CHANGELOG.md` marked `Unreleased` while preparing and
+  validating the release. Replace `Unreleased` with the actual release date only in the publication commit.
 - Update user-facing docs and `release/release-notes.md`. Release notes contain only that version's changelog section.
 - Update submodule repositories first only when their code or release metadata changed, then commit the gitlink here.
 
@@ -42,7 +43,8 @@ pnpm run prepare-release -- --dry-run --bin Apps/CLI/.build/debug/peekaboo
 
 The dry run validates metadata consistency, docs/links, generated v4 help, retired-command rejection, and the
 `app list`/`window list`/`screen list` JSON contracts. It is intentionally not release-readiness proof; the full
-preflight remains required after the version is final and the tree is clean.
+preflight remains required after the version is final and the tree is clean. Dry-run accepts the candidate's
+`Unreleased` changelog headings; full preflight requires exact `YYYY-MM-DD` headings before publication.
 
 Run `pnpm run test:automation` and live provider tests when the release changes those surfaces. Before committing,
 run the repository autoreview workflow until no accepted actionable findings remain.

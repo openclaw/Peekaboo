@@ -51,11 +51,13 @@ peekaboo see --app Finder --json
 
 That is the core loop: observe the current screen, choose an element from the result, and act on it.
 
-## What's new in 4.0
+## Coming in Peekaboo 4
 
-Peekaboo 4 has a smaller command surface, consistent duration and coordinate grammar, native `verify`
-polling, and honest JSON action effects. If you have existing scripts or agent instructions, use the
-[Peekaboo 4 migration guide](docs/v4-migration.md) for the complete old-to-new command and flag map.
+The upcoming Peekaboo 4 release has an exact 33-command root surface, consistent duration and
+coordinate grammar, native `verify` polling, and honest JSON effects after an action request has been
+parsed and classified. Pre-dispatch argument parse/bind failures may omit `effect`. If you have
+existing scripts or agent instructions, use the [Peekaboo 4 migration guide](docs/v4-migration.md)
+for the complete old-to-new command and flag map.
 
 ## Automate an app
 

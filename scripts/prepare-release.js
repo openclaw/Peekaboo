@@ -14,6 +14,12 @@ import { execSync, spawnSync } from 'child_process';
 import { readFileSync, existsSync } from 'fs';
 import { dirname, isAbsolute, join, resolve } from 'path';
 import { fileURLToPath } from 'url';
+import {
+  REMOVED_ROOT_COMMANDS,
+  validateChangelogContract,
+  validateSourceDocumentationContracts,
+  validateVersionConsistency
+} from './release-preflight-contract.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -49,9 +55,9 @@ for (let index = 0; index < cliArguments.length; index += 1) {
       console.log(`Usage: node scripts/prepare-release.js [options]
 
 Options:
-  --dry-run   Run deterministic metadata, docs, and CLI-contract checks only
+  --dry-run   Run deterministic preparation checks; changelogs may remain Unreleased
   --bin PATH  CLI binary for --dry-run (default: repo debug binary, then ./peekaboo)
-  --force     Allow a non-main branch during the full release preflight
+  --force     Allow a non-main branch during the publication-stage preflight
   -h, --help  Show this help`);
       process.exit(0);
       break;
@@ -203,7 +209,19 @@ function checkDocs() {
     logError('Documentation contract checks failed');
     return false;
   }
-  logSuccess('Documentation contract checks passed');
+  let failures;
+  try {
+    failures = validateSourceDocumentationContracts(projectRoot);
+  } catch (error) {
+    logError(`Could not inspect release source contracts: ${error.message}`);
+    return false;
+  }
+  if (failures.length > 0) {
+    logError('Release source/documentation parity checks failed:');
+    failures.forEach((failure) => logError(`  - ${failure}`));
+    return false;
+  }
+  logSuccess('Documentation and release source contracts passed');
   return true;
 }
 
@@ -315,24 +333,29 @@ function checkChangelog() {
   const packageJson = JSON.parse(readFileSync(join(projectRoot, 'package.json'), 'utf8'));
   const version = packageJson.version;
 
-  // Read CHANGELOG.md
-  const changelogPath = join(projectRoot, 'CHANGELOG.md');
-  if (!existsSync(changelogPath)) {
-    logError('CHANGELOG.md not found');
-    return false;
+  for (const relativePath of ['CHANGELOG.md', 'Apps/CLI/CHANGELOG.md']) {
+    const changelogPath = join(projectRoot, relativePath);
+    if (!existsSync(changelogPath)) {
+      logError(`${relativePath} not found`);
+      return false;
+    }
+
+    const failures = validateChangelogContract({
+      changelogSource: readFileSync(changelogPath, 'utf8'),
+      version,
+      requireDatedHeading: !dryRun
+    });
+    if (failures.length > 0) {
+      failures.forEach((failure) => logError(`${relativePath}: ${failure}`));
+      return false;
+    }
   }
 
-  const changelog = readFileSync(changelogPath, 'utf8');
-  
-  // Check for version entry (handle both x.x.x and x.x.x-beta.x formats)
-  const versionPattern = new RegExp(`^#+\\s*(?:\\[)?${version.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:\\])?`, 'm');
-  if (!changelog.match(versionPattern)) {
-    logError(`No entry found for version ${version} in CHANGELOG.md`);
-    logError('Please add a changelog entry before releasing');
-    return false;
+  if (dryRun) {
+    logSuccess(`Both changelogs contain a preparation-stage entry for version ${version}`);
+  } else {
+    logSuccess(`Both changelogs contain a dated publication entry for version ${version}`);
   }
-
-  logSuccess(`CHANGELOG.md contains entry for version ${version}`);
   return true;
 }
 
@@ -397,11 +420,7 @@ function checkSwiftCLIIntegration(binaryPath) {
 
   // Removed roots must fail and name their v4 replacement, even when a trailing
   // --help would otherwise short-circuit into help output.
-  const removedCommands = [
-    'image', 'list', 'hotkey', 'inspect-ui', 'perform-action', 'swipe',
-    'sleep', 'open', 'run', 'commander'
-  ];
-  for (const command of removedCommands) {
+  for (const command of REMOVED_ROOT_COMMANDS) {
     const result = run([command, '--help']);
     if (result.status === 0) {
       logError(`Removed command unexpectedly resolved: peekaboo ${command}`);
@@ -475,27 +494,18 @@ function checkSwiftCLIIntegration(binaryPath) {
 
 function checkVersionConsistency() {
   logStep('Version Consistency Check');
-
-  const packageJsonPath = join(projectRoot, 'package.json');
-  const versionJsonPath = join(projectRoot, 'version.json');
-
-  const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf8'));
-  const packageVersion = packageJson.version;
-
-  if (!existsSync(versionJsonPath)) {
-    logError('version.json not found');
+  let result;
+  try {
+    result = validateVersionConsistency(projectRoot);
+  } catch (error) {
+    logError(`Could not inspect version surfaces: ${error.message}`);
     return false;
   }
-
-  const versionJson = JSON.parse(readFileSync(versionJsonPath, 'utf8'));
-  const versionFileVersion = versionJson.version;
-
-  if (packageVersion !== versionFileVersion) {
-    logError(`Version mismatch: package.json has ${packageVersion}, version.json has ${versionFileVersion}`);
+  if (result.failures.length > 0) {
+    result.failures.forEach((failure) => logError(failure));
     return false;
   }
-
-  logSuccess(`Version ${packageVersion} matches version.json`);
+  logSuccess(`Version ${result.version} matches every release source surface`);
   return true;
 }
 

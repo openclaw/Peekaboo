@@ -5,7 +5,7 @@ All notable changes to Peekaboo CLI will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [4.0.0] - 2026-08-10
+## [4.0.0] - Unreleased
 
 ### Added
 - Add `verify` for stable window and element predicates, `tools describe <name>` for on-demand schemas, `app focus`, `window restore`, and launch readiness/open-target controls.
@@ -15,8 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Merge `hotkey` into xdotool-style `press` chords, `swipe` into dual-target `drag`, `image` and `inspect-ui` into `see`, and rename `perform-action` to `action`.
 - Restructure clipboard, menubar, config, agent, and permission operations into real subcommand trees.
 - Standardize durations on bare milliseconds or `ms`/`s`, coordinates on `--at`/`--global`, modifiers on comma-separated lists, and focus controls across interaction commands.
-- Standardize JSON on one result envelope with action-only `effect` values, actionable error hints, and nonzero exits for failures.
+- Standardize JSON on one result envelope with action-only `effect` values after request parsing/classification, actionable error hints, and nonzero exits for failures; pre-dispatch parse/bind failures may omit `effect`.
 - Make launch, observation, capture, and targeted input background-first; require explicit foreground consent for focus stealing, global keys, and physical pointer gestures.
+- Keep all targeted background input overlay-free even when its target is visible or frontmost; only untargeted or explicitly foreground input may show cursor or input-HUD feedback.
 - Make `type` text-only; use `press` for Return, Tab, Escape, Delete, and chord sequences.
 - Update Swift Subprocess to 1.0.0, pnpm to 11.21.0, and CI to macOS 26 / Xcode 26.6.
 
@@ -33,7 +34,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Require explicit `--foreground` for long-press clicks.
 - Pin background `press` sequences to one process generation and report partial delivery as retry-unsafe.
 - Keep direct `action` and `set-value` targets in the background by default, including web-content discovery, unless `--foreground` is explicit.
-- Emit the standard v4 result envelope for agent failures and remove `see`'s duplicate nested `success` field.
 - Preserve non-US keyboard characters, reject phantom-success accessibility actions, verify typed values and destructive app/window actions, and keep minimized-window state honest.
 - Serialize clipboard-backed paste across processes, restore partial writes, and fail closed before unsafe pasteboard mutation.
 - Keep OpenAI Responses tool errors recoverable, return all native tool content items, and restore rich tool summaries in agent output.

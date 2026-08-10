@@ -1,14 +1,14 @@
 # Changelog
 
-## [4.0.0] - 2026-08-10
+## [4.0.0] - Unreleased
 
-Peekaboo 4 is a ground-up cleanup of the command surface: fewer commands, one spelling
+Peekaboo 4 will be a ground-up cleanup of the command surface: fewer commands, one spelling
 per operation, grammars your agent already knows, and honest machine-readable results.
-It is a breaking release — see `docs/v4-migration.md` for the complete old→new table.
+It will be a breaking release — see `docs/v4-migration.md` for the complete old→new table.
 
 ### Highlights
 
-- **A smaller, sharper CLI.** 40 root commands became ~30, and thousands of lines of
+- **A smaller, sharper CLI.** 40 root commands became exactly 33, and thousands of lines of
   duplicate surface are gone. Everything a stock macOS tool already does well (`sleep`,
   `open`, the `.peekaboo.json` script runner) was removed — Peekaboo now assumes your
   automation runs in a shell and focuses on what only Peekaboo can do.
@@ -24,13 +24,16 @@ It is a breaking release — see `docs/v4-migration.md` for the complete old→n
   unit-suffixed flag names are gone; coordinates are `--at x,y` with `--global` for
   screen space; modifiers are comma-separated lists; the focus-flag matrix is identical
   across all interaction commands.
-- **Quiet, app-anchored visual feedback.** The overlay zoo (14 animation types) became
-  three: a natural agent cursor with eased curved motion, a compact input HUD pinned to
-  the target window — showing nothing when that window isn't visibly frontmost — and
-  thin capture borders. Settings collapsed to three toggles.
-- **Honest results.** Action commands report `effect: confirmed | partial |
-  unverifiable | suspected_noop | refused` in JSON, and errors carry an actionable
-  `hint`. "The process exited 0" no longer stands in for "the click landed."
+- **Quiet visual feedback.** Fourteen animation types became three feedback categories:
+  a natural agent cursor with eased curved motion, a compact input HUD, and thin capture
+  borders. Targeted background input stays overlay-free even when its target is visible
+  or frontmost; only untargeted or explicitly foreground work may show the cursor or HUD.
+  The settings retain a master switch and playback controls around those three categories.
+- **Honest results.** Once an action request has been parsed and classified, its JSON
+  result reports `effect: confirmed | partial | unverifiable | suspected_noop | refused`,
+  and errors carry an actionable `hint`. Argument parse/bind failures happen before that
+  classification and may omit `effect`. "The process exited 0" no longer stands in for
+  "the click landed."
 - **Background-first safety.** Launch, open, observation, capture, and targeted input
   are background by default; focus stealing, global keys, and physical pointer gestures
   require explicit foreground consent. Ambiguous or targetless background operations
@@ -49,8 +52,9 @@ It is a breaking release — see `docs/v4-migration.md` for the complete old→n
 
 ### Changed
 
-- Standardize CLI JSON on one result envelope with action-only effect vocabulary,
-  actionable error hints, and nonzero exits for failed actions.
+- Standardize CLI JSON on one result envelope with an action-only effect vocabulary after
+  request parsing/classification, actionable error hints, and nonzero exits for failed
+  actions; pre-dispatch parse/bind failures may omit `effect`.
 - Management commands restructured into real subcommand trees: `clipboard
   get|set|clear|save|restore`, `menubar list|click`, `config provider …` /
   `config credential set`, `agent run|resume|sessions|chat`,
@@ -95,8 +99,6 @@ It is a breaking release — see `docs/v4-migration.md` for the complete old→n
   PID can receive later chords, and report partial delivery as retry-unsafe.
 - Keep direct `action` and `set-value` targets in the background by default, including
   web-content discovery, unless `--foreground` is explicit.
-- Emit the standard v4 result envelope for agent failures and remove `see`'s duplicate
-  nested `success` field.
 - Non-US keyboard layouts preserve requested characters during background typing.
   Thanks @canvascoding for #330.
 - Phantom-success accessibility actions are rejected; typed `set-value` results are

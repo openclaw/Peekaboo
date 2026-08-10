@@ -7,6 +7,9 @@ read_when:
 
 # Interaction Debugging Notes
 
+> **Historical record:** Commands and outputs are preserved as observed when these notes were written. See the
+> [Peekaboo 4 migration guide](../v4-migration.md) for current CLI syntax.
+
 > **Mission Reminder (Nov 12, 2025):** The mandate for this doc is to *continuously* exercise every Peekaboo CLI feature until automation covers everything a human can do on macOS. That means:
 > - Systematically try every command/subcommand/flag combination (see/see, menu, dialog, window, list, type, drag, press, etc.) and capture regressions here.
 > - Treat each bug as blocking mission readiness—fix it or write down why it’s pending.
@@ -133,7 +136,7 @@ Step 1 is officially in progress: `MenuDialogLocalHarnessTests` now runs TextEdi
 - Hoisted `AnnotatedScreenshotRenderer` above `SeeTool` so Swift sees it before use and removed the duplicate definition at the bottom of the file.
 
 ## `list windows` silently emits nothing
-- **Command**: `polter peekaboo window list --app TextEdit`
+- **Command**: `polter peekaboo list windows --app TextEdit`
 - **Observed**: Exit status 0 but no stdout/stderr, regardless of `--json-output` or `--verbose`.
 - **Expected**: Either a formatted window list or an explicit “no windows found” message / JSON payload.
 - **Impact**: Prevents automation flows from enumerating windows to obtain IDs; also makes debugging focus issues impossible because there’s no feedback.
@@ -230,7 +233,7 @@ Investigate `MenuService.clickMenuPath` once `menu list` is fixed; ensure both s
 ## Help surface is unreachable
 - Root help instructs users to run `peekaboo help <subcommand>` or `<subcommand> --help`, but:
   - `polter peekaboo help window` → `Error: Unknown command 'help'`
-  - `polter peekaboo see --help` → command help
+  - `polter peekaboo image --help` → `Error: Unknown option --help`
   - Even `polter peekaboo click --help` gets intercepted by `polter`’s own help instead of reaching Peekaboo.
 - **Impact**: There is no discoverable way to read per-command usage/flags from the CLI, which leaves agents guessing (and documentation contradicting reality).
 ### Investigation log — Nov 11, 2025
@@ -277,10 +280,10 @@ Investigate `MenuService.clickMenuPath` once `menu list` is fixed; ensure both s
 - **Expected**: It should surface a structured `.WINDOW_NOT_FOUND` error (matching the rest of the CLI) so agents can fall back to `window list` or `app focus`.
 - **Impact**: Automations have to pattern-match brittle strings to detect “window missing” vs. actual internal failures.
 
-## `agent sessions` used to crash due to eager MCP init
-- **Command**: `polter peekaboo agent sessions --json`
+## `agent --list-sessions` used to crash due to eager MCP init
+- **Command**: `polter peekaboo agent --list-sessions --json-output`
 - **Observed (before fix)**: Launching the CLI triggered the Peekaboo SwiftUI app to start, which then broke inside `NSHostingView` layout (SIGTRAP). The root cause was that we bootstrapped Tachikoma MCP (spawning the GUI) even when the user only wanted metadata.
-- **Resolution — Nov 12, 2025**: The CLI handles `agent sessions` before touching MCP/logging setup, so it queries the agent service without launching the app or requiring credentials. Repeat runs return JSON instantly.
+- **Resolution — Nov 12, 2025**: The CLI now handles `--list-sessions` before touching MCP/logging setup, so it queries the agent service without launching the app or requiring credentials. Repeat runs return JSON instantly.
 
 ## `clean --dry-run` returned INTERNAL_SWIFT_ERROR on validation failure
 - **Command**: `polter peekaboo clean --dry-run --json-output`
@@ -364,7 +367,7 @@ Investigate `MenuService.clickMenuPath` once `menu list` is fixed; ensure both s
 - **Resolution — Nov 12, 2025**: Updated `SpaceTool` to accept the new `ServiceWindowInfo`, convert the integer ID to `UInt32`, and emit the camelCase fields when describing move results. The space MCP command now compiles alongside the CLI again.
 
 ## `list screens` broke CLI builds after UnifiedToolOutput migration
-- **Command**: `polter peekaboo screen list --json` (or any CLI build invoking `ScreenCommand`)
+- **Command**: `polter peekaboo list screens --json-output` (or any CLI build invoking `ListCommand`)
 - **Observed**: Swift compiler error `Highlight has no member HighlightKind` because the new `UnifiedToolOutput` nests `HighlightKind` one level higher. The CLI still referenced the legacy type alias, so Poltergeist marked the `peekaboo` target failed and no CLI commands could run.
 - **Resolution — Nov 12, 2025**: Pointed the summary builder at the new `.primary` enum case (instead of the deleted `Highlight.HighlightKind`), restoring the CLI build and allowing screen listings again.
 - **Verification — Nov 12, 2025**: `polter peekaboo -- list screens --json-output` now returns the expected JSON payload (session `LISTSCREENS-20251112T1300Z`) without triggering a rebuild.
@@ -433,7 +436,7 @@ Investigate `MenuService.clickMenuPath` once `menu list` is fixed; ensure both s
 - **Retest — Nov 14, 2025 02:34 UTC**: `polter peekaboo -- see --app "Google Chrome" --json-output --path /tmp/secure-login.png` (snapshot `A3CF1910-FE78-4420-9527-BD7FDC874E90`) still reports zero `textField` roles even though 204 elements are detected overall; screenshot + UI map stored under `~/.peekaboo/snapshots/A3CF1910-FE78-4420-9527-BD7FDC874E90/`. No observable email/password inputs yet, so we remain blocked on real-world reproduction despite the Playground coverage.
 - **Retest — Nov 14, 2025 03:05 UTC (vercel.com/login)**: Same result against a different login flow (`polter peekaboo -- see --app "Google Chrome" --json-output --path /tmp/vercel-login.png`) where we typed `https://vercel.com/login` via `type --app "Google Chrome" … --return`. Session `B4355B11-417A-43AF-BA25-AEB3B8837388` contains 648 UI nodes but zero `textField` roles, confirming the gap isn’t limited to the earlier customer-specific site.
 - **Retest — Nov 14, 2025 03:10 UTC (github.com/login)**: Repeated the workflow against GitHub’s login page (`type --app "Google Chrome" "https://github.com/login" --return` + `see --json-output --path /tmp/github-login.png`, snapshot `E8390C6E-7D29-4021-9364-4A46936F8E19`). Result: 204 elements detected, none with `role == "textField"`, even though Accessibility Inspector reports both the username and password inputs with `AXTextField/AXSecureTextField`. The heuristics still miss real-world text fields despite the Playground fixture success.
-- **Retest — Nov 14, 2025 03:25–03:33 UTC (stripe.com/login + instagram.com/login)**: Stripe auto-focused its email field, so `BF63D068-7A2D-4D6B-A910-42777FCE85D7` shows the expected `AXTextField` entries (email + password). Instagram initially returned only the omnibox field, but once we scripted a `click --at 1500,600 --global --foreground` before running `see`, snapshot `EDEED86F-8CCF-429B-A7FE-BC8FCBE4CA5B` surfaced three `AXTextField` nodes (username, password, URL bar). Conclusion: some flows only expose their embedded login form to AX after focus enters the iframe. That focus-changing fallback is now opt-in with `--web-focus`; prefer the browser MCP DOM when available.
+- **Retest — Nov 14, 2025 03:25–03:33 UTC (stripe.com/login + instagram.com/login)**: Stripe auto-focused its email field, so `BF63D068-7A2D-4D6B-A910-42777FCE85D7` shows the expected `AXTextField` entries (email + password). Instagram initially returned only the omnibox field, but once we scripted a `click --coords 1500,600` before running `see`, snapshot `EDEED86F-8CCF-429B-A7FE-BC8FCBE4CA5B` surfaced three `AXTextField` nodes (username, password, URL bar). Conclusion: some flows only expose their embedded login form to AX after focus enters the iframe. That focus-changing fallback is now opt-in with `--web-focus`; prefer the browser MCP DOM when available.
 - **Status — Nov 12, 2025**: Repeated scroll attempts (`peekaboo scroll --snapshot … --direction down --amount 8`) do not reveal any additional accessibility nodes; every capture still lacks text fields, so we remain blocked on discovering a tabbable input.
 - **Update — Nov 12, 2025 (evening)**: Quitting `1Password` removes the save-login modal, but the secure login web app still displays “Return to this browser to keep using secure login. Log in.” with no text fields or form controls exposed through AX (or visible via OCR). The flow appears to require a magic-link email that we can’t access, so we remain blocked on entering the provided password.
 

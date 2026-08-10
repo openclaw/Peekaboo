@@ -10,7 +10,11 @@ read_when:
 
 ## Overview
 
-The Peekaboo Visual Feedback System provides delightful, informative visual indicators for all agent actions. When the Peekaboo.app is running, CLI and MCP operations automatically get enhanced with animations and visual cues that help users understand what the agent is doing.
+The Peekaboo Visual Feedback System provides quiet visual indicators for eligible capture and foreground operations. When Peekaboo.app is running, CLI and MCP operations can emit animations and visual cues without making feedback part of the automation result.
+
+### Background-first contract
+
+Targeted background input never emits cursor or input-HUD overlays, even when the target window happens to be visible or frontmost. This suppression happens in the interaction layer before an event reaches the visualizer. Untargeted input and explicitly foreground operations may emit cursor or HUD feedback. Capture indicators follow their separate explicit capture/privacy contract; ordinary background observations remain silent.
 
 ## Architecture
 
@@ -50,12 +54,12 @@ MCP Server → peekaboo CLI → VisualizerEventStore → Distributed Notificatio
 | `VisualizationClient` | `Core/PeekabooVisualizer/Sources/PeekabooVisualizer/Visualizer/VisualizationClient.swift` | Runs inside CLI/MCP processes, serializes payloads, persists them, and posts distributed notifications containing the event descriptor. |
 | `VisualizerEventStore` | `Core/PeekabooVisualizer/Sources/PeekabooVisualizer/Visualizer/VisualizerEventStore.swift` | Owns the shared storage directory, defines the `VisualizerEvent` schema, and exposes helpers to persist, load, and clean up JSON envelopes. |
 | `VisualizerEventReceiver` | `Core/PeekabooVisualizer/Sources/PeekabooVisualizer/Renderer/VisualizerEventReceiver.swift` | Hosted by Peekaboo.app, listens for `boo.peekaboo.visualizer.event`, loads the referenced JSON, and forwards it to `VisualizerCoordinator`. |
-| `VisualizerCoordinator` | `Core/PeekabooVisualizer/Sources/PeekabooVisualizer/Renderer/VisualizerCoordinator.swift` | Renders SwiftUI overlays (cursor feedback, HUD chips, swipe paths, annotations) and honors user settings such as animation speed and per-action toggles. |
+| `VisualizerCoordinator` | `Core/PeekabooVisualizer/Sources/PeekabooVisualizer/Renderer/VisualizerCoordinator.swift` | Renders SwiftUI overlays (cursor feedback, HUD chips, swipe paths, annotations) and honors user settings such as animation speed and the three feedback-category switches. |
 | `VisualizerDesign` | `Core/PeekabooVisualizer/Sources/PeekabooVisualizer/Views/VisualizerDesign.swift` | The shared "Ghost HUD" design language: theme tokens, motion curves, HUD chip container, keycaps, and glyph badges every animation composes from. |
 
 ## Smoke Testing
 
-- Run `peekaboo visualizer` (new CLI command) to fire every animation in sequence. This is the fastest way to confirm Peekaboo.app is rendering flashes, HUDs, window/app/menu highlights, dialog overlays, and the element-detection visuals. Use it before releases or whenever you tweak visualizer code.
+- Run `peekaboo visualizer` to preview the three v4 feedback categories: agent cursor, input HUD, and capture indicators. This explicit smoke command bypasses the production background-input suppression so each category can be checked before releases or after visualizer changes.
 - Still keep the manual Visualizer Test view handy for ad-hoc previews or stress tests; the smoke command is intentionally short and non-interactive.
 
 ## Transport Storage & Format
@@ -121,29 +125,34 @@ All animations share one design system (`VisualizerDesign.swift`): a single viol
 - **Double Click**: The cursor presses twice with a ring for each press
 - **Right Click**: The same cursor press uses the blue secondary accent
 - **No labels**: The cursor motion communicates the action; there is no "Click" text
+- **Eligibility**: Targeted background clicks never emit this feedback; untargeted or explicitly foreground clicks may
 
 ### Typing Feedback ⌨️
-- **Style**: A caption pill at bottom center streams the typed text verbatim with a blinking caret
-- **Privacy**: Typing into a secure text field (`AXSecureTextField`) masks the caption as bullets before the event is persisted or shown. Detection samples the actual delivery focus immediately before every non-empty text segment, so focus-changing sequences such as Tab → password → Return cannot expose the middle segment; background typing scopes the sample to its target process, and `PEEKABOO_VISUALIZER_MASK_TYPED_TEXT=true` masks everything for privacy-sensitive setups
+- **Style**: A caption pill at the eligible foreground target window's bottom edge streams the typed text verbatim with a blinking caret
+- **Privacy**: Typing into a secure text field (`AXSecureTextField`) masks the caption as bullets before the event is persisted or shown. Detection samples the actual delivery focus immediately before every non-empty foreground text segment, so focus-changing sequences such as Tab → password → Return cannot expose the middle segment; `PEEKABOO_VISUALIZER_MASK_TYPED_TEXT=true` masks everything for privacy-sensitive setups. Targeted background typing emits no visualizer event at all
 - **Special Keys**: Rendered inline as accent glyphs (⏎, ⇥, ⌫, ⎋)
 - **Cadence**: Reveal speed derives from the incoming `TypingCadence` (human WPM or fixed delay)
 - **Coalescing**: Consecutive type commands crossfade through a single caption slot instead of stacking pills
 
 ### Scrolling 📜
-- **Effect**: A compact circular chip at the scroll point with three chevrons flowing along the scroll direction
+- **Effect**: A compact input-HUD chip at the eligible foreground target window's bottom edge, with chevrons flowing along the scroll direction
 - **Extra**: A small "×N" tag beneath the chip when scrolling more than one unit
+- **Eligibility**: Background AX scrolls never emit this feedback
 
 ### Mouse Movement 🖱️
 - **Effect**: A small macOS-style cursor glides from start to destination with a restrained tapered gradient trail
 - **Landing**: The cursor tip arriving at the destination is the signal; no separate landing ring is drawn
+- **Eligibility**: This physical-pointer feedback is only available to untargeted or explicitly foreground work
 
 ### Swipe/Drag Gestures 👆
 - **Effect**: The same comet vocabulary with a thicker stroke (button held)
 - **Endpoints**: A press ring marks touch-down; a release ring plus a direction chevron marks touch-up
+- **Eligibility**: This physical-pointer feedback is only available to explicitly foreground work
 
 ### Hotkeys ⌨️
-- **Style**: macOS-style keycaps (symbol plus caption, e.g. ⌘ command) in a HUD chip at screen center
+- **Style**: macOS-style keycaps (symbol plus caption, e.g. ⌘ command) in a HUD chip at the eligible foreground target window's bottom edge
 - **Effect**: Keys press down in sequence with an accent highlight, hold the chord, then release together
+- **Eligibility**: PID-routed background hotkeys never emit this feedback
 
 ### App Launch / Quit 🚀
 - **Style**: A HUD toast with the app icon, name, and a status line ("Launching" / "Quitting") with a colored status dot
@@ -254,10 +263,10 @@ PEEKABOO_VISUALIZER_FORCE_APP=true        # Pretend the CLI is running inside th
 - **Watch cleanup**: `VisualizerEventStore.cleanup` deletes envelopes older than ~10 minutes. Disable it (env var above) or inspect files quickly before they disappear.
 
 ### User Preferences (in Peekaboo.app)
-- Toggle visual feedback on/off
-- Adjust animation speed
-- Control effect intensity
-- Per-action toggles
+- Visualizer master switch
+- Three feedback-category switches: Agent cursor, Input HUD, and Capture indicators
+- Animation speed and effect intensity controls
+- Separate menu-bar automated-app-icons switch
 
 ## Fun Details 🎉
 
@@ -308,7 +317,7 @@ The visual feedback system transforms Peekaboo agent operations from invisible a
 
 The playful touches (like the screenshot flash) add personality while remaining professional and non-intrusive. The system is designed to delight power users while helping newcomers understand automation.
 
-Most importantly, it's completely optional - the CLI and MCP continue to work perfectly without it, making visual feedback a progressive enhancement rather than a requirement.
+Most importantly, it is completely optional: the CLI and MCP continue to work without it, and targeted background input intentionally remains overlay-free.
 
 ## Implementation Checklist
 
@@ -458,7 +467,7 @@ All per-action views exist in `Core/PeekabooVisualizer/Sources/PeekabooVisualize
 
 ## Success Criteria
 
-- [ ] All agent actions have visual feedback
+- [ ] Every eligible foreground/capture action has appropriate visual feedback; targeted background input remains overlay-free
 - [ ] Zero performance impact when disabled
 - [ ] < 5% CPU usage during animations
 - [ ] Works on all macOS versions (15.0+)

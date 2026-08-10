@@ -58,9 +58,10 @@ interaction-flag behavior). Flag names drop unit suffixes (`--timeout`, not
 `--timeout-seconds`). MCP tool params stay integer `*_ms` (cua convention; JSON has no
 suffix strings).
 
-**P7 — Machine-honest results.** `--json` output converges on one envelope and, for
-action commands, an `effect` field with a closed vocabulary (see §6). "The process exited
-0" must never silently stand in for "the click landed."
+**P7 — Machine-honest results.** `--json` output converges on one envelope and, once an
+action request is parsed and classified, an `effect` field with a closed vocabulary
+(see §6). Pre-dispatch parse/bind failures may omit `effect`. "The process exited 0"
+must never silently stand in for "the click landed."
 
 ## 2. Command map: v4 surface
 
@@ -112,10 +113,10 @@ action commands, an `effect` field with a closed vocabulary (see §6). "The proc
 | `completions` | Unchanged; renderers pick up the registry automatically. |
 | `browser` | Kept at root (Chrome control is not shell-duplicable). Re-described as a first-class command — drop "through the browser MCP tool" phrasing. |
 
-### Removed outright (9 root commands)
+### Removed outright (10 root commands)
 
 `image`, `list`, `sleep`, `open`, `run`, `hotkey`, `swipe`, `perform-action` (renamed),
-`inspect-ui` (merged), `commander`. Net: **40 → ~30 root entries**, and every survivor
+`inspect-ui` (merged), `commander`. Net: **40 → exactly 33 root entries**, and every survivor
 passes the razor.
 
 - `sleep` — P1. `/bin/sleep` exists; the ms-argument variant actively conflicts with shell
@@ -202,7 +203,7 @@ for humans buys little here and costs namespace hygiene. Mitigations instead:
 
 ## 6. Result envelope (phase-able, recommended for 4.0)
 
-Adopt cua's closed result vocabulary in `--json` output for action commands:
+Adopt cua's closed result vocabulary in `--json` output for parsed and classified action requests:
 
 ```json
 { "success": true,
@@ -214,6 +215,8 @@ Adopt cua's closed result vocabulary in `--json` output for action commands:
 - `effect` is computed from existing verification machinery (click focus-verification,
   window geometry readback, clipboard `--verify`) — the plumbing largely exists; v4 makes
   it a contract.
+- Commander parse/bind failures occur before action classification and may omit `effect`;
+  they still use the standard error envelope and a nonzero exit.
 - Errors carry actionable hints, not just codes (Anthropic tool-writing guidance).
 - Non-zero exit iff `success == false`. Deprecation/warning text goes to stderr only.
 
@@ -256,27 +259,30 @@ full-screen overlays; the sum is noisy. v4 direction: **fewer, quieter, app-anch
    cursor overlay moving *naturally* (eased path, cua-style arc/glide) to the target,
    with a subtle pulse on click. Drag/swipe render as the same cursor in a pressed state
    following the path — `SwipePathView` and `MouseTrailView` fold into this.
-2. **Input HUD anchored to the target window** — keystrokes/chords/typed text appear in a
-   small chip pinned to the targeted window's bottom edge (clipped to its frame), not a
-   global overlay. **If the target window is not visible (background target, hidden app,
-   other Space), nothing is shown.** Replaces the full-screen `HotkeyOverlayView` and
-   `TypeAnimationView`. Scroll feedback becomes a micro-badge in the same HUD.
+2. **Input HUD anchored to the eligible foreground target window** —
+   keystrokes/chords/typed text appear in a small chip pinned to the window's bottom edge
+   (clipped to its frame), not a global overlay. Targeted background input emits no HUD
+   event even when that target is visible or frontmost. Replaces the full-screen
+   `HotkeyOverlayView` and `TypeAnimationView`. Eligible foreground scroll feedback
+   becomes a micro-badge in the same HUD.
 3. **Element annotation** (`see --annotate`, inspector) — functional, keep as is.
 4. **Capture indicators** — screenshot flash reduced to a brief thin border around the
    captured region; `capture live` recording HUD stays (privacy-relevant).
 
 **Remove:** `AppLifecycleView` (launch/quit icon zoom), `SpaceTransitionView`,
 `MenuNavigationView`, `DialogInteractionView`, `WindowOperationView` as standalone
-animations; their events either map to the agent cursor (they involve pointer movement)
-or show nothing. Settings UI shrinks to match (per-animation toggles collapse to: agent
-cursor, input HUD, capture indicators).
+animations; their events either map to the agent cursor (they involve foreground pointer
+movement) or show nothing. Per-animation switches collapse into three feedback categories:
+agent cursor, input HUD, and capture indicators. The UI still has a visualizer master
+switch, a separate menu-bar app-icons switch, and animation speed/intensity controls.
 
-**Architectural change:** the feedback API gains target-window context. Interaction
-commands already resolve a target window; `VisualizerAutomationFeedbackClient` passes
-`(pid, windowID, windowFrame)` with each event, and the renderer decides visibility:
-window on screen and not minimized/hidden → render anchored; otherwise skip. Background
-input (`--focus-background`) therefore never paints over the user's foreground work —
-which is the whole point.
+**Architectural change:** the feedback API gains target-window context, but delivery mode
+remains the first gate. The interaction layer drops every targeted background-input
+feedback event before it reaches `VisualizerAutomationFeedbackClient`, regardless of the
+target's current visibility or frontmost state. For eligible foreground feedback, the
+client passes `(pid, windowID, windowFrame)` and the renderer revalidates that the window
+is still visible before presenting an anchored HUD. This keeps background work invisible
+without relying on a timing-sensitive visibility test.
 
 ## 9. Open questions (decide before P3)
 
