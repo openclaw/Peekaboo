@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [4.0.1] - Unreleased
 
+### Added
+- Add `see --roi x,y,width,height` for stateless exact-window crops with fresh snapshot receipts, ROI-local element output, and safe coordinate metadata.
+
 ### Changed
 - Default new agent configurations to GPT-5.6 and Claude Opus 5 while keeping credential-only Anthropic discovery on Opus 4.8 for zero-retention compatibility and preserving explicit model selections.
 
@@ -25,8 +28,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Add `verify` for stable window and element predicates, `tools describe <name>` for on-demand schemas, `app focus`, `window restore`, and launch readiness/open-target controls.
 - Add native exact-window background right/double clicks, generation-safe app/window receipts, and cross-process desktop-operation coordination.
-- Add `see --roi x,y,width,height` for stateless exact-window crops with fresh snapshot receipts, ROI-local element output, and safe coordinate metadata.
-
 ### Changed
 - Merge `hotkey` into xdotool-style `press` chords, `swipe` into dual-target `drag`, `image` and `inspect-ui` into `see`, and rename `perform-action` to `action`.
 - Restructure clipboard, menubar, config, agent, and permission operations into real subcommand trees.

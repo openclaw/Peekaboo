@@ -2,6 +2,12 @@
 
 ## [4.0.1] - Unreleased
 
+### Added
+
+- Stateless exact-window ROI capture for CLI/MCP `see`, with generation-pinned
+  full-window receipts, AX/OCR filtering, snapshot-bound pixel mapping, and
+  fail-closed remote-host validation.
+
 ### Changed
 - Default new agent configurations to GPT-5.6 and Claude Opus 5 while keeping credential-only Anthropic discovery on Opus 4.8 for zero-retention compatibility and preserving explicit model selections.
 
@@ -61,6 +67,7 @@ It is a breaking release — see `docs/v4-migration.md` for the complete old→n
   are refused instead of falling through to whatever app happens to be frontmost.
 
 ### Added
+
 - `verify` command and `verify_state` stability contracts; `tools describe <name>` for
   on-demand tool schemas.
 - `app focus`, positional app targets across app subcommands, `app launch --wait-ready`
@@ -69,10 +76,6 @@ It is a breaking release — see `docs/v4-migration.md` for the complete old→n
 - Native exact-window background right/double clicks with owner/generation validation;
   distinct background app instances with WindowServer readiness receipts.
 - Recently-automated app icons beside the Peekaboo menu bar item (with settings toggle).
-- Stateless exact-window ROI capture for CLI/MCP `see`, with generation-pinned
-  full-window receipts, AX/OCR filtering, snapshot-bound pixel mapping, and
-  fail-closed remote-host validation.
-
 ### Changed
 
 - Standardize CLI JSON on one result envelope with an action-only effect vocabulary after
