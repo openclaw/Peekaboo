@@ -6,8 +6,8 @@ extension ConfigCommand.InitCommand: AsyncRuntimeCommand {}
 extension ConfigCommand.InitCommand: CommanderBindableCommand {
     mutating func applyCommanderValues(_ values: CommanderBindableValues) throws {
         self.force = values.flag("force")
-        if let timeout = values.singleOption("timeout"), let seconds = Double(timeout) {
-            self.timeoutSeconds = seconds
+        if let timeout: CLIDuration = try values.decodeOption("timeout", as: CLIDuration.self) {
+            self.timeout = timeout
         }
     }
 }
@@ -18,8 +18,8 @@ extension ConfigCommand.ShowCommand: AsyncRuntimeCommand {}
 extension ConfigCommand.ShowCommand: CommanderBindableCommand {
     mutating func applyCommanderValues(_ values: CommanderBindableValues) throws {
         self.effective = values.flag("effective")
-        if let timeout = values.singleOption("timeout"), let seconds = Double(timeout) {
-            self.timeoutSeconds = seconds
+        if let timeout: CLIDuration = try values.decodeOption("timeout", as: CLIDuration.self) {
+            self.timeout = timeout
         }
     }
 }
@@ -29,8 +29,8 @@ extension ConfigCommand.StatusCommand: AsyncRuntimeCommand {}
 @MainActor
 extension ConfigCommand.StatusCommand: CommanderBindableCommand {
     mutating func applyCommanderValues(_ values: CommanderBindableValues) throws {
-        if let timeout = values.singleOption("timeout"), let seconds = Double(timeout) {
-            self.timeoutSeconds = seconds
+        if let timeout: CLIDuration = try values.decodeOption("timeout", as: CLIDuration.self) {
+            self.timeout = timeout
         }
     }
 }
@@ -61,8 +61,8 @@ extension ConfigCommand.CredentialSetCommand: CommanderBindableCommand {
     mutating func applyCommanderValues(_ values: CommanderBindableValues) throws {
         self.keyOrProvider = try values.decodePositional(0, label: "keyOrProvider")
         self.value = try values.decodePositional(1, label: "value")
-        if let timeout = values.singleOption("timeout"), let seconds = Double(timeout) {
-            self.timeoutSeconds = seconds
+        if let timeout: CLIDuration = try values.decodeOption("timeout", as: CLIDuration.self) {
+            self.timeout = timeout
         }
     }
 }
@@ -73,8 +73,8 @@ extension ConfigCommand.LoginCommand: AsyncRuntimeCommand {}
 extension ConfigCommand.LoginCommand: CommanderBindableCommand {
     mutating func applyCommanderValues(_ values: CommanderBindableValues) throws {
         self.provider = try values.decodePositional(0, label: "provider")
-        if let timeout = values.singleOption("timeout"), let seconds = Double(timeout) {
-            self.timeoutSeconds = seconds
+        if let timeout: CLIDuration = try values.decodeOption("timeout", as: CLIDuration.self) {
+            self.timeout = timeout
         }
         self.noBrowser = values.flag("no-browser")
     }

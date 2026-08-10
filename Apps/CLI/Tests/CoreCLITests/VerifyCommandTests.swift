@@ -9,7 +9,7 @@ struct VerifyCommandTests {
         let command = try VerifyCommand.parse(["--app", "Finder", "--window-exists"])
         #expect(command.target.app == "Finder")
         #expect(command.windowExists)
-        #expect(command.timeout == 5000)
+        #expect(command.timeout.roundedMilliseconds == 5000)
         #expect(command.stableSamples == 2)
     }
 
@@ -23,7 +23,7 @@ struct VerifyCommandTests {
         #expect(command.on == "button:Save")
         #expect(command.exists && command.enabled && command.selected)
         #expect(command.valueEquals == "Ready")
-        #expect(command.timeout == 9000)
+        #expect(command.timeout.roundedMilliseconds == 9000)
         #expect(command.stableSamples == 3)
         #expect(try VerifyCommand.elementSelector("button:Save") == ["role": "button", "label": "Save"])
         #expect(try VerifyCommand.elementSelector("B7") == ["identifier": "B7"])

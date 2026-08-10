@@ -32,28 +32,31 @@ InjectedRuntimeBackedCommand {
     ) var captureEngine: String?
 
     // Behavior
-    @Option(name: .long, help: "Duration in seconds (default 60, max 180)") var duration: Double?
+    @Option(name: .long, help: "Duration (bare values are milliseconds; default 60s, max 180s)")
+    var duration: CLIDuration?
     @Option(name: .long, help: "Idle FPS during quiet periods (default 2)") var idleFps: Double?
     @Option(name: .long, help: "Active FPS during motion (default 8, max 15)") var activeFps: Double?
     @Option(name: .long, help: "Change threshold percent to enter active mode (default 2.5)") var threshold: Double?
     @Option(
-        name: .long,
-        help: "Heartbeat keyframe interval in seconds (default 5, 0 disables)"
-    ) var heartbeatSec: Double?
-    @Option(name: .long, help: "Calm period in milliseconds before returning to idle (default 1000)") var quietMs: Int?
+        name: .customLong("heartbeat"),
+        help: "Heartbeat keyframe interval (default 5s, 0 disables)"
+    ) var heartbeat: CLIDuration?
+    @Option(name: .customLong("quiet"), help: "Calm period before returning to idle (default 1s)")
+    var quiet: CLIDuration?
     @Flag(name: .long, help: "Overlay motion boxes on kept frames") var highlightChanges = false
     @Option(name: .long, help: "Max frames before stopping (soft cap, default 800)") var maxFrames: Int?
     @Option(name: .long, help: "Max megabytes before stopping (soft cap, optional)") var maxMb: Int?
     @Option(name: .long, help: "Resolution cap (largest dimension, default 1440)") var resolutionCap: Double?
     @Option(name: .long, help: "Diff strategy: fast|quality (default fast)") var diffStrategy: String?
     @Option(
-        name: .long,
+        name: .customLong("diff-budget"),
         help: "Diff time budget in milliseconds before falling back to fast (default 30 when quality)"
-    ) var diffBudgetMs: Int?
+    ) var diffBudget: CLIDuration?
 
-    // Output
+    /// Output
     @Option(name: .long, help: "Output directory (defaults to temp capture session)") var path: String?
-    @Option(name: .long, help: "Minutes before temp sessions auto-clean (default 120)") var autocleanMinutes: Int?
+    @Option(name: .customLong("autoclean"), help: "Time before temp sessions auto-clean (default 7200s)")
+    var autoclean: CLIDuration?
     @Option(name: .long, help: "Optional MP4 output path (built from kept frames)") var videoOut: String?
 
     @RuntimeStorage var runtime: CommandRuntime?
@@ -87,7 +90,10 @@ InjectedRuntimeBackedCommand {
                 scope: scope,
                 options: options,
                 outputRoot: outputDir,
-                autoclean: WatchAutocleanConfig(minutes: autocleanMinutes ?? 120, managed: path == nil),
+                autoclean: WatchAutocleanConfig(
+                    minutes: self.autoclean.map { Int(($0.seconds / 60).rounded()) } ?? 120,
+                    managed: self.path == nil
+                ),
                 sourceKind: .live,
                 videoIn: nil,
                 videoOut: CaptureCommandPathResolver.filePath(from: self.videoOut),

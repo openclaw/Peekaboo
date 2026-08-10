@@ -72,9 +72,9 @@ extension SeeCommand: CommanderSignatureProviding {
                     long: "analyze"
                 ),
                 .commandOption(
-                    "timeoutSeconds",
-                    help: "Overall timeout in seconds (default: 20, or 60 when --analyze is set)",
-                    long: "timeout-seconds"
+                    "timeout",
+                    help: "Overall timeout; bare values are milliseconds (default: 20s, or 60s with --analyze)",
+                    long: "timeout"
                 ),
                 .commandOption(
                     "depth",

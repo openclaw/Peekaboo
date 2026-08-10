@@ -11,6 +11,7 @@
 - Add `app focus` and positional app targets across quit, relaunch, hide, unhide, and switch while rejecting conflicting positional/flag targets (v4 breaking change).
 
 ### Changed
+- Standardize all CLI duration/timeout/delay flags on bare-millisecond plus `ms`/`s` parsing, coordinate input on `--at`/`--global`, modifiers on normalized comma-separated lists, and the input-command focus flag matrix (v4 breaking change).
 - Update Swift Subprocess to 1.0.0 and pnpm to 11.21.0.
 - Merge keyboard shortcuts into xdotool-style `press` chords, fold swipe gestures into dual-target `drag`, consolidate screenshot and AX-tree CLI reads under `see`, and rename CLI/MCP `perform-action`/`perform_action` to `action` (v4 breaking change).
 - Make `type` text-only apart from `--clear`; use `press` for Return, Tab, Escape, Delete, and chord sequences (v4 breaking change).
@@ -25,6 +26,7 @@
 - Add strict bridge 1.11 capabilities for background scrolling, dialog buttons, and window close so stale hosts fail before unsafe fallback dispatch.
 
 ### Removed
+- Remove unit-encoded and legacy coordinate flag spellings including `--timeout-seconds`, `--focus-timeout-seconds`, `--restore-delay-ms`, `--coords`, `--global-coords`, daemon unit suffixes, and capture unit suffixes such as `--every-ms`/`--pre-roll-ms` (v4 breaking change).
 - Remove the CLI `hotkey`, `swipe`, `image`, `inspect-ui`, and `perform-action` roots plus the MCP `hotkey` and `swipe` tools; MCP keeps screenshot-only `image` and AX-only `inspect_ui` tools (v4 breaking change).
 - Remove clipboard `-a`/`--action`, the duplicate clipboard `load` action, flat config provider/credential spellings, agent mode flags, and the three compound permission-request command names; ClipboardTool payload parameters are now `file_path` and `data_base64` with no image-path alias (v4 breaking change).
 - Remove the CLI `sleep`, `open`, `run`, `commander`, and root `list` commands; remove `capture watch`, `menu click-extra`, `menu list-all`, and `agent permission` aliases/subtrees (v4 breaking change).

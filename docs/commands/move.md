@@ -13,7 +13,7 @@ read_when:
 | Flag | Description |
 | --- | --- |
 | `[x,y]` | Optional positional coordinates (e.g., `540,320`). |
-| `--coords <x,y>` | Coordinate target as an option (alias for the positional argument). |
+| `--at <x,y>` | Coordinate target; target-relative with app/window selectors, global otherwise. Add `--global` for explicit screen coordinates. |
 | `--on <element-id>` | Jump to a Peekaboo element’s midpoint based on the latest snapshot. |
 | `--to <query>` | Resolve an element by text/query using `waitForElement` (5 s timeout). |
 | `--center` | Move to the main screen’s center (exclusive with other targets). |
@@ -22,11 +22,11 @@ read_when:
 | Target flags | `--app <name>`, `--pid <pid>`, `--window-id <id>`, `--window-title <title>`, `--window-index <n>` — focus a specific app/window before moving. (`--window-title`/`--window-index` require `--app` or `--pid`; `--window-id` does not.) |
 | Foreground focus flags | Space switching + retries; Peekaboo aborts if a requested target cannot be focused. |
 | `--smooth` | Use natural eased movement with distance-aware timing. |
-| `--duration <ms>` / `--steps <n>` | Override movement timing/sample count; a positive duration opts into natural movement unless `--profile linear` is explicit. |
+| `--duration <duration>` / `--steps <n>` | Override movement timing/sample count; bare durations are milliseconds and `ms`/`s` suffixes are accepted. |
 | `--profile <linear\|human>` | Select a movement profile. Animated moves default to `human`; instant moves default to `linear`. |
 
 ## Implementation notes
-- Validation enforces exactly one target: coordinates (`[x,y]` or `--coords`), `--on`, `--to`, or `--center`.
+- Validation enforces exactly one target: coordinates (`[x,y]` or `--at`), `--on`, `--to`, or `--center`.
 - Element-based moves reuse snapshot data via `services.snapshots.getDetectionResult`; query-based moves run `AutomationServiceBridge.waitForElement`, so they automatically wait up to 5 s for dynamic UIs.
 - Smooth moves compute a bounded minimum-jerk Bézier path and track the previous cursor location so the result payload can include the travel distance.
 - `--smooth`, a positive `--duration`, or `--profile human` enables natural movement with distance-aware duration and sample defaults. Use `--profile linear` for a straight path. See `docs/human-mouse-move.md` for deeper guidance.
@@ -36,7 +36,7 @@ read_when:
 ```bash
 # Instantly move to a coordinate
 peekaboo move 1024,88 --foreground
-peekaboo move --coords 1024,88 --foreground
+peekaboo move --at 1024,88 --global --foreground
 
 # Natural movement with one flag
 peekaboo move 520,360 --smooth --foreground
@@ -45,7 +45,7 @@ peekaboo move 520,360 --smooth --foreground
 peekaboo move --on menu_gear --smooth --foreground
 
 # Center the cursor on the main display before taking a screenshot
-peekaboo move --center --duration 250 --steps 15 --foreground
+peekaboo move --center --duration 250ms --steps 15 --foreground
 ```
 
 ## Troubleshooting

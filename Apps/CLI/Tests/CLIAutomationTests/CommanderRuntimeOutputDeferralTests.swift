@@ -9,7 +9,7 @@ import Testing
 @Suite(.serialized)
 struct CommanderRuntimeOutputDeferralTests {
     private let clickArguments = [
-        "click", "--coords", "100,200", "--foreground",
+        "click", "--at", "100,200", "--foreground",
     ]
 
     @Test

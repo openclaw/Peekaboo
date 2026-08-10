@@ -278,12 +278,12 @@ struct CommanderBinderProgramResolutionTests {
         let invocation = try program.resolve(argv: [
             "peekaboo",
             "click",
-            "--coords", "10,10",
+            "--at", "10,10",
             "--app", "Safari",
             "--focus-background"
         ])
         let values = invocation.parsedValues
-        #expect(values.options["coords"] == ["10,10"])
+        #expect(values.options["at"] == ["10,10"])
         #expect(values.options["app"] == ["Safari"])
         #expect(values.flags.contains("focusBackground"))
     }
@@ -301,7 +301,7 @@ struct CommanderBinderProgramResolutionTests {
             "--delay", "10",
             "--clear",
             "--app", "Notes",
-            "--focus-timeout-seconds", "3.5",
+            "--focus-timeout", "3.5s",
             "--space-switch"
         ])
         let values = invocation.parsedValues
@@ -310,7 +310,7 @@ struct CommanderBinderProgramResolutionTests {
         #expect(values.options["delay"] == ["10"])
         #expect(values.options["app"] == ["Notes"])
         #expect(values.flags.contains("clear"))
-        #expect(values.options["focusTimeoutSeconds"] == ["3.5"])
+        #expect(values.options["focusTimeout"] == ["3.5s"])
         #expect(values.flags.contains("spaceSwitch"))
     }
 

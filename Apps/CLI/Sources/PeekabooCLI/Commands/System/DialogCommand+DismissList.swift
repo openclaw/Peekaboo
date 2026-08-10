@@ -79,8 +79,8 @@ extension DialogCommand {
             abstract: "List elements in current dialog using DialogService"
         )
 
-        @Option(name: .long, help: "Maximum time to spend listing dialog elements in seconds")
-        var timeoutSeconds: TimeInterval = 5
+        @Option(name: .customLong("timeout"), help: "Dialog-list timeout (bare values are milliseconds; default 5s)")
+        var timeout: CLIDuration = .seconds(5)
 
         @OptionGroup var target: InteractionTargetOptions
         @RuntimeStorage var runtime: CommandRuntime?
@@ -88,7 +88,7 @@ extension DialogCommand {
         @MainActor
         mutating func run(using runtime: CommandRuntime) async throws {
             self.runtime = runtime
-            let timeoutSeconds = self.timeoutSeconds
+            let timeoutSeconds = self.timeout.seconds
             try await DialogCommand.execute(
                 runtime: runtime,
                 target: self.target,

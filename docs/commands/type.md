@@ -14,7 +14,7 @@ read_when:
 | --- | --- |
 | `[text]` | Optional positional string; supports escape sequences like `\n` (Return) and `\t` (Tab). |
 | `--snapshot <id>` | Target a specific snapshot (or pass `latest` explicitly). |
-| `--delay <ms>` | Milliseconds between synthetic keystrokes (default `0`). |
+| `--delay <duration>` | Time between synthetic keystrokes (default `0`; bare values are milliseconds). |
 | `--wpm <80-220>` | Enable human-typing cadence at the chosen words per minute. |
 | `--profile <linear|human>` | Switch between linear (default, honors `--delay`) and human (honors `--wpm`). |
 | `--clear` | Issue Cmd+A, Delete before typing any new text. |
@@ -51,7 +51,7 @@ peekaboo type alice@example.com --app Safari --clear && peekaboo press Tab Tab R
 peekaboo type "status report ready" --app TextEdit --wpm 140
 
 # Linear profile with fixed 10ms delay
-peekaboo type "fast" --app TextEdit --profile linear --delay 10
+peekaboo type "fast" --app TextEdit --profile linear --delay 10ms
 ```
 
 ## Troubleshooting

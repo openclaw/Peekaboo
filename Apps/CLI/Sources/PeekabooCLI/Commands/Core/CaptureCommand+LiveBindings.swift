@@ -30,22 +30,22 @@ extension CaptureLiveCommand: CommanderBindableCommand {
             self.captureFocus = parsedFocus
         }
         self.captureEngine = values.singleOption("captureEngine")
-        self.duration = try values.decodeOption("duration", as: Double.self)
+        self.duration = try values.decodeOption("duration", as: CLIDuration.self)
         self.idleFps = try values.decodeOption("idleFps", as: Double.self)
         self.activeFps = try values.decodeOption("activeFps", as: Double.self)
         self.threshold = try values.decodeOption("threshold", as: Double.self)
-        self.heartbeatSec = try values.decodeOption("heartbeatSec", as: Double.self)
-        self.quietMs = try values.decodeOption("quietMs", as: Int.self)
+        self.heartbeat = try values.decodeOption("heartbeat", as: CLIDuration.self)
+        self.quiet = try values.decodeOption("quiet", as: CLIDuration.self)
         self.maxFrames = try values.decodeOption("maxFrames", as: Int.self)
         self.maxMb = try values.decodeOption("maxMb", as: Int.self)
         self.resolutionCap = try values.decodeOption("resolutionCap", as: Double.self)
         self.diffStrategy = values.singleOption("diffStrategy")
-        self.diffBudgetMs = try values.decodeOption("diffBudgetMs", as: Int.self)
+        self.diffBudget = try values.decodeOption("diffBudget", as: CLIDuration.self)
         if values.flag("highlightChanges") {
             self.highlightChanges = true
         }
         self.path = values.singleOption("path")
-        self.autocleanMinutes = try values.decodeOption("autocleanMinutes", as: Int.self)
+        self.autoclean = try values.decodeOption("autoclean", as: CLIDuration.self)
         self.videoOut = values.singleOption("videoOut")
     }
 }

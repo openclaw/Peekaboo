@@ -20,7 +20,7 @@ struct ClickCommandTests {
     func `Click command  parses coordinates correctly`() async throws {
         let context = await makeContext()
         let result = try await InProcessCommandRunner.run(
-            ["click", "--coords", "100,200", "--foreground", "--json"],
+            ["click", "--at", "100,200", "--foreground", "--json"],
             services: context.services
         )
 
@@ -36,7 +36,7 @@ struct ClickCommandTests {
 
     @Test
     func `Click command  validates coordinate format`() throws {
-        var command = try ClickCommand.parse(["--coords", "invalid", "--json"])
+        var command = try ClickCommand.parse(["--at", "invalid", "--json"])
         #expect(throws: (any Error).self) {
             try command.validate()
         }
@@ -46,7 +46,7 @@ struct ClickCommandTests {
     func `Long press uses foreground stationary click type`() async throws {
         let context = await makeContext()
         let result = try await InProcessCommandRunner.run(
-            ["click", "--coords", "100,200", "--long-press", "--json"],
+            ["click", "--at", "100,200", "--long-press", "--json"],
             services: context.services
         )
 
@@ -59,7 +59,7 @@ struct ClickCommandTests {
 
     @Test
     func `Long press rejects conflicting click variants`() throws {
-        var command = try ClickCommand.parse(["--coords", "100,200", "--long-press", "--right"])
+        var command = try ClickCommand.parse(["--at", "100,200", "--long-press", "--right"])
 
         #expect(throws: (any Error).self) {
             try command.validate()
@@ -71,7 +71,7 @@ struct ClickCommandTests {
         for snapshotArguments in [[], ["--snapshot", ""]] {
             let context = await makeContext()
             let result = try await InProcessCommandRunner.run(
-                ["click", "--coords", "100,200", "--pid", "12345", "--global-coords"] +
+                ["click", "--at", "100,200", "--pid", "12345", "--global"] +
                     snapshotArguments + ["--json"],
                 services: context.services
             )
@@ -98,7 +98,7 @@ struct ClickCommandTests {
 
         let result = try await InProcessCommandRunner.run(
             [
-                "click", "--coords", "10,10", "--window-id", "42",
+                "click", "--at", "10,10", "--window-id", "42",
                 "--snapshot", snapshotId, "--json",
             ],
             services: context.services
@@ -130,7 +130,7 @@ struct ClickCommandTests {
 
         let result = try await InProcessCommandRunner.run(
             [
-                "click", "--coords", "100,200", "--window-id", "42", "--global-coords",
+                "click", "--at", "100,200", "--window-id", "42", "--global",
                 "--snapshot", snapshotId, "--json",
             ],
             services: context.services

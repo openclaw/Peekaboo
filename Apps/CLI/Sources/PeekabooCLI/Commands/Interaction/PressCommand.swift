@@ -15,19 +15,16 @@ struct PressCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
     @Option(help: "Repeat count for all keys")
     var count: Int = 1
 
-    @Option(help: "Delay between key presses in milliseconds")
-    var delay: Int = 100
+    @Option(help: "Delay between key presses (bare values are milliseconds)")
+    var delay: CLIDuration = .milliseconds(100)
 
-    @Option(help: "Hold duration for each key in milliseconds")
-    var hold: Int = 50
+    @Option(help: "Hold duration for each key (bare values are milliseconds)")
+    var hold: CLIDuration = .milliseconds(50)
 
     @Option(help: "Snapshot ID, or 'latest'")
     var snapshot: String?
 
     @OptionGroup var focusOptions: FocusCommandOptions
-    @Flag(help: "Focus target and send foreground/global key presses")
-    var foreground = false
-
     @RuntimeStorage private var runtime: CommandRuntime?
     var runtimeOptions = CommandRuntimeOptions()
 
@@ -99,22 +96,22 @@ struct PressCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
                         try await AutomationServiceBridge.hotkey(
                             automation: self.services.automation,
                             keys: chord.serviceKeys,
-                            holdDuration: self.hold,
+                            holdDuration: self.hold.roundedMilliseconds,
                             targetProcessIdentifier: targetPID
                         )
                     } else {
                         try await AutomationServiceBridge.hotkey(
                             automation: self.services.automation,
                             keys: chord.serviceKeys,
-                            holdDuration: self.hold
+                            holdDuration: self.hold.roundedMilliseconds
                         )
                     }
                     completedPresses += 1
 
                     let isLastKey = index == parsedChords.count - 1
                     let isLastRepetition = repetition == self.count - 1
-                    if self.delay > 0, !(isLastKey && isLastRepetition) {
-                        try await Task.sleep(nanoseconds: UInt64(self.delay) * 1_000_000)
+                    if self.delay.milliseconds > 0, !(isLastKey && isLastRepetition) {
+                        try await Task.sleep(for: .seconds(self.delay.seconds))
                     }
                 }
             }
@@ -161,17 +158,11 @@ struct PressCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
     mutating func validate() throws {
         try self.target.validate()
         try KeyboardDeliverySupport.validateForegroundFlags(
-            foreground: self.foreground,
+            foreground: self.focusOptions.foreground,
             focusOptions: self.focusOptions
         )
         guard self.count >= 1 else {
             throw ValidationError("--count must be greater than 0")
-        }
-        guard self.delay >= 0 else {
-            throw ValidationError("--delay must be greater than or equal to 0")
-        }
-        guard self.hold >= 0 else {
-            throw ValidationError("--hold must be greater than or equal to 0")
         }
         _ = try self.parsedChords()
     }
@@ -187,7 +178,7 @@ struct PressCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
     }
 
     private func backgroundProcessIdentifier(snapshotId: String?) async throws -> pid_t? {
-        guard !self.foreground else {
+        guard !self.focusOptions.foreground else {
             return nil
         }
 
@@ -272,14 +263,13 @@ extension PressCommand: CommanderBindableCommand {
         if let count: Int = try values.decodeOption("count", as: Int.self) {
             self.count = count
         }
-        if let delay: Int = try values.decodeOption("delay", as: Int.self) {
+        if let delay: CLIDuration = try values.decodeOption("delay", as: CLIDuration.self) {
             self.delay = delay
         }
-        if let hold: Int = try values.decodeOption("hold", as: Int.self) {
+        if let hold: CLIDuration = try values.decodeOption("hold", as: CLIDuration.self) {
             self.hold = hold
         }
         self.snapshot = values.singleOption("snapshot")
-        self.foreground = values.flag("foreground")
-        self.focusOptions = try values.makeFocusOptions()
+        self.focusOptions = try values.makeFocusOptions(includeBackgroundDelivery: true)
     }
 }

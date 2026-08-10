@@ -12,11 +12,11 @@ read_when:
 ## Subcommands
 | Subcommand | Purpose | Key flags |
 | --- | --- | --- |
-| `init` | Create a default `config.json` (respects `--force`) and print provider readiness (env / credentials / OAuth) in human mode. | `--force` overwrites an existing file; `--timeout` (sec) to bound live checks (default 30). |
-| `show` | Print either the raw file or the fully merged “effective” view (config + env + credentials); human `--effective` also live-validates providers. | `--effective` switches to the merged view; `--timeout` (sec) bounds validation; JSON mode emits a standard `{ success, data }` object with no appended text. |
+| `init` | Create a default `config.json` (respects `--force`) and print provider readiness (env / credentials / OAuth) in human mode. | `--force` overwrites an existing file; `--timeout` bounds live checks (default `30s`; bare values are milliseconds). |
+| `show` | Print either the raw file or the fully merged “effective” view (config + env + credentials); human `--effective` also live-validates providers. | `--effective` switches to the merged view; `--timeout` bounds validation with the shared duration grammar; JSON mode emits a standard `{ success, data }` object with no appended text. |
 | `edit` | Opens the config in `$EDITOR` (or the `--editor` you pass) and validates the result after you quit. | `--editor` overrides the detected editor. |
 | `validate` | Parses the config without writing anything and surfaces syntax/errors. | None. |
-| `status` | Display provider credential readiness. | `--timeout` (sec, default 30). |
+| `status` | Display provider credential readiness. | `--timeout` (default `30s`; bare values are milliseconds). |
 | `login` | Run an OAuth flow (no API key stored) for supported providers. | `login openai` (ChatGPT/Codex), `login anthropic` (Claude Pro/Max). |
 | `credential set` | Validate and store a known provider credential, or store a raw credential key. | `credential set openai <secret>` validates; `credential set OPENAI_API_KEY <value>` stores raw. `--timeout` bounds validation. |
 | `provider add` | Append or replace a custom AI provider entry. | Positional `<provider-id>` plus `--type openai|anthropic`, `--name`, `--base-url`, `--api-key`, `--headers key:value,…`, `--description`, `--force`, `--dry-run`. |

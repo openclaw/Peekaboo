@@ -24,7 +24,7 @@ extension MenuCommand.ClickSubcommand: CommanderSignatureProviding {
             ],
             optionGroups: [
                 InteractionTargetOptions.commanderSignature(),
-                FocusCommandOptions.commanderSignature(),
+                FocusCommandOptions.commanderSignature(includeForeground: false),
             ]
         )
     }
@@ -47,7 +47,7 @@ extension MenuCommand.ListSubcommand: CommanderSignatureProviding {
             ],
             optionGroups: [
                 InteractionTargetOptions.commanderSignature(),
-                FocusCommandOptions.commanderSignature(),
+                FocusCommandOptions.commanderSignature(includeForeground: false),
             ]
         )
     }

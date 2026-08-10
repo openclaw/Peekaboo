@@ -7,7 +7,11 @@ extension VerifyCommand: CommanderSignatureProviding {
                 .commandOption("windowBounds", help: "Required x,y,width,height[,tolerance]", long: "window-bounds"),
                 .commandOption("on", help: "Element ID or role:label query", long: "on"),
                 .commandOption("valueEquals", help: "Required element value", long: "value-equals"),
-                .commandOption("timeout", help: "Polling timeout in milliseconds (default: 5000)", long: "timeout"),
+                .commandOption(
+                    "timeout",
+                    help: "Polling timeout; bare values are milliseconds, or use ms/s suffixes",
+                    long: "timeout"
+                ),
                 .commandOption("stableSamples", help: "Required stable samples (default: 2)", long: "stable-samples"),
                 .commandOption("screenshot", help: "Save the final exact-window screenshot", long: "screenshot"),
             ],
@@ -32,7 +36,7 @@ extension VerifyCommand: CommanderBindableCommand {
         self.valueEquals = values.singleOption("valueEquals")
         self.enabled = values.flag("enabled")
         self.selected = values.flag("selected")
-        self.timeout = try values.decodeOption("timeout", as: Int.self) ?? 5000
+        self.timeout = try values.decodeOption("timeout", as: CLIDuration.self) ?? .seconds(5)
         self.stableSamples = try values.decodeOption("stableSamples", as: Int.self) ?? 2
         self.screenshot = values.singleOption("screenshot")
     }

@@ -23,7 +23,7 @@ struct ClickCommandFocusTests {
 
         #expect(output.contains("--foreground"))
         #expect(output.contains("--no-auto-focus"))
-        #expect(output.contains("--focus-timeout-seconds"))
+        #expect(output.contains("--focus-timeout"))
         #expect(output.contains("--focus-retry-count"))
         #expect(output.contains("--space-switch"))
         #expect(output.contains("--bring-to-current-space"))

@@ -45,13 +45,13 @@ extension MoveCommand: AsyncRuntimeCommand {}
 extension MoveCommand: CommanderBindableCommand {
     mutating func applyCommanderValues(_ values: CommanderBindableValues) throws {
         self.coordinates = try values.decodeOptionalPositional(0, label: "coordinates")
-        self.coords = values.singleOption("coords")
+        self.at = values.singleOption("at")
         self.to = values.singleOption("to")
         self.on = values.singleOption("on")
         self.target = try values.makeInteractionTargetOptions()
         self.center = values.flag("center")
         self.smooth = values.flag("smooth")
-        if let duration: Int = try values.decodeOption("duration", as: Int.self) {
+        if let duration: CLIDuration = try values.decodeOption("duration", as: CLIDuration.self) {
             self.duration = duration
         }
         if let steps: Int = try values.decodeOption("steps", as: Int.self) {
@@ -59,7 +59,7 @@ extension MoveCommand: CommanderBindableCommand {
         }
         self.snapshot = values.singleOption("snapshot")
         self.profile = values.singleOption("profile")
-        self.foreground = values.flag("foreground")
+        self.global = values.flag("global")
         self.focusOptions = try values.makeFocusOptions()
     }
 }
@@ -76,9 +76,10 @@ extension MoveCommand: CommanderSignatureProviding {
             ],
             options: [
                 .commandOption(
-                    "coords",
-                    help: "Coordinates as x,y (alias for positional argument)",
-                    long: "coords"
+                    "at",
+                    help: "x,y — target-relative when --app/--window-* given; global otherwise " +
+                        "(use --global for explicit global)",
+                    long: "at"
                 ),
                 .commandOption(
                     "to",
@@ -92,7 +93,7 @@ extension MoveCommand: CommanderSignatureProviding {
                 ),
                 .commandOption(
                     "duration",
-                    help: "Movement duration in milliseconds",
+                    help: "Movement duration; bare values are milliseconds, or use ms/s suffixes",
                     long: "duration"
                 ),
                 .commandOption(
@@ -122,15 +123,11 @@ extension MoveCommand: CommanderSignatureProviding {
                     help: "Use natural smooth movement",
                     long: "smooth"
                 ),
-                .commandFlag(
-                    "foreground",
-                    help: "Confirm foreground cursor movement and focus the target when specified",
-                    long: "foreground"
-                ),
+                .commandFlag("global", help: "Treat --at as global screen coordinates", long: "global"),
             ],
             optionGroups: [
                 InteractionTargetOptions.commanderSignature(),
-                FocusCommandOptions.commanderSignature(includeAutoFocusControl: false),
+                FocusCommandOptions.commanderSignature(),
             ]
         )
     }

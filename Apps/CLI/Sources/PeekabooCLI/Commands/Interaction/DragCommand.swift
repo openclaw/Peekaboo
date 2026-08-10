@@ -22,14 +22,14 @@ struct DragCommand: ErrorHandlingCommand, OutputFormattable, InjectedRuntimeBack
     @Option(help: "Snapshot ID for element resolution, or 'latest'")
     var snapshot: String?
 
-    @Option(help: "Duration of drag in milliseconds (default: 500)")
-    var duration: Int?
+    @Option(help: "Duration of drag (bare values are milliseconds; default: 500ms)")
+    var duration: CLIDuration?
 
     @Option(help: "Number of intermediate steps (default: 20)")
     var steps: Int?
 
-    @Option(help: "Modifier keys to hold during drag (comma-separated: cmd,shift,option,ctrl)")
-    var modifiers: String?
+    @Option(help: "Modifier keys to hold (comma-separated: cmd,shift,option,ctrl,fn)")
+    var modifiers: CLIModifierList?
 
     @Option(help: "Mouse button to hold during drag (left or right)")
     var button = "left"
@@ -38,8 +38,6 @@ struct DragCommand: ErrorHandlingCommand, OutputFormattable, InjectedRuntimeBack
     var profile: String?
     @OptionGroup var focusOptions: FocusCommandOptions
 
-    @Flag(help: "Confirm foreground pointer movement and focus the target when specified")
-    var foreground = false
     @RuntimeStorage var runtime: CommandRuntime?
 
     @MainActor
@@ -116,7 +114,7 @@ struct DragCommand: ErrorHandlingCommand, OutputFormattable, InjectedRuntimeBack
             let movement = CursorMovementResolver.resolve(
                 CursorMovementResolutionRequest(
                     selection: profileSelection,
-                    durationOverride: self.duration,
+                    durationOverride: self.duration?.roundedMilliseconds,
                     stepsOverride: self.steps,
                     baseSmooth: true,
                     distance: distance,
@@ -130,7 +128,7 @@ struct DragCommand: ErrorHandlingCommand, OutputFormattable, InjectedRuntimeBack
                 to: endPoint,
                 duration: movement.duration,
                 steps: movement.steps,
-                modifiers: self.modifiers,
+                modifiers: self.modifiers?.description,
                 button: self.resolvedButton ?? .left,
                 profile: movement.profile
             )
@@ -138,7 +136,8 @@ struct DragCommand: ErrorHandlingCommand, OutputFormattable, InjectedRuntimeBack
             AutomationEventLogger.log(
                 .drag,
                 "drag from=(\(Int(startPoint.x)),\(Int(startPoint.y))) to=(\(Int(endPoint.x)),\(Int(endPoint.y))) "
-                    + "modifiers=\(self.modifiers ?? "none") snapshot=\(observation.snapshotId ?? "latest") "
+                    + "modifiers=\(self.modifiers?.description ?? "none") "
+                    + "snapshot=\(observation.snapshotId ?? "latest") "
                     + "profile=\(movement.profileName)"
             )
 
@@ -157,7 +156,7 @@ struct DragCommand: ErrorHandlingCommand, OutputFormattable, InjectedRuntimeBack
                 duration: movement.duration,
                 steps: movement.steps,
                 profile: movement.profileName,
-                modifiers: self.modifiers ?? "none",
+                modifiers: self.modifiers?.description ?? "none",
                 button: self.button.lowercased(),
                 fromTargetPoint: startResolution.diagnostics,
                 toTargetPoint: endResolution.diagnostics,
@@ -170,7 +169,7 @@ struct DragCommand: ErrorHandlingCommand, OutputFormattable, InjectedRuntimeBack
                 print("📍 To: (\(Int(endPoint.x)), \(Int(endPoint.y)))")
                 print("🧭 Profile: \(movement.profileName.capitalized)")
                 print("⏱️  Duration: \(movement.duration)ms with \(movement.steps) steps")
-                if let mods = modifiers {
+                if let mods = self.modifiers {
                     print("⌨️  Modifiers: \(mods)")
                 }
                 print("🖱️  Button: \(self.button.lowercased())")
@@ -185,7 +184,7 @@ struct DragCommand: ErrorHandlingCommand, OutputFormattable, InjectedRuntimeBack
     /// Validate user input combinations
     private mutating func validateInputs() throws {
         try self.target.validate()
-        guard self.foreground else {
+        guard self.focusOptions.foreground else {
             throw ValidationError(
                 "drag changes the physical cursor and requires explicit --foreground consent."
             )
@@ -296,16 +295,15 @@ extension DragCommand: CommanderBindableCommand {
         self.to = values.singleOption("to")
         self.toApp = values.singleOption("toApp")
         self.snapshot = values.singleOption("snapshot")
-        if let duration: Int = try values.decodeOption("duration", as: Int.self) {
+        if let duration: CLIDuration = try values.decodeOption("duration", as: CLIDuration.self) {
             self.duration = duration
         }
         if let steps: Int = try values.decodeOption("steps", as: Int.self) {
             self.steps = steps
         }
-        self.modifiers = values.singleOption("modifiers")
+        self.modifiers = try values.decodeOption("modifiers", as: CLIModifierList.self)
         self.button = values.singleOption("button") ?? "left"
         self.profile = values.singleOption("profile")
-        self.foreground = values.flag("foreground")
         self.focusOptions = try values.makeFocusOptions()
     }
 }

@@ -25,7 +25,7 @@ struct CommanderBinderMenuDockTests {
         #expect(command.amount == 7)
         #expect(command.on == "B4")
         #expect(command.snapshot == "sess-5")
-        #expect(command.delay == 5)
+        #expect(command.delay.roundedMilliseconds == 5)
         #expect(command.target.app == "Mail")
         #expect(command.smooth == true)
         #expect(command.focusOptions.spaceSwitch == true)

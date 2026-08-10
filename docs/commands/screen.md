@@ -20,6 +20,6 @@ peekaboo screen list --json \
   | jq '.data.screens[] | {id: .displayID, bounds, scale: .scaleFactor, main: .isPrimary}'
 ```
 
-`bounds` and `position` use the same upper-left-origin global logical coordinate space as `click --global-coords`. Multiply dimensions by `scaleFactor` when comparing them with physical-pixel captures. A Retina display can therefore report logical bounds of 1944×1274, scale 2, and a 3888×2548 pixel capture.
+`bounds` and `position` use the same upper-left-origin global logical coordinate space as `click --global`. Multiply dimensions by `scaleFactor` when comparing them with physical-pixel captures. A Retina display can therefore report logical bounds of 1944×1274, scale 2, and a 3888×2548 pixel capture.
 
-For browser pages whose accessibility tree contains no actionable web descendants, pair this inventory with `peekaboo window list --app <browser> --json`, then use `peekaboo click --window-id <id> --foreground --input-strategy synthOnly --coords x,y`.
+For browser pages whose accessibility tree contains no actionable web descendants, pair this inventory with `peekaboo window list --app <browser> --json`, then use `peekaboo click --window-id <id> --foreground --input-strategy synthOnly --at x,y`.

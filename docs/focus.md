@@ -102,7 +102,7 @@ Uses command-supported background delivery instead of activating the target app.
 
 ```bash
 peekaboo press cmd+l --app Safari
-peekaboo click --coords 420,180 --app Safari
+peekaboo click --at 420,180 --app Safari
 peekaboo type "hello" --app TextEdit
 ```
 
@@ -116,11 +116,11 @@ Currently, keyboard commands use background delivery by default when `--app`, `-
 
 Background delivery is a delivery mode, not a focus mode. It cannot be combined with foreground focus timeout, retry, or Space-switching flags. Background element/query/coordinate clicks and targeted scroll use Accessibility. Keyboard delivery and foreground synthetic pointer operations require Event Synthesizing; `peekaboo permissions request event-synthesizing` requests it for the selected bridge host by default, or for the local CLI with `--no-remote`.
 
-### `--focus-timeout-seconds <seconds>`
-Sets how long to wait for focus operations (default: 5.0).
+### `--focus-timeout <duration>`
+Sets how long to wait for focus operations (default: `5s`; bare values are milliseconds).
 
 ```bash
-peekaboo type "Long text..." --app TextEdit --foreground --focus-timeout-seconds 10
+peekaboo type "Long text..." --app TextEdit --foreground --focus-timeout 10s
 ```
 
 Use cases:
@@ -262,7 +262,7 @@ peekaboo click "Login" --foreground
 peekaboo type "username"
 
 # Less reliable: No window tracking
-peekaboo click "Login" --coords 100,200 --foreground
+peekaboo click "Login" --at 100,200 --foreground
 ```
 
 ### 2. Let Peekaboo Handle Focus
@@ -284,7 +284,7 @@ Be aware that Space switching takes time:
 
 ```bash
 # For critical operations, increase timeout
-peekaboo click "Save" --foreground --focus-timeout-seconds 10
+peekaboo click "Save" --foreground --focus-timeout 10s
 
 # Or move windows to avoid switching
 peekaboo type "Important data" --bring-to-current-space
@@ -338,7 +338,7 @@ The window is taking too long to focus:
 
 ```bash
 # Increase timeout
-peekaboo click "Button" --foreground --focus-timeout-seconds 10
+peekaboo click "Button" --foreground --focus-timeout 10s
 
 # Or increase retry count
 peekaboo click "Button" --foreground --focus-retry-count 5

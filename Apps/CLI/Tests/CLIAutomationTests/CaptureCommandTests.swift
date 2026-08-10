@@ -7,12 +7,12 @@ struct CaptureCommandTests {
     @Test
     func `buildOptions clamps values`() throws {
         var cmd = CaptureLiveCommand()
-        cmd.duration = 999
+        cmd.duration = .seconds(999)
         cmd.idleFps = 9
         cmd.activeFps = 99
         cmd.threshold = 200
-        cmd.heartbeatSec = -1
-        cmd.quietMs = -10
+        cmd.heartbeat = .seconds(-1)
+        cmd.quiet = .milliseconds(-10)
         cmd.maxFrames = 0
         cmd.resolutionCap = 10
         cmd.maxMb = -5

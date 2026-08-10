@@ -429,14 +429,14 @@ enum DaemonLaunchPolicy {
         ]
         if let pollIntervalMs, pollIntervalMs > 0 {
             arguments.append(contentsOf: [
-                "--poll-interval-ms",
-                "\(pollIntervalMs)",
+                "--poll-interval",
+                "\(pollIntervalMs)ms",
             ])
         }
         if mode == .auto {
             arguments.append(contentsOf: [
-                "--idle-timeout-seconds",
-                String(format: "%.3f", idleTimeoutSeconds),
+                "--idle-timeout",
+                String(format: "%.3fs", idleTimeoutSeconds),
             ])
         }
         return arguments

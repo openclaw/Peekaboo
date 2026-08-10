@@ -33,8 +33,8 @@ struct DragCommandTests {
 
         #expect(output.contains("--from"))
         #expect(output.contains("--to"))
-        #expect(output.contains("--from-coords"))
-        #expect(output.contains("--to-coords"))
+        #expect(!output.contains("--from-coords"))
+        #expect(!output.contains("--to-coords"))
         #expect(output.contains("--to-app"))
         #expect(output.contains("--duration"))
         #expect(output.contains("--modifiers"))
@@ -71,11 +71,11 @@ struct DragCommandTests {
     }
 
     @Test
-    func `Drag modifier parsing`() {
-        let modifiers = "cmd,shift"
-        let parts = modifiers.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
-        #expect(parts.contains("cmd"))
-        #expect(parts.contains("shift"))
+    func `Drag modifier parsing normalizes aliases`() throws {
+        let command = try DragCommand.parse([
+            "--from", "10,20", "--to", "30,40", "--modifiers", "command,alt,control", "--foreground",
+        ])
+        #expect(command.modifiers?.description == "cmd,option,ctrl")
     }
 
     @Test
@@ -100,9 +100,9 @@ struct DragCommandTests {
     func `Drag executes automation service`() async throws {
         let arguments = [
             "drag",
-            "--from-coords", "10,20",
-            "--to-coords", "30,40",
-            "--duration", "750",
+            "--from", "10,20",
+            "--to", "30,40",
+            "--duration", "750ms",
             "--steps", "5",
             "--modifiers", "cmd,option",
             "--json",
@@ -126,8 +126,8 @@ struct DragCommandTests {
     func `Drag between coordinates scenario`() async throws {
         let arguments = [
             "drag",
-            "--from-coords", "100,100",
-            "--to-coords", "300,300",
+            "--from", "100,100",
+            "--to", "300,300",
             "--duration", "500",
             "--json",
             "--foreground",
@@ -161,7 +161,7 @@ struct DragCommandTests {
         let arguments = [
             "drag",
             "--from", "B1",
-            "--to-coords", "500,500",
+            "--to", "500,500",
             "--snapshot", snapshotId,
             "--json",
             "--foreground",
@@ -196,8 +196,8 @@ struct DragCommandTests {
     func `Drag with modifiers scenario`() async throws {
         let arguments = [
             "drag",
-            "--from-coords", "200,200",
-            "--to-coords", "400,400",
+            "--from", "200,200",
+            "--to", "400,400",
             "--modifiers", "cmd,option",
             "--json",
             "--foreground",
@@ -233,7 +233,7 @@ struct DragCommandTests {
 
         let arguments = [
             "drag",
-            "--from-coords", "100,100",
+            "--from", "100,100",
             "--to-app", "Finder",
             "--json",
             "--foreground",
@@ -255,9 +255,9 @@ struct DragCommandTests {
     func `Drag with custom duration scenario`() async throws {
         let arguments = [
             "drag",
-            "--from-coords", "50,50",
-            "--to-coords", "150,150",
-            "--duration", "2000",
+            "--from", "50,50",
+            "--to", "150,150",
+            "--duration", "2s",
             "--json",
             "--foreground",
         ]
@@ -273,8 +273,8 @@ struct DragCommandTests {
     func `Human profile enables natural drag`() async throws {
         let arguments = [
             "drag",
-            "--from-coords", "0,0",
-            "--to-coords", "400,200",
+            "--from", "0,0",
+            "--to", "400,200",
             "--profile", "human",
             "--json",
             "--foreground",
@@ -294,8 +294,8 @@ struct DragCommandTests {
     func `Drag requires explicit foreground consent`() async throws {
         let arguments = [
             "drag",
-            "--from-coords", "10,20",
-            "--to-coords", "30,40",
+            "--from", "10,20",
+            "--to", "30,40",
         ]
         let (result, context) = try await self.runDragCommandWithContext(arguments)
 

@@ -5,8 +5,8 @@ import Testing
 struct ClickCommandCoordsCrashRegressionTests {
     @Test
     @MainActor
-    func `click --coords ',' returns failure (no crash)`() async {
-        let status = await executePeekabooCLI(arguments: ["peekaboo", "click", "--coords", ",", "--json"])
+    func `click --at ',' returns failure (no crash)`() async {
+        let status = await executePeekabooCLI(arguments: ["peekaboo", "click", "--at", ",", "--json"])
         #expect(status == EXIT_FAILURE)
     }
 }

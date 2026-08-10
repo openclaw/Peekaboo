@@ -35,8 +35,8 @@ peekaboo daemon start
 ```
 Options:
 - `--bridge-socket <path>` override the default daemon socket path.
-- `--poll-interval-ms <ms>` window tracker poll interval (default 1000ms).
-- `--wait-seconds <sec>` how long to wait for startup (default 3s).
+- `--poll-interval <duration>` window tracker poll interval (default `1s`; bare values are milliseconds).
+- `--wait <duration>` how long to wait for startup (default `3s`).
 
 ### Status
 ```
@@ -57,7 +57,7 @@ peekaboo daemon stop
 ```
 Options:
 - `--bridge-socket <path>` override the default daemon socket path.
-- `--wait-seconds <sec>` how long to wait for shutdown (default 12s, above the Bridge request deadline).
+- `--wait <duration>` how long to wait for shutdown (default `12s`, above the Bridge request deadline).
 
 ## Notes
 - Normal automation commands auto-start the daemon in `auto` mode when the default daemon socket is unavailable.

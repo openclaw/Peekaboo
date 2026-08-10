@@ -28,8 +28,8 @@ extension DialogCommand {
         @Flag(help: "Focus the file dialog before keyboard or coordinate interaction")
         var foreground = false
 
-        @Option(help: "Maximum time to spend handling the file dialog")
-        var timeoutSeconds: TimeInterval = 20
+        @Option(name: .customLong("timeout"), help: "File-dialog timeout (bare values are milliseconds; default 20s)")
+        var timeout: CLIDuration = .seconds(20)
 
         @OptionGroup var target: InteractionTargetOptions
         @OptionGroup var focusOptions: FocusCommandOptions
@@ -57,7 +57,7 @@ extension DialogCommand {
                 },
                 operation: { context in
                     let result = try await withMainActorCommandTimeout(
-                        seconds: self.timeoutSeconds,
+                        seconds: self.timeout.seconds,
                         operationName: "dialog file",
                         desktopMutationWatermarkStore: DesktopMutationWatermarkStore()
                     ) {

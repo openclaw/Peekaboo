@@ -704,8 +704,8 @@ struct CommandRuntimeInjectionTests {
 
         #expect(args.contains("auto"))
         #expect(args.contains("/tmp/daemon.sock"))
-        #expect(args.contains("--idle-timeout-seconds"))
-        #expect(args.contains("12.500"))
+        #expect(args.contains("--idle-timeout"))
+        #expect(args.contains("12.500s"))
     }
 
     @Test
@@ -718,9 +718,9 @@ struct CommandRuntimeInjectionTests {
         )
 
         #expect(args.contains("manual"))
-        #expect(args.contains("--poll-interval-ms"))
-        #expect(args.contains("375"))
-        #expect(!args.contains("--idle-timeout-seconds"))
+        #expect(args.contains("--poll-interval"))
+        #expect(args.contains("375ms"))
+        #expect(!args.contains("--idle-timeout"))
     }
 
     @Test
@@ -751,8 +751,8 @@ struct CommandRuntimeInjectionTests {
         )
 
         #expect(args?.contains("auto") == true)
-        #expect(args?.contains("425") == true)
-        #expect(args?.contains("47.500") == true)
+        #expect(args?.contains("425ms") == true)
+        #expect(args?.contains("47.500s") == true)
     }
 
     @Test

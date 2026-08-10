@@ -18,11 +18,19 @@ extension DaemonCommand {
         @Option(name: .long, help: "Override bridge socket path")
         var bridgeSocket: String?
 
-        @Option(name: .long, help: "Window tracker poll interval in milliseconds (default 1000)")
-        var pollIntervalMs: Int?
+        @Option(name: .customLong("poll-interval"), help: "Window tracker poll interval (bare values are milliseconds)")
+        var pollInterval: CLIDuration?
 
-        @Option(name: .long, help: "Seconds to wait for daemon startup (default 3)")
-        var waitSeconds: Int = 3
+        @Option(name: .customLong("wait"), help: "Daemon startup wait (bare values are milliseconds; default 3s)")
+        var wait: CLIDuration = .seconds(3)
+
+        var pollIntervalMs: Int? {
+            self.pollInterval?.roundedMilliseconds
+        }
+
+        var waitSeconds: Int {
+            Int(self.wait.seconds.rounded(.up))
+        }
 
         @RuntimeStorage var runtime: CommandRuntime?
         var runtimeOptions = CommandRuntimeOptions()
@@ -227,9 +235,9 @@ extension DaemonCommand.Start {
 extension DaemonCommand.Start: CommanderBindableCommand {
     mutating func applyCommanderValues(_ values: CommanderBindableValues) throws {
         self.bridgeSocket = values.singleOption("bridge-socket")
-        self.pollIntervalMs = try values.decodeOption("pollIntervalMs", as: Int.self)
-        if let waitSeconds = try values.decodeOption("waitSeconds", as: Int.self) {
-            self.waitSeconds = waitSeconds
+        self.pollInterval = try values.decodeOption("pollInterval", as: CLIDuration.self)
+        if let wait = try values.decodeOption("wait", as: CLIDuration.self) {
+            self.wait = wait
         }
     }
 }

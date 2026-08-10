@@ -22,7 +22,7 @@ struct MCPWrapperCommandBindingTests {
         #expect(command.action == "navigate")
         #expect(command.channel == "stable")
         #expect(command.url == "https://example.com")
-        #expect(command.timeout == 5000)
+        #expect(command.timeout?.roundedMilliseconds == 5000)
         #expect(command.types == ["error", "warning", "info"])
         #expect(command.resourceTypes == ["script", "xhr"])
         #expect(command.bringToFront == true)

@@ -129,7 +129,7 @@ enum InteractionCoordinateResolver {
             let height = Self.clean(windowInfo.bounds.height)
             throw ValidationError(
                 "Coordinates \(x),\(y) are outside target window \(windowInfo.windowID) " +
-                    "bounds 0,0-\(width),\(height). Use --global-coords for screen coordinates."
+                    "bounds 0,0-\(width),\(height). Use --global for screen coordinates."
             )
         }
     }

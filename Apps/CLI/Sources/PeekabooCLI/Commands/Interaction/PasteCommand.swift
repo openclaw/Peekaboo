@@ -29,16 +29,11 @@ struct PasteCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedComma
     @Flag(name: .long, help: "Allow payloads larger than 10 MB")
     var allowLarge = false
 
-    @Option(
-        name: .customLong("restore-delay-ms"),
-        help: "Delay before restoring the previous clipboard (ms; default: 150)"
-    )
-    var restoreDelayMs: Int?
+    @Option(help: "Delay before restoring the previous clipboard (bare values are milliseconds; default: 150ms)")
+    var restoreDelay: CLIDuration?
 
     @OptionGroup var target: InteractionTargetOptions
     @OptionGroup var focusOptions: FocusCommandOptions
-    @Flag(help: "Focus target and send foreground/global Cmd+V")
-    var foreground = false
 
     @RuntimeStorage var runtime: CommandRuntime?
     var runtimeOptions = CommandRuntimeOptions()
@@ -51,7 +46,7 @@ struct PasteCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedComma
     }
 
     private var resolvedRestoreDelayMs: Int {
-        self.restoreDelayMs ?? 150
+        self.restoreDelay?.roundedMilliseconds ?? 150
     }
 
     private var hasExplicitPayload: Bool {
@@ -74,7 +69,7 @@ struct PasteCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedComma
         do {
             try self.target.validate()
             try KeyboardDeliverySupport.validateForegroundFlags(
-                foreground: self.foreground,
+                foreground: self.focusOptions.foreground,
                 focusOptions: self.focusOptions
             )
 
@@ -570,7 +565,7 @@ struct PasteCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedComma
     private func verifiedBackgroundProcessIdentifier(
         expectedPIDIdentity: UInt64? = nil
     ) async throws -> pid_t? {
-        if self.foreground {
+        if self.focusOptions.foreground {
             try self.validateExplicitPIDIdentity(expectedPIDIdentity)
             return nil
         }

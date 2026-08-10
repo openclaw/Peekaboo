@@ -9,15 +9,15 @@ struct ClickCommandAdvancedTests {
     func `Parse click command basic options`() throws {
         let command = try ClickCommand.parse(["--on", "B1"])
         #expect(command.on == "B1")
-        #expect(command.coords == nil)
+        #expect(command.at == nil)
         #expect(command.right == false)
         #expect(command.double == false)
     }
 
     @Test
     func `Parse click command with coordinates`() throws {
-        let command = try ClickCommand.parse(["--coords", "100,200"])
-        #expect(command.coords == "100,200")
+        let command = try ClickCommand.parse(["--at", "100,200"])
+        #expect(command.at == "100,200")
         #expect(command.on == nil)
     }
 
@@ -38,13 +38,13 @@ struct ClickCommandAdvancedTests {
     @Test
     func `Parse foreground option`() throws {
         let command = try ClickCommand.parse(["--on", "B1", "--foreground"])
-        #expect(command.foreground == true)
+        #expect(command.focusOptions.foreground == true)
     }
 
     @Test
     func `Parse wait-for option`() throws {
         let command = try ClickCommand.parse(["--on", "B1", "--wait-for", "3000"])
-        #expect(command.waitFor == 3000)
+        #expect(command.waitFor.roundedMilliseconds == 3000)
     }
 
     @Test
@@ -141,17 +141,17 @@ struct ClickCommandAdvancedTests {
     }
 
     @Test
-    func `Command validation rejects both --on and --coords`() {
+    func `Command validation rejects both --on and --at`() {
         #expect(throws: (any Error).self) {
-            _ = try ClickCommand.parse(["--on", "B1", "--coords", "100,200"])
+            _ = try ClickCommand.parse(["--on", "B1", "--at", "100,200"])
         }
     }
 
     @Test
     func `Mutually exclusive options validation`() throws {
-        // Can't have both --on and --coords
+        // Can't have both --on and --at
         do {
-            _ = try ClickCommand.parse(["--on", "button", "--coords", "100,200"])
+            _ = try ClickCommand.parse(["--on", "button", "--at", "100,200"])
             Issue.record("Should have thrown validation error")
         } catch {
             // Expected

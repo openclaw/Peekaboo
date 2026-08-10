@@ -769,7 +769,7 @@ extension CommanderBinderTests {
         let relativeAppCoordinates = try CommanderCLIBinder.makeRuntimeOptions(
             from: ParsedValues(
                 positional: [],
-                options: ["coords": ["10,20"], "app": ["TextEdit"]],
+                options: ["at": ["10,20"], "app": ["TextEdit"]],
                 flags: []
             ),
             commandType: ClickCommand.self
@@ -777,8 +777,8 @@ extension CommanderBinderTests {
         let globalAppCoordinates = try CommanderCLIBinder.makeRuntimeOptions(
             from: ParsedValues(
                 positional: [],
-                options: ["coords": ["10,20"], "app": ["TextEdit"]],
-                flags: ["globalCoords"]
+                options: ["at": ["10,20"], "app": ["TextEdit"]],
+                flags: ["global"]
             ),
             commandType: ClickCommand.self
         )

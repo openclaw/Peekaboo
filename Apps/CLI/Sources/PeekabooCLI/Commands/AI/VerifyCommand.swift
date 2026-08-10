@@ -14,7 +14,8 @@ struct VerifyCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedComm
     @Option(help: "Require the selected element value to equal this text") var valueEquals: String?
     @Flag(help: "Require the selected element to be enabled") var enabled = false
     @Flag(help: "Require the selected element to be selected") var selected = false
-    @Option(help: "Polling timeout in milliseconds (maximum 10000)") var timeout = 5000
+    @Option(help: "Polling timeout (bare values are milliseconds; maximum 10s)")
+    var timeout: CLIDuration = .seconds(5)
     @Option(help: "Consecutive identical satisfied samples required") var stableSamples = 2
     @Option(help: "Save the final exact-window screenshot") var screenshot: String?
     @RuntimeStorage var runtime: CommandRuntime?
@@ -92,7 +93,7 @@ struct VerifyCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedComm
 
         var arguments: [String: Any] = try [
             "predicates": self.predicates(),
-            "timeout_ms": self.timeout,
+            "timeout_ms": self.timeout.roundedMilliseconds,
             "stable_samples": self.stableSamples,
             "final_screenshot": self.screenshot != nil,
         ]

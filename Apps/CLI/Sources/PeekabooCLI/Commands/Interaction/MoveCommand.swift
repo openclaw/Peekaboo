@@ -11,8 +11,10 @@ struct MoveCommand: ErrorHandlingCommand, OutputFormattable, InjectedRuntimeBack
     @Argument(help: "Coordinates as x,y (e.g., 100,200)")
     var coordinates: String?
 
-    @Option(name: .customLong("coords"), help: "Coordinates as x,y (alias for the positional argument)")
-    var coords: String?
+    @Option(
+        help: "x,y — target-relative when --app/--window-* given; global otherwise (use --global for explicit global)"
+    )
+    var at: String?
 
     @Option(help: "Move to element by text/label")
     var to: String?
@@ -23,8 +25,8 @@ struct MoveCommand: ErrorHandlingCommand, OutputFormattable, InjectedRuntimeBack
     @OptionGroup var target: InteractionTargetOptions
     @OptionGroup var focusOptions: FocusCommandOptions
 
-    @Flag(help: "Confirm foreground cursor movement and focus the target when specified")
-    var foreground = false
+    @Flag(help: "Treat --at as global screen coordinates even when target options are supplied")
+    var global = false
 
     @Flag(help: "Move to screen center")
     var center = false
@@ -32,8 +34,8 @@ struct MoveCommand: ErrorHandlingCommand, OutputFormattable, InjectedRuntimeBack
     @Flag(help: "Use natural smooth movement (equivalent to --profile human)")
     var smooth = false
 
-    @Option(help: "Movement duration in milliseconds (enables natural movement when no profile is given)")
-    var duration: Int?
+    @Option(help: "Movement duration (bare values are milliseconds; enables natural movement)")
+    var duration: CLIDuration?
 
     @Option(help: "Number of movement samples (automatic for human, default: 20 for linear)")
     var steps: Int?
@@ -46,15 +48,15 @@ struct MoveCommand: ErrorHandlingCommand, OutputFormattable, InjectedRuntimeBack
     @RuntimeStorage var runtime: CommandRuntime?
 
     private var resolvedCoordinates: String? {
-        self.coordinates ?? self.coords
+        self.coordinates ?? self.at
     }
 
     mutating func validate() throws {
         try self.target.validate()
-        if self.coordinates != nil, self.coords != nil {
-            throw ValidationError("Provide coordinates either positionally or with --coords, not both")
+        if self.coordinates != nil, self.at != nil {
+            throw ValidationError("Provide coordinates either positionally or with --at, not both")
         }
-        guard self.foreground else {
+        guard self.focusOptions.foreground else {
             throw ValidationError(
                 "move changes the physical cursor and requires explicit --foreground consent."
             )
@@ -67,11 +69,11 @@ struct MoveCommand: ErrorHandlingCommand, OutputFormattable, InjectedRuntimeBack
         ].reduce(0, +)
 
         guard targetCount >= 1 else {
-            throw ValidationError("Specify coordinates, --coords, --to, --on, or --center")
+            throw ValidationError("Specify coordinates, --at, --to, --on, or --center")
         }
 
         guard targetCount == 1 else {
-            throw ValidationError("Specify exactly one target: coordinates, --coords, --to, --on, or --center")
+            throw ValidationError("Specify exactly one target: coordinates, --at, --to, --on, or --center")
         }
 
         // Validate coordinates format if provided
@@ -89,9 +91,6 @@ struct MoveCommand: ErrorHandlingCommand, OutputFormattable, InjectedRuntimeBack
             throw ValidationError("Invalid profile '\(profileName)'. Use 'linear' or 'human'.")
         }
 
-        if let duration, duration < 0 {
-            throw ValidationError("--duration must be zero or greater")
-        }
         if let steps, steps < 1 {
             throw ValidationError("--steps must be at least 1")
         }
@@ -189,7 +188,14 @@ struct MoveCommand: ErrorHandlingCommand, OutputFormattable, InjectedRuntimeBack
             let parts = coordString.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
             let x = Double(parts[0])!
             let y = Double(parts[1])!
-            let location = CGPoint(x: x, y: y)
+            let inputPoint = CGPoint(x: x, y: y)
+            let resolution = try await InteractionCoordinateResolver.resolveClickCoordinates(
+                inputPoint,
+                target: self.target,
+                services: self.services,
+                forceGlobal: self.global
+            )
+            let location = resolution.screenPoint
             return MoveTargetResolution(
                 location: location,
                 description: "Coordinates (\(Int(x)), \(Int(y)))",
@@ -208,7 +214,7 @@ struct MoveCommand: ErrorHandlingCommand, OutputFormattable, InjectedRuntimeBack
             return try await self.resolveQueryTarget(query: query)
         }
 
-        throw ValidationError("Specify coordinates, --coords, --to, --on, or --center")
+        throw ValidationError("Specify coordinates, --at, --to, --on, or --center")
     }
 
     private func focusForCoordinateTarget() async throws {

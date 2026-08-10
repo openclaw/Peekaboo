@@ -17,24 +17,24 @@ RuntimeOptionsConfigurable, InjectedRuntimeBackedCommand {
     var captureFocus: LiveCaptureFocus = .background
     var captureEngine: String?
 
-    var durationLimit: Double?
-    var preRollMs: Int?
-    var postRollMs: Int?
-    var actionTimeout: Double?
+    var durationLimit: CLIDuration?
+    var preRoll: CLIDuration?
+    var postRoll: CLIDuration?
+    var actionTimeout: CLIDuration?
     var idleFps: Double?
     var activeFps: Double?
     var threshold: Double?
-    var heartbeatSec: Double?
-    var quietMs: Int?
+    var heartbeat: CLIDuration?
+    var quiet: CLIDuration?
     var highlightChanges = false
     var maxFrames: Int?
     var maxMb: Int?
     var resolutionCap: Double?
     var diffStrategy: String?
-    var diffBudgetMs: Int?
+    var diffBudget: CLIDuration?
 
     var path: String?
-    var autocleanMinutes: Int?
+    var autoclean: CLIDuration?
     var videoOut: String?
     var command: [String] = []
 
@@ -51,7 +51,7 @@ RuntimeOptionsConfigurable, InjectedRuntimeBackedCommand {
                 stops capture and verifies the resulting artifacts.
 
                 Examples:
-                  peekaboo capture action --duration-limit 10 -- echo smoke
+                  peekaboo capture action --duration-limit 10s -- echo smoke
                   peekaboo capture action --mode area --region 0,0,640,360 -- ./test-flow.sh
                 """,
                 version: "1.0.0"
@@ -90,7 +90,10 @@ RuntimeOptionsConfigurable, InjectedRuntimeBackedCommand {
                 scope: scope,
                 options: options,
                 outputRoot: outputDir,
-                autoclean: WatchAutocleanConfig(minutes: autocleanMinutes ?? 120, managed: path == nil),
+                autoclean: WatchAutocleanConfig(
+                    minutes: self.autoclean.map { Int(($0.seconds / 60).rounded()) } ?? 120,
+                    managed: self.path == nil
+                ),
                 sourceKind: .live,
                 videoIn: nil,
                 videoOut: CaptureCommandPathResolver.filePath(from: self.videoOut),
@@ -202,16 +205,16 @@ RuntimeOptionsConfigurable, InjectedRuntimeBackedCommand {
     }
 
     private func buildOptions() throws -> CaptureOptions {
-        let duration = max(1, min(durationLimit ?? 60, 180))
+        let duration = max(1, min(durationLimit?.seconds ?? 60, 180))
         let idle = min(max(idleFps ?? 2, 0.1), 5)
         let active = min(max(activeFps ?? 8, 0.5), 15)
         let threshold = min(max(threshold ?? 2.5, 0), 100)
-        let heartbeat = max(heartbeatSec ?? 5, 0)
-        let quiet = max(quietMs ?? 1000, 0)
+        let heartbeat = max(heartbeat?.seconds ?? 5, 0)
+        let quiet = max(quiet?.roundedMilliseconds ?? 1000, 0)
         let maxFrames = max(maxFrames ?? 800, 1)
         let resolutionCap = resolutionCap ?? 1440
         let diffStrategy = try CaptureCommandOptionParser.diffStrategy(diffStrategy)
-        let diffBudgetMs = diffBudgetMs ?? (diffStrategy == .quality ? 30 : nil)
+        let diffBudgetMs = self.diffBudget?.roundedMilliseconds ?? (diffStrategy == .quality ? 30 : nil)
         let maxMb = maxMb.flatMap { $0 > 0 ? $0 : nil }
 
         return CaptureOptions(
@@ -232,14 +235,17 @@ RuntimeOptionsConfigurable, InjectedRuntimeBackedCommand {
     }
 
     private func resolveActionTiming(durationLimit: TimeInterval) throws -> CaptureActionTiming {
-        let preRoll = max(preRollMs ?? 250, 0)
-        let postRoll = max(postRollMs ?? 500, 0)
+        let preRoll = max(preRoll?.roundedMilliseconds ?? 250, 0)
+        let postRoll = max(postRoll?.roundedMilliseconds ?? 500, 0)
         let rollSeconds = Double(preRoll + postRoll) / 1000.0
         guard rollSeconds < durationLimit else {
-            throw ValidationError("--pre-roll-ms + --post-roll-ms must be less than --duration-limit")
+            throw ValidationError("--pre-roll + --post-roll must be less than --duration-limit")
         }
         let defaultActionTimeout = max(0.1, durationLimit - rollSeconds)
-        let actionTimeout = max(0.1, min(actionTimeout ?? defaultActionTimeout, durationLimit - rollSeconds))
+        let actionTimeout = max(
+            0.1,
+            min(actionTimeout?.seconds ?? defaultActionTimeout, durationLimit - rollSeconds)
+        )
         return CaptureActionTiming(
             preRollMs: preRoll,
             postRollMs: postRoll,
@@ -569,14 +575,14 @@ extension CaptureActionCommand: CommanderSignatureProviding {
         let options = live.options.filter { $0.label != "duration" } + [
             .commandOption(
                 "durationLimit",
-                help: "Hard capture limit seconds (default 60, max 180)",
+                help: "Hard capture limit; bare values are milliseconds (default 60s, max 180s)",
                 long: "duration-limit"
             ),
-            .commandOption("preRollMs", help: "Milliseconds to capture before running the action", long: "pre-roll-ms"),
-            .commandOption("postRollMs", help: "Milliseconds to capture after the action exits", long: "post-roll-ms"),
+            .commandOption("preRoll", help: "Capture time before running the action", long: "pre-roll"),
+            .commandOption("postRoll", help: "Capture time after the action exits", long: "post-roll"),
             .commandOption(
                 "actionTimeout",
-                help: "Action timeout seconds (defaults to remaining duration)",
+                help: "Action timeout; bare values are milliseconds (defaults to remaining duration)",
                 long: "action-timeout"
             ),
             .commandOption(
@@ -609,25 +615,25 @@ extension CaptureActionCommand: CommanderBindableCommand {
             self.captureFocus = parsedFocus
         }
         self.captureEngine = values.singleOption("captureEngine")
-        self.durationLimit = try values.decodeOption("durationLimit", as: Double.self)
-        self.preRollMs = try values.decodeOption("preRollMs", as: Int.self)
-        self.postRollMs = try values.decodeOption("postRollMs", as: Int.self)
-        self.actionTimeout = try values.decodeOption("actionTimeout", as: Double.self)
+        self.durationLimit = try values.decodeOption("durationLimit", as: CLIDuration.self)
+        self.preRoll = try values.decodeOption("preRoll", as: CLIDuration.self)
+        self.postRoll = try values.decodeOption("postRoll", as: CLIDuration.self)
+        self.actionTimeout = try values.decodeOption("actionTimeout", as: CLIDuration.self)
         self.idleFps = try values.decodeOption("idleFps", as: Double.self)
         self.activeFps = try values.decodeOption("activeFps", as: Double.self)
         self.threshold = try values.decodeOption("threshold", as: Double.self)
-        self.heartbeatSec = try values.decodeOption("heartbeatSec", as: Double.self)
-        self.quietMs = try values.decodeOption("quietMs", as: Int.self)
+        self.heartbeat = try values.decodeOption("heartbeat", as: CLIDuration.self)
+        self.quiet = try values.decodeOption("quiet", as: CLIDuration.self)
         self.maxFrames = try values.decodeOption("maxFrames", as: Int.self)
         self.maxMb = try values.decodeOption("maxMb", as: Int.self)
         self.resolutionCap = try values.decodeOption("resolutionCap", as: Double.self)
         self.diffStrategy = values.singleOption("diffStrategy")
-        self.diffBudgetMs = try values.decodeOption("diffBudgetMs", as: Int.self)
+        self.diffBudget = try values.decodeOption("diffBudget", as: CLIDuration.self)
         if values.flag("highlightChanges") {
             self.highlightChanges = true
         }
         self.path = values.singleOption("path")
-        self.autocleanMinutes = try values.decodeOption("autocleanMinutes", as: Int.self)
+        self.autoclean = try values.decodeOption("autoclean", as: CLIDuration.self)
         self.videoOut = values.singleOption("videoOut")
         self.command = values.optionValues("command")
     }

@@ -6,23 +6,23 @@ import PeekabooCore
 extension ClickCommand {
     mutating func validate() throws {
         try self.target.validate()
-        guard self.query != nil || self.on != nil || self.coords != nil else {
-            throw ValidationError("Specify an element query, --on, or --coords.")
+        guard self.query != nil || self.on != nil || self.at != nil else {
+            throw ValidationError("Specify an element query, --on, or --at.")
         }
 
-        if self.on != nil && self.coords != nil {
-            throw ValidationError("Cannot specify both --on and --coords.")
+        if self.on != nil && self.at != nil {
+            throw ValidationError("Cannot specify both --on and --at.")
         }
 
-        if let coordString = self.coords, Self.parseCoordinates(coordString) == nil {
+        if let coordString = self.at, Self.parseCoordinates(coordString) == nil {
             throw ValidationError("Invalid coordinates format. Use: x,y")
         }
 
-        if self.globalCoords && self.coords == nil {
-            throw ValidationError("--global-coords requires --coords")
+        if self.global && self.at == nil {
+            throw ValidationError("--global requires --at")
         }
 
-        if self.foreground && self.focusOptions.backgroundDeliveryExplicitlyRequested {
+        if self.focusOptions.foreground && self.focusOptions.backgroundDeliveryExplicitlyRequested {
             throw ValidationError("--foreground cannot be combined with --focus-background")
         }
 
@@ -39,7 +39,7 @@ extension ClickCommand {
             throw ValidationError("--focus-background cannot be combined with focus options")
         }
 
-        if !self.foreground, !self.longPress, self.focusOptions.hasForegroundFocusOverrides {
+        if !self.focusOptions.foreground, !self.longPress, self.focusOptions.hasForegroundFocusOverrides {
             throw ValidationError("Focus options require --foreground for click")
         }
     }

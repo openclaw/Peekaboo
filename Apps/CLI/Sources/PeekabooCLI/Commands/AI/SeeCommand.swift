@@ -69,11 +69,11 @@ struct SeeCommand: ApplicationResolvable, ErrorHandlingCommand, RuntimeBackedCom
     @Option(
         name: .long,
         help: """
-        Overall timeout in seconds (default: 20, or 60 when --analyze is set).
+        Overall timeout (bare values are milliseconds; default: 20s, or 60s with --analyze).
         Increase this if element detection regularly times out for large/complex windows.
         """
     )
-    var timeoutSeconds: Int?
+    var timeout: CLIDuration?
 
     @Option(
         name: .long,
@@ -383,7 +383,7 @@ struct SeeCommand: ApplicationResolvable, ErrorHandlingCommand, RuntimeBackedCom
 
     var overallTimeoutSeconds: TimeInterval {
         Self.detectionTimeoutSeconds(
-            configuredTimeoutSeconds: self.timeoutSeconds,
+            configuredTimeoutSeconds: self.timeout?.seconds,
             analyze: self.analyze
         )
     }
@@ -584,7 +584,7 @@ extension SeeCommand: CommanderBindableCommand {
         self.captureEngine = values.singleOption("captureEngine")
         self.annotate = values.flag("annotate")
         self.analyze = values.singleOption("analyze")
-        self.timeoutSeconds = try values.decodeOption("timeoutSeconds", as: Int.self)
+        self.timeout = try values.decodeOption("timeout", as: CLIDuration.self)
         self.depth = try values.decodeOption("depth", as: Int.self)
         self.maxElements = try values.decodeOption("maxElements", as: Int.self)
         self.maxChildren = try values.decodeOption("maxChildren", as: Int.self)

@@ -16,8 +16,8 @@ struct TypeCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedComman
     @Option(help: "Snapshot ID, or 'latest'")
     var snapshot: String?
 
-    @Option(help: "Delay between keystrokes in milliseconds")
-    var delay: Int = 0
+    @Option(help: "Delay between keystrokes (bare values are milliseconds)")
+    var delay: CLIDuration = .milliseconds(0)
 
     @Option(name: .customLong("wpm"), help: "Approximate human typing speed (words per minute)")
     var wordsPerMinute: Int?
@@ -27,9 +27,6 @@ struct TypeCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedComman
 
     @Flag(help: "Clear the field before typing (Cmd+A, Delete)")
     var clear = false
-
-    @Flag(help: "Focus target and send foreground keyboard input")
-    var foreground = false
 
     @OptionGroup var target: InteractionTargetOptions
 
@@ -63,7 +60,7 @@ struct TypeCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedComman
         case .human:
             .human(wordsPerMinute: self.resolvedWordsPerMinute)
         case .linear:
-            .fixed(milliseconds: self.delay)
+            .fixed(milliseconds: self.delay.roundedMilliseconds)
         }
     }
 
@@ -137,7 +134,7 @@ struct TypeCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedComman
             throw ValidationError("Provide text either positionally or with --text, not both")
         }
         try KeyboardDeliverySupport.validateForegroundFlags(
-            foreground: self.foreground,
+            foreground: self.focusOptions.foreground,
             focusOptions: self.focusOptions
         )
         if let option = self.profileOption,
@@ -181,7 +178,7 @@ struct TypeCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedComman
     }
 
     private func backgroundProcessIdentifier(snapshotId: String?) async throws -> pid_t? {
-        guard !self.foreground else {
+        guard !self.focusOptions.foreground else {
             return nil
         }
 
@@ -232,7 +229,7 @@ struct TypeCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedComman
             case .human:
                 print("🏃‍♀️ Human cadence: \(self.resolvedWordsPerMinute) WPM")
             case .linear:
-                print("⚙️  Fixed delay: \(self.delay)ms between keys")
+                print("⚙️  Fixed delay: \(self.delay.roundedMilliseconds)ms between keys")
             }
             print("⏱️  Completed in \(String(format: "%.2f", Date().timeIntervalSince(startTime)))s")
         }
@@ -258,7 +255,7 @@ extension TypeCommand: CommanderBindableCommand {
         // custom long name for safety.
         self.textOption = values.singleOption("textOption") ?? values.singleOption("text")
         self.snapshot = values.singleOption("snapshot")
-        if let delay: Int = try values.decodeOption("delay", as: Int.self) {
+        if let delay: CLIDuration = try values.decodeOption("delay", as: CLIDuration.self) {
             self.delay = delay
         }
         if let wpm: Int = try values.decodeOption("wordsPerMinute", as: Int.self) ?? values.decodeOption(
@@ -271,9 +268,8 @@ extension TypeCommand: CommanderBindableCommand {
             self.profileOption = profile
         }
         self.clear = values.flag("clear")
-        self.foreground = values.flag("foreground")
         self.target = try values.makeInteractionTargetOptions()
-        self.focusOptions = try values.makeFocusOptions()
+        self.focusOptions = try values.makeFocusOptions(includeBackgroundDelivery: true)
     }
 }
 

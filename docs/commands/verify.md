@@ -22,7 +22,7 @@ Results are ternary. `satisfied` exits 0, `unsatisfied` exits 1, and `unknown` e
 | `--exists` | Require the selected element to exist. |
 | `--value-equals <value>` | Require its accessibility value to match exactly. |
 | `--enabled` / `--selected` | Require the corresponding accessibility state. |
-| `--timeout <ms>` | Polling timeout in milliseconds (default 5000, maximum 10000). |
+| `--timeout <duration>` | Polling timeout (default `5s`, maximum `10s`; bare values are milliseconds). |
 | `--stable-samples <n>` | Consecutive identical satisfied samples required (default 2). |
 | `--screenshot <path>` | Save one final exact-window PNG when capture is available. |
 | `--json` | Emit structured status, predicate results, timing, and the unknown reason. |
@@ -32,7 +32,7 @@ Results are ternary. `satisfied` exits 0, `unsatisfied` exits 1, and `unknown` e
 ```bash
 peekaboo verify --app Safari --window-exists
 peekaboo verify --app Safari --on button:Reload --exists --enabled --json
-peekaboo verify --pid 1234 --window-bounds 40,80,1200,800,2 --timeout 10000
+peekaboo verify --pid 1234 --window-bounds 40,80,1200,800,2 --timeout 10s
 ```
 
 The command executes the same `verify_state` MCP tool used by agents, including its 100 ms fresh-observation polling, stability sampling, exact process/window identity checks, and hard ten-second deadline.

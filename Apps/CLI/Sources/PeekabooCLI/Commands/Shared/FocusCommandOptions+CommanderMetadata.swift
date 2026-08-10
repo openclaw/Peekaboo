@@ -2,15 +2,16 @@ import Commander
 
 extension FocusCommandOptions {
     static func commanderSignature(
+        includeForeground: Bool = true,
         includeAutoFocusControl: Bool = true,
         includeBackgroundDelivery: Bool = false
     ) -> CommandSignature {
         var flags: [FlagDefinition] = []
-        if includeAutoFocusControl {
+        if includeForeground {
             flags.append(.commandFlag(
-                "noAutoFocus",
-                help: "Disable automatic focus before interaction",
-                long: "no-auto-focus"
+                "foreground",
+                help: "Focus the target and use foreground delivery where supported",
+                long: "foreground"
             ))
         }
         flags.append(contentsOf: [
@@ -25,6 +26,13 @@ extension FocusCommandOptions {
                 long: "bring-to-current-space"
             ),
         ])
+        if includeAutoFocusControl {
+            flags.append(.commandFlag(
+                "noAutoFocus",
+                help: "Disable automatic focus before interaction",
+                long: "no-auto-focus"
+            ))
+        }
         if includeBackgroundDelivery {
             flags.append(.commandFlag(
                 "focusBackground",
@@ -36,9 +44,9 @@ extension FocusCommandOptions {
         return CommandSignature(
             options: [
                 .commandOption(
-                    "focusTimeoutSeconds",
-                    help: "Timeout for focus operations in seconds",
-                    long: "focus-timeout-seconds"
+                    "focusTimeout",
+                    help: "Focus timeout; bare values are milliseconds, or use ms/s suffixes",
+                    long: "focus-timeout"
                 ),
                 .commandOption(
                     "focusRetryCount",

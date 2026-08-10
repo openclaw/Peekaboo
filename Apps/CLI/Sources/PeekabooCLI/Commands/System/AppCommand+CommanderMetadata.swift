@@ -228,7 +228,7 @@ extension AppCommand.RelaunchSubcommand: CommanderSignatureProviding {
                 ),
                 .commandOption(
                     "wait",
-                    help: "Wait time in seconds between quit and launch",
+                    help: "Wait between quit and launch; bare values are milliseconds, or use ms/s suffixes",
                     long: "wait"
                 ),
             ],

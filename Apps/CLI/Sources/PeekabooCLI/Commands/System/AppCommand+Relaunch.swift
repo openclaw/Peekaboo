@@ -20,8 +20,8 @@ extension AppCommand {
         @Option(name: .long, help: "Target application by process ID")
         var pid: Int32?
 
-        @Option(help: "Wait time in seconds between quit and launch (default: 2)")
-        var wait: TimeInterval = 2.0
+        @Option(help: "Wait between quit and launch (bare values are milliseconds; default: 2s)")
+        var wait: CLIDuration = .seconds(2)
 
         @Flag(help: "Force quit (doesn't save changes)")
         var force = false
@@ -60,7 +60,7 @@ extension AppCommand {
                         "Application discovery did not return a process-generation identity for atomic relaunch"
                     )
                 }
-                guard self.wait.isFinite, self.wait >= 0 else {
+                guard self.wait.seconds.isFinite, self.wait.seconds >= 0 else {
                     throw PeekabooError.invalidInput("Relaunch wait must be a finite, non-negative number of seconds")
                 }
                 let launchIdentifier = appInfo.bundleIdentifier == nil ? (appInfo.bundlePath ?? appInfo.name) : nil
@@ -76,7 +76,7 @@ extension AppCommand {
                             waitUntilReady: self.waitUntilReady
                         ),
                         force: self.force,
-                        waitSeconds: self.wait
+                        waitSeconds: self.wait.seconds
                     )
                 )
                 await InteractionObservationInvalidator.invalidateAfterMutation(
@@ -105,7 +105,7 @@ extension AppCommand {
                     new_process_start_identity: launchedApp.processStartIdentity,
                     bundle_id: appInfo.bundleIdentifier,
                     quit_forced: self.force,
-                    wait_time: self.wait,
+                    wait_time: self.wait.seconds,
                     launch_success: !self.waitUntilReady || launchedApp.isFinishedLaunching == true
                 )
 
@@ -137,7 +137,7 @@ extension AppCommand.RelaunchSubcommand: CommanderBindableCommand {
         guard app != nil || pid != nil else {
             throw CommanderBindingError.missingArgument(label: "app or --pid")
         }
-        if let wait: TimeInterval = try values.decodeOption("wait", as: TimeInterval.self) {
+        if let wait: CLIDuration = try values.decodeOption("wait", as: CLIDuration.self) {
             self.wait = wait
         }
         force = values.flag("force")

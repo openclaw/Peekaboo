@@ -14,8 +14,8 @@ read_when:
 | --- | --- |
 | `[chords…]` | Chords in xdotool syntax. Modifiers are `cmd`/`command`, `shift`, `option`/`alt`, `ctrl`/`control`, and `fn`; the non-modifier key comes last. |
 | `--count <n>` | Repeat the entire key sequence `n` times (default `1`). |
-| `--delay <ms>` | Delay between key presses (default `100`). |
-| `--hold <ms>` | Hold duration per key (default `50`). |
+| `--delay <duration>` | Delay between key presses (default `100ms`; bare values are milliseconds). |
+| `--hold <duration>` | Hold duration per key (default `50ms`; bare values are milliseconds). |
 | `--snapshot <id>` | Optional snapshot ID used for validation/focus (no implicit “latest snapshot” lookup). |
 | Target flags | `--app <name>` or `--pid <pid>` for process-targeted background input. Window selectors require `--foreground`. |
 | `--foreground` | Focus a supplied target or intentionally send foreground/global key presses. |
@@ -42,7 +42,7 @@ peekaboo press return --foreground
 peekaboo press Tab Tab Return --foreground
 
 # Walk a dialog down three rows with headroom between repetitions
-peekaboo press down --count 3 --delay 200 --foreground
+peekaboo press down --count 3 --delay 200ms --foreground
 
 # Send Return to TextEdit without bringing it forward
 peekaboo press return --app TextEdit

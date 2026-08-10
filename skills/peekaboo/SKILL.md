@@ -5,6 +5,8 @@ description: "Use Peekaboo for macOS desktop automation, screenshots, visual UI 
 
 # Peekaboo
 
+CLI timing flags accept bare milliseconds or `ms`/`s` suffixes, for example `500`, `500ms`, `2s`, or `1.5s`. Coordinate input uses `--at x,y`; add `--global` when a targeted coordinate should remain screen-global.
+
 Peekaboo is a macOS automation CLI and agent runtime. Prefer the freshly built repo binary, live help, and canonical docs over copied command references because command surfaces move quickly.
 
 ## Start Here
@@ -114,7 +116,7 @@ peekaboo action AXPress --on "$ELEMENT_ID" --snapshot "$SNAP" --json
 peekaboo click --on "$ELEMENT_ID" --snapshot "$SNAP" --input-strategy synthOnly --json --foreground
 
 # Negative control: coordinates cannot use actionOnly.
-peekaboo click --coords 10,10 --input-strategy actionOnly --json
+peekaboo click --at 10,10 --input-strategy actionOnly --json
 ```
 
 Interpretation:
@@ -133,7 +135,7 @@ BIN="$(swift build --package-path Apps/CLI --show-bin-path)/peekaboo"
 "$BIN" permissions status --json > /tmp/peekaboo-skill-refresh-permissions.json
 "$BIN" tools --json > /tmp/peekaboo-skill-refresh-tools.json
 "$BIN" see --tree --no-screenshot --app Calculator --json > /tmp/peekaboo-skill-refresh-calc-ax.json
-"$BIN" see --app Calculator --path /tmp/peekaboo-skill-refresh-calc.png --json --timeout-seconds 10 > /tmp/calc.json
+"$BIN" see --app Calculator --path /tmp/peekaboo-skill-refresh-calc.png --json --timeout 10s > /tmp/calc.json
 ruby -rjson -e 'j=JSON.parse(File.read("/tmp/calc.json")); puts JSON.pretty_generate((j.dig("data","ui_elements")||[]).select{|e| ["Clear","AllClear","One","Two","Add","Equals","StandardInputView"].include?(e["identifier"].to_s)}.map{|e| e.slice("id","label","identifier","description","help","bounds")})'
 
 SNAP=$(ruby -rjson -e 'j=JSON.parse(File.read("/tmp/calc.json")); puts j.dig("data","snapshot_id")')

@@ -41,7 +41,7 @@ peekaboo see --app "Google Chrome" --window-title "Login" --json --path /tmp/chr
 | `--path <file>` / `--save` / `--output` / `-o` | Save the screenshot/annotation to disk. |
 | `--json` | Emit structured metadata (recommended for scripting). |
 | `--menubar` | Capture menu bar popovers via window list + OCR (useful for status-item settings panels). When `--app` is set, the app name is used as an OCR hint for popover selection. |
-| `--timeout-seconds <seconds>` | Increase overall timeout for large/complex windows (defaults to 20s, or 60s with `--analyze`). |
+| `--timeout <duration>` | Increase overall timeout for large/complex windows (defaults to `20s`, or `60s` with `--analyze`; bare values are milliseconds). |
 | `--web-focus` | Opt into an `AXPress` retry on the target `AXWebArea` when a sparse Chromium/Tauri tree hides its content. This can change keyboard focus. |
 | `--no-web-focus` | Deprecated compatibility flag. Web focus is already disabled by default. |
 | `--depth <n>` | Override AX traversal depth (`PEEKABOO_AX_MAX_DEPTH` fallback, default 12). |
@@ -73,7 +73,7 @@ When `--json` is supplied, the CLI prints:
 - `ui_elements` – flattened list of actionable nodes (buttons, text fields, links, etc.).
 - `interactable_count`, `element_count`, `capture_mode`, and performance metadata for debugging.
 - Each `ui_elements[n]` entry now mirrors the raw AX metadata we capture—`title`, `label`, **`description`**, `role_description`, `help`, `identifier`, and the keyboard shortcut if one exists. That makes Chrome toolbar icons (which frequently hide their name in `AXDescription`) searchable without relying on coordinates.
-- GLM vision model analysis responses are converted from the model's 0-1000 bounding box coordinate space into screenshot pixel coordinates before they are printed, so follow-up `click --coords` calls can use returned box centers directly.
+- GLM vision model analysis responses are converted from the model's 0-1000 bounding box coordinate space into screenshot pixel coordinates before they are printed, so follow-up `click --at` calls can use returned box centers directly.
 
 Use `jq` or any JSON parser to find elements:
 

@@ -6,7 +6,7 @@ extension MoveCommand {
     var selectedProfile: CursorMovementProfileSelection {
         guard let profileName = self.profile?.lowercased(),
               let selection = CursorMovementProfileSelection(rawValue: profileName) else {
-            return self.smooth || (self.duration ?? 0) > 0 ? .human : .linear
+            return self.smooth || (self.duration?.milliseconds ?? 0) > 0 ? .human : .linear
         }
         return selection
     }
@@ -18,7 +18,7 @@ extension MoveCommand {
         CursorMovementResolver.resolve(
             CursorMovementResolutionRequest(
                 selection: profileSelection,
-                durationOverride: self.duration,
+                durationOverride: self.duration?.roundedMilliseconds,
                 stepsOverride: self.steps,
                 baseSmooth: self.smooth || self.duration != nil,
                 distance: distance,

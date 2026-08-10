@@ -13,7 +13,7 @@ struct CaptureEndToEndTests {
         var cmd = CaptureVideoCommand()
         cmd.input = "/tmp/foo.mov"
         cmd.sampleFps = 2
-        cmd.everyMs = 100
+        cmd.every = .milliseconds(100)
         await #expect(throws: ValidationError.self) {
             _ = try await cmd.run(using: CommandRuntime.makeDefault())
         }

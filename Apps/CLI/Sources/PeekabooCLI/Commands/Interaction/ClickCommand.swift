@@ -19,14 +19,16 @@ struct ClickCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedComma
 
     @OptionGroup var target: InteractionTargetOptions
 
-    @Option(help: "Click at coordinates (x,y)")
-    var coords: String?
+    @Option(
+        help: "x,y — target-relative when --app/--window-* given; global otherwise (use --global for explicit global)"
+    )
+    var at: String?
 
-    @Flag(help: "Treat --coords as global screen coordinates even when target options are supplied")
-    var globalCoords = false
+    @Flag(help: "Treat --at as global screen coordinates even when target options are supplied")
+    var global = false
 
-    @Option(help: "Maximum milliseconds to wait for element")
-    var waitFor: Int = 5000
+    @Option(help: "Maximum time to wait for an element (bare values are milliseconds)")
+    var waitFor: CLIDuration = .seconds(5)
 
     @Flag(help: "Double-click instead of single click")
     var double = false
@@ -37,9 +39,6 @@ struct ClickCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedComma
     @Flag(help: "Press and hold for 1.2 seconds at a stationary point")
     var longPress = false
 
-    @Flag(help: "Focus target and send a foreground mouse click")
-    var foreground = false
-
     @OptionGroup var focusOptions: FocusCommandOptions
 
     @RuntimeStorage var runtime: CommandRuntime?
@@ -49,7 +48,7 @@ struct ClickCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedComma
         if self.focusOptions.backgroundDeliveryExplicitlyRequested {
             return .background
         }
-        if self.foreground || self.longPress {
+        if self.focusOptions.foreground || self.longPress {
             return .foreground
         }
         return .background
@@ -77,7 +76,7 @@ struct ClickCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedComma
 
             // Foreground coordinates may be global. Background coordinates must remain bound to
             // one capture-owned exact-window receipt from a named snapshot.
-            if let coordString = coords {
+            if let coordString = at {
                 guard let point = Self.parseCoordinates(coordString) else {
                     throw ValidationError("Invalid coordinates format. Use: x,y")
                 }
@@ -97,7 +96,7 @@ struct ClickCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedComma
                         point,
                         target: self.target,
                         services: self.services,
-                        forceGlobal: self.globalCoords
+                        forceGlobal: self.global
                     )
                     activeSnapshotId = coordinateSnapshotId ?? ""
                 }
@@ -166,7 +165,7 @@ struct ClickCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedComma
                         waitResult = try await AutomationServiceBridge.waitForElement(
                             automation: self.services.automation,
                             target: clickTarget,
-                            timeout: TimeInterval(self.waitFor) / 1000.0,
+                            timeout: self.waitFor.seconds,
                             snapshotId: activeSnapshotId.isEmpty ? nil : activeSnapshotId
                         )
 
@@ -191,14 +190,14 @@ struct ClickCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedComma
                         waitResult = try await AutomationServiceBridge.waitForElement(
                             automation: self.services.automation,
                             target: clickTarget,
-                            timeout: TimeInterval(self.waitFor) / 1000.0,
+                            timeout: self.waitFor.seconds,
                             snapshotId: activeSnapshotId.isEmpty ? nil : activeSnapshotId
                         )
 
                         if !waitResult.found {
                             let message = Self.queryNotFoundMessage(
                                 searchQuery,
-                                waitFor: self.waitFor
+                                waitFor: self.waitFor.roundedMilliseconds
                             )
                             throw PeekabooError.elementNotFound(message)
                         }
@@ -580,7 +579,9 @@ struct ClickCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedComma
         let detectionResult = try await observation.requireDetectionResult(using: self.services.snapshots)
         let queryLower = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !queryLower.isEmpty else {
-            throw PeekabooError.elementNotFound(Self.queryNotFoundMessage(query, waitFor: self.waitFor))
+            throw PeekabooError.elementNotFound(
+                Self.queryNotFoundMessage(query, waitFor: self.waitFor.roundedMilliseconds)
+            )
         }
 
         let matches = detectionResult.elements.all.filter { element in
@@ -601,7 +602,9 @@ struct ClickCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedComma
         guard let best = matches.max(by: { lhs, rhs in
             Self.cachedQueryScore(lhs, queryLower: queryLower) < Self.cachedQueryScore(rhs, queryLower: queryLower)
         }) else {
-            throw PeekabooError.elementNotFound(Self.queryNotFoundMessage(query, waitFor: self.waitFor))
+            throw PeekabooError.elementNotFound(
+                Self.queryNotFoundMessage(query, waitFor: self.waitFor.roundedMilliseconds)
+            )
         }
 
         return best
@@ -892,7 +895,7 @@ struct ClickCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedComma
     }
 
     private func validateBackgroundClickOptions() throws {
-        if self.foreground, self.focusOptions.backgroundDeliveryExplicitlyRequested {
+        if self.focusOptions.foreground, self.focusOptions.backgroundDeliveryExplicitlyRequested {
             throw ValidationError("--foreground cannot be combined with --focus-background")
         }
 
@@ -901,7 +904,7 @@ struct ClickCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedComma
             throw ValidationError("--focus-background cannot be combined with focus options")
         }
 
-        if !self.foreground, !self.longPress, self.focusOptions.hasForegroundFocusOverrides {
+        if !self.focusOptions.foreground, !self.longPress, self.focusOptions.hasForegroundFocusOverrides {
             throw ValidationError("Focus options require --foreground for click")
         }
     }
@@ -1030,7 +1033,7 @@ extension ClickCommand {
             point,
             windowInfo: currentWindow,
             targetApplication: application,
-            forceGlobal: self.globalCoords
+            forceGlobal: self.global
         )
         guard capturedBounds.contains(resolution.screenPoint) else {
             throw ValidationError(

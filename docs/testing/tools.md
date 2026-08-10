@@ -64,7 +64,7 @@ physical-pointer phase), use [Background computer-use validation](background-com
 | --- | --- | --- | --- | --- | --- |
 | `see` | Prefer fixture windows (“Click Fixture”, “Scroll Fixture”, etc.) | Capture snapshot metadata via CLI output + optional Playground logs for follow-on actions | `peekaboo see --app Playground --mode window --window-title "Click Fixture"` | Verified – `--window-title` now resolves against ScreenCaptureKit windows and element detection is pinned to the captured `CGWindowID` | `.artifacts/playground-tools/20251217-153107-see-click-for-move.json` |
 | `see --no-elements` | Playground window (full or element-specific) | Use screenshot artifacts; note timestamp in `LOG_FILE` | `peekaboo see --no-elements --mode window --app Playground --path /tmp/playground-window.png` | Replaces the former image CLI path | Historical image artifacts remain valid evidence. |
-| `capture` | `capture live` against Playground (5–10s) + `capture video` ingest smoke | Verify artifacts (`metadata.json`, `contact.png`, frames) + optional MP4 (`--video-out`) | `peekaboo capture live --mode window --app Playground --duration 5 --threshold 0 --json-output` | Verified – live writes contact sheet + metadata; video ingest + `--video-out` covered | `.artifacts/playground-tools/20251217-133751-capture-live.json`, `.artifacts/playground-tools/20251217-180155-capture-video.json`, `.artifacts/playground-tools/20251217-184010-capture-live-videoout.json`, `.artifacts/playground-tools/20251217-184010-capture-video-videoout.json` |
+| `capture` | `capture live` against Playground (5–10s) + `capture video` ingest smoke | Verify artifacts (`metadata.json`, `contact.png`, frames) + optional MP4 (`--video-out`) | `peekaboo capture live --mode window --app Playground --duration 5s --threshold 0 --json-output` | Verified – live writes contact sheet + metadata; video ingest + `--video-out` covered | `.artifacts/playground-tools/20251217-133751-capture-live.json`, `.artifacts/playground-tools/20251217-180155-capture-video.json`, `.artifacts/playground-tools/20251217-184010-capture-live-videoout.json`, `.artifacts/playground-tools/20251217-184010-capture-video-videoout.json` |
 | noun-based inventory | Validate `app list`, `window list`, `screen list`, `menubar list`, and `permissions status` while Playground is running | `playground-log` optional (`Window` for focus changes) | `peekaboo window list --app Playground` etc. | Verified | Existing inventory artifacts remain historical evidence. |
 | `tools` | Compare CLI output against ToolRegistry | No Playground log required; attach output to notes | `peekaboo tools > $LOG_ROOT/tools.txt` | Verified – native tool listing captured 2025-12-19 | `.artifacts/playground-tools/20251219-001215-tools.txt` |
 | `clean` | Snapshot cache after `see` runs | Inspect `~/.peekaboo/snapshots` & ensure Playground unaffected | `peekaboo clean --snapshot <id>` | Verified – removed snapshot 5408D893… and confirmed re-run reports none | `.peekaboo/snapshots/5408D893-E9CF-4A79-9B9B-D025BF9C80BE (deleted)` |
@@ -130,7 +130,7 @@ The following subsections spell out the concrete steps, required Playground surf
 #### `capture`
 - **View**: Any; keep Playground frontmost so the window is captureable.
 - **Steps**:
-  1. `peekaboo capture live --mode window --app Playground --duration 5 --threshold 0 --json-output > "$LOG_ROOT/capture-live.json"`.
+  1. `peekaboo capture live --mode window --app Playground --duration 5s --threshold 0 --json-output > "$LOG_ROOT/capture-live.json"`.
   2. Confirm the JSON points at the expected output directory (kept frames + `contact.png` + `metadata.json`).
   3. Optional: repeat with `--highlight-changes` to ensure highlight rendering doesn’t crash.
 - **Video ingest add-on**:
@@ -228,8 +228,8 @@ The following subsections spell out the concrete steps, required Playground surf
 - **Test cases**:
   1. Query-based click: `peekaboo click "Single Click"` (expect `Click` log + counter increment).
   2. ID-based click: copy the opaque ID from current `see` output, then run `peekaboo click --on "$ELEMENT_ID" --snapshot <id>` targeting `single-click-button`.
-  3. Coordinate click: `peekaboo click --coords 400,400 --foreground` hitting the nested area.
-  4. Coordinate validation: `peekaboo click --coords , --json-output` should fail with `VALIDATION_ERROR` (no crash).
+  3. Coordinate click: `peekaboo click --at 400,400 --foreground` hitting the nested area.
+  4. Coordinate validation: `peekaboo click --at , --json-output` should fail with `VALIDATION_ERROR` (no crash).
   5. Error path: attempt to click disabled button and confirm descriptive `elementNotFound` guidance.
 - **Verification**: Playground counter increments, log file shows `[Click] Single click...` entries.
 - **2025-11-16 run**:
@@ -237,7 +237,7 @@ The following subsections spell out the concrete steps, required Playground surf
   - Generated fresh snapshot `263F8CD6-E809-4AC6-A7B3-604704095011` via `see` (`.artifacts/playground-tools/20251116-051120-click-see.{json,png}`).
   - `peekaboo click "Single Click" --snapshot <legacy snapshot>` succeeded but targeted Ghostty (click hit terminal input); highlighting importance of focusing Playground first.
   - `peekaboo app switch --to Playground` followed by `peekaboo click --on elem_6 --snapshot 263F8CD6-...` successfully hit the “View Logs” button (Playground log recorded the click).
-  - Coordinate click `--coords 600,500` succeeded (see log); attempting `--on elem_disabled` produced expected `elementNotFound` error.
+  - Coordinate click `--at 600,500` succeeded (see log); attempting `--on elem_disabled` produced expected `elementNotFound` error.
   - Element IDs are opaque and unstable; always copy the exact ID from current `see` output.
 - **2025-12-17 Controls Fixture add-on**:
   - Open “Controls Fixture” via `⌘⌃3`, then drive checkboxes + segmented control by clicking snapshot IDs (`--on elem_…`) captured from `see`.
@@ -268,7 +268,7 @@ The following subsections spell out the concrete steps, required Playground surf
   2. `peekaboo press up --count 3 --snapshot <id>` to ensure repeated presses log individually.
   3. Invalid key handling (`peekaboo press foo`) should error.
 - **2025-11-16 verification**:
-  - Switched to the Keyboard tab via `peekaboo hotkey --keys "cmd,option,7"`, captured `.artifacts/playground-tools/20251116-090141-see-keyboardtab.{json,png}` (snapshot `C106D508-930C-4996-A4F4-A50E2E0BA91A`), and focused the “Press keys here…” field with a coordinate click (`--coords 760,300`).
+  - Switched to the Keyboard tab via `peekaboo press cmd+option+7 --foreground`, captured `.artifacts/playground-tools/20251116-090141-see-keyboardtab.{json,png}` (snapshot `C106D508-930C-4996-A4F4-A50E2E0BA91A`), and focused the “Press keys here…” field with a coordinate click (`--at 760,300`).
   - `peekaboo press return --snapshot C106D508-…` and `peekaboo press up --count 3 --snapshot C106D508-…` produced `[boo.peekaboo.playground:Keyboard] Key pressed: …` entries in `.artifacts/playground-tools/20251116-090455-keyboard.log`.
   - `peekaboo press foo` reports `Unknown key: 'foo'. Run 'peekaboo press --help' for available keys.` confirming validation and documenting the negative path.
 
@@ -307,13 +307,13 @@ The following subsections spell out the concrete steps, required Playground surf
 #### `swipe`
 - **View**: Gesture Testing area.
 - **Test cases**:
-  1. `peekaboo swipe --from-coords 1100,520 --to-coords 700,520 --duration 600`.
-  2. `peekaboo swipe --from-coords 850,600 --to-coords 850,350 --duration 800 --profile human`.
+  1. `peekaboo drag --from 1100,520 --to 700,520 --duration 600ms --foreground`.
+  2. `peekaboo drag --from 850,600 --to 850,350 --duration 800ms --profile human --foreground`.
   3. Negative test: `peekaboo swipe … --right-button` should error.
 - **2025-11-16 verification**:
   - Used snapshot `DBFDD053-4513-4603-B7C3-9170E7386BA7` (see `.artifacts/playground-tools/20251116-085714-see-scrolltab.{json,png}`) to keep the tab selection stable.
   - Horizontal and vertical commands above completed successfully; Playground log `.artifacts/playground-tools/20251116-090041-gesture.log` shows `[boo.peekaboo.playground:Gesture]` entries with exact coordinates, profiles, and step counts.
-  - `peekaboo swipe --from-coords 900,520 --to-coords 700,520 --right-button` returns `Right-button swipe is not currently supported…`, matching expectations.
+  - `peekaboo drag --from 900,520 --to 700,520 --button right --foreground` exercises right-button dragging.
 - **2025-12-18 rerun**:
   - Verified swipe-direction logging + long-press detection on the Scroll Fixture gesture tiles.
   - Evidence: `.artifacts/playground-tools/20251218-012323-gesture.log` plus `.artifacts/playground-tools/20251218-012323-swipe-right.json` and `.artifacts/playground-tools/20251218-012323-long-press.json`.
@@ -326,7 +326,7 @@ The following subsections spell out the concrete steps, required Playground surf
   3. (Optional) Drag the reorderable list rows (`elem_37`…`elem_57`) once additional coverage is needed.
 - **2025-11-16 verification**:
   - A reusable `PlaygroundTabRouter` + header “Go to Drag & Drop” control keep the TabView state predictable, and more importantly `elem_79` now works deterministically—clicking it flips the TabView so subsequent `see` runs expose DragDropView element IDs (see `.artifacts/playground-tools/20251116-085142-see-afterclick-elem79.{json,png}` with snapshot `BBF9D6B9-26CB-4370-8460-6C8188E7466C`).
-  - `peekaboo drag --snapshot BBF9D6B9-26CB-4370-8460-6C8188E7466C --from elem_15 --to elem_24 --duration 800 --steps 40` succeeded; Playground log `.artifacts/playground-tools/20251116-085233-drag.log` shows “Started dragging: Item A”, “Hovering over zone1”, and “Item dropped… zone1”, plus the CLI-side `[boo.peekaboo.playground:Drag] drag from=…` entry.
+  - `peekaboo drag --snapshot BBF9D6B9-26CB-4370-8460-6C8188E7466C --from elem_15 --to elem_24 --duration 800ms --steps 40 --foreground` succeeded; Playground log `.artifacts/playground-tools/20251116-085233-drag.log` shows “Started dragging: Item A”, “Hovering over zone1”, and “Item dropped… zone1”, plus the CLI-side `[boo.peekaboo.playground:Drag] drag from=…` entry.
   - Captured a second run with JSON output (`.artifacts/playground-tools/20251116-085346-drag-elem17.json`) dragging Item B to zone2 so we have structured metadata (coords, duration, profile) for regression diffs.
   - We still keep the older coordinate-only recipe around as a fallback, but the default regression loop is now: **focus Playground → `see` → `click --on elem_79` → `drag --snapshot … --from elem_XX --to elem_YY` → archive the Drag log + CLI JSON.**
 - **2025-12-17 Controls Fixture add-on**:
@@ -338,15 +338,15 @@ The following subsections spell out the concrete steps, required Playground surf
 - **Test cases**:
   1. `peekaboo move 600,600` for instant pointer relocation.
   2. Smooth query-based move: `peekaboo move --to "Focus Basic Field" --snapshot <id> --smooth`.
-  3. `peekaboo move --center --duration 300 --steps 15`.
-  4. `peekaboo move --coords 600,600` (alias coverage).
+  3. `peekaboo move --center --duration 300ms --steps 15 --foreground`.
+  4. `peekaboo move --at 600,600 --foreground`.
   5. Negative test: `peekaboo move 1,2 --center` should error (conflicting targets).
 - **2025-11-16 verification**:
   - Commands above rerun with snapshot `DBFDD053-4513-4603-B7C3-9170E7386BA7`; CLI outputs saved implicitly (no JSON mode). Pointer jumps succeeded (`move 600,600`, `move --center`).
   - `move --to "Focus Basic Field" --snapshot ... --smooth` works with snapshot-based targeting; repeated runs confirm the lookup is stable.
   - Focus logger still doesn’t capture these events (`playground-log -c Focus` remains empty), so we rely on CLI output for evidence until instrumentation is added.
 - **2025-12-17 re-verification**:
-  - `--coords` is now accepted (Commander metadata updated) and treated as an alias for the positional coordinates.
+  - `--at` is the explicit coordinate option; `--global` forces screen coordinates with a target.
   - Conflicting targets now fail at runtime (MoveCommand explicitly runs `validate()` before executing).
   - Playground evidence loop using Click Fixture probe:
     - Snapshot: `.artifacts/playground-tools/20251217-194922-see-click-fixture.json`

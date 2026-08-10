@@ -22,22 +22,17 @@ extension PasteCommand: CommanderSignatureProviding {
                     long: "also-text"
                 ),
                 .commandOption(
-                    "restoreDelayMs",
-                    help: "Delay before restoring previous clipboard (ms; default: 150)",
-                    long: "restore-delay-ms"
+                    "restoreDelay",
+                    help: "Clipboard restore delay; bare values are milliseconds, or use ms/s suffixes",
+                    long: "restore-delay"
                 ),
             ],
             flags: [
                 .commandFlag("allowLarge", help: "Allow payloads larger than 10 MB", long: "allow-large"),
-                .commandFlag(
-                    "foreground",
-                    help: "Focus target and send foreground/global Cmd+V",
-                    long: "foreground"
-                ),
             ],
             optionGroups: [
                 InteractionTargetOptions.commanderSignature(),
-                FocusCommandOptions.commanderSignature(),
+                FocusCommandOptions.commanderSignature(includeBackgroundDelivery: true),
             ]
         )
     }
@@ -53,13 +48,11 @@ extension PasteCommand: CommanderBindableCommand {
         self.dataBase64 = values.singleOption("dataBase64")
         self.uti = values.singleOption("uti")
         self.alsoText = values.singleOption("alsoText")
-        if let delay: Int = try values.decodeOption("restoreDelayMs", as: Int.self) {
-            self.restoreDelayMs = delay
+        if let delay: CLIDuration = try values.decodeOption("restoreDelay", as: CLIDuration.self) {
+            self.restoreDelay = delay
         }
         self.allowLarge = values.flag("allowLarge")
-        self.foreground = values.flag("foreground")
-
         self.target = try values.makeInteractionTargetOptions()
-        self.focusOptions = try values.makeFocusOptions()
+        self.focusOptions = try values.makeFocusOptions(includeBackgroundDelivery: true)
     }
 }

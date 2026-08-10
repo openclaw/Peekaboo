@@ -23,12 +23,12 @@ extension PressCommand: CommanderSignatureProviding {
                 ),
                 .commandOption(
                     "delay",
-                    help: "Delay between key presses in milliseconds",
+                    help: "Key delay; bare values are milliseconds, or use ms/s suffixes",
                     long: "delay"
                 ),
                 .commandOption(
                     "hold",
-                    help: "Hold duration for each key in milliseconds",
+                    help: "Key hold; bare values are milliseconds, or use ms/s suffixes",
                     long: "hold"
                 ),
                 .commandOption(
@@ -37,16 +37,9 @@ extension PressCommand: CommanderSignatureProviding {
                     long: "snapshot"
                 ),
             ],
-            flags: [
-                .commandFlag(
-                    "foreground",
-                    help: "Focus target and send foreground/global key presses",
-                    long: "foreground"
-                ),
-            ],
             optionGroups: [
                 InteractionTargetOptions.commanderSignature(),
-                FocusCommandOptions.commanderSignature(),
+                FocusCommandOptions.commanderSignature(includeBackgroundDelivery: true),
             ]
         )
     }

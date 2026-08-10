@@ -21,14 +21,11 @@ struct ScrollCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedComm
     @Option(help: "Snapshot ID, or 'latest' (uses latest if not specified)")
     var snapshot: String?
 
-    @Option(help: "Delay between scroll ticks in milliseconds")
-    var delay: Int = 0
+    @Option(help: "Delay between scroll ticks (bare values are milliseconds)")
+    var delay: CLIDuration = .milliseconds(0)
 
     @Flag(help: "Use smooth scrolling with smaller increments")
     var smooth = false
-
-    @Flag(help: "Focus the target and allow synthetic wheel events")
-    var foreground = false
 
     @OptionGroup var target: InteractionTargetOptions
 
@@ -74,7 +71,7 @@ struct ScrollCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedComm
             }
 
             self.resolvedRuntime.beginInteractionMutation()
-            if self.foreground {
+            if self.focusOptions.foreground {
                 try await ensureFocused(
                     snapshotId: observation.focusSnapshotId(for: self.target),
                     target: self.target,
@@ -89,9 +86,9 @@ struct ScrollCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedComm
                 amount: self.amount,
                 target: self.on,
                 smooth: self.smooth,
-                delay: self.delay,
+                delay: self.delay.roundedMilliseconds,
                 snapshotId: observation.snapshotId,
-                foreground: self.foreground
+                foreground: self.focusOptions.foreground
             )
             try await AutomationServiceBridge.scroll(
                 automation: self.services.automation,
@@ -160,17 +157,14 @@ struct ScrollCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedComm
     }
 
     private func validateDeliveryMode() throws {
-        guard self.delay >= 0 else {
-            throw ValidationError("--delay must be zero or greater")
-        }
-        guard self.foreground else {
+        guard self.focusOptions.foreground else {
             if self.on == nil {
                 throw ValidationError(
                     "Background scroll requires --on with an Accessibility-scrollable element; " +
                         "add --foreground to scroll at the physical pointer."
                 )
             }
-            if self.smooth || self.delay > 0 {
+            if self.smooth || self.delay.milliseconds > 0 {
                 throw ValidationError(
                     "--smooth and a nonzero --delay require --foreground because they synthesize wheel events."
                 )
@@ -262,11 +256,10 @@ extension ScrollCommand: CommanderBindableCommand {
         }
         self.on = values.singleOption("on")
         self.snapshot = values.singleOption("snapshot")
-        if let delay: Int = try values.decodeOption("delay", as: Int.self) {
+        if let delay: CLIDuration = try values.decodeOption("delay", as: CLIDuration.self) {
             self.delay = delay
         }
         self.smooth = values.flag("smooth")
-        self.foreground = values.flag("foreground")
         self.target = try values.makeInteractionTargetOptions()
         self.focusOptions = try values.makeFocusOptions()
     }

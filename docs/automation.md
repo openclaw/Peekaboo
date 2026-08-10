@@ -17,7 +17,7 @@ Every input command accepts one of three target shapes:
 
 - **Element ID** — `--on <id>` from a fresh `peekaboo see` capture; preferred when available. Treat IDs as opaque strings and copy the exact value returned by the capture.
 - **Label / role / app** — positional query text such as `peekaboo click "Send" --app Mail`; resolved via the AX tree.
-- **Coordinates** — `--coords 480,120`; target-relative when paired with `--app`, `--pid`, or `--window-*`, global otherwise. Add `--global-coords` to force screen coordinates with a target.
+- **Coordinates** — `--at 480,120`; target-relative when paired with `--app`, `--pid`, or `--window-*`, global otherwise. Add `--global` to force screen coordinates with a target.
 
 Prefer IDs when you can capture them, labels when you can't, and coordinates only as a last resort. The agent and MCP tooling default to the first two.
 
@@ -29,6 +29,8 @@ Peekaboo has two input delivery modes:
 - **Foreground** focuses the target first, then sends normal/global input to the active key window or mouse focus. Add `--foreground` when an app ignores background input, when a text field only accepts key-window input, or when you want focus/Space switching to be part of the action.
 
 Focus flags tune foreground focus behavior but do not silently change delivery mode. Add `--foreground` explicitly. `--no-auto-focus` also does not discard a background keyboard PID. Background element/query/coordinate clicks complete through Accessibility alone. Keyboard input and foreground synthetic pointer input require Event Synthesizing for the sender shown by `peekaboo permissions status`; request it with `peekaboo permissions request event-synthesizing`.
+
+All CLI timing flags use the same grammar: bare numbers are milliseconds, and `ms`/`s` suffixes are accepted (`500`, `500ms`, `2s`, `1.5s`).
 
 Pointer delivery is deliberately stricter. A targeted `scroll --on <id>` stays in the background and invokes only the element's Accessibility scroll action; it never falls back to the shared cursor. Targetless, smooth, or delayed wheel input requires `--foreground`. `move` and `drag` always manipulate the shared physical cursor, so they also require explicit `--foreground` consent. Their Space/focus modifiers are only valid with that foreground mode; there is no misleading `--no-auto-focus` escape hatch.
 

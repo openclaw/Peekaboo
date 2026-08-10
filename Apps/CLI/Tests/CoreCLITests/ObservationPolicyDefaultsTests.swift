@@ -22,7 +22,7 @@ struct ObservationPolicyDefaultsTests {
     @Test
     func `See propagates its overall timeout to remote observation`() throws {
         var configured = try SeeCommand.parse([])
-        configured.timeoutSeconds = 45
+        configured.timeout = .seconds(45)
         var analyzed = try SeeCommand.parse([])
         analyzed.analyze = "summarize"
 

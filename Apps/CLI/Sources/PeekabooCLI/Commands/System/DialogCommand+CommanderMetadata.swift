@@ -16,7 +16,7 @@ extension DialogCommand.ClickSubcommand: CommanderSignatureProviding {
 
             optionGroups: [
                 InteractionTargetOptions.commanderSignature(),
-                FocusCommandOptions.commanderSignature(),
+                FocusCommandOptions.commanderSignature(includeForeground: false),
             ]
         )
     }
@@ -41,7 +41,7 @@ extension DialogCommand.InputSubcommand: CommanderSignatureProviding {
 
             optionGroups: [
                 InteractionTargetOptions.commanderSignature(),
-                FocusCommandOptions.commanderSignature(),
+                FocusCommandOptions.commanderSignature(includeForeground: false),
             ]
         )
     }
@@ -59,9 +59,9 @@ extension DialogCommand.FileSubcommand: CommanderSignatureProviding {
                     long: "select"
                 ),
                 .commandOption(
-                    "timeoutSeconds",
-                    help: "Maximum time to spend handling the file dialog",
-                    long: "timeout-seconds"
+                    "timeout",
+                    help: "File-dialog timeout; bare values are milliseconds, or use ms/s suffixes",
+                    long: "timeout"
                 ),
             ],
             flags: [
@@ -79,7 +79,7 @@ extension DialogCommand.FileSubcommand: CommanderSignatureProviding {
 
             optionGroups: [
                 InteractionTargetOptions.commanderSignature(),
-                FocusCommandOptions.commanderSignature(),
+                FocusCommandOptions.commanderSignature(includeForeground: false),
             ]
         )
     }
@@ -99,7 +99,7 @@ extension DialogCommand.DismissSubcommand: CommanderSignatureProviding {
 
             optionGroups: [
                 InteractionTargetOptions.commanderSignature(),
-                FocusCommandOptions.commanderSignature(),
+                FocusCommandOptions.commanderSignature(includeForeground: false),
             ]
         )
     }
@@ -110,9 +110,9 @@ extension DialogCommand.ListSubcommand: CommanderSignatureProviding {
         CommandSignature(
             options: [
                 .commandOption(
-                    "timeoutSeconds",
-                    help: "Maximum time to spend listing dialog elements",
-                    long: "timeout-seconds"
+                    "timeout",
+                    help: "Dialog-list timeout; bare values are milliseconds, or use ms/s suffixes",
+                    long: "timeout"
                 ),
             ],
             optionGroups: [

@@ -66,7 +66,7 @@ peekaboo click "Address and search bar" --app Safari
 peekaboo type "github.com/openclaw/Peekaboo" --app Safari && peekaboo press Return --app Safari
 ```
 
-Coordinates also work: `peekaboo click --coords 480,120 --app Safari`. With app/window target flags, click coordinates are target-window-relative; add `--global-coords` for screen coordinates. Add `--foreground` only when the target app requires focused input. See [automation.md](automation.md) for the full input vocabulary.
+Coordinates also work: `peekaboo click --at 480,120 --app Safari`. With app/window target flags, click coordinates are target-window-relative; add `--global` for screen coordinates. Add `--foreground` only when the target app requires focused input. See [automation.md](automation.md) for the full input vocabulary.
 
 By default these targeted commands use background delivery: Safari can receive the click and text without becoming frontmost. If the target field ignores background input, rerun the same command with `--foreground` to focus the target first.
 

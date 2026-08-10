@@ -13,7 +13,7 @@ struct TypeCommandTests {
 
         #expect(command.text == "Hello World")
         #expect(command.jsonOutput == true)
-        #expect(command.delay == 0) // default delay
+        #expect(command.delay.roundedMilliseconds == 0) // default delay
         #expect(command.clear == false)
     }
 
@@ -40,7 +40,7 @@ struct TypeCommandTests {
 
         #expect(command.text == "New Text")
         #expect(command.clear == true)
-        #expect(command.delay == 0) // default delay
+        #expect(command.delay.roundedMilliseconds == 0) // default delay
     }
 
     @Test
@@ -48,14 +48,14 @@ struct TypeCommandTests {
         let command = try TypeCommand.parse(["Fast", "--delay", "0", "--json"])
 
         #expect(command.text == "Fast")
-        #expect(command.delay == 0)
+        #expect(command.delay.roundedMilliseconds == 0)
     }
 
     @Test
     func `Type command with human typing speed`() throws {
         var command = try TypeCommand.parse(["Message", "--wpm", "140", "--json"])
         #expect(command.wordsPerMinute == 140)
-        #expect(command.delay == 0)
+        #expect(command.delay.roundedMilliseconds == 0)
         // Validation should allow the selected range
         try command.validate()
     }
@@ -64,7 +64,7 @@ struct TypeCommandTests {
     func `Type command with linear profile`() throws {
         var command = try TypeCommand.parse(["Hello", "--profile", "linear", "--delay", "15"])
         #expect(command.profileOption?.lowercased() == "linear")
-        #expect(command.delay == 15)
+        #expect(command.delay.roundedMilliseconds == 15)
         #expect(command.wordsPerMinute == nil)
         try command.validate()
     }
@@ -289,7 +289,7 @@ struct TypeCommandTests {
         let command = try TypeCommand.parse(["Hello World", "--delay", "10"])
 
         #expect(command.text == "Hello World")
-        #expect(command.delay == 10)
+        #expect(command.delay.roundedMilliseconds == 10)
     }
 
     @Test
@@ -439,7 +439,7 @@ struct TypeCommandTests {
         let command = try TypeCommand.parse(["Line 1\\nLine 2", "--delay", "50"])
 
         #expect(command.text == "Line 1\\nLine 2")
-        #expect(command.delay == 50)
+        #expect(command.delay.roundedMilliseconds == 50)
     }
 
     // MARK: - Helpers

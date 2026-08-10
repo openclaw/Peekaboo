@@ -33,7 +33,7 @@ struct DialogCommand: ParsableCommand {
 
           # Handle file dialogs
           peekaboo dialog file --path "/Users/me/Documents" --name "report.pdf" --select "Save" --foreground
-          peekaboo dialog file --app TextEdit --window-title "Untitled" --path "/tmp" --name "poem.rtf" --select default --foreground
+          peekaboo dialog file --app TextEdit --path /tmp --name poem.rtf --select default --foreground
 
           # Dismiss dialogs
           peekaboo dialog dismiss
@@ -199,8 +199,8 @@ extension DialogCommand.FileSubcommand: CommanderBindableCommand {
         self.path = values.singleOption("path")
         self.name = values.singleOption("name")
         self.select = values.singleOption("select")
-        if let timeoutSeconds: TimeInterval = try values.decodeOption("timeoutSeconds", as: TimeInterval.self) {
-            self.timeoutSeconds = timeoutSeconds
+        if let timeout: CLIDuration = try values.decodeOption("timeout", as: CLIDuration.self) {
+            self.timeout = timeout
         }
         self.ensureExpanded = values.flag("ensureExpanded")
         self.foreground = values.flag("foreground")
@@ -230,8 +230,8 @@ extension DialogCommand.ListSubcommand: AsyncRuntimeCommand {}
 @MainActor
 extension DialogCommand.ListSubcommand: CommanderBindableCommand {
     mutating func applyCommanderValues(_ values: CommanderBindableValues) throws {
-        if let timeoutSeconds: TimeInterval = try values.decodeOption("timeoutSeconds", as: TimeInterval.self) {
-            self.timeoutSeconds = timeoutSeconds
+        if let timeout: CLIDuration = try values.decodeOption("timeout", as: CLIDuration.self) {
+            self.timeout = timeout
         }
         try values.fillInteractionTargetOptions(into: &self.target)
     }

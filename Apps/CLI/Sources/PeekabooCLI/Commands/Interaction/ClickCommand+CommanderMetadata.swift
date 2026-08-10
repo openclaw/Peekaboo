@@ -23,15 +23,14 @@ extension ClickCommand: CommanderBindableCommand {
         self.snapshot = values.singleOption("snapshot")
         self.on = values.singleOption("on")
         self.target = try values.makeInteractionTargetOptions()
-        self.coords = values.singleOption("coords")
-        self.globalCoords = values.flag("globalCoords")
-        if let wait: Int = try values.decodeOption("waitFor", as: Int.self) {
+        self.at = values.singleOption("at")
+        self.global = values.flag("global")
+        if let wait: CLIDuration = try values.decodeOption("waitFor", as: CLIDuration.self) {
             self.waitFor = wait
         }
         self.double = values.flag("double")
         self.right = values.flag("right")
         self.longPress = values.flag("longPress")
-        self.foreground = values.flag("foreground")
         self.focusOptions = try values.makeFocusOptions(includeBackgroundDelivery: true)
     }
 }
@@ -58,13 +57,14 @@ extension ClickCommand: CommanderSignatureProviding {
                     long: "on"
                 ),
                 .commandOption(
-                    "coords",
-                    help: "Click at x,y. Target-relative when --app/--pid/--window-* is supplied; global otherwise.",
-                    long: "coords"
+                    "at",
+                    help: "x,y — target-relative when --app/--window-* given; global otherwise " +
+                        "(use --global for explicit global)",
+                    long: "at"
                 ),
                 .commandOption(
                     "waitFor",
-                    help: "Maximum milliseconds to wait for element",
+                    help: "Maximum wait; bare values are milliseconds, or use ms/s suffixes",
                     long: "wait-for"
                 ),
             ],
@@ -85,14 +85,9 @@ extension ClickCommand: CommanderSignatureProviding {
                     long: "long-press"
                 ),
                 .commandFlag(
-                    "foreground",
-                    help: "Focus target and send a foreground mouse click",
-                    long: "foreground"
-                ),
-                .commandFlag(
-                    "globalCoords",
-                    help: "Treat --coords as global screen coordinates even with target options",
-                    long: "global-coords"
+                    "global",
+                    help: "Treat --at as global screen coordinates even with target options",
+                    long: "global"
                 ),
             ],
             optionGroups: [

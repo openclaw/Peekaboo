@@ -164,7 +164,7 @@ peekaboo window list --app Safari --json
 Increase timeout for complex UIs:
 
 ```bash
-peekaboo see --app Safari --timeout-seconds 30 --no-remote --capture-engine cg
+peekaboo see --app Safari --timeout 30s --no-remote --capture-engine cg
 ```
 
 ### Memory issues (large screenshots)

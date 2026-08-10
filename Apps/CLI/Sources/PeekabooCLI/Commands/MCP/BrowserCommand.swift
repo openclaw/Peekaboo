@@ -24,7 +24,7 @@ InjectedRuntimeBackedCommand {
     var noBringToFront = false
     var background = false
     var foreground = false
-    var timeout: Int?
+    var timeout: CLIDuration?
     var pageSize: Int?
     var pageIndex: Int?
     var types: [String] = []
@@ -152,7 +152,7 @@ InjectedRuntimeBackedCommand {
         } else if self.background {
             arguments["background"] = true
         }
-        self.add(self.timeout, as: "timeout", to: &arguments)
+        self.add(self.timeout?.roundedMilliseconds, as: "timeout", to: &arguments)
         self.add(self.pageSize, as: "page_size", to: &arguments)
         self.add(self.pageIndex, as: "page_index", to: &arguments)
         if !self.types.isEmpty {
@@ -237,7 +237,11 @@ extension BrowserCommand: CommanderSignatureProviding {
                 .commandOption("key", help: "Key or key combination for press-key", long: "key"),
                 .commandOption("submitKey", help: "Optional key after type", long: "submit-key"),
                 .commandOption("dialogAction", help: "Dialog action: accept|dismiss", long: "dialog-action"),
-                .commandOption("timeout", help: "Timeout in milliseconds", long: "timeout"),
+                .commandOption(
+                    "timeout",
+                    help: "Timeout; bare values are milliseconds, or use ms/s suffixes",
+                    long: "timeout"
+                ),
                 .commandOption("pageSize", help: "Console/network page size", long: "page-size"),
                 .commandOption("pageIndex", help: "Console/network page index", long: "page-index"),
                 OptionDefinition.make(
@@ -323,7 +327,7 @@ extension BrowserCommand: CommanderBindableCommand {
         if self.background, self.foreground {
             throw ValidationError("--background and --foreground cannot be used together")
         }
-        self.timeout = try values.decodeOption("timeout", as: Int.self)
+        self.timeout = try values.decodeOption("timeout", as: CLIDuration.self)
         self.pageSize = try values.decodeOption("pageSize", as: Int.self)
         self.pageIndex = try values.decodeOption("pageIndex", as: Int.self)
         self.types = Self.splitCSV(values.optionValues("types"))

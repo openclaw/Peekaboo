@@ -292,7 +292,7 @@ struct AppCommandLaunchFlowTests {
 
         var command = AppCommand.RelaunchSubcommand()
         command.app = "Example"
-        command.wait = 0
+        command.wait = .milliseconds(0)
         let runtime = CommandRuntime(
             configuration: .init(verbose: false, jsonOutput: true, logLevel: nil),
             services: ServicesWithApplicationStub(applications: applicationService)
@@ -327,7 +327,7 @@ struct AppCommandLaunchFlowTests {
         )
         var command = AppCommand.RelaunchSubcommand()
         command.app = "Example"
-        command.wait = 0
+        command.wait = .milliseconds(0)
         command.foreground = true
 
         try await command.run(using: CommandRuntime(
@@ -348,7 +348,7 @@ struct AppCommandLaunchFlowTests {
         let applicationService = RecordingApplicationService(applications: [application])
         var command = AppCommand.RelaunchSubcommand()
         command.app = "Peekaboo"
-        command.wait = 0
+        command.wait = .milliseconds(0)
         let runtime = CommandRuntime(
             configuration: .init(verbose: false, jsonOutput: true, logLevel: nil),
             services: ServicesWithApplicationStub(applications: applicationService),
@@ -373,7 +373,7 @@ struct AppCommandLaunchFlowTests {
         let applicationService = RecordingApplicationService(applications: [application])
         var command = AppCommand.RelaunchSubcommand()
         command.app = "Peekaboo daemon"
-        command.wait = 0
+        command.wait = .milliseconds(0)
         let runtime = CommandRuntime(
             configuration: .init(verbose: false, jsonOutput: true, logLevel: nil),
             services: ServicesWithApplicationStub(applications: applicationService),

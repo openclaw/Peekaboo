@@ -45,7 +45,7 @@ struct DaemonLaunchRuntimeTests {
                 [
                     "daemon", "start",
                     "--bridge-socket", socketPath,
-                    "--wait-seconds", "5",
+                    "--wait", "5s",
                 ],
                 environment: environment,
                 executablePathOverride: "peekaboo",
@@ -111,7 +111,7 @@ struct DaemonLaunchRuntimeTests {
         [
             "daemon", "stop",
             "--bridge-socket", socketPath,
-            "--wait-seconds", "5",
+            "--wait", "5s",
         ]
     }
 }

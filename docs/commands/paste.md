@@ -18,7 +18,7 @@ This reduces drift by collapsing multiple CLI steps into one command. Plain text
 | `--file-path` | Copy a file or image into the clipboard, then paste. |
 | `--data-base64` + `--uti` | Paste raw base64 payload with explicit UTI (e.g. `public.rtf`). |
 | `--also-text` | Optional plain-text companion when pasting binary. |
-| `--restore-delay-ms` | Delay before restoring the previous clipboard (default 150ms). |
+| `--restore-delay <duration>` | Delay before restoring the previous clipboard (default `150ms`; bare values are milliseconds). |
 | Target flags | `--app <name>` or `--pid <pid>` for process-targeted background paste. Window selectors require `--foreground`. |
 | `--foreground` | Focus a supplied target or intentionally send foreground/global Cmd+V. |
 | Focus flags | Foreground focus controls (`--space-switch`, `--no-auto-focus`, etc.). |
@@ -30,7 +30,7 @@ This reduces drift by collapsing multiple CLI steps into one command. Plain text
 - Window selectors are rejected in background mode because process-targeted events cannot prove which window owns the process's focused element.
 - Clipboard-backed transactions are serialized across CLI, daemon, and GUI processes with a private per-user lock under `~/Library/Application Support/Peekaboo`, independent of each process's temporary directory.
 - Target capability checks, cancellation checks, and the prior-clipboard snapshot must all succeed before Peekaboo writes a temporary payload. A read failure is never treated as an empty clipboard; if a write fails after partially changing the pasteboard, Peekaboo restores the exact saved state before returning the error.
-- Background binary/rich paste still mutates the system clipboard briefly; `paste` completes the noncancellable `--restore-delay-ms` settle and restores the previous contents before releasing the transaction lock, even when delivery throws or the caller cancels.
+- Background binary/rich paste still mutates the system clipboard briefly; `paste` completes the noncancellable `--restore-delay` settle and restores the previous contents before releasing the transaction lock, even when delivery throws or the caller cancels.
 
 ## Examples
 ```bash

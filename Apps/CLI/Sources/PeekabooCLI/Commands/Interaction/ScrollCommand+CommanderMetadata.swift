@@ -26,7 +26,7 @@ extension ScrollCommand: CommanderSignatureProviding {
                 ),
                 .commandOption(
                     "delay",
-                    help: "Delay between scroll ticks in milliseconds",
+                    help: "Scroll delay; bare values are milliseconds, or use ms/s suffixes",
                     long: "delay"
                 ),
             ],
@@ -36,15 +36,10 @@ extension ScrollCommand: CommanderSignatureProviding {
                     help: "Use smooth scrolling with smaller increments",
                     long: "smooth"
                 ),
-                .commandFlag(
-                    "foreground",
-                    help: "Focus the target and allow synthetic wheel events",
-                    long: "foreground"
-                ),
             ],
             optionGroups: [
                 InteractionTargetOptions.commanderSignature(),
-                FocusCommandOptions.commanderSignature(includeAutoFocusControl: false),
+                FocusCommandOptions.commanderSignature(),
             ]
         )
     }

@@ -25,7 +25,7 @@ struct DaemonCommandTests {
 
     @Test
     func `Daemon start accepts an immediate readiness deadline`() throws {
-        let command = try DaemonCommand.Start.parse(["--wait-seconds", "0"])
+        let command = try DaemonCommand.Start.parse(["--wait", "0"])
         #expect(command.waitSeconds == 0)
     }
 
@@ -49,16 +49,16 @@ struct DaemonCommandTests {
             "auto",
             "--bridge-socket",
             "/tmp/peekaboo.sock",
-            "--poll-interval-ms",
-            "500",
-            "--idle-timeout-seconds",
-            "2.5",
+            "--poll-interval",
+            "500ms",
+            "--idle-timeout",
+            "2.5s",
         ]
         let command = try DaemonCommand.Run.parse(args)
         #expect(command.mode == "auto")
         #expect(command.bridgeSocket == "/tmp/peekaboo.sock")
-        #expect(command.pollIntervalMs == 500)
-        #expect(command.idleTimeoutSeconds == 2.5)
+        #expect(command.pollInterval?.roundedMilliseconds == 500)
+        #expect(command.idleTimeout?.seconds == 2.5)
     }
 
     @Test

@@ -11,18 +11,21 @@ import PeekabooFoundation
 struct CaptureVideoCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConfigurable,
 InjectedRuntimeBackedCommand {
     @Argument(help: "Input video file") var input: String
-    @Option(name: .long, help: "Sample FPS (default 2). Mutually exclusive with --every-ms") var sampleFps: Double?
-    @Option(name: .long, help: "Sample every N milliseconds (mutually exclusive with --sample-fps)") var everyMs: Int?
-    @Option(name: .long, help: "Trim start in ms") var startMs: Int?
-    @Option(name: .long, help: "Trim end in ms") var endMs: Int?
+    @Option(name: .long, help: "Sample FPS (default 2). Mutually exclusive with --every") var sampleFps: Double?
+    @Option(name: .customLong("every"), help: "Sampling interval (mutually exclusive with --sample-fps)")
+    var every: CLIDuration?
+    @Option(name: .customLong("start"), help: "Trim start offset") var start: CLIDuration?
+    @Option(name: .customLong("end"), help: "Trim end offset") var end: CLIDuration?
     @Flag(name: .long, help: "Keep all sampled frames (disable diff/keep filtering)") var noDiff = false
     @Option(name: .long, help: "Max frames before stopping") var maxFrames: Int?
     @Option(name: .long, help: "Max megabytes before stopping") var maxMb: Int?
     @Option(name: .long, help: "Resolution cap (largest dimension, default 1440)") var resolutionCap: Double?
     @Option(name: .long, help: "Diff strategy: fast|quality (default fast)") var diffStrategy: String?
-    @Option(name: .long, help: "Diff time budget ms before falling back to fast") var diffBudgetMs: Int?
+    @Option(name: .customLong("diff-budget"), help: "Diff time budget before falling back to fast")
+    var diffBudget: CLIDuration?
     @Option(name: .long, help: "Output directory") var path: String?
-    @Option(name: .long, help: "Minutes before temp sessions auto-clean (default 120)") var autocleanMinutes: Int?
+    @Option(name: .customLong("autoclean"), help: "Time before temp sessions auto-clean (default 7200s)")
+    var autoclean: CLIDuration?
     @Option(name: .long, help: "Optional MP4 output path (built from kept frames)") var videoOut: String?
 
     @RuntimeStorage var runtime: CommandRuntime?
@@ -34,8 +37,8 @@ InjectedRuntimeBackedCommand {
         self.logger.operationStart("capture_video", metadata: ["input": self.input])
 
         do {
-            if self.sampleFps != nil, self.everyMs != nil {
-                throw ValidationError("--sample-fps and --every-ms are mutually exclusive")
+            if self.sampleFps != nil, self.every != nil {
+                throw ValidationError("--sample-fps and --every are mutually exclusive")
             }
             let outputDir = try self.resolveOutputDirectory()
             let options = try self.buildOptions()
@@ -43,9 +46,9 @@ InjectedRuntimeBackedCommand {
             let frameSource = try await VideoFrameSource(
                 url: videoURL,
                 sampleFps: self.sampleFps,
-                everyMs: self.everyMs,
-                startMs: self.startMs,
-                endMs: self.endMs,
+                everyMs: self.every?.roundedMilliseconds,
+                startMs: self.start?.roundedMilliseconds,
+                endMs: self.end?.roundedMilliseconds,
                 resolutionCap: self.resolutionCap.map { CGFloat($0) }
             )
 
@@ -58,17 +61,20 @@ InjectedRuntimeBackedCommand {
                 scope: CaptureScope(kind: .frontmost),
                 options: options,
                 outputRoot: outputDir,
-                autoclean: WatchAutocleanConfig(minutes: self.autocleanMinutes ?? 120, managed: self.path == nil),
+                autoclean: WatchAutocleanConfig(
+                    minutes: self.autoclean.map { Int(($0.seconds / 60).rounded()) } ?? 120,
+                    managed: self.path == nil
+                ),
                 sourceKind: .video,
                 videoIn: videoURL.path,
                 videoOut: CaptureCommandPathResolver.filePath(from: self.videoOut),
                 keepAllFrames: self.noDiff,
                 videoOptions: CaptureVideoOptionsSnapshot(
-                    sampleFps: self.everyMs == nil ? self.sampleFps ?? 2.0 : nil,
-                    everyMs: self.everyMs,
+                    sampleFps: self.every == nil ? self.sampleFps ?? 2.0 : nil,
+                    everyMs: self.every?.roundedMilliseconds,
                     effectiveFps: frameSource.effectiveFPS,
-                    startMs: self.startMs,
-                    endMs: self.endMs,
+                    startMs: self.start?.roundedMilliseconds,
+                    endMs: self.end?.roundedMilliseconds,
                     keepAllFrames: self.noDiff
                 )
             )
@@ -104,7 +110,7 @@ InjectedRuntimeBackedCommand {
         let maxFrames = max(self.maxFrames ?? 10000, 1)
         let resolutionCap = self.resolutionCap ?? 1440
         let diffStrategy = try CaptureCommandOptionParser.diffStrategy(self.diffStrategy)
-        let diffBudgetMs = self.diffBudgetMs ?? (diffStrategy == .quality ? 30 : nil)
+        let diffBudgetMs = self.diffBudget?.roundedMilliseconds ?? (diffStrategy == .quality ? 30 : nil)
         let maxMb = self.maxMb.flatMap { $0 > 0 ? $0 : nil }
         return CaptureOptions(
             duration: 3600,
@@ -169,9 +175,9 @@ extension CaptureVideoCommand: CommanderBindableCommand {
     mutating func applyCommanderValues(_ values: CommanderBindableValues) throws {
         self.input = try values.requiredPositional(0, label: "input")
         self.sampleFps = try values.decodeOption("sampleFps", as: Double.self)
-        self.everyMs = try values.decodeOption("everyMs", as: Int.self)
-        self.startMs = try values.decodeOption("startMs", as: Int.self)
-        self.endMs = try values.decodeOption("endMs", as: Int.self)
+        self.every = try values.decodeOption("every", as: CLIDuration.self)
+        self.start = try values.decodeOption("start", as: CLIDuration.self)
+        self.end = try values.decodeOption("end", as: CLIDuration.self)
         if values.flag("noDiff") {
             self.noDiff = true
         }
@@ -179,9 +185,9 @@ extension CaptureVideoCommand: CommanderBindableCommand {
         self.maxMb = try values.decodeOption("maxMb", as: Int.self)
         self.resolutionCap = try values.decodeOption("resolutionCap", as: Double.self)
         self.diffStrategy = values.singleOption("diffStrategy")
-        self.diffBudgetMs = try values.decodeOption("diffBudgetMs", as: Int.self)
+        self.diffBudget = try values.decodeOption("diffBudget", as: CLIDuration.self)
         self.path = values.singleOption("path")
-        self.autocleanMinutes = try values.decodeOption("autocleanMinutes", as: Int.self)
+        self.autoclean = try values.decodeOption("autoclean", as: CLIDuration.self)
         self.videoOut = values.singleOption("videoOut")
     }
 }

@@ -18,8 +18,12 @@ extension DaemonCommand {
         @Option(name: .long, help: "Override bridge socket path")
         var bridgeSocket: String?
 
-        @Option(name: .long, help: "Seconds to wait for daemon shutdown (default 12)")
-        var waitSeconds: Int = DaemonControlClient.defaultShutdownWaitSeconds
+        @Option(name: .customLong("wait"), help: "Daemon shutdown wait (bare values are milliseconds; default 12s)")
+        var wait: CLIDuration = .seconds(TimeInterval(DaemonControlClient.defaultShutdownWaitSeconds))
+
+        var waitSeconds: Int {
+            Int(self.wait.seconds.rounded(.up))
+        }
 
         @RuntimeStorage var runtime: CommandRuntime?
         var runtimeOptions = CommandRuntimeOptions()
@@ -65,8 +69,8 @@ extension DaemonCommand.Stop: AsyncRuntimeCommand {}
 extension DaemonCommand.Stop: CommanderBindableCommand {
     mutating func applyCommanderValues(_ values: CommanderBindableValues) throws {
         self.bridgeSocket = values.singleOption("bridge-socket")
-        if let waitSeconds = try values.decodeOption("waitSeconds", as: Int.self) {
-            self.waitSeconds = waitSeconds
+        if let wait = try values.decodeOption("wait", as: CLIDuration.self) {
+            self.wait = wait
         }
     }
 }

@@ -23,7 +23,7 @@ extension TypeCommand: CommanderSignatureProviding {
                 ),
                 .commandOption(
                     "delay",
-                    help: "Delay between keystrokes in milliseconds",
+                    help: "Keystroke delay; bare values are milliseconds, or use ms/s suffixes",
                     long: "delay"
                 ),
                 .commandOption(
@@ -43,15 +43,10 @@ extension TypeCommand: CommanderSignatureProviding {
                     help: "Clear the field before typing (Cmd+A, Delete)",
                     long: "clear"
                 ),
-                .commandFlag(
-                    "foreground",
-                    help: "Focus target and send foreground keyboard input",
-                    long: "foreground"
-                ),
             ],
             optionGroups: [
                 InteractionTargetOptions.commanderSignature(),
-                FocusCommandOptions.commanderSignature(),
+                FocusCommandOptions.commanderSignature(includeBackgroundDelivery: true),
             ]
         )
     }

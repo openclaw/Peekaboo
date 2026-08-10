@@ -98,7 +98,7 @@ struct TargetedInteractionDefaultDeliveryTests {
         for arguments in [
             ["type", "hello", "--foreground"],
             ["press", "return", "--foreground"],
-            ["paste", "--text", "hello", "--foreground", "--restore-delay-ms", "0"],
+            ["paste", "--text", "hello", "--foreground", "--restore-delay", "0"],
         ] {
             let result = try await InProcessCommandRunner.run(arguments + ["--no-remote"], services: services)
             #expect(result.exitStatus == 0, "Expected explicit foreground input to succeed: \(arguments)")
@@ -340,8 +340,8 @@ struct TargetedInteractionDefaultDeliveryTests {
         )
         let result = try await InProcessCommandRunner.run(
             [
-                "click", "--coords", "10,20", "--snapshot", snapshotId,
-                "--app", "TextEdit", "--global-coords", "--json", "--no-remote",
+                "click", "--at", "10,20", "--snapshot", snapshotId,
+                "--app", "TextEdit", "--global", "--json", "--no-remote",
             ],
             services: services
         )

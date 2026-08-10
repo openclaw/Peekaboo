@@ -294,7 +294,7 @@ struct CommanderBinderCommandBindingTests {
             positional: [],
             options: [
                 "app": ["Terminal"],
-                "focusTimeoutSeconds": ["5.5"],
+                "focusTimeout": ["5.5s"],
                 "focusRetryCount": ["3"]
             ],
             flags: ["noAutoFocus", "spaceSwitch", "bringToCurrentSpace"]
@@ -307,7 +307,7 @@ struct CommanderBinderCommandBindingTests {
         #expect(command.focusOptions.noAutoFocus == true)
         #expect(command.focusOptions.spaceSwitch == true)
         #expect(command.focusOptions.bringToCurrentSpace == true)
-        #expect(command.focusOptions.focusTimeoutSeconds == 5.5)
+        #expect(command.focusOptions.focusTimeout == 5.5)
         #expect(command.focusOptions.focusRetryCount == 3)
     }
 
@@ -348,7 +348,7 @@ struct CommanderBinderCommandBindingTests {
         #expect(command.snapshot == "abc")
         #expect(command.on == "B1")
         #expect(command.target.app == "Safari")
-        #expect(command.waitFor == 2500)
+        #expect(command.waitFor.roundedMilliseconds == 2500)
         #expect(command.longPress == true)
         #expect(command.focusOptions.noAutoFocus == true)
         #expect(command.runtimeOptions.inputStrategy == .actionOnly)
@@ -364,21 +364,21 @@ struct CommanderBinderCommandBindingTests {
                 "wpm": ["150"],
                 "app": ["Notes"],
                 "windowId": ["424242"],
-                "focusTimeoutSeconds": ["3.5"]
+                "focusTimeout": ["3.5s"]
             ],
             flags: ["clear", "spaceSwitch"]
         )
         let command = try CommanderCLIBinder.instantiateCommand(ofType: TypeCommand.self, parsedValues: parsed)
         #expect(command.text == "Hello")
         #expect(command.snapshot == "xyz")
-        #expect(command.delay == 10)
+        #expect(command.delay.roundedMilliseconds == 10)
         #expect(command.profileOption == nil)
         #expect(command.wordsPerMinute == 150)
         #expect(command.clear == true)
         #expect(command.target.app == "Notes")
         #expect(command.target.windowId == 424_242)
         #expect(command.focusOptions.spaceSwitch == true)
-        #expect(command.focusOptions.focusTimeoutSeconds == 3.5)
+        #expect(command.focusOptions.focusTimeout == 3.5)
     }
 
     @Test
@@ -446,8 +446,8 @@ struct CommanderBinderCommandBindingTests {
         let command = try CommanderCLIBinder.instantiateCommand(ofType: PressCommand.self, parsedValues: parsed)
         #expect(command.chords == ["cmd+c", "Return"])
         #expect(command.count == 3)
-        #expect(command.delay == 25)
-        #expect(command.hold == 75)
+        #expect(command.delay.roundedMilliseconds == 25)
+        #expect(command.hold.roundedMilliseconds == 75)
         #expect(command.snapshot == "sess-123")
         #expect(command.focusOptions.noAutoFocus == true)
     }
@@ -458,15 +458,15 @@ struct CommanderBinderCommandBindingTests {
             positional: ["/tmp/demo.mov"],
             options: [
                 "sampleFps": ["2"],
-                "startMs": ["1000"],
-                "endMs": ["2000"],
+                "start": ["1s"],
+                "end": ["2s"],
                 "maxFrames": ["123"],
                 "maxMb": ["10"],
                 "resolutionCap": ["720"],
                 "diffStrategy": ["quality"],
-                "diffBudgetMs": ["50"],
+                "diffBudget": ["50ms"],
                 "path": ["/tmp/outdir"],
-                "autocleanMinutes": ["15"],
+                "autoclean": ["900s"],
                 "videoOut": ["/tmp/out.mp4"]
             ],
             flags: ["noDiff"]
@@ -477,17 +477,17 @@ struct CommanderBinderCommandBindingTests {
         )
         #expect(command.input == "/tmp/demo.mov")
         #expect(command.sampleFps == 2)
-        #expect(command.everyMs == nil)
-        #expect(command.startMs == 1000)
-        #expect(command.endMs == 2000)
+        #expect(command.every == nil)
+        #expect(command.start?.roundedMilliseconds == 1000)
+        #expect(command.end?.roundedMilliseconds == 2000)
         #expect(command.noDiff == true)
         #expect(command.maxFrames == 123)
         #expect(command.maxMb == 10)
         #expect(command.resolutionCap == 720)
         #expect(command.diffStrategy == "quality")
-        #expect(command.diffBudgetMs == 50)
+        #expect(command.diffBudget?.roundedMilliseconds == 50)
         #expect(command.path == "/tmp/outdir")
-        #expect(command.autocleanMinutes == 15)
+        #expect(command.autoclean?.seconds == 900)
         #expect(command.videoOut == "/tmp/out.mp4")
     }
 
@@ -546,14 +546,14 @@ struct CommanderBinderCommandBindingTests {
             ofType: PasteCommand.self,
             parsedValues: ParsedValues(positional: [], options: [:], flags: [])
         )
-        #expect(defaultCommand.restoreDelayMs == nil)
+        #expect(defaultCommand.restoreDelay == nil)
 
         let parsed = ParsedValues(
             positional: ["Hello"],
             options: [
                 "app": ["TextEdit"],
                 "windowTitle": ["Untitled"],
-                "restoreDelayMs": ["250"],
+                "restoreDelay": ["250ms"],
             ],
             flags: ["allowLarge"]
         )
@@ -563,11 +563,11 @@ struct CommanderBinderCommandBindingTests {
         #expect(command.textOption == nil)
         #expect(command.target.app == "TextEdit")
         #expect(command.target.windowTitle == "Untitled")
-        #expect(command.restoreDelayMs == 250)
+        #expect(command.restoreDelay?.roundedMilliseconds == 250)
         #expect(command.allowLarge == true)
 
-        let restoreDelay = PasteCommand.commanderSignature().options.first { $0.label == "restoreDelayMs" }
-        #expect(restoreDelay?.help?.contains("default: 150") == true)
+        let restoreDelay = PasteCommand.commanderSignature().options.first { $0.label == "restoreDelay" }
+        #expect(restoreDelay?.names.contains(.long("restore-delay")) == true)
     }
 
     @Test
@@ -588,14 +588,14 @@ struct CommanderBinderCommandBindingTests {
             positional: [],
             options: [
                 "captureEngine": ["classic"],
-                "timeoutSeconds": ["7"],
+                "timeout": ["7s"],
             ],
             flags: []
         )
 
         let command = try CommanderCLIBinder.instantiateCommand(ofType: SeeCommand.self, parsedValues: parsed)
         #expect(command.captureEngine == "classic")
-        #expect(command.timeoutSeconds == 7)
+        #expect(command.timeout?.seconds == 7)
         #expect(command.runtimeOptions.captureEnginePreference == "classic")
     }
 
@@ -634,20 +634,20 @@ struct CommanderBinderCommandBindingTests {
         )
         let command = try CommanderCLIBinder.instantiateCommand(ofType: MoveCommand.self, parsedValues: parsed)
         #expect(command.coordinates == "100,200")
-        #expect(command.duration == 750)
+        #expect(command.duration?.roundedMilliseconds == 750)
         #expect(command.steps == 30)
         #expect(command.profile == "human")
         #expect(command.snapshot == "sess-1")
         #expect(command.smooth == true)
-        #expect(command.foreground)
+        #expect(command.focusOptions.foreground)
     }
 
     @Test
-    func `Move command binding with --coords`() throws {
+    func `Move command binding with --at`() throws {
         let parsed = ParsedValues(
             positional: [],
             options: [
-                "coords": ["100,200"],
+                "at": ["100,200"],
                 "duration": ["750"],
                 "steps": ["30"],
                 "profile": ["human"],
@@ -656,14 +656,14 @@ struct CommanderBinderCommandBindingTests {
             flags: ["smooth", "foreground"]
         )
         let command = try CommanderCLIBinder.instantiateCommand(ofType: MoveCommand.self, parsedValues: parsed)
-        #expect(command.coords == "100,200")
+        #expect(command.at == "100,200")
         #expect(command.coordinates == nil)
-        #expect(command.duration == 750)
+        #expect(command.duration?.roundedMilliseconds == 750)
         #expect(command.steps == 30)
         #expect(command.profile == "human")
         #expect(command.snapshot == "sess-1")
         #expect(command.smooth == true)
-        #expect(command.foreground)
+        #expect(command.focusOptions.foreground)
     }
 
     @Test
@@ -717,12 +717,12 @@ struct CommanderBinderCommandBindingTests {
         let command = try CommanderCLIBinder.instantiateCommand(ofType: DragCommand.self, parsedValues: parsed)
         #expect(command.from == "B1")
         #expect(command.to == "T2")
-        #expect(command.duration == 1200)
+        #expect(command.duration?.roundedMilliseconds == 1200)
         #expect(command.steps == 15)
-        #expect(command.modifiers == "cmd,shift")
+        #expect(command.modifiers?.description == "cmd,shift")
         #expect(command.profile == "human")
         #expect(command.snapshot == "sess-drag")
         #expect(command.focusOptions.spaceSwitch == true)
-        #expect(command.foreground)
+        #expect(command.focusOptions.foreground)
     }
 }

@@ -104,7 +104,7 @@ struct DialogFileJSONOutputTests {
                 "--path", "/tmp",
                 "--name", "out.txt",
                 "--select", "Save",
-                "--timeout-seconds", "1",
+                "--timeout", "1s",
                 "--foreground",
                 "--json",
             ],

@@ -26,6 +26,6 @@ Reference tips
 
 ## Common troubleshooting
 - **Background/foreground issues** — input commands use background delivery when they can resolve a target process. Element/query clicks can use Accessibility actions; grant Event Synthesizing for keyboard input, coordinates, and click fallback, or pass `--foreground` and ensure the target app/window is focused.
-- **Element not found** — run `peekaboo see --annotate` to verify AX labels/roles; fall back to coordinates with `--coords` when needed.
+- **Element not found** — run `peekaboo see --annotate` to verify AX labels/roles; fall back to coordinates with `--at` when needed.
 - **Permission errors** — re-run `peekaboo permissions grant` and restart affected apps if dialogs persist.
-- **Slow or flaky automation** — add `--quiet-ms`/`--heartbeat-sec` for capture/live commands; for input commands use `--delay` where available or `/bin/sleep` between shell invocations.
+- **Slow or flaky automation** — tune `--quiet`/`--heartbeat` for capture/live commands; for input commands use `--delay` where available or `/bin/sleep` between shell invocations.

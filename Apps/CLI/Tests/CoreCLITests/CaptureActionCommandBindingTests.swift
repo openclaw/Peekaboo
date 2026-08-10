@@ -11,10 +11,10 @@ struct CaptureActionCommandBindingTests {
                 "mode": ["area"],
                 "region": ["0,0,320,240"],
                 "captureEngine": ["cg"],
-                "durationLimit": ["5"],
-                "preRollMs": ["100"],
-                "postRollMs": ["250"],
-                "actionTimeout": ["3"],
+                "durationLimit": ["5s"],
+                "preRoll": ["100ms"],
+                "postRoll": ["250ms"],
+                "actionTimeout": ["3s"],
                 "path": ["/tmp/action-capture"],
                 "command": ["echo", "hello", "--flag"],
             ],
@@ -27,10 +27,10 @@ struct CaptureActionCommandBindingTests {
         #expect(command.mode == "area")
         #expect(command.region == "0,0,320,240")
         #expect(command.captureEngine == "cg")
-        #expect(command.durationLimit == 5)
-        #expect(command.preRollMs == 100)
-        #expect(command.postRollMs == 250)
-        #expect(command.actionTimeout == 3)
+        #expect(command.durationLimit?.seconds == 5)
+        #expect(command.preRoll?.roundedMilliseconds == 100)
+        #expect(command.postRoll?.roundedMilliseconds == 250)
+        #expect(command.actionTimeout?.seconds == 3)
         #expect(command.path == "/tmp/action-capture")
         #expect(command.command == ["echo", "hello", "--flag"])
         #expect(command.highlightChanges == true)

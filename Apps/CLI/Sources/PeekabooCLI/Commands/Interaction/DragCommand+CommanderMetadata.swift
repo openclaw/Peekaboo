@@ -26,7 +26,7 @@ extension DragCommand: CommanderSignatureProviding {
                 ),
                 .commandOption(
                     "duration",
-                    help: "Duration of drag in milliseconds",
+                    help: "Drag duration; bare values are milliseconds, or use ms/s suffixes",
                     long: "duration"
                 ),
                 .commandOption(
@@ -36,7 +36,7 @@ extension DragCommand: CommanderSignatureProviding {
                 ),
                 .commandOption(
                     "modifiers",
-                    help: "Modifier keys to hold during drag",
+                    help: "Comma-separated modifiers: cmd,shift,option,ctrl,fn",
                     long: "modifiers"
                 ),
                 .commandOption(
@@ -50,16 +50,9 @@ extension DragCommand: CommanderSignatureProviding {
                     long: "profile"
                 ),
             ],
-            flags: [
-                .commandFlag(
-                    "foreground",
-                    help: "Confirm foreground pointer movement and focus the target when specified",
-                    long: "foreground"
-                ),
-            ],
             optionGroups: [
                 InteractionTargetOptions.commanderSignature(),
-                FocusCommandOptions.commanderSignature(includeAutoFocusControl: false),
+                FocusCommandOptions.commanderSignature(),
             ]
         )
     }

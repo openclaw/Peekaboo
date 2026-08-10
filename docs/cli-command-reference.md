@@ -11,6 +11,8 @@ Peekaboo’s CLI covers most of what agents can do, and selected MCP/agent tools
 
 Use `peekaboo <command> --help` for inline flag descriptions; this page links to the authoritative docs in `docs/commands/`.
 
+Timing flags share one grammar: bare numbers mean milliseconds, while `ms` and `s` suffixes are accepted (`500`, `500ms`, `2s`, `1.5s`). Input commands also share `--foreground`, `--no-auto-focus`, `--space-switch`, and `--bring-to-current-space`; click/type/press/paste additionally expose explicit `--focus-background` delivery.
+
 ## Vision & Capture
 
 - [`see`](commands/see.md) – Capture pixels and annotated UI maps, print AX trees, produce snapshot IDs, and optionally run AI analysis.
@@ -26,7 +28,7 @@ Use `peekaboo <command> --help` for inline flag descriptions; this page links to
 
 ## Interaction
 
-- [`click`](commands/click.md) – Target elements by ID/query/coords with smart waits and focus helpers.
+- [`click`](commands/click.md) – Target elements by ID/query or `--at x,y` with smart waits and focus helpers.
 - [`type`](commands/type.md) – Send text with `--clear`, fixed-delay, or human cadence.
 - [`press`](commands/press.md) – Send xdotool-style chords such as `cmd+shift+t` and chord sequences.
 - [`paste`](commands/paste.md) – Atomically set clipboard → paste (Cmd+V) → restore clipboard.

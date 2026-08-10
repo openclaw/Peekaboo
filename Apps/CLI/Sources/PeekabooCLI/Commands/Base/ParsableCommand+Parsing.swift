@@ -3,7 +3,12 @@ import Commander
 extension ParsableCommand {
     static func parse(_ arguments: [String]) throws -> Self {
         let instance = Self()
-        let signature = CommandSignature.describe(instance)
+        let declaredSignature = if let provider = Self.self as? any CommanderSignatureProviding.Type {
+            provider.commanderSignature()
+        } else {
+            CommandSignature.describe(instance)
+        }
+        let signature = declaredSignature
             .flattened()
             .withPeekabooRuntimeFlags()
         let parser = CommandParser(signature: signature)

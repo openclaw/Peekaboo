@@ -21,8 +21,8 @@ extension ConfigCommand {
         @Argument(help: "Credential value")
         var value: String
 
-        @Option(name: .customLong("timeout"), help: "Validation timeout in seconds (default 30)")
-        var timeoutSeconds: Double = 30
+        @Option(name: .customLong("timeout"), help: "Validation timeout (bare values are milliseconds; default 30s)")
+        var timeout: CLIDuration = .seconds(30)
 
         @RuntimeStorage var runtime: CommandRuntime?
 
@@ -39,8 +39,12 @@ extension ConfigCommand {
                 }
             }
 
-            let timeout = self.timeoutSeconds > 0 ? self.timeoutSeconds : 30
-            let result = await TKAuthManager.shared.validate(provider: provider, secret: self.value, timeout: timeout)
+            let timeoutSeconds = self.timeout.seconds > 0 ? self.timeout.seconds : 30
+            let result = await TKAuthManager.shared.validate(
+                provider: provider,
+                secret: self.value,
+                timeout: timeoutSeconds
+            )
 
             do {
                 try TKAuthManager.shared.setCredential(key: provider.credentialKeys.first!, value: self.value)
@@ -77,8 +81,11 @@ extension ConfigCommand {
         @Argument(help: "Provider id (openai|anthropic)")
         var provider: String
 
-        @Option(name: .customLong("timeout"), help: "Timeout in seconds for token exchange (default 30)")
-        var timeoutSeconds: Double = 30
+        @Option(
+            name: .customLong("timeout"),
+            help: "Token exchange timeout (bare values are milliseconds; default 30s)"
+        )
+        var timeout: CLIDuration = .seconds(30)
 
         @Flag(name: .customLong("no-browser"), help: "Do not auto-open the browser")
         var noBrowser: Bool = false
@@ -91,10 +98,10 @@ extension ConfigCommand {
                 self.output.error(code: "INVALID_PROVIDER", message: "OAuth supported: openai, anthropic")
                 throw ExitCode.failure
             }
-            let timeout = self.timeoutSeconds > 0 ? self.timeoutSeconds : 30
+            let timeoutSeconds = self.timeout.seconds > 0 ? self.timeout.seconds : 30
             let result = await TKAuthManager.shared.oauthLogin(
                 provider: pid,
-                timeout: timeout,
+                timeout: timeoutSeconds,
                 noBrowser: self.noBrowser
             )
             switch result {

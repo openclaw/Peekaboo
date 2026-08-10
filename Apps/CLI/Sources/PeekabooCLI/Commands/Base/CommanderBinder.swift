@@ -398,7 +398,7 @@ enum CommanderCLIBinder {
         }
 
         let hasProcessTarget = values.singleOption("app") != nil || values.singleOption("pid") != nil
-        return values.singleOption("coords") != nil && hasProcessTarget && !values.flag("globalCoords")
+        return values.singleOption("at") != nil && hasProcessTarget && !values.flag("global")
     }
 
     private static func requiresPostEventPermission(
@@ -633,13 +633,15 @@ extension CommanderBindableValues {
         includeBackgroundDelivery: Bool = false
     ) throws {
         options.noAutoFocus = self.flag("noAutoFocus")
+        options.foreground = self.flag("foreground")
         options.spaceSwitch = self.flag("spaceSwitch")
         options.bringToCurrentSpace = self.flag("bringToCurrentSpace")
         if includeBackgroundDelivery, self.flag("focusBackground") {
             options.focusBackground = true
         }
-        if let timeout: TimeInterval = try decodeOption("focusTimeoutSeconds", as: TimeInterval.self) {
-            options.focusTimeoutSeconds = timeout
+        if let timeout: CLIDuration = try decodeOption("focusTimeout", as: CLIDuration.self) ??
+            decodeOption("focusTimeoutDuration", as: CLIDuration.self) {
+            options.focusTimeoutDuration = timeout
         }
         if let retries: Int = try decodeOption("focusRetryCount", as: Int.self) {
             options.focusRetryCount = retries

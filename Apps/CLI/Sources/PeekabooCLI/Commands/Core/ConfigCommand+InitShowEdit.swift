@@ -35,8 +35,8 @@ extension ConfigCommand {
 
         @Flag(name: .long, help: "Force overwrite existing configuration")
         var force = false
-        @Option(name: .customLong("timeout"), help: "Validation timeout in seconds (default 30)")
-        var timeoutSeconds: Double = 30
+        @Option(name: .customLong("timeout"), help: "Validation timeout (bare values are milliseconds; default 30s)")
+        var timeout: CLIDuration = .seconds(30)
         @RuntimeStorage var runtime: CommandRuntime?
 
         private var io: ConfigCommandOutput {
@@ -49,7 +49,7 @@ extension ConfigCommand {
             try self.ensureWritableConfig(at: path)
             try self.createConfiguration(at: path)
             if !self.jsonOutput {
-                let reporter = ProviderStatusReporter(timeoutSeconds: self.timeoutSeconds)
+                let reporter = ProviderStatusReporter(timeoutSeconds: self.timeout.seconds)
                 await reporter.printSummary()
             }
         }
@@ -97,8 +97,8 @@ extension ConfigCommand {
 
         @Flag(name: .long, help: "Show effective configuration (merged with environment)")
         var effective = false
-        @Option(name: .customLong("timeout"), help: "Validation timeout in seconds (default 30)")
-        var timeoutSeconds: Double = 30
+        @Option(name: .customLong("timeout"), help: "Validation timeout (bare values are milliseconds; default 30s)")
+        var timeout: CLIDuration = .seconds(30)
         @RuntimeStorage var runtime: CommandRuntime?
 
         mutating func run(using runtime: CommandRuntime) async throws {
@@ -111,7 +111,7 @@ extension ConfigCommand {
 
             try self.showEffectiveConfiguration()
             if !self.jsonOutput {
-                let reporter = ProviderStatusReporter(timeoutSeconds: self.timeoutSeconds)
+                let reporter = ProviderStatusReporter(timeoutSeconds: self.timeout.seconds)
                 await reporter.printSummary()
             }
         }
@@ -231,13 +231,13 @@ extension ConfigCommand {
             abstract: "Display provider credential status"
         )
 
-        @Option(name: .customLong("timeout"), help: "Validation timeout in seconds (default 30)")
-        var timeoutSeconds: Double = 30
+        @Option(name: .customLong("timeout"), help: "Validation timeout (bare values are milliseconds; default 30s)")
+        var timeout: CLIDuration = .seconds(30)
         @RuntimeStorage var runtime: CommandRuntime?
 
         mutating func run(using runtime: CommandRuntime) async throws {
             self.prepare(using: runtime)
-            let reporter = ProviderStatusReporter(timeoutSeconds: self.timeoutSeconds)
+            let reporter = ProviderStatusReporter(timeoutSeconds: self.timeout.seconds)
             if self.jsonOutput {
                 let summary = await reporter.summary()
                 let response = ProviderStatusResponse(

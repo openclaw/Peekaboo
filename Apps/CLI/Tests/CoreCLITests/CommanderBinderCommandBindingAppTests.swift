@@ -195,7 +195,7 @@ struct CommanderBinderAppConfigTests {
             positional: ["Safari"],
             options: [
                 "pid": ["456"],
-                "wait": ["3.5"]
+                "wait": ["3.5s"]
             ],
             flags: ["force", "waitUntilReady", "foreground"]
         )
@@ -205,7 +205,7 @@ struct CommanderBinderAppConfigTests {
         )
         #expect(command.app == "Safari")
         #expect(command.pid == 456)
-        #expect(command.wait == 3.5)
+        #expect(command.wait.seconds == 3.5)
         #expect(command.force == true)
         #expect(command.waitUntilReady == true)
         #expect(command.foreground == true)
@@ -233,12 +233,12 @@ struct CommanderBinderAppConfigTests {
 
     @Test
     func `Config status binding`() throws {
-        let parsed = ParsedValues(positional: [], options: ["timeout": ["5"]], flags: [])
+        let parsed = ParsedValues(positional: [], options: ["timeout": ["5s"]], flags: [])
         let command = try CommanderCLIBinder.instantiateCommand(
             ofType: ConfigCommand.StatusCommand.self,
             parsedValues: parsed
         )
-        #expect(command.timeoutSeconds == 5)
+        #expect(command.timeout.seconds == 5)
     }
 
     @Test

@@ -14,9 +14,9 @@ read_when:
 | --- | --- | --- |
 | `click` | Press a dialog button with AX. | `--button <label>` (required), optional target flags; `--foreground` permits focus and a coordinate fallback if AXPress fails. |
 | `input` | Enter text into a dialog field. | `--foreground` (required), `--text`, optional `--field <label>` or `--index <0-based>`, `--clear`, plus optional target flags. |
-| `file` | Drive NSOpenPanel/NSSavePanel style dialogs. | `--foreground` (required), `--path <dir>`, `--name <filename>`, `--select <button>`, `--ensure-expanded`, plus optional target flags. Save-like actions verify the file exists and return `saved_path`. |
+| `file` | Drive NSOpenPanel/NSSavePanel style dialogs. | `--foreground` (required), `--path <dir>`, `--name <filename>`, `--select <button>`, `--ensure-expanded`, `--timeout <duration>`, plus optional target flags. Save-like actions verify the file exists and return `saved_path`. |
 | `dismiss` | Close the current dialog. | Normal dismissal searches for and AX-presses a cancel/close button in the background. `--force --foreground` explicitly sends global Escape. |
-| `list` | Read dialog metadata (buttons, text fields, static text) without focusing or mutating it. | Optional `--app`/`--pid`, optional `--window-id`/`--window-title`/`--window-index`. |
+| `list` | Read dialog metadata (buttons, text fields, static text) without focusing or mutating it. | Optional `--app`/`--pid`, optional `--window-id`/`--window-title`/`--window-index`, and `--timeout <duration>`. |
 
 ## Implementation notes
 - `dialog list` is always read-only/background. `dialog click` is AX-only by default and fails honestly if AXPress is unsupported; `--foreground` explicitly permits focus and coordinate fallback.

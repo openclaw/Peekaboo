@@ -21,23 +21,26 @@ extension DaemonCommand {
         @Option(name: .long, help: "Override bridge socket path")
         var bridgeSocket: String?
 
-        @Option(name: .long, help: "Window tracker poll interval in milliseconds (default 1000)")
-        var pollIntervalMs: Int?
+        @Option(name: .customLong("poll-interval"), help: "Window tracker poll interval (bare values are milliseconds)")
+        var pollInterval: CLIDuration?
 
-        @Option(name: .long, help: "Idle seconds before auto daemon shutdown")
-        var idleTimeoutSeconds: Double?
+        @Option(
+            name: .customLong("idle-timeout"),
+            help: "Idle timeout before auto daemon shutdown (bare values are milliseconds)"
+        )
+        var idleTimeout: CLIDuration?
 
         @RuntimeStorage private var runtime: CommandRuntime?
         var runtimeOptions = CommandRuntimeOptions()
 
         mutating func run(using runtime: CommandRuntime) async throws {
             self.runtime = runtime
-            let pollInterval = TimeInterval(Double(self.pollIntervalMs ?? 1000) / 1000.0)
+            let pollInterval = self.pollInterval?.seconds ?? 1
             let config = try Self.configuration(
                 mode: self.mode,
                 bridgeSocket: self.bridgeSocket,
                 pollInterval: pollInterval,
-                idleTimeoutSeconds: self.idleTimeoutSeconds
+                idleTimeoutSeconds: self.idleTimeout?.seconds
             )
 
             let daemon = PeekabooDaemon(configuration: config)
@@ -53,7 +56,8 @@ extension DaemonCommand {
             let normalizedMode = mode.lowercased()
             if normalizedMode == "mcp" {
                 throw ValidationError(
-                    "Standalone MCP daemon mode is unavailable; use `peekaboo mcp` so the MCP transport owns its lifecycle."
+                    "Standalone MCP daemon mode is unavailable; use `peekaboo mcp` so the MCP transport " +
+                        "owns its lifecycle."
                 )
             }
             return if normalizedMode == "auto" {
@@ -77,12 +81,8 @@ extension DaemonCommand {
             if let socketOption = values.singleOption("bridge-socket") {
                 self.bridgeSocket = socketOption
             }
-            if let pollMs = try values.decodeOption("pollIntervalMs", as: Int.self) {
-                self.pollIntervalMs = pollMs
-            }
-            if let idleSeconds = try values.decodeOption("idleTimeoutSeconds", as: Double.self) {
-                self.idleTimeoutSeconds = idleSeconds
-            }
+            self.pollInterval = try values.decodeOption("pollInterval", as: CLIDuration.self)
+            self.idleTimeout = try values.decodeOption("idleTimeout", as: CLIDuration.self)
         }
     }
 }

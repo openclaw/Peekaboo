@@ -14,7 +14,7 @@ extension SeeCommand {
         defer { self.logger.operationComplete("element_detection") }
 
         let timeoutSeconds = Self.detectionTimeoutSeconds(
-            configuredTimeoutSeconds: self.timeoutSeconds,
+            configuredTimeoutSeconds: self.timeout?.seconds,
             analyze: self.analyze
         )
 
@@ -33,10 +33,10 @@ extension SeeCommand {
     }
 
     static func detectionTimeoutSeconds(
-        configuredTimeoutSeconds: Int?,
+        configuredTimeoutSeconds: TimeInterval?,
         analyze: String?
     ) -> TimeInterval {
-        TimeInterval(configuredTimeoutSeconds ?? ((analyze == nil) ? 20 : 60))
+        configuredTimeoutSeconds ?? ((analyze == nil) ? 20 : 60)
     }
 
     static func remoteDetectionRequestTimeoutSeconds(for timeoutSeconds: TimeInterval) -> TimeInterval {

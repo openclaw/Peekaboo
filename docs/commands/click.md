@@ -14,15 +14,15 @@ read_when:
 | --- | --- |
 | `[query]` | Optional positional text query (case-insensitive substring match). |
 | `--on <id>` | Target an opaque Peekaboo element ID copied exactly from current `see` or MCP `inspect_ui` output. |
-| `--coords x,y` | Click coordinates. With target flags, coordinates are relative to the resolved target window; without target flags, they are global screen coordinates. |
-| `--global-coords` | Treat `--coords` as global screen coordinates even when target flags are supplied. |
+| `--at x,y` | Click coordinates. With target flags, coordinates are relative to the resolved target window; without target flags, they are global screen coordinates. |
+| `--global` | Treat `--at` as global screen coordinates even when target flags are supplied. |
 | `--snapshot <id>` | Reuse a prior snapshot; defaults to the latest snapshot for element/query clicks. Background coordinate clicks require an explicit nonempty snapshot from a fresh exact-window `see`. |
 | Target flags | `--app <name>`, `--pid <pid>`, `--window-id <id>`, `--window-title <title>`, `--window-index <n>` — resolve the app/window that should receive the click. In background mode this does not focus the app; with `--foreground` it focuses before clicking. (`--window-title`/`--window-index` require `--app` or `--pid`; `--window-id` does not.) |
-| `--wait-for <ms>` | Millisecond timeout while waiting for the element to appear (default 5000). |
+| `--wait-for <duration>` | Timeout while waiting for the element (default `5s`; bare values are milliseconds). |
 | `--double` / `--right` | Perform double-click or secondary-click instead of the default single click. Background pixel delivery requires a provable exact PID/window route; `--foreground` remains available for shared-pointer behavior. |
 | `--long-press` | Send mouse-down, hold stationary for 1.2 seconds, then mouse-up. Long press implies foreground delivery and cannot be combined with `--double`, `--right`, or `--focus-background`. |
 | `--foreground` | Focus target and send a foreground mouse click. Focus flags require this explicit mode. |
-| Focus flags | `--no-auto-focus`, `--focus-timeout-seconds`, `--focus-retry-count`, `--space-switch`, `--bring-to-current-space` (foreground mode only; see `FocusCommandOptions`). |
+| Focus flags | `--no-auto-focus`, `--focus-timeout`, `--focus-retry-count`, `--space-switch`, `--bring-to-current-space` (foreground mode only; see `FocusCommandOptions`). |
 | `--focus-background` | Legacy alias for the default background delivery. Use `--app`, `--pid`, `--window-id`, or a snapshot with process metadata. |
 
 ## Delivery modes
@@ -37,7 +37,7 @@ read_when:
 - Right-click (`--right`) issues `AXShowMenu` without waiting for the context menu to close: a successfully opened menu runs a nested tracking runloop in the target app, so the command reports success once the menu is up instead of timing out behind it.
 
 ## Implementation notes
-- Validation makes sure you only provide one targeting strategy (ID/query vs. `--coords`) and that coordinate strings parse cleanly into doubles. Target-relative coordinate clicks fail if the point is outside the resolved window.
+- Validation makes sure you only provide one targeting strategy (ID/query vs. `--at`) and that coordinate strings parse cleanly into doubles. Target-relative coordinate clicks fail if the point is outside the resolved window.
 - When no `--snapshot` is provided, element/query clicks may use the most recent snapshot. Foreground global coordinates remain snapshot-free. Background coordinates never infer ownership at dispatch time: they resolve through the explicit capture snapshot and pass its exact receipt through the automation/Bridge boundary.
 - Background element/query clicks re-resolve cached elements in the target process and exact snapshot window, then invoke their AX action; when the element cannot be re-resolved, the adjusted snapshot point is hit-tested and the AX element found there is pressed. Mismatched process/window selectors and unverifiable window snapshots are rejected. Run `peekaboo see` first when you need fresh element IDs or target metadata.
 - Foreground element-based clicks call `AutomationServiceBridge.waitForElement` with the supplied timeout so you don’t have to insert manual sleeps. Helpful hints are printed when timeouts expire.
@@ -51,28 +51,28 @@ read_when:
 peekaboo click --on "$ELEMENT_ID"
 
 # Fuzzy search + extra wait for a slow dialog using foreground delivery
-peekaboo click "Allow" --foreground --wait-for 8000 --space-switch
+peekaboo click "Allow" --foreground --wait-for 8s --space-switch
 
 # Issue a background right-click in an exact window without moving the cursor
-peekaboo click --window-id 59620 --coords 420,180 --right
+peekaboo click --window-id 59620 --at 420,180 --right
 
 # Trigger a SwiftUI long-press gesture
-peekaboo click --coords 640,420 --long-press
+peekaboo click --at 640,420 --long-press
 
 # Click 20,40 inside a resolved app window
-peekaboo click --app Safari --coords 20,40
+peekaboo click --app Safari --at 20,40
 
 # Force global screen coordinates while still focusing a target first
-peekaboo click --window-id 59620 --coords 1024,88 --global-coords --foreground
+peekaboo click --window-id 59620 --at 1024,88 --global --foreground
 
 # Click captured Safari coordinates without activating Safari
 peekaboo see --app Safari --json
-peekaboo click --coords 420,180 --app Safari --global-coords --snapshot "$SNAPSHOT_ID"
+peekaboo click --at 420,180 --app Safari --global --snapshot "$SNAPSHOT_ID"
 
 # Browser fallback when web content has no actionable accessibility descendants
 peekaboo screen list --json
 peekaboo window list --app "Google Chrome" --json
-peekaboo click --window-id 59620 --coords 420,180 --foreground --input-strategy synthOnly
+peekaboo click --window-id 59620 --at 420,180 --foreground --input-strategy synthOnly
 ```
 
 ## Troubleshooting
@@ -80,4 +80,4 @@ peekaboo click --window-id 59620 --coords 420,180 --foreground --input-strategy 
 - Confirm your target (app/window/selector) with `peekaboo list`/`peekaboo see` before rerunning.
 - If you see `SNAPSHOT_NOT_FOUND`, regenerate the snapshot with `peekaboo see` (or omit `--snapshot` to use the most recent one). Cleaned/expired snapshots cannot be reused.
 - Re-run with `--json` or `--verbose` to surface detailed errors.
-- Chromium browsers can expose menus plus generic web-area/layout containers while omitting actionable web-content descendants from `see --annotate`. This is a browser accessibility limitation, not proof that the page is empty. Use `screen list` and `window list` to map the intended display/window, then use `--foreground --input-strategy synthOnly` with window-relative coordinates. For already-focused browser automation, targetless `--global-coords` is also valid.
+- Chromium browsers can expose menus plus generic web-area/layout containers while omitting actionable web-content descendants from `see --annotate`. This is a browser accessibility limitation, not proof that the page is empty. Use `screen list` and `window list` to map the intended display/window, then use `--foreground --input-strategy synthOnly` with window-relative coordinates. For already-focused browser automation, targetless `--global` is also valid.
