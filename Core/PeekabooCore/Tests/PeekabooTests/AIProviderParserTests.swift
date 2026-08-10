@@ -150,7 +150,7 @@ struct AIProviderParserTests {
             from: "invalid/model",
             hasOpenAI: false,
             hasAnthropic: true)
-        #expect(model1 == "claude-opus-5")
+        #expect(model1 == "claude-opus-4-8")
 
         let model2 = AIProviderParser.determineDefaultModel(
             from: "",

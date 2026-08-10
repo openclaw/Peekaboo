@@ -18,8 +18,8 @@ pages instead of duplicating provider lists in multiple places.
 
 | Provider | Example model IDs | Credential |
 | --- | --- | --- |
-| **OpenAI** | gpt-5.6, gpt-5.6-sol, gpt-5.6-terra, gpt-5.6-luna, gpt-5-mini, gpt-4.1 | `OPENAI_API_KEY` |
-| **Anthropic** | claude-opus-5, claude-fable-5, claude-sonnet-5, claude-sonnet-4-6, claude-haiku-4-5 | `ANTHROPIC_API_KEY` |
+| **OpenAI** | gpt-5.6, gpt-5.6-sol, gpt-5.6-terra, gpt-5.6-luna, gpt-5.5, gpt-5.4, gpt-5.4-mini, gpt-5.4-nano, gpt-5, gpt-5-pro, gpt-5-mini, gpt-5-nano | `OPENAI_API_KEY` |
+| **Anthropic** | claude-opus-5, claude-fable-5, claude-sonnet-5, claude-opus-4-8, claude-opus-4-7, claude-opus-4-5, claude-sonnet-4-6, claude-sonnet-4-5, claude-haiku-4-5 | `ANTHROPIC_API_KEY` |
 | **xAI** | grok-4 | `XAI_API_KEY` |
 | **Google** | gemini-3.1-pro-preview, gemini-3-flash | `GEMINI_API_KEY` |
 | **MiniMax** | MiniMax-M3, MiniMax-M2.7, MiniMax-M2.7-highspeed | `MINIMAX_API_KEY` |
@@ -71,8 +71,12 @@ peekaboo agent --model ollama/llama3.1:8b "open System Settings"
 peekaboo agent --model lmstudio/openai/gpt-oss-120b "summarize this window"
 ```
 
-Defaults come from `agent.defaultModel` in `~/.peekaboo/config.json`. Anthropic defaults use Opus 5; select Fable 5,
-Sonnet 5, or an older model explicitly when needed. Set a per-project default with `PEEKABOO_AGENT_MODEL`.
+Defaults come from `agent.defaultModel` and `aiProviders.providers` in `~/.peekaboo/config.json`. New generated
+configurations select GPT-5.6 and Opus 5. If Anthropic credentials are discovered without any saved provider
+selection, Peekaboo keeps the compatibility fallback on Opus 4.8 for zero-retention organizations. Explicit CLI,
+configuration, and persisted-session model selections are never upgraded to a different model. The generic `gpt`,
+`openai`, and `openai/gpt` shortcuts select GPT-5.6 Sol; a concrete model such as `gpt-5-mini` stays GPT-5 Mini.
+Set a per-project default with `PEEKABOO_AGENT_MODEL`.
 
 The app and CLI share `agent.temperature` and `agent.maxTokens`. Peekaboo clamps those requests to provider
 capabilities; Peekaboo currently catalogs Opus 5, Fable 5, and Sonnet 5 with 1M context windows and up to 128K output. See

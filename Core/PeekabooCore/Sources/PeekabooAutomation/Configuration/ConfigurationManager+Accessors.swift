@@ -46,16 +46,29 @@ extension ConfigurationManager {
             return true
         }
 
-        guard let providers = self.configuration?.aiProviders?.providers?
-            .trimmingCharacters(in: .whitespacesAndNewlines),
-            !providers.isEmpty
-        else {
-            return false
-        }
+        guard let providers = self.configuredAIProviderList() else { return false }
 
         return !Self.isGeneratedAIProviderList(
             providers,
             configuredDefault: self.configuration?.agent?.defaultModel)
+    }
+
+    /// Whether a provider list is stored in the user's configuration file.
+    ///
+    /// This deliberately excludes built-in defaults and environment overrides so callers can distinguish a saved
+    /// model selection from credential-only discovery.
+    public func hasConfiguredAIProviderList() -> Bool {
+        self.configuredAIProviderList() != nil
+    }
+
+    private func configuredAIProviderList() -> String? {
+        guard let providers = self.configuration?.aiProviders?.providers?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+            !providers.isEmpty
+        else {
+            return nil
+        }
+        return providers
     }
 
     public static func isGeneratedAIProviderList(_ providers: String, configuredDefault: String?) -> Bool {

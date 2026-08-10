@@ -174,13 +174,56 @@ struct PeekabooAIServiceTests {
 
     @Test
     @MainActor
-    func `Falls back to Anthropic when only Anthropic key is present`() {
+    func `Auth-only Anthropic fallback remains zero-retention compatible`() throws {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekaboo-config-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+
+        setenv("PEEKABOO_CONFIG_DIR", tempDir.path, 1)
+        setenv("PEEKABOO_CONFIG_DISABLE_MIGRATION", "1", 1)
         setenv("ANTHROPIC_API_KEY", "key", 1)
         unsetenv("OPENAI_API_KEY")
-        unsetenv("PEEKABOO_CONFIG_DIR")
         defer {
+            unsetenv("PEEKABOO_CONFIG_DIR")
+            unsetenv("PEEKABOO_CONFIG_DISABLE_MIGRATION")
             unsetenv("ANTHROPIC_API_KEY")
             ConfigurationManager.shared.resetForTesting()
+            try? FileManager.default.removeItem(at: tempDir)
+        }
+
+        ConfigurationManager.shared.resetForTesting()
+        _ = ConfigurationManager.shared.loadConfiguration()
+
+        let service = PeekabooAIService()
+        #expect(service.resolvedDefaultModel == .anthropic(.opus48))
+        #expect(service.availableModels() == [.anthropic(.opus48)])
+    }
+
+    @Test
+    @MainActor
+    func `Saved current provider generation selects Opus 5`() throws {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekaboo-config-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        try """
+        {
+          "aiProviders": { "providers": "openai/gpt-5.6,anthropic/claude-opus-5" }
+        }
+        """.write(
+            to: tempDir.appendingPathComponent("config.json"),
+            atomically: true,
+            encoding: .utf8)
+
+        setenv("PEEKABOO_CONFIG_DIR", tempDir.path, 1)
+        setenv("PEEKABOO_CONFIG_DISABLE_MIGRATION", "1", 1)
+        setenv("ANTHROPIC_API_KEY", "key", 1)
+        unsetenv("OPENAI_API_KEY")
+        defer {
+            unsetenv("PEEKABOO_CONFIG_DIR")
+            unsetenv("PEEKABOO_CONFIG_DISABLE_MIGRATION")
+            unsetenv("ANTHROPIC_API_KEY")
+            ConfigurationManager.shared.resetForTesting()
+            try? FileManager.default.removeItem(at: tempDir)
         }
 
         ConfigurationManager.shared.resetForTesting()

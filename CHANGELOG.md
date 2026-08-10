@@ -3,7 +3,7 @@
 ## [4.0.1] - Unreleased
 
 ### Changed
-- Default new agent configurations and generation fallbacks to GPT-5.6 and Claude Opus 5.
+- Default new agent configurations to GPT-5.6 and Claude Opus 5 while keeping credential-only Anthropic discovery on Opus 4.8 for zero-retention compatibility and preserving explicit model selections.
 
 ### Fixed
 - Keep background app launch/open ownership through verified focus reconciliation, restoring only the exact prior process generation while treating transient frontmost uncertainty and later user foreground choices conservatively.

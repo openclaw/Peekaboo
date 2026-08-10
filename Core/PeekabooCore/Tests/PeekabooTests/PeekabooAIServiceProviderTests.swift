@@ -423,6 +423,34 @@ struct PeekabooAIServiceProviderTests {
 
     @Test
     @MainActor
+    func `Auth-only Anthropic discovery keeps the compatibility model`() throws {
+        try self.withIsolatedEnvironment(["ANTHROPIC_API_KEY": "key"]) {
+            let service = PeekabooAIService()
+            #expect(service.resolvedDefaultModel == .anthropic(.opus48))
+            #expect(service.availableModels() == [.anthropic(.opus48)])
+        }
+    }
+
+    @Test
+    @MainActor
+    func `Saved current provider generation selects Opus 5`() throws {
+        try self.withIsolatedEnvironment(
+            ["ANTHROPIC_API_KEY": "key"],
+            configurationJSON: """
+            {
+              "aiProviders": {
+                "providers": "openai/gpt-5.6,anthropic/claude-opus-5"
+              }
+            }
+            """) {
+                let service = PeekabooAIService()
+                #expect(service.resolvedDefaultModel == .anthropic(.opus5))
+                #expect(service.availableModels() == [.anthropic(.opus5)])
+            }
+    }
+
+    @Test
+    @MainActor
     func `Falls back to Gemini when only Gemini key is present`() throws {
         try self.withIsolatedEnvironment(["GEMINI_API_KEY": "key"]) {
             let service = PeekabooAIService()

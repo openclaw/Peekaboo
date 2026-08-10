@@ -17,6 +17,9 @@ final class SessionTitleGenerator {
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
         let hasOpenAI = self.configuration.hasOpenAIAuth()
         let hasAnthropic = self.configuration.hasAnthropicAuth()
+        let hasProviderSelection = self.configuration.hasConfiguredAIProviderList() ||
+            self.configuration.hasExplicitAIProviderList()
+        let configuredDefault = self.configuration.getAgentModel()
 
         return await withTaskGroup(of: String.self) { group in
             group.addTask { await Self.timeoutTitle() }
@@ -26,7 +29,9 @@ final class SessionTitleGenerator {
                     for: task,
                     providers: providerTokens,
                     hasOpenAI: hasOpenAI,
-                    hasAnthropic: hasAnthropic)
+                    hasAnthropic: hasAnthropic,
+                    hasProviderSelection: hasProviderSelection,
+                    configuredDefault: configuredDefault)
             }
 
             for await result in group {
@@ -60,13 +65,17 @@ final class SessionTitleGenerator {
         for task: String,
         providers: [String],
         hasOpenAI: Bool,
-        hasAnthropic: Bool) async -> String
+        hasAnthropic: Bool,
+        hasProviderSelection: Bool,
+        configuredDefault: String?) async -> String
     {
         do {
             let model = Self.selectModel(
                 providers: providers,
                 hasOpenAI: hasOpenAI,
-                hasAnthropic: hasAnthropic)
+                hasAnthropic: hasAnthropic,
+                hasProviderSelection: hasProviderSelection,
+                configuredDefault: configuredDefault)
             let prompt = self.buildPrompt(for: task)
 
             let result = try await generateText(
@@ -83,28 +92,57 @@ final class SessionTitleGenerator {
     static func selectModel(
         providers: [String],
         hasOpenAI: Bool,
-        hasAnthropic: Bool) -> LanguageModel
+        hasAnthropic: Bool,
+        hasProviderSelection: Bool = true,
+        configuredDefault: String? = nil) -> LanguageModel
     {
-        if hasAnthropic,
+        if let configuredDefault,
+           let configuredModel = LanguageModel.parse(from: configuredDefault)
+        {
+            switch configuredModel {
+            case .anthropic where hasAnthropic:
+                return configuredModel
+            case .openai where hasOpenAI:
+                return configuredModel
+            default:
+                break
+            }
+        }
+
+        if hasProviderSelection,
+           hasAnthropic,
            let configuredAnthropic = self.configuredModel(for: "anthropic", in: providers)
         {
             return configuredAnthropic
         }
-        if providers.contains(where: { $0 == "anthropic" || $0.hasPrefix("anthropic/") }), hasAnthropic {
+        if hasProviderSelection,
+           providers.contains(where: { $0 == "anthropic" || $0.hasPrefix("anthropic/") }),
+           hasAnthropic
+        {
             return .anthropic(.opus5)
         }
-        if hasOpenAI,
+        if hasProviderSelection,
+           hasOpenAI,
            let configuredOpenAI = self.configuredModel(for: "openai", in: providers)
         {
             return configuredOpenAI
         }
-        if providers.contains(where: { $0 == "openai" || $0.hasPrefix("openai/") }), hasOpenAI {
+        if hasProviderSelection,
+           providers.contains(where: { $0 == "openai" || $0.hasPrefix("openai/") }),
+           hasOpenAI
+        {
             return .openai(.gpt56Sol)
         }
-        if providers.contains(where: { $0 == "ollama" || $0.hasPrefix("ollama/") }) {
+        if hasProviderSelection, providers.contains(where: { $0 == "ollama" || $0.hasPrefix("ollama/") }) {
             return .ollama(.llama33)
         }
-        return .anthropic(.opus5)
+        if hasAnthropic {
+            return .anthropic(.opus48)
+        }
+        if hasOpenAI {
+            return .openai(.gpt56Sol)
+        }
+        return .anthropic(.opus48)
     }
 
     private static func configuredModel(for provider: String, in selections: [String]) -> LanguageModel? {

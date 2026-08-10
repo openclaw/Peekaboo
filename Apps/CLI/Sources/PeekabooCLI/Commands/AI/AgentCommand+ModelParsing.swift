@@ -22,6 +22,10 @@ extension AgentCommand {
             .first
             .map { String($0).lowercased() }
 
+        if Self.genericOpenAIAliases.contains(trimmed.lowercased()) {
+            return .openai(.gpt56Sol)
+        }
+
         if trimmed.caseInsensitiveCompare("claude") == .orderedSame ||
             trimmed.caseInsensitiveCompare("anthropic") == .orderedSame {
             return .anthropic(.opus5)
@@ -56,12 +60,7 @@ extension AgentCommand {
         switch parsed {
         case let .openai(model):
             if Self.supportedOpenAIInputs.contains(model) {
-                // GPT-5.6 models route as themselves; older supported aliases
-                // collapse to the current flagship.
-                if Self.gpt56Models.contains(model) {
-                    return .openai(model)
-                }
-                return .openai(.gpt56Sol)
+                return .openai(model)
             }
         case let .anthropic(model):
             if Self.supportedAnthropicInputs.contains(model) {
@@ -248,10 +247,10 @@ extension AgentCommand {
         .gpt5Nano,
     ]
 
-    private static let gpt56Models: Set<LanguageModel.OpenAI> = [
-        .gpt56Sol,
-        .gpt56Terra,
-        .gpt56Luna,
+    private static let genericOpenAIAliases: Set<String> = [
+        "gpt",
+        "openai",
+        "openai/gpt",
     ]
 
     private static let supportedAnthropicInputs: Set<LanguageModel.Anthropic> = [

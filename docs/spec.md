@@ -119,7 +119,7 @@ Common helpers:
 - Lives under `Apps/CLI/Sources/PeekabooCLI/Commands/AI/AgentCommand.swift`.
 - Supports `agent run`, `agent resume [session-id]`, `agent sessions`, `agent chat`, `--dry-run`, `--max-steps`, `--no-cache`, and audio options.
 - Output modes (`minimal`, `compact`, `enhanced`, `quiet`, `verbose`) adapt to terminal capabilities via `TerminalDetector`.
-- Uses Tachikoma to call GPT-5.5, Claude Fable 5/Opus 4.8, or Gemini 3.1. Session metadata is stored via `AgentSessionInfo` for resume flows.
+- Uses Tachikoma to call the GPT-5.6/5.5/5.4/5 families, Claude Opus 5/Fable 5/Sonnet 5 and compatible 4.x models, or Gemini 3.x. New configurations select GPT-5.6 and Opus 5; credential-only Anthropic discovery stays on Opus 4.8 for zero-retention compatibility. Session metadata stores the exact model selection for resume flows.
 
 ### 7.2 MCP (`peekaboo mcp`)
 - `serve` starts `PeekabooMCPServer` over stdio/HTTP/SSE.

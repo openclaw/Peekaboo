@@ -18,7 +18,7 @@ read_when:
 | `chat [initial-prompt]` | Start the interactive chat loop. |
 | `--dry-run` | Validate and echo the task without calling a model, invoking tools, or creating a session. |
 | `--max-steps <n>` | Cap model turns to `1...100` (default: 100). One turn may contain multiple tool calls. |
-| `--model gpt-5.6|claude-opus-5|claude-fable-5|claude-sonnet-5|gemini-3-flash|minimax|minimax-cn/<model>|openrouter/<provider>/<model>|ollama/<model>|lmstudio/<model>` | Override the default model (`claude-opus-5`). Input is validated against supported hosted providers and local model providers. |
+| `--model gpt-5.6|gpt-5-mini|claude-opus-5|claude-fable-5|claude-sonnet-5|gemini-3-flash|minimax|minimax-cn/<model>|openrouter/<provider>/<model>|ollama/<model>|lmstudio/<model>` | Override the configured model. Concrete OpenAI and Anthropic selections are preserved; generic `gpt`/`openai` select GPT-5.6 Sol. Input is validated against supported hosted providers and local model providers. |
 | `--no-cache` | Run ephemerally without saving a resumable session. Cannot be combined with resume/list flags. |
 | `--quiet` / `--simple` / `--no-color` / `--debug-terminal` | Control output mode; the command auto-detects terminal capabilities when you don’t override it. |
 | `--audio` / `--audio-file <path>` | Use microphone input or pipe audio from disk. |
@@ -28,6 +28,7 @@ read_when:
 - Session metadata lives inside `agentService` (PeekabooCore). `agent resume` grabs the most recent session, `agent sessions` prints the cached list, and `--no-cache` keeps a run in memory.
 - Agent execution stays in the caller process by default. Pass the global `--bridge-socket <path>` option to route its tools through one specific Bridge host; `--no-remote` keeps the run strictly caller-local.
 - All agent executions run under `CommandRuntime.makeDefault()`, so environment variables, credentials, and logging levels match the top-level CLI state.
+- New configurations select GPT-5.6 and Opus 5. Credential-only Anthropic discovery uses Opus 4.8 for zero-retention compatibility, while saved configuration and session model pins remain unchanged.
 - `--dry-run` is a zero-provider task preview: it echoes the task without model reasoning, tool calls, or a resumable session.
 - Audio flags wire into Tachikoma’s audio stack: `--audio` opens the microphone and `--audio-file` loads a WAV/CAF file.
 - Generation uses `agent.temperature` and `agent.maxTokens` from the shared config written by the macOS Settings UI.

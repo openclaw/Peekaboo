@@ -475,7 +475,7 @@ public final class PeekabooAIService {
             return parsed
         }
 
-        if !parsed.isEmpty {
+        if configuration.hasConfiguredAIProviderList(), !parsed.isEmpty {
             let available = parsed.filter { self.hasCredentialsOrLocalRuntime(for: $0, configuration: configuration) }
             if !available.isEmpty {
                 return self.appendingGeneratedVisionFallbacks(from: parsed, to: available)
@@ -492,7 +492,7 @@ public final class PeekabooAIService {
 
         // Fallback: prefer Anthropic if any auth (API key or OAuth) is present
         if configuration.hasAnthropicAuth() {
-            return self.appendingGeneratedVisionFallbacks(from: parsed, to: [.anthropic(.opus5)])
+            return self.appendingGeneratedVisionFallbacks(from: parsed, to: [.anthropic(.opus48)])
         }
         if let key = configuration.getGeminiAPIKey(), !key.isEmpty {
             return self.appendingGeneratedVisionFallbacks(from: parsed, to: [.google(.gemini35Flash)])

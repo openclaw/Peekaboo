@@ -130,7 +130,7 @@ public enum AIProviderParser {
 
         // Fall back to hardcoded defaults based on what's available
         if hasAnthropic {
-            return "claude-opus-5"
+            return "claude-opus-4-8"
         } else if hasOpenAI {
             return "gpt-5.6"
         } else if hasGemini {
