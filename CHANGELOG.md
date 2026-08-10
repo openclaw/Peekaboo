@@ -3,6 +3,10 @@
 ## [4.0.1] - Unreleased
 
 ### Fixed
+- Stop `peekaboo learn` from documenting a `shell` tool that no longer exists. The curated
+  agent copy kept its own name table, so agents were taught `peekaboo shell "..."`, which fails
+  with an unknown-command error and gets no migration hint. A contract test now fails if the
+  curated copy documents any tool the runtime does not expose.
 - Ensure action-command JSON validation failures before dispatch report
   `effect: refused`, including parser and binding errors.
 - Verify app focus against the exact active Workspace PID and visible frontmost-window PID, retry through native AX activation, and report the verified effect as confirmed instead of claiming success for an unfulfilled request.

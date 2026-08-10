@@ -18,6 +18,12 @@ public enum ToolRegistry {
         let agentGuidance: String?
     }
 
+    /// Tool names carrying curated `learn` copy. Exposed so a contract test can
+    /// keep this table from documenting a tool the runtime no longer exposes.
+    static var overriddenToolNames: Set<String> {
+        Set(self.toolOverrides.keys)
+    }
+
     private static let toolOverrides: [String: ToolOverride] = [
         "see": ToolOverride(
             category: .vision,
@@ -57,10 +63,14 @@ public enum ToolRegistry {
             - Smart waiting keeps checking until the element is reachable
             - Snapshot-aware IDs avoid ambiguity when multiple matches exist
 
+            CLICK KIND
+            - `--double` for a double-click, `--right` for a secondary click
+            - `--long-press` presses and holds, and requires `--foreground`
+
             EXAMPLE
             peekaboo see --app Safari --json
             peekaboo click \"Submit\" --app Safari --snapshot "$SNAPSHOT_ID" --wait-for 1500ms
-            peekaboo click --on "$ELEMENT_ID" --snapshot "$SNAPSHOT_ID"
+            peekaboo click --on "$ELEMENT_ID" --snapshot "$SNAPSHOT_ID" --double
 
             TROUBLESHOOTING
             If the element isn't found, refresh the snapshot with a fresh observation (`peekaboo see`
@@ -96,24 +106,6 @@ public enum ToolRegistry {
             ],
             agentGuidance: "Remember to escape newline/tab characters when providing prompts; " +
                 "literal newlines may be interpreted by the shell."),
-        "shell": ToolOverride(
-            category: .system,
-            abstract: "Run shell commands with quoting guidance and examples.",
-            discussion: """
-            Runs shell commands directly from Peekaboo. Always quote your command when it contains spaces
-            or shell metacharacters.
-
-            EXAMPLE
-            peekaboo shell \"ls -la \\\"/Applications/Utilities\\\"\"
-            peekaboo shell --command 'bash -lc \"echo \\\"Hello\\\"\"'
-            """,
-            examples: [
-                "peekaboo shell \"open -a Safari\"",
-                "peekaboo shell --command 'bash -lc \"whoami\"'",
-            ],
-            agentGuidance: """
-            Use single quotes around the entire command and escape internal quotes when interacting via shells.
-            """),
         "clipboard": ToolOverride(
             category: .system,
             abstract: "Read/write the macOS clipboard (text, images, files) with save/restore slots.",

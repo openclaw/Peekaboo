@@ -130,6 +130,16 @@ jobs:
           swift test --no-parallel --filter PeekabooAgentSessionSafetyTests
           swift test --no-parallel --filter PeekabooAgentStreamTerminalIntegrityTests
 
+      - name: Run agent-surface contract tests
+        working-directory: Core/PeekabooCore
+        # These guard the tables that silently rot: the curated `learn` copy, the
+        # MCP snapshot-effect classification, and the agent tool descriptions.
+        # The full Core suite is too slow for CI, so name the guards explicitly.
+        run: |
+          swift test --no-parallel --filter ToolRegistryContractTests
+          swift test --no-parallel --filter MCPToolSnapshotMutationTests
+          swift test --no-parallel --filter AgentToolDescriptionTests
+
   peekaboo-cli:
     name: Peekaboo CLI build & tests
     runs-on: macos-26
