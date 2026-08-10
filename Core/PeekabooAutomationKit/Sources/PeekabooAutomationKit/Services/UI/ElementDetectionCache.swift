@@ -85,6 +85,12 @@ import PeekabooFoundation
     }
 
     public func store(_ elements: [DetectedElement], truncationInfo: DetectionTruncationInfo? = nil, for key: Key) {
+        if truncationInfo?.deadlineReached == true || truncationInfo?.incompleteAccessibilityRead == true {
+            // A retry may use a longer timeout or the target may recover from a transient AX refusal.
+            // Remove any older entry too: replaying stale completeness is less honest than recollecting.
+            self.entries.removeValue(forKey: key)
+            return
+        }
         self.entries[key] = Entry(
             cachedAt: self.now(),
             result: CachedElements(elements: elements, truncationInfo: truncationInfo))

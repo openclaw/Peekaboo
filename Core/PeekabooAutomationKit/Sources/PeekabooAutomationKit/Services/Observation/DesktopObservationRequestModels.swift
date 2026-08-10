@@ -183,14 +183,24 @@ extension DetectionTruncationInfo {
 
         let limitSummary = limits.isEmpty ? "the AX traversal budget" : limits.joined(separator: ", ")
         if self.incompleteAccessibilityRead {
-            return "Warning: AX tree incomplete at \(limitSummary). Retry the observation; if the problem persists, " +
-                "use a narrower target or a longer caller timeout."
+            return "Warning: AX tree incomplete at \(limitSummary). Retry once; if this persists, the target may " +
+                "not expose a readable Accessibility tree. Use a narrower window target or screenshot/OCR; " +
+                "increase the timeout only when the app is slow to respond."
         }
         if self.deadlineReached {
-            return "Warning: AX tree truncated at \(limitSummary). Retry with a longer caller timeout, a narrower " +
-                "target, or larger AX traversal limits."
+            let structuralLimits: [String] = ([
+                self.maxDepthReached ? "--depth" : nil,
+                self.maxElementCountReached ? "--max-elements" : nil,
+                self.maxChildrenPerNodeReached ? "--max-children" : nil,
+            ] as [String?]).compactMap(\.self)
+            let structuralGuidance = structuralLimits.isEmpty
+                ? ""
+                : " The result also reached \(structuralLimits.joined(separator: ", ")); " +
+                "use larger AX traversal limits only for those reported caps."
+            return "Warning: AX tree truncated at \(limitSummary). Retry with a longer caller timeout or a " +
+                "narrower target.\(structuralGuidance)"
         }
-        return "Warning: AX tree truncated at \(limitSummary). Retry with larger --max-depth, --max-elements, " +
+        return "Warning: AX tree truncated at \(limitSummary). Retry with larger --depth, --max-elements, " +
             "or --max-children values, or set \(AXTraversalBudget.maxDepthEnvironmentKey), " +
             "\(AXTraversalBudget.maxElementCountEnvironmentKey), or " +
             "\(AXTraversalBudget.maxChildrenPerNodeEnvironmentKey)."

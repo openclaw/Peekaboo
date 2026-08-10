@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Stop the curated `learn` copy from presenting `shell` as a CLI command: it remains a built-in Agent capability but is not in the MCP catalog and has no `peekaboo shell` CLI root.
 - Ensure action-command JSON validation failures before dispatch report `effect: refused`, including parser and binding errors.
 - Verify app focus against the exact active Workspace PID and visible frontmost-window PID, retry through native AX activation, and report the verified effect as confirmed instead of claiming success for an unfulfilled request.
+- Honor explicit `see` timeouts beyond 20 seconds, rerun deadline/incomplete AX retries instead of replaying cache, distinguish incomplete reads from expired deadlines, and keep CLI/MCP guidance accurate.
 
 ## [4.0.0] - 2026-08-10
 

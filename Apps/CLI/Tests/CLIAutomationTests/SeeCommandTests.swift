@@ -21,6 +21,59 @@ struct SeeCommandTests {
 
         #expect(summary.deadline_reached)
         #expect(summary.warning.contains("deadline"))
+        #expect(!summary.warning.contains("larger AX traversal limits"))
+    }
+
+    @Test
+    func `CLI deadline warning mentions larger traversal limits only for reported structural caps`() throws {
+        let metadata = DetectionMetadata(
+            detectionTime: 0,
+            elementCount: 0,
+            method: "accessibility",
+            truncationInfo: DetectionTruncationInfo(
+                maxDepthReached: true,
+                deadlineReached: true
+            )
+        )
+
+        let summary = try #require(SeeTruncationSummary(metadata: metadata))
+
+        #expect(summary.warning.contains("--depth"))
+        #expect(summary.warning.contains("larger AX traversal limits"))
+        #expect(!summary.warning.contains("--max-elements"))
+        #expect(!summary.warning.contains("--max-children"))
+    }
+
+    @Test
+    func `CLI structural warning uses the current depth flag`() throws {
+        let metadata = DetectionMetadata(
+            detectionTime: 0,
+            elementCount: 1,
+            method: "accessibility",
+            truncationInfo: DetectionTruncationInfo(maxDepthReached: true)
+        )
+
+        let summary = try #require(SeeTruncationSummary(metadata: metadata))
+
+        #expect(summary.warning.contains("--depth"))
+        #expect(!summary.warning.contains("--max-depth"))
+    }
+
+    @Test
+    func `CLI incomplete AX warning does not promise that a longer timeout fixes app refusal`() throws {
+        let metadata = DetectionMetadata(
+            detectionTime: 0,
+            elementCount: 0,
+            method: "accessibility",
+            truncationInfo: DetectionTruncationInfo(incompleteAccessibilityRead: true)
+        )
+
+        let summary = try #require(SeeTruncationSummary(metadata: metadata))
+
+        #expect(!summary.deadline_reached)
+        #expect(summary.incomplete_accessibility_read)
+        #expect(summary.warning.contains("may not expose a readable Accessibility tree"))
+        #expect(summary.warning.contains("increase the timeout only when the app is slow"))
     }
 
     @Test

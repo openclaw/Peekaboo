@@ -222,6 +222,36 @@ final class AXTreeCollectorBudgetTests: XCTestCase {
         XCTAssertNotEqual(withoutMenuBar, withMenuBar)
     }
 
+    func testElementCacheDoesNotStoreDeadlineResults() throws {
+        let cache = ElementDetectionCache()
+        let key = try XCTUnwrap(cache.key(windowID: 42, processID: 123, allowWebFocus: false))
+        cache.store([], for: key)
+        XCTAssertNotNil(cache.result(for: key))
+
+        cache.store([], truncationInfo: DetectionTruncationInfo(deadlineReached: true), for: key)
+
+        XCTAssertNil(cache.result(for: key))
+    }
+
+    func testElementCacheDoesNotStoreIncompleteAccessibilityResults() throws {
+        let cache = ElementDetectionCache()
+        let key = try XCTUnwrap(cache.key(windowID: 42, processID: 123, allowWebFocus: false))
+
+        cache.store([], truncationInfo: DetectionTruncationInfo(incompleteAccessibilityRead: true), for: key)
+
+        XCTAssertNil(cache.result(for: key))
+    }
+
+    func testElementCachePreservesStructuralLimitResults() throws {
+        let cache = ElementDetectionCache()
+        let key = try XCTUnwrap(cache.key(windowID: 42, processID: 123, allowWebFocus: false))
+        let truncation = DetectionTruncationInfo(maxDepthReached: true)
+
+        cache.store([], truncationInfo: truncation, for: key)
+
+        XCTAssertEqual(cache.result(for: key)?.truncationInfo, truncation)
+    }
+
     func testExactWindowResolutionDoesNotActivateBackgroundApplication() async throws {
         guard let originalFrontmost = NSWorkspace.shared.frontmostApplication else {
             throw XCTSkip("No frontmost application available")

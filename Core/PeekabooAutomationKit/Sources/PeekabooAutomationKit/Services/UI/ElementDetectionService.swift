@@ -94,7 +94,9 @@ public final class ElementDetectionService {
         let allowWebFocus = windowContext?.shouldFocusWebContent ?? false
         let includeMenuBarElements = windowContext?.includeMenuBarElements ?? true
         let budget = AXTraversalBudget.normalizedForTraversal(windowContext?.traversalBudget)
-        let usesDefaultBudget = budget == AXTraversalBudget()
+        let canReuseAXTree = Self.shouldUseAXTreeCache(
+            budget: budget,
+            requiresFreshAccessibilityTree: windowContext?.requiresFreshAccessibilityTree == true)
         let resolvedWindowBounds = windowContext?.windowBounds ?? windowResolution.window.frame()
         let resolvedWindowMutationIdentity = try Self.validatedExactWindowReceipt(
             windowID: windowContext?.windowID,
@@ -129,7 +131,7 @@ public final class ElementDetectionService {
         let detectedElements: [DetectedElement]
         let usedCache: Bool
         let truncationInfo: DetectionTruncationInfo?
-        let cacheKey = usesDefaultBudget && windowContext?.requiresFreshAccessibilityTree != true
+        let cacheKey = canReuseAXTree
             ? self.axTreeCache.key(
                 windowID: resolvedWindowID,
                 processID: targetApp.processIdentifier,
@@ -188,9 +190,16 @@ public final class ElementDetectionService {
         self.axTreeCache.removeAll()
     }
 
-    private static func normalizedAccessibilityTimeout(_ requested: TimeInterval?) -> TimeInterval {
+    static func normalizedAccessibilityTimeout(_ requested: TimeInterval?) -> TimeInterval {
         guard let requested, requested.isFinite else { return 20 }
-        return min(max(requested, 0.05), 20)
+        return max(requested, 0.05)
+    }
+
+    static func shouldUseAXTreeCache(
+        budget: AXTraversalBudget,
+        requiresFreshAccessibilityTree: Bool) -> Bool
+    {
+        !requiresFreshAccessibilityTree && budget == AXTraversalBudget()
     }
 
     private func inspectReadOnlyElements(
@@ -213,7 +222,9 @@ public final class ElementDetectionService {
 
         let includeMenuBarElements = context?.includeMenuBarElements ?? true
         let budget = AXTraversalBudget.normalizedForTraversal(context?.traversalBudget)
-        let usesDefaultBudget = budget == AXTraversalBudget()
+        let canReuseAXTree = Self.shouldUseAXTreeCache(
+            budget: budget,
+            requiresFreshAccessibilityTree: context?.requiresFreshAccessibilityTree == true)
         let preliminaryContext = WindowContext(
             applicationName: context?.applicationName ?? targetApp.localizedName,
             applicationBundleId: context?.applicationBundleId ?? targetApp.bundleIdentifier,
@@ -234,7 +245,7 @@ public final class ElementDetectionService {
             return gameBridgeResult
         }
 
-        let cacheKey = usesDefaultBudget && context?.requiresFreshAccessibilityTree != true
+        let cacheKey = canReuseAXTree
             ? self.axTreeCache.key(
                 windowID: context?.windowID,
                 processID: processIdentifier,

@@ -174,6 +174,47 @@ struct DetachedAXObservationWorkerTests {
     }
 
     @Test
+    func `exact window AX refusal is incomplete rather than a fake deadline`() {
+        let immediate = DetachedAXObservationWorker.exactWindowResolutionFailureTruncation(
+            deadlineReached: false)
+        let expired = DetachedAXObservationWorker.exactWindowResolutionFailureTruncation(
+            deadlineReached: true)
+
+        #expect(immediate.incompleteAccessibilityRead)
+        #expect(!immediate.deadlineReached)
+        #expect(expired.deadlineReached)
+        #expect(!expired.incompleteAccessibilityRead)
+    }
+
+    @Test
+    @MainActor
+    func `explicit accessibility timeout is not silently capped`() {
+        #expect(ElementDetectionService.normalizedAccessibilityTimeout(nil) == 20)
+        #expect(ElementDetectionService.normalizedAccessibilityTimeout(60) == 60)
+        #expect(ElementDetectionService.normalizedAccessibilityTimeout(0.01) == 0.05)
+    }
+
+    @Test
+    @MainActor
+    func `materially different traversal budgets bypass AX cache`() {
+        #expect(ElementDetectionService.shouldUseAXTreeCache(
+            budget: AXTraversalBudget(),
+            requiresFreshAccessibilityTree: false))
+        #expect(!ElementDetectionService.shouldUseAXTreeCache(
+            budget: AXTraversalBudget(maxDepth: 4),
+            requiresFreshAccessibilityTree: false))
+        #expect(!ElementDetectionService.shouldUseAXTreeCache(
+            budget: AXTraversalBudget(maxElementCount: 120),
+            requiresFreshAccessibilityTree: false))
+        #expect(!ElementDetectionService.shouldUseAXTreeCache(
+            budget: AXTraversalBudget(maxChildrenPerNode: 40),
+            requiresFreshAccessibilityTree: false))
+        #expect(!ElementDetectionService.shouldUseAXTreeCache(
+            budget: AXTraversalBudget(),
+            requiresFreshAccessibilityTree: true))
+    }
+
+    @Test
     func `process reuse before detached worker fails closed`() {
         let request = Self.identityRequest()
 

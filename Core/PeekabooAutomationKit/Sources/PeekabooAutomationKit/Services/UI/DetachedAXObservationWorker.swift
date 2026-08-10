@@ -185,7 +185,10 @@ enum DetachedAXObservationWorker {
         do {
             window = try self.resolveWindow(application: application, request: request, deadline: deadline)
         } catch {
-            if let fallback = self.exactWindowUnavailableResult(request) {
+            if let fallback = self.exactWindowUnavailableResult(
+                request,
+                deadlineReached: ContinuousClock.now >= deadline)
+            {
                 try self.validateIdentity(request)
                 return fallback
             }
@@ -271,7 +274,8 @@ enum DetachedAXObservationWorker {
     }
 
     private static func exactWindowUnavailableResult(
-        _ request: DetachedAXObservationRequest) -> DetachedAXObservationResult?
+        _ request: DetachedAXObservationRequest,
+        deadlineReached: Bool) -> DetachedAXObservationResult?
     {
         guard let requestedID = request.windowID,
               let windowID = CGWindowID(exactly: requestedID),
@@ -286,7 +290,17 @@ enum DetachedAXObservationWorker {
             windowTitle: identity.title,
             windowBounds: identity.bounds,
             isDialog: self.isFileDialogTitle(identity.title),
-            truncationInfo: DetectionTruncationInfo(deadlineReached: true))
+            truncationInfo: self.exactWindowResolutionFailureTruncation(
+                deadlineReached: deadlineReached))
+    }
+
+    static func exactWindowResolutionFailureTruncation(
+        deadlineReached: Bool) -> DetectionTruncationInfo
+    {
+        if deadlineReached {
+            return DetectionTruncationInfo(deadlineReached: true)
+        }
+        return DetectionTruncationInfo(incompleteAccessibilityRead: true)
     }
 
     private static func resolveWindow(
