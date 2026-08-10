@@ -1,10 +1,10 @@
 # Changelog
 
-## [4.0.0] - 2026-08-10
+## [4.0.0] - Unreleased
 
-Peekaboo 4 is a ground-up cleanup of the command surface: fewer commands, one spelling
+Peekaboo 4 will be a ground-up cleanup of the command surface: fewer commands, one spelling
 per operation, grammars your agent already knows, and honest machine-readable results.
-It is a breaking release — see `docs/v4-migration.md` for the complete old→new table.
+It will be a breaking release — see `docs/v4-migration.md` for the complete old→new table.
 
 ### Highlights
 
