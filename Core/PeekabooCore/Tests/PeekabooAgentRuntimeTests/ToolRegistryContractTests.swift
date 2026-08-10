@@ -23,6 +23,7 @@ struct ToolRegistryContractTests {
             "action",
             "drag",
             "move",
+            "shell",
             "app",
             "window",
         ]))
@@ -30,7 +31,7 @@ struct ToolRegistryContractTests {
     }
 
     @Test
-    func `Curated learn copy only documents tools the runtime exposes`() {
+    func `Curated copy only overrides tools the runtime exposes`() {
         let services = PeekabooServices()
         services.installAgentRuntimeDefaults()
 
@@ -38,9 +39,7 @@ struct ToolRegistryContractTests {
         let documented = ToolRegistry.overriddenToolNames
         let orphaned = documented.subtracting(exposed).sorted()
 
-        // A stale entry here is not inert: `peekaboo learn` renders it, so agents
-        // are taught a tool that fails with an unknown-command error.
-        #expect(orphaned.isEmpty, "Curated copy documents unavailable tools: \(orphaned)")
+        #expect(orphaned.isEmpty, "Curated copy overrides unavailable runtime tools: \(orphaned)")
     }
 
     @Test

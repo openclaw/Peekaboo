@@ -1,6 +1,7 @@
 import Foundation
 import Subprocess
 import Testing
+@testable import PeekabooCLI
 
 enum CLIRuntimeEnvironment {
     static var shouldRunSmokeTests: Bool {
@@ -44,7 +45,8 @@ struct CLIRuntimeSmokeTests {
               let success = json["success"] as? Bool,
               success == false,
               let error = json["error"] as? [String: Any],
-              let code = error["code"] as? String else {
+              let code = error["code"] as? String
+        else {
             Issue.record("Expected successful app list JSON or structured permission error JSON.")
             return
         }
@@ -60,7 +62,8 @@ struct CLIRuntimeSmokeTests {
         let data = Data(payload.utf8)
         let object = try JSONSerialization.jsonObject(with: data)
         guard let json = object as? [String: Any],
-              let error = json["error"] as? [String: Any] else {
+              let error = json["error"] as? [String: Any]
+        else {
             Issue.record("Expected JSON parse-error output from window list.")
             return
         }
@@ -79,7 +82,8 @@ struct CLIRuntimeSmokeTests {
         let data = Data(payload.utf8)
         let object = try JSONSerialization.jsonObject(with: data)
         guard let json = object as? [String: Any],
-              let error = json["error"] as? [String: Any] else {
+              let error = json["error"] as? [String: Any]
+        else {
             Issue.record("Expected JSON parse-error output.")
             return
         }
@@ -129,7 +133,8 @@ struct CLIRuntimeSmokeTests {
         let data = Data(result.standardOutput.utf8)
         let object = try JSONSerialization.jsonObject(with: data)
         guard let json = object as? [String: Any],
-              let error = json["error"] as? [String: Any] else {
+              let error = json["error"] as? [String: Any]
+        else {
             Issue.record("Expected JSON parse-error output from tools command.")
             return
         }
@@ -148,7 +153,8 @@ struct CLIRuntimeSmokeTests {
         let data = Data(result.standardOutput.utf8)
         let object = try JSONSerialization.jsonObject(with: data)
         guard let json = object as? [String: Any],
-              let payload = json["data"] as? [String: Any] else {
+              let payload = json["data"] as? [String: Any]
+        else {
             Issue.record("Expected JSON object output from browser status.")
             return
         }
@@ -208,7 +214,8 @@ struct CLIRuntimeSmokeTests {
         let data = Data(result.standardOutput.utf8)
         let object = try JSONSerialization.jsonObject(with: data)
         guard let json = object as? [String: Any],
-              let error = json["error"] as? [String: Any] else {
+              let error = json["error"] as? [String: Any]
+        else {
             Issue.record("Expected JSON object output from config error.")
             return
         }
@@ -268,7 +275,8 @@ struct CLIRuntimeSmokeTests {
         let data = Data(payload.utf8)
         let object = try JSONSerialization.jsonObject(with: data)
         guard let json = object as? [String: Any],
-              let success = json["success"] as? Bool else {
+              let success = json["success"] as? Bool
+        else {
             Issue.record("Expected JSON object output from dialog list command.")
             return
         }
@@ -295,7 +303,7 @@ struct CLIRuntimeSmokeTests {
                 "--text",
                 text,
                 "--json",
-                "--no-remote"
+                "--no-remote",
             ])
             #expect(setResult.status == .exited(0))
 
@@ -303,7 +311,7 @@ struct CLIRuntimeSmokeTests {
                 "clipboard",
                 "get",
                 "--json",
-                "--no-remote"
+                "--no-remote",
             ])
             #expect(getResult.status == .exited(0))
             let payload = try Self.jsonDataPayload(from: getResult.standardOutput)
@@ -316,7 +324,7 @@ struct CLIRuntimeSmokeTests {
                 "--output",
                 "-",
                 "--json",
-                "--no-remote"
+                "--no-remote",
             ])
             #expect(stdoutJSONResult.status == .exited(0))
             let stdoutJSONPayload = try Self.jsonDataPayload(from: stdoutJSONResult.standardOutput)
@@ -327,7 +335,7 @@ struct CLIRuntimeSmokeTests {
                 "get",
                 "--output",
                 "-",
-                "--no-remote"
+                "--no-remote",
             ])
             #expect(stdoutResult.status == .exited(0))
             #expect(stdoutResult.standardOutput == text)
@@ -348,7 +356,7 @@ struct CLIRuntimeSmokeTests {
         let result = try await TestChildProcess.runPeekaboo([
             "agent",
             "list files",
-            "--dry-run"
+            "--dry-run",
         ], environment: ["PEEKABOO_DISABLE_AGENT": "1", "PEEKABOO_NO_REMOTE": "1"])
         #expect(result.status == .exited(1))
         #expect(result.standardOutput.contains("Agent service not available"))
@@ -372,8 +380,7 @@ struct CLIRuntimeSmokeTests {
         """.write(
             to: tempDir.appendingPathComponent("config.json"),
             atomically: true,
-            encoding: .utf8
-        )
+            encoding: .utf8)
 
         let result = try await TestChildProcess.runPeekaboo([
             "agent",
@@ -399,12 +406,27 @@ struct CLIRuntimeSmokeTests {
     }
 
     @Test
+    @MainActor
     func `peekaboo learn prints comprehensive guide`() async throws {
         guard Self.ensureLocalRuntimeAvailable() else { return }
         let result = try await TestChildProcess.runPeekaboo(["learn", "--no-remote"])
         #expect(result.status == .exited(0))
         #expect(result.standardOutput.contains("# Peekaboo Comprehensive Guide"))
         #expect(result.standardOutput.contains("## Commander Command Signatures"))
+
+        let registeredRoots = Set(CommandRegistry.definitions().map(\.name))
+        let expression = try NSRegularExpression(pattern: #"\bpeekaboo ([a-z][a-z0-9-]*)"#)
+        let output = result.standardOutput
+        let range = NSRange(output.startIndex..<output.endIndex, in: output)
+        let documentedRoots: Set<String> = Set(expression.matches(in: output, range: range)
+            .compactMap { match -> String? in
+                guard let rootRange = Range(match.range(at: 1), in: output) else { return nil }
+                return String(output[rootRange])
+            })
+        let unavailableRoots = documentedRoots.subtracting(registeredRoots).sorted()
+
+        #expect(documentedRoots.contains("click"))
+        #expect(unavailableRoots.isEmpty, "Learn documents unavailable CLI roots: \(unavailableRoots)")
     }
 
     @Test
@@ -437,8 +459,7 @@ struct CLIRuntimeSmokeTests {
         let startTime = Date()
         let result = try await TestChildProcess.runPeekaboo(
             ["visualizer", "--json", "--no-remote"],
-            environment: ["PEEKABOO_VISUAL_FEEDBACK": "false"]
-        )
+            environment: ["PEEKABOO_VISUAL_FEEDBACK": "false"])
         let duration = Date().timeIntervalSince(startTime)
 
         let payload = !result.standardOutput.isEmpty ? result.standardOutput : result.standardError
@@ -462,7 +483,7 @@ struct CLIRuntimeSmokeTests {
             "--slot",
             slot,
             "--json",
-            "--no-remote"
+            "--no-remote",
         ])
 
         guard saveResult.status == .exited(0) else {
@@ -478,7 +499,7 @@ struct CLIRuntimeSmokeTests {
                 "--slot",
                 slot,
                 "--json",
-                "--no-remote"
+                "--no-remote",
             ])
         } catch {
             _ = try? await TestChildProcess.runPeekaboo([
@@ -487,7 +508,7 @@ struct CLIRuntimeSmokeTests {
                 "--slot",
                 slot,
                 "--json",
-                "--no-remote"
+                "--no-remote",
             ])
             throw error
         }
@@ -498,7 +519,8 @@ struct CLIRuntimeSmokeTests {
         let object = try JSONSerialization.jsonObject(with: data)
         guard let json = object as? [String: Any],
               json["success"] as? Bool == true,
-              let payload = json["data"] as? [String: Any] else {
+              let payload = json["data"] as? [String: Any]
+        else {
             Issue.record("Expected successful JSON envelope.")
             return [:]
         }

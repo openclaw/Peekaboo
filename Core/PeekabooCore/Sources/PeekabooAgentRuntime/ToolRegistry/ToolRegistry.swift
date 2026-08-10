@@ -18,8 +18,8 @@ public enum ToolRegistry {
         let agentGuidance: String?
     }
 
-    /// Tool names carrying curated `learn` copy. Exposed so a contract test can
-    /// keep this table from documenting a tool the runtime no longer exposes.
+    /// Runtime tool names carrying curated copy. Exposed so a contract test can
+    /// keep this table synchronized with the agent/MCP tool surface.
     static var overriddenToolNames: Set<String> {
         Set(self.toolOverrides.keys)
     }
