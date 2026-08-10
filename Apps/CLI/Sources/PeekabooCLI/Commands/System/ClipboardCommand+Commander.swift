@@ -83,7 +83,8 @@ extension ClipboardCommand {
                         print("📋 Saved \(result.data.count) bytes (\(result.utiIdentifier)) to \(output)")
                     } else {
                         print(
-                            "📋 Clipboard contains \(result.data.count) bytes of \(result.utiIdentifier); use --output to save."
+                            "📋 Clipboard contains \(result.data.count) bytes of \(result.utiIdentifier); " +
+                                "use --output to save."
                         )
                     }
                 }
@@ -128,14 +129,7 @@ extension ClipboardCommand {
 
             do {
                 self.resolvedRuntime.beginInteractionMutation()
-                let request = try makeClipboardWriteRequest(
-                    text: self.text,
-                    filePath: self.filePath,
-                    dataBase64: self.dataBase64,
-                    uti: self.uti,
-                    alsoText: self.alsoText,
-                    allowLarge: self.allowLarge
-                )
+                let request = try makeClipboardWriteRequest(from: self)
                 let result = try self.services.clipboard.set(request)
                 let verification = try verifyClipboardWriteIfNeeded(
                     request: request,
@@ -328,38 +322,36 @@ extension ClipboardCommand.RestoreSubcommand: CommanderBindableCommand {
     }
 }
 
-private func makeClipboardWriteRequest(
-    text: String?,
-    filePath: String?,
-    dataBase64: String?,
-    uti: String?,
-    alsoText: String?,
-    allowLarge: Bool
-) throws -> ClipboardWriteRequest {
-    if let text {
-        return try ClipboardPayloadBuilder.textRequest(text: text, alsoText: alsoText, allowLarge: allowLarge)
+@MainActor
+private func makeClipboardWriteRequest(from command: ClipboardCommand.SetSubcommand) throws -> ClipboardWriteRequest {
+    if let text = command.text {
+        return try ClipboardPayloadBuilder.textRequest(
+            text: text,
+            alsoText: command.alsoText,
+            allowLarge: command.allowLarge
+        )
     }
 
-    if let filePath {
+    if let filePath = command.filePath {
         let url = ClipboardPathResolver.fileURL(from: filePath)
         let data = try Data(contentsOf: url)
         return ClipboardPayloadBuilder.dataRequest(
             data: data,
             uti: UTType(filenameExtension: url.pathExtension) ?? .data,
-            alsoText: alsoText,
-            allowLarge: allowLarge
+            alsoText: command.alsoText,
+            allowLarge: command.allowLarge
         )
     }
 
-    if let dataBase64, let uti {
+    if let dataBase64 = command.dataBase64, let uti = command.uti {
         guard let data = Data(base64Encoded: dataBase64) else {
             throw ValidationError("data-base64 is not valid base64")
         }
         return ClipboardPayloadBuilder.dataRequest(
             data: data,
             utiIdentifier: uti,
-            alsoText: alsoText,
-            allowLarge: allowLarge
+            alsoText: command.alsoText,
+            allowLarge: command.allowLarge
         )
     }
 

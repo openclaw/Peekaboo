@@ -75,7 +75,7 @@ public enum ToolRegistry {
                 "reference the new element id."),
         "type": ToolOverride(
             category: .automation,
-            abstract: "Types text or key sequences, including escape characters and modifiers.",
+            abstract: "Types text into a targeted app or element with configurable cadence.",
             discussion: """
             Types raw text into the targeted app or focused element. Escape sequences are supported:
             - Use "\\n" for newline

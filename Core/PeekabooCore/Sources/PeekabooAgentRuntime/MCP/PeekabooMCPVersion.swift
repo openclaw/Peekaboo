@@ -1,5 +1,5 @@
 enum PeekabooMCPVersion {
     static let serverName = "peekaboo-mcp"
-    static let current = "3.10.0"
+    static let current = "4.0.0"
     static let banner = "Peekaboo MCP \(current)"
 }

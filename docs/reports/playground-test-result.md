@@ -34,7 +34,7 @@ This document tracks comprehensive testing of all Peekaboo CLI commands using th
 **Help Output**:
 ```
 OVERVIEW: Capture screenshots
-USAGE: peekaboo image [--app <app>] [--window-id <window-id>] [--window-title <window-title>] [--pid <pid>] [--mode <mode>] [--path <path>] [--format <format>] [--quality <quality>] [--json-output]
+USAGE: peekaboo see [options]
 ```
 
 **Testing Results**:
@@ -52,7 +52,7 @@ USAGE: peekaboo image [--app <app>] [--window-id <window-id>] [--window-title <w
 **Help Output**:
 ```
 OVERVIEW: List running applications, windows, or check permissions
-USAGE: peekaboo list <subcommand>
+USAGE: peekaboo app|window|screen|menubar list [options]
 SUBCOMMANDS:
   apps                    List all running applications
   windows                 List windows for an application
@@ -93,7 +93,7 @@ USAGE: peekaboo see [--app <app>] [--window-id <window-id>] [--window-title <win
 **Help Output**:
 ```
 OVERVIEW: Click on UI elements or coordinates
-USAGE: peekaboo click [<query>] [--snapshot <snapshot>] [--on <on>] [--coords <coords>] [--wait-for <wait-for>] [--double] [--right] [--json-output]
+USAGE: peekaboo click [query] [--snapshot <snapshot>] [--on <on>] [--at <x,y>] [--wait-for <duration>] [--double] [--right] [--json]
 ```
 
 **Testing Results**:
@@ -168,7 +168,7 @@ USAGE: peekaboo scroll --direction <direction> [--amount <amount>] [--on <on>] [
 **Help Output**:
 ```
 OVERVIEW: Press keyboard shortcuts and key combinations
-USAGE: peekaboo hotkey --keys <keys> [--hold-duration <hold-duration>] [--snapshot <snapshot>] [--json-output]
+USAGE: peekaboo press [chords] [--hold <duration>] [--snapshot <snapshot>] [--json]
 ```
 
 **Testing Results**:
@@ -276,7 +276,7 @@ USAGE: peekaboo move [<coordinates>] [--to <to>] [--id <id>] [--center] [--smoot
 **Help Output**:
 ```
 OVERVIEW: Pause execution for a specified duration
-USAGE: peekaboo sleep <duration> [--json-output]
+USAGE: /bin/sleep <seconds>
 ```
 
 **Testing Results**:

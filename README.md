@@ -51,6 +51,12 @@ peekaboo see --app Finder --json
 
 That is the core loop: observe the current screen, choose an element from the result, and act on it.
 
+## What's new in 4.0
+
+Peekaboo 4 has a smaller command surface, consistent duration and coordinate grammar, native `verify`
+polling, and honest JSON action effects. If you have existing scripts or agent instructions, use the
+[Peekaboo 4 migration guide](docs/v4-migration.md) for the complete old-to-new command and flag map.
+
 ## Automate an app
 
 Target an element by its accessible label, then send text to the same app:
@@ -76,10 +82,10 @@ Agent runs need a configured model provider. See [agent setup](docs/commands/age
 
 | Goal | Commands | Guide |
 | --- | --- | --- |
-| Observe the desktop | `see`, `capture`, `app list`, `window list`, `screen list` | [Capture and inspection](docs/quickstart.md) |
-| Interact with UI | `click`, `type`, `press`, `scroll`, `drag`, `move`, `set-value`, `action` | [Automation](docs/automation.md) |
+| Observe the desktop | `see`, `screen list`, `window list` | [Capture and inspection](docs/quickstart.md) |
+| Interact with UI | `click`, `type`, `press`, `scroll`, `drag`, `set-value`, `action` | [Automation](docs/automation.md) |
 | Control macOS | `app`, `window`, `menu`, `menubar`, `dock`, `dialog`, `space` | [Command reference](docs/commands/README.md) |
-| Run workflows | `agent`, `capture action` | [Agent](docs/commands/agent.md) · [Action capture](docs/commands/capture.md) |
+| Run workflows | `agent`, `capture` | [Agent](docs/commands/agent.md) · [Capture](docs/commands/capture.md) |
 | Integrate with clients | `mcp`, `browser`, `tools` | [MCP](docs/MCP.md) |
 
 Run `peekaboo help <command>` for live CLI help. The [complete command index](docs/commands/README.md) links to flags, examples, and troubleshooting for every command.

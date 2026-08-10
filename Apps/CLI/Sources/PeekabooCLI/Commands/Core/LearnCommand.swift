@@ -46,14 +46,32 @@ struct LearnCommand {
 
         This guide contains everything you need to know about using Peekaboo for macOS automation.
 
+        ## Peekaboo 4 CLI Surface
+
+        - Observe with `see`: add `--tree` for an AX text tree, `--no-screenshot` for AX-only output,
+          or `--no-elements` for a fast screenshot-only capture.
+        - Send standalone keys and xdotool-style chords with `press`, for example
+          `peekaboo press cmd+shift+t --app Safari`.
+        - Use `verify` instead of fixed sleeps to wait for stable window and element predicates.
+        - Invoke accessibility actions with `action`; drag from elements or coordinates with
+          `drag --from <id|x,y> --to <id|x,y>`.
+        - Management commands are subcommand trees: `clipboard get|set|clear|save|restore`,
+          `menubar list|click`, `agent run|resume|sessions|chat`, `config provider ...`, and
+          `permissions request <kind>`.
+        - Coordinates use `--at x,y`; add `--global` to force screen coordinates. Durations accept
+          bare milliseconds, `ms`, or `s` (`500`, `500ms`, `2s`).
+        - JSON responses use one envelope. Mutating commands add `effect` as `confirmed`, `partial`,
+          `unverifiable`, `suspected_noop`, or `refused`; read-only commands omit it.
+
         ## System Instructions
 
         \(systemPrompt)
 
         ## Available Tools
 
-        Peekaboo's registry-driven agent and MCP tools cover macOS observation,
-        interaction, app/window management, and workflow completion.
+        Peekaboo provides 30+ tools for macOS automation.
+        Each tool is designed for a specific purpose and can be combined
+        to create powerful workflows.
         """, to: &output)
     }
 
@@ -120,7 +138,7 @@ struct LearnCommand {
 
         1. Always start with `see` to understand the UI before interacting.
         2. Prefer opaque element IDs from the current snapshot over guessed coordinates.
-        3. Verify each action before proceeding; use `see` again if needed.
+        3. Verify each action before proceeding; use `verify` for exact predicates or `see` for fresh state.
         4. Inventory targets with `app list`, `window list`, and `screen list`;
            focus only when foreground delivery is required.
         5. Recover from errors by trying alternative interactions (menus, keyboard chords).
@@ -135,14 +153,17 @@ struct LearnCommand {
 
     private func appendQuickReference(to output: inout String) {
         print("""
-        ## Quick Reference
-        - **Observe**: see (`--no-elements` for screenshots, `--tree --no-screenshot` for AX), capture
+        ## MCP / Agent Tool Quick Reference
+        - **Vision**: see, image
         - **UI Automation**: click, type, press, scroll, drag
-        - **Inventory**: app list, window list, screen list
         - **Window Management**: window, space
-        - **Elements**: verify, set-value, action
+        - **Applications**: app
+        - **Elements**: inspect_ui, verify_state, set_value, action
         - **Menu/Dialog**: menu, dialog
-        - **System and integration**: clipboard, permissions, tools, mcp
+        - **System**: shell, done, need_info
+
+        The MCP-only `image` and `inspect_ui` tools remain separate; their CLI equivalents are
+        `see --no-elements` and `see --tree --no-screenshot`.
 
         Remember: You are Peekaboo, an AI-powered screen automation assistant.
         Be confident, be helpful, and get things done!

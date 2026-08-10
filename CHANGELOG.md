@@ -1,74 +1,116 @@
 # Changelog
 
-## [3.10.1] - Unreleased
+## [4.0.0] - 2026-08-10
+
+Peekaboo 4 is a ground-up cleanup of the command surface: fewer commands, one spelling
+per operation, grammars your agent already knows, and honest machine-readable results.
+It is a breaking release — see `docs/v4-migration.md` for the complete old→new table.
+
+### Highlights
+
+- **A smaller, sharper CLI.** 40 root commands became ~30, and thousands of lines of
+  duplicate surface are gone. Everything a stock macOS tool already does well (`sleep`,
+  `open`, the `.peekaboo.json` script runner) was removed — Peekaboo now assumes your
+  automation runs in a shell and focuses on what only Peekaboo can do.
+- **One verb per operation.** `press` absorbs `hotkey` with xdotool chord syntax
+  (`press cmd+shift+t`); `drag` absorbs `swipe` with dual-typed `--from`/`--to`
+  (element IDs or coordinates); `see` absorbs `image` and `inspect-ui`
+  (`--no-elements` for fast screenshots, `--tree` for AX text trees); `perform-action`
+  is now simply `action`.
+- **`verify` replaces sleep-polling.** Assert window/element predicates with a timeout
+  and stability sampling; results are satisfied / unsatisfied / unknown — and unknown
+  never implies success.
+- **One flag grammar.** Every duration accepts `500`, `500ms`, or `2s` (bare = ms) and
+  unit-suffixed flag names are gone; coordinates are `--at x,y` with `--global` for
+  screen space; modifiers are comma-separated lists; the focus-flag matrix is identical
+  across all interaction commands.
+- **Quiet, app-anchored visual feedback.** The overlay zoo (14 animation types) became
+  three: a natural agent cursor with eased curved motion, a compact input HUD pinned to
+  the target window — showing nothing when that window isn't visibly frontmost — and
+  thin capture borders. Settings collapsed to three toggles.
+- **Honest results.** Action commands report `effect: confirmed | partial |
+  unverifiable | suspected_noop | refused` in JSON, and errors carry an actionable
+  `hint`. "The process exited 0" no longer stands in for "the click landed."
+- **Background-first safety.** Launch, open, observation, capture, and targeted input
+  are background by default; focus stealing, global keys, and physical pointer gestures
+  require explicit foreground consent. Ambiguous or targetless background operations
+  are refused instead of falling through to whatever app happens to be frontmost.
 
 ### Added
-- Add `verify` for stable window and element assertions and `tools describe` for on-demand MCP input schemas.
-- Add a Developer-ID-signed Playground validation harness that continuously detects focus, window, cursor, clipboard, and visualizer leakage during background automation.
-- Show recently automated app icons beside Peekaboo in the menu bar, with a settings toggle.
-- Add distinct background app instances and exact WindowServer readiness/ID receipts to app launch and open workflows.
-- Add native exact-window background pixel right- and double-clicks with per-event owner/generation validation, generation-safe mouse-up cleanup, no cursor movement or activation, and explicit unverifiable-effect reporting.
-- Add `app focus` and positional app targets across quit, relaunch, hide, unhide, and switch while rejecting conflicting positional/flag targets (v4 breaking change).
+
+- `verify` command and `verify_state` stability contracts; `tools describe <name>` for
+  on-demand tool schemas.
+- `app focus`, positional app targets across app subcommands, `app launch --wait-ready`
+  with repeatable `--open` targets; `window restore` (CLI/MCP/Bridge) with
+  exact-window receipts; `window` tool `list` action.
+- Native exact-window background right/double clicks with owner/generation validation;
+  distinct background app instances with WindowServer readiness receipts.
+- Recently-automated app icons beside the Peekaboo menu bar item (with settings toggle).
 
 ### Changed
-- Standardize CLI JSON on one result envelope with action-only effect vocabulary, actionable error hints, and nonzero exits for failed actions (v4 breaking change).
-- Standardize all CLI duration/timeout/delay flags on bare-millisecond plus `ms`/`s` parsing, coordinate input on `--at`/`--global`, modifiers on normalized comma-separated lists, and the input-command focus flag matrix (v4 breaking change).
-- Update Swift Subprocess to 1.0.0 and pnpm to 11.21.0.
-- Merge keyboard shortcuts into xdotool-style `press` chords, fold swipe gestures into dual-target `drag`, consolidate screenshot and AX-tree CLI reads under `see`, and rename CLI/MCP `perform-action`/`perform_action` to `action` (v4 breaking change).
-- Make `type` text-only apart from `--clear`; use `press` for Return, Tab, Escape, Delete, and chord sequences (v4 breaking change).
-- Convert clipboard and menubar actions, agent modes, permission requests, and flat config provider/credential operations into real nested subcommands (v4 breaking change).
-- Add `app launch --wait-ready` and repeatable `--open` targets as the surviving launch/open surface (v4 breaking change).
-- Redesign automation feedback around a natural agent cursor, a quiet target-window input HUD, and capture borders, suppressing window feedback whenever its target is not visibly active.
-- Add rich formatter coverage for every current MCP and agent tool, and remove the non-functional agent `--realtime` flag.
-- Enrich shared tool summaries with menu counts, clicked menu paths, screenshot dimensions, app lifecycle names, screen resolutions, and clipboard actions so the agent chat and Mac activity feed regain the detail lost in the formatter unification.
-- Remove the obsolete scoped-commit helper now that agent work uses isolated worktrees.
-- Make app launch, open, relaunch, observation, capture, targeted keyboard input, and action-backed scrolling background by default; focus, global keys, synthetic scrolling, and physical pointer gestures now require explicit foreground consent.
-- Route `peekaboo run` through the canonical targeted interaction services with flat agent-friendly JSON parameters while retaining legacy script decoding.
-- Add strict bridge 1.11 capabilities for background scrolling, dialog buttons, and window close so stale hosts fail before unsafe fallback dispatch.
 
-### Removed
-- Remove unit-encoded and legacy coordinate flag spellings including `--timeout-seconds`, `--focus-timeout-seconds`, `--restore-delay-ms`, `--coords`, `--global-coords`, daemon/capture unit suffixes, and move's positional/`--to`/`--center` targeting in favor of `--at`/`--on` (v4 breaking change).
-- Remove the CLI `hotkey`, `swipe`, `image`, `inspect-ui`, and `perform-action` roots plus the MCP `hotkey` and `swipe` tools; MCP keeps screenshot-only `image` and AX-only `inspect_ui` tools (v4 breaking change).
-- Remove clipboard `-a`/`--action`, the duplicate clipboard `load` action, flat config provider/credential spellings, agent mode flags, and the three compound permission-request command names; ClipboardTool payload parameters are now `file_path` and `data_base64` with no image-path alias (v4 breaking change).
-- Remove the CLI `sleep`, `open`, `run`, `commander`, and root `list` commands; remove `capture watch`, `menu click-extra`, `menu list-all`, and `agent permission` aliases/subtrees (v4 breaking change).
-- Remove CLI flag aliases `--id`, `--image-path`, and `--app-target`; Commander’s submodule-owned `--json-output` alias remains (v4 breaking change).
-- Remove `.peekaboo.json` script loading/execution and its ProcessService command model (v4 breaking change).
-- Remove the MCP `list` tool, MenuTool’s status-item actions, and agent shims `list_apps`, `list_screens`, and `launch_app`; add `window` action `list` (v4 breaking change).
+- Standardize CLI JSON on one result envelope with action-only effect vocabulary,
+  actionable error hints, and nonzero exits for failed actions.
+- Management commands restructured into real subcommand trees: `clipboard
+  get|set|clear|save|restore`, `menubar list|click`, `config provider …` /
+  `config credential set`, `agent run|resume|sessions|chat`,
+  `permissions request <kind>`.
+- `type` is text-only (plus `--clear`); use `press` for Return/Tab/Escape/Delete.
+- Cross-process coordination for concurrent CLI/agent/GUI/daemon desktop operations
+  with generation-scoped lanes; strict bridge 1.11 capability gating.
+- Clipboard paste is serialized across processes, fails closed without touching the
+  pasteboard when unsafe, and restores partial writes.
+- Swift Subprocess 1.0.0, pnpm 11.21.0; CI on macOS 26 / Xcode 26.6.
+
+### Removed (breaking)
+
+- Commands: `sleep`, `open`, `run` (+ `.peekaboo.json` format), `commander`, root
+  `list`, `image`, `hotkey`, `swipe`, `inspect-ui`, `perform-action`, `capture watch`,
+  `menu click-extra`, `menu list-all`, `agent permission`.
+- Flags: `--coords`/`--global-coords` (→ `--at`/`--global`), `--id`, `--image-path`,
+  `--app-target`, `--timeout-seconds`, `--focus-timeout-seconds`, `--restore-delay-ms`
+  and the whole unit-suffixed family, `type --return/--escape/--delete/--tab`,
+  clipboard `-a/--action` + `load`, agent mode flags, compound
+  `permissions request-*` names.
+- MCP surface: `list` tool, `hotkey`/`swipe` tools, agent shims `list_apps` /
+  `list_screens` / `launch_app`; `perform_action` renamed `action`; ClipboardTool
+  params are snake_case (`file_path`, `data_base64`). MCP keeps screenshot-only
+  `image`, AX-only `inspect_ui`, and `sleep` (MCP clients may lack a shell).
 
 ### Fixed
-- Add actionable text and JSON migration hints for removed v4 commands and flags, reject ambiguous press input shapes, and align `see`/`type`/`press` help with the accepted grammar.
-- Stop cancelled on-demand daemon idle timers from rescheduling one another, preventing runaway CPU and memory use after repeated Bridge activity.
-- Return exact window-sized pixels from automatic and modern ScreenCaptureKit capture instead of accepting a display-sized transparent canvas, and avoid SDK continuation-leak diagnostics when a quarantined screenshot callback never arrives.
-- Reject conflicting app/PID and window selectors across interaction CLI and MCP entry points before focus, observation, or mutation.
-- Require explicit `--foreground` for long-press clicks so the shared physical cursor cannot be used through an implicit delivery-mode promotion.
-- Pin background `press` sequences to one process generation, stop before a recycled PID can receive later chords, and report partial delivery as retry-unsafe.
-- Keep direct `action` and `set-value` app, PID, and exact-window targeting background-only by default, including web-content discovery, unless `--foreground` is explicit.
-- Preserve stable `verify_state` proof for a directly matched exact AX identifier/value when only unrelated accessibility siblings are unreadable, while keeping absence, mismatch, ambiguity, and target drift fail-closed.
-- Preserve the requested characters during background typing on non-US keyboard layouts instead of interpreting fixed US key positions through the active layout. Thanks @canvascoding for #330.
-- Wait for WindowServer to settle after an exact background maximize dispatch before repinning its final bounds, avoiding false failures without relaxing owner-generation checks.
-- Preserve OpenAI Responses tool-error payloads without sending unsupported `failed` statuses that abort the next agent turn.
-- Coordinate concurrent CLI, agent, GUI-bridge, and daemon desktop reads and mutations with generation-scoped cross-process lanes, preserving parallel work across unrelated exact targets while preventing conflicting background operations from overlapping.
-- Preserve tool response metadata for native agent tools so the Mac activity feed and CLI agent chat show their short summaries, matching external MCP tools.
-- Return all content items from multi-part native tool responses (e.g. `see` with annotation, `analyze`) instead of only the first.
-- Refuse PID-only/app-only background coordinate clicks and require a fresh capture-owned exact-window receipt, with retry-safe pre-dispatch metadata and no mutation invalidation on validation failure.
-- Route automatic window capture around quarantined or contended in-process ScreenCaptureKit calls through a bounded isolated `screencapture` fallback, while explicit modern-only capture still fails honestly.
-- Stop bridge hosts from requiring AppleScript permission for native application activate, hide, unhide, hide-others, and show-all operations.
-- Keep targeted UI observation in the background, exclude irrelevant application menu trees, and restore the documented `see` traversal flags and output-path aliases.
-- Reject phantom-success accessibility actions, support selectable sidebar rows, and verify typed `set-value` results against live AX state.
-- Suppress desktop-global visualizer overlays for process-targeted background click, type, press, paste, and hotkey delivery.
-- Restore documented app, window, and menu CLI options; unsupported menu-extra item selection and failed app quits now exit nonzero instead of claiming success.
-- Remove the Dock-removal AppleScript path in favor of native accessibility actions.
-- Reject targetless or ambiguous background keyboard, paste, scroll, dialog, and window operations instead of silently falling through to the foreground app or shared cursor.
-- Serialize clipboard-backed paste across every Peekaboo process, fail closed without touching the pasteboard when setup is unsafe, restore partial writes, route plain text through verified background typing, preserve MCP exact-window selectors through atomic dispatch, report MCP partial direct-text failure as retry-unsafe without touching the clipboard, and report targeted Cmd+V as retry-unsafe when macOS cannot confirm receiver consumption.
-- Verify app termination and exact window disappearance before reporting quit/close success, and make maximize a bounded background geometry operation that cannot activate an app or enter full screen.
-- Return launch-bound process-generation receipts from app launch and relaunch so cleanup never has to infer ownership from a reusable PID.
-- Reject queued window mutations when the selected CGWindowID or owner PID generation has disappeared or been recycled, and report minimized windows from live AX state.
-- Bind destructive window mutations to immutable capture-time bounds, reject same-process CGWindowID reuse, repin intended geometry transitions, and refuse Bridge hosts that would ignore the stronger receipt.
-- Keep minimized exact PID/window-ID targets addressable through bounded AX inventory, add native background `window restore` to CLI/MCP/Bridge, and make default minimized close return restore-or-`--foreground` guidance.
-- Let background `window restore` accept a successful native unminimize once the same exact window ID, owner process generation, and original bounds reappear, and keep its output pinned to those verified bounds while public inventory settles.
-- Verify minimize from the original AX window when WindowServer hides it, and close minimized exact windows without activating their app.
-- Restore minimized privacy state before returning when a background close cannot be verified.
-- Keep agent JSON output machine-readable and refuse terminal text that impersonates an unexecuted tool call.
+
+- Add actionable text and JSON migration hints for removed v4 commands and flags,
+  reject ambiguous press input shapes, and align `see`/`type`/`press` help with the
+  accepted grammar.
+- Stop cancelled on-demand daemon idle timers from rescheduling one another,
+  preventing runaway CPU and memory use after repeated Bridge activity.
+- Reject conflicting app/PID and window selectors across interaction CLI and MCP
+  entry points before focus, observation, or mutation.
+- Require explicit `--foreground` for long-press clicks so the shared physical cursor
+  cannot be used through an implicit delivery-mode promotion.
+- Pin background `press` sequences to one process generation, stop before a recycled
+  PID can receive later chords, and report partial delivery as retry-unsafe.
+- Keep direct `action` and `set-value` targets in the background by default, including
+  web-content discovery, unless `--foreground` is explicit.
+- Emit the standard v4 result envelope for agent failures and remove `see`'s duplicate
+  nested `success` field.
+- Non-US keyboard layouts preserve requested characters during background typing.
+  Thanks @canvascoding for #330.
+- Phantom-success accessibility actions are rejected; typed `set-value` results are
+  verified against live AX state; app quit/window close verify disappearance before
+  reporting success; minimized windows report from live AX state.
+- Window mutations bind to immutable capture-time bounds, reject recycled
+  CGWindowID/PID generations, and never activate apps or enter full screen from
+  background maximize; background `window restore` verifies the same exact window
+  reappears with original bounds.
+- OpenAI Responses tool errors no longer abort the next agent turn; multi-part native
+  tool responses return all content items; tool summaries regain rich detail in agent
+  chat and the Mac activity feed.
+- ScreenCaptureKit contention routes through a bounded isolated fallback; menu-extra
+  selection failures and failed app quits exit nonzero; Dock removal uses native AX.
+- Return exact window-sized pixels from automatic and modern ScreenCaptureKit capture
+  instead of accepting a display-sized transparent canvas, without continuation-leak
+  diagnostics when a quarantined screenshot callback never arrives.
 
 ## [3.10.0] - 2026-08-02
 

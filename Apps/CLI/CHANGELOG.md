@@ -5,56 +5,39 @@ All notable changes to Peekaboo CLI will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [3.10.1] - Unreleased
+## [4.0.0] - 2026-08-10
 
 ### Added
-- Add owner-validated exact `window_id` targeting to the MCP `see` and `inspect_ui` tools without changing legacy window-index syntax.
-- Add atomic exact-window background typing and hotkeys with per-dispatch focused-window revalidation across local and Bridge runtimes.
-- Add an observation-only MCP `verify_state` tool with exact app/PID/window ownership, fresh 100 ms native polling, stable samples, and a hard 10-second cap.
-- Add native exact-window background pixel right- and double-clicks with per-event owner/generation validation, generation-safe mouse-up cleanup, no cursor movement or activation, and explicit unverifiable-effect reporting.
+- Add `verify` for stable window and element predicates, `tools describe <name>` for on-demand schemas, `app focus`, `window restore`, and launch readiness/open-target controls.
+- Add native exact-window background right/double clicks, generation-safe app/window receipts, and cross-process desktop-operation coordination.
 
 ### Changed
-- Make Chrome DevTools page creation and selection background-first, pin the verified browser MCP runtime, and require direct page-ID routing for page-scoped actions so concurrent agents cannot redirect one another's tab work.
-- Let independent observations overlap by keeping AX traversal and OCR outside the serialized ScreenCaptureKit transaction.
-- Keep agent screenshot grounding transient so session checkpoints retain text and tool state without persisting image bytes or local image paths.
+- Merge `hotkey` into xdotool-style `press` chords, `swipe` into dual-target `drag`, `image` and `inspect-ui` into `see`, and rename `perform-action` to `action`.
+- Restructure clipboard, menubar, config, agent, and permission operations into real subcommand trees.
+- Standardize durations on bare milliseconds or `ms`/`s`, coordinates on `--at`/`--global`, modifiers on comma-separated lists, and focus controls across interaction commands.
+- Standardize JSON on one result envelope with action-only `effect` values, actionable error hints, and nonzero exits for failures.
+- Make launch, observation, capture, and targeted input background-first; require explicit foreground consent for focus stealing, global keys, and physical pointer gestures.
+- Make `type` text-only; use `press` for Return, Tab, Escape, Delete, and chord sequences.
+- Update Swift Subprocess to 1.0.0, pnpm to 11.21.0, and CI to macOS 26 / Xcode 26.6.
+
+### Removed
+- Remove CLI roots `sleep`, `open`, `run`, `commander`, root `list`, `image`, `hotkey`, `swipe`, `inspect-ui`, and `perform-action`, plus retired nested aliases.
+- Remove legacy coordinate/unit-suffixed flags, clipboard action dispatch, agent mode flags, compound permission requests, and the `.peekaboo.json` runner format.
+- Remove the MCP `list`, `hotkey`, and `swipe` tools plus legacy agent shims; rename MCP `perform_action` to `action`.
 
 ### Fixed
-- Add actionable text and JSON migration hints for removed v4 commands and flags, reject ambiguous press input shapes, and align `see`/`type`/`press` help with the accepted grammar.
-- Stop cancelled on-demand daemon idle timers from rescheduling one another, preventing runaway CPU and memory use after repeated Bridge activity.
-- Return exact window-sized pixels from automatic and modern ScreenCaptureKit capture instead of accepting a display-sized transparent canvas, and avoid SDK continuation-leak diagnostics when a quarantined screenshot callback never arrives.
-- Reject conflicting app/PID and window selectors across interaction CLI and MCP entry points before focus, observation, or mutation.
-- Require explicit `--foreground` for long-press clicks so the shared physical cursor cannot be used through an implicit delivery-mode promotion.
-- Pin background `press` sequences to one process generation, stop before a recycled PID can receive later chords, and report partial delivery as retry-unsafe.
-- Keep direct `action` and `set-value` app, PID, and exact-window targeting background-only by default, including web-content discovery, unless `--foreground` is explicit.
-- Preserve stable `verify_state` proof for a directly matched exact AX identifier/value when only unrelated accessibility siblings are unreadable, while keeping absence, mismatch, ambiguity, and target drift fail-closed.
-- Wait for WindowServer to settle after an exact background maximize dispatch before repinning its final bounds, avoiding false failures without relaxing owner-generation checks.
-- Preserve OpenAI Responses tool-error payloads without sending unsupported `failed` statuses that abort the next agent turn.
-- Refuse PID-only/app-only background coordinate clicks and require a fresh capture-owned exact-window receipt, with retry-safe pre-dispatch metadata and no mutation invalidation on validation failure.
-- Route automatic window capture around quarantined or contended in-process ScreenCaptureKit calls through a bounded isolated `screencapture` fallback, while explicit modern-only capture still fails honestly.
-- Require explicit `--foreground` before click focus flags can select the foreground path, instead of silently overriding the background default.
-- Make `inspect-ui --snapshot` fail closed when the named snapshot is missing or unavailable in the current process instead of silently inspecting the frontmost app under a new snapshot.
-- Serialize clipboard-backed paste transactions across CLI, daemon, and GUI clients with one secure per-user lock; fail closed before writes on capability, cancellation, or prior-state read errors; restore partial writes noncancellably; re-resolve queued targets; detect PID reuse; route background text without clipboard mutation; preserve MCP exact-window selectors through atomic dispatch; report MCP partial direct-text failure as retry-unsafe; and report targeted Cmd+V as may-have-pasted instead of claiming unverified receiver consumption.
-- Cancel queued Bridge mutations when their client disconnects and recheck liveness after cross-process mutation admission.
-- Report failed or unavailable action verification honestly without replaying the mutation, and keep all verification captures background-silent.
-- Reject conflicting exact-window selectors instead of silently broadening to another same-process window.
-- Make daemon cleanup ownership- and idle-deadline-aware so automatic migration cannot terminate an active or user-managed host.
-- Restore Peekaboo-specific `config init` guidance instead of emitting Tachikoma commands and an incorrect no-file-written message.
-- Preserve `data:` navigation URLs received through MCP instead of misclassifying them as a missing browser URL.
-- Flush the final MCP stdio response before exiting on input EOF, so one-shot pipelines no longer need an artificial delay.
-- Make agent `--no-cache` runs truly ephemeral across CLI and MCP, keep their validation output machine-readable, and stop dry runs from reporting phantom resumable sessions.
-- Keep `agent --json` stdout parseable during model-source conflicts and reject tool-call-shaped terminal text that was never executed.
-- Reject reserved HTTP/SSE MCP transports before daemon startup with an actionable structured error instead of failing late.
-- Add native background `--new-instance` launches, explicit `--wait-for-window` automation readiness, and bounded focus restoration when a background-launched app self-activates.
-- Return launch-bound process-generation receipts and refreshed exact window IDs from launch/open/relaunch readiness, reject PID reuse before returning a launch result, verify process termination before reporting quit success, pin application quit to the resolved PID/process generation, and accept saved generation receipts for race-free cleanup.
-- Make maximize a bounded exact-window geometry operation that cannot activate or enter full screen, and require exact WindowServer disappearance before close succeeds.
-- Pin destructive window mutations to the selected owner PID/process generation through Bridge admission and correct minimized-window inventory with AX state.
-- Bind destructive window mutations to immutable capture-time bounds, reject owner-generation or bounds drift, repin intended geometry transitions, and refuse Bridge hosts that would ignore the stronger receipt.
-- Fail closed when exact window selection or capture receipts drift, remove bounds-only minimized-window fallbacks, quarantine timed-out OCR until native work exits, and keep transient agent images correlated and execution-owned.
-- Keep minimized exact PID/window-ID targets addressable through bounded AX inventory, add native background `window restore` to CLI/MCP/Bridge, and make default minimized close return restore-or-`--foreground` guidance.
-- Let background `window restore` accept a successful native unminimize once the same exact window ID, owner process generation, and original bounds reappear, and keep its output pinned to those verified bounds while public inventory settles.
-- Treat WindowServer disappearance as valid after AX-verified minimize and close minimized exact windows through a bounded non-activating AX restore/close path.
-- Re-minimize a temporarily restored exact window before returning any failed or indeterminate minimized-close result.
-- Make background screenshot, observation, and live-capture paths visualizer-silent, including multi-display and menu-bar OCR fallbacks, while preserving explicit foreground feedback.
+- Add actionable migration hints for removed v4 commands and flags, reject ambiguous press input shapes, and align `see`/`type`/`press` help with the accepted grammar.
+- Stop cancelled on-demand daemon idle timers from rescheduling one another after repeated Bridge activity.
+- Reject conflicting app/PID and window selectors before focus, observation, or mutation.
+- Require explicit `--foreground` for long-press clicks.
+- Pin background `press` sequences to one process generation and report partial delivery as retry-unsafe.
+- Keep direct `action` and `set-value` targets in the background by default, including web-content discovery, unless `--foreground` is explicit.
+- Emit the standard v4 result envelope for agent failures and remove `see`'s duplicate nested `success` field.
+- Preserve non-US keyboard characters, reject phantom-success accessibility actions, verify typed values and destructive app/window actions, and keep minimized-window state honest.
+- Serialize clipboard-backed paste across processes, restore partial writes, and fail closed before unsafe pasteboard mutation.
+- Keep OpenAI Responses tool errors recoverable, return all native tool content items, and restore rich tool summaries in agent output.
+- Route contended ScreenCaptureKit work through bounded fallback capture and reject unsafe targetless or ambiguous background input.
+- Return exact window-sized pixels from automatic and modern ScreenCaptureKit capture instead of accepting a display-sized transparent canvas, without continuation-leak diagnostics when a quarantined screenshot callback never arrives.
 
 ## [3.10.0] - 2026-08-02
 

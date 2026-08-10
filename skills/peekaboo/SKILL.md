@@ -9,6 +9,8 @@ CLI timing flags accept bare milliseconds or `ms`/`s` suffixes, for example `500
 
 Peekaboo is a macOS automation CLI and agent runtime. Prefer the freshly built repo binary, live help, and canonical docs over copied command references because command surfaces move quickly.
 
+Peekaboo 4 uses `press` for standalone keys and chords, `drag --from/--to` for drags, `see --tree` for CLI AX inspection, `action` for named accessibility actions, and real noun/verb subcommand trees. Use `verify` for stable predicates instead of fixed sleeps. JSON action results include an `effect` value; read-only results omit it. See `docs/v4-migration.md` when converting older invocations.
+
 ## Start Here
 
 1. In repo work, build and use the current-source binary:
@@ -88,6 +90,8 @@ peekaboo permissions request screen-recording
 peekaboo app focus Safari
 peekaboo config provider list --json
 peekaboo agent sessions --json
+peekaboo press cmd+shift+t --app Safari
+peekaboo verify --app Safari --window-exists --timeout 2s --json
 ```
 
 ## Input Path Testing

@@ -104,7 +104,7 @@ public struct AgentSystemPrompt {
           asked for it.
         - Ask the user before destructive or externally visible actions such as sending, deleting, purchasing, or
           publishing.
-        - When the user explicitly names a tool (e.g., "use the `open` tool"), you must honor that request unless
+        - When the user explicitly names a tool (e.g., "use the `press` tool"), you must honor that request unless
           the tool errors—do not substitute shell commands.
         """
     }

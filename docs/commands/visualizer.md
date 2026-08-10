@@ -7,11 +7,11 @@ read_when:
 
 # `peekaboo visualizer`
 
-Runs a lightweight smoke sequence that fires a representative set of visualizer events so you can verify Peekaboo’s overlay renderer is working end-to-end.
+Runs a lightweight smoke sequence for the three v4 visualizer surfaces: the agent cursor, app-anchored input HUD, and capture indicators.
 
 ## What it does
 - Connects to the visualizer host (typically `Peekaboo.app`)
-- Emits events such as screenshot flash, capture HUD, cursor click, typing overlay, scroll indicator, cursor movement, swipe path, hotkey HUD, window/app/menu/dialog overlays, and a sample element-detection overlay
+- Emits representative cursor, input HUD, and capture-indicator events
 
 ## Usage
 ```bash

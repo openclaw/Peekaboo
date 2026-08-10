@@ -1,7 +1,7 @@
 ---
 summary: 'Paste text or rich content via peekaboo paste'
 read_when:
-  - 'you want fewer steps than clipboard set + menu/hotkey paste + clipboard restore'
+  - 'you want fewer steps than clipboard set + press-based paste + clipboard restore'
   - 'pasting rich text (RTF) into a targeted app/window without drift'
 ---
 

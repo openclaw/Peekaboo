@@ -7,19 +7,12 @@ read_when:
 
 # Command docs index
 
-Core automation
-- `agent.md` — run the autonomous agent loop.
-- `app.md` — launch/quit/focus apps and list running processes with `app list`.
-- `window.md` — list/move/resize/focus windows with `window list` and its sibling actions.
-- `menu.md`, `menubar.md` — drive app menus and status items.
-- `click.md`, `move.md`, `scroll.md`, `drag.md`, `press.md`, `type.md`, `set-value.md`, `action.md` — input primitives.
-- `see.md`, `capture.md` — screenshot-only `see --no-elements`, AX-only `see --tree --no-screenshot`, annotated UI maps, and capture sessions.
+Every current root command has one page here:
 
-System & config
-- `config.md`, `permissions.md`, `bridge.md`, `daemon.md`, `tools.md`, `clean.md`, `learn.md`, `screen.md` (`screen list`).
-- `completions.md` — install shell-native completions for zsh, bash, and fish.
-- MCP helpers: `mcp.md`.
-- Clipboard: `clipboard.md`.
+- Core: [`bridge`](bridge.md), [`capture`](capture.md), [`clean`](clean.md), [`completions`](completions.md), [`config`](config.md), [`daemon`](daemon.md), [`learn`](learn.md), [`permissions`](permissions.md), [`screen`](screen.md), [`tools`](tools.md).
+- Interaction: [`action`](action.md), [`click`](click.md), [`drag`](drag.md), [`move`](move.md), [`paste`](paste.md), [`press`](press.md), [`scroll`](scroll.md), [`set-value`](set-value.md), [`type`](type.md).
+- System: [`app`](app.md), [`clipboard`](clipboard.md), [`dialog`](dialog.md), [`dock`](dock.md), [`menu`](menu.md), [`menubar`](menubar.md), [`space`](space.md), [`visualizer`](visualizer.md), [`window`](window.md).
+- Vision, AI, and MCP: [`see`](see.md), [`verify`](verify.md), [`agent`](agent.md), [`browser`](browser.md), [`mcp`](mcp.md).
 
 Reference tips
 - Each command page lists flags, examples, and troubleshooting. For common pitfalls (permissions, focus, window targeting), see the “Common troubleshooting” section below.
