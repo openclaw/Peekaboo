@@ -88,6 +88,6 @@ extension TypeTool {
         if let text = request.text, !text.isEmpty {
             return "Typed"
         }
-        return request.clearField ? "Clear and Type" : "Type"
+        return request.clearField ? "Clear Field" : "Type"
     }
 }

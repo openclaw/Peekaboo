@@ -164,10 +164,21 @@ enum ElementActionCommandExecutor {
             var target = context.target
             try target.validate()
             let prepared = try prepare()
-            let observation = await InteractionObservationContext.resolve(
+            var observation = await InteractionObservationContext.resolve(
                 explicitSnapshot: context.snapshot,
                 fallbackToLatest: true,
                 snapshots: services.snapshots
+            )
+            let refreshRuntime = runtime
+            observation = try await InteractionObservationRefresher.refreshForTargetIfNeeded(
+                observation,
+                elementTarget: prepared.target,
+                target: target,
+                services: services,
+                logger: logger,
+                beforeRefresh: { startedAt in
+                    refreshRuntime.beginInteractionMutation(at: startedAt)
+                }
             )
             try await observation.validateIfExplicit(using: services.snapshots)
             let startTime = Date()

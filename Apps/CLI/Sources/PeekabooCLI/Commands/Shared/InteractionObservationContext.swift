@@ -177,6 +177,53 @@ struct InteractionObservationRefreshDependencies {
 
 @MainActor
 enum InteractionObservationRefresher {
+    static func refreshForTargetIfNeeded(
+        _ observation: InteractionObservationContext,
+        elementTarget: String,
+        target: InteractionTargetOptions,
+        services: any PeekabooServiceProviding,
+        logger: Logger,
+        beforeRefresh: ((Date) -> Void)? = nil
+    ) async throws -> InteractionObservationContext {
+        try await self.refreshForTargetIfNeeded(
+            observation,
+            elementTarget: elementTarget,
+            target: target,
+            dependencies: InteractionObservationRefreshDependencies(
+                desktopObservation: services.desktopObservation,
+                snapshots: services.snapshots,
+                beginMutation: beforeRefresh
+            ),
+            logger: logger
+        )
+    }
+
+    static func refreshForTargetIfNeeded(
+        _ observation: InteractionObservationContext,
+        elementTarget: String,
+        target: InteractionTargetOptions,
+        dependencies: InteractionObservationRefreshDependencies,
+        logger: Logger
+    ) async throws -> InteractionObservationContext {
+        guard target.hasAnyTarget else {
+            return observation
+        }
+        guard observation.source != .explicit else {
+            throw PeekabooError.invalidInput(
+                "Do not combine an explicit --snapshot with --app, --pid, or window targeting options. " +
+                    "The snapshot already identifies the element's application and window."
+            )
+        }
+
+        return try await self.refreshObservation(
+            observation,
+            reason: "explicit target for element '\(elementTarget)'",
+            target: target,
+            dependencies: dependencies,
+            logger: logger
+        )
+    }
+
     static func refreshForMissingElementsIfNeeded(
         _ observation: InteractionObservationContext,
         elementIds: [String?],

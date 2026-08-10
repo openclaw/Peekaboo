@@ -1501,6 +1501,28 @@ struct MCPToolErrorHandlingTests {
     }
 
     @Test
+    func `Type tool describes clear-only requests without claiming it typed`() async throws {
+        let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
+
+        try await MCPToolTestHelpers.withContext(automation: automation) {
+            let response = try await TypeTool().execute(arguments: ToolArguments(raw: [
+                "clear": true,
+                "foreground": true,
+            ]))
+
+            #expect(response.isError == false)
+            guard case let .object(meta) = response.meta,
+                  case let .object(summary)? = meta["summary"],
+                  case let .string(action)? = summary["action"]
+            else {
+                Issue.record("Expected type response summary action")
+                return
+            }
+            #expect(action == "Clear Field")
+        }
+    }
+
+    @Test
     func `Type tool with WPM opts into human cadence`() async throws {
         let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
 

@@ -690,6 +690,78 @@ struct InteractionObservationContextTests {
     }
 
     @Test
+    func `Targeted element action refreshes an implicit snapshot even when the element exists`() async throws {
+        let snapshots = CoreSnapshotManagerStub()
+        let snapshotId = try await snapshots.createSnapshot(id: "unrelated-latest")
+        try await snapshots.storeDetectionResult(
+            snapshotId: snapshotId,
+            result: Self.detectionResult(snapshotId: snapshotId, element: Self.buttonElement(id: "B1"))
+        )
+        let observation = await InteractionObservationContext.resolve(
+            explicitSnapshot: nil,
+            fallbackToLatest: true,
+            snapshots: snapshots
+        )
+        let freshDetection = Self.detectionResult(
+            snapshotId: "fresh-snapshot",
+            element: Self.buttonElement(id: "B1")
+        )
+        let desktopObservation = RecordingDesktopObservationService(elements: freshDetection, snapshots: snapshots)
+        var target = InteractionTargetOptions()
+        target.app = "TargetApp"
+
+        let refreshed = try await InteractionObservationRefresher.refreshForTargetIfNeeded(
+            observation,
+            elementTarget: "B1",
+            target: target,
+            dependencies: InteractionObservationRefreshDependencies(
+                desktopObservation: desktopObservation,
+                snapshots: snapshots
+            ),
+            logger: Logger.shared
+        )
+
+        let reservedSnapshotID = try #require(desktopObservation.requests.first?.output.snapshotID)
+        #expect(refreshed.snapshotId == reservedSnapshotID)
+        switch desktopObservation.requests.first?.target {
+        case let .app(identifier, _):
+            #expect(identifier == "TargetApp")
+        default:
+            Issue.record("Expected targeted app observation")
+        }
+    }
+
+    @Test
+    func `Targeted element action rejects an explicit snapshot`() async throws {
+        let snapshots = CoreSnapshotManagerStub()
+        let explicit = try await snapshots.createSnapshot(id: "explicit-snapshot")
+        let observation = await InteractionObservationContext.resolve(
+            explicitSnapshot: explicit,
+            fallbackToLatest: true,
+            snapshots: snapshots
+        )
+        let desktopObservation = RecordingDesktopObservationService(
+            elements: Self.detectionResult(snapshotId: "unused", element: Self.buttonElement(id: "B1"))
+        )
+        var target = InteractionTargetOptions()
+        target.pid = 123
+
+        await #expect(throws: PeekabooError.self) {
+            _ = try await InteractionObservationRefresher.refreshForTargetIfNeeded(
+                observation,
+                elementTarget: "B1",
+                target: target,
+                dependencies: InteractionObservationRefreshDependencies(
+                    desktopObservation: desktopObservation,
+                    snapshots: snapshots
+                ),
+                logger: Logger.shared
+            )
+        }
+        #expect(desktopObservation.requests.isEmpty)
+    }
+
+    @Test
     func `Missing implicit query refreshes observation snapshot`() async throws {
         let snapshots = CoreSnapshotManagerStub()
         let staleSnapshotId = try await snapshots.createSnapshot(id: "latest-snapshot")
