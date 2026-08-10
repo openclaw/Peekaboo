@@ -3,10 +3,10 @@ import Foundation
 import PeekabooAgentRuntime
 import PeekabooAutomationKit
 import PeekabooBridge
-@testable import PeekabooCLI
 import PeekabooCore
 import Tachikoma
 import Testing
+@testable import PeekabooCLI
 
 struct CommandRuntimeInjectionTests {
     @Test
@@ -864,74 +864,74 @@ final class RecordingPeekabooServices: PeekabooServiceProviding {
     private(set) var ensureVisualizerConnectionCallCount = 0
 
     func ensureVisualizerConnection() {
-        ensureVisualizerConnectionCallCount += 1
+        self.ensureVisualizerConnectionCallCount += 1
     }
 
     var logging: any LoggingServiceProtocol {
-        base.logging
+        self.base.logging
     }
 
     var screenCapture: any ScreenCaptureServiceProtocol {
-        base.screenCapture
+        self.base.screenCapture
     }
 
     var applications: any ApplicationServiceProtocol {
-        base.applications
+        self.base.applications
     }
 
     var automation: any UIAutomationServiceProtocol {
-        base.automation
+        self.base.automation
     }
 
     var windows: any WindowManagementServiceProtocol {
-        base.windows
+        self.base.windows
     }
 
     var menu: any MenuServiceProtocol {
-        base.menu
+        self.base.menu
     }
 
     var dock: any DockServiceProtocol {
-        base.dock
+        self.base.dock
     }
 
     var dialogs: any DialogServiceProtocol {
-        base.dialogs
+        self.base.dialogs
     }
 
     var snapshots: any SnapshotManagerProtocol {
-        base.snapshots
+        self.base.snapshots
     }
 
     var files: any FileServiceProtocol {
-        base.files
+        self.base.files
     }
 
     var clipboard: any ClipboardServiceProtocol {
-        base.clipboard
+        self.base.clipboard
     }
 
     var configuration: PeekabooCore.ConfigurationManager {
-        base.configuration
+        self.base.configuration
     }
 
     var permissions: PermissionsService {
-        base.permissions
+        self.base.permissions
     }
 
     var audioInput: AudioInputService {
-        base.audioInput
+        self.base.audioInput
     }
 
     var screens: any ScreenServiceProtocol {
-        base.screens
+        self.base.screens
     }
 
     var browser: any BrowserMCPClientProviding {
-        base.browser
+        self.base.browser
     }
 
     var agent: (any AgentServiceProtocol)? {
-        base.agent
+        self.base.agent
     }
 }

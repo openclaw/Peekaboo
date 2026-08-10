@@ -10,6 +10,36 @@ import UniformTypeIdentifiers
 
 @MainActor
 struct RemoteCaptureGateOwnershipTests {
+    private static let roiFixtureBounds = CGRect(x: 100, y: 200, width: 100, height: 80)
+
+    private func makeROIServer(
+        services: any PeekabooBridgeServiceProviding,
+        allowedOperations: Set<PeekabooBridgeOperation> = [.desktopObservation]) -> PeekabooBridgeServer
+    {
+        let fixtureBounds = Self.roiFixtureBounds
+        return PeekabooBridgeServer(
+            services: services,
+            allowlistedTeams: [],
+            allowlistedBundles: [],
+            allowedOperations: allowedOperations,
+            permissionStatusEvaluator: { _ in
+                PermissionsStatus(
+                    screenRecording: true,
+                    accessibility: true,
+                    appleScript: true,
+                    postEvent: true)
+            },
+            windowOwnerProcessIdentifierProvider: { windowID in
+                windowID == 42 ? 123 : nil
+            },
+            windowBoundsProvider: { windowID in
+                windowID == 42 ? fixtureBounds : nil
+            },
+            processStartIdentityProvider: { processIdentifier in
+                processIdentifier == 123 ? 456 : nil
+            })
+    }
+
     @Test
     func `remote ROI rejects a pre 1_20 host before transport`() async {
         let remote = RemoteDesktopObservationService(client: PeekabooBridgeClient(
@@ -109,18 +139,7 @@ struct RemoteCaptureGateOwnershipTests {
             .appendingPathComponent("peekaboo-remote-roi-public-\(UUID().uuidString).png")
         defer { try? FileManager.default.removeItem(at: outputURL) }
         let observation = ROIFileObservationService(mode: .ignored)
-        let server = PeekabooBridgeServer(
-            services: StubServices(desktopObservation: observation),
-            allowlistedTeams: [],
-            allowlistedBundles: [],
-            allowedOperations: [.desktopObservation],
-            permissionStatusEvaluator: { _ in
-                PermissionsStatus(
-                    screenRecording: true,
-                    accessibility: true,
-                    appleScript: true,
-                    postEvent: true)
-            })
+        let server = self.makeROIServer(services: StubServices(desktopObservation: observation))
         let host = PeekabooBridgeHost(
             socketPath: socketPath,
             server: server,
@@ -160,18 +179,7 @@ struct RemoteCaptureGateOwnershipTests {
             .appendingPathComponent("peekaboo-remote-valid-roi-public-\(UUID().uuidString).png")
         defer { try? FileManager.default.removeItem(at: outputURL) }
         let observation = ROIFileObservationService(mode: .valid)
-        let server = PeekabooBridgeServer(
-            services: StubServices(desktopObservation: observation),
-            allowlistedTeams: [],
-            allowlistedBundles: [],
-            allowedOperations: [.desktopObservation],
-            permissionStatusEvaluator: { _ in
-                PermissionsStatus(
-                    screenRecording: true,
-                    accessibility: true,
-                    appleScript: true,
-                    postEvent: true)
-            })
+        let server = self.makeROIServer(services: StubServices(desktopObservation: observation))
         let host = PeekabooBridgeHost(
             socketPath: socketPath,
             server: server,
@@ -210,18 +218,7 @@ struct RemoteCaptureGateOwnershipTests {
         try Data("preserve-directory".utf8).write(to: markerURL, options: .atomic)
         defer { try? FileManager.default.removeItem(at: outputDirectory) }
         let observation = ROIFileObservationService(mode: .valid)
-        let server = PeekabooBridgeServer(
-            services: StubServices(desktopObservation: observation),
-            allowlistedTeams: [],
-            allowlistedBundles: [],
-            allowedOperations: [.desktopObservation],
-            permissionStatusEvaluator: { _ in
-                PermissionsStatus(
-                    screenRecording: true,
-                    accessibility: true,
-                    appleScript: true,
-                    postEvent: true)
-            })
+        let server = self.makeROIServer(services: StubServices(desktopObservation: observation))
         let host = PeekabooBridgeHost(
             socketPath: socketPath,
             server: server,
@@ -259,18 +256,9 @@ struct RemoteCaptureGateOwnershipTests {
         let snapshotID = "validated-roi-\(UUID().uuidString)"
         let snapshots = InMemorySnapshotManager(options: .init(copyArtifactsOnStore: true))
         let observation = ROIFileObservationService(mode: .valid)
-        let server = PeekabooBridgeServer(
+        let server = self.makeROIServer(
             services: StubServices(snapshots: snapshots, desktopObservation: observation),
-            allowlistedTeams: [],
-            allowlistedBundles: [],
-            allowedOperations: [.desktopObservation, .storeScreenshot],
-            permissionStatusEvaluator: { _ in
-                PermissionsStatus(
-                    screenRecording: true,
-                    accessibility: true,
-                    appleScript: true,
-                    postEvent: true)
-            })
+            allowedOperations: [.desktopObservation, .storeScreenshot])
         let host = PeekabooBridgeHost(
             socketPath: socketPath,
             server: server,
@@ -314,18 +302,7 @@ struct RemoteCaptureGateOwnershipTests {
             .appendingPathComponent("peekaboo-remote-mismatched-roi-public-\(UUID().uuidString).png")
         defer { try? FileManager.default.removeItem(at: outputURL) }
         let observation = ROIFileObservationService(mode: .mismatchedArtifact)
-        let server = PeekabooBridgeServer(
-            services: StubServices(desktopObservation: observation),
-            allowlistedTeams: [],
-            allowlistedBundles: [],
-            allowedOperations: [.desktopObservation],
-            permissionStatusEvaluator: { _ in
-                PermissionsStatus(
-                    screenRecording: true,
-                    accessibility: true,
-                    appleScript: true,
-                    postEvent: true)
-            })
+        let server = self.makeROIServer(services: StubServices(desktopObservation: observation))
         let host = PeekabooBridgeHost(
             socketPath: socketPath,
             server: server,
@@ -364,18 +341,7 @@ struct RemoteCaptureGateOwnershipTests {
         let existingData = Data("existing-public-output".utf8)
         try existingData.write(to: outputURL, options: .atomic)
         let observation = ROIFileObservationService(mode: .mismatchedAnnotatedArtifact)
-        let server = PeekabooBridgeServer(
-            services: StubServices(desktopObservation: observation),
-            allowlistedTeams: [],
-            allowlistedBundles: [],
-            allowedOperations: [.desktopObservation],
-            permissionStatusEvaluator: { _ in
-                PermissionsStatus(
-                    screenRecording: true,
-                    accessibility: true,
-                    appleScript: true,
-                    postEvent: true)
-            })
+        let server = self.makeROIServer(services: StubServices(desktopObservation: observation))
         let host = PeekabooBridgeHost(
             socketPath: socketPath,
             server: server,
@@ -417,18 +383,7 @@ struct RemoteCaptureGateOwnershipTests {
             try? FileManager.default.removeItem(at: annotatedURL)
         }
         let observation = ROIFileObservationService(mode: .valid)
-        let server = PeekabooBridgeServer(
-            services: StubServices(desktopObservation: observation),
-            allowlistedTeams: [],
-            allowlistedBundles: [],
-            allowedOperations: [.desktopObservation],
-            permissionStatusEvaluator: { _ in
-                PermissionsStatus(
-                    screenRecording: true,
-                    accessibility: true,
-                    appleScript: true,
-                    postEvent: true)
-            })
+        let server = self.makeROIServer(services: StubServices(desktopObservation: observation))
         let host = PeekabooBridgeHost(
             socketPath: socketPath,
             server: server,
@@ -458,18 +413,8 @@ struct RemoteCaptureGateOwnershipTests {
     @Test
     func `remote ROI refuses a self consistent crop from the wrong exact window`() async throws {
         let socketPath = "/tmp/peekaboo-remote-wrong-roi-\(UUID().uuidString).sock"
-        let server = PeekabooBridgeServer(
-            services: StubServices(desktopObservation: WrongWindowROIObservationService()),
-            allowlistedTeams: [],
-            allowlistedBundles: [],
-            allowedOperations: [.desktopObservation],
-            permissionStatusEvaluator: { _ in
-                PermissionsStatus(
-                    screenRecording: true,
-                    accessibility: true,
-                    appleScript: true,
-                    postEvent: true)
-            })
+        let server = self.makeROIServer(
+            services: StubServices(desktopObservation: WrongWindowROIObservationService()))
         let host = PeekabooBridgeHost(
             socketPath: socketPath,
             server: server,
@@ -494,18 +439,8 @@ struct RemoteCaptureGateOwnershipTests {
     @Test
     func `remote ROI preserves typed host validation errors`() async throws {
         let socketPath = "/tmp/peekaboo-remote-roi-error-\(UUID().uuidString).sock"
-        let server = PeekabooBridgeServer(
-            services: StubServices(desktopObservation: FailingROIObservationService(error: .outOfBounds)),
-            allowlistedTeams: [],
-            allowlistedBundles: [],
-            allowedOperations: [.desktopObservation],
-            permissionStatusEvaluator: { _ in
-                PermissionsStatus(
-                    screenRecording: true,
-                    accessibility: true,
-                    appleScript: true,
-                    postEvent: true)
-            })
+        let server = self.makeROIServer(
+            services: StubServices(desktopObservation: FailingROIObservationService(error: .outOfBounds)))
         let host = PeekabooBridgeHost(
             socketPath: socketPath,
             server: server,

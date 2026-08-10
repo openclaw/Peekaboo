@@ -2,8 +2,8 @@ import Commander
 import Foundation
 import PeekabooAutomation
 import PeekabooBridge
-@testable import PeekabooCLI
 import Testing
+@testable import PeekabooCLI
 
 struct CommanderBinderTests {
     @Test

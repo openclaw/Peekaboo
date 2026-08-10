@@ -1,7 +1,7 @@
 import Commander
 import PeekabooBridge
-@testable import PeekabooCLI
 import Testing
+@testable import PeekabooCLI
 
 @Suite(.tags(.safe))
 @MainActor

@@ -1,8 +1,8 @@
 import Commander
 import PeekabooAutomation
 import PeekabooBridge
-@testable import PeekabooCLI
 import Testing
+@testable import PeekabooCLI
 
 @Suite(.tags(.safe))
 @MainActor
@@ -430,7 +430,7 @@ struct RuntimeHostResolverTests {
             .invalidateImplicitLatestSnapshot,
         ]
         func handshake(minor: Int, enabledOperations: [PeekabooBridgeOperation]? = nil)
-            -> PeekabooBridgeHandshakeResponse {
+        -> PeekabooBridgeHandshakeResponse {
             PeekabooBridgeHandshakeResponse(
                 negotiatedVersion: PeekabooBridgeProtocolVersion(major: 1, minor: minor),
                 hostKind: .onDemand,
