@@ -17,7 +17,8 @@ public struct PressTool: MCPTool {
         Presses one or more keyboard chords. Use `keys` for an xdotool-style chord sequence such as
         ["cmd+c", "Return"], or use `key` plus `modifiers` for a single chord. The two input shapes are
         mutually exclusive. Background delivery requires app/pid targeting; set foreground=true for intentional
-        OS-global shortcuts or to focus a specific window first.
+        OS-global shortcuts or to focus a specific window first. app and pid are alternatives; provide at most one of
+        window_id, window_title, or window_index, and pair title/index with app or pid.
         \(PeekabooMCPVersion.banner) using openai/gpt-5.5, anthropic/claude-opus-4-8
         """
     }
@@ -96,7 +97,7 @@ public struct PressTool: MCPTool {
             }
 
             let foreground = arguments.getBool("foreground") == true
-            let target = MCPInteractionTarget(
+            let target = try MCPInteractionTarget(
                 app: arguments.getString("app"),
                 pid: arguments.getInt("pid"),
                 windowTitle: arguments.getString("window_title"),

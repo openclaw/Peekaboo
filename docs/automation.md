@@ -21,6 +21,8 @@ Every input command accepts one of three target shapes:
 
 Prefer IDs when you can capture them, labels when you can't, and coordinates only as a last resort. The agent and MCP tooling default to the first two.
 
+Process and window selectors are fail-closed. Choose either `--app` or `--pid`, never both. Choose at most one of `--window-id`, `--window-title`, or `--window-index`; title and index require an app or PID owner. The same rules apply to MCP's `app`, `pid`, `window_id`, `window_title`, and `window_index` fields.
+
 ## Delivery modes
 
 Peekaboo has two input delivery modes:

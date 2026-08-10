@@ -7,7 +7,7 @@ read_when:
 
 # Application Resolution in Peekaboo
 
-This document explains how Peekaboo resolves applications across all commands that accept an application parameter.
+This document explains how Peekaboo resolves applications across commands that accept an application parameter.
 
 ## Overview
 
@@ -38,7 +38,7 @@ peekaboo menu list --app "PID:12345"
 # By PID using --pid parameter
 peekaboo app quit --pid 12345
 
-# Both parameters (when they refer to the same app)
+# Both parameters on a legacy window command (when they refer to the same app)
 peekaboo window focus --app Safari --pid 12345
 ```
 
@@ -112,37 +112,39 @@ peekaboo window list --app chrome
 3. Prioritizes running applications
 4. Falls back to installed applications
 
-## Lenient Parameter Handling
+## Selector safety and legacy leniency
 
-Peekaboo is designed to be forgiving with parameters, especially for AI agents that might provide redundant information.
+V4 interaction and observation commands fail closed: use either `--app` or `--pid`, never both. This rule covers `see` and commands that use the shared interaction target such as `action`, `click`, `drag`, `press`, `set-value`, and `type`. These commands may observe, focus, and mutate through different services, so a redundant-looking pair is unsafe when those services resolve it differently.
+
+Some legacy app/window management commands retain lenient parameter handling as a compatibility contract. For those commands, redundant app/PID information is accepted; a textual app selector remains authoritative because the synchronous resolver cannot reliably cross-check it against the PID.
 
 ### Allowed Redundancy
 
-These are all valid and equivalent:
+These legacy management forms are valid and equivalent:
 ```bash
 # Redundant PID specifications
 peekaboo window close --app "PID:12345" --pid 12345
 
-# Name and PID for same app
-peekaboo see --no-elements --app Safari --pid 67890  # If PID 67890 is Safari
+# Legacy compatibility: the textual app selector is authoritative
+peekaboo window focus --app Safari --pid 67890
 ```
 
 ### Conflict Detection
 
-These will produce errors:
+This produces an error:
 ```bash
 # Different PIDs
 peekaboo window close --app "PID:12345" --pid 67890
 
-# Name doesn't match PID
-peekaboo see --no-elements --app Safari --pid 12345  # If PID 12345 is Chrome
 ```
+
+A textual app/PID mismatch is not synchronously detectable in the legacy resolver. This is why interaction and observation commands reject the pair instead of choosing one.
 
 ## Implementation Details
 
 ### ApplicationResolvable Protocol
 
-All commands with application parameters conform to the `ApplicationResolvable` protocol:
+Commands with application parameters can conform to the `ApplicationResolvable` protocol:
 
 ```swift
 protocol ApplicationResolvable {
@@ -151,14 +153,14 @@ protocol ApplicationResolvable {
 }
 ```
 
-This ensures consistent behavior across all commands.
+Safety-sensitive interaction call sites add stricter selector validation before invoking this resolver.
 
 ### Resolution Priority
 
-When both `--app` and `--pid` are provided:
-1. Validate they refer to the same application
-2. Prefer the more readable format (name/bundle) for operations
-3. Use PID for precise targeting when needed
+When a legacy-compatible command accepts both `--app` and `--pid`:
+1. If `--app` uses `PID:<pid>`, validate that it matches `--pid`
+2. Otherwise, prefer the textual app or bundle identifier for the operation
+3. Do not infer that an accompanying PID proves the textual app's identity
 
 ### Error Messages
 
@@ -189,12 +191,7 @@ peekaboo app launch --app com.apple.Safari
 
 ### For AI Agents
 
-AI agents can safely:
-- Provide both `--app` and `--pid` if unsure
-- Use PID format in either parameter
-- Mix formats as needed
-
-The lenient validation ensures the command works if the parameters are consistent.
+AI agents should provide exactly one of `--app` or `--pid`. Use `PID:<pid>` in `--app` only when a schema lacks a separate PID field. Do not send both unless the specific legacy command documents that compatibility form.
 
 ## Common Patterns
 

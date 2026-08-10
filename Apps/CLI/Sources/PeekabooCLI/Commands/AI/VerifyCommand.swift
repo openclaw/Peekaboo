@@ -88,7 +88,7 @@ struct VerifyCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedComm
     }
 
     private func makeArguments() async throws -> [String: Any] {
-        var target = self.target
+        let target = self.target
         try target.validate()
 
         var arguments: [String: Any] = try [

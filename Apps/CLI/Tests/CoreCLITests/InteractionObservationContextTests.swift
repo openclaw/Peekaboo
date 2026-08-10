@@ -1,3 +1,4 @@
+import Commander
 import CoreGraphics
 import Foundation
 import PeekabooAutomationKit
@@ -104,23 +105,14 @@ struct InteractionObservationContextTests {
     }
 
     @Test
-    func `Interaction observation target prefers title over index`() throws {
+    func `Interaction observation target rejects title and index`() throws {
         var target = InteractionTargetOptions()
         target.app = "Preview"
         target.windowTitle = "Main"
         target.windowIndex = 2
 
-        switch try target.observationTargetRequest() {
-        case let .app(identifier, window):
-            #expect(identifier == "Preview")
-            switch window {
-            case let .some(.title(title)):
-                #expect(title == "Main")
-            default:
-                Issue.record("Expected title window selection")
-            }
-        default:
-            Issue.record("Expected app observation target")
+        #expect(throws: ValidationError.self) {
+            try target.observationTargetRequest()
         }
     }
 

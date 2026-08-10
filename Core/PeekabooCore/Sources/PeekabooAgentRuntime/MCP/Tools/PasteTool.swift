@@ -26,6 +26,7 @@ public struct PasteTool: MCPTool {
 
         Targeting:
         - Provide app/pid for process-targeted background paste.
+        - app and pid are alternatives. Provide at most one window selector; title/index require app or pid.
         - Add window_id, window_title, or window_index for atomic exact-window background delivery. Peekaboo pins the
           selected window ID, owner PID, and bounds through dispatch instead of falling back to a sibling window.
         - Set foreground=true only for intentional focus-changing/global paste.
@@ -107,7 +108,7 @@ public struct PasteTool: MCPTool {
         let startTime = Date()
 
         do {
-            let target = MCPInteractionTarget(
+            let target = try MCPInteractionTarget(
                 app: arguments.getString("app"),
                 pid: arguments.getInt("pid"),
                 windowTitle: arguments.getString("window_title"),

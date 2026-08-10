@@ -32,21 +32,30 @@ struct InteractionTargetOptions: CommanderParsable, ApplicationResolvable {
         self.app != nil || self.pid != nil || self.windowTitle != nil || self.windowIndex != nil || self.windowId != nil
     }
 
-    mutating func validate() throws {
+    func validateSelectorCombination() throws {
+        try InteractionTargetSelectorValidator.validateCLI(
+            hasApplication: self.app != nil,
+            hasProcessIdentifier: self.pid != nil,
+            hasWindowID: self.windowId != nil,
+            hasWindowTitle: self.windowTitle != nil,
+            hasWindowIndex: self.windowIndex != nil
+        )
+    }
+
+    func validate() throws {
+        try self.validateSelectorCombination()
+
         if let windowIndex = self.windowIndex, windowIndex < 0 {
             throw ValidationError("--window-index must be 0 or greater")
         }
 
-        if let windowId = self.windowId, windowId <= 0 {
-            throw ValidationError("--window-id must be greater than 0")
-        }
-
-        if self.windowTitle != nil || self.windowIndex != nil, self.app == nil, self.pid == nil, self.windowId == nil {
-            throw ValidationError("When using --window-title/--window-index, also provide --app or --pid.")
+        if let windowId = self.windowId, windowId <= 0 || UInt32(exactly: windowId) == nil {
+            throw ValidationError("--window-id must be between 1 and \(UInt32.max)")
         }
     }
 
     func resolveApplicationIdentifierOptional() throws -> String? {
+        try self.validate()
         guard self.app != nil || self.pid != nil else {
             return nil
         }
@@ -54,6 +63,7 @@ struct InteractionTargetOptions: CommanderParsable, ApplicationResolvable {
     }
 
     func resolveWindowID(services: any PeekabooServiceProviding) async throws -> CGWindowID? {
+        try self.validate()
         if let windowId = self.windowId {
             return CGWindowID(windowId)
         }
@@ -75,6 +85,7 @@ struct InteractionTargetOptions: CommanderParsable, ApplicationResolvable {
     }
 
     func resolveWindowTitleOptional(services: any PeekabooServiceProviding) async throws -> String? {
+        try self.validate()
         if let windowTitle {
             return windowTitle
         }
@@ -97,6 +108,7 @@ struct InteractionTargetOptions: CommanderParsable, ApplicationResolvable {
     }
 
     func toWindowTarget() throws -> WindowTarget? {
+        try self.validate()
         if let windowId {
             return .windowId(windowId)
         }
@@ -115,5 +127,35 @@ struct InteractionTargetOptions: CommanderParsable, ApplicationResolvable {
         }
 
         return .application(appIdentifier)
+    }
+}
+
+extension InteractionTargetSelectorValidator {
+    static func validateCLI(
+        hasApplication: Bool,
+        hasProcessIdentifier: Bool,
+        hasWindowID: Bool,
+        hasWindowTitle: Bool,
+        hasWindowIndex: Bool
+    ) throws {
+        do {
+            try self.validate(
+                hasApplication: hasApplication,
+                hasProcessIdentifier: hasProcessIdentifier,
+                hasWindowID: hasWindowID,
+                hasWindowTitle: hasWindowTitle,
+                hasWindowIndex: hasWindowIndex
+            )
+        } catch let error as InteractionTargetSelectorValidationError {
+            let message = switch error {
+            case .applicationAndProcessIdentifier:
+                "Use either --app or --pid, not both."
+            case .multipleWindowSelectors:
+                "Use only one of --window-id, --window-title, or --window-index."
+            case .windowSelectorRequiresApplication:
+                "--window-title and --window-index require --app or --pid."
+            }
+            throw ValidationError(message)
+        }
     }
 }
