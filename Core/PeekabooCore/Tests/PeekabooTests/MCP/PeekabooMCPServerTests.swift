@@ -58,6 +58,35 @@ struct PeekabooMCPServerTests {
     }
 
     @Test
+    func `server projects bounded capture failure metadata onto the MCP wire`() throws {
+        let response = ToolResponse.error(
+            "Video capture produced no decodable frames.",
+            meta: .object([
+                "decode_failures": .int(3),
+                "effect": .string("partial"),
+                "error_code": .string("CAPTURE_NO_VALID_FRAMES"),
+                "first_decode_error": .string("first"),
+                "internal_diagnostics": .string("private"),
+                "mutation_dispatched": .bool(true),
+                "retry_safe": .bool(false),
+                "source": .string("video"),
+            ]))
+
+        let result = PeekabooMCPServer.callToolResult(from: response, toolName: "capture")
+        let data = try JSONEncoder().encode(result)
+        let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let metadata = try #require(json["_meta"] as? [String: Any])
+
+        #expect(metadata["error_code"] as? String == "CAPTURE_NO_VALID_FRAMES")
+        #expect(metadata["effect"] as? String == "partial")
+        #expect(metadata["mutation_dispatched"] as? Bool == true)
+        #expect(metadata["retry_safe"] as? Bool == false)
+        #expect(metadata["decode_failures"] as? Int == 3)
+        #expect(metadata["source"] as? String == "video")
+        #expect(metadata["internal_diagnostics"] == nil)
+    }
+
+    @Test
     @MainActor
     func `server filters action-only tools with runtime input policy`() async throws {
         let services = PeekabooServices(inputPolicy: UIInputPolicy(

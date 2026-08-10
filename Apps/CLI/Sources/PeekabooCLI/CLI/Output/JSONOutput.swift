@@ -73,17 +73,42 @@ struct ErrorInfo: Codable {
     let message: String
     let hint: String?
     let details: String?
+    let retry_safe: Bool?
+    let mutation_dispatched: Bool?
 
-    init(message: String, code: ErrorCode, hint: String? = nil, details: String? = nil) {
-        self.init(message: message, code: code.rawValue, hint: hint, details: details)
+    init(
+        message: String,
+        code: ErrorCode,
+        hint: String? = nil,
+        details: String? = nil,
+        retrySafe: Bool? = nil,
+        mutationDispatched: Bool? = nil
+    ) {
+        self.init(
+            message: message,
+            code: code.rawValue,
+            hint: hint,
+            details: details,
+            retrySafe: retrySafe,
+            mutationDispatched: mutationDispatched
+        )
     }
 
-    init(message: String, code: String, hint: String? = nil, details: String? = nil) {
+    init(
+        message: String,
+        code: String,
+        hint: String? = nil,
+        details: String? = nil,
+        retrySafe: Bool? = nil,
+        mutationDispatched: Bool? = nil
+    ) {
         let presentation = splitErrorHint(from: message)
         self.code = code
         self.message = presentation.message
         self.hint = hint ?? presentation.hint
         self.details = details
+        self.retry_safe = retrySafe
+        self.mutation_dispatched = mutationDispatched
     }
 }
 
@@ -113,6 +138,7 @@ enum ErrorCode: String, Codable {
     case NO_POINT_SPECIFIED, INVALID_COORDINATES, DOCK_LIST_NOT_FOUND, DOCK_ITEM_NOT_FOUND
     case POSITION_NOT_FOUND, SCRIPT_ERROR, MISSING_API_KEY, AGENT_ERROR, INTERACTION_FAILED, TIMEOUT
     case INVALID_INPUT
+    case CAPTURE_NO_VALID_FRAMES
 }
 
 func outputSuccessCodable(
@@ -165,6 +191,8 @@ func outputError(
     hint: String? = nil,
     details: String? = nil,
     effect: ActionEffect? = nil,
+    retrySafe: Bool? = nil,
+    mutationDispatched: Bool? = nil,
     logger: Logger
 ) {
     let response = ResultEnvelope<Empty?>(
@@ -172,7 +200,14 @@ func outputError(
         effect: effect ?? (ResultEnvelopeContext.isActionCommand ? defaultActionErrorEffect(code) : nil),
         data: nil,
         debug_logs: logger.getDebugLogs(),
-        error: ErrorInfo(message: message, code: code, hint: hint, details: details)
+        error: ErrorInfo(
+            message: message,
+            code: code,
+            hint: hint,
+            details: details,
+            retrySafe: retrySafe,
+            mutationDispatched: mutationDispatched
+        )
     )
     outputJSONCodable(response, logger: logger)
 }

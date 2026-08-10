@@ -79,7 +79,8 @@ public struct ImageTool: MCPTool {
             format: request.format,
             savedFiles: savedFiles,
             captureResults: captureResults,
-            observation: captureSet.observation)
+            observation: captureSet.observation,
+            mutationDispatched: request.captureFocus != .background && request.focusIdentifier != nil)
     }
 
     private func screenRecordingPermissionError() -> ToolResponse {

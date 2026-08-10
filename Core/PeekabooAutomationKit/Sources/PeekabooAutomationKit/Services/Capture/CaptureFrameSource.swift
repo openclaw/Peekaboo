@@ -53,6 +53,26 @@ public protocol CaptureFrameSource {
     func nextFrame(maxAge: TimeInterval?) async throws -> (cgImage: CGImage?, metadata: CaptureMetadata)?
 }
 
+public struct CaptureFrameSourceDiagnostics: Sendable, Equatable {
+    public let decodeFailures: Int
+    public let firstDecodeError: String?
+    public let lastDecodeError: String?
+
+    public init(
+        decodeFailures: Int = 0,
+        firstDecodeError: String? = nil,
+        lastDecodeError: String? = nil)
+    {
+        self.decodeFailures = max(0, decodeFailures)
+        self.firstDecodeError = CaptureDiagnosticSanitizer.sanitize(firstDecodeError)
+        self.lastDecodeError = CaptureDiagnosticSanitizer.sanitize(lastDecodeError)
+    }
+}
+
+public protocol CaptureFrameSourceDiagnosticsProviding: CaptureFrameSource {
+    @MainActor var captureDiagnostics: CaptureFrameSourceDiagnostics { get }
+}
+
 extension CaptureFrameSource {
     @MainActor
     public func start(request _: CaptureFrameRequest) async throws {}

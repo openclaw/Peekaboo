@@ -43,6 +43,7 @@ public struct CaptureStats: Codable, Sendable, Equatable {
     public let fpsEffective: Double
     public let framesKept: Int
     public let framesDropped: Int
+    public let decodeFailures: Int
     public let maxFramesHit: Bool
     public let maxMbHit: Bool
 
@@ -53,6 +54,7 @@ public struct CaptureStats: Codable, Sendable, Equatable {
         fpsEffective: Double,
         framesKept: Int,
         framesDropped: Int,
+        decodeFailures: Int = 0,
         maxFramesHit: Bool,
         maxMbHit: Bool)
     {
@@ -62,8 +64,47 @@ public struct CaptureStats: Codable, Sendable, Equatable {
         self.fpsEffective = fpsEffective
         self.framesKept = framesKept
         self.framesDropped = framesDropped
+        self.decodeFailures = decodeFailures
         self.maxFramesHit = maxFramesHit
         self.maxMbHit = maxMbHit
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case durationMs
+        case fpsIdle
+        case fpsActive
+        case fpsEffective
+        case framesKept
+        case framesDropped
+        case decodeFailures
+        case maxFramesHit
+        case maxMbHit
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.durationMs = try container.decode(Int.self, forKey: .durationMs)
+        self.fpsIdle = try container.decode(Double.self, forKey: .fpsIdle)
+        self.fpsActive = try container.decode(Double.self, forKey: .fpsActive)
+        self.fpsEffective = try container.decode(Double.self, forKey: .fpsEffective)
+        self.framesKept = try container.decode(Int.self, forKey: .framesKept)
+        self.framesDropped = try container.decode(Int.self, forKey: .framesDropped)
+        self.decodeFailures = try container.decodeIfPresent(Int.self, forKey: .decodeFailures) ?? 0
+        self.maxFramesHit = try container.decode(Bool.self, forKey: .maxFramesHit)
+        self.maxMbHit = try container.decode(Bool.self, forKey: .maxMbHit)
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(self.durationMs, forKey: .durationMs)
+        try container.encode(self.fpsIdle, forKey: .fpsIdle)
+        try container.encode(self.fpsActive, forKey: .fpsActive)
+        try container.encode(self.fpsEffective, forKey: .fpsEffective)
+        try container.encode(self.framesKept, forKey: .framesKept)
+        try container.encode(self.framesDropped, forKey: .framesDropped)
+        try container.encode(self.decodeFailures, forKey: .decodeFailures)
+        try container.encode(self.maxFramesHit, forKey: .maxFramesHit)
+        try container.encode(self.maxMbHit, forKey: .maxMbHit)
     }
 }
 
@@ -103,6 +144,7 @@ public struct CaptureWarning: Codable, Sendable, Equatable {
         case diffDowngraded
         case autoclean
         case transientCaptureFailure
+        case videoDecodeFailure
     }
 
     public let code: Code

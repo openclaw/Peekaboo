@@ -63,4 +63,18 @@ struct WatchCLISmokeTests {
         #expect(result.diffScale == "w256")
         #expect(result.options.diffBudgetMs == 30)
     }
+
+    @Test
+    func `Legacy capture stats decode with zero video failures`() throws {
+        let data = Data("""
+        {
+          "durationMs": 1000, "fpsIdle": 2, "fpsActive": 8, "fpsEffective": 1,
+          "framesKept": 1, "framesDropped": 2, "maxFramesHit": false, "maxMbHit": false
+        }
+        """.utf8)
+
+        let stats = try JSONDecoder().decode(CaptureStats.self, from: data)
+
+        #expect(stats.decodeFailures == 0)
+    }
 }

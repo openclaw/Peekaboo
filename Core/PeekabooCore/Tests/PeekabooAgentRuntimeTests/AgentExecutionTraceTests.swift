@@ -1,6 +1,8 @@
 import Foundation
+import MCP
 import PeekabooCore
 import Tachikoma
+import TachikomaMCP
 import Testing
 @testable import PeekabooAgentRuntime
 
@@ -128,6 +130,85 @@ struct AgentExecutionTraceTests {
         #expect(summary["mutation_dispatch"]?.stringValue == "not_dispatched")
         #expect(summary["retry_safe"]?.boolValue == true)
         #expect(summary["error_present"]?.boolValue == true)
+    }
+
+    @Test
+    func `Capture and image traces classify only focus-capable requests as mutations`() {
+        let calls = [
+            AgentToolCall(
+                id: "capture-background",
+                name: "capture",
+                arguments: ["capture_focus": AnyAgentToolValue(string: "background")]),
+            AgentToolCall(
+                id: "capture-foreground",
+                name: "capture",
+                arguments: ["capture_focus": AnyAgentToolValue(string: "foreground")]),
+            AgentToolCall(
+                id: "image-auto",
+                name: "image",
+                arguments: ["capture_focus": AnyAgentToolValue(string: "auto")]),
+        ]
+        let messages = [
+            ModelMessage(role: .assistant, content: calls.map(ModelMessage.ContentPart.toolCall)),
+            ModelMessage(role: .tool, content: calls.map { call in
+                .toolResult(AgentToolResult(
+                    toolCallId: call.id,
+                    result: AnyAgentToolValue(object: [
+                        "mutation_dispatched": AnyAgentToolValue(bool: call.id != "capture-background"),
+                        "success": AnyAgentToolValue(bool: true),
+                    ]),
+                    isError: false))
+            }),
+        ]
+        let result = AgentExecutionResult(
+            content: "",
+            messages: messages,
+            metadata: AgentMetadata(
+                executionTime: 0,
+                toolCallCount: calls.count,
+                modelName: "test",
+                startTime: Date(),
+                endTime: Date()))
+
+        let trace = result.executionTrace()
+        #expect(trace.entries[0].mutationDispatch == nil)
+        #expect(trace.entries[1].mutationDispatch == .dispatched)
+        #expect(trace.entries[2].mutationDispatch == .dispatched)
+    }
+
+    @Test
+    func `Native capture success receipt reaches execution trace through the real agent bridge`() throws {
+        let call = AgentToolCall(
+            id: "capture-focused",
+            name: "capture",
+            arguments: ["capture_focus": AnyAgentToolValue(string: "foreground")])
+        let bridged = convertToolResponseToAgentToolResult(ToolResponse.text(
+            "captured",
+            meta: .object([
+                "mutation_dispatched": .bool(true),
+                "retry_safe": .bool(false),
+            ])))
+        let messages = [
+            ModelMessage(role: .assistant, content: [.toolCall(call)]),
+            ModelMessage(role: .tool, content: [.toolResult(AgentToolResult(
+                toolCallId: call.id,
+                result: bridged,
+                isError: false))]),
+        ]
+        let result = AgentExecutionResult(
+            content: "",
+            messages: messages,
+            metadata: AgentMetadata(
+                executionTime: 0,
+                toolCallCount: 1,
+                modelName: "test",
+                startTime: Date(),
+                endTime: Date()))
+
+        let entry = try #require(result.executionTrace().entries.first)
+        #expect(entry.mutationDispatch == .dispatched)
+        #expect(entry.result?.objectValue?["mutation_dispatched"]?.boolValue == true)
+        #expect(entry.result?.objectValue?["retry_safe"]?.boolValue == false)
     }
 
     @Test

@@ -1,4 +1,5 @@
 import Foundation
+import PeekabooFoundation
 
 struct WatchCaptureSessionStore {
     let outputRoot: URL
@@ -11,6 +12,20 @@ struct WatchCaptureSessionStore {
         try self.fileManager.createDirectory(
             at: self.outputRoot,
             withIntermediateDirectories: true)
+        let contents = try self.fileManager.contentsOfDirectory(
+            at: self.outputRoot,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles])
+        let staleArtifacts = contents.filter { url in
+            url.lastPathComponent == "contact.png" ||
+                url.lastPathComponent == "metadata.json" ||
+                (url.lastPathComponent.hasPrefix("keep-") && url.pathExtension.lowercased() == "png")
+        }
+        guard staleArtifacts.isEmpty else {
+            let names = staleArtifacts.map(\.lastPathComponent).sorted().prefix(5).joined(separator: ", ")
+            throw PeekabooError.fileIOError(
+                "Capture output directory already contains capture artifacts (\(names)); choose an empty directory")
+        }
     }
 
     func performAutoclean() -> WatchWarning? {

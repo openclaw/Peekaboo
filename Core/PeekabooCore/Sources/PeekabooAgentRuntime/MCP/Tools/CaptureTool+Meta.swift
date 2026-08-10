@@ -2,12 +2,55 @@ import MCP
 import PeekabooAutomationKit
 
 enum CaptureMetaBuilder {
+    static func failureMeta(_ error: any Error, mutationDispatched: Bool) -> Value {
+        if let noValidFrames = error as? CaptureNoValidFramesError {
+            return self.noValidFramesMeta(noValidFrames, mutationDispatched: mutationDispatched)
+        }
+        var meta: [String: Value] = [
+            "retry_safe": .bool(!mutationDispatched),
+            "mutation_dispatched": .bool(mutationDispatched),
+        ]
+        if mutationDispatched {
+            meta["effect"] = .string("partial")
+        }
+        return .object(meta)
+    }
+
+    static func noValidFramesMeta(
+        _ error: CaptureNoValidFramesError,
+        mutationDispatched: Bool) -> Value
+    {
+        var meta: [String: Value] = [
+            "error_code": .string("CAPTURE_NO_VALID_FRAMES"),
+            "retry_safe": .bool(error.retrySafe && !mutationDispatched),
+            "mutation_dispatched": .bool(mutationDispatched),
+            "source": .string(error.source.rawValue),
+            "frames_dropped": .int(error.framesDropped),
+            "decode_failures": .int(error.decodeFailures),
+        ]
+        if mutationDispatched {
+            meta["effect"] = .string("partial")
+        }
+        if let first = error.firstDecodeError {
+            meta["first_decode_error"] = .string(first)
+        }
+        if let last = error.lastDecodeError {
+            meta["last_decode_error"] = .string(last)
+        }
+        if let last = error.lastCaptureError {
+            meta["last_capture_error"] = .string(last)
+        }
+        return .object(meta)
+    }
+
     static func buildMeta(from summary: CaptureMetaSummary) -> Value {
         .object(self.summaryMeta(from: summary))
     }
 
-    static func buildMeta(from result: CaptureSessionResult) -> Value {
+    static func buildMeta(from result: CaptureSessionResult, mutationDispatched: Bool = false) -> Value {
         var meta = self.summaryMeta(from: .make(from: result))
+        meta["mutation_dispatched"] = .bool(mutationDispatched)
+        meta["retry_safe"] = .bool(!mutationDispatched)
         meta["source"] = .string(result.source.rawValue)
         if let videoIn = result.videoIn {
             meta["video_in"] = .string(videoIn)
@@ -22,6 +65,7 @@ enum CaptureMetaBuilder {
             "fps_effective": .double(result.stats.fpsEffective),
             "frames_kept": .int(result.stats.framesKept),
             "frames_dropped": .int(result.stats.framesDropped),
+            "decode_failures": .int(result.stats.decodeFailures),
             "max_frames_hit": .bool(result.stats.maxFramesHit),
             "max_mb_hit": .bool(result.stats.maxMbHit),
         ])

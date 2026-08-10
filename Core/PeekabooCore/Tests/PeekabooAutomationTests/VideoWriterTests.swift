@@ -3,6 +3,7 @@ import CoreGraphics
 import Foundation
 import PeekabooFoundation
 import Testing
+@testable import PeekabooAutomationKit
 @testable import PeekabooCore
 
 @MainActor
@@ -126,6 +127,47 @@ struct VideoWriterTests {
         let observed = result.frames.map(\.timestampMs)
         #expect(observed == timestamps)
     }
+
+    @Test
+    func `partial video cleanup failure is surfaced and retains the artifact`() throws {
+        let outputDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekaboo-video-cleanup-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: outputDir) }
+        let output = outputDir.appendingPathComponent("partial.mp4")
+        let writer = try VideoWriter(
+            outputPath: output.path,
+            width: 20,
+            height: 20,
+            fps: 2,
+            fileManager: FailingRemovalFileManager())
+        try Data("partial".utf8).write(to: output)
+
+        let thrown = #expect(throws: PeekabooError.self) {
+            try writer.abortAndRemovePartialOutput()
+        }
+        guard case .fileIOError = try #require(thrown) else {
+            Issue.record("Expected cleanup failure to retain file-I/O identity")
+            return
+        }
+        #expect(FileManager.default.fileExists(atPath: output.path))
+
+        let primary = PeekabooError.captureFailed("frame persistence failed")
+        let combined = try CaptureArtifactCleanupError(
+            primaryError: primary,
+            cleanupError: #require(thrown),
+            artifactPath: output.path)
+        #expect((combined.primaryError as? PeekabooError)?.localizedDescription == primary.localizedDescription)
+        #expect(combined.localizedDescription.contains("Incomplete video cleanup failed"))
+
+        let longPrimary = CaptureArtifactCleanupError(
+            primaryError: PeekabooError.captureFailed(String(repeating: "primary-", count: 200)),
+            cleanupError: PeekabooError.fileIOError("cleanup-marker"),
+            artifactPath: String(repeating: "/long-path", count: 80))
+        #expect(longPrimary.localizedDescription.contains("Incomplete video cleanup failed"))
+        #expect(longPrimary.localizedDescription.contains("cleanup-marker"))
+        #expect(longPrimary.localizedDescription.utf8.count <= 512)
+    }
 }
 
 // MARK: - Test fakes
@@ -232,5 +274,15 @@ private struct NoOpScreenService: ScreenServiceProtocol {
 
     var primaryScreen: ScreenInfo? {
         nil
+    }
+}
+
+private final class FailingRemovalFileManager: FileManager, @unchecked Sendable {
+    override func fileExists(atPath _: String) -> Bool {
+        false
+    }
+
+    override func removeItem(at URL: URL) throws {
+        throw CocoaError(.fileWriteNoPermission, userInfo: [NSFilePathErrorKey: URL.path])
     }
 }

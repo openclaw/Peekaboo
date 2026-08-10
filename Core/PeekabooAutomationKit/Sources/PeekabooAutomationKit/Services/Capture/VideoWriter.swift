@@ -1,22 +1,36 @@
 import AVFoundation
 import CoreGraphics
+import Darwin
 import Foundation
 import PeekabooFoundation
 
 /// Simple MP4 writer that appends CGImages as video frames.
-final class VideoWriter {
+final class VideoWriter: @unchecked Sendable {
     private let writer: AVAssetWriter
     private let input: AVAssetWriterInput
     private let adaptor: AVAssetWriterInputPixelBufferAdaptor
     private let frameDuration: CMTime
     private var frameIndex: Int64 = 0
+    private let outputExistedBeforeInitialization: Bool
+    private let fileManager: FileManager
 
     var finalURL: URL {
         self.writer.outputURL
     }
 
-    init(outputPath: String, width: Int, height: Int, fps: Double) throws {
+    init(
+        outputPath: String,
+        width: Int,
+        height: Int,
+        fps: Double,
+        fileManager: FileManager = .default) throws
+    {
+        self.fileManager = fileManager
         let url = URL(fileURLWithPath: outputPath)
+        self.outputExistedBeforeInitialization = fileManager.fileExists(atPath: url.path)
+        guard !self.outputExistedBeforeInitialization else {
+            throw PeekabooError.fileIOError("Video output already exists: \(url.path)")
+        }
         self.writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
 
         let settings: [String: Any] = [
@@ -53,9 +67,19 @@ final class VideoWriter {
         self.writer.startSession(atSourceTime: .zero)
     }
 
-    func append(image: CGImage) throws {
+    func append(image: CGImage) async throws {
         try self.startIfNeeded()
-        guard self.input.isReadyForMoreMediaData else { return }
+        let readinessDeadline = ContinuousClock.now.advanced(by: .seconds(2))
+        while !self.input.isReadyForMoreMediaData {
+            try Task.checkCancellation()
+            if self.writer.status == .failed || self.writer.status == .cancelled {
+                throw self.writer.error ?? PeekabooError.captureFailed("Video writer stopped accepting frames")
+            }
+            guard ContinuousClock.now < readinessDeadline else {
+                throw PeekabooError.captureTimeout
+            }
+            try await Task.sleep(for: .milliseconds(5))
+        }
 
         var pixelBuffer: CVPixelBuffer?
         let width = image.width
@@ -74,10 +98,12 @@ final class VideoWriter {
             kCVPixelFormatType_32BGRA,
             attrs as CFDictionary,
             &pixelBuffer)
-        guard let buffer = pixelBuffer else { return }
+        guard let buffer = pixelBuffer else {
+            throw PeekabooError.captureFailed("Failed to allocate a video pixel buffer")
+        }
 
         CVPixelBufferLockBaseAddress(buffer, [])
-        if let ctx = CGContext(
+        guard let ctx = CGContext(
             data: CVPixelBufferGetBaseAddress(buffer),
             width: width,
             height: height,
@@ -85,26 +111,69 @@ final class VideoWriter {
             bytesPerRow: CVPixelBufferGetBytesPerRow(buffer),
             space: CGColorSpaceCreateDeviceRGB(),
             bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue)
-        {
-            ctx.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        else {
+            CVPixelBufferUnlockBaseAddress(buffer, [])
+            throw PeekabooError.captureFailed("Failed to create the video frame drawing context")
         }
+        ctx.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
         CVPixelBufferUnlockBaseAddress(buffer, [])
 
         let pts = CMTimeMultiply(self.frameDuration, multiplier: Int32(self.frameIndex))
-        self.adaptor.append(buffer, withPresentationTime: pts)
+        guard self.adaptor.append(buffer, withPresentationTime: pts) else {
+            throw self.writer.error ?? PeekabooError.captureFailed("Failed to append a video frame")
+        }
         self.frameIndex += 1
     }
 
     func finish() async throws {
+        try Task.checkCancellation()
         guard self.writer.status != .completed else { return }
         self.input.markAsFinished()
-        await withCheckedContinuation { continuation in
-            self.writer.finishWriting {
-                continuation.resume()
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                self.writer.finishWriting {
+                    continuation.resume()
+                }
             }
+        } onCancel: {
+            self.writer.cancelWriting()
         }
+        try Task.checkCancellation()
         if self.writer.status != .completed {
             throw self.writer.error ?? PeekabooError.captureFailed(reason: "Failed to finalize video")
         }
+    }
+
+    func abortAndRemovePartialOutput() throws {
+        if self.writer.status == .writing || self.writer.status == .unknown {
+            self.writer.cancelWriting()
+        }
+        guard !self.outputExistedBeforeInitialization else { return }
+        do {
+            try self.fileManager.removeItem(at: self.writer.outputURL)
+        } catch {
+            if Self.isMissingOutputError(error) {
+                return
+            }
+            let detail = CaptureDiagnosticSanitizer.sanitize(error.localizedDescription) ?? "unknown error"
+            throw PeekabooError.fileIOError(
+                "Failed to remove incomplete video output at \(self.writer.outputURL.path): \(detail)")
+        }
+    }
+
+    private static func isMissingOutputError(_ error: any Error) -> Bool {
+        let nsError = error as NSError
+        if nsError.domain == NSCocoaErrorDomain, nsError.code == NSFileNoSuchFileError {
+            return true
+        }
+        if nsError.domain == NSPOSIXErrorDomain, nsError.code == ENOENT {
+            return true
+        }
+        if let underlying = nsError.userInfo[NSUnderlyingErrorKey] as? any Error,
+           underlying as NSError !== nsError
+        {
+            return self.isMissingOutputError(underlying)
+        }
+        return false
     }
 }

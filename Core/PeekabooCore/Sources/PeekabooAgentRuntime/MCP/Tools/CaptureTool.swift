@@ -83,65 +83,98 @@ public struct CaptureTool: MCPTool {
 
     @MainActor
     public func execute(arguments: ToolArguments) async throws -> ToolResponse {
-        let request = try await CaptureRequest(arguments: arguments, windows: self.context.windows)
-        try await self.prepareCaptureFocus(request)
-        let dependencies = WatchCaptureDependencies(
-            screenCapture: self.context.screenCapture,
-            screenService: self.context.screens,
-            frameSource: request.frameSource)
-        let configuration = WatchCaptureConfiguration(
-            scope: request.scope,
-            options: request.options,
-            outputRoot: request.outputDirectory,
-            autoclean: WatchAutocleanConfig(
-                minutes: request.autocleanMinutes,
-                managed: request.usesDefaultOutput),
-            sourceKind: request.source,
-            videoIn: request.videoIn,
-            videoOut: request.videoOut,
-            keepAllFrames: request.keepAllFrames,
-            videoOptions: request.videoOptions)
-        let session = WatchCaptureSession(
-            dependencies: dependencies,
-            configuration: configuration)
-        let result = try await session.run()
+        let focusReceipt = CaptureFocusDispatchReceipt()
+        do {
+            let request = try await CaptureRequest(arguments: arguments, windows: self.context.windows)
+            try await self.prepareCaptureFocus(request, receipt: focusReceipt)
+            let dependencies = WatchCaptureDependencies(
+                screenCapture: self.context.screenCapture,
+                screenService: self.context.screens,
+                frameSource: request.frameSource)
+            let configuration = WatchCaptureConfiguration(
+                scope: request.scope,
+                options: request.options,
+                outputRoot: request.outputDirectory,
+                autoclean: WatchAutocleanConfig(
+                    minutes: request.autocleanMinutes,
+                    managed: request.usesDefaultOutput),
+                sourceKind: request.source,
+                videoIn: request.videoIn,
+                videoOut: request.videoOut,
+                keepAllFrames: request.keepAllFrames,
+                videoOptions: request.videoOptions)
+            let session = WatchCaptureSession(
+                dependencies: dependencies,
+                configuration: configuration)
+            let result = try await session.run()
 
-        var summaryLines = [
-            "capture kept \(result.stats.framesKept) frames (dropped \(result.stats.framesDropped))",
-            "contact: \(result.contactSheet.path)",
-            "metadata: \(result.metadataFile)",
-            "frames: \(result.frames.count) files",
-        ]
-        if let videoOut = result.videoOut {
-            summaryLines.insert("video: \(videoOut)", at: 3)
-        }
-        if !result.warnings.isEmpty {
-            let warnings = result.warnings.map(\.message).joined(separator: "; ")
-            summaryLines.append("warnings: \(warnings)")
-        }
-        let summary = summaryLines.joined(separator: "\n")
-        let meta = ToolEventSummary(
-            actionDescription: "Capture",
-            notes: summary)
+            var summaryLines = [
+                "capture kept \(result.stats.framesKept) frames (dropped \(result.stats.framesDropped))",
+                "contact: \(result.contactSheet.path)",
+                "metadata: \(result.metadataFile)",
+                "frames: \(result.frames.count) files",
+            ]
+            if let videoOut = result.videoOut {
+                summaryLines.insert("video: \(videoOut)", at: 3)
+            }
+            if !result.warnings.isEmpty {
+                let warnings = result.warnings.map(\.message).joined(separator: "; ")
+                summaryLines.append("warnings: \(warnings)")
+            }
+            let summary = summaryLines.joined(separator: "\n")
+            let meta = ToolEventSummary(
+                actionDescription: "Capture",
+                notes: summary)
 
-        return ToolResponse.text(
-            summary,
-            meta: ToolEventSummary.merge(
-                summary: meta,
-                into: CaptureMetaBuilder.buildMeta(from: result)))
+            return ToolResponse.text(
+                summary,
+                meta: ToolEventSummary.merge(
+                    summary: meta,
+                    into: CaptureMetaBuilder.buildMeta(
+                        from: result,
+                        mutationDispatched: focusReceipt.mutationDispatched)))
+        } catch let error as CaptureArtifactCleanupError {
+            return Self.failureResponse(error, mutationDispatched: focusReceipt.mutationDispatched)
+        } catch let error as CancellationError {
+            throw error
+        } catch {
+            try Task.checkCancellation()
+            return Self.failureResponse(error, mutationDispatched: focusReceipt.mutationDispatched)
+        }
+    }
+
+    static func failureResponse(
+        _ error: any Error,
+        mutationDispatched: Bool) -> ToolResponse
+    {
+        ToolResponse.error(
+            error.localizedDescription,
+            meta: CaptureMetaBuilder.failureMeta(
+                error,
+                mutationDispatched: mutationDispatched))
     }
 
     @MainActor
-    private func prepareCaptureFocus(_ request: CaptureRequest) async throws {
+    private func prepareCaptureFocus(
+        _ request: CaptureRequest,
+        receipt: CaptureFocusDispatchReceipt) async throws
+    {
         guard request.source == .live, request.options.captureFocus != .background else { return }
 
         if request.options.captureFocus == .foreground, let windowID = request.scope.windowId {
+            receipt.mutationDispatched = true
             try await self.context.windows.focusWindow(target: .windowId(Int(windowID)))
         } else if let identifier = request.scope.applicationIdentifier {
+            receipt.mutationDispatched = true
             try await self.context.applications.activateApplication(identifier: identifier)
         } else {
             return
         }
         try await Task.sleep(nanoseconds: 50_000_000)
     }
+}
+
+@MainActor
+private final class CaptureFocusDispatchReceipt {
+    var mutationDispatched = false
 }

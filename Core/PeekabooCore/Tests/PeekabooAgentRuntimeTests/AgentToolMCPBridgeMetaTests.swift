@@ -57,6 +57,51 @@ struct AgentToolMCPBridgeMetaTests {
     }
 
     @Test
+    func `Capture error keeps only safe bounded metadata for the agent`() throws {
+        let response = ToolResponse.error(
+            "no frames",
+            meta: .object([
+                "decode_failures": .int(2),
+                "effect": .string("partial"),
+                "error_code": .string("CAPTURE_NO_VALID_FRAMES"),
+                "first_decode_error": .string("first"),
+                "internal_diagnostics": .string("private"),
+                "mutation_dispatched": .bool(true),
+                "retry_safe": .bool(false),
+                "source": .string("video"),
+            ]))
+
+        let converted = convertToolResponseToAgentToolResult(response)
+        let payload = try #require(try converted.toJSON() as? [String: Any])
+
+        #expect(payload["error_code"] as? String == "CAPTURE_NO_VALID_FRAMES")
+        #expect(payload["effect"] as? String == "partial")
+        #expect(payload["decode_failures"] as? Int == 2)
+        #expect(payload["mutation_dispatched"] as? Bool == true)
+        #expect(payload["retry_safe"] as? Bool == false)
+        #expect(payload["internal_diagnostics"] == nil)
+    }
+
+    @Test
+    func `Successful focus-capable capture promotes dispatch receipt for the agent`() throws {
+        let response = ToolResponse.text(
+            "captured",
+            meta: .object([
+                "mutation_dispatched": .bool(true),
+                "retry_safe": .bool(false),
+                "stats": .object(["frames_kept": .int(2)]),
+            ]))
+
+        let converted = convertToolResponseToAgentToolResult(response)
+        let payload = try #require(try converted.toJSON() as? [String: Any])
+
+        #expect(payload["mutation_dispatched"] as? Bool == true)
+        #expect(payload["retry_safe"] as? Bool == false)
+        #expect(payload["stats"] == nil)
+        #expect((payload["meta"] as? [String: Any])?["stats"] != nil)
+    }
+
+    @Test
     func `Shell tool metadata survives native bridge`() async throws {
         let command = "echo bridge-meta-test"
         let tool = ShellTool()

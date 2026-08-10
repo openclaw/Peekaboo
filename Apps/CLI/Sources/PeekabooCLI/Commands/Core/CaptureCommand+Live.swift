@@ -61,6 +61,7 @@ InjectedRuntimeBackedCommand {
 
     @RuntimeStorage var runtime: CommandRuntime?
     var runtimeOptions = CommandRuntimeOptions()
+    var captureMutationDispatched = false
 
     func withCaptureFocusMutation(_ operation: () async throws -> Void) async rethrows {
         try await self.resolvedRuntime.withCaptureFocusMutation(operation)

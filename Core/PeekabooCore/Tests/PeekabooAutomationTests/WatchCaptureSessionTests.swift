@@ -2,11 +2,98 @@
 import CoreGraphics
 import Foundation
 import ImageIO
+import PeekabooFoundation
 import Testing
 import UniformTypeIdentifiers
-@testable import PeekabooAutomationKit
+@testable @_spi(Testing) import PeekabooAutomationKit
 
 struct WatchCaptureSessionTests {
+    @Test
+    @MainActor
+    func `video decoder suspension releases MainActor`() async throws {
+        let image = try #require(WatchCaptureArtifactWriter.makeCGImage(from: Self.makePNG(
+            size: CGSize(width: 20, height: 20))))
+        let decoder = ControlledVideoFrameDecoder(image: image)
+        let source = VideoFrameSource(
+            timeline: VideoFrameTimeline(
+                start: .zero,
+                end: CMTime(seconds: 1, preferredTimescale: 1000),
+                interval: CMTime(seconds: 0.5, preferredTimescale: 1000)),
+            effectiveFPS: 2,
+            decoder: decoder)
+
+        let frameTask = Task { @MainActor in
+            try await source.nextFrame()
+        }
+        await decoder.waitUntilEntered()
+        let mainActorRemainedResponsive = await MainActor.run { true }
+        #expect(mainActorRemainedResponsive)
+        await decoder.release()
+        #expect(try await frameTask.value?.cgImage != nil)
+    }
+
+    @Test
+    @MainActor
+    func `video decoder timeout cancels generator without awaiting noncooperative work`() async throws {
+        let image = try #require(WatchCaptureArtifactWriter.makeCGImage(from: Self.makePNG(
+            size: CGSize(width: 20, height: 20))))
+        let decoder = NoncooperativeVideoFrameDecoder(image: image)
+        let source = VideoFrameSource(
+            timeline: VideoFrameTimeline(
+                start: .zero,
+                end: CMTime(seconds: 1, preferredTimescale: 1000),
+                interval: CMTime(seconds: 0.5, preferredTimescale: 1000)),
+            effectiveFPS: 2,
+            decoder: decoder,
+            decodeTimeout: .milliseconds(30))
+
+        let releaseTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(300))
+            decoder.release()
+        }
+        let started = ContinuousClock.now
+        let frame = try await source.nextFrame()
+        let elapsed = started.duration(to: .now)
+
+        #expect(frame?.cgImage == nil)
+        #expect(elapsed < .milliseconds(150))
+        #expect(decoder.cancelCount == 1)
+        #expect(source.captureDiagnostics.decodeFailures == 1)
+        await releaseTask.value
+    }
+
+    @Test
+    @MainActor
+    func `video decoder file IO errors are not counted as recoverable decode loss`() async throws {
+        let source = VideoFrameSource(
+            timeline: VideoFrameTimeline(
+                start: .zero,
+                end: CMTime(seconds: 1, preferredTimescale: 1000),
+                interval: CMTime(seconds: 0.5, preferredTimescale: 1000)),
+            effectiveFPS: 2,
+            decoder: FailingVideoFrameDecoder(error: PeekabooError.fileIOError("read failed")))
+
+        let thrown = await #expect(throws: PeekabooError.self) {
+            _ = try await source.nextFrame()
+        }
+        guard case .fileIOError = try #require(thrown) else {
+            Issue.record("Expected file-I/O decode failure to retain its type")
+            return
+        }
+        #expect(source.captureDiagnostics.decodeFailures == 0)
+
+        let recoverable = VideoFrameSource(
+            timeline: VideoFrameTimeline(
+                start: .zero,
+                end: CMTime(seconds: 1, preferredTimescale: 1000),
+                interval: CMTime(seconds: 0.5, preferredTimescale: 1000)),
+            effectiveFPS: 2,
+            decoder: FailingVideoFrameDecoder(error: PeekabooError.captureFailed("decode failed")))
+        let output = try await recoverable.nextFrame()
+        #expect(output?.cgImage == nil)
+        #expect(recoverable.captureDiagnostics.decodeFailures == 1)
+    }
+
     @Test
     func `Fast diff detects change and bounding box`() {
         let prev = WatchFrameDiffer.LumaBuffer(width: 2, height: 2, pixels: [0, 0, 0, 0])
@@ -109,6 +196,88 @@ struct WatchCaptureSessionTests {
         #expect(timeline.next() == .zero)
         #expect(timeline.next() == CMTime(value: 1, timescale: 1000))
         #expect(timeline.next() == CMTime(value: 2, timescale: 1000))
+    }
+
+    @Test
+    func `Video frame timeline treats trim end as exclusive`() {
+        var timeline = VideoFrameTimeline(
+            start: .zero,
+            end: CMTime(value: 2, timescale: 1000),
+            interval: CMTime(value: 1, timescale: 1000))
+
+        #expect(timeline.next() == .zero)
+        #expect(timeline.next() == CMTime(value: 1, timescale: 1000))
+        #expect(timeline.next() == nil)
+    }
+
+    @Test
+    func `Video source rejects invalid sampling trim and resolution admission before file access`() async {
+        let missing = URL(fileURLWithPath: "/tmp/peekaboo-missing-video-\(UUID().uuidString).mov")
+        await #expect(throws: PeekabooError.self) {
+            _ = try await VideoFrameSource(
+                url: missing,
+                sampleFps: 0,
+                everyMs: nil,
+                startMs: nil,
+                endMs: nil,
+                resolutionCap: nil)
+        }
+        await #expect(throws: PeekabooError.self) {
+            _ = try await VideoFrameSource(
+                url: missing,
+                sampleFps: nil,
+                everyMs: 0,
+                startMs: nil,
+                endMs: nil,
+                resolutionCap: nil)
+        }
+        await #expect(throws: PeekabooError.self) {
+            _ = try await VideoFrameSource(
+                url: missing,
+                sampleFps: nil,
+                everyMs: nil,
+                startMs: -1,
+                endMs: nil,
+                resolutionCap: nil)
+        }
+        await #expect(throws: PeekabooError.self) {
+            _ = try await VideoFrameSource(
+                url: missing,
+                sampleFps: nil,
+                everyMs: nil,
+                startMs: nil,
+                endMs: -1,
+                resolutionCap: nil)
+        }
+        await #expect(throws: PeekabooError.self) {
+            _ = try await VideoFrameSource(
+                url: missing,
+                sampleFps: nil,
+                everyMs: nil,
+                startMs: nil,
+                endMs: nil,
+                resolutionCap: 0)
+        }
+    }
+
+    @Test
+    func `Only the observed TCC contention signature receives a transient retry`() {
+        let contention = NSError(
+            domain: "com.apple.ScreenCaptureKit.SCStreamErrorDomain",
+            code: -3801,
+            userInfo: [NSLocalizedDescriptionKey: "The user declined TCC for application, window, display capture"])
+        let invalidParameter = NSError(
+            domain: "com.apple.ScreenCaptureKit.SCStreamErrorDomain",
+            code: -3812,
+            userInfo: [NSLocalizedDescriptionKey: "Invalid parameter"])
+        let unrelatedDenial = NSError(
+            domain: "example.test",
+            code: -3801,
+            userInfo: [NSLocalizedDescriptionKey: "The user declined TCC"])
+
+        #expect(ScreenCaptureKitTransientError.retryDelayNanoseconds(after: contention) != nil)
+        #expect(ScreenCaptureKitTransientError.retryDelayNanoseconds(after: invalidParameter) == nil)
+        #expect(ScreenCaptureKitTransientError.retryDelayNanoseconds(after: unrelatedDenial) == nil)
     }
 
     @Test
@@ -246,7 +415,7 @@ struct WatchCaptureSessionTests {
 
     @Test
     @MainActor
-    func `Stops at size cap and emits warning`() async throws {
+    func `Size cap is honored before any fallback capture`() async throws {
         let png = Self.makePNG(size: CGSize(width: 50, height: 50))
         let capture = StubScreenCaptureService(result: png, size: CGSize(width: 50, height: 50))
         let screens = StubScreenService()
@@ -287,8 +456,10 @@ struct WatchCaptureSessionTests {
             autoclean: WatchAutocleanConfig(minutes: 1, managed: false))
         let session = WatchCaptureSession(dependencies: dependencies, configuration: configuration)
 
-        let result = try await session.run()
-        #expect(result.warnings.contains { $0.code == .sizeCap })
+        let thrown = await #expect(throws: CaptureNoValidFramesError.self) {
+            _ = try await session.run()
+        }
+        #expect(try #require(thrown).framesDropped == 0)
     }
 
     @Test
@@ -338,7 +509,61 @@ struct WatchCaptureSessionTests {
 
     @Test
     @MainActor
-    func `Stop request wakes transient capture backoff`() async throws {
+    func `Stop request returns while an in-flight frame source ignores cancellation`() async throws {
+        let image = try #require(WatchCaptureArtifactWriter.makeCGImage(from: Self.makePNG(
+            size: CGSize(width: 20, height: 20))))
+        let source = NoncooperativeCaptureFrameSource(image: image)
+        let output = FileManager.default.temporaryDirectory
+            .appendingPathComponent("watch-noncooperative-stop-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: output) }
+        let options = CaptureOptions(
+            duration: 30,
+            idleFps: 5,
+            activeFps: 5,
+            changeThresholdPercent: 100,
+            heartbeatSeconds: 0,
+            quietMsToIdle: 0,
+            maxFrames: 10,
+            maxMegabytes: nil,
+            highlightChanges: false,
+            captureFocus: .background,
+            resolutionCap: nil,
+            diffStrategy: .fast,
+            diffBudgetMs: nil)
+        let session = WatchCaptureSession(
+            dependencies: WatchCaptureDependencies(
+                screenCapture: StubScreenCaptureService(
+                    result: Self.makePNG(size: CGSize(width: 20, height: 20)),
+                    size: CGSize(width: 20, height: 20)),
+                screenService: StubScreenService(),
+                frameSource: source),
+            configuration: WatchCaptureConfiguration(
+                scope: CaptureScope(kind: .frontmost),
+                options: options,
+                outputRoot: output,
+                autoclean: WatchAutocleanConfig(minutes: 1, managed: false),
+                sourceKind: .live,
+                keepAllFrames: true))
+
+        let task = Task { @MainActor in try await session.run() }
+        await source.waitUntilBlocked()
+        let releaseTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(300))
+            source.release()
+        }
+        let started = ContinuousClock.now
+        session.requestStop()
+        let result = try await task.value
+        let elapsed = started.duration(to: .now)
+
+        #expect(result.frames.count == 1)
+        #expect(elapsed < .milliseconds(150))
+        await releaseTask.value
+    }
+
+    @Test
+    @MainActor
+    func `Stop request cancels in-flight transient capture backoff`() async throws {
         let png = Self.makePNG(size: CGSize(width: 20, height: 20))
         let capture = StubTransientScreenCaptureService(result: png, size: CGSize(width: 20, height: 20))
         let screens = StubScreenService()
@@ -395,7 +620,11 @@ struct WatchCaptureSessionTests {
 
         print("PROOF transient_stop_elapsed_ms=\(Int(stopElapsed * 1000))")
 
-        #expect(result.warnings.contains { $0.code == .transientCaptureFailure })
+        // The fallback runner owns this retry and cancellation wins before it surfaces an error
+        // to the session, so reporting a dropped transient frame here would be fabricated.
+        #expect(!result.warnings.contains { $0.code == .transientCaptureFailure })
+        #expect(result.frames.count == 1)
+        #expect(result.warnings.contains { $0.code == .noMotion })
         // Unfixed raw Task.sleep still waits ~350ms before the loop can observe stop.
         #expect(stopElapsed < 0.08)
     }
@@ -571,6 +800,133 @@ struct WatchCaptureSessionTests {
 
 // MARK: - Stubs
 
+private final class NoncooperativeVideoFrameDecoder: @unchecked Sendable, VideoFrameDecoding {
+    private let lock = NSLock()
+    private let image: CGImage
+    private var releaseContinuation: CheckedContinuation<Void, Never>?
+    private var cancellationCount = 0
+
+    init(image: CGImage) {
+        self.image = image
+    }
+
+    func image(at time: CMTime) async throws -> (image: CGImage, actualTime: CMTime) {
+        await withCheckedContinuation { continuation in
+            self.lock.lock()
+            self.releaseContinuation = continuation
+            self.lock.unlock()
+        }
+        return (self.image, time)
+    }
+
+    func cancelPendingDecodes() {
+        self.lock.lock()
+        self.cancellationCount += 1
+        self.lock.unlock()
+    }
+
+    var cancelCount: Int {
+        self.lock.lock()
+        defer { self.lock.unlock() }
+        return self.cancellationCount
+    }
+
+    func release() {
+        self.lock.lock()
+        let continuation = self.releaseContinuation
+        self.releaseContinuation = nil
+        self.lock.unlock()
+        continuation?.resume()
+    }
+}
+
+@MainActor
+private final class NoncooperativeCaptureFrameSource: CaptureFrameSource {
+    private let image: CGImage
+    private var callCount = 0
+    private var blocked = false
+    private var blockedContinuation: CheckedContinuation<Void, Never>?
+    private var releaseContinuation: CheckedContinuation<Void, Never>?
+
+    init(image: CGImage) {
+        self.image = image
+    }
+
+    func nextFrame() async throws -> (cgImage: CGImage?, metadata: CaptureMetadata)? {
+        self.callCount += 1
+        if self.callCount == 1 {
+            return (self.image, self.metadata)
+        }
+        self.blocked = true
+        self.blockedContinuation?.resume()
+        self.blockedContinuation = nil
+        await withCheckedContinuation { continuation in
+            self.releaseContinuation = continuation
+        }
+        return (self.image, self.metadata)
+    }
+
+    func waitUntilBlocked() async {
+        guard !self.blocked else { return }
+        await withCheckedContinuation { continuation in
+            self.blockedContinuation = continuation
+        }
+    }
+
+    func release() {
+        self.releaseContinuation?.resume()
+        self.releaseContinuation = nil
+    }
+
+    private var metadata: CaptureMetadata {
+        CaptureMetadata(
+            size: CGSize(width: self.image.width, height: self.image.height),
+            mode: .screen,
+            timestamp: Date())
+    }
+}
+
+private actor ControlledVideoFrameDecoder: VideoFrameDecoding {
+    private let image: CGImage
+    private var entered = false
+    private var enteredContinuation: CheckedContinuation<Void, Never>?
+    private var releaseContinuation: CheckedContinuation<Void, Never>?
+
+    init(image: CGImage) {
+        self.image = image
+    }
+
+    func image(at time: CMTime) async throws -> (image: CGImage, actualTime: CMTime) {
+        self.entered = true
+        self.enteredContinuation?.resume()
+        self.enteredContinuation = nil
+        await withCheckedContinuation { continuation in
+            self.releaseContinuation = continuation
+        }
+        return (self.image, time)
+    }
+
+    func waitUntilEntered() async {
+        guard !self.entered else { return }
+        await withCheckedContinuation { continuation in
+            self.enteredContinuation = continuation
+        }
+    }
+
+    func release() {
+        self.releaseContinuation?.resume()
+        self.releaseContinuation = nil
+    }
+}
+
+private struct FailingVideoFrameDecoder: VideoFrameDecoding {
+    let error: any Error & Sendable
+
+    func image(at _: CMTime) async throws -> (image: CGImage, actualTime: CMTime) {
+        throw self.error
+    }
+}
+
 @MainActor
 private final class StubTransientScreenCaptureService: ScreenCaptureServiceProtocol {
     private let success: StubScreenCaptureService
@@ -617,14 +973,22 @@ private final class StubTransientScreenCaptureService: ScreenCaptureServiceProto
         visualizerMode: CaptureVisualizerMode,
         scale: CaptureScalePreference) async throws -> CaptureResult
     {
-        self.attemptCount += 1
-        if self.attemptCount == 1 {
+        if self.attemptCount == 0 {
+            self.attemptCount += 1
             return try await self.success.captureFrontmost(
                 visualizerMode: visualizerMode,
                 scale: scale)
         }
-        self.onTransientFailure?()
-        throw Self.transientError
+        let runner = ScreenCaptureFallbackRunner(apis: [.modern])
+        return try await runner.run(
+            operationName: "captureFrontmost",
+            logger: MockLoggingService().logger(category: "test"),
+            correlationId: "watch-stop-inner-retry")
+        { _ in
+            self.attemptCount += 1
+            self.onTransientFailure?()
+            throw Self.transientError
+        }
     }
 
     func captureArea(

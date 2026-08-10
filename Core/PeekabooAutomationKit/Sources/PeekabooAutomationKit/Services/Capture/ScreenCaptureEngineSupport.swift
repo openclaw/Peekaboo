@@ -136,6 +136,7 @@ import PeekabooFoundation
         precondition(!selectedAPIs.isEmpty, "At least one API must be provided")
 
         for (index, api) in selectedAPIs.indexed() {
+            try Task.checkCancellation()
             do {
                 logger.debug(
                     "Attempting \(operationName) via \(api.description)",
@@ -155,6 +156,7 @@ import PeekabooFoundation
             } catch {
                 lastError = error
                 self.observer?(operationName, api, 0, false, error)
+                var currentError = error
                 if let delay = ScreenCaptureKitTransientError.retryDelayNanoseconds(after: error) {
                     logger.warning(
                         "\(api.description) capture hit transient ScreenCaptureKit denial; retrying once",
@@ -177,18 +179,23 @@ import PeekabooFoundation
                         return result
                     } catch {
                         lastError = error
+                        currentError = error
                         self.observer?(operationName, api, 0, false, error)
                     }
                 }
+                if currentError is CancellationError {
+                    throw currentError
+                }
+                try Task.checkCancellation()
                 let hasFallback = index < (selectedAPIs.count - 1)
-                if self.shouldFallback(after: error, api: api, hasFallback: hasFallback) {
+                if self.shouldFallback(after: currentError, api: api, hasFallback: hasFallback) {
                     logger.warning(
                         "\(api.description) capture failed, retrying with fallback API",
-                        metadata: ["error": String(describing: error)],
+                        metadata: ["error": String(describing: currentError)],
                         correlationId: correlationId)
                     continue
                 }
-                throw error
+                throw currentError
             }
         }
 
@@ -210,6 +217,7 @@ import PeekabooFoundation
         precondition(!selectedAPIs.isEmpty, "At least one API must be provided")
 
         for (index, api) in selectedAPIs.indexed() {
+            try Task.checkCancellation()
             do {
                 logger.debug(
                     "Attempting \(operationName) via \(api.description)",
@@ -231,6 +239,7 @@ import PeekabooFoundation
             } catch {
                 lastError = error
                 self.observer?(operationName, api, 0, false, error)
+                var currentError = error
                 if let delay = ScreenCaptureKitTransientError.retryDelayNanoseconds(after: error) {
                     logger.warning(
                         "\(api.description) capture hit transient ScreenCaptureKit denial; retrying once",
@@ -255,19 +264,24 @@ import PeekabooFoundation
                             fallbackReason: fallbackReason)
                     } catch {
                         lastError = error
+                        currentError = error
                         self.observer?(operationName, api, 0, false, error)
                     }
                 }
+                if currentError is CancellationError {
+                    throw currentError
+                }
+                try Task.checkCancellation()
                 let hasFallback = index < (selectedAPIs.count - 1)
-                if self.shouldFallback(after: error, api: api, hasFallback: hasFallback) {
-                    fallbackReason = "\(api.description) failed: \(String(describing: error))"
+                if self.shouldFallback(after: currentError, api: api, hasFallback: hasFallback) {
+                    fallbackReason = "\(api.description) failed: \(String(describing: currentError))"
                     logger.warning(
                         "\(api.description) capture failed, retrying with fallback API",
-                        metadata: ["error": String(describing: error)],
+                        metadata: ["error": String(describing: currentError)],
                         correlationId: correlationId)
                     continue
                 }
-                throw error
+                throw currentError
             }
         }
 
@@ -298,10 +312,12 @@ enum ScreenCaptureKitTransientError {
             error.localizedDescription,
             nsError.domain,
         ].joined(separator: " ").lowercased()
-        let looksTransient = nsError.domain.localizedCaseInsensitiveContains("ScreenCaptureKit") ||
-            message.contains("declined tcc") ||
-            message.contains("user declined") ||
-            message.contains("application, window, display capture")
+        let isScreenCaptureKitDenial = nsError.domain == "com.apple.ScreenCaptureKit.SCStreamErrorDomain" &&
+            nsError.code == -3801
+        let looksLikeObservedContention = message.contains("declined tcc") ||
+            message.contains("transient tcc") ||
+            message.contains("temporary tcc")
+        let looksTransient = isScreenCaptureKitDenial && looksLikeObservedContention
         guard looksTransient else {
             return nil
         }

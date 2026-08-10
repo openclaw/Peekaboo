@@ -145,7 +145,7 @@ InjectedRuntimeBackedCommand {
         }
         print("""
         🎥 capture(video) kept \(result.stats.framesKept) frames (dropped \(result.stats
-            .framesDropped)), contact sheet: \(meta.contactPath)
+            .framesDropped), decode failures \(result.stats.decodeFailures)), contact sheet: \(meta.contactPath)
         """)
         for frame in result.frames {
             print("🖼️  \(frame.reason.rawValue) t=\(frame.timestampMs)ms → \(frame.path)")

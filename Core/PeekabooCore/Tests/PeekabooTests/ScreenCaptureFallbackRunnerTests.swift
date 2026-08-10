@@ -1,5 +1,6 @@
 import CoreGraphics
 import Foundation
+import PeekabooFoundation
 import Testing
 @_spi(Testing) import PeekabooAutomationKit
 
@@ -149,6 +150,90 @@ struct ScreenCaptureFallbackRunnerTests {
 
         #expect(value == "ok_modern")
         #expect(calls == [.modern, .modern])
+    }
+
+    @MainActor
+    @Test
+    func `permanent retry error replaces the first transient denial`() async {
+        let logger = LoggingService(subsystem: "test.logger").logger(category: "test")
+        let runner = ScreenCaptureFallbackRunner(apis: [.modern])
+        var genericAttempts = 0
+        let genericError = PeekabooError.fileIOError("retry file failure")
+
+        let genericThrown = await #expect(throws: PeekabooError.self) {
+            _ = try await runner.run(
+                operationName: "test",
+                logger: logger,
+                correlationId: "retry-generic")
+            { _ -> String in
+                genericAttempts += 1
+                if genericAttempts == 1 {
+                    throw Self.transientDenial
+                }
+                throw genericError
+            }
+        }
+        guard case .fileIOError = genericThrown else {
+            Issue.record("Expected generic retry to retain the permanent file error")
+            return
+        }
+
+        var captureAttempts = 0
+        let captureThrown = await #expect(throws: PeekabooError.self) {
+            _ = try await runner.runCapture(
+                operationName: "capture",
+                logger: logger,
+                correlationId: "retry-capture")
+            { _ in
+                captureAttempts += 1
+                if captureAttempts == 1 {
+                    throw Self.transientDenial
+                }
+                throw genericError
+            }
+        }
+        guard case .fileIOError = captureThrown else {
+            Issue.record("Expected capture retry to retain the permanent file error")
+            return
+        }
+    }
+
+    @MainActor
+    @Test
+    func `retry cancellation never dispatches a fallback capture API`() async {
+        let logger = LoggingService(subsystem: "test.logger").logger(category: "test")
+        let runner = ScreenCaptureFallbackRunner(apis: [.modern, .legacy])
+        var genericCalls: [ScreenCaptureAPI] = []
+        await #expect(throws: CancellationError.self) {
+            _ = try await runner.run(
+                operationName: "test",
+                logger: logger,
+                correlationId: "cancel-generic-fallback")
+            { api -> String in
+                genericCalls.append(api)
+                if genericCalls.count == 1 {
+                    throw Self.transientDenial
+                }
+                throw CancellationError()
+            }
+        }
+        #expect(genericCalls == [.modern, .modern])
+
+        var captureCalls: [ScreenCaptureAPI] = []
+        await #expect(throws: CancellationError.self) {
+            _ = try await runner.runCapture(
+                operationName: "capture",
+                logger: logger,
+                correlationId: "cancel-capture-fallback")
+            { api in
+                captureCalls.append(api)
+                if captureCalls.count == 1 {
+                    throw Self.transientDenial
+                }
+                throw CancellationError()
+            }
+        }
+        #expect(captureCalls == [.modern, .modern])
     }
 
     @MainActor

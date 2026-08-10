@@ -23,7 +23,7 @@ The MCP server exposes the same primitive as the `capture` tool. MCP arguments u
 - `metadata.json` (`CaptureResult`) with stats, warnings, grid info, and source (live|video)
 - Optional MP4 (`--video-out`) built from kept frames
 
-For `capture video`, `metadata.json` and JSON stdout include `options.video` with the requested sampling/trim options plus the effective FPS used by the frame reader.
+For `capture video`, `metadata.json` and JSON stdout include `options.video` with the requested sampling/trim options plus the effective FPS used by the frame reader. `stats.decodeFailures` identifies the decode-failure subset of `stats.framesDropped`; ordinary diff drops remain in `framesDropped` without increasing `decodeFailures`. A bounded `videoDecodeFailure` warning retains the first and last decode errors when later samples still succeed.
 
 ## `capture live` flags
 - Targeting: `--mode screen|window|frontmost|area`, `--screen-index`, `--app`, `--pid`, `--window-title`, `--window-index`, `--region x,y,width,height` (global coords)
@@ -48,7 +48,11 @@ The command exits non-zero if the child command exits non-zero, times out, or re
 - Caps/output: `--max-frames`, `--max-mb`, `--resolution-cap` (default 1440), `--diff-strategy`, `--diff-budget`, `--video-out`
 - Paths: `--path`, `--autoclean`
 
-Validation: video source rejects targeting/focus/cadence flags; live rejects sampling/trim/no-diff. Video runs may keep a single frame when no motion is detected (emits a `noMotion` warning) instead of failing.
+Validation: video source rejects targeting/focus/cadence flags; live rejects sampling/trim/no-diff. Video runs may keep a single valid frame when no motion is detected (emits a `noMotion` warning) instead of failing. A partial decode run remains successful but reports `decodeFailures` and `videoDecodeFailure`; it is not mislabeled as no motion when decode loss leaves only one valid frame.
+
+Live and video sessions require at least one valid image. Peekaboo fails before contact-sheet or metadata creation with `CAPTURE_NO_VALID_FRAMES` and the bounded capture/decode cause; cancellation, permanent capture failures, and file/video-writer errors keep their original error instead. Retry metadata follows actual dispatch: a read-only capture reports `mutation_dispatched: false` and `retry_safe: true`, while a completed focus operation or `capture action` child dispatch reports `mutation_dispatched: true`, `effect: partial`, and `retry_safe: false`.
+
+An explicit `--path` may reuse an existing directory only when it contains no prior capture-owned `contact.png`, `metadata.json`, or `keep-*.png` artifacts. Choose a new directory when rerunning a capture instead of silently reusing stale output.
 
 ## Examples
 ```bash
@@ -75,8 +79,9 @@ peekaboo capture video /path/to/demo.mov --every 500ms --no-diff
 - Live defaults: max duration 180s, `--max-frames` 800, resolution cap 1440, diff strategy `fast` unless `--diff-strategy quality` is set.
 - Action capture uses the same live sampler and can stop it early once the child command and post-roll complete.
 - Background live capture of an exact PID/window reacquires a generation-pinned read lane for each frame. Unrelated app mutations can overlap, while a queued mutation for the captured process runs before the next frame. Screen, area, frontmost, unresolved, foreground, and focus-capable observations remain globally exclusive.
-- Video ingest uses the same diff/keep logic as live; `--no-diff` keeps every sampled frame. When no motion is detected, you may end up with a single kept frame plus a `noMotion` warning.
-- Core types: `CaptureScope/Options/Result` with a pluggable `CaptureFrameSource` (ScreenCapture for live, AVAssetReader for video). Optional MP4 is written by `VideoWriter` when `--video-out` is set.
+- Video ingest uses the same diff/keep logic as live; `--no-diff` keeps every sampled frame. `--max-frames` also bounds video sample attempts, 32 consecutive decode failures stop sampling early, and each decode has a five-second deadline that cancels pending generator work. Negative/zero sampling values and trim offsets are rejected, trim end is exclusive and capped to the asset duration, and the resolution cap must be positive and finite. When no motion is detected without capture/decode loss, you may end up with a single kept frame plus a `noMotion` warning. Undecodable samples remain bounded warnings when later samples succeed; if every admitted sample is invalid, the command fails instead of returning an empty contact sheet.
+- MP4 output is transactional with session success: writer, frame, contact-sheet, metadata, or cancellation failures cancel the writer and remove its incomplete output. If removal itself fails, Peekaboo reports that cleanup failure alongside the primary capture error instead of silently leaving a corrupt artifact. Contact-sheet creation fails if any advertised source frame is unreadable instead of emitting blank cells with false sampled indexes.
+- Core types: `CaptureScope/Options/Result` with a pluggable `CaptureFrameSource` (ScreenCapture for live, asynchronous AVAssetImageGenerator sampling for video). Optional MP4 is written by `VideoWriter` when `--video-out` is set.
 - Quick smokes:
   - `peekaboo capture live --mode screen --duration 5s --active-fps 8 --threshold 0` → frames > 0, contact sheet exists.
   - `peekaboo capture video /path/demo.mov --sample-fps 2 --start 5s --video-out /tmp/demo.mp4` → ≥2 kept frames and MP4 written.

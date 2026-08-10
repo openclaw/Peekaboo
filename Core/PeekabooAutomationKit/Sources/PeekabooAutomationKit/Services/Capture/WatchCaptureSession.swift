@@ -152,7 +152,9 @@ public final class WatchCaptureSession {
     var frames: [CaptureFrameInfo] = []
     var warnings: [CaptureWarning] = []
     var framesDropped: Int = 0
+    var frameAttempts: Int = 0
     var totalBytes: Int = 0
+    var lastCaptureErrorDescription: String?
     private let stopSignal = WatchCaptureStopSignal()
 
     public init(dependencies: WatchCaptureDependencies, configuration: WatchCaptureConfiguration) {
@@ -185,46 +187,76 @@ public final class WatchCaptureSession {
     }
 
     public func run() async throws -> CaptureSessionResult {
-        try self.store.prepareOutputRoot()
-        if let autocleanWarning = self.store.performAutoclean() {
-            self.warnings.append(autocleanWarning)
-        }
-        // videoWriter is created lazily on first saved frame to match actual dimensions.
+        do {
+            try self.store.prepareOutputRoot()
+            if let autocleanWarning = self.store.performAutoclean() {
+                self.warnings.append(autocleanWarning)
+            }
+            // videoWriter is created lazily on first saved frame to match actual dimensions.
 
-        let timing = self.makeTiming(start: Date())
-        try await self.captureFrames(timing: timing)
-        try await self.ensureFallbackFrame()
+            let timing = self.makeTiming(start: Date())
+            try await self.captureFrames(timing: timing)
+            try Task.checkCancellation()
 
-        if let writer = self.videoWriter {
-            try await writer.finish()
-        }
+            let sourceDiagnostics = self.captureSourceDiagnostics
+            guard !self.frames.isEmpty else {
+                throw CaptureNoValidFramesError(
+                    source: self.sourceKind,
+                    framesDropped: self.framesDropped,
+                    decodeFailures: sourceDiagnostics.decodeFailures,
+                    firstDecodeError: sourceDiagnostics.firstDecodeError,
+                    lastDecodeError: sourceDiagnostics.lastDecodeError,
+                    lastCaptureError: self.lastCaptureErrorDescription)
+            }
 
-        let contact = try WatchCaptureArtifactWriter.buildContactSheet(
-            frames: self.frames,
-            outputRoot: self.outputRoot,
-            columns: Constants.contactMaxColumns,
-            thumbSize: CGSize(width: Constants.contactThumb, height: Constants.contactThumb))
-        let durationMs = self.elapsedMilliseconds(since: timing.start)
-        let metadataURL = self.outputRoot.appendingPathComponent("metadata.json")
-        let metadata = WatchCaptureResultBuilder(
-            sourceKind: self.sourceKind,
-            videoIn: self.videoIn,
-            videoOut: self.videoWriter?.finalURL.path,
-            scope: self.scope,
-            options: self.options,
-            videoOptions: self.videoOptions,
-            diffScale: "w\(Int(Constants.diffScaleWidth))")
-            .build(.init(
+            if let writer = self.videoWriter {
+                try await writer.finish()
+            }
+
+            let contact = try WatchCaptureArtifactWriter.buildContactSheet(
                 frames: self.frames,
-                contactSheet: contact,
-                metadataURL: metadataURL,
-                durationMs: durationMs,
-                framesDropped: self.framesDropped,
-                totalBytes: self.totalBytes,
-                warnings: self.warnings))
+                outputRoot: self.outputRoot,
+                columns: Constants.contactMaxColumns,
+                thumbSize: CGSize(width: Constants.contactThumb, height: Constants.contactThumb))
+            let durationMs = self.elapsedMilliseconds(since: timing.start)
+            let metadataURL = self.outputRoot.appendingPathComponent("metadata.json")
+            let metadata = WatchCaptureResultBuilder(
+                sourceKind: self.sourceKind,
+                videoIn: self.videoIn,
+                videoOut: self.videoWriter?.finalURL.path,
+                scope: self.scope,
+                options: self.options,
+                videoOptions: self.videoOptions,
+                diffScale: "w\(Int(Constants.diffScaleWidth))")
+                .build(.init(
+                    frames: self.frames,
+                    contactSheet: contact,
+                    metadataURL: metadataURL,
+                    durationMs: durationMs,
+                    framesDropped: self.framesDropped,
+                    frameAttempts: self.frameAttempts,
+                    totalBytes: self.totalBytes,
+                    warnings: self.warnings,
+                    sourceDiagnostics: sourceDiagnostics))
 
-        try self.store.writeJSON(metadata, to: metadataURL)
-        return metadata
+            try self.store.writeJSON(metadata, to: metadataURL)
+            return metadata
+        } catch {
+            let primaryError = error
+            if let videoWriter = self.videoWriter {
+                do {
+                    try videoWriter.abortAndRemovePartialOutput()
+                } catch {
+                    self.videoWriter = nil
+                    throw CaptureArtifactCleanupError(
+                        primaryError: primaryError,
+                        cleanupError: error,
+                        artifactPath: videoWriter.finalURL.path)
+                }
+            }
+            self.videoWriter = nil
+            throw primaryError
+        }
     }
 
     public func requestStop() {
@@ -237,5 +269,10 @@ public final class WatchCaptureSession {
 
     func waitForStopRequest() async {
         await self.stopSignal.wait()
+    }
+
+    var captureSourceDiagnostics: CaptureFrameSourceDiagnostics {
+        (self.frameSource as? any CaptureFrameSourceDiagnosticsProviding)?.captureDiagnostics ??
+            CaptureFrameSourceDiagnostics()
     }
 }

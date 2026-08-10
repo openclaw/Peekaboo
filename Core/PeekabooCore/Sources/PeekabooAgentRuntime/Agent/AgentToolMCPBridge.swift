@@ -136,12 +136,8 @@ enum AgentToolMCPBridge {
             "error": AnyAgentToolValue(string: message),
             "success": AnyAgentToolValue(bool: false),
         ]
-        if case let .object(metadata)? = response.meta {
-            for key in ["mutation_dispatched", "retry_safe"] {
-                if case let .bool(value)? = metadata[key] {
-                    payload[key] = AnyAgentToolValue(bool: value)
-                }
-            }
+        for (key, value) in MCPToolResponseMetadataProjector.agentFields(from: response.meta) {
+            payload[key] = TypedValueBridge.anyAgentValue(from: value)
         }
         return AgentToolMCPBridgeResult(value: AnyAgentToolValue(object: payload), images: [])
     }
@@ -157,6 +153,9 @@ enum AgentToolMCPBridge {
             "result": contentValue,
             "meta": TypedValueBridge.anyAgentValue(from: metadata),
         ]
+        for (key, value) in MCPToolResponseMetadataProjector.agentFields(from: response.meta) {
+            payload[key] = TypedValueBridge.anyAgentValue(from: value)
+        }
         if let text = contentValue.stringValue {
             payload["text"] = AnyAgentToolValue(string: text)
         }

@@ -15,8 +15,10 @@ struct WatchCaptureResultBuilder {
         let metadataURL: URL
         let durationMs: Int
         let framesDropped: Int
+        let frameAttempts: Int
         let totalBytes: Int
         let warnings: [CaptureWarning]
+        let sourceDiagnostics: CaptureFrameSourceDiagnostics
     }
 
     func build(_ input: Input) -> CaptureSessionResult {
@@ -27,26 +29,42 @@ struct WatchCaptureResultBuilder {
             frames: input.frames,
             contactSheet: input.contactSheet,
             metadataFile: input.metadataURL.path,
-            stats: self.makeStats(
-                durationMs: input.durationMs,
-                frames: input.frames,
-                framesDropped: input.framesDropped,
-                totalBytes: input.totalBytes),
+            stats: self.makeStats(input),
             scope: self.scope,
             diffAlgorithm: self.options.diffStrategy.rawValue,
             diffScale: self.diffScale,
             options: self.makeOptionsSnapshot(),
-            warnings: self.warningsWithNoMotionCheck(frames: input.frames, warnings: input.warnings))
+            warnings: self.captureWarnings(
+                frames: input.frames,
+                warnings: input.warnings,
+                sourceDiagnostics: input.sourceDiagnostics))
     }
 
-    private func warningsWithNoMotionCheck(
+    private func captureWarnings(
         frames: [CaptureFrameInfo],
-        warnings: [CaptureWarning]) -> [CaptureWarning]
+        warnings: [CaptureWarning],
+        sourceDiagnostics: CaptureFrameSourceDiagnostics) -> [CaptureWarning]
     {
         var output = warnings
-        if frames.isEmpty {
-            output.append(WatchWarning(code: .noMotion, message: "No frames were captured"))
-        } else if frames.count < 2 {
+        if self.sourceKind == .video,
+           sourceDiagnostics.decodeFailures > 0,
+           !output.contains(where: { $0.code == .videoDecodeFailure })
+        {
+            var details = ["count": "\(sourceDiagnostics.decodeFailures)"]
+            if let first = sourceDiagnostics.firstDecodeError {
+                details["first_error"] = first
+            }
+            if let last = sourceDiagnostics.lastDecodeError {
+                details["last_error"] = last
+            }
+            output.append(WatchWarning(
+                code: .videoDecodeFailure,
+                message: "Skipped \(sourceDiagnostics.decodeFailures) undecodable video sample(s)",
+                details: details))
+        }
+        let hadCaptureLoss = sourceDiagnostics.decodeFailures > 0 ||
+            warnings.contains(where: { $0.code == .transientCaptureFailure })
+        if frames.count < 2, !hadCaptureLoss {
             output.append(WatchWarning(code: .noMotion, message: "No motion detected; only key frames captured"))
         }
         return output
@@ -70,22 +88,23 @@ struct WatchCaptureResultBuilder {
             video: self.videoOptions)
     }
 
-    private func makeStats(
-        durationMs: Int,
-        frames: [CaptureFrameInfo],
-        framesDropped: Int,
-        totalBytes: Int) -> WatchStats
-    {
+    private func makeStats(_ input: Input) -> WatchStats {
         let maxMbHit = self.options.maxMegabytes != nil
-            && totalBytes / (1024 * 1024) >= (self.options.maxMegabytes ?? 0)
+            && input.totalBytes / (1024 * 1024) >= (self.options.maxMegabytes ?? 0)
+        let maxFramesHit = if self.sourceKind == .video {
+            input.frameAttempts >= self.options.maxFrames
+        } else {
+            input.frames.count >= self.options.maxFrames
+        }
         return WatchStats(
-            durationMs: durationMs,
+            durationMs: input.durationMs,
             fpsIdle: self.options.idleFps,
             fpsActive: self.options.activeFps,
-            fpsEffective: Self.computeEffectiveFps(frameCount: frames.count, durationMs: durationMs),
-            framesKept: frames.count,
-            framesDropped: framesDropped,
-            maxFramesHit: frames.count >= self.options.maxFrames,
+            fpsEffective: Self.computeEffectiveFps(frameCount: input.frames.count, durationMs: input.durationMs),
+            framesKept: input.frames.count,
+            framesDropped: input.framesDropped,
+            decodeFailures: input.sourceDiagnostics.decodeFailures,
+            maxFramesHit: maxFramesHit,
             maxMbHit: maxMbHit)
     }
 

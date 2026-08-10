@@ -40,6 +40,7 @@ RuntimeOptionsConfigurable, InjectedRuntimeBackedCommand {
 
     @RuntimeStorage var runtime: CommandRuntime?
     var runtimeOptions = CommandRuntimeOptions()
+    var captureMutationDispatched = false
 
     nonisolated(unsafe) static var commandDescription: CommandDescription {
         MainActorCommandDescription.describe {
@@ -114,6 +115,7 @@ RuntimeOptionsConfigurable, InjectedRuntimeBackedCommand {
                     command: self.command,
                     timeoutSeconds: timing.actionTimeout
                 )
+                self.captureMutationDispatched = true
                 try await Self.sleep(milliseconds: timing.postRollMs)
                 session.requestStop()
 
@@ -201,6 +203,9 @@ RuntimeOptionsConfigurable, InjectedRuntimeBackedCommand {
         }
         if !result.validation.ok {
             print("artifact validation failed: \(result.validation.missing.joined(separator: ", "))")
+        }
+        for warning in result.capture.warnings {
+            print("warning: \(warning.code.rawValue): \(warning.message)")
         }
     }
 
@@ -460,11 +465,13 @@ extension CaptureActionCommand {
         return CGRect(x: x, y: y, width: width, height: height)
     }
 
-    func focusIfNeeded(appIdentifier: String) async throws {
+    mutating func focusIfNeeded(appIdentifier: String) async throws {
         switch self.captureFocus {
         case .background:
             return
         case .auto:
+            let windowTitle = self.windowTitle
+            let services = self.services
             let options = FocusOptions(
                 autoFocus: true,
                 focusTimeout: nil,
@@ -472,15 +479,17 @@ extension CaptureActionCommand {
                 spaceSwitch: false,
                 bringToCurrentSpace: false
             )
-            try await withCaptureFocusMutation {
+            try await self.withCaptureFocusDispatchReceipt {
                 try await ensureFocused(
                     applicationName: appIdentifier,
-                    windowTitle: self.windowTitle,
+                    windowTitle: windowTitle,
                     options: options,
-                    services: self.services
+                    services: services
                 )
             }
         case .foreground:
+            let windowTitle = self.windowTitle
+            let services = self.services
             let options = FocusOptions(
                 autoFocus: true,
                 focusTimeout: nil,
@@ -488,12 +497,12 @@ extension CaptureActionCommand {
                 spaceSwitch: true,
                 bringToCurrentSpace: true
             )
-            try await withCaptureFocusMutation {
+            try await self.withCaptureFocusDispatchReceipt {
                 try await ensureFocused(
                     applicationName: appIdentifier,
-                    windowTitle: self.windowTitle,
+                    windowTitle: windowTitle,
                     options: options,
-                    services: self.services
+                    services: services
                 )
             }
         }

@@ -17,6 +17,7 @@ extension ErrorHandlingCommand {
     func handleError(_ error: any Error, customCode: ErrorCode? = nil) {
         if jsonOutput {
             let errorCode = customCode ?? self.mapErrorToCode(error)
+            let captureReceipt = self.captureFailureReceipt(for: error)
             let logger: Logger = if let formattable = self as? any OutputFormattable {
                 formattable.outputLogger
             } else {
@@ -27,10 +28,14 @@ extension ErrorHandlingCommand {
                 code: errorCode,
                 hint: (error as? any ResultEnvelopeError)?.envelopeHint,
                 details: errorDetails(for: error),
-                effect: (error as? any ResultEnvelopeError)?.envelopeEffect ??
+                effect: captureReceipt?.mutationDispatched == true
+                    ? .partial
+                    : (error as? any ResultEnvelopeError)?.envelopeEffect ??
                     ((self as? any ActionOutputFormattable)?.defaultEffect == nil
                         ? nil
                         : defaultActionErrorEffect(errorCode)),
+                retrySafe: captureReceipt?.retrySafe,
+                mutationDispatched: captureReceipt?.mutationDispatched,
                 logger: logger
             )
         } else {
@@ -51,8 +56,12 @@ extension ErrorHandlingCommand {
     }
 
     /// Map various error types to error codes
-    private func mapErrorToCode(_ error: any Error) -> ErrorCode {
+    func mapErrorToCode(_ error: any Error) -> ErrorCode {
         switch error {
+        case let cleanupError as CaptureArtifactCleanupError:
+            self.mapErrorToCode(cleanupError.primaryError)
+        case is CaptureNoValidFramesError:
+            .CAPTURE_NO_VALID_FRAMES
         case let focusError as FocusError:
             self.mapFocusErrorToCode(focusError)
         case let peekabooError as PeekabooError:
@@ -226,6 +235,33 @@ extension ErrorHandlingCommand {
     private func mapFocusErrorToCode(_ error: FocusError) -> ErrorCode {
         errorCode(for: error)
     }
+
+    var captureMutationDispatched: Bool {
+        if let command = self as? CaptureLiveCommand {
+            return command.captureMutationDispatched
+        }
+        if let command = self as? CaptureActionCommand {
+            return command.captureMutationDispatched
+        }
+        return false
+    }
+
+    func captureFailureReceipt(for error: any Error) -> CaptureFailureReceipt? {
+        guard self is CaptureLiveCommand || self is CaptureVideoCommand || self is CaptureActionCommand else {
+            return nil
+        }
+        let mutationDispatched = self.captureMutationDispatched
+        let errorAllowsRetry = (error as? CaptureNoValidFramesError)?.retrySafe ?? true
+        return CaptureFailureReceipt(
+            retrySafe: errorAllowsRetry && !mutationDispatched,
+            mutationDispatched: mutationDispatched
+        )
+    }
+}
+
+struct CaptureFailureReceipt: Equatable {
+    let retrySafe: Bool
+    let mutationDispatched: Bool
 }
 
 func peekabooAutomationErrorCode(for error: PeekabooError) -> ErrorCode? {

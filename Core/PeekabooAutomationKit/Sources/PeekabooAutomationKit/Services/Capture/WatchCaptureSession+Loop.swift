@@ -17,6 +17,9 @@ extension WatchCaptureSession {
         var activeMode: Bool
         var lastDiffBuffer: WatchFrameDiffer.LumaBuffer?
         var frameIndex: Int
+        var frameAttempts: Int
+        var consecutiveDecodeFailures: Int
+        var consecutiveTransientCaptureFailures: Int
         var transientCaptureWarningEmitted: Bool
     }
 
@@ -25,6 +28,11 @@ extension WatchCaptureSession {
         let motionBoxes: [CGRect]?
         let buffer: WatchFrameDiffer.LumaBuffer
         let enterActive: Bool
+    }
+
+    enum CaptureAttemptResult: @unchecked Sendable {
+        case frame(WatchCaptureFrame?, warning: WatchWarning?)
+        case stopRequested
     }
 
     func makeTiming(start: Date) -> SessionTiming {
@@ -51,25 +59,35 @@ extension WatchCaptureSession {
             activeMode: false,
             lastDiffBuffer: nil,
             frameIndex: 0,
+            frameAttempts: 0,
+            consecutiveDecodeFailures: 0,
+            consecutiveTransientCaptureFailures: 0,
             transientCaptureWarningEmitted: false)
 
-        while true {
+        captureLoop: while true {
             let now = Date()
             let elapsedNs = Self.elapsedNanoseconds(since: timing.start, now: now)
             if self.shouldEndSession(elapsedNs: elapsedNs, durationNs: timing.durationNs) {
                 break
             }
-            if self.hitFrameCap() || self.hitSizeCap() {
+            if self.hitFrameCap(videoFrameAttempts: state.frameAttempts) || self.hitSizeCap() {
                 break
             }
 
             let frameStart = Date()
             let cadence = state.activeMode ? timing.cadenceActiveNs : timing.cadenceIdleNs
-            let capture: WatchCaptureFrame?
+            let attemptResult: CaptureAttemptResult
             do {
-                capture = try await self.captureFrame()
+                attemptResult = try await self.captureFrameOrStop()
             } catch {
                 if let delay = ScreenCaptureKitTransientError.retryDelayNanoseconds(after: error) {
+                    state.consecutiveTransientCaptureFailures += 1
+                    guard state.consecutiveTransientCaptureFailures <= 3 else {
+                        throw error
+                    }
+                    let boundedError = CaptureDiagnosticSanitizer.sanitize(error.localizedDescription) ??
+                        "Transient ScreenCaptureKit capture failure"
+                    self.lastCaptureErrorDescription = boundedError
                     self.framesDropped += 1
                     if !state.transientCaptureWarningEmitted {
                         state.transientCaptureWarningEmitted = true
@@ -77,7 +95,7 @@ extension WatchCaptureSession {
                             WatchWarning(
                                 code: .transientCaptureFailure,
                                 message: "Dropped a frame after a transient ScreenCaptureKit capture failure",
-                                details: ["error": error.localizedDescription]))
+                                details: ["error": boundedError]))
                     }
                     // SCK can report a temporary TCC denial while another CLI capture is settling.
                     // Treat that as a dropped live frame; the next sample or fallback frame can recover.
@@ -87,21 +105,52 @@ extension WatchCaptureSession {
                 }
                 throw error
             }
+            state.consecutiveTransientCaptureFailures = 0
+
+            let capture: WatchCaptureFrame?
+            switch attemptResult {
+            case let .frame(frame, warning):
+                if let warning {
+                    self.warnings.append(warning)
+                }
+                capture = frame
+            case .stopRequested:
+                break captureLoop
+            }
 
             guard let capture else {
                 // Frame source exhausted, usually from finite video input.
                 break
             }
+            state.frameAttempts += 1
+            self.frameAttempts = state.frameAttempts
             let timestampMs = capture.metadata.videoTimestampMs ?? Int(elapsedNs / 1_000_000)
 
             guard let cgImage = capture.cgImage else {
                 self.framesDropped += 1
+                state.consecutiveDecodeFailures += 1
+                if self.sourceKind == .video, state.consecutiveDecodeFailures >= 32 {
+                    let diagnostics = self.captureSourceDiagnostics
+                    var details = ["count": "\(diagnostics.decodeFailures)"]
+                    if let first = diagnostics.firstDecodeError {
+                        details["first_error"] = first
+                    }
+                    if let last = diagnostics.lastDecodeError {
+                        details["last_error"] = last
+                    }
+                    self.warnings.append(WatchWarning(
+                        code: .videoDecodeFailure,
+                        message: "Stopped video sampling after 32 consecutive undecodable samples",
+                        details: details))
+                    break
+                }
                 try await self.sleep(ns: cadence, since: frameStart)
                 continue
             }
+            state.consecutiveDecodeFailures = 0
 
             if self.keepAllFrames {
-                try self.keepAllFrame(
+                try await self.keepAllFrame(
                     cgImage: cgImage,
                     capture: capture,
                     timestampMs: timestampMs,
@@ -131,7 +180,7 @@ extension WatchCaptureSession {
                     changePercent: diff.changePercent,
                     reason: decision.reason,
                     motionBoxes: diff.motionBoxes)
-                let saved = try self.saveFrame(cgImage: cgImage, context: saveContext)
+                let saved = try await self.saveFrame(cgImage: cgImage, context: saveContext)
                 self.frames.append(saved)
                 state.lastKeptTime = now
             } else {
@@ -147,10 +196,10 @@ extension WatchCaptureSession {
         cgImage: CGImage,
         capture: WatchCaptureFrame,
         timestampMs: Int,
-        state: inout SessionState) throws
+        state: inout SessionState) async throws
     {
         let reason: CaptureFrameInfo.Reason = self.frames.isEmpty ? .first : .motion
-        let saved = try self.saveFrame(
+        let saved = try await self.saveFrame(
             cgImage: cgImage,
             context: FrameSaveContext(
                 capture: capture,
@@ -163,12 +212,38 @@ extension WatchCaptureSession {
         state.frameIndex += 1
     }
 
-    func captureFrame() async throws -> WatchCaptureFrame? {
-        let output = try await self.frameProvider.captureFrame()
-        if let warning = output.warning {
-            self.warnings.append(warning)
+    func captureFrameOrStop() async throws -> CaptureAttemptResult {
+        guard !self.hasStopRequest() else { return .stopRequested }
+        let provider = self.frameProvider
+        let captureTask = Task<CaptureAttemptResult, any Error> { @MainActor in
+            let output = try await provider.captureFrame()
+            return .frame(output.frame, warning: output.warning)
         }
-        return output.frame
+        let stopTask = Task<CaptureAttemptResult, any Error> { [weak self] in
+            await self?.waitForStopRequest()
+            try Task.checkCancellation()
+            return .stopRequested
+        }
+        defer {
+            captureTask.cancel()
+            stopTask.cancel()
+        }
+        return try await withTaskCancellationHandler {
+            let result: CaptureAttemptResult = try await withCheckedThrowingContinuation { continuation in
+                let gate = WatchCaptureAttemptContinuation(continuation: continuation)
+                Task {
+                    await gate.resume(with: captureTask.result)
+                }
+                Task {
+                    await gate.resume(with: stopTask.result)
+                }
+            }
+            try Task.checkCancellation()
+            return result
+        } onCancel: {
+            captureTask.cancel()
+            stopTask.cancel()
+        }
     }
 
     static func elapsedNanoseconds(since start: Date, now: Date) -> UInt64 {
@@ -179,10 +254,14 @@ extension WatchCaptureSession {
         self.hasStopRequest() || elapsedNs >= durationNs
     }
 
-    func hitFrameCap() -> Bool {
-        guard self.frames.count >= self.options.maxFrames else { return false }
+    func hitFrameCap(videoFrameAttempts: Int = 0) -> Bool {
+        let count = self.sourceKind == .video ? videoFrameAttempts : self.frames.count
+        guard count >= self.options.maxFrames else { return false }
+        let message = self.sourceKind == .video
+            ? "Stopped after reaching max-frames video sampling cap"
+            : "Stopped after reaching max-frames cap"
         self.warnings.append(
-            WatchWarning(code: .frameCap, message: "Stopped after reaching max-frames cap"))
+            WatchWarning(code: .frameCap, message: message))
         return true
     }
 
@@ -295,5 +374,22 @@ extension WatchCaptureSession {
             group.cancelAll()
             try Task.checkCancellation()
         }
+    }
+}
+
+private final class WatchCaptureAttemptContinuation: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<WatchCaptureSession.CaptureAttemptResult, any Error>?
+
+    init(continuation: CheckedContinuation<WatchCaptureSession.CaptureAttemptResult, any Error>) {
+        self.continuation = continuation
+    }
+
+    func resume(with result: Result<WatchCaptureSession.CaptureAttemptResult, any Error>) {
+        self.lock.lock()
+        let continuation = self.continuation
+        self.continuation = nil
+        self.lock.unlock()
+        continuation?.resume(with: result)
     }
 }

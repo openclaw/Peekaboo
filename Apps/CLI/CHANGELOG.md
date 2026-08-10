@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Stop probing, requesting, advertising, or showing AppleScript Automation permission now that application, Dock, and UI operations use native macOS APIs; remove AppleScript code from shipped executables while retaining legacy wire/error decoding for older Bridge hosts.
 - Return generation-pinned CG window inventory promptly when AX enrichment stalls; detached per-process enrichment no longer holds Bridge requests after caller timeout or disconnect.
 - Let generation-pinned background PID/window observations use fair process/window read lanes so unrelated app mutations overlap and queued same-process writes run between live frames; unresolved or focus-capable capture remains globally exclusive.
+- Report empty live/video capture as `CAPTURE_NO_VALID_FRAMES` with actual-dispatch retry metadata, retain bounded capture/decode causes without laundering cancellation or I/O errors, bound video sampling, and remove incomplete MP4 output on failure.
 - Stop the curated `learn` copy from presenting `shell` as a CLI command: it remains a built-in Agent capability but is not in the MCP catalog and has no `peekaboo shell` CLI root.
 - Ensure action-command JSON validation failures before dispatch report `effect: refused`, including parser and binding errors.
 - Verify app focus against the exact active Workspace PID and visible frontmost-window PID, retry through native AX activation, and report the verified effect as confirmed instead of claiming success for an unfulfilled request.

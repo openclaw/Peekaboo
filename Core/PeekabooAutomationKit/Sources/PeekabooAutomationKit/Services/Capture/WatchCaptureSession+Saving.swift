@@ -1,5 +1,6 @@
 import CoreGraphics
 import Foundation
+import PeekabooFoundation
 
 @MainActor
 extension WatchCaptureSession {
@@ -28,10 +29,10 @@ extension WatchCaptureSession {
         return (scaledWidth, scaledHeight)
     }
 
-    func saveFrame(cgImage: CGImage, context: FrameSaveContext) throws -> CaptureFrameInfo {
+    func saveFrame(cgImage: CGImage, context: FrameSaveContext) async throws -> CaptureFrameInfo {
         try self.prepareVideoWriterIfNeeded(for: cgImage)
         if let writer = self.videoWriter {
-            try writer.append(image: cgImage)
+            try await writer.append(image: cgImage)
         }
 
         let fileName = String(format: "keep-%04d.png", self.frames.count + 1)
@@ -41,8 +42,17 @@ extension WatchCaptureSession {
             to: url,
             highlight: self.options.highlightChanges ? context.motionBoxes : nil)
 
-        if let data = try? Data(contentsOf: url) {
-            self.totalBytes += data.count
+        do {
+            let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+            guard let size = attributes[.size] as? NSNumber else {
+                throw PeekabooError.fileIOError("Missing file size after writing \(fileName)")
+            }
+            self.totalBytes += size.intValue
+        } catch let error as PeekabooError {
+            throw error
+        } catch {
+            throw PeekabooError
+                .fileIOError("Failed to inspect written frame \(fileName): \(error.localizedDescription)")
         }
 
         return CaptureFrameInfo(
@@ -68,20 +78,6 @@ extension WatchCaptureSession {
             width: size.width,
             height: size.height,
             fps: fps)
-    }
-
-    func ensureFallbackFrame() async throws {
-        guard self.frames.isEmpty else { return }
-        guard let capture = try? await self.captureFrame(), let cg = capture.cgImage else { return }
-        let context = FrameSaveContext(
-            capture: capture,
-            index: 0,
-            timestampMs: 0,
-            changePercent: 0,
-            reason: .first,
-            motionBoxes: nil)
-        let saved = try self.saveFrame(cgImage: cg, context: context)
-        self.frames.append(saved)
     }
 
     func elapsedMilliseconds(since start: Date) -> Int {

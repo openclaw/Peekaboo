@@ -12,6 +12,9 @@ enum WatchCaptureArtifactWriter {
         columns: Int,
         thumbSize: CGSize) throws -> WatchContactSheet
     {
+        guard !frames.isEmpty else {
+            throw PeekabooError.captureFailed(reason: "Cannot build a contact sheet without valid frames")
+        }
         let maxCells = columns * columns
         let framesToUse: [CaptureFrameInfo]
         let sampledIndexes: [Int]
@@ -39,7 +42,9 @@ enum WatchCaptureArtifactWriter {
         }
 
         for (idx, frame) in framesToUse.enumerated() {
-            guard let image = self.makeCGImage(fromFile: frame.path) else { continue }
+            guard let image = self.makeCGImage(fromFile: frame.path) else {
+                throw PeekabooError.fileIOError("Contact sheet source frame is unreadable: \(frame.file)")
+            }
             let resized = self.resize(image: image, to: thumbSize) ?? image
             let row = idx / columns
             let col = idx % columns
@@ -101,17 +106,23 @@ enum WatchCaptureArtifactWriter {
             image
         }
 
-        guard let destination = CGImageDestinationCreateWithURL(
-            url as CFURL,
+        let encoded = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(
+            encoded,
             UTType.png.identifier as CFString,
             1,
             nil)
         else {
-            throw PeekabooError.captureFailed(reason: "Failed to create image destination")
+            throw PeekabooError.fileIOError("Failed to create PNG encoder for: \(url.path)")
         }
         CGImageDestinationAddImage(destination, finalImage, nil)
         if !CGImageDestinationFinalize(destination) {
-            throw PeekabooError.captureFailed(reason: "Failed to write PNG")
+            throw PeekabooError.fileIOError("Failed to encode PNG for: \(url.path)")
+        }
+        do {
+            try (encoded as Data).write(to: url, options: .atomic)
+        } catch {
+            throw PeekabooError.fileIOError("Failed to write PNG to \(url.path): \(error.localizedDescription)")
         }
     }
 

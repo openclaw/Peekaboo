@@ -199,6 +199,12 @@ private enum AgentExecutionTraceBuilder {
             "action", "app", "click", "dialog", "dock", "drag", "menu", "move", "paste", "press",
             "scroll", "set_value", "space", "type", "window",
         ]
+        if name == "capture" || name == "image" {
+            let focus = call.arguments["capture_focus"]?.stringValue?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased() ?? "background"
+            return focus != "background"
+        }
         guard mutatingTools.contains(name) else { return false }
 
         let readOnlyActions: [String: Set<String>] = [

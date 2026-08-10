@@ -123,10 +123,13 @@ extension ImageTool {
         format: ImageFormatOption,
         savedFiles: [MCPSavedFile],
         captureResults: [CaptureResult],
-        observation: DesktopObservationResult?) -> ToolResponse
+        observation: DesktopObservationResult?,
+        mutationDispatched: Bool = false) -> ToolResponse
     {
         var metadata: [String: Value] = [
             "savedFiles": .array(savedFiles.map { Value.string($0.path) }),
+            "mutation_dispatched": .bool(mutationDispatched),
+            "retry_safe": .bool(!mutationDispatched),
         ]
         if let firstCapture = captureResults.first {
             metadata["coordinate_context"] = CaptureCoordinateContextMetadata.value(for: firstCapture.metadata)

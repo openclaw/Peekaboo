@@ -1,10 +1,12 @@
 import Foundation
+import MCP
 import PeekabooAutomation
 import PeekabooAutomationKit
 import PeekabooFoundation
 import TachikomaMCP
 import Testing
 @testable import PeekabooAgentRuntime
+@testable import PeekabooCore
 
 struct CaptureToolPathResolverTests {
     @Test
@@ -174,6 +176,134 @@ struct CaptureToolPathResolverTests {
         }
     }
 
+    @Test
+    func `no-valid-frame MCP response preserves retry and focus effect honesty`() throws {
+        let error = CaptureNoValidFramesError(
+            source: .video,
+            framesDropped: 3,
+            decodeFailures: 3,
+            firstDecodeError: "first",
+            lastDecodeError: "last",
+            lastCaptureError: nil)
+
+        let background = CaptureTool.failureResponse(error, mutationDispatched: false)
+        let backgroundMeta = try #require(Self.meta(from: background))
+        #expect(background.isError)
+        #expect(backgroundMeta["error_code"] == .string("CAPTURE_NO_VALID_FRAMES"))
+        #expect(backgroundMeta["retry_safe"] == .bool(true))
+        #expect(backgroundMeta["mutation_dispatched"] == .bool(false))
+        #expect(backgroundMeta["effect"] == nil)
+        #expect(backgroundMeta["decode_failures"] == .int(3))
+
+        let foreground = CaptureTool.failureResponse(error, mutationDispatched: true)
+        let foregroundMeta = try #require(Self.meta(from: foreground))
+        #expect(foregroundMeta["effect"] == .string("partial"))
+        #expect(foregroundMeta["mutation_dispatched"] == .bool(true))
+        #expect(foregroundMeta["retry_safe"] == .bool(false))
+    }
+
+    @Test
+    func `all MCP capture failures preserve actual focus dispatch receipts`() throws {
+        let error = PeekabooError.fileIOError("metadata write failed")
+        let background = CaptureTool.failureResponse(error, mutationDispatched: false)
+        let foreground = CaptureTool.failureResponse(error, mutationDispatched: true)
+        let backgroundMeta = try #require(Self.meta(from: background))
+        let foregroundMeta = try #require(Self.meta(from: foreground))
+
+        #expect(background.isError)
+        #expect(backgroundMeta["mutation_dispatched"] == .bool(false))
+        #expect(backgroundMeta["retry_safe"] == .bool(true))
+        #expect(backgroundMeta["effect"] == nil)
+        #expect(foreground.isError)
+        #expect(foregroundMeta["mutation_dispatched"] == .bool(true))
+        #expect(foregroundMeta["retry_safe"] == .bool(false))
+        #expect(foregroundMeta["effect"] == .string("partial"))
+    }
+
+    @Test
+    @MainActor
+    func `capture request setup failure returns explicit pre-dispatch receipt`() async throws {
+        let response = try await CaptureTool(context: MCPToolContext(services: PeekabooServices())).execute(
+            arguments: ToolArguments(raw: ["source": "camera"]))
+        let meta = try #require(Self.meta(from: response))
+
+        #expect(response.isError)
+        #expect(meta["mutation_dispatched"] == .bool(false))
+        #expect(meta["retry_safe"] == .bool(true))
+        #expect(meta["effect"] == nil)
+    }
+
+    @Test
+    @MainActor
+    func `partial focus failure returns conservative capture dispatch receipt`() async throws {
+        let focusError = PeekabooError.operationError(message: "focus verification failed after dispatch")
+        let windows = CaptureWindowResolverWindowService(
+            windows: [Self.window(id: 42, title: "Main Document", index: 0)],
+            focusError: focusError)
+        let services = PeekabooServices()
+        let context = MCPToolContext(
+            automation: services.automation,
+            menu: services.menu,
+            windows: windows,
+            applications: services.applications,
+            dialogs: services.dialogs,
+            dock: services.dock,
+            screenCapture: services.screenCapture,
+            desktopObservation: services.desktopObservation,
+            snapshots: services.snapshots,
+            screens: services.screens,
+            agent: services.agent,
+            permissions: services.permissions,
+            clipboard: services.clipboard,
+            browser: services.browser)
+        let response = try await CaptureTool(context: context).execute(arguments: ToolArguments(raw: [
+            "source": "live",
+            "mode": "window",
+            "app": "TextEdit",
+            "window_title": "Main Document",
+            "capture_focus": "foreground",
+        ]))
+        let meta = try #require(Self.meta(from: response))
+
+        #expect(response.isError)
+        #expect(windows.focusCallCount == 1)
+        #expect(meta["mutation_dispatched"] == .bool(true))
+        #expect(meta["retry_safe"] == .bool(false))
+        #expect(meta["effect"] == .string("partial"))
+    }
+
+    @Test
+    @MainActor
+    func `successful image response reports actual focus dispatch`() throws {
+        let tool = ImageTool(context: MCPToolContext(services: PeekabooServices()))
+        let background = tool.buildCaptureResponse(
+            format: .png,
+            savedFiles: [],
+            captureResults: [],
+            observation: nil,
+            mutationDispatched: false)
+        let foreground = tool.buildCaptureResponse(
+            format: .png,
+            savedFiles: [],
+            captureResults: [],
+            observation: nil,
+            mutationDispatched: true)
+        let backgroundMeta = try #require(Self.meta(from: background))
+        let foregroundMeta = try #require(Self.meta(from: foreground))
+
+        #expect(backgroundMeta["mutation_dispatched"] == .bool(false))
+        #expect(backgroundMeta["retry_safe"] == .bool(true))
+        #expect(backgroundMeta["effect"] == nil)
+        #expect(foregroundMeta["mutation_dispatched"] == .bool(true))
+        #expect(foregroundMeta["retry_safe"] == .bool(false))
+        #expect(foregroundMeta["effect"] == nil)
+    }
+
+    private static func meta(from response: ToolResponse) -> [String: Value]? {
+        guard case let .object(meta) = response.meta else { return nil }
+        return meta
+    }
+
     private static func window(
         id: Int,
         title: String,
@@ -190,10 +320,13 @@ struct CaptureToolPathResolverTests {
 
 private final class CaptureWindowResolverWindowService: WindowManagementServiceProtocol, @unchecked Sendable {
     let windows: [ServiceWindowInfo]
+    let focusError: (any Error)?
     var requestedTargets: [WindowTarget] = []
+    var focusCallCount = 0
 
-    init(windows: [ServiceWindowInfo]) {
+    init(windows: [ServiceWindowInfo], focusError: (any Error)? = nil) {
         self.windows = windows
+        self.focusError = focusError
     }
 
     func closeWindow(target _: WindowTarget) async throws {}
@@ -208,7 +341,12 @@ private final class CaptureWindowResolverWindowService: WindowManagementServiceP
 
     func setWindowBounds(target _: WindowTarget, bounds _: CGRect) async throws {}
 
-    func focusWindow(target _: WindowTarget) async throws {}
+    func focusWindow(target _: WindowTarget) async throws {
+        self.focusCallCount += 1
+        if let focusError {
+            throw focusError
+        }
+    }
 
     func listWindows(target: WindowTarget) async throws -> [ServiceWindowInfo] {
         self.requestedTargets.append(target)
