@@ -40,6 +40,31 @@ struct PeekabooBridgeClientTransportOutcomeTests {
     }
 
     @Test
+    func `handshake timeout is shared across protocol fallback attempts`() async throws {
+        let peer = try VersionMismatchBridgePeer(firstResponseDelay: 0.3)
+        let client = PeekabooBridgeClient(socketPath: peer.socketPath, requestTimeoutSec: 1)
+        let identity = PeekabooBridgeClientIdentity(
+            bundleIdentifier: "dev.peekaboo.tests",
+            teamIdentifier: nil,
+            processIdentifier: getpid(),
+            hostname: nil)
+        let startedAt = ContinuousClock.now
+
+        do {
+            _ = try await client.handshake(client: identity, overallTimeoutSec: 1)
+            Issue.record("Expected the negotiated handshake to exhaust its shared deadline")
+        } catch let error as POSIXError {
+            #expect(error.code == .ETIMEDOUT)
+        }
+
+        let elapsed = startedAt.duration(to: .now)
+        #expect(elapsed >= .milliseconds(850))
+        #expect(elapsed < .milliseconds(1200))
+        #expect(await peer.acceptedConnectionCount == 2)
+        await peer.stop()
+    }
+
+    @Test
     func `mutation response EOF is indeterminate and retry unsafe`() async throws {
         let peer = try ScriptedBridgePeer(behavior: .closeWithoutResponse)
         let client = PeekabooBridgeClient(socketPath: peer.socketPath, requestTimeoutSec: 1)
@@ -226,5 +251,107 @@ private final class ScriptedBridgePeer: @unchecked Sendable {
     func waitUntilFinished() async {
         await self.task?.value
         self.task = nil
+    }
+}
+
+private actor VersionMismatchBridgePeerState {
+    private(set) var acceptedConnectionCount = 0
+
+    func recordConnection() {
+        self.acceptedConnectionCount += 1
+    }
+}
+
+private final class VersionMismatchBridgePeer: @unchecked Sendable {
+    let socketPath: String
+    private let listener: Int32
+    private let state = VersionMismatchBridgePeerState()
+    private var task: Task<Void, Never>?
+
+    var acceptedConnectionCount: Int {
+        get async { await self.state.acceptedConnectionCount }
+    }
+
+    init(firstResponseDelay: TimeInterval) throws {
+        self.socketPath = "/tmp/pb-handshake-fallback-\(UUID().uuidString).sock"
+        self.listener = socket(AF_UNIX, SOCK_STREAM, 0)
+        guard self.listener >= 0 else {
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+        do {
+            var address = sockaddr_un()
+            address.sun_family = sa_family_t(AF_UNIX)
+            address.sun_len = UInt8(MemoryLayout.size(ofValue: address))
+            let copied = self.socketPath.withCString { source in
+                strlcpy(&address.sun_path.0, source, MemoryLayout.size(ofValue: address.sun_path))
+            }
+            guard copied < MemoryLayout.size(ofValue: address.sun_path) else {
+                throw POSIXError(.ENAMETOOLONG)
+            }
+            let length = socklen_t(MemoryLayout.size(ofValue: address))
+            let bindResult = withUnsafePointer(to: &address) { pointer in
+                Darwin.bind(self.listener, UnsafePointer<sockaddr>(OpaquePointer(pointer)), length)
+            }
+            guard bindResult == 0, listen(self.listener, 2) == 0 else {
+                throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+            }
+        } catch {
+            Darwin.close(self.listener)
+            try? FileManager.default.removeItem(atPath: self.socketPath)
+            throw error
+        }
+
+        let listener = self.listener
+        let socketPath = self.socketPath
+        let state = self.state
+        self.task = Task.detached {
+            defer {
+                Darwin.close(listener)
+                try? FileManager.default.removeItem(atPath: socketPath)
+            }
+            for attempt in 0..<2 {
+                let client = accept(listener, nil, nil)
+                guard client >= 0 else { return }
+                await state.recordConnection()
+                Self.drainRequest(client)
+                if attempt == 0 {
+                    try? await Task.sleep(for: .seconds(firstResponseDelay))
+                    let response = PeekabooBridgeResponse.error(.init(
+                        code: .versionMismatch,
+                        message: "scripted version mismatch"))
+                    if let data = try? JSONEncoder.peekabooBridgeEncoder().encode(response) {
+                        _ = data.withUnsafeBytes { bytes in
+                            Darwin.write(client, bytes.baseAddress, bytes.count)
+                        }
+                    }
+                } else {
+                    try? await Task.sleep(for: .seconds(5))
+                }
+                Darwin.close(client)
+            }
+        }
+    }
+
+    func stop() async {
+        self.task?.cancel()
+        _ = shutdown(self.listener, SHUT_RDWR)
+        await self.task?.value
+        self.task = nil
+    }
+
+    private nonisolated static func drainRequest(_ descriptor: Int32) {
+        var buffer = [UInt8](repeating: 0, count: 4096)
+        while true {
+            let count = buffer.withUnsafeMutableBytes { bytes in
+                Darwin.read(descriptor, bytes.baseAddress, bytes.count)
+            }
+            if count > 0 {
+                continue
+            }
+            if count < 0, errno == EINTR {
+                continue
+            }
+            return
+        }
     }
 }

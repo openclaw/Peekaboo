@@ -29,14 +29,25 @@ public actor PeekabooBridgeClient {
     public func handshake(
         client: PeekabooBridgeClientIdentity,
         requestedHost: PeekabooBridgeHostKind? = nil,
-        protocolVersion: PeekabooBridgeProtocolVersion = PeekabooBridgeConstants.protocolVersion)
+        protocolVersion: PeekabooBridgeProtocolVersion = PeekabooBridgeConstants.protocolVersion,
+        overallTimeoutSec: TimeInterval? = nil)
         async throws -> PeekabooBridgeHandshakeResponse
     {
+        let deadline: Date?
+        if let overallTimeoutSec {
+            guard overallTimeoutSec.isFinite, overallTimeoutSec > 0 else {
+                throw POSIXError(.EINVAL)
+            }
+            deadline = Date().addingTimeInterval(overallTimeoutSec)
+        } else {
+            deadline = nil
+        }
         do {
             return try await self.performHandshake(
                 client: client,
                 requestedHost: requestedHost,
-                protocolVersion: protocolVersion)
+                protocolVersion: protocolVersion,
+                timeoutSec: self.remainingHandshakeTimeout(deadline: deadline))
         } catch let envelope as PeekabooBridgeErrorEnvelope
             where envelope.code == .versionMismatch &&
             protocolVersion == PeekabooBridgeConstants.protocolVersion &&
@@ -50,7 +61,8 @@ public actor PeekabooBridgeClient {
                     return try await self.performHandshake(
                         client: client,
                         requestedHost: requestedHost,
-                        protocolVersion: version)
+                        protocolVersion: version,
+                        timeoutSec: self.remainingHandshakeTimeout(deadline: deadline))
                 } catch let fallbackEnvelope as PeekabooBridgeErrorEnvelope
                     where fallbackEnvelope.code == .versionMismatch
                 {
@@ -65,13 +77,14 @@ public actor PeekabooBridgeClient {
     private func performHandshake(
         client: PeekabooBridgeClientIdentity,
         requestedHost: PeekabooBridgeHostKind?,
-        protocolVersion: PeekabooBridgeProtocolVersion) async throws -> PeekabooBridgeHandshakeResponse
+        protocolVersion: PeekabooBridgeProtocolVersion,
+        timeoutSec: TimeInterval?) async throws -> PeekabooBridgeHandshakeResponse
     {
         let payload = PeekabooBridgeHandshake(
             protocolVersion: protocolVersion,
             client: client,
             requestedHostKind: requestedHost)
-        let response = try await self.send(.handshake(payload))
+        let response = try await self.send(.handshake(payload), timeoutSec: timeoutSec)
 
         switch response {
         case let .handshake(handshake):
@@ -81,5 +94,14 @@ public actor PeekabooBridgeClient {
         default:
             throw PeekabooBridgeErrorEnvelope(code: .invalidRequest, message: "Unexpected handshake response")
         }
+    }
+
+    private func remainingHandshakeTimeout(deadline: Date?) throws -> TimeInterval? {
+        guard let deadline else { return nil }
+        let remaining = deadline.timeIntervalSinceNow
+        guard remaining > 0 else {
+            throw POSIXError(.ETIMEDOUT)
+        }
+        return min(self.requestTimeoutSec, remaining)
     }
 }

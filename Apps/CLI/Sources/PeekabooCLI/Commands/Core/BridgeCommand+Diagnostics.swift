@@ -188,7 +188,11 @@ struct BridgeDiagnostics {
             requestTimeoutSec: Self.probeTimeoutSeconds
         )
         do {
-            return try await client.handshake(client: identity, requestedHost: nil)
+            return try await client.handshake(
+                client: identity,
+                requestedHost: nil,
+                overallTimeoutSec: Self.probeTimeoutSeconds
+            )
         } catch let error as POSIXError where error.code == .ETIMEDOUT {
             throw PeekabooBridgeErrorEnvelope(
                 code: .timeout,
