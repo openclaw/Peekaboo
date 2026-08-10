@@ -107,6 +107,10 @@ public final class ApplicationService: ApplicationServiceProtocol {
     /// AX can be sluggish on some apps (e.g., Arc); allow more headroom.
     static let axTimeout: Float = 10.0
 
+    /// Window inventory is CG-first, so AX is bounded enrichment rather than an authoritative read.
+    /// Keep this safely below the Bridge's fixed request deadline so partial CG inventory remains usable.
+    static let windowAXEnrichmentTimeout: Float = 2.0
+
     public convenience init(
         permissions: PermissionsService = PermissionsService(),
         feedbackClient: any AutomationFeedbackClient = NoopAutomationFeedbackClient())

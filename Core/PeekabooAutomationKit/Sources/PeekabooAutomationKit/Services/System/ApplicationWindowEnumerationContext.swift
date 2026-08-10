@@ -1,39 +1,25 @@
 import AppKit
-import AXorcist
 import Foundation
 import os.log
 import PeekabooFoundation
 
 @MainActor
 struct WindowEnumerationContext {
+    typealias AXEnumerator = @Sendable (
+        _ processIdentity: ApplicationProcessIdentity,
+        _ timeoutSeconds: TimeInterval) async throws -> AXWindowResult
+
     struct CGSnapshot {
         let windows: [ServiceWindowInfo]
     }
 
-    struct AXWindowResult {
-        let windows: [Element]
-        let timedOut: Bool
-        let focusedWindowID: Int?
-    }
-
-    /// Plain, testable description of an AX window used to enrich or extend the CG snapshot.
-    ///
-    /// AX windows are associated with CG windows by `CGWindowID` (resolved via `_AXUIElementGetWindow`)
-    /// and, as a fallback, by matching bounds. Title is deliberately *not* an association key: two
-    /// windows of the same app can share a title, and keying by title collapses them onto a single
-    /// CG entry, reordering the enumeration and mis-aligning `--window-index` targets.
+    /// MainActor-owned descriptor used by the existing CG/AX merge contract. Detached workers return
+    /// raw descriptors; process/window receipts and AX-only records are materialized here.
     struct AXWindowDescriptor: Sendable {
-        /// Resolved CGWindowID, when AX could expose one.
         let windowID: Int?
-        /// AX window title (may be empty).
         let title: String
-        /// AX-reported bounds, used only as a fallback matcher when `windowID` is unavailable.
         let bounds: CGRect?
-        /// Fully materialized record for a genuine AX-only window. Set only when `windowID` is a
-        /// reliable resolved CGWindowID absent from the CG snapshot, so appending it cannot introduce
-        /// a phantom entry; nil for CG-matched windows and for windows AX could not resolve to an ID.
         let standaloneInfo: ServiceWindowInfo?
-
         let isMainWindow: Bool
         let isKeyWindow: Bool?
         let isFrontmost: Bool?
@@ -66,29 +52,87 @@ struct WindowEnumerationContext {
         }
     }
 
+    typealias AXWindowResult = DetachedAXWindowEnumerationResult
+
     unowned let service: ApplicationService
     let app: ServiceApplicationInfo
     let startTime: Date
     let axTimeout: Float
     let hasScreenRecording: Bool
     let logger: Logger
+    let processIdentity: ApplicationProcessIdentity
+    let cgSnapshotProvider: (@MainActor () -> CGSnapshot?)?
+    let applicationRunningProvider: (@MainActor () -> Bool)?
+    let axEnumerator: AXEnumerator
 
-    func run() async -> UnifiedToolOutput<ServiceWindowListData> {
-        let snapshot = self.hasScreenRecording ? self.collectCGSnapshot() : nil
+    init(
+        service: ApplicationService,
+        app: ServiceApplicationInfo,
+        startTime: Date,
+        axTimeout: Float,
+        hasScreenRecording: Bool,
+        logger: Logger,
+        processIdentity: ApplicationProcessIdentity,
+        cgSnapshotProvider: (@MainActor () -> CGSnapshot?)? = nil,
+        applicationRunningProvider: (@MainActor () -> Bool)? = nil,
+        axEnumerator: AXEnumerator? = nil)
+    {
+        self.service = service
+        self.app = app
+        self.startTime = startTime
+        self.axTimeout = axTimeout
+        self.hasScreenRecording = hasScreenRecording
+        self.logger = logger
+        self.processIdentity = processIdentity
+        self.cgSnapshotProvider = cgSnapshotProvider
+        self.applicationRunningProvider = applicationRunningProvider
+        self.axEnumerator = axEnumerator ?? { processIdentity, timeoutSeconds in
+            try await DetachedAXWindowEnumerationCoordinator.run(
+                processIdentifier: processIdentity.processIdentifier,
+                processStartIdentity: processIdentity.processStartIdentity,
+                timeoutSeconds: timeoutSeconds)
+        }
+    }
+
+    func run() async throws -> UnifiedToolOutput<ServiceWindowListData> {
+        try self.validateProcessIdentity()
+        let snapshot: CGSnapshot? = if self.hasScreenRecording {
+            if let cgSnapshotProvider {
+                cgSnapshotProvider()
+            } else {
+                self.collectCGSnapshot()
+            }
+        } else {
+            nil
+        }
         guard self.isApplicationRunning else {
             return self.terminatedOutput()
         }
 
-        let axWindows = self.fetchAXWindows()
+        let axWindows = try await self.fetchAXWindows()
+        try Task.checkCancellation()
+        try self.validateProcessIdentity()
         if let snapshot {
             return await self.mergeWithSnapshot(snapshot, axResult: axWindows)
         }
 
-        return await self.buildAXOnlyResult(from: axWindows)
+        return self.buildAXOnlyResult(from: axWindows)
     }
 
     private var isApplicationRunning: Bool {
-        NSRunningApplication(processIdentifier: self.app.processIdentifier)?.isTerminated == false
+        if let applicationRunningProvider {
+            return applicationRunningProvider()
+        }
+        return NSRunningApplication(processIdentifier: self.app.processIdentifier)?.isTerminated == false
+    }
+
+    private func validateProcessIdentity() throws {
+        guard self.service.processStartIdentityProvider(self.processIdentity.processIdentifier) ==
+            self.processIdentity.processStartIdentity
+        else {
+            throw PeekabooError.snapshotStale(
+                "Target PID \(self.processIdentity.processIdentifier) changed process generation during window listing")
+        }
     }
 
     private func collectCGSnapshot() -> CGSnapshot? {
@@ -155,8 +199,7 @@ struct WindowEnumerationContext {
         guard let windowIDValue = windowInfo[kCGWindowNumber as String] as? Int,
               let windowID = CGWindowID(exactly: windowIDValue),
               let ownerPID = windowInfo[kCGWindowOwnerPID as String] as? pid_t,
-              let processIdentity = self.app.processIdentity,
-              ownerPID == processIdentity.processIdentifier
+              ownerPID == self.processIdentity.processIdentifier
         else {
             return nil
         }
@@ -170,7 +213,7 @@ struct WindowEnumerationContext {
         guard let mutationIdentity = SystemIdentityResolver.windowMutationIdentity(
             windowID: windowID,
             expectedOwnerProcessIdentifier: ownerPID,
-            expectedOwnerProcessStartIdentity: processIdentity.processStartIdentity,
+            expectedOwnerProcessStartIdentity: self.processIdentity.processStartIdentity,
             expectedBounds: bounds,
             isMinimized: isMinimized)
         else {
@@ -221,21 +264,20 @@ struct WindowEnumerationContext {
                 warnings: ["Application appears to have terminated"]))
     }
 
-    private func fetchAXWindows() -> AXWindowResult {
-        guard let runningApp = NSRunningApplication(processIdentifier: self.app.processIdentifier) else {
-            return AXWindowResult(windows: [], timedOut: false, focusedWindowID: nil)
+    private func fetchAXWindows() async throws -> AXWindowResult {
+        do {
+            return try await self.axEnumerator(
+                self.processIdentity,
+                TimeInterval(self.axTimeout))
+        } catch let CaptureError.detectionTimedOut(seconds) {
+            self.logger.warning("AX window enrichment escaped its \(seconds)s hard deadline")
+            return AXWindowResult(
+                descriptors: [],
+                focusedWindowID: nil,
+                timedOut: true,
+                incomplete: true,
+                reportedWindowCount: 0)
         }
-        let appElement = AXApp(runningApp).element
-        appElement.setMessagingTimeout(self.axTimeout)
-        defer { appElement.setMessagingTimeout(0) }
-
-        let windowStartTime = Date()
-        let windows = appElement.windowsWithTimeout(timeout: self.axTimeout) ?? []
-        let timedOut = Date().timeIntervalSince(windowStartTime) >= Double(self.axTimeout)
-        let focusedWindowID = appElement.focusedWindow()
-            .flatMap { WindowIdentityService().getWindowID(from: $0) }
-            .map(Int.init)
-        return AXWindowResult(windows: windows, timedOut: timedOut, focusedWindowID: focusedWindowID)
     }
 
     private func mergeWithSnapshot(
@@ -243,15 +285,22 @@ struct WindowEnumerationContext {
         axResult: AXWindowResult) async -> UnifiedToolOutput<ServiceWindowListData>
     {
         var warnings: [String] = []
-        let descriptors = await self.collectAXDescriptors(
+        let descriptors = self.materializeStandaloneWindows(
             axResult: axResult,
-            cgWindowIDs: Set(snapshot.windows.map(\.windowID)),
-            warnings: &warnings)
+            cgWindowIDs: Set(snapshot.windows.map(\.windowID)))
 
         let merged = Self.mergeWindows(cgWindows: snapshot.windows, axDescriptors: descriptors)
 
         if axResult.timedOut {
             warnings.append("Window enumeration timed out after \(self.axTimeout)s, results may be incomplete")
+        }
+        if axResult.incomplete {
+            warnings.append("Accessibility window enrichment was incomplete; returning verified CG inventory")
+        }
+        if axResult.reportedWindowCount > descriptors.count {
+            warnings.append(
+                "Accessibility reported \(axResult.reportedWindowCount) windows; " +
+                    "enriched \(descriptors.count) before the bounded deadline")
         }
 
         return self.service.buildWindowListOutput(
@@ -270,78 +319,64 @@ struct WindowEnumerationContext {
     /// title an untitled CG window by bounds; they are never appended as their own entry, because
     /// `createWindowInfo` would fall back to a synthetic index-based ID and produce exactly the
     /// phantom / duplicate / index-shifting entries this change fixes.
-    private func collectAXDescriptors(
+    private func materializeStandaloneWindows(
         axResult: AXWindowResult,
-        cgWindowIDs: Set<Int>,
-        warnings: inout [String]) async -> [AXWindowDescriptor]
+        cgWindowIDs: Set<Int>) -> [AXWindowDescriptor]
     {
-        let windowIdentityService = WindowIdentityService()
-        var descriptors: [AXWindowDescriptor] = []
-        descriptors.reserveCapacity(axResult.windows.count)
-
-        for (index, axWindow) in axResult.windows.indexed() {
-            if Date().timeIntervalSince(self.startTime) > Double(self.axTimeout * 2) {
-                warnings.append("Stopped enrichment after timeout")
-                break
-            }
-
-            let title = axWindow.title() ?? ""
-            let resolvedID = windowIdentityService.getWindowID(from: axWindow).map(Int.init)
-            let isMinimized = axWindow.isMinimized()
-            let bounds: CGRect? = axWindow.position().map { position in
-                CGRect(origin: position, size: axWindow.size() ?? .zero)
-            }
-            let mutationIdentity: WindowMutationIdentity? = if let resolvedID,
+        axResult.descriptors.enumerated().map { index, raw in
+            let focus = Self.focusMetadata(
+                windowID: raw.windowID,
+                focusedWindowID: axResult.focusedWindowID,
+                appIsActive: self.app.isActive)
+            let mutationIdentity: WindowMutationIdentity? = if let resolvedID = raw.windowID,
                                                                let windowID = CGWindowID(exactly: resolvedID),
-                                                               let bounds,
-                                                               let processIdentity = self.app.processIdentity
+                                                               let bounds = raw.bounds
             {
                 SystemIdentityResolver.axWindowMutationIdentity(
                     snapshot: SystemIdentityResolver.WindowMutationSnapshot(
                         windowID: windowID,
-                        ownerProcessIdentifier: processIdentity.processIdentifier,
-                        ownerProcessStartIdentity: processIdentity.processStartIdentity,
+                        ownerProcessIdentifier: self.processIdentity.processIdentifier,
+                        ownerProcessStartIdentity: self.processIdentity.processStartIdentity,
                         bounds: bounds,
-                        isMinimized: isMinimized),
+                        isMinimized: raw.isMinimized),
                     processStartIdentityProvider: SystemIdentityResolver.processStartIdentity,
                     windowIdentityProvider: SystemIdentityResolver.windowIdentity)
             } else {
                 nil
             }
-
-            var standaloneInfo: ServiceWindowInfo?
-            if let resolvedID, !cgWindowIDs.contains(resolvedID), !title.isEmpty {
-                let focusMetadata = Self.focusMetadata(
-                    windowID: resolvedID,
-                    focusedWindowID: axResult.focusedWindowID,
-                    appIsActive: self.app.isActive)
-                standaloneInfo = await self.service.createWindowInfo(
-                    from: axWindow,
+            let candidate = AXWindowDescriptor(
+                windowID: raw.windowID,
+                title: raw.title,
+                bounds: raw.bounds,
+                standaloneInfo: nil,
+                isMainWindow: raw.isMainWindow,
+                isKeyWindow: focus.isKey,
+                isFrontmost: focus.isFrontmost,
+                subrole: raw.subrole,
+                isMinimized: raw.isMinimized,
+                mutationIdentity: mutationIdentity)
+            let shouldMaterializeStandalone = !raw.title.isEmpty &&
+                raw.windowID.map { !cgWindowIDs.contains($0) } != false
+            let standaloneInfo: ServiceWindowInfo? = if shouldMaterializeStandalone {
+                self.service.createWindowInfo(
+                    from: candidate,
                     index: index,
-                    isKeyWindow: focusMetadata.isKey,
-                    isFrontmost: focusMetadata.isFrontmost,
-                    expectedProcessIdentity: self.app.processIdentity)
+                    expectedProcessIdentity: self.processIdentity)
+            } else {
+                nil
             }
-
-            let focusMetadata = Self.focusMetadata(
-                windowID: resolvedID,
-                focusedWindowID: axResult.focusedWindowID,
-                appIsActive: self.app.isActive)
-
-            descriptors.append(AXWindowDescriptor(
-                windowID: resolvedID,
-                title: title,
-                bounds: bounds,
+            return AXWindowDescriptor(
+                windowID: candidate.windowID,
+                title: candidate.title,
+                bounds: candidate.bounds,
                 standaloneInfo: standaloneInfo,
-                isMainWindow: axWindow.isMain() ?? false,
-                isKeyWindow: focusMetadata.isKey,
-                isFrontmost: focusMetadata.isFrontmost,
-                subrole: axWindow.subrole(),
-                isMinimized: isMinimized,
-                mutationIdentity: mutationIdentity))
+                isMainWindow: candidate.isMainWindow,
+                isKeyWindow: candidate.isKeyWindow,
+                isFrontmost: candidate.isFrontmost,
+                subrole: candidate.subrole,
+                isMinimized: candidate.isMinimized,
+                mutationIdentity: candidate.mutationIdentity)
         }
-
-        return descriptors
     }
 
     /// Merge CG and AX windows preserving CGWindowList enumeration order.
@@ -468,50 +503,21 @@ struct WindowEnumerationContext {
         return (isKey, appIsActive && isKey)
     }
 
-    private func buildAXOnlyResult(from axResult: AXWindowResult) async -> UnifiedToolOutput<ServiceWindowListData> {
+    private func buildAXOnlyResult(from axResult: AXWindowResult) -> UnifiedToolOutput<ServiceWindowListData> {
         self.logger.debug("Using pure AX approach (no screen recording permission)")
         var warnings: [String] = []
-        var windowInfos: [ServiceWindowInfo] = []
-        let maxWindowsToProcess = 100
-        let limitedWindows = Array(axResult.windows.prefix(maxWindowsToProcess))
-
-        if axResult.windows.count > maxWindowsToProcess {
-            let warning =
-                "Application \(self.app.name) has \(axResult.windows.count) windows, " +
-                "processing only first \(maxWindowsToProcess)"
-            self.logger.warning("\(warning)")
-        }
-
-        for (index, window) in limitedWindows.indexed() {
-            if Date().timeIntervalSince(self.startTime) > Double(self.axTimeout) {
-                warnings.append("Stopped processing after \(self.axTimeout)s timeout")
-                break
-            }
-
-            let windowID = WindowIdentityService().getWindowID(from: window).map(Int.init)
-            let focusMetadata = Self.focusMetadata(
-                windowID: windowID,
-                focusedWindowID: axResult.focusedWindowID,
-                appIsActive: self.app.isActive)
-            if let windowInfo = await self.service.createWindowInfo(
-                from: window,
-                index: index,
-                isKeyWindow: focusMetadata.isKey,
-                isFrontmost: focusMetadata.isFrontmost,
-                expectedProcessIdentity: self.app.processIdentity)
-            {
-                windowInfos.append(windowInfo)
-            }
-        }
+        let descriptors = self.materializeStandaloneWindows(axResult: axResult, cgWindowIDs: [])
+        let windowInfos = descriptors.compactMap(\.standaloneInfo)
 
         if axResult.timedOut {
             warnings.append("Window enumeration timed out, results may be incomplete")
         }
-
-        if axResult.windows.count > maxWindowsToProcess {
-            let processedWarning =
-                "Only processed first \(maxWindowsToProcess) of \(axResult.windows.count) windows"
-            warnings.append(processedWarning)
+        if axResult.incomplete {
+            warnings.append("Accessibility window enumeration was incomplete")
+        }
+        if axResult.reportedWindowCount > descriptors.count {
+            warnings.append(
+                "Only processed \(descriptors.count) of \(axResult.reportedWindowCount) accessible windows")
         }
 
         if !self.hasScreenRecording {

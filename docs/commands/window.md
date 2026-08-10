@@ -36,6 +36,7 @@ read_when:
 - `focus` routes through the exact CG window ID, makes the window main, raises it, and honors the global focus flags (`--space-switch` to jump Spaces, `--bring-to-current-space` to move the window instead, etc.). Success requires macOS Accessibility to report that exact window as focused and Workspace to report its app as frontmost.
 - `focus --verify` performs a second command-level check against the exact focused window ID. A merely topmost/renderable sibling no longer counts as focused.
 - `window list` filters to renderable windows for interaction targeting: entries on non-zero layers, smaller than 60x60, fully transparent, or excluded from the Windows menu are dropped. The surviving windows keep their canonical `index` values, so indexes shown here can have gaps yet still match `--window-index`.
+- Window inventory is CG-first and generation-pinned. Accessibility only enriches titles, focus, minimized state, and AX-only windows on a detached per-process lane with a two-second default bound. If enrichment stalls, an updated host returns the verified CG rows promptly instead of holding the Bridge request after caller timeout; AX-only metadata may be omitted from that result.
 - `window list --json` includes `is_frontmost`, `is_key`, `layer`, and accessibility `subrole` when the host can resolve them. When no window selector is supplied, interaction commands prefer the exact key/frontmost window, then titled standard windows over small untitled panels.
 
 ## Examples

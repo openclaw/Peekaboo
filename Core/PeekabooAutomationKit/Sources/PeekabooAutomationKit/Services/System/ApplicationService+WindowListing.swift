@@ -1,5 +1,4 @@
 import AppKit
-import AXorcist
 import Foundation
 import os.log
 import PeekabooFoundation
@@ -13,16 +12,24 @@ extension ApplicationService {
         let startTime = Date()
         self.logger.info("Listing windows for application: \(appIdentifier)")
         let app = try await findApplication(identifier: appIdentifier)
+        guard let processIdentity = app.processIdentity,
+              self.processStartIdentityProvider(processIdentity.processIdentifier) ==
+              processIdentity.processStartIdentity
+        else {
+            throw PeekabooError.snapshotStale(
+                "Application \(app.name) has no stable process generation for window listing")
+        }
         let hasScreenRecording = self.permissions.checkScreenRecordingPermission()
 
         let context = WindowEnumerationContext(
             service: self,
             app: app,
             startTime: startTime,
-            axTimeout: timeout ?? Self.axTimeout,
+            axTimeout: timeout ?? Self.windowAXEnrichmentTimeout,
             hasScreenRecording: hasScreenRecording,
-            logger: self.logger)
-        return await context.run()
+            logger: self.logger,
+            processIdentity: processIdentity)
+        return try await context.run()
     }
 
     static func normalizeWindowIndices(_ windows: [ServiceWindowInfo]) -> [ServiceWindowInfo] {
@@ -57,50 +64,45 @@ extension ApplicationService {
     }
 
     func createWindowInfo(
-        from window: Element,
+        from descriptor: WindowEnumerationContext.AXWindowDescriptor,
         index: Int,
-        isKeyWindow: Bool? = nil,
-        isFrontmost: Bool? = nil,
-        expectedProcessIdentity: ApplicationProcessIdentity?) async -> ServiceWindowInfo?
+        expectedProcessIdentity: ApplicationProcessIdentity) -> ServiceWindowInfo?
     {
-        guard let title = window.title(),
-              let expectedProcessIdentity,
-              window.pid() == expectedProcessIdentity.processIdentifier
-        else {
-            return nil
-        }
-
-        let bounds = self.windowBounds(for: window)
-        let isMinimized = window.isMinimized()
-        let screen = self.screenInfo(for: bounds)
-        let windowResolution = self.resolveWindowID(for: window, title: title, bounds: bounds, fallbackIndex: index)
-        let windowID = windowResolution.windowID
-        guard windowResolution.isReliable,
-              let mutationIdentity = SystemIdentityResolver.axWindowMutationIdentity(
+        guard let bounds = descriptor.bounds,
+              !descriptor.title.isEmpty,
+              let resolvedID = descriptor.windowID ?? self.matchWindowID(
+                  pid: expectedProcessIdentity.processIdentifier,
+                  title: descriptor.title,
+                  bounds: bounds),
+              let windowID = CGWindowID(exactly: resolvedID),
+              let mutationIdentity = descriptor.mutationIdentity ??
+              SystemIdentityResolver.axWindowMutationIdentity(
                   snapshot: SystemIdentityResolver.WindowMutationSnapshot(
                       windowID: windowID,
                       ownerProcessIdentifier: expectedProcessIdentity.processIdentifier,
                       ownerProcessStartIdentity: expectedProcessIdentity.processStartIdentity,
                       bounds: bounds,
-                      isMinimized: isMinimized),
+                      isMinimized: descriptor.isMinimized),
                   processStartIdentityProvider: SystemIdentityResolver.processStartIdentity,
                   windowIdentityProvider: SystemIdentityResolver.windowIdentity)
         else {
             return nil
         }
+
+        let screen = self.screenInfo(for: bounds)
         let spaces = self.spaceInfo(for: windowID)
         let level = self.windowLevel(for: windowID)
 
-        let minimized = isMinimized ?? false
+        let minimized = descriptor.isMinimized ?? false
         return ServiceWindowInfo(
-            windowID: Int(windowID),
-            title: title,
+            windowID: resolvedID,
+            title: descriptor.title,
             bounds: bounds,
             isMinimized: minimized,
-            isMainWindow: window.isMain() ?? false,
-            isKeyWindow: isKeyWindow,
-            isFrontmost: isFrontmost,
-            subrole: window.subrole(),
+            isMainWindow: descriptor.isMainWindow,
+            isKeyWindow: descriptor.isKeyWindow,
+            isFrontmost: descriptor.isFrontmost,
+            subrole: descriptor.subrole,
             windowLevel: level,
             index: index,
             spaceID: spaces.spaceID,
@@ -113,40 +115,13 @@ extension ApplicationService {
             mutationIdentity: mutationIdentity)
     }
 
-    private func windowBounds(for window: Element) -> CGRect {
-        let position = window.position() ?? .zero
-        let size = window.size() ?? .zero
-        return CGRect(origin: position, size: size)
-    }
-
     private func screenInfo(for bounds: CGRect) -> (index: Int?, name: String?) {
         let screenService = ScreenService()
         let screenInfo = screenService.screenContainingWindow(bounds: bounds)
         return (screenInfo?.index, screenInfo?.name)
     }
 
-    private func resolveWindowID(
-        for window: Element,
-        title: String,
-        bounds: CGRect,
-        fallbackIndex: Int) -> (windowID: CGWindowID, isReliable: Bool)
-    {
-        let windowIdentityService = WindowIdentityService()
-        if let identifier = windowIdentityService.getWindowID(from: window) {
-            return (identifier, true)
-        }
-
-        if let pid = window.pid(), let matched = matchWindowID(pid: pid, title: title, bounds: bounds) {
-            return (matched, true)
-        }
-
-        let missingIdentifierMessage =
-            "Failed to get actual window ID for window '\(title)', using index \(fallbackIndex) as fallback"
-        self.logger.warning("\(missingIdentifierMessage)")
-        return (CGWindowID(fallbackIndex), false)
-    }
-
-    private func matchWindowID(pid: pid_t, title: String, bounds: CGRect) -> CGWindowID? {
+    private func matchWindowID(pid: pid_t, title: String, bounds: CGRect) -> Int? {
         let options: CGWindowListOption = [.optionAll, .excludeDesktopElements]
         guard let windowList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
             return nil
@@ -165,20 +140,15 @@ extension ApplicationService {
             else {
                 continue
             }
-
-            let cgBounds = CGRect(x: x, y: y, width: width, height: height)
-
-            let withinTolerance = abs(cgBounds.origin.x - bounds.origin.x) < 5 &&
-                abs(cgBounds.origin.y - bounds.origin.y) < 5 &&
-                abs(cgBounds.size.width - bounds.size.width) < 5 &&
-                abs(cgBounds.size.height - bounds.size.height) < 5
-
-            if withinTolerance, let windowNumber = windowInfo[kCGWindowNumber as String] as? Int {
-                self.logger.debug("Found window ID \(windowNumber) via CGWindowList for '\(title)'")
-                return CGWindowID(windowNumber)
+            let candidateBounds = CGRect(x: x, y: y, width: width, height: height)
+            let matchesBounds = abs(candidateBounds.origin.x - bounds.origin.x) < 5 &&
+                abs(candidateBounds.origin.y - bounds.origin.y) < 5 &&
+                abs(candidateBounds.size.width - bounds.size.width) < 5 &&
+                abs(candidateBounds.size.height - bounds.size.height) < 5
+            if matchesBounds, let windowNumber = windowInfo[kCGWindowNumber as String] as? Int {
+                return windowNumber
             }
         }
-
         return nil
     }
 
@@ -228,7 +198,7 @@ extension ApplicationService {
             data: ServiceWindowListData(windows: normalizedWindows, targetApplication: app),
             summary: UnifiedToolOutput.Summary(
                 brief: "Found \(processedCount) window\(processedCount == 1 ? "" : "s") for \(app.name)",
-                status: .success,
+                status: warnings.isEmpty ? .success : .partial,
                 counts: [
                     "windows": processedCount,
                     "minimized": minimizedCount,
