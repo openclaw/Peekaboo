@@ -356,7 +356,6 @@ struct PasteCommandTests {
             from: jsonResult,
             as: CodableJSONResponse<PasteResult>.self
         )
-        #expect(payload.data.success)
         #expect(!payload.data.restoreSucceeded)
         #expect(payload.data.restoreError == "Failed to write to clipboard: simulated restore failure")
 

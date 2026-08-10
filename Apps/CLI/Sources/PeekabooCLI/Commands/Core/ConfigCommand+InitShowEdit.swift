@@ -240,12 +240,12 @@ extension ConfigCommand {
             let reporter = ProviderStatusReporter(timeoutSeconds: self.timeout.seconds)
             if self.jsonOutput {
                 let summary = await reporter.summary()
-                let response = ProviderStatusResponse(
+                let response = ResultEnvelope(
                     success: true,
                     data: summary,
-                    debugLogs: self.logger.getDebugLogs()
+                    debug_logs: self.logger.getDebugLogs()
                 )
-                outputJSON(response, logger: self.logger)
+                outputJSONCodable(response, logger: self.logger)
             } else {
                 await reporter.printSummary()
             }
@@ -347,16 +347,5 @@ extension ConfigCommand {
                 throw ExitCode.failure
             }
         }
-    }
-}
-
-private struct ProviderStatusResponse: Encodable {
-    let success: Bool
-    let data: ProviderStatusSummary
-    let debugLogs: [String]
-
-    enum CodingKeys: String, CodingKey {
-        case success, data
-        case debugLogs = "debug_logs"
     }
 }

@@ -5,7 +5,8 @@ extension DockCommand {
     // MARK: - Hide Dock
 
     @MainActor
-    struct HideSubcommand: ErrorHandlingCommand, OutputFormattable, InjectedRuntimeBackedCommand {
+    struct HideSubcommand: ConfirmedActionOutputFormattable, ErrorHandlingCommand, OutputFormattable,
+    InjectedRuntimeBackedCommand {
         @RuntimeStorage var runtime: CommandRuntime?
 
         @MainActor
@@ -20,7 +21,11 @@ extension DockCommand {
 
                 if self.jsonOutput {
                     struct DockHideResult: Codable { let action: String }
-                    outputSuccessCodable(data: DockHideResult(action: "dock_hide"), logger: self.outputLogger)
+                    outputSuccessCodable(
+                        data: DockHideResult(action: "dock_hide"),
+                        effect: .confirmed,
+                        logger: self.outputLogger
+                    )
                 } else {
                     print("✓ Dock hidden")
                 }
@@ -37,7 +42,8 @@ extension DockCommand {
     // MARK: - Show Dock
 
     @MainActor
-    struct ShowSubcommand: ErrorHandlingCommand, OutputFormattable, InjectedRuntimeBackedCommand {
+    struct ShowSubcommand: ConfirmedActionOutputFormattable, ErrorHandlingCommand, OutputFormattable,
+    InjectedRuntimeBackedCommand {
         @RuntimeStorage var runtime: CommandRuntime?
 
         @MainActor
@@ -52,7 +58,11 @@ extension DockCommand {
 
                 if self.jsonOutput {
                     struct DockShowResult: Codable { let action: String }
-                    outputSuccessCodable(data: DockShowResult(action: "dock_show"), logger: self.outputLogger)
+                    outputSuccessCodable(
+                        data: DockShowResult(action: "dock_show"),
+                        effect: .confirmed,
+                        logger: self.outputLogger
+                    )
                 } else {
                     print("✓ Dock shown")
                 }

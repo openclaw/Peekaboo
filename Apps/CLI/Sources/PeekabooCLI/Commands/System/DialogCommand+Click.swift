@@ -6,7 +6,7 @@ extension DialogCommand {
     // MARK: - Click Dialog Button
 
     @MainActor
-    struct ClickSubcommand: InjectedRuntimeBackedCommand {
+    struct ClickSubcommand: ConfirmedActionOutputFormattable, InjectedRuntimeBackedCommand {
         @Option(help: "Button text to click (e.g., 'OK', 'Cancel', 'Save')")
         var button: String
 
@@ -44,7 +44,7 @@ extension DialogCommand {
                             buttonIdentifier: result.details["button_identifier"],
                             window: result.details["window"] ?? "Dialog"
                         )
-                        outputSuccessCodable(data: outputData, logger: self.outputLogger)
+                        outputSuccessCodable(data: outputData, effect: .confirmed, logger: self.outputLogger)
                     } else {
                         print("✓ Clicked '\(result.details["button"] ?? self.button)' button")
                     }

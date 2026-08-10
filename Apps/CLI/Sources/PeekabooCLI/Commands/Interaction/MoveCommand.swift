@@ -7,7 +7,7 @@ import PeekabooFoundation
 /// Moves the mouse cursor to specific coordinates or UI elements.
 @available(macOS 14.0, *)
 @MainActor
-struct MoveCommand: ErrorHandlingCommand, OutputFormattable, InjectedRuntimeBackedCommand {
+struct MoveCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormattable, InjectedRuntimeBackedCommand {
     @Option(
         help: "x,y — target-relative when --app/--window-* given; global otherwise (use --global for explicit global)"
     )
@@ -40,11 +40,6 @@ struct MoveCommand: ErrorHandlingCommand, OutputFormattable, InjectedRuntimeBack
 
     mutating func validate() throws {
         try self.target.validate()
-        guard self.focusOptions.foreground else {
-            throw ValidationError(
-                "move changes the physical cursor and requires explicit --foreground consent."
-            )
-        }
         let targetCount = [
             self.at == nil ? 0 : 1,
             self.on == nil ? 0 : 1,
@@ -56,6 +51,12 @@ struct MoveCommand: ErrorHandlingCommand, OutputFormattable, InjectedRuntimeBack
 
         guard targetCount == 1 else {
             throw ValidationError("Specify exactly one target: --at or --on")
+        }
+        guard self.focusOptions.foreground else {
+            throw ActionRefusalError(
+                message: "move changes the physical cursor and requires explicit consent.",
+                hint: "Use --foreground to provide explicit consent."
+            )
         }
 
         // Validate coordinates format if provided
@@ -118,7 +119,6 @@ struct MoveCommand: ErrorHandlingCommand, OutputFormattable, InjectedRuntimeBack
 
             // Output results
             let result = MoveResult(
-                success: true,
                 targetLocation: targetLocation,
                 targetDescription: targetDescription,
                 fromLocation: currentLocation,

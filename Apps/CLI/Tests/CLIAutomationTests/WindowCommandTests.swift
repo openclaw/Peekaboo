@@ -62,7 +62,6 @@ struct WindowCommandTests {
         )
 
         #expect(response.data.action == "restore")
-        #expect(response.data.success)
         #expect(await MainActor.run {
             context.windowService.windowsByApp[appName]?.first?.isMinimized
         } == false)

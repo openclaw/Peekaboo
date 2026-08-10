@@ -3,7 +3,6 @@ import Foundation
 import PeekabooCore
 
 struct MoveResult: Codable {
-    let success: Bool
     let targetLocation: [String: Double]
     let targetDescription: String
     let fromLocation: [String: Double]
@@ -15,7 +14,6 @@ struct MoveResult: Codable {
     let executionTime: TimeInterval
 
     init(
-        success: Bool,
         targetLocation: CGPoint,
         targetDescription: String,
         fromLocation: CGPoint,
@@ -26,7 +24,6 @@ struct MoveResult: Codable {
         targetPoint: InteractionTargetPointDiagnostics? = nil,
         executionTime: TimeInterval
     ) {
-        self.success = success
         self.targetLocation = ["x": targetLocation.x, "y": targetLocation.y]
         self.targetDescription = targetDescription
         self.fromLocation = ["x": fromLocation.x, "y": fromLocation.y]

@@ -34,7 +34,6 @@ struct PressCommandTests {
         let payloadData = try #require(self.output(from: result).data(using: .utf8))
         let payload = try JSONDecoder().decode(CodableJSONResponse<PressResult>.self, from: payloadData)
         #expect(payload.success)
-        #expect(payload.data.success)
         #expect(payload.data.keys == ["return"])
         #expect(payload.data.totalPresses == 1)
     }

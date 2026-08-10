@@ -86,7 +86,7 @@ struct WindowGeometryVerificationTests {
         let warning = try #require(output.result.warning)
         #expect(warning.contains("requested size 900x700"))
         #expect(warning.contains("actual size 1200x800"))
-        #expect(output.result.success)
+        #expect(output.effect == .partial)
     }
 
     @Test func `fully ignored resize throws instead of claiming success`() async throws {
@@ -115,7 +115,7 @@ struct WindowGeometryVerificationTests {
         #expect(bounds.width == 900)
         #expect(bounds.height == 700)
         #expect(output.result.warning == nil)
-        #expect(output.result.success)
+        #expect(output.effect == .confirmed)
     }
 
     @Test func `set-bounds with clamped size keeps the applied position and warns`() async throws {
@@ -145,7 +145,6 @@ struct WindowGeometryVerificationTests {
 
         let warning = try #require(output.result.warning)
         #expect(warning.contains("requested size 900x700"))
-        #expect(output.result.success)
     }
 
     @Test func `move reports the achieved origin without warning`() async throws {

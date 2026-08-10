@@ -7,7 +7,7 @@ import PeekabooFoundation
 /// Perform drag and drop operations using intelligent element finding
 @available(macOS 14.0, *)
 @MainActor
-struct DragCommand: ErrorHandlingCommand, OutputFormattable, InjectedRuntimeBackedCommand {
+struct DragCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormattable, InjectedRuntimeBackedCommand {
     @OptionGroup var target: InteractionTargetOptions
 
     @Option(help: "Starting element ID or coordinates as 'x,y'")
@@ -150,7 +150,6 @@ struct DragCommand: ErrorHandlingCommand, OutputFormattable, InjectedRuntimeBack
             try Task.checkCancellation()
 
             let result = DragResult(
-                success: true,
                 from: ["x": Int(startPoint.x), "y": Int(startPoint.y)],
                 to: ["x": Int(endPoint.x), "y": Int(endPoint.y)],
                 duration: movement.duration,
@@ -184,11 +183,6 @@ struct DragCommand: ErrorHandlingCommand, OutputFormattable, InjectedRuntimeBack
     /// Validate user input combinations
     private mutating func validateInputs() throws {
         try self.target.validate()
-        guard self.focusOptions.foreground else {
-            throw ValidationError(
-                "drag changes the physical cursor and requires explicit --foreground consent."
-            )
-        }
         guard self.from != nil else {
             throw ValidationError("Must specify --from as an element ID or x,y coordinates")
         }
@@ -199,6 +193,12 @@ struct DragCommand: ErrorHandlingCommand, OutputFormattable, InjectedRuntimeBack
 
         if self.to != nil, self.toApp != nil {
             throw ValidationError("Specify only one of --to or --to-app")
+        }
+        guard self.focusOptions.foreground else {
+            throw ActionRefusalError(
+                message: "drag changes the physical cursor and requires explicit consent.",
+                hint: "Use --foreground to provide explicit consent."
+            )
         }
         guard self.resolvedButton != nil else {
             throw ValidationError("--button must be either 'left' or 'right'")

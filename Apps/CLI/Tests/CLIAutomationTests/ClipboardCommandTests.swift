@@ -16,7 +16,7 @@ struct ClipboardCommandTests {
         let data = try #require(result.stdout.data(using: .utf8))
         let payload = try JSONDecoder().decode(JSONResponse.self, from: data)
         #expect(payload.success == false)
-        #expect(payload.error?.code == ErrorCode.VALIDATION_ERROR.rawValue)
+        #expect(payload.error?.code == ErrorCode.INVALID_ARGUMENT.rawValue)
     }
 
     @Test

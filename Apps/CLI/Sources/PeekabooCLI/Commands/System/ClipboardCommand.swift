@@ -5,7 +5,8 @@ import UniformTypeIdentifiers
 
 @available(macOS 14.0, *)
 @MainActor
-struct ClipboardActionCommand: OutputFormattable, RuntimeOptionsConfigurable {
+struct ClipboardActionCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormattable,
+RuntimeOptionsConfigurable {
     var action: String?
     var actionOption: String?
 
@@ -71,28 +72,39 @@ struct ClipboardActionCommand: OutputFormattable, RuntimeOptionsConfigurable {
         self.configuration.jsonOutput
     }
 
+    var defaultEffect: ActionEffect? {
+        let action = (self.action ?? self.actionOption)?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard Self.actionMayMutate(action) else { return nil }
+        return .unverifiable
+    }
+
     @MainActor
     mutating func run(using runtime: CommandRuntime) async throws {
         self.runtime = runtime
         self.logger.setJsonOutputMode(self.jsonOutput)
 
-        let action = try self.resolvedAction()
-        if Self.actionMayMutate(action) {
-            self.resolvedRuntime.beginInteractionMutation()
-        }
-        switch action.lowercased() {
-        case "get":
-            try self.handleGet()
-        case "set":
-            try self.handleSet()
-        case "clear":
-            self.handleClear()
-        case "save":
-            try self.handleSave()
-        case "restore":
-            try self.handleRestore()
-        default:
-            throw ValidationError("Invalid action: \(action)")
+        do {
+            let action = try self.resolvedAction()
+            if Self.actionMayMutate(action) {
+                self.resolvedRuntime.beginInteractionMutation()
+            }
+            switch action.lowercased() {
+            case "get":
+                try self.handleGet()
+            case "set":
+                try self.handleSet()
+            case "clear":
+                self.handleClear()
+            case "save":
+                try self.handleSave()
+            case "restore":
+                try self.handleRestore()
+            default:
+                throw ValidationError("Invalid action: \(action)")
+            }
+        } catch {
+            self.handleError(error)
+            throw ExitCode.failure
         }
     }
 
@@ -184,7 +196,7 @@ struct ClipboardActionCommand: OutputFormattable, RuntimeOptionsConfigurable {
             verification: verification
         )
 
-        self.output(payload) {
+        self.output(payload, effect: verification == nil ? .unverifiable : .confirmed) {
             print("✅ Set clipboard (\(result.utiIdentifier), \(result.data.count) bytes)")
             self.printVerificationSummary(verification)
         }

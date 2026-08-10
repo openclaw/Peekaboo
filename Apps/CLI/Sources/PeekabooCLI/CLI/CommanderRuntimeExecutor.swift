@@ -37,6 +37,16 @@ enum CommanderRuntimeExecutor {
             parsedValues: resolved.parsedValues
         )
 
+        let isActionCommand = (command as? any ActionOutputFormattable)?.defaultEffect != nil
+        try await ResultEnvelopeContext.$isActionCommand.withValue(isActionCommand) {
+            try await self.runCommand(command, resolved: resolved)
+        }
+    }
+
+    private static func runCommand(
+        _ command: any ParsableCommand,
+        resolved: CommanderResolvedCommand
+    ) async throws {
         if var runtimeCommand = command as? any AsyncRuntimeCommand {
             let runtimeOptions = try CommanderCLIBinder.makeRuntimeOptions(
                 from: resolved.parsedValues,

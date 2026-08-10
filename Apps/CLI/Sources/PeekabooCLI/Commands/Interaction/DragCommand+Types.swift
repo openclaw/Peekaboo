@@ -2,7 +2,6 @@ import Foundation
 import PeekabooCore
 
 struct DragResult: Codable {
-    let success: Bool
     let from: [String: Int]
     let to: [String: Int]
     let duration: Int

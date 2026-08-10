@@ -5,7 +5,7 @@ import PeekabooCore
 
 @available(macOS 14.0, *)
 @MainActor
-struct ActionCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedCommand {
+struct ActionCommand: ConfirmedActionOutputFormattable, ErrorHandlingCommand, OutputFormattable, RuntimeBackedCommand {
     @Argument(help: "Accessibility action name, e.g. AXPress, AXShowMenu, AXIncrement")
     var actionName: String?
 

@@ -11,6 +11,7 @@
 - Add `app focus` and positional app targets across quit, relaunch, hide, unhide, and switch while rejecting conflicting positional/flag targets (v4 breaking change).
 
 ### Changed
+- Standardize CLI JSON on one result envelope with action-only effect vocabulary, actionable error hints, and nonzero exits for failed actions (v4 breaking change).
 - Standardize all CLI duration/timeout/delay flags on bare-millisecond plus `ms`/`s` parsing, coordinate input on `--at`/`--global`, modifiers on normalized comma-separated lists, and the input-command focus flag matrix (v4 breaking change).
 - Update Swift Subprocess to 1.0.0 and pnpm to 11.21.0.
 - Merge keyboard shortcuts into xdotool-style `press` chords, fold swipe gestures into dual-target `drag`, consolidate screenshot and AX-tree CLI reads under `see`, and rename CLI/MCP `perform-action`/`perform_action` to `action` (v4 breaking change).

@@ -4,7 +4,8 @@ import PeekabooCore
 // MARK: - Switch Space
 
 @MainActor
-struct SwitchSubcommand: ErrorHandlingCommand, OutputFormattable, InjectedRuntimeBackedCommand {
+struct SwitchSubcommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormattable,
+InjectedRuntimeBackedCommand {
     @Option(name: .long, help: "Space number to switch to (1-based)")
     var to: Int
     @RuntimeStorage var runtime: CommandRuntime?
@@ -38,7 +39,7 @@ struct SwitchSubcommand: ErrorHandlingCommand, OutputFormattable, InjectedRuntim
                     space_id: targetSpace.id,
                     space_number: self.to
                 )
-                outputSuccessCodable(data: data, logger: self.logger)
+                outputSuccessCodable(data: data, effect: .unverifiable, logger: self.logger)
             } else {
                 print("✓ Switched to Space \(self.to)")
             }

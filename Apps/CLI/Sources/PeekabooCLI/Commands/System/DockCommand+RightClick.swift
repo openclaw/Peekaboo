@@ -5,7 +5,7 @@ extension DockCommand {
     // MARK: - Right-Click Dock Item
 
     @MainActor
-    struct RightClickSubcommand: OutputFormattable, InjectedRuntimeBackedCommand {
+    struct RightClickSubcommand: ConfirmedActionOutputFormattable, OutputFormattable, InjectedRuntimeBackedCommand {
         @Option(help: "Application name in the Dock")
         var app: String
 
@@ -41,7 +41,7 @@ extension DockCommand {
                         app: dockItem.title,
                         selectedItem: self.select ?? ""
                     )
-                    outputSuccessCodable(data: outputData, logger: self.outputLogger)
+                    outputSuccessCodable(data: outputData, effect: .confirmed, logger: self.outputLogger)
                 } else if let selected = self.select {
                     print("✓ Right-clicked \(dockItem.title) and selected '\(selected)'")
                 } else {

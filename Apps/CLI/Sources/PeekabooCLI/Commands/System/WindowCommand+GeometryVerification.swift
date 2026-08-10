@@ -29,11 +29,19 @@ enum WindowGeometryOutcome: Equatable {
 }
 
 /// Thrown when a geometry mutation was accepted by AX but the window frame did not change at all.
-struct WindowGeometryIgnoredError: Error, LocalizedError {
+struct WindowGeometryIgnoredError: Error, LocalizedError, ResultEnvelopeError {
     let reason: String
 
-    var errorDescription: String? {
+    nonisolated var errorDescription: String? {
         self.reason
+    }
+
+    nonisolated var envelopeEffect: ActionEffect? {
+        .suspectedNoop
+    }
+
+    nonisolated var envelopeHint: String? {
+        nil
     }
 }
 
@@ -117,6 +125,7 @@ struct VerifiedWindowActionOutput {
     let windowInfo: ServiceWindowInfo?
     let result: WindowActionResult
     let warning: String?
+    let effect: ActionEffect
 }
 
 /// Build the action result from the read-back frame, surfacing clamped or unverifiable requests.
@@ -146,24 +155,29 @@ func verifiedWindowActionResult(
     }
 
     let warning: String?
+    let effect: ActionEffect
     switch outcome {
     case .applied:
         warning = nil
-    case let .constrained(text), let .unverified(text):
+        effect = .confirmed
+    case let .constrained(text):
         warning = text
+        effect = .partial
+    case let .unverified(text):
+        warning = text
+        effect = .unverifiable
     case let .ignored(reason):
         throw WindowGeometryIgnoredError(reason: reason)
     }
 
     let result = createWindowActionResult(
         action: action,
-        success: true,
         windowInfo: finalInfo,
         appName: appName,
         requestedBounds: requestedWindowBounds(requested: requested, original: originalInfo?.bounds),
         warning: warning
     )
-    return VerifiedWindowActionOutput(windowInfo: finalInfo, result: result, warning: warning)
+    return VerifiedWindowActionOutput(windowInfo: finalInfo, result: result, warning: warning, effect: effect)
 }
 
 /// Full requested rectangle for the JSON payload; components the command did not set fall back

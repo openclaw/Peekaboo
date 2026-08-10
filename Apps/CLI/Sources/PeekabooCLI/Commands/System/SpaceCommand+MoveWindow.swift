@@ -5,8 +5,9 @@ import PeekabooCore
 // MARK: - Move Window to Space
 
 @MainActor
-struct MoveWindowSubcommand: ApplicationResolvable, ErrorHandlingCommand, OutputFormattable,
-InjectedRuntimeBackedCommand {
+struct MoveWindowSubcommand: ActionOutputFormattable, ApplicationResolvable, ErrorHandlingCommand,
+    OutputFormattable,
+    InjectedRuntimeBackedCommand {
     @Option(name: .long, help: "Target application name, bundle ID, or 'PID:12345'")
     var app: String?
 
@@ -81,7 +82,7 @@ InjectedRuntimeBackedCommand {
                         moved_to_current: true,
                         followed: nil
                     )
-                    outputSuccessCodable(data: data, logger: self.logger)
+                    outputSuccessCodable(data: data, effect: .unverifiable, logger: self.logger)
                 } else {
                     print("✓ Moved window '\(windowInfo.title)' to current Space")
                 }
@@ -120,7 +121,7 @@ InjectedRuntimeBackedCommand {
                     moved_to_current: false,
                     followed: self.follow
                 )
-                outputSuccessCodable(data: data, logger: self.logger)
+                outputSuccessCodable(data: data, effect: .unverifiable, logger: self.logger)
             } else {
                 var message = "✓ Moved window '\(windowInfo.title)' to Space \(spaceNum)"
                 if self.follow {

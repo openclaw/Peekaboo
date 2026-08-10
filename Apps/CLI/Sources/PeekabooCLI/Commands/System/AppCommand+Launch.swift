@@ -195,7 +195,8 @@ extension AppCommand {
     }
 }
 
-extension AppCommand.LaunchSubcommand: AsyncRuntimeCommand, ErrorHandlingCommand, OutputFormattable {}
+extension AppCommand.LaunchSubcommand: AsyncRuntimeCommand, ConfirmedActionOutputFormattable, ErrorHandlingCommand,
+OutputFormattable {}
 
 @MainActor
 extension AppCommand.LaunchSubcommand: CommanderBindableCommand {

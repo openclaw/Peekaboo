@@ -8,7 +8,7 @@ import PeekabooFoundation
 /// Supports scrolling on specific elements or at the current mouse position.
 @available(macOS 14.0, *)
 @MainActor
-struct ScrollCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedCommand {
+struct ScrollCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormattable, RuntimeBackedCommand {
     @Option(help: "Scroll direction: up, down, left, or right")
     var direction: String
 
@@ -132,7 +132,6 @@ struct ScrollCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedComm
 
             // Output results
             let outputPayload = ScrollResult(
-                success: true,
                 direction: direction,
                 amount: amount,
                 location: ["x": scrollLocation.x, "y": scrollLocation.y],
@@ -140,7 +139,7 @@ struct ScrollCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedComm
                 targetPoint: scrollResolution.diagnostics,
                 executionTime: Date().timeIntervalSince(startTime)
             )
-            output(outputPayload) {
+            output(outputPayload, effect: self.focusOptions.foreground ? .unverifiable : .confirmed) {
                 print("✅ Scroll completed")
                 print("🎯 Direction: \(self.direction)")
                 print("📊 Amount: \(self.amount) ticks")
@@ -159,9 +158,9 @@ struct ScrollCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedComm
     private func validateDeliveryMode() throws {
         guard self.focusOptions.foreground else {
             if self.on == nil {
-                throw ValidationError(
-                    "Background scroll requires --on with an Accessibility-scrollable element; " +
-                        "add --foreground to scroll at the physical pointer."
+                throw ActionRefusalError(
+                    message: "Background scroll requires --on with an Accessibility-scrollable element.",
+                    hint: "Add --foreground to scroll at the physical pointer."
                 )
             }
             if self.smooth || self.delay.milliseconds > 0 {
@@ -179,10 +178,7 @@ struct ScrollCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedComm
     // Error handling is provided by ErrorHandlingCommand protocol
 }
 
-// MARK: - JSON Output Structure
-
 struct ScrollResult: Codable {
-    let success: Bool
     let direction: String
     let amount: Int
     let location: [String: Double]
@@ -191,7 +187,6 @@ struct ScrollResult: Codable {
     let executionTime: TimeInterval
 
     init(
-        success: Bool,
         direction: String,
         amount: Int,
         location: [String: Double],
@@ -199,7 +194,6 @@ struct ScrollResult: Codable {
         targetPoint: InteractionTargetPointDiagnostics? = nil,
         executionTime: TimeInterval
     ) {
-        self.success = success
         self.direction = direction
         self.amount = amount
         self.location = location

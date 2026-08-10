@@ -7,7 +7,7 @@ extension DockCommand {
     // MARK: - Launch from Dock
 
     @MainActor
-    struct LaunchSubcommand: OutputFormattable, InjectedRuntimeBackedCommand {
+    struct LaunchSubcommand: ConfirmedActionOutputFormattable, OutputFormattable, InjectedRuntimeBackedCommand {
         @Argument(help: "Application name in the Dock")
         var app: String
 
@@ -36,7 +36,7 @@ extension DockCommand {
                     }
 
                     let outputData = DockLaunchResult(action: "dock_launch", app: dockItem.title)
-                    outputSuccessCodable(data: outputData, logger: self.outputLogger)
+                    outputSuccessCodable(data: outputData, effect: .confirmed, logger: self.outputLogger)
                 } else {
                     print("✓ Launched \(dockItem.title) from Dock")
                 }

@@ -6,7 +6,7 @@ extension DialogCommand {
     // MARK: - Input Text in Dialog
 
     @MainActor
-    struct InputSubcommand: InjectedRuntimeBackedCommand {
+    struct InputSubcommand: ConfirmedActionOutputFormattable, InjectedRuntimeBackedCommand {
         static let commandDescription = CommandDescription(
             commandName: "input",
             abstract: "Enter text in a dialog field using DialogService"
@@ -60,7 +60,7 @@ extension DialogCommand {
                             textLength: result.details["text_length"] ?? String(self.text.count),
                             cleared: result.details["cleared"] ?? String(self.clear)
                         )
-                        outputSuccessCodable(data: outputData, logger: self.outputLogger)
+                        outputSuccessCodable(data: outputData, effect: .confirmed, logger: self.outputLogger)
                     } else {
                         print("✓ Entered text in '\(result.details["field"] ?? "field")'")
                     }

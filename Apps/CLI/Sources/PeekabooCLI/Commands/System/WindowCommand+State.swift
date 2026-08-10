@@ -6,7 +6,8 @@ import PeekabooFoundation
 
 extension WindowCommand {
     @MainActor
-    struct CloseSubcommand: ErrorHandlingCommand, OutputFormattable, InjectedRuntimeBackedCommand {
+    struct CloseSubcommand: ConfirmedActionOutputFormattable, ErrorHandlingCommand, OutputFormattable,
+    InjectedRuntimeBackedCommand {
         @OptionGroup var windowOptions: WindowIdentificationOptions
 
         @Flag(help: "Allow focused/global fallback if AX close does not dismiss the window")
@@ -63,7 +64,6 @@ extension WindowCommand {
 
                 let data = createWindowActionResult(
                     action: "close",
-                    success: true,
                     windowInfo: windowInfo,
                     appName: appName
                 )
@@ -80,7 +80,8 @@ extension WindowCommand {
     }
 
     @MainActor
-    struct MinimizeSubcommand: ErrorHandlingCommand, OutputFormattable, InjectedRuntimeBackedCommand {
+    struct MinimizeSubcommand: ConfirmedActionOutputFormattable, ErrorHandlingCommand, OutputFormattable,
+    InjectedRuntimeBackedCommand {
         @OptionGroup var windowOptions: WindowIdentificationOptions
         @RuntimeStorage var runtime: CommandRuntime?
 
@@ -132,7 +133,6 @@ extension WindowCommand {
 
                 let data = createWindowActionResult(
                     action: "minimize",
-                    success: true,
                     windowInfo: windowInfo,
                     appName: appName
                 )
@@ -149,7 +149,8 @@ extension WindowCommand {
     }
 
     @MainActor
-    struct RestoreSubcommand: ErrorHandlingCommand, OutputFormattable, InjectedRuntimeBackedCommand {
+    struct RestoreSubcommand: ConfirmedActionOutputFormattable, ErrorHandlingCommand, OutputFormattable,
+    InjectedRuntimeBackedCommand {
         @OptionGroup var windowOptions: WindowIdentificationOptions
         @RuntimeStorage var runtime: CommandRuntime?
 
@@ -204,7 +205,6 @@ extension WindowCommand {
                 )
                 let data = createWindowActionResult(
                     action: "restore",
-                    success: true,
                     windowInfo: refreshedWindow,
                     appName: appName
                 )
@@ -219,7 +219,8 @@ extension WindowCommand {
     }
 
     @MainActor
-    struct MaximizeSubcommand: ErrorHandlingCommand, OutputFormattable, InjectedRuntimeBackedCommand {
+    struct MaximizeSubcommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormattable,
+    InjectedRuntimeBackedCommand {
         @OptionGroup var windowOptions: WindowIdentificationOptions
         @RuntimeStorage var runtime: CommandRuntime?
 
@@ -308,13 +309,21 @@ extension WindowCommand {
                 }
                 let data = createWindowActionResult(
                     action: "maximize",
-                    success: true,
                     windowInfo: finalWindowInfo,
                     appName: appName,
                     warning: warning
                 )
 
-                output(data) {
+                let effect: ActionEffect = if outcome.alreadyMaximized {
+                    .suspectedNoop
+                } else if outcome.info == nil {
+                    .unverifiable
+                } else if !outcome.stabilized {
+                    .partial
+                } else {
+                    .confirmed
+                }
+                output(data, effect: effect) {
                     let title = finalWindowInfo.title
                     if outcome.alreadyMaximized {
                         print("Window '\(title)' of \(appName) is already maximized")

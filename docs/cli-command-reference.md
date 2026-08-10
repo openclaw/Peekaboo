@@ -55,4 +55,8 @@ Timing flags share one grammar: bare numbers mean milliseconds, while `ms` and `
 - `see --tree --no-screenshot` – Accessibility-tree text/control inspection without pixel capture.
 - [`mcp`](commands/mcp.md) – Run Peekaboo's MCP server; `serve` is the only subcommand and stdio is the implemented transport.
 
-Need structured payloads? Pass `--json` (or the Commander-provided `--json-output` alias) where supported and compose commands with your shell.
+## JSON result envelope
+
+Pass `--json` (or the Commander-provided `--json-output` alias) for one stable result shape. Every response has `success`, `data` (null when unavailable), optional `error`, and `debug_logs`. Failed responses exit nonzero and include `error.code`, `error.message`, and an actionable `error.hint` when the command already knows the next step.
+
+Action commands also include a top-level `effect`: `confirmed` when existing AX/readback verification proves the result, `partial` for a partly completed multi-step action, `unverifiable` when input was dispatched without an application-level signal, `suspected_noop` when a post-check found no change, or `refused` when a safety gate prevented dispatch. Read-only commands omit `effect`. MCP tool result contracts are unchanged.

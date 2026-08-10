@@ -6,7 +6,7 @@ import PeekabooFoundation
 /// Press keyboard chords or chord sequences.
 @available(macOS 14.0, *)
 @MainActor
-struct PressCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConfigurable {
+struct PressCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConfigurable {
     @Argument(help: "Chord(s) to press. Chord syntax matches xdotool key (cmd+shift+t).")
     var chords: [String]
 
@@ -124,7 +124,6 @@ struct PressCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
 
             // Output results
             let pressResult = PressResult(
-                success: true,
                 keys: parsedChords.map(\.displayValue),
                 totalPresses: completedPresses,
                 count: self.count,
@@ -190,10 +189,7 @@ struct PressCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
     }
 }
 
-// MARK: - JSON Output Structure
-
 struct PressResult: Codable {
-    let success: Bool
     let keys: [String]
     let totalPresses: Int
     let count: Int

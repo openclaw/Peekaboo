@@ -126,7 +126,6 @@ struct MoveCommandTests {
         let data = try #require(self.output(from: result).data(using: .utf8))
         let payload = try JSONDecoder().decode(CodableJSONResponse<MoveResult>.self, from: data)
         #expect(payload.success)
-        #expect(payload.data.success)
         #expect(payload.data.targetDescription.contains("Coordinates"))
         #expect(payload.data.targetLocation["x"] == 150)
         #expect(payload.data.targetLocation["y"] == 250)

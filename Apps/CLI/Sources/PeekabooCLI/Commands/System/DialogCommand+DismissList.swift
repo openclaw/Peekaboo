@@ -6,7 +6,7 @@ extension DialogCommand {
     // MARK: - Dismiss Dialog
 
     @MainActor
-    struct DismissSubcommand: InjectedRuntimeBackedCommand {
+    struct DismissSubcommand: ConfirmedActionOutputFormattable, InjectedRuntimeBackedCommand {
         static let commandDescription = CommandDescription(
             commandName: "dismiss",
             abstract: "Dismiss a dialog using DialogService"
@@ -50,7 +50,7 @@ extension DialogCommand {
                             method: result.details["method"] ?? "unknown",
                             button: result.details["button"]
                         )
-                        outputSuccessCodable(data: outputData, logger: self.outputLogger)
+                        outputSuccessCodable(data: outputData, effect: .confirmed, logger: self.outputLogger)
                     } else if result.details["method"] == "escape" {
                         print("✓ Dismissed dialog with Escape")
                     } else if let button = result.details["button"] {

@@ -244,7 +244,7 @@ struct AppCommand: ParsableCommand {
                         success: true
                     )
 
-                    output(data) {
+                    output(data, effect: self.verify ? .confirmed : .unverifiable) {
                         print("✓ Switched to \(appInfo.name)")
                     }
                     AutomationEventLogger.log(
@@ -332,8 +332,9 @@ struct AppCommand: ParsableCommand {
     }
 }
 
-extension AppCommand.HideSubcommand: AsyncRuntimeCommand, ErrorHandlingCommand, OutputFormattable,
-ApplicationResolvable, ApplicationResolver {}
+extension AppCommand.HideSubcommand: AsyncRuntimeCommand, ConfirmedActionOutputFormattable, ErrorHandlingCommand,
+    OutputFormattable,
+    ApplicationResolvable, ApplicationResolver {}
 @MainActor
 extension AppCommand.HideSubcommand: CommanderBindableCommand {
     mutating func applyCommanderValues(_ values: CommanderBindableValues) throws {
@@ -345,8 +346,9 @@ extension AppCommand.HideSubcommand: CommanderBindableCommand {
     }
 }
 
-extension AppCommand.UnhideSubcommand: AsyncRuntimeCommand, ErrorHandlingCommand, OutputFormattable,
-ApplicationResolvable, ApplicationResolver {}
+extension AppCommand.UnhideSubcommand: AsyncRuntimeCommand, ConfirmedActionOutputFormattable, ErrorHandlingCommand,
+    OutputFormattable,
+    ApplicationResolvable, ApplicationResolver {}
 @MainActor
 extension AppCommand.UnhideSubcommand: CommanderBindableCommand {
     mutating func applyCommanderValues(_ values: CommanderBindableValues) throws {
@@ -390,8 +392,9 @@ extension AppCommand {
     }
 }
 
-extension AppCommand.SwitchSubcommand: AsyncRuntimeCommand, ErrorHandlingCommand, OutputFormattable,
-ApplicationResolver {}
+extension AppCommand.SwitchSubcommand: ActionOutputFormattable, AsyncRuntimeCommand, ErrorHandlingCommand,
+    OutputFormattable,
+    ApplicationResolver {}
 @MainActor
 extension AppCommand.SwitchSubcommand: CommanderBindableCommand {
     mutating func applyCommanderValues(_ values: CommanderBindableValues) throws {
@@ -401,8 +404,9 @@ extension AppCommand.SwitchSubcommand: CommanderBindableCommand {
     }
 }
 
-extension AppCommand.FocusSubcommand: AsyncRuntimeCommand, ErrorHandlingCommand, OutputFormattable,
-ApplicationResolvable, ApplicationResolver {}
+extension AppCommand.FocusSubcommand: ActionOutputFormattable, AsyncRuntimeCommand, ErrorHandlingCommand,
+    OutputFormattable,
+    ApplicationResolvable, ApplicationResolver {}
 @MainActor
 extension AppCommand.FocusSubcommand: CommanderBindableCommand {
     mutating func applyCommanderValues(_ values: CommanderBindableValues) throws {

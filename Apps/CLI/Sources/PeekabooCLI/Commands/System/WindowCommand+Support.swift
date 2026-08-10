@@ -164,7 +164,6 @@ func windowDisplayName(from snapshot: UIAutomationSnapshot, snapshotId: String) 
 
 func createWindowActionResult(
     action: String,
-    success: Bool,
     windowInfo: ServiceWindowInfo?,
     appName: String? = nil,
     requestedBounds: WindowBounds? = nil,
@@ -183,7 +182,6 @@ func createWindowActionResult(
 
     return WindowActionResult(
         action: action,
-        success: success,
         app_name: appName ?? "Unknown",
         window_title: windowInfo?.title,
         new_bounds: bounds,

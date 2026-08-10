@@ -13,14 +13,7 @@ private func emitError(
     prefix: String = "❌"
 ) {
     if jsonOutput {
-        let response = JSONResponse(
-            success: false,
-            error: ErrorInfo(
-                message: message,
-                code: code
-            )
-        )
-        outputJSON(response, logger: logger)
+        outputError(message: message, code: code, logger: logger)
     } else {
         print("\(prefix) \(message)")
     }

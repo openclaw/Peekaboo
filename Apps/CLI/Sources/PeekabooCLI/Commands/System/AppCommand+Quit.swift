@@ -111,11 +111,18 @@ extension AppCommand {
                 let allSucceeded = results.allSatisfy(\.success)
 
                 if self.jsonOutput {
-                    let response = CodableJSONResponse(
+                    let succeededCount = results.count(where: \.success)
+                    let response = ResultEnvelope(
                         success: allSucceeded,
+                        effect: allSucceeded ? .confirmed : (succeededCount > 0 ? .partial : .suspectedNoop),
                         data: data,
                         messages: nil,
-                        debug_logs: self.outputLogger.getDebugLogs()
+                        debug_logs: self.outputLogger.getDebugLogs(),
+                        error: allSucceeded ? nil : ErrorInfo(
+                            message: "Failed to quit \(results.count - succeededCount) application(s).",
+                            code: .INTERACTION_FAILED,
+                            hint: self.force ? nil : "Try --force to force quit."
+                        )
                     )
                     outputJSONCodable(response, logger: self.outputLogger)
                 } else {
@@ -239,7 +246,8 @@ private struct AppQuitTarget {
     }
 }
 
-extension AppCommand.QuitSubcommand: AsyncRuntimeCommand, ErrorHandlingCommand, OutputFormattable,
+extension AppCommand.QuitSubcommand: AsyncRuntimeCommand, ConfirmedActionOutputFormattable, ErrorHandlingCommand,
+    OutputFormattable,
     ApplicationResolvable,
     ApplicationResolver {}
 

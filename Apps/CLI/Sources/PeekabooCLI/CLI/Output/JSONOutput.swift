@@ -1,170 +1,196 @@
 import Foundation
-import PeekabooFoundation
 
-/// Standard JSON response format for Peekaboo API output.
-///
-/// This is now deprecated - use CodableJSONResponse with specific types instead
-struct JSONResponse: Codable {
-    let success: Bool
-    let data: Empty? // Added for test compatibility
-    let messages: [String]?
-    let debug_logs: [String]
-    let error: ErrorInfo?
+nonisolated enum ActionEffect: String, Codable, Sendable {
+    case confirmed
+    case partial
+    case unverifiable
+    case suspectedNoop = "suspected_noop"
+    case refused
+}
 
-    init(
-        success: Bool,
-        data: Empty? = nil, // Added for test compatibility
-        messages: [String]? = nil,
-        debugLogs: [String] = [],
-        error: ErrorInfo? = nil
-    ) {
-        self.success = success
-        self.data = data
-        self.messages = messages
-        self.debug_logs = debugLogs
-        self.error = error
+protocol ActionOutputFormattable {
+    var defaultEffect: ActionEffect? { get }
+}
+
+extension ActionOutputFormattable {
+    var defaultEffect: ActionEffect? {
+        .unverifiable
     }
 }
 
-/// Error information structure for JSON responses.
-///
-/// Contains error details including message, standardized error code,
-/// and optional additional context.
-struct ErrorInfo: Codable {
+protocol ConfirmedActionOutputFormattable: ActionOutputFormattable {}
+extension ConfirmedActionOutputFormattable { var defaultEffect: ActionEffect? {
+    .confirmed
+} }
+
+nonisolated protocol ResultEnvelopeError: Error, Sendable {
+    var envelopeEffect: ActionEffect? { get }
+    var envelopeHint: String? { get }
+}
+
+struct ActionRefusalError: LocalizedError, ResultEnvelopeError {
     let message: String
+    let hint: String?
+
+    nonisolated var errorDescription: String? {
+        self.message
+    }
+
+    nonisolated var envelopeEffect: ActionEffect? {
+        .refused
+    }
+
+    nonisolated var envelopeHint: String? {
+        self.hint
+    }
+}
+
+enum ResultEnvelopeContext {
+    @TaskLocal static var isActionCommand = false
+}
+
+let jsonEncodingFailureEnvelope =
+    #"{"success":false,"data":null,"error":{"code":"INTERNAL_SWIFT_ERROR","# +
+    #""message":"Failed to encode JSON response"},"debug_logs":[]}"#
+
+struct ResultEnvelope<Payload> {
+    let success: Bool
+    var effect: ActionEffect?
+    let data: Payload
+    var messages: [String]?
+    var debug_logs: [String] = []
+    var error: ErrorInfo?
+}
+
+extension ResultEnvelope: Encodable where Payload: Encodable {}
+extension ResultEnvelope: Decodable where Payload: Decodable {}
+
+typealias JSONResponse = ResultEnvelope<Empty?>
+typealias CodableJSONResponse<Payload: Codable> = ResultEnvelope<Payload>
+
+struct ErrorInfo: Codable {
     let code: String
+    let message: String
+    let hint: String?
     let details: String?
 
-    init(message: String, code: ErrorCode, details: String? = nil) {
-        self.message = message
-        self.code = code.rawValue
+    init(message: String, code: ErrorCode, hint: String? = nil, details: String? = nil) {
+        self.init(message: message, code: code.rawValue, hint: hint, details: details)
+    }
+
+    init(message: String, code: String, hint: String? = nil, details: String? = nil) {
+        let presentation = splitErrorHint(from: message)
+        self.code = code
+        self.message = presentation.message
+        self.hint = hint ?? presentation.hint
         self.details = details
     }
 }
 
-/// Standardized error codes for Peekaboo operations.
-///
-/// Provides consistent error identification across the API for proper
-/// error handling by clients and automation tools.
+func splitErrorHint(from text: String) -> (message: String, hint: String?) {
+    let markers = [
+        (". Use ", "Use "), ("; use ", "Use "),
+        (". Try ", "Try "), ("; try ", "Try "),
+        (". Run ", "Run "), ("; run ", "Run "),
+        (". Add ", "Add "), ("; add ", "Add "),
+    ]
+    for (marker, prefix) in markers {
+        guard let range = text.range(of: marker) else { continue }
+        let message = text[..<range.lowerBound].trimmingCharacters(in: .whitespacesAndNewlines)
+        let suffix = text[range.upperBound...].trimmingCharacters(in: .whitespacesAndNewlines)
+        return (message.hasSuffix(".") ? message : message + ".", prefix + suffix)
+    }
+    return (text, nil)
+}
+
 enum ErrorCode: String, Codable {
-    case PERMISSION_ERROR_SCREEN_RECORDING
-    case PERMISSION_ERROR_ACCESSIBILITY
-    case PERMISSION_ERROR_EVENT_SYNTHESIZING
-    case PERMISSION_ERROR_APPLESCRIPT
-    case PERMISSION_DENIED
-    case APP_NOT_FOUND
-    case AMBIGUOUS_APP_IDENTIFIER
-    case WINDOW_NOT_FOUND
-    case CAPTURE_FAILED
-    case FILE_IO_ERROR
-    case INVALID_ARGUMENT
-    case SIPS_ERROR
-    case INTERNAL_SWIFT_ERROR
-    case UNKNOWN_ERROR
-    case WINDOW_MANIPULATION_ERROR
-    case VALIDATION_ERROR
-    case MENU_BAR_NOT_FOUND
-    case MENU_ITEM_NOT_FOUND
-    case DOCK_NOT_FOUND
-    case NO_ACTIVE_DIALOG
-    case ELEMENT_NOT_FOUND
-    case SESSION_NOT_FOUND
-    case SNAPSHOT_NOT_FOUND
-    case SNAPSHOT_STALE
-    case APPLICATION_NOT_FOUND
-    case NO_POINT_SPECIFIED
-    case INVALID_COORDINATES
-    case DOCK_LIST_NOT_FOUND
-    case DOCK_ITEM_NOT_FOUND
-    case POSITION_NOT_FOUND
-    case SCRIPT_ERROR
-    case MISSING_API_KEY
-    case AGENT_ERROR
-    case INTERACTION_FAILED
-    case TIMEOUT
+    case PERMISSION_ERROR_SCREEN_RECORDING, PERMISSION_ERROR_ACCESSIBILITY
+    case PERMISSION_ERROR_EVENT_SYNTHESIZING, PERMISSION_ERROR_APPLESCRIPT, PERMISSION_DENIED
+    case APP_NOT_FOUND, AMBIGUOUS_APP_IDENTIFIER, WINDOW_NOT_FOUND, CAPTURE_FAILED, FILE_IO_ERROR
+    case INVALID_ARGUMENT, SIPS_ERROR, INTERNAL_SWIFT_ERROR, UNKNOWN_ERROR, WINDOW_MANIPULATION_ERROR
+    case VALIDATION_ERROR, MENU_BAR_NOT_FOUND, MENU_ITEM_NOT_FOUND, DOCK_NOT_FOUND, NO_ACTIVE_DIALOG
+    case ELEMENT_NOT_FOUND, SESSION_NOT_FOUND, SNAPSHOT_NOT_FOUND, SNAPSHOT_STALE, APPLICATION_NOT_FOUND
+    case NO_POINT_SPECIFIED, INVALID_COORDINATES, DOCK_LIST_NOT_FOUND, DOCK_ITEM_NOT_FOUND
+    case POSITION_NOT_FOUND, SCRIPT_ERROR, MISSING_API_KEY, AGENT_ERROR, INTERACTION_FAILED, TIMEOUT
     case INVALID_INPUT
 }
 
-func outputJSON(_ response: JSONResponse, logger: Logger) {
-    do {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = .prettyPrinted
-        let data = try encoder.encode(response)
-        if let jsonString = String(data: data, encoding: .utf8) {
-            print(jsonString)
-        }
-    } catch {
-        logger.error("Failed to encode JSON response: \(error)")
-        // Fallback to simple error JSON
-        print("""
-        {
-          "success": false,
-          "error": {
-            "message": "Failed to encode JSON response",
-            "code": "INTERNAL_SWIFT_ERROR"
-          },
-          "debug_logs": []
-        }
-        """)
-    }
-}
-
-func outputSuccessCodable(data: some Codable, messages: [String]? = nil, logger: Logger) {
-    let debugLogs = logger.getDebugLogs()
-    let response = CodableJSONResponse(
-        success: true, data: data, messages: messages, debug_logs: debugLogs
+func outputSuccessCodable(
+    data: some Codable,
+    messages: [String]? = nil,
+    effect: ActionEffect? = nil,
+    logger: Logger
+) {
+    let response = ResultEnvelope(
+        success: true,
+        effect: effect,
+        data: data,
+        messages: messages,
+        debug_logs: logger.getDebugLogs()
     )
     outputJSONCodable(response, logger: logger)
 }
 
-func outputJSONCodable(_ response: some Encodable, logger: Logger) {
+func outputJSONCodable(_ response: ResultEnvelope<some Encodable>, logger: Logger) {
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = .prettyPrinted
     do {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = .prettyPrinted
-        // Note: JSONEncoder by default omits nil values from optionals
-        // This is standard behavior and generally desirable for cleaner output
         let data = try encoder.encode(response)
         if let jsonString = String(data: data, encoding: .utf8) {
             print(jsonString)
         }
     } catch {
         logger.error("Failed to encode JSON response: \(error)")
-        // Fallback to simple error JSON
-        print("""
-        {
-          "success": false,
-          "error": {
-            "message": "Failed to encode JSON response",
-            "code": "INTERNAL_SWIFT_ERROR"
-          },
-          "debug_logs": []
+        let fallback = makeJSONEncodingFailureEnvelope(effect: response.effect)
+        if let data = try? encoder.encode(fallback), let jsonString = String(data: data, encoding: .utf8) {
+            print(jsonString)
+        } else {
+            print(jsonEncodingFailureEnvelope)
         }
-        """)
     }
 }
 
-/// Generic JSON response wrapper for strongly-typed data.
-///
-/// Provides type-safe JSON responses when the data payload type
-/// is known at compile time.
-struct CodableJSONResponse<T: Codable>: Codable {
-    let success: Bool
-    let data: T
-    let messages: [String]?
-    let debug_logs: [String]
+func makeJSONEncodingFailureEnvelope(effect: ActionEffect?) -> ResultEnvelope<Empty?> {
+    ResultEnvelope(
+        success: false,
+        effect: effect == nil ? nil : .unverifiable,
+        data: nil,
+        error: ErrorInfo(message: "Failed to encode JSON response", code: .INTERNAL_SWIFT_ERROR)
+    )
 }
 
-func outputError(message: String, code: ErrorCode, details: String? = nil, logger: Logger) {
-    let error = ErrorInfo(message: message, code: code, details: details)
-    let debugLogs = logger.getDebugLogs()
-    outputJSON(JSONResponse(success: false, messages: nil, debugLogs: debugLogs, error: error), logger: logger)
+func outputError(
+    message: String,
+    code: ErrorCode,
+    hint: String? = nil,
+    details: String? = nil,
+    effect: ActionEffect? = nil,
+    logger: Logger
+) {
+    let response = ResultEnvelope<Empty?>(
+        success: false,
+        effect: effect ?? (ResultEnvelopeContext.isActionCommand ? defaultActionErrorEffect(code) : nil),
+        data: nil,
+        debug_logs: logger.getDebugLogs(),
+        error: ErrorInfo(message: message, code: code, hint: hint, details: details)
+    )
+    outputJSONCodable(response, logger: logger)
 }
 
-/// Empty type for successful responses with no data
+func defaultActionErrorEffect(_ code: ErrorCode) -> ActionEffect {
+    switch code {
+    case .INVALID_ARGUMENT, .VALIDATION_ERROR, .INVALID_INPUT,
+         .PERMISSION_DENIED, .PERMISSION_ERROR_SCREEN_RECORDING, .PERMISSION_ERROR_ACCESSIBILITY,
+         .PERMISSION_ERROR_EVENT_SYNTHESIZING, .PERMISSION_ERROR_APPLESCRIPT,
+         .APP_NOT_FOUND, .AMBIGUOUS_APP_IDENTIFIER, .WINDOW_NOT_FOUND, .ELEMENT_NOT_FOUND,
+         .APPLICATION_NOT_FOUND, .SESSION_NOT_FOUND, .SNAPSHOT_NOT_FOUND, .SNAPSHOT_STALE,
+         .NO_POINT_SPECIFIED, .INVALID_COORDINATES, .NO_ACTIVE_DIALOG,
+         .MENU_BAR_NOT_FOUND, .MENU_ITEM_NOT_FOUND, .DOCK_NOT_FOUND, .DOCK_LIST_NOT_FOUND,
+         .DOCK_ITEM_NOT_FOUND, .POSITION_NOT_FOUND:
+        .refused
+    default:
+        .unverifiable
+    }
+}
+
 struct Empty: Codable {}
-
-extension Empty: ExpressibleByNilLiteral {
-    init(nilLiteral: ()) {
-        self.init()
-    }
-}

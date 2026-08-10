@@ -6,7 +6,8 @@ import PeekabooFoundation
 
 extension WindowCommand {
     @MainActor
-    struct FocusSubcommand: ErrorHandlingCommand, OutputFormattable, InjectedRuntimeBackedCommand {
+    struct FocusSubcommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormattable,
+    InjectedRuntimeBackedCommand {
         @OptionGroup var windowOptions: WindowIdentificationOptions
 
         @OptionGroup var focusOptions: FocusCommandOptions
@@ -132,12 +133,11 @@ extension WindowCommand {
 
                 let data = createWindowActionResult(
                     action: "focus",
-                    success: true,
                     windowInfo: finalWindowInfo,
                     appName: appName
                 )
 
-                output(data) {
+                output(data, effect: self.verify ? .confirmed : .unverifiable) {
                     var message = "Successfully focused window '\(finalWindowInfo?.title ?? "Untitled")' of \(appName)"
                     if self.focusOptions.bringToCurrentSpace {
                         message += " (moved to current Space)"

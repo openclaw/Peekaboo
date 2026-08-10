@@ -1,7 +1,6 @@
 import Foundation
 
 struct TypeCommandResult: Codable {
-    let success: Bool
     let requestedText: String?
     let typedText: String?
     let keyPresses: Int

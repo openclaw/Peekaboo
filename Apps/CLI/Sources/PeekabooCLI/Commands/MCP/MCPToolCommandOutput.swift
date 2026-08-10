@@ -12,14 +12,6 @@ struct MCPToolCommandPayload: Codable {
     let meta: Value?
 }
 
-struct MCPToolCommandJSONEnvelope: Codable {
-    let success: Bool
-    let data: MCPToolCommandPayload
-    let messages: [String]?
-    let debug_logs: [String]
-    let error: ErrorInfo?
-}
-
 @MainActor
 enum MCPToolCommandOutput {
     static func payload(tool: String, response: ToolResponse) -> MCPToolCommandPayload {
@@ -43,7 +35,7 @@ enum MCPToolCommandOutput {
             let error = response.isError
                 ? ErrorInfo(message: payload.text, code: .VALIDATION_ERROR)
                 : nil
-            let envelope = MCPToolCommandJSONEnvelope(
+            let envelope = ResultEnvelope(
                 success: !response.isError,
                 data: payload,
                 messages: nil,

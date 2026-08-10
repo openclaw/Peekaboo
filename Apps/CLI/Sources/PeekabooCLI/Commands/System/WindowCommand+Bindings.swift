@@ -4,7 +4,6 @@ import PeekabooCore
 
 struct WindowActionResult: Codable {
     let action: String
-    let success: Bool
     let app_name: String
     let window_title: String?
     /// The frame the window actually has after the operation (read back from the OS).

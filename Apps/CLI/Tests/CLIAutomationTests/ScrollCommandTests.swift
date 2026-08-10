@@ -72,7 +72,6 @@ struct ScrollCommandTests {
         let payloadData = try #require(self.output(from: result).data(using: .utf8))
         let payload = try JSONDecoder().decode(CodableJSONResponse<ScrollResult>.self, from: payloadData)
         #expect(payload.success)
-        #expect(payload.data.success)
         #expect(payload.data.direction == "down")
         #expect(payload.data.amount == 5)
     }
@@ -273,7 +272,6 @@ struct ScrollCommandResultStructTests {
     @Test
     func `Scroll result structure maintains fields`() {
         let result = ScrollResult(
-            success: true,
             direction: "down",
             amount: 5,
             location: ["x": 500.0, "y": 300.0],
@@ -281,7 +279,6 @@ struct ScrollCommandResultStructTests {
             executionTime: 0.15
         )
 
-        #expect(result.success == true)
         #expect(result.direction == "down")
         #expect(result.amount == 5)
         #expect(result.location["x"] == 500.0)

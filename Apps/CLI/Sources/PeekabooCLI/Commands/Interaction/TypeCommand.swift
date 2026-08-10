@@ -6,7 +6,7 @@ import PeekabooFoundation
 /// Types text into focused elements or sends keyboard input using the UIAutomationService.
 @available(macOS 14.0, *)
 @MainActor
-struct TypeCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedCommand {
+struct TypeCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormattable, RuntimeBackedCommand {
     @Argument(help: "Text to type")
     var text: String?
 
@@ -197,7 +197,6 @@ struct TypeCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedComman
     ) {
         let specialKeys = max(typeResult.keyPresses - typeResult.totalCharacters, 0)
         let result = TypeCommandResult(
-            success: true,
             requestedText: self.resolvedText,
             typedText: self.resolvedText,
             keyPresses: typeResult.keyPresses,

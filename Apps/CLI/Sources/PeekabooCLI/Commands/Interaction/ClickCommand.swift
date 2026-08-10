@@ -7,7 +7,7 @@ import PeekabooFoundation
 /// Click on UI elements identified in the current snapshot using intelligent element finding and smart waiting.
 @available(macOS 14.0, *)
 @MainActor
-struct ClickCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedCommand {
+struct ClickCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormattable, RuntimeBackedCommand {
     @Argument(help: "Element text or query to click")
     var query: String?
 
@@ -67,12 +67,11 @@ struct ClickCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedComma
         do {
             try validate()
 
-            // Determine click target first to check if we need a snapshot
             let clickTarget: ClickTarget
             let waitResult: WaitForElementResult
             var activeSnapshotId: String
-            var coordinateResolution: InteractionCoordinateResolution?
-            var explicitWindowResolution: InteractionWindowResolution?
+            var coordinateResolution: InteractionCoordinateResolution?,
+                explicitWindowResolution: InteractionWindowResolution?
 
             // Foreground coordinates may be global. Background coordinates must remain bound to
             // one capture-owned exact-window receipt from a named snapshot.
@@ -84,7 +83,7 @@ struct ClickCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedComma
                 let resolvedCoordinates: InteractionCoordinateResolution
                 if self.usesBackgroundDelivery {
                     guard let coordinateSnapshotId, !coordinateSnapshotId.isEmpty else {
-                        throw ValidationError(Self.backgroundCoordinateReferenceMessage)
+                        throw Self.backgroundCoordinateRefusal
                     }
                     resolvedCoordinates = try await self.resolveBackgroundCoordinateReference(
                         point,
@@ -267,7 +266,6 @@ struct ClickCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedComma
             coordinateResolution: coordinateResolution
         )
         let result = ClickResult(
-            success: true,
             clickedElement: details.clickedElement,
             clickLocation: details.location,
             waitTime: waitResult.waitTime,
@@ -279,11 +277,14 @@ struct ClickCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedComma
             inputCoordinates: coordinateResolution?.inputPoint,
             screenCoordinates: coordinateResolution?.screenPoint,
             targetPoint: details.targetPointDiagnostics,
-            deliveryMode: self.deliveryMode.rawValue,
-            verified: self.routedPointerEffectIsUnverifiable ? false : nil,
-            effect: self.routedPointerEffectIsUnverifiable ? "unverifiable" : nil
+            deliveryMode: self.deliveryMode.rawValue
         )
-        self.outputSuccess(result)
+        self.output(result, effect: self.clickEffect(for: clickTarget)) {
+            print(self.clickEffect(for: clickTarget) == .confirmed
+                ? "✅ Click confirmed by Accessibility"
+                : "⚠️ Click dispatched; application effect is unverifiable")
+            self.printClickDetails(result)
+        }
     }
 
     private func clickOutputDetails(
@@ -429,47 +430,41 @@ struct ClickCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedComma
         return output.data.applications.first { $0.processIdentifier == processIdentifier }?.name
     }
 
-    private func outputSuccess(_ result: ClickResult) {
-        output(result) {
-            if result.verified == false {
-                print("⚠️ Click dispatched; application effect is unverifiable")
-            } else {
-                print("✅ Click successful")
-            }
-            print("🎯 App: \(result.targetApp)")
-            if let deliveryMode = result.deliveryMode {
-                print("🎯 Mode: \(deliveryMode)")
-            }
-            if let effect = result.effect {
-                print("🔎 Effect: \(effect)")
-            }
-            if let coordinateSpace = result.coordinateSpace {
-                print("🎯 Coordinate space: \(coordinateSpace)")
-            }
-            if let windowID = result.targetWindowId {
-                if let title = result.targetWindowTitle, !title.isEmpty {
-                    print("🪟 Window: \(windowID) (\(title))")
-                } else {
-                    print("🪟 Window: \(windowID)")
-                }
-            }
-            if let info = result.clickedElement {
-                print("📱 Clicked: \(info)")
-            }
-            let x = result.clickLocation["x"] ?? 0
-            let y = result.clickLocation["y"] ?? 0
-            print("📍 Location: (\(Int(x)), \(Int(y)))")
-            if result.waitTime > 0 {
-                print("⏳ Waited: \(String(format: "%.1f", result.waitTime))s")
-            }
-            print("⏱️  Completed in \(String(format: "%.2f", result.executionTime))s")
+    private func printClickDetails(_ result: ClickResult) {
+        print("🎯 App: \(result.targetApp)")
+        if let deliveryMode = result.deliveryMode {
+            print("🎯 Mode: \(deliveryMode)")
         }
+        if let coordinateSpace = result.coordinateSpace {
+            print("🎯 Coordinate space: \(coordinateSpace)")
+        }
+        if let windowID = result.targetWindowId {
+            if let title = result.targetWindowTitle, !title.isEmpty {
+                print("🪟 Window: \(windowID) (\(title))")
+            } else {
+                print("🪟 Window: \(windowID)")
+            }
+        }
+        if let info = result.clickedElement {
+            print("📱 Clicked: \(info)")
+        }
+        let x = result.clickLocation["x"] ?? 0
+        let y = result.clickLocation["y"] ?? 0
+        print("📍 Location: (\(Int(x)), \(Int(y)))")
+        if result.waitTime > 0 {
+            print("⏳ Waited: \(String(format: "%.1f", result.waitTime))s")
+        }
+        print("⏱️  Completed in \(String(format: "%.2f", result.executionTime))s")
     }
 
-    /// Routed pointer APIs acknowledge event queuing, not application-level handling. Report that
-    /// distinction for every background right/double click, including AX-to-pointer fallbacks.
-    private var routedPointerEffectIsUnverifiable: Bool {
-        self.usesBackgroundDelivery && (self.right || self.double)
+    private func clickEffect(for target: ClickTarget) -> ActionEffect {
+        guard self.usesBackgroundDelivery, !self.right, !self.double else { return .unverifiable }
+        switch target {
+        case .elementId, .query:
+            return .confirmed
+        case .coordinates:
+            return .unverifiable
+        }
     }
 
     private func refreshObservationIfQueryMissing(
@@ -913,9 +908,13 @@ struct ClickCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedComma
 }
 
 extension ClickCommand {
+    private static let backgroundCoordinateRefusal = ActionRefusalError(
+        message: backgroundCoordinateReferenceMessage,
+        hint: "Use --foreground for explicit global input."
+    )
     private static let backgroundCoordinateReferenceMessage =
         "Background coordinate clicks require --snapshot from a fresh see capture of the exact target window. " +
-        "PID-only/app-only coordinates and empty snapshots are refused; use --foreground for explicit global input."
+        "PID-only/app-only coordinates and empty snapshots are refused."
 
     private func resolveBackgroundClickProcessIdentifier(
         snapshotId: String?,

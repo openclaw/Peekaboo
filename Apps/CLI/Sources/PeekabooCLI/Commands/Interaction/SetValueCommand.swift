@@ -5,7 +5,8 @@ import PeekabooCore
 
 @available(macOS 14.0, *)
 @MainActor
-struct SetValueCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedCommand {
+struct SetValueCommand: ConfirmedActionOutputFormattable, ErrorHandlingCommand, OutputFormattable,
+RuntimeBackedCommand {
     @Argument(help: "Value to set")
     var value: String?
 
@@ -125,7 +126,6 @@ extension SetValueCommand: CommanderSignatureProviding {
 }
 
 struct ElementActionCommandResult: Codable {
-    let success: Bool
     let target: String
     let actionName: String?
     let oldValue: String?
@@ -204,7 +204,6 @@ enum ElementActionCommandExecutor {
             )
 
             let output = ElementActionCommandResult(
-                success: true,
                 target: result.target,
                 actionName: result.actionName,
                 oldValue: result.oldValue,

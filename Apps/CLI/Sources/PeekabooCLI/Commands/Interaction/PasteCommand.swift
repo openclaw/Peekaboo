@@ -7,7 +7,7 @@ import UniformTypeIdentifiers
 /// Pastes text through background typing when targeted, otherwise uses clipboard + Cmd+V.
 @available(macOS 14.0, *)
 @MainActor
-struct PasteCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedCommand {
+struct PasteCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormattable, RuntimeBackedCommand {
     @Argument(help: "Text to paste")
     var text: String?
 
@@ -121,7 +121,6 @@ struct PasteCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedComma
             }
 
             let result = PasteResult(
-                success: true,
                 pastedUti: outcome.setResult.utiIdentifier,
                 pastedSize: outcome.setResult.data.count,
                 pastedTextPreview: outcome.setResult.textPreview,
@@ -136,7 +135,10 @@ struct PasteCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedComma
                 targetPID: outcome.targetPID.map(Int.init)
             )
 
-            self.output(result) {
+            self.output(
+                result,
+                effect: outcome.restoreErrorDescription == nil ? .unverifiable : .partial
+            ) {
                 if outcome.restoreErrorDescription != nil {
                     print("⚠️  Pasted, but clipboard restoration failed. Do not retry the paste; " +
                         "the previous clipboard contents may be unavailable.")
@@ -310,7 +312,6 @@ struct PasteCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedComma
         }
 
         let result = PasteResult(
-            success: true,
             pastedUti: setResult.utiIdentifier,
             pastedSize: setResult.data.count,
             pastedTextPreview: setResult.textPreview,
@@ -457,7 +458,6 @@ struct PasteCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedComma
         }
 
         let result = PasteResult(
-            success: true,
             pastedUti: outcome.clipboard?.utiIdentifier ?? "current-clipboard",
             pastedSize: outcome.clipboard?.data.count ?? 0,
             // Never echo ambient clipboard content into structured output: the
@@ -613,7 +613,6 @@ private struct CurrentClipboardPasteOutcome: Sendable {
 }
 
 struct PasteResult: Codable {
-    let success: Bool
     let pastedUti: String
     let pastedSize: Int
     let pastedTextPreview: String?

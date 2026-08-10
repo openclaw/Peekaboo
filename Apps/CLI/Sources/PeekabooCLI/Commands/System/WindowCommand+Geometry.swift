@@ -8,7 +8,8 @@ extension WindowCommand {
     // MARK: - Move Command
 
     @MainActor
-    struct MoveSubcommand: ErrorHandlingCommand, OutputFormattable, InjectedRuntimeBackedCommand {
+    struct MoveSubcommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormattable,
+    InjectedRuntimeBackedCommand {
         @OptionGroup var windowOptions: WindowIdentificationOptions
 
         @Option(name: .customShort("x", allowingJoined: false), help: "New X coordinate")
@@ -80,7 +81,7 @@ extension WindowCommand {
                     windowInfo: verified.windowInfo
                 )
 
-                output(verified.result) {
+                output(verified.result, effect: verified.effect) {
                     let title = verified.windowInfo?.title ?? "Untitled"
                     let actualOrigin = verified.windowInfo?.bounds.origin ?? newOrigin
                     if let warning = verified.warning {
@@ -105,7 +106,8 @@ extension WindowCommand {
     // MARK: - Resize Command
 
     @MainActor
-    struct ResizeSubcommand: ErrorHandlingCommand, OutputFormattable, InjectedRuntimeBackedCommand {
+    struct ResizeSubcommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormattable,
+    InjectedRuntimeBackedCommand {
         @OptionGroup var windowOptions: WindowIdentificationOptions
 
         @Option(name: .customShort("w", allowingJoined: false), help: "New width")
@@ -177,7 +179,7 @@ extension WindowCommand {
                     windowInfo: verified.windowInfo
                 )
 
-                output(verified.result) {
+                output(verified.result, effect: verified.effect) {
                     let title = verified.windowInfo?.title ?? "Untitled"
                     let actualSize = verified.windowInfo?.bounds.size ?? newSize
                     if let warning = verified.warning {
@@ -202,7 +204,8 @@ extension WindowCommand {
     // MARK: - Set Bounds Command
 
     @MainActor
-    struct SetBoundsSubcommand: ErrorHandlingCommand, OutputFormattable, InjectedRuntimeBackedCommand {
+    struct SetBoundsSubcommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormattable,
+    InjectedRuntimeBackedCommand {
         @OptionGroup var windowOptions: WindowIdentificationOptions
 
         @Option(name: .customShort("x", allowingJoined: false), help: "New X coordinate")
@@ -280,7 +283,7 @@ extension WindowCommand {
                     windowInfo: verified.windowInfo
                 )
 
-                output(verified.result) {
+                output(verified.result, effect: verified.effect) {
                     let title = verified.windowInfo?.title ?? "Untitled"
                     let actualBounds = verified.windowInfo?.bounds ?? newBounds
                     let actualDescription =

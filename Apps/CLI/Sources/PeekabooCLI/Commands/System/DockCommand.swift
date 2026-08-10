@@ -166,14 +166,16 @@ func handleDockServiceError(_ error: DockError, jsonOutput: Bool, logger: Logger
     }
 
     if jsonOutput {
-        let response = JSONResponse(
+        let response = ResultEnvelope<Empty?>(
             success: false,
+            effect: ResultEnvelopeContext.isActionCommand ? defaultActionErrorEffect(errorCode) : nil,
+            data: nil,
             error: ErrorInfo(
                 message: error.localizedDescription,
                 code: errorCode
             )
         )
-        outputJSON(response, logger: logger)
+        outputJSONCodable(response, logger: logger)
     } else {
         fputs("❌ \(error.localizedDescription)\n", stderr)
     }

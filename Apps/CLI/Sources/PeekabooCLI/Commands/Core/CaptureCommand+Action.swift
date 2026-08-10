@@ -175,7 +175,7 @@ RuntimeOptionsConfigurable, InjectedRuntimeBackedCommand {
             let error = result.success
                 ? nil
                 : ErrorInfo(message: result.failureMessage, code: .VALIDATION_ERROR)
-            let envelope = CaptureActionJSONEnvelope(
+            let envelope = ResultEnvelope(
                 success: result.success,
                 data: result,
                 messages: nil,
@@ -320,14 +320,6 @@ struct CaptureActionCommandResult: Codable {
         }
         return "Capture artifact validation failed"
     }
-}
-
-struct CaptureActionJSONEnvelope: Codable {
-    let success: Bool
-    let data: CaptureActionCommandResult
-    let messages: [String]?
-    let debug_logs: [String]
-    let error: ErrorInfo?
 }
 
 struct CaptureActionArtifactValidation: Codable {

@@ -25,7 +25,12 @@ extension ErrorHandlingCommand {
             outputError(
                 message: errorMessage(for: error),
                 code: errorCode,
+                hint: (error as? any ResultEnvelopeError)?.envelopeHint,
                 details: errorDetails(for: error),
+                effect: (error as? any ResultEnvelopeError)?.envelopeEffect ??
+                    ((self as? any ActionOutputFormattable)?.defaultEffect == nil
+                        ? nil
+                        : defaultActionErrorEffect(errorCode)),
                 logger: logger
             )
         } else {
@@ -40,7 +45,8 @@ extension ErrorHandlingCommand {
             } else {
                 error.localizedDescription
             }
-            fputs("Error: \(errorMessage)\n", stderr)
+            let hint = (error as? any ResultEnvelopeError)?.envelopeHint.map { " Hint: \($0)" } ?? ""
+            fputs("Error: \(errorMessage)\(hint)\n", stderr)
         }
     }
 
@@ -59,6 +65,8 @@ extension ErrorHandlingCommand {
             errorCode(for: bridgeError)
         case let posixError as POSIXError:
             errorCode(for: posixError)
+        case is ActionRefusalError:
+            .VALIDATION_ERROR
         case is Commander.ValidationError:
             .VALIDATION_ERROR
         default:

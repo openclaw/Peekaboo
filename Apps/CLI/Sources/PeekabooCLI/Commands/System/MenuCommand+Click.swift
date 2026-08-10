@@ -7,7 +7,7 @@ extension MenuCommand {
     // MARK: - Click Menu Item
 
     @MainActor
-    struct ClickSubcommand: OutputFormattable, InjectedRuntimeBackedCommand {
+    struct ClickSubcommand: ConfirmedActionOutputFormattable, OutputFormattable, InjectedRuntimeBackedCommand {
         @OptionGroup var target: InteractionTargetOptions
 
         @Option(help: "Menu item to click (for simple, non-nested items)")
@@ -103,7 +103,7 @@ extension MenuCommand {
                         menu_path: clickedPath,
                         clicked_item: clickedPath
                     )
-                    outputSuccessCodable(data: data, logger: self.outputLogger)
+                    outputSuccessCodable(data: data, effect: .confirmed, logger: self.outputLogger)
                 } else {
                     print("✓ Clicked menu item: \(clickedPath)")
                 }

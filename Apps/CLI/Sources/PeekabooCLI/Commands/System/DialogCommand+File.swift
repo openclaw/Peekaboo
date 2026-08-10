@@ -7,7 +7,7 @@ extension DialogCommand {
     // MARK: - Handle File Dialog
 
     @MainActor
-    struct FileSubcommand: InjectedRuntimeBackedCommand {
+    struct FileSubcommand: ConfirmedActionOutputFormattable, InjectedRuntimeBackedCommand {
         static let commandDescription = CommandDescription(
             commandName: "file",
             abstract: "Handle file save/open dialogs using DialogService"
@@ -71,7 +71,11 @@ extension DialogCommand {
                     }
 
                     if self.jsonOutput {
-                        outputSuccessCodable(data: self.makeOutput(from: result), logger: self.outputLogger)
+                        outputSuccessCodable(
+                            data: self.makeOutput(from: result),
+                            effect: .confirmed,
+                            logger: self.outputLogger
+                        )
                     } else {
                         print("✓ Handled file dialog")
                         if let path = result.details["path"] {

@@ -1,8 +1,3 @@
-//
-//  ConfigCommand+Shared.swift
-//  PeekabooCLI
-//
-
 import Commander
 import Foundation
 import PeekabooCore
@@ -17,7 +12,6 @@ extension ConfigRuntimeCommand {
     mutating func prepare(using runtime: CommandRuntime) {
         self.runtime = runtime
         self.logger.setJsonOutputMode(self.jsonOutput)
-        // Align Tachikoma profile dir with Peekaboo storage
         PeekabooCore.ConfigurationManager.configureTachikomaProfileDirectory()
     }
 
@@ -93,63 +87,27 @@ struct ConfigCommandOutput {
     }
 }
 
-struct SuccessOutput: Encodable {
-    let success: Bool
-    let data: [String: Any]
-    let debugLogs: [String]
-
-    init(success: Bool, data: [String: Any], debugLogs: [String] = []) {
-        self.success = success
-        self.data = data
-        self.debugLogs = debugLogs
-    }
-
-    func withDebugLogs(_ debugLogs: [String]) -> Self {
-        Self(success: self.success, data: self.data, debugLogs: debugLogs)
-    }
-
-    enum CodingKeys: String, CodingKey {
-        case success, data
-        case debugLogs = "debug_logs"
-    }
-
-    func encode(to encoder: any Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(self.success, forKey: .success)
-        try container.encode(JSONValue(self.data), forKey: .data)
-        try container.encode(self.debugLogs, forKey: .debugLogs)
-    }
+func SuccessOutput(
+    success: Bool,
+    data: [String: Any],
+    debugLogs: [String] = []
+) -> ResultEnvelope<JSONValue> {
+    ResultEnvelope(success: success, data: JSONValue(data), debug_logs: debugLogs)
 }
 
-struct ErrorOutput: Encodable {
-    let success = false
-    let error: ConfigErrorInfo
-    let debugLogs: [String]
-
-    init(error _: Bool = true, code: String, message: String, details: String?, debugLogs: [String] = []) {
-        self.error = ConfigErrorInfo(code: code, message: message, details: details)
-        self.debugLogs = debugLogs
-    }
-
-    enum CodingKeys: String, CodingKey {
-        case success, error
-        case debugLogs = "debug_logs"
-    }
-
-    func withDebugLogs(_ debugLogs: [String]) -> Self {
-        Self(
-            code: self.error.code,
-            message: self.error.message,
-            details: self.error.details,
-            debugLogs: debugLogs
-        )
-    }
-}
-
-struct ConfigErrorInfo: Encodable {
-    let code: String
-    let message: String
-    let details: String?
+func ErrorOutput(
+    error _: Bool = true,
+    code: String,
+    message: String,
+    details: String?,
+    debugLogs: [String] = []
+) -> ResultEnvelope<Empty?> {
+    ResultEnvelope(
+        success: false,
+        data: nil,
+        debug_logs: debugLogs,
+        error: ErrorInfo(message: message, code: code, details: details)
+    )
 }
 
 struct JSONValue: Encodable {
@@ -192,28 +150,30 @@ struct JSONValue: Encodable {
     }
 }
 
-func outputJSON(_ value: SuccessOutput, logger: Logger) {
-    writeConfigJSON(value.withDebugLogs(logger.getDebugLogs()), logger: logger)
+func outputJSON(_ value: ResultEnvelope<JSONValue>, logger: Logger) {
+    outputJSONCodable(
+        ResultEnvelope(
+            success: value.success,
+            effect: value.effect,
+            data: value.data,
+            messages: value.messages,
+            debug_logs: logger.getDebugLogs(),
+            error: value.error
+        ),
+        logger: logger
+    )
 }
 
-func outputJSON(_ value: ErrorOutput, logger: Logger) {
-    writeConfigJSON(value.withDebugLogs(logger.getDebugLogs()), logger: logger)
-}
-
-func outputJSON(_ value: some Encodable, logger: Logger) {
-    writeConfigJSON(value, logger: logger)
-}
-
-private func writeConfigJSON(_ value: some Encodable, logger: Logger) {
-    let encoder = JSONEncoder()
-    encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-    do {
-        let data = try encoder.encode(value)
-        if let json = String(data: data, encoding: .utf8) {
-            print(json)
-        }
-    } catch {
-        logger.error("Failed to encode config JSON output: \(error.localizedDescription)")
-        print("{\n  \"success\": false,\n  \"error\": {\n    \"message\": \"Failed to encode JSON response\"\n  }\n}")
-    }
+func outputJSON(_ value: ResultEnvelope<Empty?>, logger: Logger) {
+    outputJSONCodable(
+        ResultEnvelope<Empty?>(
+            success: value.success,
+            effect: value.effect,
+            data: value.data,
+            messages: value.messages,
+            debug_logs: logger.getDebugLogs(),
+            error: value.error
+        ),
+        logger: logger
+    )
 }

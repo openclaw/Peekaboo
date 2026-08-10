@@ -107,7 +107,11 @@ struct MenuBarActionCommand: ErrorHandlingCommand, OutputFormattable, InjectedRu
                     executionTime: Date().timeIntervalSince(startTime),
                     verified: verification?.verified
                 )
-                outputSuccessCodable(data: output, logger: self.outputLogger)
+                outputSuccessCodable(
+                    data: output,
+                    effect: verification?.verified == true ? .confirmed : .unverifiable,
+                    logger: self.outputLogger
+                )
             } else {
                 print("✅ Clicked menu bar item: \(result.elementDescription)")
                 if let verification {
@@ -177,8 +181,6 @@ struct MenuBarActionCommand: ErrorHandlingCommand, OutputFormattable, InjectedRu
     }
 }
 
-// MARK: - JSON Output Types
-
 private struct ClickJSONOutput: Codable {
     let success: Bool
     let clicked: String
@@ -222,7 +224,7 @@ struct MenuBarCommand: ParsableCommand {
         }
     }
 
-    struct ClickSubcommand: RuntimeBackedCommand {
+    struct ClickSubcommand: ActionOutputFormattable, RuntimeBackedCommand {
         static let commandDescription = CommandDescription(
             commandName: "click",
             abstract: "Click a menu bar status item"

@@ -125,7 +125,8 @@ extension AppCommand {
     }
 }
 
-extension AppCommand.RelaunchSubcommand: AsyncRuntimeCommand, ErrorHandlingCommand, OutputFormattable,
+extension AppCommand.RelaunchSubcommand: AsyncRuntimeCommand, ConfirmedActionOutputFormattable, ErrorHandlingCommand,
+    OutputFormattable,
     ApplicationResolvable,
     ApplicationResolver {}
 

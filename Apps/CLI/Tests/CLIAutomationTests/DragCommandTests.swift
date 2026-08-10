@@ -137,7 +137,6 @@ struct DragCommandTests {
         let payloadData = Data(self.output(from: result).utf8)
         let payload = try JSONDecoder().decode(CodableJSONResponse<DragResult>.self, from: payloadData)
         #expect(payload.success)
-        #expect(payload.data.success)
         #expect(payload.data.profile == "linear")
         let dragCalls = await self.automationState(context) { $0.dragCalls }
         let call = try #require(dragCalls.first)

@@ -2,7 +2,6 @@ import CoreGraphics
 import Foundation
 
 struct ClickResult: Codable {
-    let success: Bool
     let clickedElement: String?
     let clickLocation: [String: Double]
     let waitTime: Double
@@ -15,11 +14,8 @@ struct ClickResult: Codable {
     let screenCoordinates: [String: Double]?
     let targetPoint: InteractionTargetPointDiagnostics?
     let deliveryMode: String?
-    let verified: Bool?
-    let effect: String?
 
     init(
-        success: Bool,
         clickedElement: String?,
         clickLocation: CGPoint,
         waitTime: Double,
@@ -31,11 +27,8 @@ struct ClickResult: Codable {
         inputCoordinates: CGPoint? = nil,
         screenCoordinates: CGPoint? = nil,
         targetPoint: InteractionTargetPointDiagnostics? = nil,
-        deliveryMode: String? = nil,
-        verified: Bool? = nil,
-        effect: String? = nil
+        deliveryMode: String? = nil
     ) {
-        self.success = success
         self.clickedElement = clickedElement
         self.clickLocation = ["x": clickLocation.x, "y": clickLocation.y]
         self.waitTime = waitTime
@@ -48,7 +41,5 @@ struct ClickResult: Codable {
         self.screenCoordinates = screenCoordinates.map { ["x": $0.x, "y": $0.y] }
         self.targetPoint = targetPoint
         self.deliveryMode = deliveryMode
-        self.verified = verified
-        self.effect = effect
     }
 }
