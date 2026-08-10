@@ -196,6 +196,27 @@ struct PeekabooMCPServerTests {
     }
 
     @Test
+    func `server projects incomplete Accessibility metadata without an effect`() throws {
+        let response = ToolResponse.error(
+            "AX tree incomplete.",
+            meta: .object([
+                "error_code": .string("ACCESSIBILITY_INCOMPLETE"),
+                "mutation_dispatched": .bool(false),
+                "retry_safe": .bool(true),
+            ]))
+
+        let result = PeekabooMCPServer.callToolResult(from: response, toolName: "inspect_ui")
+        let data = try JSONEncoder().encode(result)
+        let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let metadata = try #require(json["_meta"] as? [String: Any])
+
+        #expect(metadata["error_code"] as? String == "ACCESSIBILITY_INCOMPLETE")
+        #expect(metadata["mutation_dispatched"] as? Bool == false)
+        #expect(metadata["retry_safe"] as? Bool == true)
+        #expect(metadata["effect"] == nil)
+    }
+
+    @Test
     @MainActor
     func `server filters action-only tools with runtime input policy`() async throws {
         let services = PeekabooServices(inputPolicy: UIInputPolicy(

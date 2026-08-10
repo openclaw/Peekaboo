@@ -31,6 +31,7 @@ case windowNotFound = "WINDOW_NOT_FOUND"
 case elementNotFound = "ELEMENT_NOT_FOUND"
 case captureFailed = "CAPTURE_FAILED"
 case interactionFailed = "INTERACTION_FAILED"
+case accessibilityIncomplete = "ACCESSIBILITY_INCOMPLETE"
 case timeout = "TIMEOUT"
 case invalidInput = "INVALID_INPUT"
 ```
@@ -123,6 +124,10 @@ Commands conforming to `ErrorHandlingCommand` call `handleError(_:customCode:)`.
 ```
 
 The CLI's `ErrorCode` names are an output contract separate from `StandardErrorCode`; `CommandErrorHandling.swift` owns the explicit mapping between them.
+
+AX-only observation uses `ACCESSIBILITY_INCOMPLETE` only when the exact target was positively resolved but an
+explicitly incomplete read produced no usable elements. It is retry-safe and mutation-free. It must not replace
+`TIMEOUT`, permission/target errors, native AX failures, or successful nonempty truncated evidence.
 
 ## Best Practices
 

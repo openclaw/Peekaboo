@@ -37,6 +37,9 @@ public nonisolated enum PeekabooError: LocalizedError, StandardizedError, Peekab
     case invalidCoordinates
     case fileIOError(String)
     case commandFailed(String)
+    /// The exact target exists, but its AX-only observation returned no usable evidence
+    /// and was explicitly incomplete.
+    case accessibilityIncomplete(String)
     case timeout(String)
 
     // Input errors
@@ -114,6 +117,8 @@ public nonisolated enum PeekabooError: LocalizedError, StandardizedError, Peekab
             return "File I/O error: \(reason)"
         case let .commandFailed(reason):
             return "Command failed: \(reason)"
+        case let .accessibilityIncomplete(message):
+            return message
         case let .timeout(reason):
             return "Operation timed out: \(reason)"
         case let .invalidInput(message):
@@ -197,6 +202,8 @@ public nonisolated enum PeekabooError: LocalizedError, StandardizedError, Peekab
             .fileIOError
         case .commandFailed:
             .interactionFailed
+        case .accessibilityIncomplete:
+            .accessibilityIncomplete
         case .timeout:
             .timeout
         case .invalidInput:
@@ -264,6 +271,8 @@ public nonisolated enum PeekabooError: LocalizedError, StandardizedError, Peekab
             return ["reason": reason]
         case let .commandFailed(reason):
             return ["reason": reason]
+        case let .accessibilityIncomplete(message):
+            return ["message": message]
         case let .timeout(reason):
             return ["reason": reason]
         case let .invalidInput(message):
@@ -322,7 +331,7 @@ public nonisolated enum PeekabooError: LocalizedError, StandardizedError, Peekab
             .automation
         case .sessionNotFound, .snapshotNotFound, .snapshotNotAvailable, .snapshotStale:
             .session
-        case .captureTimeout, .captureFailed, .timeout:
+        case .captureTimeout, .captureFailed, .accessibilityIncomplete, .timeout:
             .automation
         case .fileIOError:
             .io
@@ -359,6 +368,8 @@ public nonisolated enum PeekabooError: LocalizedError, StandardizedError, Peekab
             "Try one of: \(suggestions.joined(separator: ", "))"
         case .snapshotNotAvailable:
             "Run 'peekaboo see' to capture a fresh UI snapshot"
+        case .accessibilityIncomplete:
+            "Run one fresh exact-window Accessibility observation, then use screenshot/OCR if it remains incomplete"
         case .noAIProviderAvailable:
             "Configure an AI provider and API key in settings"
         case .aiProviderError:

@@ -98,10 +98,16 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
             throw Self.inspectAccessibilityTreeUnavailableError(reason: self.inspectAccessibilityTreeUnavailableReason)
         }
 
-        return try await self.client.inspectAccessibilityTree(
-            windowContext: windowContext,
-            requestTimeoutSec: Self.inspectAccessibilityTreeRequestTimeoutSeconds(
-                accessibilityTimeoutSeconds: windowContext?.accessibilityTimeoutSeconds))
+        do {
+            return try await self.client.inspectAccessibilityTree(
+                windowContext: windowContext,
+                requestTimeoutSec: Self.inspectAccessibilityTreeRequestTimeoutSeconds(
+                    accessibilityTimeoutSeconds: windowContext?.accessibilityTimeoutSeconds))
+        } catch let error as PeekabooBridgeErrorEnvelope
+            where error.standardizedErrorCode == .accessibilityIncomplete
+        {
+            throw PeekabooError.accessibilityIncomplete(error.message)
+        }
     }
 
     nonisolated static func inspectAccessibilityTreeRequestTimeoutSeconds(

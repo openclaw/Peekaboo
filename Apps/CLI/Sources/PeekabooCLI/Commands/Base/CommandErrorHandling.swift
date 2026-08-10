@@ -18,7 +18,8 @@ extension ErrorHandlingCommand {
         if jsonOutput {
             let envelopeError = error as? any ResultEnvelopeError
             let errorCode = customCode ?? envelopeError?.envelopeCode ?? self.mapErrorToCode(error)
-            let captureReceipt = self.captureFailureReceipt(for: error)
+            let failureReceipt = self.captureFailureReceipt(for: error) ??
+                self.readOnlyObservationFailureReceipt(for: error)
             let logger: Logger = if let formattable = self as? any OutputFormattable {
                 formattable.outputLogger
             } else {
@@ -29,14 +30,14 @@ extension ErrorHandlingCommand {
                 code: errorCode,
                 hint: envelopeError?.envelopeHint,
                 details: errorDetails(for: error),
-                effect: captureReceipt?.mutationDispatched == true
+                effect: failureReceipt?.mutationDispatched == true
                     ? .partial
                     : envelopeError?.envelopeEffect ??
                     ((self as? any ActionOutputFormattable)?.defaultEffect == nil
                         ? nil
                         : defaultActionErrorEffect(errorCode)),
-                retrySafe: captureReceipt?.retrySafe ?? envelopeError?.envelopeRetrySafe,
-                mutationDispatched: captureReceipt?.mutationDispatched ?? envelopeError?.envelopeMutationDispatched,
+                retrySafe: failureReceipt?.retrySafe ?? envelopeError?.envelopeRetrySafe,
+                mutationDispatched: failureReceipt?.mutationDispatched ?? envelopeError?.envelopeMutationDispatched,
                 logger: logger
             )
         } else {
@@ -260,6 +261,19 @@ extension ErrorHandlingCommand {
             mutationDispatched: mutationDispatched
         )
     }
+
+    func readOnlyObservationFailureReceipt(for error: any Error) -> CaptureFailureReceipt? {
+        let isIncomplete = if let peekabooError = error as? PeekabooError,
+                              case .accessibilityIncomplete = peekabooError {
+            true
+        } else if let bridgeError = error as? PeekabooBridgeErrorEnvelope {
+            bridgeError.standardizedErrorCode == .accessibilityIncomplete
+        } else {
+            false
+        }
+        guard isIncomplete else { return nil }
+        return CaptureFailureReceipt(retrySafe: true, mutationDispatched: false)
+    }
 }
 
 struct CaptureFailureReceipt: Equatable {
@@ -273,6 +287,8 @@ func peekabooAutomationErrorCode(for error: PeekabooError) -> ErrorCode? {
         .CAPTURE_FAILED
     case .clickFailed, .typeFailed:
         .INTERACTION_FAILED
+    case .accessibilityIncomplete:
+        .ACCESSIBILITY_INCOMPLETE
     case .serviceUnavailable, .networkError, .apiError, .commandFailed, .encodingError:
         .UNKNOWN_ERROR
     default:
@@ -333,6 +349,9 @@ func errorCode(for roiError: CaptureROIError) -> ErrorCode {
 }
 
 func errorCode(for bridgeError: PeekabooBridgeErrorEnvelope) -> ErrorCode {
+    if bridgeError.standardizedErrorCode == .accessibilityIncomplete {
+        return .ACCESSIBILITY_INCOMPLETE
+    }
     if let context = bridgeError.context,
        context.hasPrefix("capture_roi:"),
        let roiError = CaptureROIError(code: String(context.dropFirst("capture_roi:".count))) {

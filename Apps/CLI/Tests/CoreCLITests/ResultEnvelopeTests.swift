@@ -55,6 +55,27 @@ struct ResultEnvelopeTests {
         #expect(encodedError["mutation_dispatched"] as? Bool == false)
     }
 
+    @Test func `incomplete Accessibility failure is effect free and retry safe`() throws {
+        let error = ErrorInfo(
+            message: "AX tree incomplete. Retry once to obtain a fresh observation.",
+            code: .ACCESSIBILITY_INCOMPLETE,
+            retrySafe: true,
+            mutationDispatched: false
+        )
+        let envelope = ResultEnvelope<Empty?>(success: false, data: nil, error: error)
+        let object = try #require(
+            JSONSerialization.jsonObject(with: JSONEncoder().encode(envelope)) as? [String: Any]
+        )
+        let encodedError = try #require(object["error"] as? [String: Any])
+
+        #expect(object["success"] as? Bool == false)
+        #expect(object["data"] is NSNull)
+        #expect(object["effect"] == nil)
+        #expect(encodedError["code"] as? String == "ACCESSIBILITY_INCOMPLETE")
+        #expect(encodedError["retry_safe"] as? Bool == true)
+        #expect(encodedError["mutation_dispatched"] as? Bool == false)
+    }
+
     @Test func `safety refusal carries refused effect and explicit hint`() {
         let error = ActionRefusalError(
             message: "Background coordinate clicks require a fresh snapshot.",

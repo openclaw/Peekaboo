@@ -3,7 +3,7 @@ import Foundation
 // MARK: - Error Code Protocol
 
 /// Standard error codes used across Peekaboo
-public enum StandardErrorCode: String, Sendable {
+public enum StandardErrorCode: String, Sendable, Equatable {
     // Permission errors
     case screenRecordingPermissionDenied = "PERMISSION_DENIED_SCREEN_RECORDING"
     case accessibilityPermissionDenied = "PERMISSION_DENIED_ACCESSIBILITY"
@@ -21,6 +21,7 @@ public enum StandardErrorCode: String, Sendable {
     // Operation errors
     case captureFailed = "CAPTURE_FAILED"
     case interactionFailed = "INTERACTION_FAILED"
+    case accessibilityIncomplete = "ACCESSIBILITY_INCOMPLETE"
     case timeout = "TIMEOUT"
     case cancelled = "CANCELLED"
 
@@ -134,6 +135,8 @@ extension StandardizedError {
             "Ensure the application is installed and running"
         case .windowNotFound:
             "Check that the application has open windows"
+        case .accessibilityIncomplete:
+            "Run one fresh exact-window Accessibility observation, then use screenshot/OCR if it remains incomplete"
         case .timeout:
             "Try the operation again or increase the timeout"
         case .ambiguousAppIdentifier:

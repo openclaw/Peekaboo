@@ -4,6 +4,7 @@
 //
 
 import Foundation
+import PeekabooFoundation
 import Testing
 @testable import PeekabooBridge
 @testable import PeekabooCLI
@@ -117,6 +118,39 @@ struct FocusErrorMappingTests {
     @Test
     func `captureFailed maps to CAPTURE_FAILED`() {
         #expect(peekabooAutomationErrorCode(for: .captureFailed("cam")) == .CAPTURE_FAILED)
+    }
+
+    @Test
+    func `incomplete Accessibility evidence maps directly and through Bridge`() {
+        let error = PeekabooError.accessibilityIncomplete("AX tree incomplete")
+        let remote = PeekabooBridgeErrorEnvelope(
+            code: .internalError,
+            message: "AX tree incomplete",
+            context: PeekabooBridgeErrorEnvelope.standardizedErrorContextPrefix +
+                StandardErrorCode.accessibilityIncomplete.rawValue
+        )
+
+        #expect(peekabooAutomationErrorCode(for: error) == .ACCESSIBILITY_INCOMPLETE)
+        #expect(errorCode(for: remote) == .ACCESSIBILITY_INCOMPLETE)
+        #expect(remote.standardizedErrorCode == .accessibilityIncomplete)
+    }
+
+    @Test
+    @MainActor
+    func `incomplete Accessibility evidence is retry safe and mutation free`() {
+        let command = WindowCommand.WindowListSubcommand()
+        let direct = command.readOnlyObservationFailureReceipt(
+            for: PeekabooError.accessibilityIncomplete("AX tree incomplete")
+        )
+        let remote = command.readOnlyObservationFailureReceipt(for: PeekabooBridgeErrorEnvelope(
+            code: .internalError,
+            message: "AX tree incomplete",
+            context: PeekabooBridgeErrorEnvelope.standardizedErrorContextPrefix +
+                StandardErrorCode.accessibilityIncomplete.rawValue
+        ))
+
+        #expect(direct == CaptureFailureReceipt(retrySafe: true, mutationDispatched: false))
+        #expect(remote == direct)
     }
 
     @Test

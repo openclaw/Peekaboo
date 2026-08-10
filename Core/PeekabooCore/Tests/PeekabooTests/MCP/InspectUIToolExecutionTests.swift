@@ -81,6 +81,7 @@ struct InspectUIToolExecutionTests {
         }
         #expect(output.contains("Failed to inspect UI"))
         #expect(output.contains("mock inspectAccessibilityTree"))
+        #expect(response.meta == nil)
     }
 
     @Test
@@ -172,6 +173,57 @@ struct InspectUIToolExecutionTests {
         }
         #expect(output.contains("Failed to inspect UI"))
         #expect(output.contains("time deadline"))
+        guard case let .object(meta)? = response.meta else {
+            Issue.record("Expected structured timeout metadata")
+            return
+        }
+        #expect(meta["error_code"] == .string("TIMEOUT"))
+        #expect(meta["retry_safe"] == .bool(true))
+        #expect(meta["mutation_dispatched"] == .bool(false))
+        #expect(meta["effect"] == nil)
+        #expect(try await snapshots.listSnapshots().isEmpty)
+    }
+
+    @Test
+    func `Inspect UI returns typed retry-safe failure for Calendar-shaped incomplete evidence`() async throws {
+        let detectionResult = ElementDetectionResult(
+            snapshotId: "snapshot-calendar-empty-incomplete",
+            screenshotPath: "",
+            elements: DetectedElements(),
+            metadata: DetectionMetadata(
+                detectionTime: 0.35,
+                elementCount: 0,
+                method: "AXorcist",
+                windowContext: WindowContext(
+                    applicationName: "Calendar",
+                    applicationBundleId: "com.apple.iCal",
+                    applicationProcessId: 858,
+                    windowTitle: "Calendar",
+                    windowID: 119),
+                truncationInfo: DetectionTruncationInfo(incompleteAccessibilityRead: true)))
+        let automation = await MainActor.run {
+            InspectUITestAutomationService(
+                accessibilityGranted: true,
+                detectionResult: detectionResult)
+        }
+        let snapshots = await MainActor.run { InMemorySnapshotManager() }
+        let context = await Self.makeContext(automation: automation, snapshots: snapshots)
+
+        let response = try await InspectUITool(context: context).execute(arguments: ToolArguments(raw: [:]))
+
+        #expect(response.isError)
+        guard case let .text(text: output, annotations: _, _meta: _) = response.content.first,
+              case let .object(meta)? = response.meta
+        else {
+            Issue.record("Expected structured inspect_ui failure")
+            return
+        }
+        #expect(output.contains("fresh observation"))
+        #expect(output.contains("screenshot/OCR"))
+        #expect(meta["error_code"] == .string("ACCESSIBILITY_INCOMPLETE"))
+        #expect(meta["retry_safe"] == .bool(true))
+        #expect(meta["mutation_dispatched"] == .bool(false))
+        #expect(meta["effect"] == nil)
         #expect(try await snapshots.listSnapshots().isEmpty)
     }
 

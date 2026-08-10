@@ -32,6 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Ensure action-command JSON validation failures before dispatch report `effect: refused`, including parser and binding errors.
 - Verify app focus against the exact active Workspace PID and visible frontmost-window PID, retry through native AX activation, and report the verified effect as confirmed instead of claiming success for an unfulfilled request.
 - Honor explicit `see` timeouts beyond 20 seconds, rerun deadline/incomplete AX retries instead of replaying cache, distinguish incomplete reads from expired deadlines, reject unusable empty truncated AX-only results, and keep CLI/MCP guidance accurate.
+- Report unusably empty incomplete AX-only observations as retry-safe, mutation-free `ACCESSIBILITY_INCOMPLETE` failures while preserving true `TIMEOUT` errors and useful nonempty truncated evidence.
 
 ## [4.0.0] - 2026-08-10
 

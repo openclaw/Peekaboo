@@ -1,6 +1,7 @@
 import Darwin
 import Foundation
 import PeekabooAutomationKit
+import PeekabooFoundation
 
 public struct PeekabooBridgeProtocolVersion: Codable, Sendable, Comparable, Hashable {
     public let major: Int
@@ -350,6 +351,7 @@ public enum PeekabooBridgeErrorKind: String, Codable, Sendable {
 }
 
 public struct PeekabooBridgeErrorEnvelope: Codable, Sendable, LocalizedError {
+    public static let standardizedErrorContextPrefix = "standard_error:"
     public let code: PeekabooBridgeErrorCode
     public let message: String
     public let details: String?
@@ -415,6 +417,13 @@ public struct PeekabooBridgeErrorEnvelope: Codable, Sendable, LocalizedError {
 
     public var errorDescription: String? {
         self.message
+    }
+
+    public var standardizedErrorCode: StandardErrorCode? {
+        guard let context,
+              context.hasPrefix(Self.standardizedErrorContextPrefix)
+        else { return nil }
+        return StandardErrorCode(rawValue: String(context.dropFirst(Self.standardizedErrorContextPrefix.count)))
     }
 }
 

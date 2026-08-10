@@ -351,6 +351,12 @@ public final class PeekabooBridgeServer {
                 context: reason)
         case .notFound:
             .init(code: .notFound, message: error.localizedDescription, details: details)
+        case .accessibilityIncomplete:
+            .init(
+                code: .internalError,
+                message: error.localizedDescription,
+                details: details,
+                context: PeekabooBridgeErrorEnvelope.standardizedErrorContextPrefix + error.code.rawValue)
         case .timeout, .captureTimeout:
             .init(code: .timeout, message: error.localizedDescription, details: details)
         default:

@@ -196,12 +196,14 @@ extension DetectionTruncationInfo {
         if self.incompleteAccessibilityRead {
             return switch style {
             case .commandLine:
-                "Warning: AX tree incomplete at \(limitSummary). Retry once; if this persists, the target may " +
+                "Warning: AX tree incomplete at \(limitSummary). Retry once to obtain a fresh observation; " +
+                    "if this persists, the target may " +
                     "not expose a readable Accessibility tree. Use a narrower window target or screenshot/OCR; " +
                     "increase the timeout only when the app is slow to respond."
             case .automationTool:
                 "Warning: AX tree incomplete at \(limitSummary). Retry once with an exact app_target and " +
-                    "window_id. If this persists, the target may not expose a readable Accessibility tree; " +
+                    "window_id to obtain a fresh observation. If this persists, the target may not expose a " +
+                    "readable Accessibility tree; " +
                     "use screenshot/OCR evidence instead."
             }
         }

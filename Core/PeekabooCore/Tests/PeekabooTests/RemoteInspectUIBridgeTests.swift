@@ -106,6 +106,53 @@ struct RemoteInspectUIBridgeTests {
             #expect(message.contains("does not support inspect_ui"))
         }
     }
+
+    @Test
+    func `remote inspect preserves incomplete Accessibility code without a protocol bump`() async throws {
+        let socketPath = "/tmp/peekaboo-bridge-incomplete-\(UUID().uuidString).sock"
+        let automation = await MainActor.run {
+            InspectUITestAutomationService(
+                accessibilityGranted: true,
+                inspectError: PeekabooError.accessibilityIncomplete(
+                    "AX tree incomplete. Retry once to obtain a fresh observation."))
+        }
+        let services = await MainActor.run { InspectUIBridgeServices(automation: automation) }
+        let server = await MainActor.run {
+            PeekabooBridgeServer(
+                services: services,
+                hostKind: .gui,
+                allowlistedTeams: [],
+                allowlistedBundles: [])
+        }
+        let host = PeekabooBridgeHost(
+            socketPath: socketPath,
+            server: server,
+            allowedTeamIDs: [],
+            requestTimeoutSec: 2)
+        try await host.startChecked()
+        defer { Task { await host.stop() } }
+
+        let client = PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 2)
+        do {
+            _ = try await client.inspectAccessibilityTree(windowContext: nil)
+            Issue.record("Expected raw Bridge error")
+        } catch let error as PeekabooBridgeErrorEnvelope {
+            #expect(error.code == .internalError)
+            #expect(error.standardizedErrorCode == .accessibilityIncomplete)
+        }
+
+        let remote = await MainActor.run {
+            RemoteUIAutomationService(client: client, supportsInspectAccessibilityTree: true)
+        }
+        do {
+            _ = try await remote.inspectAccessibilityTree(windowContext: nil)
+            Issue.record("Expected standardized remote error")
+        } catch let error as PeekabooError {
+            #expect(error.code == .accessibilityIncomplete)
+            #expect(error.localizedDescription.contains("fresh observation"))
+        }
+        await host.stop()
+    }
 }
 
 @MainActor

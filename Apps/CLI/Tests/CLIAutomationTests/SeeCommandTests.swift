@@ -340,7 +340,10 @@ struct SeeCommandRuntimeTests {
                         elementCount: 1,
                         method: "AXorcist",
                         windowContext: fixture.detectionResult.metadata.windowContext,
-                        truncationInfo: DetectionTruncationInfo(deadlineReached: true)
+                        truncationInfo: DetectionTruncationInfo(
+                            deadlineReached: true,
+                            incompleteAccessibilityRead: true
+                        )
                     )
                 )
             }
@@ -1031,6 +1034,113 @@ struct SeeCommandRuntimeTests {
 }
 
 extension SeeCommandRuntimeTests {
+    @Test
+    @MainActor
+    func `tree only See returns typed retry-safe failure for Calendar-shaped incomplete evidence`() async throws {
+        try await self.withTempConfigEnv { _ in
+            let fixture = Self.makeSeeCommandRuntimeFixture()
+            let automation = StubAutomationService()
+            automation.inspectAccessibilityTreeHandler = { _ in
+                ElementDetectionResult(
+                    snapshotId: "calendar-empty-incomplete",
+                    screenshotPath: "",
+                    elements: DetectedElements(),
+                    metadata: DetectionMetadata(
+                        detectionTime: 0.35,
+                        elementCount: 0,
+                        method: "AXorcist",
+                        windowContext: WindowContext(
+                            applicationName: "Calendar",
+                            applicationBundleId: "com.apple.iCal",
+                            applicationProcessId: 858,
+                            windowTitle: "Calendar",
+                            windowID: 119
+                        ),
+                        truncationInfo: DetectionTruncationInfo(incompleteAccessibilityRead: true)
+                    )
+                )
+            }
+            let (context, _) = Self.makeSeeCommandRuntimeContext(
+                automation: automation,
+                screenCapture: fixture.screenCapture,
+                applicationInfo: fixture.applicationInfo,
+                windowInfo: fixture.windowInfo
+            )
+
+            let result = try await InProcessCommandRunner.run(
+                [
+                    "see",
+                    "--app", fixture.applicationInfo.name,
+                    "--tree",
+                    "--no-screenshot",
+                    "--timeout", "5s",
+                    "--json",
+                ],
+                services: context.services
+            )
+            let envelope = try #require(
+                JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [String: Any]
+            )
+            let error = try #require(envelope["error"] as? [String: Any])
+
+            #expect(result.exitStatus == 1)
+            #expect(result.stderr.isEmpty)
+            #expect(envelope["success"] as? Bool == false)
+            #expect(envelope["data"] is NSNull)
+            #expect(envelope["effect"] == nil)
+            #expect(error["code"] as? String == "ACCESSIBILITY_INCOMPLETE")
+            #expect(error["retry_safe"] as? Bool == true)
+            #expect(error["mutation_dispatched"] as? Bool == false)
+            #expect((error["message"] as? String)?.contains("fresh observation") == true)
+            #expect((error["hint"] as? String)?.contains("screenshot/OCR") == true)
+            #expect(!result.stdout.contains("snapshot_id"))
+            #expect(try await context.snapshots.listSnapshots().isEmpty)
+        }
+    }
+
+    @Test
+    @MainActor
+    func `tree only See does not claim exact incomplete code without a resolved window`() async throws {
+        try await self.withTempConfigEnv { _ in
+            let fixture = Self.makeSeeCommandRuntimeFixture()
+            let automation = StubAutomationService()
+            automation.inspectAccessibilityTreeHandler = { _ in
+                ElementDetectionResult(
+                    snapshotId: "unresolved-empty-incomplete",
+                    screenshotPath: "",
+                    elements: DetectedElements(),
+                    metadata: DetectionMetadata(
+                        detectionTime: 0.1,
+                        elementCount: 0,
+                        method: "AXorcist",
+                        truncationInfo: DetectionTruncationInfo(incompleteAccessibilityRead: true)
+                    )
+                )
+            }
+            let (context, _) = Self.makeSeeCommandRuntimeContext(
+                automation: automation,
+                screenCapture: fixture.screenCapture,
+                applicationInfo: fixture.applicationInfo,
+                windowInfo: fixture.windowInfo
+            )
+
+            let result = try await InProcessCommandRunner.run(
+                ["see", "--app", fixture.applicationInfo.name, "--tree", "--no-screenshot", "--json"],
+                services: context.services
+            )
+            let envelope = try #require(
+                JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [String: Any]
+            )
+            let error = try #require(envelope["error"] as? [String: Any])
+
+            #expect(result.exitStatus == 1)
+            #expect(error["code"] as? String == "UNKNOWN_ERROR")
+            #expect(error["code"] as? String != "ACCESSIBILITY_INCOMPLETE")
+            #expect(error["retry_safe"] == nil)
+            #expect(error["mutation_dispatched"] == nil)
+        }
+    }
+
     struct RuntimeFixture {
         let snapshotId: String
         let applicationInfo: ServiceApplicationInfo

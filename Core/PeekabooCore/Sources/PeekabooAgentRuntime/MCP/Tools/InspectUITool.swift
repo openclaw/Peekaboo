@@ -140,7 +140,7 @@ public struct InspectUITool: MCPTool {
                 }
             }
             self.logger.error("Inspect UI tool execution failed: \(error.localizedDescription)")
-            return ToolResponse.error("Failed to inspect UI: \(error.localizedDescription)")
+            return Self.failureResponse(error)
         }
     }
 
@@ -152,9 +152,42 @@ public struct InspectUITool: MCPTool {
               truncationInfo.isTruncated
         else { return }
 
-        throw PeekabooError.operationError(
-            message: truncationInfo.automationToolRemediationMessage(
-                budget: result.metadata.windowContext?.traversalBudget))
+        let message = truncationInfo.automationToolRemediationMessage(
+            budget: result.metadata.windowContext?.traversalBudget)
+        if truncationInfo.deadlineReached {
+            throw PeekabooError.timeout(message)
+        }
+        if truncationInfo.incompleteAccessibilityRead,
+           result.metadata.windowContext?.windowID != nil
+        {
+            throw PeekabooError.accessibilityIncomplete(message)
+        }
+        throw PeekabooError.operationError(message: message)
+    }
+
+    private static func failureResponse(_ error: any Error) -> ToolResponse {
+        let code: StandardErrorCode? = if let error = error as? PeekabooError {
+            switch error {
+            case .accessibilityIncomplete:
+                .accessibilityIncomplete
+            case .timeout:
+                .timeout
+            default:
+                nil
+            }
+        } else {
+            nil
+        }
+        let metadata: Value? = code.map { code in
+            .object([
+                "error_code": .string(code.rawValue),
+                "retry_safe": .bool(true),
+                "mutation_dispatched": .bool(false),
+            ])
+        }
+        return ToolResponse.error(
+            "Failed to inspect UI: \(error.localizedDescription)",
+            meta: metadata)
     }
 
     private func getOrCreateSnapshot(snapshotId: String?) async throws -> (snapshot: UISnapshot, isNew: Bool) {

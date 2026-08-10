@@ -143,11 +143,14 @@ extension SeeCommand {
         if truncationInfo.deadlineReached {
             throw CaptureError.detectionTimedOut(self.overallTimeoutSeconds)
         }
-        throw PeekabooError.operationError(
-            message: truncationInfo.remediationMessage(
-                budget: result.metadata.windowContext?.traversalBudget
-            )
+        let message = truncationInfo.remediationMessage(
+            budget: result.metadata.windowContext?.traversalBudget
         )
+        if truncationInfo.incompleteAccessibilityRead,
+           result.metadata.windowContext?.windowID != nil {
+            throw PeekabooError.accessibilityIncomplete(message)
+        }
+        throw PeekabooError.operationError(message: message)
     }
 
     private func requireActionCapableTreeOnlyEvidence(_ result: ElementDetectionResult) throws {

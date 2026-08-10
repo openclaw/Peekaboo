@@ -30,6 +30,7 @@
 - Ensure action-command JSON validation failures before dispatch report
   `effect: refused`, including parser and binding errors.
 - Verify app focus against the exact active Workspace PID and visible frontmost-window PID, retry through native AX activation, and report the verified effect as confirmed instead of claiming success for an unfulfilled request.
+- Report unusably empty incomplete AX-only observations as retry-safe, mutation-free `ACCESSIBILITY_INCOMPLETE` failures while preserving true `TIMEOUT` errors and useful nonempty truncated evidence.
 - Pin the OpenClaw Foundation identity for the release preflight so a bare `SIGN_IDENTITY`
   exported by the operator's login shell can no longer substitute for the release certificate,
   and surface any inherited identity instead of signing with it silently.
