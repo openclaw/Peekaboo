@@ -35,6 +35,14 @@ struct PreDispatchActionEnvelopeTests {
                 errorCode: .VALIDATION_ERROR
             ),
             ValidationCase(
+                name: "action window selector binding validation",
+                arguments: [
+                    "action", "AXPress", "--on", "button", "--app", "Example",
+                    "--window-title", "Main", "--window-index", "0", "--json",
+                ],
+                errorCode: .VALIDATION_ERROR
+            ),
+            ValidationCase(
                 name: "click parser validation",
                 arguments: ["click", "--not-a-click-option", "--json"],
                 errorCode: .INVALID_ARGUMENT
@@ -88,6 +96,30 @@ struct PreDispatchActionEnvelopeTests {
             ValidationCase(
                 name: "clipboard get parser validation",
                 arguments: ["clipboard", "get", "--not-a-clipboard-option", "--json"],
+                errorCode: .INVALID_ARGUMENT
+            ),
+            ValidationCase(
+                name: "capture live app and pid parser validation",
+                arguments: [
+                    "capture", "live", "--app", "Example", "--pid", "123",
+                    "--not-a-capture-option", "--json",
+                ],
+                errorCode: .INVALID_ARGUMENT
+            ),
+            ValidationCase(
+                name: "capture live title and index parser validation",
+                arguments: [
+                    "capture", "live", "--window-title", "Main", "--window-index", "0",
+                    "--not-a-capture-option", "--json",
+                ],
+                errorCode: .INVALID_ARGUMENT
+            ),
+            ValidationCase(
+                name: "capture live screen and app parser validation",
+                arguments: [
+                    "capture", "live", "--mode", "screen", "--screen-index", "0", "--app", "Example",
+                    "--not-a-capture-option", "--json",
+                ],
                 errorCode: .INVALID_ARGUMENT
             ),
         ]

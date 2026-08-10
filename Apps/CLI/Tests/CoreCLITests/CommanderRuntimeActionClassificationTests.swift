@@ -21,6 +21,28 @@ struct CommanderRuntimeActionClassificationTests {
         #expect(!CommanderRuntimeRouter.isActionInvocation(argv: ["peekaboo", "window", "unknown", "--json"]))
     }
 
+    @Test
+    func `capture selector shapes stay read-only while window and space mutations are actions`() {
+        let captureShapes = [
+            ["peekaboo", "capture", "live", "--app", "Example", "--pid", "123", "--json"],
+            ["peekaboo", "capture", "live", "--window-title", "Main", "--window-index", "0", "--json"],
+            [
+                "peekaboo", "capture", "live", "--mode", "screen", "--screen-index", "0", "--app", "Example",
+                "--json",
+            ],
+        ]
+        for argv in captureShapes {
+            #expect(!CommanderRuntimeRouter.isActionInvocation(argv: argv))
+        }
+
+        #expect(CommanderRuntimeRouter.isActionInvocation(argv: [
+            "peekaboo", "window", "close", "--window-title", "Main", "--window-index", "0", "--json",
+        ]))
+        #expect(CommanderRuntimeRouter.isActionInvocation(argv: [
+            "peekaboo", "space", "move-window", "--app", "Example", "--pid", "123", "--to", "1", "--json",
+        ]))
+    }
+
     private static func leafDescriptors(
         _ descriptors: [CommanderCommandDescriptor],
         prefix: [String] = []
