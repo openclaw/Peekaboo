@@ -38,11 +38,11 @@ It is a breaking release — see `docs/v4-migration.md` for the complete old→n
   borders. Targeted background input stays overlay-free even when its target is visible
   or frontmost; only untargeted or explicitly foreground work may show the cursor or HUD.
   The settings retain a master switch and playback controls around those three categories.
-- **Honest results.** Once an action request has been parsed and classified, its JSON
+- **Honest results.** Once the command path identifies an action request, its JSON
   result reports `effect: confirmed | partial | unverifiable | suspected_noop | refused`,
-  and errors carry an actionable `hint`. Argument parse/bind failures happen before that
-  classification and may omit `effect`. "The process exited 0" no longer stands in for
-  "the click landed."
+  and errors carry an actionable `hint`. Pre-dispatch parse/bind failures for recognized
+  action commands report `effect: refused`; read-only failures omit `effect`. "The process
+  exited 0" no longer stands in for "the click landed."
 - **Background-first safety.** Launch, open, observation, capture, and targeted input
   are background by default; focus stealing, global keys, and physical pointer gestures
   require explicit foreground consent. Ambiguous or targetless background operations
@@ -61,9 +61,9 @@ It is a breaking release — see `docs/v4-migration.md` for the complete old→n
 
 ### Changed
 
-- Standardize CLI JSON on one result envelope with an action-only effect vocabulary after
-  request parsing/classification, actionable error hints, and nonzero exits for failed
-  actions; pre-dispatch parse/bind failures may omit `effect`.
+- Standardize CLI JSON on one result envelope with an action-only effect vocabulary,
+  including `effect: refused` for pre-dispatch action parse/bind failures, actionable
+  error hints, and nonzero exits for failed actions.
 - Management commands restructured into real subcommand trees: `clipboard
   get|set|clear|save|restore`, `menubar list|click`, `config provider …` /
   `config credential set`, `agent run|resume|sessions|chat`,
@@ -91,10 +91,11 @@ It is a breaking release — see `docs/v4-migration.md` for the complete old→n
   `image`, AX-only `inspect_ui`, and `sleep` (MCP clients may lack a shell).
 
 ### Fixed
-
 - Normalize agent failures and `see` success JSON under the shared result envelope,
   with nonzero terminal failures, specific validation/credential/session/runtime codes,
   and no duplicate inner `success` field.
+- Ensure action-command JSON validation failures before dispatch report
+  `effect: refused`, including parser and binding errors.
 - Add actionable text and JSON migration hints for removed v4 commands and flags,
   reject ambiguous press input shapes, and align `see`/`type`/`press` help with the
   accepted grammar.

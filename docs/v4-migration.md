@@ -102,8 +102,8 @@ Modifier lists are comma-separated: `--modifiers cmd,shift`.
 - `app launch --wait-ready --open <target>`, `window restore`, `window` tool `list` action.
 - JSON envelope: after an action request has been parsed and classified, its result reports
   `effect: confirmed|partial|unverifiable|suspected_noop|refused` and errors carry `hint`
-  with the actionable next step. Pre-dispatch argument parse/bind failures happen before
-  that classification and may omit `effect`. (Phase 6)
+  with the actionable next step. Pre-dispatch argument parse/bind failures for recognized
+  action commands report `effect: refused`; read-only failures omit `effect`. (Phase 6)
 
 ## MCP / agent tool changes
 

@@ -26,18 +26,21 @@ func executePeekabooCLI(arguments: [String]) async -> Int32 {
     _ = ConfigurationManager.shared.getConfiguration()
 
     let shouldEmitJSONErrors = containsJSONOutputFlag(arguments)
+    let isActionCommand = shouldEmitJSONErrors && CommanderRuntimeRouter.isActionInvocation(argv: arguments)
 
-    do {
-        try await CommanderRuntimeExecutor.resolveAndRun(arguments: arguments)
-        return EXIT_SUCCESS
-    } catch let exit as ExitCode {
-        return exit.rawValue
-    } catch let programError as CommanderProgramError {
-        printCommanderError(programError, jsonOutput: shouldEmitJSONErrors)
-        return EXIT_FAILURE
-    } catch {
-        printGenericError(error, jsonOutput: shouldEmitJSONErrors)
-        return EXIT_FAILURE
+    return await ResultEnvelopeContext.$isActionCommand.withValue(isActionCommand) {
+        do {
+            try await CommanderRuntimeExecutor.resolveAndRun(arguments: arguments)
+            return EXIT_SUCCESS
+        } catch let exit as ExitCode {
+            return exit.rawValue
+        } catch let programError as CommanderProgramError {
+            printCommanderError(programError, jsonOutput: shouldEmitJSONErrors)
+            return EXIT_FAILURE
+        } catch {
+            printGenericError(error, jsonOutput: shouldEmitJSONErrors)
+            return EXIT_FAILURE
+        }
     }
 }
 

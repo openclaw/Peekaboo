@@ -60,7 +60,7 @@ suffix strings).
 
 **P7 — Machine-honest results.** `--json` output converges on one envelope and, once an
 action request is parsed and classified, an `effect` field with a closed vocabulary
-(see §6). Pre-dispatch parse/bind failures may omit `effect`. "The process exited 0"
+(see §6). Pre-dispatch action parse/bind failures report `effect: refused`. "The process exited 0"
 must never silently stand in for "the click landed."
 
 ## 2. Command map: v4 surface
@@ -215,7 +215,7 @@ Adopt cua's closed result vocabulary in `--json` output for parsed and classifie
 - `effect` is computed from existing verification machinery (click focus-verification,
   window geometry readback, clipboard `--verify`) — the plumbing largely exists; v4 makes
   it a contract.
-- Commander parse/bind failures occur before action classification and may omit `effect`;
+- Commander parse/bind failures for recognized action commands report `effect: refused`;
   they still use the standard error envelope and a nonzero exit.
 - Errors carry actionable hints, not just codes (Anthropic tool-writing guidance).
 - Non-zero exit iff `success == false`. Deprecation/warning text goes to stderr only.
