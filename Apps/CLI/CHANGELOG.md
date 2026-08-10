@@ -43,7 +43,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Bind destructive window mutations to immutable capture-time bounds, reject owner-generation or bounds drift, repin intended geometry transitions, and refuse Bridge hosts that would ignore the stronger receipt.
 - Fail closed when exact window selection or capture receipts drift, remove bounds-only minimized-window fallbacks, quarantine timed-out OCR until native work exits, and keep transient agent images correlated and execution-owned.
 - Keep minimized exact PID/window-ID targets addressable through bounded AX inventory, add native background `window restore` to CLI/MCP/Bridge, and make default minimized close return restore-or-`--foreground` guidance.
-- Let background `window restore` accept a successful native unminimize once the same exact window ID, owner process generation, and original bounds reappear, instead of failing on transient AX readback.
+- Let background `window restore` accept a successful native unminimize once the same exact window ID, owner process generation, and original bounds reappear, and keep its output pinned to those verified bounds while public inventory settles.
 - Treat WindowServer disappearance as valid after AX-verified minimize and close minimized exact windows through a bounded non-activating AX restore/close path.
 - Re-minimize a temporarily restored exact window before returning any failed or indeterminate minimized-close result.
 - Make background screenshot, observation, and live-capture paths visualizer-silent, including multi-display and menu-bar OCR fallbacks, while preserving explicit foreground feedback.

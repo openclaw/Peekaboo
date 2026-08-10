@@ -197,7 +197,11 @@ extension WindowCommand {
                         target: exactTarget
                     ).first
                 }
-                logWindowAction(action: "restore", appName: appName, windowInfo: refreshedWindow)
+                logWindowAction(
+                    action: "restore",
+                    appName: appName,
+                    windowInfo: refreshedWindow
+                )
                 let data = createWindowActionResult(
                     action: "restore",
                     success: true,
@@ -205,7 +209,7 @@ extension WindowCommand {
                     appName: appName
                 )
                 output(data) {
-                    print("Successfully restored window '\(refreshedWindow.title)' of \(appName)")
+                    print("Successfully restored window '\(refreshedWindow?.title ?? windowInfo.title)' of \(appName)")
                 }
             } catch {
                 handleError(error)
@@ -333,9 +337,34 @@ extension WindowCommand {
 @MainActor
 func restoredWindowOutputInfo(
     original: ServiceWindowInfo,
+    tolerance: CGFloat = 1,
     refresh: @MainActor () async throws -> ServiceWindowInfo?
-) async -> ServiceWindowInfo {
+) async -> ServiceWindowInfo? {
+    guard let expectedIdentity = original.mutationIdentity,
+          expectedIdentity.windowID == original.windowID,
+          expectedIdentity.isMinimized == original.isMinimized,
+          let expectedBounds = expectedIdentity.capturedBounds,
+          windowFramesMatch(original.bounds, expectedBounds, tolerance: tolerance)
+    else {
+        return nil
+    }
+
     // The service has already repinned the exact restored window. Public/AX inventory can
-    // still omit it briefly, so a display-only refresh must not turn success into failure.
-    await (try? refresh()) ?? original
+    // still omit it briefly or expose its Dock thumbnail, so accept refresh metadata only
+    // when its complete identity receipt matches the verified restore receipt.
+    guard let refreshed = try? await refresh(),
+          let refreshedIdentity = refreshed.mutationIdentity,
+          refreshed.windowID == expectedIdentity.windowID,
+          refreshedIdentity.windowID == expectedIdentity.windowID,
+          refreshedIdentity.ownerProcessIdentifier == expectedIdentity.ownerProcessIdentifier,
+          refreshedIdentity.ownerProcessStartIdentity == expectedIdentity.ownerProcessStartIdentity,
+          refreshed.isMinimized == false,
+          refreshedIdentity.isMinimized == false,
+          let refreshedBounds = refreshedIdentity.capturedBounds,
+          windowFramesMatch(refreshed.bounds, expectedBounds, tolerance: tolerance),
+          windowFramesMatch(refreshedBounds, expectedBounds, tolerance: tolerance)
+    else {
+        return original
+    }
+    return refreshed
 }
