@@ -127,10 +127,21 @@ public enum CaptureError: Error, LocalizedError, Sendable {
             return "Failed to convert captured image to desired format."
         case let .detectionTimedOut(seconds):
             return """
-            Element detection timed out after \(Int(seconds))s. Try narrowing the capture, targeting a specific \
-            window, or increasing the timeout (e.g. `peekaboo see --timeout-seconds 30 ...`).
+            Element detection timed out after \(Self.formattedTimeoutDuration(seconds)). Try narrowing the capture, \
+            targeting a specific window, or increasing the timeout (e.g. `peekaboo see --timeout 30s ...`).
             """
         }
+    }
+
+    private static func formattedTimeoutDuration(_ seconds: TimeInterval) -> String {
+        guard seconds.isFinite, seconds > 0 else { return "\(seconds)s" }
+        if seconds < 1 {
+            return "\(max(1, Int((seconds * 1000).rounded())))ms"
+        }
+        if seconds.rounded() == seconds, seconds <= TimeInterval(Int.max) {
+            return "\(Int(seconds))s"
+        }
+        return String(format: "%.1fs", seconds)
     }
 
     public var exitCode: Int32 {

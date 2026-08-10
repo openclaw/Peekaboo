@@ -42,6 +42,17 @@ struct FocusErrorMappingTests {
     }
 
     @Test
+    func `subsecond capture timeout splits into precise message and current hint`() throws {
+        let description = try #require(CaptureError.detectionTimedOut(0.2).errorDescription)
+
+        let presentation = splitErrorHint(from: description)
+
+        #expect(presentation.message == "Element detection timed out after 200ms.")
+        #expect(presentation.hint?.contains("peekaboo see --timeout 30s") == true)
+        #expect(presentation.hint?.contains("--timeout-seconds") == false)
+    }
+
+    @Test
     func `bridge screen recording permission maps to screen recording error`() {
         let envelope = PeekabooBridgeErrorEnvelope(
             code: .permissionDenied,
