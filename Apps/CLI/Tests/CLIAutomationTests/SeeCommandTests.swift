@@ -711,9 +711,13 @@ struct SeeCommandRuntimeTests {
                 CodableJSONResponse<SeeResult>.self,
                 from: data
             )
+            let rawResponse = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+            let rawData = try #require(rawResponse["data"] as? [String: Any])
             let element = try #require(response.data.ui_elements.first)
 
             #expect(response.success == true)
+            #expect(rawResponse["success"] as? Bool == true)
+            #expect(rawData["success"] == nil)
             #expect(element.description == "Wingman Grindr Session Helper")
             #expect(element.role_description == "Pop Up Button")
             #expect(element.help == "Pinned extension button")

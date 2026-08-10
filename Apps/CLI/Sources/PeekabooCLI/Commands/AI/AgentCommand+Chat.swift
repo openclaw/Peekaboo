@@ -17,28 +17,24 @@ extension AgentCommand {
         let underlyingError: any Error
     }
 
-    private func ensureChatModePreconditions() -> Bool {
+    private func validateChatModePreconditions() throws {
         let flags = AgentChatPreconditions.Flags(
             jsonOutput: self.jsonOutput,
             quiet: self.quiet,
             dryRun: self.dryRun,
             noCache: self.noCache,
             audio: self.audio,
-            audioFileProvided: self.audioFile != nil
-        )
+            audioFileProvided: self.audioFile != nil)
         if let violation = AgentChatPreconditions.firstViolation(for: flags) {
-            self.printAgentExecutionError(violation)
-            return false
+            try self.failAgentCommand(message: violation, code: .VALIDATION_ERROR)
         }
-        return true
     }
 
     func printNonInteractiveChatHelp() {
         if self.jsonOutput {
             self
                 .printAgentExecutionError(
-                    AgentMessages.Chat.nonInteractiveHelp
-                )
+                    AgentMessages.Chat.nonInteractiveHelp)
             return
         }
 
@@ -58,11 +54,9 @@ extension AgentCommand {
         requestedModel: LanguageModel?,
         initialPrompt: String?,
         capabilities: TerminalCapabilities,
-        queueMode: QueueMode
-    ) async throws {
-        guard self.ensureChatModePreconditions() else {
-            throw ExitCode.failure
-        }
+        queueMode: QueueMode) async throws
+    {
+        try self.validateChatModePreconditions()
 
         if self.shouldUseTauTUIChat(capabilities: capabilities) {
             do {
@@ -71,15 +65,13 @@ extension AgentCommand {
                     requestedModel: requestedModel,
                     initialPrompt: initialPrompt,
                     capabilities: capabilities,
-                    queueMode: queueMode
-                )
+                    queueMode: queueMode)
                 return
             } catch is ExitCode {
                 throw ExitCode.failure
             } catch {
                 self.printAgentExecutionError(
-                    "Failed to launch TauTUI chat: \(error.localizedDescription). Falling back to basic chat."
-                )
+                    "Failed to launch TauTUI chat: \(error.localizedDescription). Falling back to basic chat.")
             }
         }
 
@@ -88,8 +80,7 @@ extension AgentCommand {
             requestedModel: requestedModel,
             initialPrompt: initialPrompt,
             capabilities: capabilities,
-            queueMode: queueMode
-        )
+            queueMode: queueMode)
     }
 
     @MainActor
@@ -98,32 +89,30 @@ extension AgentCommand {
         requestedModel: LanguageModel?,
         initialPrompt: String?,
         capabilities: TerminalCapabilities,
-        queueMode: QueueMode
-    ) async throws {
+        queueMode: QueueMode) async throws
+    {
         let failTasklessResumeTurn = self.shouldFailTasklessResumeTurn(capabilities: capabilities)
         var turnContext = ChatTurnContext(
             sessionId: nil,
             requestedModel: requestedModel,
             queueMode: queueMode,
-            queuedWhileRunning: []
-        )
+            queuedWhileRunning: [])
         do {
             turnContext.sessionId = try await self.initialChatSessionId(agentService)
-        } catch {
-            self.printAgentExecutionError(error.localizedDescription)
+        } catch is ExitCode {
             throw ExitCode.failure
+        } catch {
+            try self.failAgentCommand(message: error.localizedDescription, code: .AGENT_ERROR)
         }
 
         let modelDescription = await self.describeChatModel(
             requestedModel,
             sessionId: turnContext.sessionId,
-            agentService: agentService
-        )
+            agentService: agentService)
         self.printChatWelcome(
             sessionId: turnContext.sessionId,
             modelDescription: modelDescription,
-            queueMode: queueMode
-        )
+            queueMode: queueMode)
         self.printChatHelpIntro()
 
         if let seed = initialPrompt {
@@ -159,8 +148,7 @@ extension AgentCommand {
                     batchedPrompt,
                     agentService: agentService,
                     context: &turnContext,
-                    propagateTurnFailure: failTasklessResumeTurn
-                )
+                    propagateTurnFailure: failTasklessResumeTurn)
             } catch is ReportedChatTurnError {
                 if failTasklessResumeTurn {
                     throw ExitCode.failure
@@ -185,27 +173,26 @@ extension AgentCommand {
         requestedModel: LanguageModel?,
         initialPrompt: String?,
         capabilities: TerminalCapabilities,
-        queueMode: QueueMode
-    ) async throws {
+        queueMode: QueueMode) async throws
+    {
         var activeSessionId: String?
         do {
             activeSessionId = try await self.initialChatSessionId(agentService)
-        } catch {
-            self.printAgentExecutionError(error.localizedDescription)
+        } catch is ExitCode {
             throw ExitCode.failure
+        } catch {
+            try self.failAgentCommand(message: error.localizedDescription, code: .AGENT_ERROR)
         }
 
         let modelDescription = await self.describeChatModel(
             requestedModel,
             sessionId: activeSessionId,
-            agentService: agentService
-        )
+            agentService: agentService)
         let chatUI = AgentChatUI(
             modelDescription: modelDescription,
             sessionId: activeSessionId,
             queueMode: queueMode,
-            helpLines: self.chatHelpLines
-        )
+            helpLines: self.chatHelpLines)
 
         try chatUI.start()
         defer { chatUI.stop() }
@@ -256,14 +243,12 @@ extension AgentCommand {
                 sessionId: sessionForRun,
                 requestedModel: requestedModel,
                 queueMode: queueMode,
-                delegate: tuiDelegate
-            )
+                delegate: tuiDelegate)
             currentRun = Task { @MainActor in
                 try await self.runAgentTurnForTUI(
                     batchedPrompt,
                     agentService: agentService,
-                    context: tuiContext
-                )
+                    context: tuiContext)
             }
 
             do {
@@ -301,8 +286,8 @@ extension AgentCommand {
     private func runAgentTurnForTUI(
         _ input: String,
         agentService: PeekabooAgentService,
-        context: AgentRunContext
-    ) async throws -> AgentExecutionResult {
+        context: AgentRunContext) async throws -> AgentExecutionResult
+    {
         let sessionId = context.sessionId
         let requestedModel = context.requestedModel
         let queueMode = context.queueMode
@@ -316,8 +301,7 @@ extension AgentCommand {
                 dryRun: self.dryRun,
                 queueMode: queueMode,
                 eventDelegate: delegate,
-                verbose: self.verbose
-            )
+                verbose: self.verbose)
         }
 
         return try await agentService.executeTask(
@@ -329,16 +313,17 @@ extension AgentCommand {
             queueMode: queueMode,
             eventDelegate: delegate,
             verbose: self.verbose,
-            persistSession: !self.noCache
-        )
+            persistSession: !self.noCache)
     }
 
     private func initialChatSessionId(
-        _ agentService: PeekabooAgentService
-    ) async throws -> String? {
+        _ agentService: PeekabooAgentService) async throws -> String?
+    {
         if let sessionId = self.resumeSession {
             guard try await agentService.getSessionInfo(sessionId: sessionId) != nil else {
-                throw PeekabooError.sessionNotFound(sessionId)
+                try self.failAgentCommand(
+                    message: "Session not found or expired: \(sessionId)",
+                    code: .SESSION_NOT_FOUND)
             }
             return sessionId
         }
@@ -346,7 +331,10 @@ extension AgentCommand {
         if self.resume {
             let sessions = try await agentService.listSessions()
             guard let mostRecent = sessions.first else {
-                throw PeekabooError.commandFailed("No sessions available to resume.")
+                try self.failAgentCommand(
+                    message: "No sessions found to resume",
+                    code: .SESSION_NOT_FOUND,
+                    hint: "Run 'peekaboo agent run \"<task>\"' to start a session.")
             }
             return mostRecent.id
         }
@@ -373,8 +361,8 @@ extension AgentCommand {
         _ input: String,
         agentService: PeekabooAgentService,
         context: inout ChatTurnContext,
-        propagateTurnFailure: Bool = false
-    ) async throws {
+        propagateTurnFailure: Bool = false) async throws
+    {
         let startingSessionId = context.sessionId
         let queueMode = context.queueMode
         let requestedModel = context.requestedModel
@@ -398,8 +386,7 @@ extension AgentCommand {
                         dryRun: self.dryRun,
                         queueMode: queueMode,
                         eventDelegate: streamingDelegate,
-                        verbose: self.verbose
-                    )
+                        verbose: self.verbose)
                     self.displayResult(result, delegate: outputDelegate)
                     return result
                 } catch {
@@ -416,8 +403,7 @@ extension AgentCommand {
                     maxSteps: self.resolvedMaxSteps,
                     queueMode: queueMode,
                     preserveStepLimitError: true,
-                    wrapReportedFailure: true
-                )
+                    wrapReportedFailure: true)
             }
         }
 
@@ -508,8 +494,8 @@ extension AgentCommand {
     func describeChatModel(
         _ requestedModel: LanguageModel?,
         sessionId: String?,
-        agentService: PeekabooAgentService
-    ) async -> String {
+        agentService: PeekabooAgentService) async -> String
+    {
         if let requestedModel {
             return agentService.safeModelDisplayName(for: requestedModel)
         }

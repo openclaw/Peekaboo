@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Remove the MCP `list`, `hotkey`, and `swipe` tools plus legacy agent shims; rename MCP `perform_action` to `action`.
 
 ### Fixed
+- Normalize agent failures and `see` success JSON under the shared result envelope, with nonzero terminal failures, specific validation/credential/session/runtime codes, and no duplicate inner `success` field.
 - Add actionable migration hints for removed v4 commands and flags, reject ambiguous press input shapes, and align `see`/`type`/`press` help with the accepted grammar.
 - Stop cancelled on-demand daemon idle timers from rescheduling one another after repeated Bridge activity.
 - Reject conflicting app/PID and window selectors before focus, observation, or mutation.

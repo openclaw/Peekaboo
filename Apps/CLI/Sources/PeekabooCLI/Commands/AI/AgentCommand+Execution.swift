@@ -9,23 +9,22 @@ import TauTUI
 
 @available(macOS 14.0, *)
 extension AgentCommand {
-    func ensureAgentHasCredentials(
-        selectedModel: LanguageModel
-    ) -> Bool {
+    func requireAgentCredentials(
+        selectedModel: LanguageModel) throws
+    {
         if self.isLocalModel(selectedModel) {
-            return true
+            return
         }
 
         if self.hasCredentials(for: selectedModel) {
-            return true
+            return
         }
 
         let providerName = self.providerDisplayName(for: selectedModel)
         let envVar = self.providerEnvironmentVariable(for: selectedModel)
-        self.printAgentExecutionError(
-            "Missing API key for \(providerName). Set \(envVar) and retry."
-        )
-        return false
+        try self.failAgentCommand(
+            message: "Missing API key for \(providerName). Set \(envVar) and retry.",
+            code: .MISSING_API_KEY)
     }
 
     /// Render the agent execution result using either JSON output or a rich CLI transcript.
@@ -114,23 +113,34 @@ extension AgentCommand {
     }
 
     func printAgentExecutionError(_ message: String) {
-        if self.jsonOutput {
-            let logger = Logger.shared
-            logger.setJsonOutputMode(true)
-            outputError(message: message, code: .AGENT_ERROR, logger: logger)
-        } else {
-            print("\(TerminalColor.red)Error: \(message)\(TerminalColor.reset)")
-        }
+        self.emitAgentError(message: message, code: .AGENT_ERROR)
     }
 
     func printAgentValidationError(_ message: String) {
+        self.emitAgentError(message: message, code: .VALIDATION_ERROR)
+    }
+
+    func emitAgentError(message: String, code: ErrorCode, hint: String? = nil) {
         if self.jsonOutput {
             let logger = Logger.shared
             logger.setJsonOutputMode(true)
-            outputError(message: message, code: .VALIDATION_ERROR, logger: logger)
-        } else {
+            outputError(message: message, code: code, hint: hint, logger: logger)
+        } else if code == .VALIDATION_ERROR {
             fputs("Error: \(message)\n", stderr)
+            if let hint, !hint.isEmpty {
+                fputs("\(hint)\n", stderr)
+            }
+        } else {
+            print("\(TerminalColor.red)Error: \(message)\(TerminalColor.reset)")
+            if let hint, !hint.isEmpty {
+                print(hint)
+            }
         }
+    }
+
+    func failAgentCommand(message: String, code: ErrorCode, hint: String? = nil) throws -> Never {
+        self.emitAgentError(message: message, code: code, hint: hint)
+        throw ExitCode.failure
     }
 
     func executeAgentTask(
@@ -140,8 +150,8 @@ extension AgentCommand {
         maxSteps: Int,
         queueMode: QueueMode,
         preserveStepLimitError: Bool = false,
-        wrapReportedFailure: Bool = false
-    ) async throws -> AgentExecutionResult {
+        wrapReportedFailure: Bool = false) async throws -> AgentExecutionResult
+    {
         let outputDelegate = self.makeDisplayDelegate(for: task)
         let streamingDelegate = self.makeStreamingDelegate(using: outputDelegate)
         do {
@@ -154,8 +164,7 @@ extension AgentCommand {
                 queueMode: queueMode,
                 eventDelegate: streamingDelegate,
                 verbose: self.verbose,
-                persistSession: !self.noCache
-            )
+                persistSession: !self.noCache)
             self.displayResult(result, delegate: outputDelegate)
             let duration = String(format: "%.2f", result.metadata.executionTime)
             let sessionId = result.sessionId ?? "none"
@@ -165,8 +174,7 @@ extension AgentCommand {
                 .agent,
                 "result status=\(status) task='\(task)' model=\(result.metadata.modelName) duration=\(duration)s "
                     + "tools=\(result.metadata.toolCallCount) dry_run=\(self.dryRun) "
-                    + "session=\(sessionId) tokens=\(finalTokens)"
-            )
+                    + "session=\(sessionId) tokens=\(finalTokens)")
             return result
         } catch let error as PeekabooAgentService.AgentStepLimitExceededError where preserveStepLimitError {
             if outputDelegate?.hasReceivedError != true {

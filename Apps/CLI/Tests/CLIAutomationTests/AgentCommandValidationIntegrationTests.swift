@@ -8,6 +8,13 @@ import Testing
 
 @Suite(.serialized, .tags(.safe))
 struct AgentCommandValidationIntegrationTests {
+    private struct FailureCase {
+        let name: String
+        let arguments: [String]
+        let code: PeekabooCLI.ErrorCode
+        let message: String
+    }
+
     @Test
     func `No cache session conflicts return one validation JSON object`() async throws {
         let result = try await InProcessCommandRunner.runShared(
@@ -41,6 +48,82 @@ struct AgentCommandValidationIntegrationTests {
         let message = try #require(error["message"] as? String)
         #expect(message.contains("between 1 and 100"))
         #expect(message.contains("received \(maxSteps)"))
+    }
+
+    @Test
+    @MainActor
+    func `Terminal agent failures use raw envelopes and nonzero exits`() async throws {
+        try await self.withIsolatedAgentEnvironment { sessionDirectory in
+            let services = TestServicesFactory.makePeekabooServices()
+            let localModel = "ollama/llama3.3"
+            let parsedLocalModel = try #require(LanguageModel.parse(from: localModel))
+            let agentService = try PeekabooAgentService(
+                services: services,
+                defaultModel: parsedLocalModel,
+                sessionManager: AgentSessionManager(sessionDirectory: sessionDirectory)
+            )
+            services.agent = agentService
+            let cases: [FailureCase] = [
+                .init(
+                    name: "missing task",
+                    arguments: ["agent", "run", "--model", localModel, "--json"],
+                    code: .VALIDATION_ERROR,
+                    message: "Task argument is required"
+                ),
+                .init(
+                    name: "no resumable session",
+                    arguments: ["agent", "resume", "--model", localModel, "--json"],
+                    code: .SESSION_NOT_FOUND,
+                    message: "No sessions found to resume"
+                ),
+                .init(
+                    name: "invalid resume session",
+                    arguments: ["agent", "resume", "missing-\(UUID().uuidString)", "--model", localModel, "--json"],
+                    code: .SESSION_NOT_FOUND,
+                    message: "Session not found or expired"
+                ),
+                .init(
+                    name: "audio transcription failure",
+                    arguments: [
+                        "agent", "run", "--audio-file", "/tmp/peekaboo-missing-audio.wav",
+                        "--model", localModel, "--json",
+                    ],
+                    code: .AGENT_ERROR,
+                    message: "Audio processing failed"
+                ),
+                .init(
+                    name: "missing provider key",
+                    arguments: ["agent", "run", "task", "--model", "gemini-3.5-flash", "--json"],
+                    code: .MISSING_API_KEY,
+                    message: "Missing API key"
+                ),
+                .init(
+                    name: "unknown model",
+                    arguments: ["agent", "run", "task", "--model", "definitely-not-a-model", "--json"],
+                    code: .VALIDATION_ERROR,
+                    message: "Unsupported model"
+                ),
+                .init(
+                    name: "invalid queue mode",
+                    arguments: [
+                        "agent", "run", "task", "--model", localModel,
+                        "--queue-mode", "sideways", "--json",
+                    ],
+                    code: .VALIDATION_ERROR,
+                    message: "Invalid queue mode"
+                ),
+            ]
+
+            for testCase in cases {
+                let result = try await InProcessCommandRunner.run(testCase.arguments, services: services)
+                try self.requireFailureEnvelope(
+                    result,
+                    code: testCase.code,
+                    messageContains: testCase.message,
+                    context: testCase.name
+                )
+            }
+        }
     }
 
     @Test
@@ -398,6 +481,7 @@ struct AgentCommandValidationIntegrationTests {
             "PEEKABOO_CONFIG_DIR",
             "PEEKABOO_CONFIG_NONINTERACTIVE",
             "PEEKABOO_CONFIG_DISABLE_MIGRATION",
+            "GEMINI_API_KEY",
         ]
         let previous = Dictionary(uniqueKeysWithValues: environmentKeys.map { key in
             (key, getenv(key).map { String(cString: $0) })
@@ -406,6 +490,7 @@ struct AgentCommandValidationIntegrationTests {
         setenv("PEEKABOO_CONFIG_DIR", tempDirectory.path, 1)
         setenv("PEEKABOO_CONFIG_NONINTERACTIVE", "1", 1)
         setenv("PEEKABOO_CONFIG_DISABLE_MIGRATION", "1", 1)
+        unsetenv("GEMINI_API_KEY")
         ConfigurationManager.shared.resetForTesting()
 
         defer {
@@ -440,6 +525,27 @@ struct AgentCommandValidationIntegrationTests {
         return try await TerminalDetector.$standardOutputFileDescriptor.withValue(terminalFileDescriptor) {
             try await body()
         }
+    }
+
+    private func requireFailureEnvelope(
+        _ result: CommandRunResult,
+        code: PeekabooCLI.ErrorCode,
+        messageContains: String,
+        context: String = #function
+    ) throws {
+        #expect(result.exitStatus == 1, "Wrong exit status for \(context)")
+        #expect(result.stderr.isEmpty, "JSON error leaked to stderr for \(context)")
+
+        let data = Data(result.stdout.utf8)
+        let payload = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        #expect(payload["success"] as? Bool == false, "Missing failure status for \(context)")
+        #expect(payload["data"] is NSNull, "Failure data was not null for \(context)")
+        #expect(payload["effect"] == nil, "Agent failure unexpectedly gained an action effect for \(context)")
+
+        let error = try #require(payload["error"] as? [String: Any])
+        #expect(error["code"] as? String == code.rawValue, "Wrong error code for \(context)")
+        let message = try #require(error["message"] as? String)
+        #expect(message.contains(messageContains), "Wrong error message for \(context): \(message)")
     }
 }
 

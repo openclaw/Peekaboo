@@ -10,19 +10,18 @@ import PeekabooCore
 
 @available(macOS 14.0, *)
 extension AgentCommand {
-    func buildExecutionTask() async throws -> String? {
+    func buildExecutionTask() async throws -> String {
         if self.audio || self.audioFile != nil {
             return try await self.processAudioInput()
         }
 
         guard let providedTask = self.task else {
-            self.printMissingTaskError(message: "Task argument is required", usage: "")
-            return nil
+            try self.failAgentCommand(message: "Task argument is required", code: .VALIDATION_ERROR)
         }
         return providedTask
     }
 
-    private func processAudioInput() async throws -> String? {
+    private func processAudioInput() async throws -> String {
         self.logAudioStartMessage()
         let audioService = self.services.audioInput
 
@@ -30,20 +29,23 @@ extension AgentCommand {
             let transcript = try await self.transcribeAudio(using: audioService)
             self.logTranscriptionSuccess(transcript)
             return self.composeExecutionTask(with: transcript)
+        } catch let error as CancellationError {
+            throw error
         } catch {
-            self.logAudioError(error)
-            return nil
+            try self.failAgentCommand(
+                message: AgentMessages.Audio.processingError(error),
+                code: .AGENT_ERROR)
         }
     }
 
     private func logAudioStartMessage() {
-        guard !self.jsonOutput && !self.quiet else { return }
+        guard !self.jsonOutput, !self.quiet else { return }
         if let audioPath = self.audioFile {
             print("\(TerminalColor.cyan)🎙️ Processing audio file: \(audioPath)\(TerminalColor.reset)")
         } else {
             let recordingMessage = [
                 "\(TerminalColor.cyan)🎙️ Starting audio recording...",
-                " (Press Ctrl+C to stop)\(TerminalColor.reset)"
+                " (Press Ctrl+C to stop)\(TerminalColor.reset)",
             ].joined()
             print(recordingMessage)
         }
@@ -84,10 +86,10 @@ extension AgentCommand {
     }
 
     private func logTranscriptionSuccess(_ transcript: String) {
-        guard !self.jsonOutput && !self.quiet else { return }
+        guard !self.jsonOutput, !self.quiet else { return }
         let message = [
             "\(TerminalColor.green)\(AgentDisplayTokens.Status.success) Transcription complete",
-            "\(TerminalColor.reset)"
+            "\(TerminalColor.reset)",
         ].joined()
         print(message)
         print("\(TerminalColor.gray)Transcript: \(transcript.prefix(100))...\(TerminalColor.reset)")
@@ -102,22 +104,5 @@ extension AgentCommand {
             return transcript
         }
         return "\(providedTask)\n\nAudio transcript:\n\(transcript)"
-    }
-
-    private func logAudioError(_ error: any Error) {
-        let message = AgentMessages.Audio.processingError(error)
-        if self.jsonOutput {
-            let logger = Logger.shared
-            logger.setJsonOutputMode(true)
-            outputError(message: message, code: .AGENT_ERROR, logger: logger)
-        } else {
-            let failurePrefix = [
-                "\(TerminalColor.red)\(AgentDisplayTokens.Status.failure)",
-                " ",
-                message
-            ].joined()
-            let audioErrorMessage = [failurePrefix, "\(TerminalColor.reset)"].joined()
-            print(audioErrorMessage)
-        }
     }
 }

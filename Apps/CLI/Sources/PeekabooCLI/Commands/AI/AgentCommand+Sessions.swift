@@ -29,8 +29,25 @@ extension AgentCommand {
         guard self.noCache else { return }
         guard !self.resume, self.resumeSession == nil, !self.listSessions else {
             throw PeekabooError.invalidInput(
-                "--no-cache cannot be combined with resume or sessions mode."
-            )
+                "--no-cache cannot be combined with resume or sessions mode.")
+        }
+    }
+
+    func requireRequestedSession(_ agentService: PeekabooAgentService) async throws {
+        if let sessionId = self.resumeSession {
+            guard try await agentService.getSessionInfo(sessionId: sessionId) != nil else {
+                try self.failAgentCommand(
+                    message: "Session not found or expired: \(sessionId)",
+                    code: .SESSION_NOT_FOUND)
+            }
+        } else if self.resume {
+            let sessions = try await agentService.listSessions()
+            guard sessions.first != nil else {
+                try self.failAgentCommand(
+                    message: "No sessions found to resume",
+                    code: .SESSION_NOT_FOUND,
+                    hint: "Run 'peekaboo agent run \"<task>\"' to start a session.")
+            }
         }
     }
 
@@ -38,15 +55,14 @@ extension AgentCommand {
         _ agentService: PeekabooAgentService,
         requestedModel: LanguageModel?,
         maxSteps: Int,
-        queueMode: QueueMode
-    ) async throws -> Bool {
+        queueMode: QueueMode) async throws -> Bool
+    {
         if let sessionId = self.resumeSession {
             guard let continuationTask = self.task else {
-                self.printMissingTaskError(
+                try self.failAgentCommand(
                     message: "Task argument required when resuming session",
-                    usage: "Usage: peekaboo agent resume <session-id>"
-                )
-                return true
+                    code: .VALIDATION_ERROR,
+                    hint: "Usage: peekaboo agent resume <session-id>")
             }
             try await self.resumeAgentSession(
                 agentService,
@@ -55,19 +71,16 @@ extension AgentCommand {
                     task: continuationTask,
                     requestedModel: requestedModel,
                     maxSteps: maxSteps,
-                    queueMode: queueMode
-                )
-            )
+                    queueMode: queueMode))
             return true
         }
 
         if self.resume {
             guard let continuationTask = self.task else {
-                self.printMissingTaskError(
+                try self.failAgentCommand(
                     message: "Task argument required when resuming",
-                    usage: "Usage: peekaboo agent resume"
-                )
-                return true
+                    code: .VALIDATION_ERROR,
+                    hint: "Usage: peekaboo agent resume")
             }
 
             let sessions = try await agentService.listSessions()
@@ -80,45 +93,17 @@ extension AgentCommand {
                         task: continuationTask,
                         requestedModel: requestedModel,
                         maxSteps: maxSteps,
-                        queueMode: queueMode
-                    )
-                )
+                        queueMode: queueMode))
             } else {
-                if self.jsonOutput {
-                    let logger = Logger.shared
-                    logger.setJsonOutputMode(true)
-                    outputError(
-                        message: "No sessions found to resume",
-                        code: .SESSION_NOT_FOUND,
-                        hint: "Run 'peekaboo agent \"<task>\"' to start a session.",
-                        logger: logger
-                    )
-                } else {
-                    print("\(TerminalColor.red)Error: No sessions found to resume\(TerminalColor.reset)")
-                }
+                try self.failAgentCommand(
+                    message: "No sessions found to resume",
+                    code: .SESSION_NOT_FOUND,
+                    hint: "Run 'peekaboo agent run \"<task>\"' to start a session.")
             }
             return true
         }
 
         return false
-    }
-
-    func printMissingTaskError(message: String, usage: String) {
-        if self.jsonOutput {
-            let logger = Logger.shared
-            logger.setJsonOutputMode(true)
-            outputError(
-                message: message,
-                code: .VALIDATION_ERROR,
-                hint: usage.isEmpty ? nil : usage,
-                logger: logger
-            )
-        } else {
-            print("\(TerminalColor.red)Error: \(message)\(TerminalColor.reset)")
-            if !usage.isEmpty {
-                print(usage)
-            }
-        }
     }
 
     @MainActor
@@ -134,8 +119,7 @@ extension AgentCommand {
                 task: summary.summary ?? "Unknown task",
                 created: summary.createdAt,
                 lastModified: summary.lastAccessedAt,
-                messageCount: summary.messageCount
-            )
+                messageCount: summary.messageCount)
         }
 
         guard !sessions.isEmpty else {
@@ -167,7 +151,7 @@ extension AgentCommand {
                 "task": session.task,
                 "createdAt": ISO8601DateFormatter().string(from: session.created),
                 "updatedAt": ISO8601DateFormatter().string(from: session.lastModified),
-                "messageCount": session.messageCount
+                "messageCount": session.messageCount,
             ]
         }
         let response = ["success": true, "sessions": sessionData] as [String: Any]
@@ -179,7 +163,7 @@ extension AgentCommand {
     private func printSessionsList(_ sessions: [AgentSessionInfo]) {
         let headerLine = [
             "\(TerminalColor.cyan)\(TerminalColor.bold)Agent Sessions:\(TerminalColor.reset)",
-            "\n"
+            "\n",
         ].joined()
         print(headerLine)
 
@@ -197,14 +181,14 @@ extension AgentCommand {
         if sessions.count > 10 {
             print([
                 "\n",
-                "\(TerminalColor.dim)... and \(sessions.count - 10) more sessions\(TerminalColor.reset)"
+                "\(TerminalColor.dim)... and \(sessions.count - 10) more sessions\(TerminalColor.reset)",
             ].joined())
         }
 
         let resumeHintLine = [
             "\n",
             "\(TerminalColor.dim)To resume: peekaboo agent resume <session-id>",
-            "\(TerminalColor.reset)"
+            "\(TerminalColor.reset)",
         ].joined()
         print(resumeHintLine)
     }
@@ -214,7 +198,7 @@ extension AgentCommand {
         let sessionLine = [
             "\(TerminalColor.blue)\(index + 1).\(TerminalColor.reset)",
             " ",
-            "\(TerminalColor.bold)\(session.id.prefix(8))\(TerminalColor.reset)"
+            "\(TerminalColor.bold)\(session.id.prefix(8))\(TerminalColor.reset)",
         ].joined()
         print(sessionLine)
         print("   Messages: \(session.messageCount)")
@@ -223,15 +207,15 @@ extension AgentCommand {
 
     private func resumeAgentSession(
         _ agentService: PeekabooAgentService,
-        request: ResumeAgentSessionRequest
-    ) async throws {
+        request: ResumeAgentSessionRequest) async throws
+    {
         if !self.jsonOutput {
             let resumingLine = [
                 "\(TerminalColor.cyan)\(TerminalColor.bold)",
                 "\(AgentDisplayTokens.Status.info)",
                 " Resuming session \(request.sessionId.prefix(8))...",
                 "\(TerminalColor.reset)",
-                "\n"
+                "\n",
             ].joined()
             print(resumingLine)
         }
@@ -246,9 +230,18 @@ extension AgentCommand {
                 maxSteps: request.maxSteps,
                 dryRun: self.dryRun,
                 queueMode: request.queueMode,
-                eventDelegate: streamingDelegate
-            )
+                eventDelegate: streamingDelegate)
             self.displayResult(result, delegate: outputDelegate)
+        } catch let error as PeekabooError {
+            if case let .sessionNotFound(sessionId) = error {
+                try self.failAgentCommand(
+                    message: "Session not found or expired: \(sessionId)",
+                    code: .SESSION_NOT_FOUND)
+            }
+            if outputDelegate?.hasReceivedError != true {
+                self.printAgentExecutionError("Failed to resume session: \(error.localizedDescription)")
+            }
+            throw ExitCode.failure
         } catch {
             if outputDelegate?.hasReceivedError != true {
                 self.printAgentExecutionError("Failed to resume session: \(error.localizedDescription)")

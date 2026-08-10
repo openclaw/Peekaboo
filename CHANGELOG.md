@@ -79,6 +79,9 @@ It is a breaking release — see `docs/v4-migration.md` for the complete old→n
 
 ### Fixed
 
+- Normalize agent failures and `see` success JSON under the shared result envelope,
+  with nonzero terminal failures, specific validation/credential/session/runtime codes,
+  and no duplicate inner `success` field.
 - Add actionable text and JSON migration hints for removed v4 commands and flags,
   reject ambiguous press input shapes, and align `see`/`type`/`press` help with the
   accepted grammar.

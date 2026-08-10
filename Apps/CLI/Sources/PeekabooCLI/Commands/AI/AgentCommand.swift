@@ -17,7 +17,8 @@ private var isDebugLoggingEnabled: Bool {
     }
     // Check if agent is in verbose mode
     if ProcessInfo.processInfo.arguments.contains("-v") ||
-        ProcessInfo.processInfo.arguments.contains("--verbose") {
+        ProcessInfo.processInfo.arguments.contains("--verbose")
+    {
         return true
     }
     return false
@@ -53,18 +54,14 @@ struct AgentCommand: RuntimeBackedCommand {
         usageExamples: [
             CommandUsageExample(
                 command: "peekaboo agent \"Prepare the TestFlight build for review\"",
-                description: "Start a brand-new session with a natural-language brief."
-            ),
+                description: "Start a brand-new session with a natural-language brief."),
             CommandUsageExample(
                 command: "peekaboo agent resume",
-                description: "Resume the most recent session without retyping the task."
-            ),
+                description: "Resume the most recent session without retyping the task."),
             CommandUsageExample(
                 command: "peekaboo agent resume SESSION_ID --max-steps 12",
-                description: "Resume a known session while capping the step budget."
-            )
-        ]
-    )
+                description: "Resume a known session while capping the step budget."),
+        ])
 
     @Argument(help: "Natural language description of the task to perform (optional when using --resume)")
     var task: String?
@@ -90,8 +87,7 @@ struct AgentCommand: RuntimeBackedCommand {
         AI model to use (for example: gpt-5.6, gpt-5.5, claude-fable-5, claude-sonnet-5, \
         gemini-3.5-flash, grok-4.3, minimax-m2.7, minimax-cn/m2.7, \
         ollama/<model>, lmstudio/<model>, or <custom-provider>/<model>)
-        """
-    )
+        """)
     var model: String?
     var resume = false
 
@@ -174,15 +170,13 @@ extension AgentCommand {
             aiDebugPrint(
                 "DEBUG: Caught DecodingError in run(): \(error)",
                 verbose: self.verbose,
-                jsonOutput: self.jsonOutput
-            )
+                jsonOutput: self.jsonOutput)
             throw error
         } catch let error as NSError {
             aiDebugPrint(
                 "DEBUG: Caught NSError in run(): \(error)",
                 verbose: self.verbose,
-                jsonOutput: self.jsonOutput
-            )
+                jsonOutput: self.jsonOutput)
             aiDebugPrint("DEBUG: Domain: \(error.domain)", verbose: self.verbose, jsonOutput: self.jsonOutput)
             aiDebugPrint("DEBUG: Code: \(error.code)", verbose: self.verbose, jsonOutput: self.jsonOutput)
             aiDebugPrint("DEBUG: UserInfo: \(error.userInfo)", verbose: self.verbose, jsonOutput: self.jsonOutput)
@@ -191,8 +185,7 @@ extension AgentCommand {
             aiDebugPrint(
                 "DEBUG: Caught unknown error in run(): \(error)",
                 verbose: self.verbose,
-                jsonOutput: self.jsonOutput
-            )
+                jsonOutput: self.jsonOutput)
             throw error
         }
     }
@@ -200,24 +193,22 @@ extension AgentCommand {
     @MainActor
     mutating func runInternal(runtime: CommandRuntime) async throws {
         if self.isAgentDisabled() {
-            self.emitAgentUnavailableMessage()
-            throw ExitCode.failure
+            try self.failAgentCommand(
+                message: "Agent service not available because PEEKABOO_DISABLE_AGENT is set.",
+                code: .AGENT_ERROR)
         }
 
         do {
             try self.validateSessionOptions()
         } catch {
-            self.printAgentValidationError(error.localizedDescription)
-            throw ExitCode.failure
+            try self.failAgentCommand(message: error.localizedDescription, code: .VALIDATION_ERROR)
         }
 
         let maxSteps: Int
         do {
             maxSteps = try self.validatedMaxStepCount()
         } catch {
-            // Argument-range failures are validation errors, not agent failures.
-            self.printAgentValidationError(error.localizedDescription)
-            throw ExitCode.failure
+            try self.failAgentCommand(message: error.localizedDescription, code: .VALIDATION_ERROR)
         }
 
         let services = runtime.services
@@ -226,9 +217,7 @@ extension AgentCommand {
         do {
             requestedModel = try self.validatedModelSelection(configuration: services.configuration)
         } catch {
-            // An unknown/unconfigured model name is a bad argument, not a run failure.
-            self.printAgentValidationError(error.localizedDescription)
-            throw ExitCode.failure
+            try self.failAgentCommand(message: error.localizedDescription, code: .VALIDATION_ERROR)
         }
 
         let configuredAIService = PeekabooAIService(configuration: services.configuration)
@@ -243,8 +232,7 @@ extension AgentCommand {
             self.implicitToolModel(
                 from: configuredAIService,
                 configuration: services.configuration,
-                existingAgentModel: existingAgentModel
-            )
+                existingAgentModel: existingAgentModel)
         let usesPersistedSessionModel = self.shouldUsePersistedSessionModel(requestedModel: requestedModel)
         if self.listSessions {
             let listingModel = selectedModel ?? existingAgentModel ?? .anthropic(.opus48)
@@ -254,8 +242,7 @@ extension AgentCommand {
                 try PeekabooAgentService(
                     services: services,
                     defaultModel: listingModel,
-                    snapshotMutationCoordinator: mutationCoordinator
-                )
+                    snapshotMutationCoordinator: mutationCoordinator)
             }
             try await self.showSessions(agentService)
             return
@@ -264,29 +251,29 @@ extension AgentCommand {
         if selectedModel == nil, !usesPersistedSessionModel {
             if let capabilityError = self.unavailableImplicitCustomModelToolCapabilityError(
                 from: configuredAIService,
-                configuration: services.configuration
-            ) {
-                self.printAgentExecutionError(capabilityError.localizedDescription)
-                throw ExitCode.failure
+                configuration: services.configuration)
+            {
+                try self.failAgentCommand(
+                    message: capabilityError.localizedDescription,
+                    code: .VALIDATION_ERROR)
             }
-            self.emitAgentUnavailableMessage()
-            throw ExitCode.failure
+            try self.failAgentUnavailable()
         }
 
         let serviceDefaultModel = selectedModel ?? existingAgentModel ?? .anthropic(.opus48)
         if !usesPersistedSessionModel,
            !self.hasCredentials(for: serviceDefaultModel),
-           !self.isLocalModel(serviceDefaultModel) {
+           !self.isLocalModel(serviceDefaultModel)
+        {
             if requestedModel != nil {
                 let providerName = self.providerDisplayName(for: serviceDefaultModel)
                 let envVar = self.providerEnvironmentVariable(for: serviceDefaultModel)
-                self.printAgentExecutionError(
-                    "Missing API key for \(providerName). Set \(envVar) and retry."
-                )
+                try self.failAgentCommand(
+                    message: "Missing API key for \(providerName). Set \(envVar) and retry.",
+                    code: .MISSING_API_KEY)
             } else {
-                self.emitAgentUnavailableMessage()
+                try self.failAgentUnavailable()
             }
-            throw ExitCode.failure
         }
 
         let agentService: any AgentServiceProtocol = if let existing = existingAgent {
@@ -295,8 +282,7 @@ extension AgentCommand {
             try PeekabooAgentService(
                 services: services,
                 defaultModel: serviceDefaultModel,
-                snapshotMutationCoordinator: mutationCoordinator
-            )
+                snapshotMutationCoordinator: mutationCoordinator)
         }
 
         let terminalCapabilities = TerminalDetector.detectCapabilities()
@@ -312,10 +298,10 @@ extension AgentCommand {
         }
 
         if !usesPersistedSessionModel {
-            guard self.ensureAgentHasCredentials(selectedModel: serviceDefaultModel) else {
-                throw ExitCode.failure
-            }
+            try self.requireAgentCredentials(selectedModel: serviceDefaultModel)
         }
+
+        try await self.requireRequestedSession(peekabooAgent)
 
         let chatPolicy = AgentChatLaunchPolicy()
         let chatContext = AgentChatLaunchContext(
@@ -324,19 +310,23 @@ extension AgentCommand {
             listSessions: self.listSessions,
             normalizedTaskInput: self.normalizedTaskInput,
             capabilities: terminalCapabilities,
-            hasSessionResumption: self.resume || self.resumeSession != nil
-        )
+            hasSessionResumption: self.resume || self.resumeSession != nil)
 
         let queueMode: QueueMode
         do {
             queueMode = try self.resolvedQueueMode()
         } catch {
-            self.printAgentExecutionError(error.localizedDescription)
-            throw ExitCode.failure
+            try self.failAgentCommand(message: error.localizedDescription, code: .VALIDATION_ERROR)
         }
 
         switch chatPolicy.strategy(for: chatContext) {
         case .helpOnly:
+            if self.jsonOutput {
+                try self.failAgentCommand(
+                    message: "Task argument is required",
+                    code: .VALIDATION_ERROR,
+                    hint: AgentMessages.Chat.nonInteractiveHelp)
+            }
             self.printNonInteractiveChatHelp()
             return
         case let .interactive(initialPrompt):
@@ -345,8 +335,7 @@ extension AgentCommand {
                 requestedModel: requestedModel,
                 initialPrompt: initialPrompt,
                 capabilities: terminalCapabilities,
-                queueMode: queueMode
-            )
+                queueMode: queueMode)
             return
         case .none:
             break
@@ -356,22 +345,19 @@ extension AgentCommand {
             peekabooAgent,
             requestedModel: requestedModel,
             maxSteps: maxSteps,
-            queueMode: queueMode
-        ) {
+            queueMode: queueMode)
+        {
             return
         }
 
-        guard let executionTask = try await self.buildExecutionTask() else {
-            return
-        }
+        let executionTask = try await self.buildExecutionTask()
 
         _ = try await self.executeAgentTask(
             peekabooAgent,
             task: executionTask,
             requestedModel: requestedModel,
             maxSteps: maxSteps,
-            queueMode: queueMode
-        )
+            queueMode: queueMode)
     }
 
     private func isAgentDisabled() -> Bool {
@@ -401,23 +387,10 @@ extension AgentCommand {
         }
     }
 
-    func emitAgentUnavailableMessage() {
-        if self.jsonOutput {
-            let message = "Agent service not available. Please set OPENAI_API_KEY, ANTHROPIC_API_KEY, " +
-                "GEMINI_API_KEY, X_AI_API_KEY, MINIMAX_API_KEY, MINIMAX_CN_API_KEY, OPENROUTER_API_KEY, " +
-                "or configure ollama/<model>, lmstudio/<model>, or a custom provider."
-            let logger = Logger.shared
-            logger.setJsonOutputMode(true)
-            outputError(message: message, code: .MISSING_API_KEY, logger: logger)
-        } else {
-            let errorPrefix = [
-                "\(TerminalColor.red)Error: Agent service not available.",
-                " Please set OPENAI_API_KEY, ANTHROPIC_API_KEY, GEMINI_API_KEY, X_AI_API_KEY,",
-                " MINIMAX_API_KEY, MINIMAX_CN_API_KEY, OPENROUTER_API_KEY,",
-                " or configure ollama/<model>, lmstudio/<model>, or a custom provider."
-            ].joined()
-            let errorMessageLine = [errorPrefix, "\(TerminalColor.reset)"].joined()
-            print(errorMessageLine)
-        }
+    func failAgentUnavailable() throws -> Never {
+        let message = "Agent service not available. Please set OPENAI_API_KEY, ANTHROPIC_API_KEY, " +
+            "GEMINI_API_KEY, X_AI_API_KEY, MINIMAX_API_KEY, MINIMAX_CN_API_KEY, OPENROUTER_API_KEY, " +
+            "or configure ollama/<model>, lmstudio/<model>, or a custom provider."
+        try self.failAgentCommand(message: message, code: .MISSING_API_KEY)
     }
 }
