@@ -3,20 +3,24 @@ import Foundation
 import MCP
 import PeekabooAutomationKit
 
+enum VerifyStateAccessibilityEvidence: Sendable {
+    case complete([DetectedElement])
+    case incompleteTraversal([DetectedElement], reason: String)
+    case unavailable(String)
+}
+
 extension VerifyStateTool {
     static func evaluate(
         request: VerifyStateRequest,
         application: ServiceApplicationInfo,
         window: ServiceWindowInfo,
-        elements: [DetectedElement]?,
-        accessibilityUnknownReason: String?) -> VerifyStateSample
+        accessibilityEvidence: VerifyStateAccessibilityEvidence?) -> VerifyStateSample
     {
         let results = request.predicates.map { predicate in
             self.evaluate(
                 predicate,
                 window: window,
-                elements: elements,
-                accessibilityUnknownReason: accessibilityUnknownReason)
+                accessibilityEvidence: accessibilityEvidence)
         }
         return VerifyStateSample(
             status: self.aggregate(results),
@@ -80,8 +84,7 @@ extension VerifyStateTool {
     private static func evaluate(
         _ predicate: VerifyStatePredicate,
         window: ServiceWindowInfo,
-        elements: [DetectedElement]?,
-        accessibilityUnknownReason: String?) -> VerifyStatePredicateResult
+        accessibilityEvidence: VerifyStateAccessibilityEvidence?) -> VerifyStatePredicateResult
     {
         switch predicate {
         case let .windowExists(expected):
@@ -98,8 +101,8 @@ extension VerifyStateTool {
                 detail: "expected \(expected.description) ±\(String(format: "%.2f", tolerance))",
                 observed: actual.description)
         case let .elementExists(selector, expected):
-            guard let elements else {
-                return self.axUnknown(predicate, reason: accessibilityUnknownReason)
+            guard case let .complete(elements) = accessibilityEvidence else {
+                return self.axUnknown(predicate, reason: accessibilityEvidence?.unknownReason)
             }
             let count = elements.count(where: selector.matches)
             return self.booleanResult(
@@ -109,21 +112,16 @@ extension VerifyStateTool {
                 detail: selector.description,
                 observed: "count=\(count)")
         case let .elementValue(selector, expected):
-            return self.elementState(
+            return self.elementValueState(
                 predicate,
                 selector: selector,
-                elements: elements,
-                accessibilityUnknownReason: accessibilityUnknownReason)
-            { element in
-                let actual = element.value
-                return (actual == expected ? .satisfied : .unsatisfied, actual ?? "<no value>")
-            }
+                expected: expected,
+                accessibilityEvidence: accessibilityEvidence)
         case let .elementEnabled(selector, expected):
             return self.elementState(
                 predicate,
                 selector: selector,
-                elements: elements,
-                accessibilityUnknownReason: accessibilityUnknownReason)
+                accessibilityEvidence: accessibilityEvidence)
             { element in
                 guard element.attributes["axEnabledKnown"] == "true" else {
                     return (.unknown, "<AXEnabled unavailable>")
@@ -134,8 +132,7 @@ extension VerifyStateTool {
             return self.elementState(
                 predicate,
                 selector: selector,
-                elements: elements,
-                accessibilityUnknownReason: accessibilityUnknownReason)
+                accessibilityEvidence: accessibilityEvidence)
             { element in
                 guard let selected = element.isSelected else {
                     return (.unknown, "<AXSelected unavailable>")
@@ -145,16 +142,75 @@ extension VerifyStateTool {
         }
     }
 
+    private static func elementValueState(
+        _ predicate: VerifyStatePredicate,
+        selector: VerifyStateElementSelector,
+        expected: String,
+        accessibilityEvidence: VerifyStateAccessibilityEvidence?) -> VerifyStatePredicateResult
+    {
+        switch accessibilityEvidence {
+        case let .complete(elements):
+            return self.elementState(predicate, selector: selector, elements: elements) { element in
+                let actual = element.value
+                return (actual == expected ? .satisfied : .unsatisfied, actual ?? "<no value>")
+            }
+        case let .incompleteTraversal(elements, reason):
+            guard selector.hasExactIdentifier else {
+                return self.axUnknown(
+                    predicate,
+                    reason: "\(reason); direct positive value proof requires an exact accessibility identifier")
+            }
+            // Emitted elements have a complete descriptor read; the global incomplete flag can come from a sibling.
+            let matches = elements.filter(selector.matches)
+            guard matches.count == 1, let element = matches.first else {
+                let detail = matches.isEmpty
+                    ? "No element matches \(selector.description)"
+                    : "Selector is ambiguous: \(matches.count) elements match \(selector.description)"
+                return VerifyStatePredicateResult(
+                    kind: predicate.kind,
+                    status: .unknown,
+                    detail: "\(detail); \(reason)",
+                    observed: "count=\(matches.count)")
+            }
+            let actual = element.value
+            guard actual == expected else {
+                return VerifyStatePredicateResult(
+                    kind: predicate.kind,
+                    status: .unknown,
+                    detail: "\(selector.description): \(reason); an incomplete traversal cannot disprove " +
+                        "the expected value",
+                    observed: actual ?? "<no value>")
+            }
+            return VerifyStatePredicateResult(
+                kind: predicate.kind,
+                status: .satisfied,
+                detail: "\(selector.description): direct value match from an incomplete traversal",
+                observed: actual)
+        case let .unavailable(reason):
+            return self.axUnknown(predicate, reason: reason)
+        case nil:
+            return self.axUnknown(predicate, reason: nil)
+        }
+    }
+
     private static func elementState(
         _ predicate: VerifyStatePredicate,
         selector: VerifyStateElementSelector,
-        elements: [DetectedElement]?,
-        accessibilityUnknownReason: String?,
+        accessibilityEvidence: VerifyStateAccessibilityEvidence?,
         read: (DetectedElement) -> (VerifyStateStatus, String)) -> VerifyStatePredicateResult
     {
-        guard let elements else {
-            return self.axUnknown(predicate, reason: accessibilityUnknownReason)
+        guard case let .complete(elements) = accessibilityEvidence else {
+            return self.axUnknown(predicate, reason: accessibilityEvidence?.unknownReason)
         }
+        return self.elementState(predicate, selector: selector, elements: elements, read: read)
+    }
+
+    private static func elementState(
+        _ predicate: VerifyStatePredicate,
+        selector: VerifyStateElementSelector,
+        elements: [DetectedElement],
+        read: (DetectedElement) -> (VerifyStateStatus, String)) -> VerifyStatePredicateResult
+    {
         let matches = elements.filter(selector.matches)
         guard matches.count == 1, let element = matches.first else {
             let status: VerifyStateStatus = matches.isEmpty ? .unsatisfied : .unknown
@@ -208,5 +264,16 @@ extension VerifyStateTool {
             return .unknown
         }
         return .satisfied
+    }
+}
+
+extension VerifyStateAccessibilityEvidence {
+    fileprivate var unknownReason: String? {
+        switch self {
+        case .complete:
+            nil
+        case let .incompleteTraversal(_, reason), let .unavailable(reason):
+            reason
+        }
     }
 }

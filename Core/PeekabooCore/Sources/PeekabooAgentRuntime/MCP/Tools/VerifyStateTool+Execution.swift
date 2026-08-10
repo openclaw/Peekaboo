@@ -190,8 +190,7 @@ extension VerifyStateTool {
                     request: request,
                     application: application,
                     window: window,
-                    elements: nil,
-                    accessibilityUnknownReason: nil)
+                    accessibilityEvidence: nil)
             }
 
             let context = WindowContext(
@@ -237,7 +236,7 @@ extension VerifyStateTool {
                 if let reason = await identityTracker.validate(resolvedApplication) {
                     return Self.unknownSample(request: request, application: application, reason: reason)
                 }
-                let trustFailure = Self.accessibilityTrustFailure(
+                let accessibilityEvidence = Self.accessibilityEvidence(
                     result,
                     application: application,
                     window: completionWindow)
@@ -245,8 +244,7 @@ extension VerifyStateTool {
                     request: request,
                     application: application,
                     window: completionWindow,
-                    elements: trustFailure == nil ? result.elements.all : nil,
-                    accessibilityUnknownReason: trustFailure)
+                    accessibilityEvidence: accessibilityEvidence)
             } catch {
                 if let reason = await identityTracker.validate(resolvedApplication) {
                     return Self.unknownSample(request: request, application: application, reason: reason)
@@ -255,8 +253,8 @@ extension VerifyStateTool {
                     request: request,
                     application: application,
                     window: window,
-                    elements: nil,
-                    accessibilityUnknownReason: "Accessibility inspection failed: \(error.localizedDescription)")
+                    accessibilityEvidence: .unavailable(
+                        "Accessibility inspection failed: \(error.localizedDescription)"))
             }
         }
     }
@@ -492,33 +490,43 @@ extension VerifyStateTool {
         return "The application has no window"
     }
 
-    private static func accessibilityTrustFailure(
+    private static func accessibilityEvidence(
         _ result: ElementDetectionResult,
         application: ServiceApplicationInfo,
-        window: ServiceWindowInfo) -> String?
+        window: ServiceWindowInfo) -> VerifyStateAccessibilityEvidence
     {
         guard result.metadata.method == "AXorcist" else {
-            return "Inspection method '\(result.metadata.method)' is not a fresh native AX traversal"
+            return .unavailable(
+                "Inspection method '\(result.metadata.method)' is not a fresh native AX traversal")
         }
-        if result.metadata.truncationInfo?.incompleteAccessibilityRead == true {
-            return "Accessibility traversal was incomplete because one or more AX reads failed"
+        if let truncation = result.metadata.truncationInfo,
+           truncation.maxDepthReached || truncation.maxElementCountReached ||
+           truncation.maxChildrenPerNodeReached || truncation.deadlineReached
+        {
+            return .unavailable("Accessibility traversal was truncated")
         }
-        if result.metadata.truncationInfo?.isTruncated == true {
-            return "Accessibility traversal was truncated"
-        }
-        if !result.metadata.warnings.isEmpty {
-            return "Accessibility traversal reported warnings: \(result.metadata.warnings.joined(separator: ", "))"
+        let incompleteRead = result.metadata.truncationInfo?.incompleteAccessibilityRead == true
+        let expectedWarnings = incompleteRead ? Set(["ax_incomplete_read"]) : []
+        let unexpectedWarnings = result.metadata.warnings.filter { !expectedWarnings.contains($0) }
+        if !unexpectedWarnings.isEmpty {
+            return .unavailable(
+                "Accessibility traversal reported warnings: \(unexpectedWarnings.joined(separator: ", "))")
         }
         if result.metadata.desktopMutationPreservationAllowed == false {
-            return "Accessibility state overlapped another desktop mutation"
+            return .unavailable("Accessibility state overlapped another desktop mutation")
         }
         guard result.metadata.windowContext?.applicationProcessId == application.processIdentifier else {
-            return "Accessibility result did not confirm target PID ownership"
+            return .unavailable("Accessibility result did not confirm target PID ownership")
         }
         guard result.metadata.windowContext?.windowID == window.windowID else {
-            return "Accessibility result did not confirm the exact target window"
+            return .unavailable("Accessibility result did not confirm the exact target window")
         }
-        return nil
+        if incompleteRead {
+            return .incompleteTraversal(
+                result.elements.all,
+                reason: "Accessibility traversal was incomplete because one or more AX reads failed")
+        }
+        return .complete(result.elements.all)
     }
 
     private static func seconds(_ duration: Duration) -> TimeInterval {

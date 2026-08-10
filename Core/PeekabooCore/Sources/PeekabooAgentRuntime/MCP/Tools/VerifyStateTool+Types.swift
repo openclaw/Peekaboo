@@ -336,6 +336,10 @@ struct VerifyStateElementSelector: Decodable, Sendable, Equatable {
         return true
     }
 
+    var hasExactIdentifier: Bool {
+        self.identifier?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+    }
+
     var description: String {
         [
             self.identifier.map { "identifier=\($0)" },

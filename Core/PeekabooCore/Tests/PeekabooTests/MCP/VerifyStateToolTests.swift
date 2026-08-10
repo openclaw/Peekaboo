@@ -1335,7 +1335,8 @@ final class VerifyStateFixture {
         elements: [DetectedElement]? = nil,
         truncated: Bool = false,
         truncationInfo: DetectionTruncationInfo? = nil,
-        method: String = "AXorcist") -> ElementDetectionResult
+        method: String = "AXorcist",
+        warnings: [String] = []) -> ElementDetectionResult
     {
         let resolvedElements = elements ?? self.defaultElements
         return ElementDetectionResult(
@@ -1346,6 +1347,7 @@ final class VerifyStateFixture {
                 detectionTime: 0.01,
                 elementCount: resolvedElements.count,
                 method: method,
+                warnings: warnings,
                 windowContext: WindowContext(
                     applicationName: self.application.name,
                     applicationBundleId: self.application.bundleIdentifier,
