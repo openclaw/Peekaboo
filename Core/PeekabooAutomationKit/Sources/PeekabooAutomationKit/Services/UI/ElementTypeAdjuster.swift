@@ -36,7 +36,7 @@ import PeekabooFoundation
         -> ElementType
     {
         let resolved = self.roleResolvedType(baseType: baseType, input: input)
-        guard resolved == .group else {
+        guard self.canRecoverTextField(baseType: resolved, input: input) else {
             return resolved
         }
 
@@ -45,6 +45,25 @@ import PeekabooFoundation
         }
 
         return resolved
+    }
+
+    /// SwiftUI and web accessibility bridges can collapse an input into a static-text proxy while
+    /// retaining text-entry metadata. Preserve an explicitly assigned identifier, but unwrap the
+    /// conventional group proxy prefix when the proxy itself is promoted to the hidden control.
+    public static func resolveIdentifier(
+        _ identifier: String?,
+        baseType: ElementType,
+        resolvedType: ElementType) -> String?
+    {
+        guard baseType != .textField,
+              resolvedType == .textField,
+              let identifier,
+              identifier.hasPrefix("group-"),
+              identifier.count > "group-".count
+        else {
+            return identifier
+        }
+        return String(identifier.dropFirst("group-".count))
     }
 
     public static func shouldScanForTextFieldDescendant(
@@ -73,5 +92,17 @@ import PeekabooFoundation
         let loweredLabel = input.label?.lowercased()
         return loweredTitle.map { title in self.textFieldKeywords.contains(where: { title.contains($0) }) } ?? false ||
             loweredLabel.map { label in self.textFieldKeywords.contains(where: { label.contains($0) }) } ?? false
+    }
+
+    private static func canRecoverTextField(baseType: ElementType, input: ElementTypeAdjustmentInput) -> Bool {
+        if baseType == .group {
+            return true
+        }
+
+        // A placeholder on AXStaticText is not ordinary rendered text; it is the strongest portable signal
+        // left by frameworks that flatten an editable child into its accessibility wrapper.
+        return baseType == .other &&
+            input.role.caseInsensitiveCompare("AXStaticText") == .orderedSame &&
+            input.placeholder?.isEmpty == false
     }
 }

@@ -139,6 +139,7 @@ public final class DesktopObservationService: DesktopObservationServiceProtocol 
         }
         let ocr = try await self.recognizeOCRIfNeeded(
             capture: capture,
+            detection: detection,
             request: request,
             tracer: tracer)
         try Task.checkCancellation()

@@ -362,6 +362,49 @@ extension DesktopObservationServiceTests {
         ])
     }
 
+    func testObservationSelectivelyUsesOCRForIdentifierDerivedButtonLabel() async throws {
+        let app = Self.app()
+        let window = Self.window(id: 79, title: "OCR Repair", bounds: CGRect(x: 10, y: 20, width: 200, height: 100))
+        let applications = RecordingApplicationService(applications: [app], windows: [window])
+        let capture = RecordingScreenCaptureService(result: Self.captureResult(app: app, window: window))
+        let automation = RecordingUIAutomationService(elements: DetectedElements(buttons: [
+            DetectedElement(
+                id: "B1",
+                type: .button,
+                label: "permission deny",
+                bounds: CGRect(x: 30, y: 70, width: 100, height: 30),
+                attributes: [
+                    "role": "AXButton",
+                    "description": "button",
+                    "identifier": "permission-deny-button",
+                    "isActionable": "true",
+                ]),
+        ]))
+        let ocr = RecordingOCRRecognizer(result: OCRTextResult(
+            observations: [
+                OCRTextObservation(
+                    text: "Don't Allow",
+                    confidence: 0.9,
+                    boundingBox: CGRect(x: 0.1, y: 0.3, width: 0.4, height: 0.2)),
+            ],
+            imageSize: CGSize(width: 200, height: 100)))
+        let service = DesktopObservationService(
+            screenCapture: capture,
+            automation: automation,
+            applications: applications,
+            ocrRecognizer: ocr)
+
+        let result = try await service.observe(DesktopObservationRequest(
+            target: .app(identifier: "Fixture", window: .automatic),
+            detection: DesktopDetectionOptions(mode: .accessibility)))
+
+        XCTAssertEqual(ocr.recognizeCalls, 1)
+        XCTAssertEqual(result.elements?.elements.buttons.first?.label, "Don't Allow")
+        XCTAssertEqual(result.elements?.elements.buttons.first?.attributes["labelSource"], "ocr")
+        XCTAssertEqual(result.elements?.metadata.method, "fake+OCR")
+        XCTAssertTrue(result.timings.spans.map(\.name).contains("detection.ocr"))
+    }
+
     func testObservationPreferOCRCanRunWithoutAccessibilityDetection() async throws {
         let app = Self.app()
         let window = Self.window(id: 79, title: "OCR Only", bounds: CGRect(x: 10, y: 20, width: 200, height: 100))

@@ -440,11 +440,28 @@ enum DetachedAXObservationWorker {
         }
         guard let descriptor = descriptorRead.descriptor else { return }
         let normalizedRole = descriptor.role.lowercased()
+        let baseType = self.elementType(role: normalizedRole, isEditable: descriptor.isEditable)
+        let elementTypeInput = ElementTypeAdjustmentInput(
+            role: descriptor.role,
+            roleDescription: descriptor.roleDescription,
+            title: descriptor.title,
+            label: descriptor.label,
+            placeholder: descriptor.placeholder,
+            isEditable: descriptor.isEditable)
+        let elementType = ElementTypeAdjuster.resolve(
+            baseType: baseType,
+            input: elementTypeInput,
+            hasTextFieldDescendant: false)
+        let identifier = ElementTypeAdjuster.resolveIdentifier(
+            descriptor.identifier,
+            baseType: baseType,
+            resolvedType: elementType)
         let exposesAction = self.actionableRoles.contains(normalizedRole) ||
             (self.actionLookupRoles.contains(normalizedRole) && self.actions(of: element).contains(kAXPressAction))
         let isValueSettable = self.valueSettable(
             of: element,
             role: descriptor.role,
+            recoveredType: elementType,
             deadline: request.deadline)
         let isActionable = exposesAction || isValueSettable == true
         let elementID = request.source == nil ?
@@ -462,7 +479,7 @@ enum DetachedAXObservationWorker {
         if let roleDescription = descriptor.roleDescription {
             attributes["roleDescription"] = roleDescription
         }
-        if let identifier = descriptor.identifier {
+        if let identifier {
             attributes["identifier"] = identifier
         }
         if let placeholder = descriptor.placeholder {
@@ -483,7 +500,7 @@ enum DetachedAXObservationWorker {
 
         state.elements.append(DetectedElement(
             id: elementID,
-            type: self.elementType(role: normalizedRole, isEditable: descriptor.isEditable),
+            type: elementType,
             label: self.label(for: descriptor),
             value: descriptor.value,
             bounds: descriptor.frame,
@@ -657,9 +674,10 @@ enum DetachedAXObservationWorker {
     private static func valueSettable(
         of element: AXUIElement,
         role: String,
+        recoveredType: ElementType,
         deadline: ContinuousClock.Instant) -> Bool?
     {
-        guard ElementClassifier.supportsValueMetadata(for: role) else { return nil }
+        guard recoveredType == .textField || ElementClassifier.supportsValueMetadata(for: role) else { return nil }
         guard let timeout = self.remainingMessagingTimeout(until: deadline) else { return nil }
         AXUIElementSetMessagingTimeout(element, timeout)
         var isSettable = DarwinBoolean(false)

@@ -39,10 +39,13 @@ extension DesktopObservationService {
 
     func recognizeOCRIfNeeded(
         capture: CaptureResult,
+        detection: ElementDetectionResult?,
         request: DesktopObservationRequest,
         tracer: DesktopObservationTraceRecorder) async throws -> OCRTextResult?
     {
-        guard request.detection.mode == .accessibilityAndOCR || request.detection.preferOCR else {
+        let explicitlyRequested = request.detection.mode == .accessibilityAndOCR || request.detection.preferOCR
+        let needsSemanticRepair = ObservationOCRMapper.needsSemanticLabelRecovery(in: detection)
+        guard explicitlyRequested || needsSemanticRepair else {
             return nil
         }
 

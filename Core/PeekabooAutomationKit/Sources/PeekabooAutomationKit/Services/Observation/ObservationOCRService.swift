@@ -372,6 +372,12 @@ private final class OCRExecutionRace<T: Sendable>: @unchecked Sendable {
 }
 
 public enum ObservationOCRMapper {
+    /// Returns true only when AX exposes an actionable button but no semantic text beyond its generic role.
+    /// Those controls need pixel text to avoid presenting an identifier-derived guess as their visible label.
+    public static func needsSemanticLabelRecovery(in detectionResult: ElementDetectionResult?) -> Bool {
+        detectionResult?.elements.buttons.contains(where: self.needsSemanticLabelRecovery) == true
+    }
+
     public static func matches(_ result: OCRTextResult, hints: [String]) -> Bool {
         guard result.isComplete else { return false }
         guard !hints.isEmpty else { return !result.observations.isEmpty }
@@ -425,7 +431,9 @@ public enum ObservationOCRMapper {
         into detectionResult: ElementDetectionResult,
         methodSuffix: String = "+OCR") -> ElementDetectionResult
     {
-        let elements = detectionResult.elements
+        let elements = self.recoverSemanticLabels(
+            in: detectionResult.elements,
+            from: ocrElements)
         let mergedElements = DetectedElements(
             buttons: elements.buttons,
             textFields: elements.textFields,
@@ -457,6 +465,106 @@ public enum ObservationOCRMapper {
                     ocrResult.isComplete ? nil : DetectionTruncationInfo(
                         deadlineReached: ocrResult.deadlineReached,
                         incompleteAccessibilityRead: false))))
+    }
+
+    @_spi(Testing) public static func recoverSemanticLabels(
+        in elements: DetectedElements,
+        from ocrElements: [DetectedElement]) -> DetectedElements
+    {
+        DetectedElements(
+            buttons: elements.buttons.map { self.recoverSemanticLabel(for: $0, from: ocrElements) },
+            textFields: elements.textFields,
+            links: elements.links,
+            images: elements.images,
+            groups: elements.groups,
+            sliders: elements.sliders,
+            checkboxes: elements.checkboxes,
+            menus: elements.menus,
+            other: elements.other)
+    }
+
+    private static func recoverSemanticLabel(
+        for element: DetectedElement,
+        from ocrElements: [DetectedElement]) -> DetectedElement
+    {
+        guard self.needsSemanticLabelRecovery(element) else { return element }
+        let matches = ocrElements
+            .filter { self.isOCRText($0) && self.isSpatiallyContained($0.bounds, in: element.bounds) }
+            .sorted { lhs, rhs in
+                if abs(lhs.bounds.midY - rhs.bounds.midY) > 2 {
+                    return lhs.bounds.minY < rhs.bounds.minY
+                }
+                return lhs.bounds.minX < rhs.bounds.minX
+            }
+        let label = matches.compactMap(\.label)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+        guard !label.isEmpty else { return element }
+
+        var attributes = element.attributes
+        attributes["labelSource"] = "ocr"
+        return DetectedElement(
+            id: element.id,
+            type: element.type,
+            label: label,
+            value: element.value,
+            bounds: element.bounds,
+            isEnabled: element.isEnabled,
+            isSelected: element.isSelected,
+            attributes: attributes)
+    }
+
+    private static func needsSemanticLabelRecovery(_ element: DetectedElement) -> Bool {
+        guard element.type == .button, element.isActionable else { return false }
+        let candidates = [
+            element.attributes["title"],
+            element.attributes["description"],
+            element.attributes["help"],
+            element.value,
+        ]
+        guard candidates.compactMap(self.nonGenericButtonText).isEmpty else { return false }
+        guard let label = self.nonGenericButtonText(element.label) else { return true }
+        guard let identifier = element.attributes["identifier"] else { return false }
+        return self.normalizedIdentifierLabel(identifier) == self.normalizedIdentifierLabel(label)
+    }
+
+    private static func nonGenericButtonText(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else { return nil }
+        switch normalized.lowercased() {
+        case "button", "push button", "axbutton":
+            return nil
+        default:
+            return normalized
+        }
+    }
+
+    private static func isOCRText(_ element: DetectedElement) -> Bool {
+        element.attributes["description"] == "ocr" && self.nonGenericButtonText(element.label) != nil
+    }
+
+    private static func normalizedIdentifierLabel(_ value: String) -> String {
+        let withoutButtonSuffix = value.lowercased().hasSuffix("-button")
+            ? String(value.dropLast("-button".count))
+            : value
+        return withoutButtonSuffix.lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+    }
+
+    private static func isSpatiallyContained(_ textBounds: CGRect, in controlBounds: CGRect) -> Bool {
+        guard !textBounds.isEmpty, !controlBounds.isEmpty else { return false }
+        if controlBounds.insetBy(dx: -2, dy: -2).contains(
+            CGPoint(x: textBounds.midX, y: textBounds.midY))
+        {
+            return true
+        }
+        let intersection = textBounds.intersection(controlBounds)
+        guard !intersection.isNull else { return false }
+        return intersection.width * intersection.height >= textBounds.width * textBounds.height * 0.5
     }
 
     public static func detectionResult(

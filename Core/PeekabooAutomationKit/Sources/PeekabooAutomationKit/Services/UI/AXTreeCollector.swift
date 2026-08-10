@@ -130,6 +130,10 @@ struct AXTreeCollector {
         let elementId = "elem_\(state.elements.count)"
         let baseType = ElementClassifier.elementType(for: descriptor.role)
         let elementType = self.adjustedElementType(element: element, descriptor: descriptor, baseType: baseType)
+        let identifier = ElementTypeAdjuster.resolveIdentifier(
+            descriptor.identifier,
+            baseType: baseType,
+            resolvedType: elementType)
         let isActionable = self.isElementActionable(element, role: descriptor.role)
         let keyboardShortcut = isActionable ? self.extractKeyboardShortcut(element, role: descriptor.role) : nil
         let label = self.effectiveLabel(for: element, descriptor: descriptor)
@@ -141,7 +145,7 @@ struct AXTreeCollector {
                 description: descriptor.description,
                 help: descriptor.help,
                 roleDescription: descriptor.roleDescription,
-                identifier: descriptor.identifier,
+                identifier: identifier,
                 isActionable: isActionable,
                 keyboardShortcut: keyboardShortcut,
                 placeholder: descriptor.placeholder))

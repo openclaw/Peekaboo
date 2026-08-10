@@ -535,6 +535,52 @@ struct ElementTypeAdjusterTests {
     }
 
     @Test
+    func `Placeholder-bearing static text proxy recovers hidden text field identity`() {
+        let input = ElementTypeAdjustmentInput(
+            role: "AXStaticText",
+            roleDescription: "text",
+            title: nil,
+            label: nil,
+            placeholder: "name@example.com",
+            isEditable: false)
+
+        let resolved = ElementTypeAdjuster.resolve(
+            baseType: .other,
+            input: input,
+            hasTextFieldDescendant: false)
+
+        #expect(resolved == .textField)
+        #expect(ElementTypeAdjuster.resolveIdentifier(
+            "group-hidden-email-field",
+            baseType: .other,
+            resolvedType: resolved) == "hidden-email-field")
+    }
+
+    @Test
+    func `Ordinary static text and native field identifiers are unchanged`() {
+        let staticText = ElementTypeAdjustmentInput(
+            role: "AXStaticText",
+            roleDescription: "text",
+            title: "Email",
+            label: nil,
+            placeholder: nil,
+            isEditable: false)
+
+        #expect(ElementTypeAdjuster.resolve(
+            baseType: .other,
+            input: staticText,
+            hasTextFieldDescendant: false) == .other)
+        #expect(ElementTypeAdjuster.resolveIdentifier(
+            "group-heading",
+            baseType: .other,
+            resolvedType: .other) == "group-heading")
+        #expect(ElementTypeAdjuster.resolveIdentifier(
+            "group-native-field",
+            baseType: .textField,
+            resolvedType: .textField) == "group-native-field")
+    }
+
+    @Test
     func `Generic groups scan descendants only when hints are missing`() {
         let input = ElementTypeAdjustmentInput(
             role: "AXGroup",
