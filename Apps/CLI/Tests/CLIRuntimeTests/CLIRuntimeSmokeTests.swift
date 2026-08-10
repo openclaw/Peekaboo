@@ -380,7 +380,8 @@ struct CLIRuntimeSmokeTests {
         """.write(
             to: tempDir.appendingPathComponent("config.json"),
             atomically: true,
-            encoding: .utf8)
+            encoding: .utf8
+        )
 
         let result = try await TestChildProcess.runPeekaboo([
             "agent",
@@ -459,7 +460,8 @@ struct CLIRuntimeSmokeTests {
         let startTime = Date()
         let result = try await TestChildProcess.runPeekaboo(
             ["visualizer", "--json", "--no-remote"],
-            environment: ["PEEKABOO_VISUAL_FEEDBACK": "false"])
+            environment: ["PEEKABOO_VISUAL_FEEDBACK": "false"]
+        )
         let duration = Date().timeIntervalSince(startTime)
 
         let payload = !result.standardOutput.isEmpty ? result.standardOutput : result.standardError
