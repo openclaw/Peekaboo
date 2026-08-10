@@ -9,6 +9,7 @@ enum ObservationTargetArgument: Equatable, CustomStringConvertible {
     case frontmost
     case application(identifier: String, window: WindowSelection)
     case pid(Int32, window: WindowSelection)
+    case windowID(CGWindowID)
     case menubar
 
     var observationTarget: DesktopObservationTargetRequest {
@@ -21,6 +22,8 @@ enum ObservationTargetArgument: Equatable, CustomStringConvertible {
             .app(identifier: identifier, window: window)
         case let .pid(pid, window):
             .pid(pid, window: window)
+        case let .windowID(windowID):
+            .windowID(windowID)
         case .menubar:
             .menubar
         }
@@ -32,7 +35,7 @@ enum ObservationTargetArgument: Equatable, CustomStringConvertible {
             identifier
         case let .pid(pid, _):
             "PID:\(pid)"
-        case .screen, .frontmost, .menubar:
+        case .screen, .frontmost, .windowID, .menubar:
             nil
         }
     }
@@ -47,6 +50,8 @@ enum ObservationTargetArgument: Equatable, CustomStringConvertible {
             "\(identifier)\(Self.windowDescription(window))"
         case let .pid(pid, window):
             "PID:\(pid)\(Self.windowDescription(window))"
+        case let .windowID(windowID):
+            "window-id:\(windowID)"
         case .menubar:
             "menubar"
         }
@@ -55,6 +60,10 @@ enum ObservationTargetArgument: Equatable, CustomStringConvertible {
     static func parse(_ rawTarget: String?, windowIDValue: Value?) throws -> ObservationTargetArgument {
         let parsed = try self.parse(rawTarget)
         guard let exactWindowID = try self.exactWindowID(from: windowIDValue) else { return parsed }
+        let hasExplicitTarget = rawTarget?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        if !hasExplicitTarget {
+            return .windowID(exactWindowID)
+        }
 
         switch parsed {
         case let .application(identifier, .automatic):
@@ -64,9 +73,9 @@ enum ObservationTargetArgument: Equatable, CustomStringConvertible {
         case .application, .pid:
             throw PeekabooError.invalidInput(
                 "window_id cannot be combined with an app_target window title or index")
-        case .screen, .frontmost, .menubar:
+        case .screen, .frontmost, .windowID, .menubar:
             throw PeekabooError.invalidInput(
-                "window_id requires app_target to identify an application or PID so ownership can be verified")
+                "window_id cannot be combined with this app_target")
         }
     }
 

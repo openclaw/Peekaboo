@@ -16,7 +16,10 @@ extension InMemorySnapshotManager {
             snapshotData: UIAutomationSnapshot(creatorProcessId: getpid()))
 
         entry.lastAccessedAt = Date()
+        entry.detectionResult = nil
         entry.snapshotData.screenshotPath = request.screenshotPath
+        entry.snapshotData.annotatedPath = nil
+        entry.snapshotData.uiMap = [:]
         entry.snapshotData.applicationName = request.applicationName
         entry.snapshotData.applicationBundleId = request.applicationBundleId
         entry.snapshotData.applicationProcessId = request.applicationProcessId
@@ -24,6 +27,7 @@ extension InMemorySnapshotManager {
         entry.snapshotData.windowBounds = request.windowBounds
         entry.snapshotData.windowID = request.windowID.flatMap { CGWindowID(exactly: $0) }
         entry.snapshotData.windowMutationIdentity = request.windowMutationIdentity
+        entry.snapshotData.captureCoordinateContext = request.captureCoordinateContext
         entry.snapshotData.lastUpdateTime = Date()
         self.entries[request.snapshotId] = entry
         self.pruneIfNeeded()

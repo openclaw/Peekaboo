@@ -479,6 +479,95 @@ extension MCPToolExecutionTests {
     }
 
     @Test
+    func `Click tool maps ROI pixels while validating the full exact window receipt`() async throws {
+        await UISnapshotManager.shared.removeAllSnapshots()
+        let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
+        let (snapshot, window) = await Self.makeROICoordinateSnapshot()
+        let context = await MCPToolTestHelpers.makeContext(
+            automation: automation,
+            windows: PointerPolicyWindowService(window: window))
+        let snapshotID = await snapshot.id
+
+        let response = try await ClickTool(context: context).execute(arguments: ToolArguments(raw: [
+            "coords": "200,100",
+            "coordinate_space": "image_pixels",
+            "coordinate_reference": snapshotID,
+        ]))
+
+        #expect(response.isError == false)
+        let call = try #require(await MainActor.run { automation.targetedClickCalls.first })
+        #expect(call.targetWindowID == window.windowID)
+        guard case let .coordinates(point) = call.target else {
+            Issue.record("Expected ROI-mapped coordinate target")
+            return
+        }
+        #expect(point == CGPoint(x: 400, y: 200))
+    }
+
+    @Test
+    func `ROI pixel clicks refuse moved resized and reused exact windows`() async throws {
+        await UISnapshotManager.shared.removeAllSnapshots()
+        let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
+
+        let (movedSnapshot, movedCapture) = await Self.makeROICoordinateSnapshot()
+        let movedWindow = ServiceWindowInfo(
+            windowID: movedCapture.windowID,
+            title: movedCapture.title,
+            bounds: movedCapture.bounds.offsetBy(dx: 10, dy: 0),
+            mutationIdentity: movedCapture.mutationIdentity)
+        let movedContext = await MCPToolTestHelpers.makeContext(
+            automation: automation,
+            windows: PointerPolicyWindowService(window: movedWindow))
+        let moved = try await ClickTool(context: movedContext).execute(arguments: ToolArguments(raw: [
+            "coords": "200,100",
+            "coordinate_space": "image_pixels",
+            "coordinate_reference": movedSnapshot.id,
+        ]))
+
+        let (resizedSnapshot, resizedCapture) = await Self.makeROICoordinateSnapshot()
+        let resizedWindow = ServiceWindowInfo(
+            windowID: resizedCapture.windowID,
+            title: resizedCapture.title,
+            bounds: CGRect(
+                origin: resizedCapture.bounds.origin,
+                size: CGSize(width: resizedCapture.bounds.width - 1, height: resizedCapture.bounds.height)),
+            mutationIdentity: resizedCapture.mutationIdentity)
+        let resizedContext = await MCPToolTestHelpers.makeContext(
+            automation: automation,
+            windows: PointerPolicyWindowService(window: resizedWindow))
+        let resized = try await ClickTool(context: resizedContext).execute(arguments: ToolArguments(raw: [
+            "coords": "200,100",
+            "coordinate_space": "image_pixels",
+            "coordinate_reference": resizedSnapshot.id,
+        ]))
+
+        let (reusedSnapshot, reusedCapture) = await Self.makeROICoordinateSnapshot()
+        let reusedIdentity = try #require(reusedCapture.mutationIdentity)
+        let reusedWindow = ServiceWindowInfo(
+            windowID: reusedCapture.windowID,
+            title: reusedCapture.title,
+            bounds: reusedCapture.bounds,
+            mutationIdentity: WindowMutationIdentity(
+                windowID: reusedIdentity.windowID,
+                ownerProcessIdentifier: reusedIdentity.ownerProcessIdentifier,
+                ownerProcessStartIdentity: reusedIdentity.ownerProcessStartIdentity + 1,
+                capturedBounds: reusedIdentity.capturedBounds))
+        let reusedContext = await MCPToolTestHelpers.makeContext(
+            automation: automation,
+            windows: PointerPolicyWindowService(window: reusedWindow))
+        let reused = try await ClickTool(context: reusedContext).execute(arguments: ToolArguments(raw: [
+            "coords": "200,100",
+            "coordinate_space": "image_pixels",
+            "coordinate_reference": reusedSnapshot.id,
+        ]))
+
+        #expect(moved.isError)
+        #expect(resized.isError)
+        #expect(reused.isError)
+        #expect(await MainActor.run { automation.targetedClickCalls.isEmpty })
+    }
+
+    @Test
     func `Click tool maps referenced normalized coordinates`() async throws {
         await UISnapshotManager.shared.removeAllSnapshots()
         let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
@@ -787,6 +876,39 @@ extension MCPToolExecutionTests {
                     bundleIdentifier: "com.example.snapshot",
                     name: "SnapshotApp"),
                 windowInfo: window))
+        return (snapshot, window)
+    }
+
+    private static func makeROICoordinateSnapshot() async -> (UISnapshot, ServiceWindowInfo) {
+        let sourceBounds = CGRect(x: 100, y: 50, width: 1000, height: 500)
+        let identity = WindowMutationIdentity(
+            windowID: 42,
+            ownerProcessIdentifier: 111,
+            ownerProcessStartIdentity: 7,
+            capturedBounds: sourceBounds)
+        let window = ServiceWindowInfo(
+            windowID: 42,
+            title: "ROI Coordinate Window",
+            bounds: sourceBounds,
+            mutationIdentity: identity)
+        let viewport = CaptureViewport(
+            sourceLogicalBounds: sourceBounds,
+            requestedWindowRelativeBounds: CGRect(x: 200, y: 100, width: 200, height: 100),
+            deliveredWindowRelativeBounds: CGRect(x: 200, y: 100, width: 200, height: 100),
+            logicalBounds: CGRect(x: 300, y: 150, width: 200, height: 100),
+            sourceImageSize: CGSize(width: 2000, height: 1000))
+        let snapshot = await UISnapshotManager.shared.createSnapshot()
+        await snapshot.setScreenshot(
+            path: "/tmp/roi-coordinate-snapshot.png",
+            metadata: CaptureMetadata(
+                size: CGSize(width: 400, height: 200),
+                mode: .window,
+                applicationInfo: ServiceApplicationInfo(
+                    processIdentifier: 111,
+                    bundleIdentifier: "com.example.snapshot",
+                    name: "SnapshotApp"),
+                windowInfo: window,
+                viewport: viewport))
         return (snapshot, window)
     }
 

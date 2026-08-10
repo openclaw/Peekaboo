@@ -109,6 +109,37 @@ struct SeeToolImageOwnershipTests {
         #expect(try Data(contentsOf: victimURL) == sentinel)
     }
 
+    @Test
+    func `ROI response exposes local elements and snapshot bound coordinate metadata`() async throws {
+        let observation = await MainActor.run { ROIFileObservationService() }
+        let context = await self.makeContext(desktopObservation: observation)
+        let response = try await SeeTool(context: context).execute(arguments: ToolArguments(raw: [
+            "window_id": 42,
+            "roi": "10,20,30,20",
+        ]))
+
+        #expect(response.isError == false)
+        #expect(try Self.summary(response).contains("at (5, 5) size 10×5"))
+        let request = try #require(await MainActor.run { observation.lastRequest })
+        #expect(request.target == .windowID(42))
+        #expect(request.capture.roi?.bounds == CGRect(x: 10, y: 20, width: 30, height: 20))
+
+        guard case let .object(meta) = response.meta,
+              case let .string(snapshotID)? = meta["snapshot_id"],
+              case let .object(context)? = meta["coordinate_context"],
+              case let .object(viewport)? = context["viewport"],
+              case let .object(logicalBounds)? = viewport["logical_bounds"],
+              case let .double(logicalX)? = logicalBounds["x"],
+              case let .double(logicalWidth)? = logicalBounds["width"]
+        else {
+            Issue.record("Expected ROI coordinate metadata in See response")
+            return
+        }
+        #expect(logicalX == 210)
+        #expect(logicalWidth == 30)
+        #expect(!snapshotID.isEmpty)
+    }
+
     private func makeContext(
         desktopObservation: any DesktopObservationServiceProtocol) async -> MCPToolContext
     {
@@ -240,5 +271,92 @@ private final class AnnotatedFileOnlyObservationService: DesktopObservationServi
             files: DesktopObservationFiles(
                 rawScreenshotPath: path,
                 annotatedScreenshotPath: annotatedPath))
+    }
+}
+
+@MainActor
+private final class ROIFileObservationService: DesktopObservationServiceProtocol {
+    private(set) var lastRequest: DesktopObservationRequest?
+
+    func observe(_ request: DesktopObservationRequest) async throws -> DesktopObservationResult {
+        self.lastRequest = request
+        let path = try #require(request.output.path)
+        let pixels = Data("roi-capture".utf8)
+        try pixels.write(to: URL(fileURLWithPath: path), options: .atomic)
+        let sourceBounds = CGRect(x: 200, y: 300, width: 100, height: 80)
+        let requested = try #require(request.capture.roi?.bounds)
+        let identity = WindowMutationIdentity(
+            windowID: 42,
+            ownerProcessIdentifier: 123,
+            ownerProcessStartIdentity: 456,
+            capturedBounds: sourceBounds)
+        let viewport = CaptureViewport(
+            sourceLogicalBounds: sourceBounds,
+            requestedWindowRelativeBounds: requested,
+            deliveredWindowRelativeBounds: requested,
+            logicalBounds: CGRect(
+                x: sourceBounds.minX + requested.minX,
+                y: sourceBounds.minY + requested.minY,
+                width: requested.width,
+                height: requested.height),
+            sourceImageSize: sourceBounds.size)
+        let metadata = CaptureMetadata(
+            size: requested.size,
+            mode: .window,
+            applicationInfo: ServiceApplicationInfo(
+                processIdentifier: 123,
+                processStartIdentity: 456,
+                bundleIdentifier: "test.roi",
+                name: "ROI Fixture"),
+            windowInfo: ServiceWindowInfo(
+                windowID: 42,
+                title: "ROI Window",
+                bounds: sourceBounds,
+                mutationIdentity: identity),
+            viewport: viewport)
+        let snapshotID = request.output.snapshotID ?? "snapshot"
+        return DesktopObservationResult(
+            target: ResolvedObservationTarget(
+                kind: .windowID(42),
+                app: ApplicationIdentity(
+                    processIdentifier: 123,
+                    processStartIdentity: 456,
+                    bundleIdentifier: "test.roi",
+                    name: "ROI Fixture"),
+                window: WindowIdentity(windowID: 42, title: "ROI Window", bounds: sourceBounds, index: 0),
+                bounds: sourceBounds,
+                detectionContext: WindowContext(
+                    applicationName: "ROI Fixture",
+                    applicationBundleId: "test.roi",
+                    applicationProcessId: 123,
+                    windowTitle: "ROI Window",
+                    windowID: 42,
+                    windowBounds: sourceBounds,
+                    windowMutationIdentity: identity)),
+            capture: CaptureResult(imageData: pixels, savedPath: path, metadata: metadata),
+            elements: ElementDetectionResult(
+                snapshotId: snapshotID,
+                screenshotPath: path,
+                elements: DetectedElements(buttons: [
+                    DetectedElement(
+                        id: "B1",
+                        type: .button,
+                        label: "Inside",
+                        bounds: CGRect(x: 215, y: 325, width: 10, height: 5)),
+                ]),
+                metadata: DetectionMetadata(
+                    detectionTime: 0,
+                    elementCount: 1,
+                    method: "test",
+                    windowContext: WindowContext(
+                        applicationProcessId: 123,
+                        windowID: 42,
+                        windowBounds: sourceBounds,
+                        windowMutationIdentity: identity),
+                    truncationInfo: nil,
+                    captureCoordinateContext: CaptureCoordinateContext(
+                        metadata: metadata,
+                        referenceID: snapshotID))),
+            files: DesktopObservationFiles(rawScreenshotPath: path))
     }
 }

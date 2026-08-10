@@ -214,6 +214,20 @@ public final class PeekabooBridgeServer {
                 details: "\(error)",
                 operationMayHaveCompleted: error.operationMayHaveCompleted)
         }
+        if let error = error as? CaptureROIError {
+            let code: PeekabooBridgeErrorCode = switch error {
+            case .invalidFormat, .invalidBounds, .exactWindowRequired, .missingExactWindowReceipt,
+                 .outOfBounds, .outputTooLarge:
+                .invalidRequest
+            case .invalidSourceImage, .unsupportedScale, .hostDidNotApplyROI:
+                .internalError
+            }
+            return .init(
+                code: code,
+                message: error.localizedDescription,
+                details: "\(error)",
+                context: "capture_roi:\(error.code)")
+        }
 
         if let error = error as? DockError {
             let kind: PeekabooBridgeErrorKind?

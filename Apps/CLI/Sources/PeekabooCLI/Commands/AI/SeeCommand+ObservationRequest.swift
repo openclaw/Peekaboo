@@ -87,13 +87,14 @@ extension SeeCommand {
     func makeObservationRequest(
         target: DesktopObservationTargetRequest,
         snapshotID: String? = nil
-    ) -> DesktopObservationRequest {
-        DesktopObservationRequest(
+    ) throws -> DesktopObservationRequest {
+        try DesktopObservationRequest(
             target: target,
             capture: DesktopCaptureOptions(
                 engine: self.observationCaptureEnginePreference,
                 scale: self.retina ? .native : .logical1x,
-                visualizerMode: .none
+                visualizerMode: .none,
+                roi: self.captureROI()
             ),
             detection: self.observationDetectionOptions(for: target),
             output: DesktopObservationOutputOptions(

@@ -23,6 +23,7 @@ struct CaptureAndDetectionResult {
     let elements: DetectedElements
     let metadata: DetectionMetadata
     let observation: SeeObservationDiagnostics?
+    let coordinateContext: CaptureCoordinateContext?
 }
 
 struct SnapshotPaths {
@@ -37,6 +38,7 @@ struct SeeCommandRenderContext {
     let annotatedPath: String?
     let metadata: DetectionMetadata
     let elements: DetectedElements
+    let coordinateContext: CaptureCoordinateContext?
     let analysis: SeeAnalysisData?
     let executionTime: TimeInterval
     let observation: SeeObservationDiagnostics?
@@ -185,6 +187,7 @@ struct SeeResult: Codable {
     let truncation: SeeTruncationSummary?
     let menu_bar: MenuBarSummary?
     let observation: SeeObservationDiagnostics?
+    let coordinate_context: CaptureCoordinateContext?
 
     init(
         snapshot_id: String,
@@ -202,7 +205,8 @@ struct SeeResult: Codable {
         ui_elements: [UIElementSummary],
         menu_bar: MenuBarSummary?,
         truncation: SeeTruncationSummary? = nil,
-        observation: SeeObservationDiagnostics? = nil
+        observation: SeeObservationDiagnostics? = nil,
+        coordinate_context: CaptureCoordinateContext? = nil
     ) {
         self.snapshot_id = snapshot_id
         self.screenshot_raw = screenshot_raw
@@ -220,6 +224,7 @@ struct SeeResult: Codable {
         self.truncation = truncation
         self.menu_bar = menu_bar
         self.observation = observation
+        self.coordinate_context = coordinate_context
     }
 }
 

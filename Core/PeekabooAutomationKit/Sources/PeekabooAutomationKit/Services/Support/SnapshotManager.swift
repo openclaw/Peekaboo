@@ -86,6 +86,8 @@ public final class SnapshotManager: SnapshotManagerProtocol {
             snapshotData.screenshotPath = result.screenshotPath
         }
         snapshotData.lastUpdateTime = Date()
+        snapshotData.captureCoordinateContext = result.metadata.captureCoordinateContext ?? snapshotData
+            .captureCoordinateContext
 
         // Convert detected elements to UI map
         var uiMap: [String: UIElement] = [:]
@@ -154,7 +156,10 @@ public final class SnapshotManager: SnapshotManagerProtocol {
             elementCount: snapshotData.uiMap.count,
             method: "snapshot-cache",
             warnings: self.buildWarnings(from: snapshotData),
-            windowContext: self.windowContext(from: snapshotData))
+            windowContext: self.windowContext(from: snapshotData),
+            isDialog: false,
+            truncationInfo: nil,
+            captureCoordinateContext: snapshotData.captureCoordinateContext)
 
         return ElementDetectionResult(
             snapshotId: snapshotId,

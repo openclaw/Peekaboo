@@ -87,6 +87,7 @@ public final class DesktopObservationService: DesktopObservationServiceProtocol 
     private func observeWithinOverallDeadline(
         _ request: DesktopObservationRequest) async throws -> DesktopObservationResult
     {
+        try DesktopObservationROIProcessor.validateRequest(request.capture.roi, target: request.target)
         let tracer = DesktopObservationTraceRecorder()
         let observeStart = ContinuousClock.now
         let serializesDetection = request.detection.mode != .none && request.detection.allowWebFocusFallback
@@ -147,18 +148,24 @@ public final class DesktopObservationService: DesktopObservationServiceProtocol 
             capture: capture,
             target: target,
             request: request)
-        try Task.checkCancellation()
-        let files = try await self.writeOutputIfNeeded(
+        let roiResult = try DesktopObservationROIProcessor.apply(
+            request.capture.roi,
+            target: target,
             capture: capture,
             elements: elements,
+            ocr: ocr)
+        try Task.checkCancellation()
+        let files = try await self.writeOutputIfNeeded(
+            capture: roiResult.capture,
+            elements: roiResult.elements,
             options: request.output,
             tracer: tracer)
         try Task.checkCancellation()
         tracer.record("desktop.observe", start: observeStart)
 
-        var warnings = capture.warning.map { [$0] } ?? []
-        warnings.append(contentsOf: ocr?.warnings ?? [])
-        warnings.append(contentsOf: elements?.metadata.warnings ?? [])
+        var warnings = roiResult.capture.warning.map { [$0] } ?? []
+        warnings.append(contentsOf: roiResult.ocr?.warnings ?? [])
+        warnings.append(contentsOf: roiResult.elements?.metadata.warnings ?? [])
         warnings = warnings.reduce(into: []) { unique, warning in
             if !unique.contains(warning) {
                 unique.append(warning)
@@ -167,9 +174,9 @@ public final class DesktopObservationService: DesktopObservationServiceProtocol 
 
         return DesktopObservationResult(
             target: target,
-            capture: capture,
-            elements: elements,
-            ocr: ocr,
+            capture: roiResult.capture,
+            elements: roiResult.elements,
+            ocr: roiResult.ocr,
             files: files,
             timings: tracer.timings(),
             diagnostics: DesktopObservationDiagnostics(

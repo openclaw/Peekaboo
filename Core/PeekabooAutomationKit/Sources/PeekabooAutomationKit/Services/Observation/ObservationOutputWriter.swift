@@ -101,7 +101,10 @@ public final class ObservationOutputWriter {
             windowBounds: windowContext?.windowBounds ?? capture.metadata.windowInfo?.bounds,
             windowID: windowContext?.windowID ?? capture.metadata.windowInfo?.windowID,
             windowMutationIdentity: windowContext?.windowMutationIdentity ?? capture.metadata.windowInfo?
-                .mutationIdentity))
+                .mutationIdentity,
+            captureCoordinateContext: CaptureCoordinateContext(
+                metadata: capture.metadata,
+                referenceID: snapshotID)))
 
         if let elements {
             try await snapshotManager.storeDetectionResult(

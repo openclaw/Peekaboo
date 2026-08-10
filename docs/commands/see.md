@@ -17,6 +17,9 @@ peekaboo see --json --annotate --path /tmp/see.png
 
 # Target a specific app or window title
 peekaboo see --app "Google Chrome" --window-title "Login" --json --path /tmp/chrome-login.png
+
+# Crop one exact window without activating it
+peekaboo see --window-id 12345 --roi 100,80,500,300 --json --path /tmp/window-roi.png
 ```
 
 ## When to use
@@ -31,6 +34,7 @@ peekaboo see --app "Google Chrome" --window-title "Login" --json --path /tmp/chr
 | --- | --- |
 | `--app`, `--window-title`, `--pid` | Limit capture to a known app/window/process. Use either `--app` or `--pid`; title requires one of them. |
 | `--window-id <id>` | Observe one exact WindowServer window. Pair it with `--app` or `--pid` to require that owner. Use at most one of `--window-id`, `--window-title`, or `--window-index`. |
+| `--roi x,y,width,height` | Crop an exact `--window-id` in window-local logical points. Produces a fresh snapshot with element detection; it cannot be combined with `--no-elements`, `--no-screenshot`, or `--path -`. |
 | `--mode screen|window|frontmost|multi|area` | Override the target picker. `multi` captures every screen; `area` uses `--region`. |
 | `--region x,y,width,height` | Capture a rectangular region (`area` mode is inferred). |
 | `--format png|jpg` / `--retina` | Select the image encoding and native display scale. |
@@ -54,6 +58,22 @@ For agent and automation runs, pass `--path` to a known temporary file when usin
 
 When `--json` is used without `--path`, Peekaboo retains the raw image only in managed snapshot storage and returns empty `screenshot_raw` and `screenshot_annotated` fields. Pass `--path` when the caller needs a directly accessible image file.
 
+## Exact-window ROI capture
+
+`--roi` is a stateless output crop, not persistent window zoom. Peekaboo first resolves and generation-pins one exact WindowServer window, captures and inspects that full window, then emits only the requested rectangle. The request fails if the window moves, resizes, changes owner, is recycled, or the rectangle extends outside the captured window. Pixel output is limited to 8192 pixels per edge and 64 megapixels.
+
+ROI coordinates are `x,y,width,height` in top-left-origin, window-local logical points. `--retina` changes the delivered pixel density, not that coordinate system. Pixel alignment can expand a fractional logical rectangle by less than one source pixel; JSON reports both the requested and delivered rectangles.
+
+ROI JSON adds `coordinate_context.viewport`:
+
+- `source_logical_bounds` is the full exact-window frame used for freshness and later dispatch validation.
+- `requested_window_relative_bounds` is the caller's window-local rectangle.
+- `delivered_window_relative_bounds` is the pixel-aligned rectangle actually emitted.
+- `logical_bounds` maps the delivered raster into global logical coordinates.
+- `source_image_size` is the uncropped source raster size.
+
+Returned `ui_elements[].bounds` are clipped and translated into ROI-local logical coordinates for presentation. The snapshot retains their global action coordinates, so copy element IDs into `click`, `action`, `type`, and other element operations rather than replaying the displayed bounds. For coordinate work, use `coordinate_context.logical_bounds` to convert ROI pixels to global points and pass `--global`, or prefer the MCP `image_pixels`/`normalized` mapping described in [MCP](../MCP.md#exact-window-roi).
+
 ## Optional web focus fallback
 
 Modern browsers sometimes keep keyboard focus in the omnibox, which means embedded forms never expose their `AXTextField` nodes to accessibility clients. Peekaboo does not alter focus during ordinary observation. If a browser-native AX inspection is required and DOM-based browser automation is unavailable, pass `--web-focus` (or MCP `web_focus: true`) to enable this retry:
@@ -71,6 +91,7 @@ When `--json` is supplied, the CLI prints:
 - `snapshot_id` – reference for subsequent `click --snapshot …` and `type --snapshot …`.
 - `ui_map` – path to the persisted snapshot file (`~/.peekaboo/snapshots/<id>/snapshot.json`).
 - `ui_elements` – flattened list of actionable nodes (buttons, text fields, links, etc.).
+- `coordinate_context` – capture-owned raster mapping. ROI results include the full-window and cropped viewport rectangles described above.
 - `interactable_count`, `element_count`, `capture_mode`, and performance metadata for debugging.
 - Each `ui_elements[n]` entry now mirrors the raw AX metadata we capture—`title`, `label`, **`description`**, `role_description`, `help`, `identifier`, and the keyboard shortcut if one exists. That makes Chrome toolbar icons (which frequently hide their name in `AXDescription`) searchable without relying on coordinates.
 - GLM vision model analysis responses are converted from the model's 0-1000 bounding box coordinate space into screenshot pixel coordinates before they are printed, so follow-up `click --at` calls can use returned box centers directly.

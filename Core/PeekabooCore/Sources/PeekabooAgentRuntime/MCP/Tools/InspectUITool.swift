@@ -190,6 +190,9 @@ public struct InspectUITool: MCPTool {
                     "PID:PROCESS_ID:WindowTitle targets. Use `see` for screen or menu bar targets.")
         case .frontmost, .application, .pid:
             return target
+        case .windowID:
+            throw PeekabooError.invalidInput(
+                "inspect_ui window_id requires app_target to identify an application or PID")
         }
     }
 
@@ -217,6 +220,9 @@ public struct InspectUITool: MCPTool {
                 windowID: selection.id,
                 shouldFocusWebContent: webFocus,
                 traversalBudget: traversalBudget)
+        case .windowID:
+            throw PeekabooError.invalidInput(
+                "inspect_ui window_id requires app_target to identify an application or PID")
         case .screen, .menubar:
             throw PeekabooError.invalidInput("inspect_ui cannot inspect screen or menu bar targets. Use `see` instead.")
         }

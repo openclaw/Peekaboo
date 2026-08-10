@@ -194,6 +194,9 @@ public struct CaptureMetadata: Sendable, Codable {
     /// Diagnostic details for scale planning and engine selection.
     public let diagnostics: CaptureDiagnostics?
 
+    /// Optional stateless viewport applied after an exact-window capture.
+    public let viewport: CaptureViewport?
+
     public init(
         size: CGSize,
         mode: CaptureMode,
@@ -202,7 +205,8 @@ public struct CaptureMetadata: Sendable, Codable {
         windowInfo: ServiceWindowInfo? = nil,
         displayInfo: DisplayInfo? = nil,
         timestamp: Date = Date(),
-        diagnostics: CaptureDiagnostics? = nil)
+        diagnostics: CaptureDiagnostics? = nil,
+        viewport: CaptureViewport? = nil)
     {
         self.size = size
         self.mode = mode
@@ -212,6 +216,42 @@ public struct CaptureMetadata: Sendable, Codable {
         self.displayInfo = displayInfo
         self.timestamp = timestamp
         self.diagnostics = diagnostics
+        self.viewport = viewport
+    }
+}
+
+public struct CaptureViewport: Sendable, Codable, Equatable {
+    /// Full exact-window bounds in global logical points.
+    public let sourceLogicalBounds: CGRect
+    /// Requested ROI in window-local logical points.
+    public let requestedWindowRelativeBounds: CGRect
+    /// Pixel-aligned delivered ROI in window-local logical points.
+    public let deliveredWindowRelativeBounds: CGRect
+    /// Pixel-aligned delivered ROI in global logical points.
+    public let logicalBounds: CGRect
+    /// Full source raster size before cropping.
+    public let sourceImageSize: CGSize
+
+    public init(
+        sourceLogicalBounds: CGRect,
+        requestedWindowRelativeBounds: CGRect,
+        deliveredWindowRelativeBounds: CGRect,
+        logicalBounds: CGRect,
+        sourceImageSize: CGSize)
+    {
+        self.sourceLogicalBounds = sourceLogicalBounds
+        self.requestedWindowRelativeBounds = requestedWindowRelativeBounds
+        self.deliveredWindowRelativeBounds = deliveredWindowRelativeBounds
+        self.logicalBounds = logicalBounds
+        self.sourceImageSize = sourceImageSize
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case sourceLogicalBounds = "source_logical_bounds"
+        case requestedWindowRelativeBounds = "requested_window_relative_bounds"
+        case deliveredWindowRelativeBounds = "delivered_window_relative_bounds"
+        case logicalBounds = "logical_bounds"
+        case sourceImageSize = "source_image_size"
     }
 }
 
@@ -253,7 +293,8 @@ extension CaptureMetadata {
             windowInfo: self.windowInfo,
             displayInfo: self.displayInfo,
             timestamp: self.timestamp,
-            diagnostics: diagnostics)
+            diagnostics: diagnostics,
+            viewport: self.viewport)
     }
 
     /// Return metadata updated for an image resized after capture.
@@ -261,7 +302,7 @@ extension CaptureMetadata {
     /// Capture engines populate `size` and `finalPixelSize` with their raster output. Callers that
     /// subsequently resize that raster must keep both values aligned with the delivered image.
     public func withDeliveredPixelSize(_ deliveredPixelSize: CGSize) -> CaptureMetadata {
-        let logicalBounds = self.windowInfo?.bounds ?? self.displayInfo?.bounds
+        let logicalBounds = self.viewport?.logicalBounds ?? self.windowInfo?.bounds ?? self.displayInfo?.bounds
         let deliveredOutputScale: CGFloat? = if let logicalBounds, logicalBounds.width > 0 {
             deliveredPixelSize.width / logicalBounds.width
         } else if let diagnostics = self.diagnostics, diagnostics.finalPixelSize.width > 0 {
@@ -288,7 +329,31 @@ extension CaptureMetadata {
             windowInfo: self.windowInfo,
             displayInfo: self.displayInfo,
             timestamp: self.timestamp,
-            diagnostics: updatedDiagnostics)
+            diagnostics: updatedDiagnostics,
+            viewport: self.viewport)
+    }
+
+    public func withViewport(_ viewport: CaptureViewport, deliveredPixelSize: CGSize) -> CaptureMetadata {
+        let updatedDiagnostics = self.diagnostics.map { diagnostics in
+            CaptureDiagnostics(
+                requestedScale: diagnostics.requestedScale,
+                nativeScale: diagnostics.nativeScale,
+                outputScale: diagnostics.outputScale,
+                scaleSource: diagnostics.scaleSource,
+                finalPixelSize: deliveredPixelSize,
+                engine: diagnostics.engine,
+                fallbackReason: diagnostics.fallbackReason)
+        }
+        return CaptureMetadata(
+            size: deliveredPixelSize,
+            mode: self.mode,
+            videoTimestampMs: self.videoTimestampMs,
+            applicationInfo: self.applicationInfo,
+            windowInfo: self.windowInfo,
+            displayInfo: self.displayInfo,
+            timestamp: self.timestamp,
+            diagnostics: updatedDiagnostics,
+            viewport: viewport)
     }
 }
 
@@ -311,6 +376,7 @@ public struct CaptureCoordinateContext: Sendable, Codable, Equatable {
     public let outputScale: CGFloat?
     public let display: DisplayIdentity?
     public let window: WindowIdentity?
+    public let viewport: CaptureViewport?
 
     public enum LogicalSpace: String, Sendable, Codable, Equatable {
         case globalDisplayPoints = "global_display_points"
@@ -361,7 +427,8 @@ public struct CaptureCoordinateContext: Sendable, Codable, Equatable {
     }
 
     public init(metadata: CaptureMetadata, referenceID: String? = nil) {
-        let logicalBounds = metadata.windowInfo?.bounds ?? metadata.displayInfo?.bounds
+        let logicalBounds = metadata.viewport?.logicalBounds ?? metadata.windowInfo?.bounds ?? metadata.displayInfo?
+            .bounds
         self.version = Self.currentVersion
         self.referenceID = referenceID
         self.logicalSpace = .globalDisplayPoints
@@ -382,6 +449,7 @@ public struct CaptureCoordinateContext: Sendable, Codable, Equatable {
                 screenIndex: $0.screenIndex,
                 screenName: $0.screenName)
         }
+        self.viewport = metadata.viewport
     }
 
     private static func inferredOutputScale(deliveredImageSize: CGSize, logicalBounds: CGRect?) -> CGFloat? {
@@ -401,6 +469,7 @@ public struct CaptureCoordinateContext: Sendable, Codable, Equatable {
         case outputScale = "output_scale"
         case display
         case window
+        case viewport
     }
 }
 

@@ -64,6 +64,7 @@ struct MCPSpecificToolTests {
         #expect(props["window_id"] != nil)
         #expect(props["path"] != nil)
         #expect(props["web_focus"] != nil)
+        #expect(props["roi"] != nil)
 
         // Check annotate default value
         if let annotateSchema = props["annotate"],
@@ -74,6 +75,36 @@ struct MCPSpecificToolTests {
             #expect(annotateDefault == false)
         }
         #expect(Self.booleanDefault(for: "web_focus", in: props) == false)
+
+        let imageTool = makeTestTool(ImageTool.init)
+        guard case let .object(imageSchema) = imageTool.inputSchema,
+              case let .object(imageProperties)? = imageSchema["properties"]
+        else {
+            Issue.record("Expected image tool object schema")
+            return
+        }
+        #expect(imageProperties["roi"] == nil)
+    }
+
+    @Test
+    func `See ROI requires exact window and fresh snapshot`() throws {
+        #expect(throws: (any Error).self) {
+            _ = try SeeRequest(arguments: ToolArguments(raw: ["roi": "0,0,100,100"]))
+        }
+        #expect(throws: (any Error).self) {
+            _ = try SeeRequest(arguments: ToolArguments(raw: [
+                "roi": "0,0,100,100",
+                "window_id": 42,
+                "snapshot": "existing",
+            ]))
+        }
+        let request = try SeeRequest(arguments: ToolArguments(raw: [
+            "roi": "10,20,100,50",
+            "window_id": 42,
+        ]))
+        #expect(request.roi?.bounds == CGRect(x: 10, y: 20, width: 100, height: 50))
+        #expect(try ObservationTargetArgument.parse(nil, windowIDValue: .int(42)) == .windowID(42))
+        #expect(try ObservationTargetArgument.parse("", windowIDValue: .int(42)) == .windowID(42))
     }
 
     @Test

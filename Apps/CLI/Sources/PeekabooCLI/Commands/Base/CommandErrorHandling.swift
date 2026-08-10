@@ -70,6 +70,8 @@ extension ErrorHandlingCommand {
             self.mapCaptureErrorToCode(captureError)
         case let observationError as DesktopObservationError:
             self.mapObservationErrorToCode(observationError)
+        case let roiError as CaptureROIError:
+            errorCode(for: roiError)
         case let bridgeError as PeekabooBridgeErrorEnvelope:
             errorCode(for: bridgeError)
         case let posixError as POSIXError:
@@ -318,7 +320,23 @@ func errorCode(for focusError: FocusError) -> ErrorCode {
     }
 }
 
+func errorCode(for roiError: CaptureROIError) -> ErrorCode {
+    switch roiError {
+    case .invalidFormat, .invalidBounds, .exactWindowRequired, .outOfBounds, .outputTooLarge:
+        .INVALID_ARGUMENT
+    case .missingExactWindowReceipt:
+        .SNAPSHOT_STALE
+    case .invalidSourceImage, .unsupportedScale, .hostDidNotApplyROI:
+        .CAPTURE_FAILED
+    }
+}
+
 func errorCode(for bridgeError: PeekabooBridgeErrorEnvelope) -> ErrorCode {
+    if let context = bridgeError.context,
+       context.hasPrefix("capture_roi:"),
+       let roiError = CaptureROIError(code: String(context.dropFirst("capture_roi:".count))) {
+        return errorCode(for: roiError)
+    }
     if let kind = bridgeError.kind {
         return errorCode(for: kind)
     }

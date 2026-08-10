@@ -1,6 +1,7 @@
 import Foundation
 import MCP
 import PeekabooAutomationKit
+import PeekabooFoundation
 import TachikomaMCP
 
 struct SeeRequest {
@@ -11,14 +12,28 @@ struct SeeRequest {
     let annotate: Bool
     let webFocus: Bool
     let traversalBudget: AXTraversalBudget
+    let roi: CaptureRegionOfInterest?
 
-    init(arguments: ToolArguments) {
+    init(arguments: ToolArguments) throws {
         self.appTarget = arguments.getString("app_target")
         self.windowIDValue = arguments.getValue(for: "window_id")
         self.path = arguments.getString("path")
         self.snapshotId = arguments.getString("snapshot")
         self.annotate = arguments.getBool("annotate") ?? false
         self.webFocus = arguments.getBool("web_focus") ?? false
+        if let rawROI = arguments.getString("roi")?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !rawROI.isEmpty
+        {
+            guard self.windowIDValue != nil else {
+                throw PeekabooError.invalidInput("roi requires an exact window_id")
+            }
+            guard self.snapshotId?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false else {
+                throw PeekabooError.invalidInput("roi requires a fresh snapshot; omit snapshot")
+            }
+            self.roi = try CaptureRegionOfInterest.parse(rawROI)
+        } else {
+            self.roi = nil
+        }
         self.traversalBudget = AXTraversalBudget.resolved(
             maxDepth: Self.positiveInt("max_depth", in: arguments),
             maxElementCount: Self.positiveInt("max_elements", in: arguments),

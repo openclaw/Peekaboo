@@ -35,6 +35,15 @@ enum CaptureCoordinateContextMetadata {
                 "screen_name": window.screenName.map(Value.string) ?? .null,
             ])
         } ?? .null
+        payload["viewport"] = context.viewport.map { viewport in
+            .object([
+                "source_logical_bounds": self.rectValue(viewport.sourceLogicalBounds),
+                "requested_window_relative_bounds": self.rectValue(viewport.requestedWindowRelativeBounds),
+                "delivered_window_relative_bounds": self.rectValue(viewport.deliveredWindowRelativeBounds),
+                "logical_bounds": self.rectValue(viewport.logicalBounds),
+                "source_image_size": self.sizeValue(viewport.sourceImageSize),
+            ])
+        } ?? .null
 
         return .object(payload)
     }
@@ -46,7 +55,7 @@ enum CaptureCoordinateContextMetadata {
         }
     }
 
-    private static func rectValue(_ rect: CGRect) -> Value {
+    static func rectValue(_ rect: CGRect) -> Value {
         .object([
             "x": .double(Double(rect.origin.x)),
             "y": .double(Double(rect.origin.y)),
@@ -55,7 +64,7 @@ enum CaptureCoordinateContextMetadata {
         ])
     }
 
-    private static func sizeValue(_ size: CGSize) -> Value {
+    static func sizeValue(_ size: CGSize) -> Value {
         .object([
             "width": .double(Double(size.width)),
             "height": .double(Double(size.height)),

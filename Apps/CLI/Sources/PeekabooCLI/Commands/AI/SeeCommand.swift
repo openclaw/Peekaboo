@@ -1,4 +1,5 @@
 import Commander
+import CoreGraphics
 import Foundation
 import PeekabooCore
 import PeekabooFoundation
@@ -29,6 +30,9 @@ struct SeeCommand: ApplicationResolvable, ErrorHandlingCommand, RuntimeBackedCom
 
     @Option(help: "Region for area captures as x,y,width,height in global display coordinates")
     var region: String?
+
+    @Option(help: "Crop an exact --window-id as x,y,width,height in window-local logical points")
+    var roi: String?
 
     @Option(help: "Image format: png or jpg")
     var format: PeekabooCore.ImageFormat = .png
@@ -270,6 +274,9 @@ struct SeeCommand: ApplicationResolvable, ErrorHandlingCommand, RuntimeBackedCom
     func validateMergedOptions() throws {
         let resolvedMode = self.determineMode()
         let forcesPixelOnlyMode = resolvedMode == .area || resolvedMode == .multi
+        if let windowId, windowId <= 0 || UInt32(exactly: windowId) == nil {
+            throw ValidationError("--window-id must be between 1 and \(UInt32.max)")
+        }
         if self.tree, self.noElements {
             throw ValidationError("--tree cannot be combined with --no-elements")
         }
@@ -278,6 +285,18 @@ struct SeeCommand: ApplicationResolvable, ErrorHandlingCommand, RuntimeBackedCom
         }
         if self.noScreenshot, self.annotate || self.analyze != nil {
             throw ValidationError("--no-screenshot cannot be combined with --annotate or --analyze")
+        }
+        if self.roi != nil {
+            guard self.windowId != nil else {
+                throw ValidationError("--roi requires an exact --window-id")
+            }
+            guard !self.noElements, !self.noScreenshot, !self.streamsImageToStdout else {
+                throw ValidationError("--roi requires a snapshot-producing see capture with element detection")
+            }
+            guard resolvedMode == .window, self.region == nil, self.screenIndex == nil, !self.menubar else {
+                throw ValidationError("--roi supports exact window capture only")
+            }
+            _ = try self.captureROI()
         }
         if self.noScreenshot,
            resolvedMode == .screen || forcesPixelOnlyMode || self.screenIndex != nil || self.menubar ||
@@ -473,17 +492,40 @@ struct SeeCommand: ApplicationResolvable, ErrorHandlingCommand, RuntimeBackedCom
         try Task.checkCancellation()
 
         let executionTime = Date().timeIntervalSince(startTime)
+        let presentationElements = DesktopObservationROIProcessor.presentationElements(
+            captureResult.elements,
+            viewport: captureResult.coordinateContext?.viewport
+        )
         return SeeCommandRenderContext(
             snapshotId: captureResult.snapshotId,
             screenshotPath: captureResult.screenshotPath,
             annotatedPath: annotatedPath,
             metadata: captureResult.metadata,
-            elements: captureResult.elements,
+            elements: presentationElements,
+            coordinateContext: captureResult.coordinateContext,
             analysis: analysisResult,
             executionTime: executionTime,
             observation: captureResult.observation,
             menuBar: menuBarSummary
         )
+    }
+
+    func captureROI() throws -> CaptureRegionOfInterest? {
+        guard let roi else { return nil }
+        do {
+            let parsed = try CaptureRegionOfInterest.parse(roi)
+            if let windowId, let exactWindowID = CGWindowID(exactly: windowId) {
+                try DesktopObservationROIProcessor.validateRequest(
+                    parsed,
+                    target: .windowID(exactWindowID)
+                )
+            } else if windowId != nil {
+                throw ValidationError("--window-id must be between 1 and \(UInt32.max)")
+            }
+            return parsed
+        } catch let error as CaptureROIError {
+            throw ValidationError(error.localizedDescription)
+        }
     }
 
     private func emitAnnotationStatus(context: SeeCommandRenderContext) {
@@ -560,6 +602,7 @@ extension SeeCommand: CommanderBindableCommand {
             self.mode = parsedMode
         }
         self.region = values.singleOption("region")
+        self.roi = values.singleOption("roi")
         let parsedFormat: PeekabooCore.ImageFormat? = try values.decodeOptionEnum("format")
         if let parsedFormat {
             self.format = parsedFormat

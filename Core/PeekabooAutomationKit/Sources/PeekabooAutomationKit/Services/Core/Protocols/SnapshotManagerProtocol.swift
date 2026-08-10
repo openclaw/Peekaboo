@@ -11,6 +11,7 @@ public struct SnapshotScreenshotRequest: Sendable, Equatable {
     public let windowBounds: CGRect?
     public let windowID: Int?
     public let windowMutationIdentity: WindowMutationIdentity?
+    public let captureCoordinateContext: CaptureCoordinateContext?
 
     public init(
         snapshotId: String,
@@ -21,7 +22,8 @@ public struct SnapshotScreenshotRequest: Sendable, Equatable {
         windowTitle: String?,
         windowBounds: CGRect?,
         windowID: Int? = nil,
-        windowMutationIdentity: WindowMutationIdentity? = nil)
+        windowMutationIdentity: WindowMutationIdentity? = nil,
+        captureCoordinateContext: CaptureCoordinateContext? = nil)
     {
         self.snapshotId = snapshotId
         self.screenshotPath = screenshotPath
@@ -32,6 +34,7 @@ public struct SnapshotScreenshotRequest: Sendable, Equatable {
         self.windowBounds = windowBounds
         self.windowID = windowID
         self.windowMutationIdentity = windowMutationIdentity
+        self.captureCoordinateContext = captureCoordinateContext
     }
 }
 

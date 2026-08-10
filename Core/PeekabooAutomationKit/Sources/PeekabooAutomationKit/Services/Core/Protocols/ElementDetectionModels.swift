@@ -250,6 +250,9 @@ public struct DetectionMetadata: Sendable, Codable {
     /// Whether no overlapping desktop mutation invalidated this observation before publication.
     public let desktopMutationPreservationAllowed: Bool?
 
+    /// Capture-owned coordinate mapping for the delivered raster, including an optional ROI viewport.
+    public let captureCoordinateContext: CaptureCoordinateContext?
+
     private enum CodingKeys: String, CodingKey {
         case detectionTime
         case elementCount
@@ -261,6 +264,7 @@ public struct DetectionMetadata: Sendable, Codable {
         case desktopMutationCompletedAt
         case desktopMutationCompletedAtReferenceDateSeconds
         case desktopMutationPreservationAllowed
+        case captureCoordinateContext
     }
 
     public init(
@@ -272,7 +276,8 @@ public struct DetectionMetadata: Sendable, Codable {
         isDialog: Bool = false,
         truncationInfo: DetectionTruncationInfo?,
         desktopMutationCompletedAt: Date? = nil,
-        desktopMutationPreservationAllowed: Bool? = nil)
+        desktopMutationPreservationAllowed: Bool? = nil,
+        captureCoordinateContext: CaptureCoordinateContext? = nil)
     {
         self.detectionTime = detectionTime
         self.elementCount = elementCount
@@ -283,6 +288,7 @@ public struct DetectionMetadata: Sendable, Codable {
         self.truncationInfo = truncationInfo
         self.desktopMutationCompletedAt = desktopMutationCompletedAt
         self.desktopMutationPreservationAllowed = desktopMutationPreservationAllowed
+        self.captureCoordinateContext = captureCoordinateContext
     }
 
     public init(from decoder: any Decoder) throws {
@@ -309,6 +315,9 @@ public struct DetectionMetadata: Sendable, Codable {
         self.desktopMutationPreservationAllowed = try container.decodeIfPresent(
             Bool.self,
             forKey: .desktopMutationPreservationAllowed)
+        self.captureCoordinateContext = try container.decodeIfPresent(
+            CaptureCoordinateContext.self,
+            forKey: .captureCoordinateContext)
     }
 
     public func encode(to encoder: any Encoder) throws {
@@ -326,6 +335,7 @@ public struct DetectionMetadata: Sendable, Codable {
         try container.encodeIfPresent(
             self.desktopMutationPreservationAllowed,
             forKey: .desktopMutationPreservationAllowed)
+        try container.encodeIfPresent(self.captureCoordinateContext, forKey: .captureCoordinateContext)
     }
 
     public init(

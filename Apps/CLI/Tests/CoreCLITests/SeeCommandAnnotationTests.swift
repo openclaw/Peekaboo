@@ -97,6 +97,37 @@ struct SeeCommandAnnotationTests {
     }
 
     @Test
+    func `Annotation maps and clips native scale ROI elements`() {
+        let logicalBounds = CGRect(x: 210, y: 320, width: 30, height: 20)
+        let inside = DetectedElement(
+            id: "inside",
+            type: .button,
+            label: "Inside",
+            bounds: CGRect(x: 215, y: 325, width: 10, height: 5)
+        )
+        let partial = DetectedElement(
+            id: "partial",
+            type: .button,
+            label: "Partial",
+            bounds: CGRect(x: 235, y: 335, width: 20, height: 20)
+        )
+
+        let insideRect = ObservationAnnotationCoordinateMapper.drawingRect(
+            for: inside,
+            imageSize: CGSize(width: 60, height: 40),
+            logicalBounds: logicalBounds
+        )
+        let partialRect = ObservationAnnotationCoordinateMapper.drawingRect(
+            for: partial,
+            imageSize: CGSize(width: 60, height: 40),
+            logicalBounds: logicalBounds
+        )
+
+        #expect(insideRect == CGRect(x: 10, y: 20, width: 20, height: 10))
+        #expect(partialRect == CGRect(x: 50, y: 0, width: 10, height: 10))
+    }
+
+    @Test
     func `Annotation is disabled for screen mode captures`() {
         // This test documents that annotation should be disabled for full screen captures
         // due to performance constraints
@@ -189,7 +220,7 @@ struct SeeCommandAnnotationTests {
             "--annotate",
             "--path", "/tmp/peekaboo-see-screen.png",
         ])
-        let request = command.makeObservationRequest(target: .screen(index: 0))
+        let request = try command.makeObservationRequest(target: .screen(index: 0))
 
         #expect(command.allowsAnnotation(for: .screen(index: 0)) == false)
         #expect(command.allowsAnnotationForCurrentCapture() == false)
@@ -204,7 +235,7 @@ struct SeeCommandAnnotationTests {
             "--annotate",
             "--path", "/tmp/peekaboo-see-menubar.png",
         ])
-        let request = command.makeObservationRequest(target: .menubar)
+        let request = try command.makeObservationRequest(target: .menubar)
 
         #expect(command.allowsAnnotation(for: .menubar) == false)
         #expect(command.allowsAnnotationForCurrentCapture() == false)
@@ -355,6 +386,76 @@ struct SeeCommandAnnotationTests {
             appName: appName,
             windowTitle: windowTitle
         )
+    }
+
+    @Test
+    func `See JSON exposes ROI coordinate context and local element bounds`() throws {
+        let sourceBounds = CGRect(x: 100, y: 50, width: 1000, height: 500)
+        let viewport = CaptureViewport(
+            sourceLogicalBounds: sourceBounds,
+            requestedWindowRelativeBounds: CGRect(x: 200, y: 100, width: 200, height: 100),
+            deliveredWindowRelativeBounds: CGRect(x: 200, y: 100, width: 200, height: 100),
+            logicalBounds: CGRect(x: 300, y: 150, width: 200, height: 100),
+            sourceImageSize: CGSize(width: 2000, height: 1000)
+        )
+        let context = CaptureCoordinateContext(
+            metadata: CaptureMetadata(
+                size: CGSize(width: 400, height: 200),
+                mode: .window,
+                windowInfo: ServiceWindowInfo(
+                    windowID: 42,
+                    title: "ROI Window",
+                    bounds: sourceBounds
+                ),
+                viewport: viewport
+            ),
+            referenceID: "roi-snapshot"
+        )
+        let result = SeeResult(
+            snapshot_id: "roi-snapshot",
+            screenshot_raw: "roi.png",
+            screenshot_annotated: "",
+            ui_map: "roi.json",
+            application_name: "Fixture",
+            window_title: "ROI Window",
+            is_dialog: false,
+            element_count: 1,
+            interactable_count: 1,
+            capture_mode: "window",
+            analysis: nil,
+            execution_time: 0.1,
+            ui_elements: [
+                UIElementSummary(
+                    id: "B1",
+                    role: "button",
+                    title: "Inside",
+                    label: nil,
+                    description: nil,
+                    role_description: nil,
+                    help: nil,
+                    identifier: nil,
+                    bounds: UIElementBounds(CGRect(x: 5, y: 5, width: 10, height: 5)),
+                    is_actionable: true,
+                    keyboard_shortcut: nil
+                ),
+            ],
+            menu_bar: nil,
+            coordinate_context: context
+        )
+
+        let encoded = try JSONEncoder().encode(result)
+        let json = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        let encodedContext = try #require(json["coordinate_context"] as? [String: Any])
+        let encodedViewport = try #require(encodedContext["viewport"] as? [String: Any])
+        let elements = try #require(json["ui_elements"] as? [[String: Any]])
+        let bounds = try #require(elements.first?["bounds"] as? [String: Any])
+        let decoded = try JSONDecoder().decode(SeeResult.self, from: encoded)
+
+        #expect(encodedContext["reference_id"] as? String == "roi-snapshot")
+        #expect(encodedViewport["logical_bounds"] != nil)
+        #expect(decoded.coordinate_context?.viewport?.logicalBounds == viewport.logicalBounds)
+        #expect(bounds["x"] as? Double == 5)
+        #expect(bounds["y"] as? Double == 5)
     }
 
     @Test

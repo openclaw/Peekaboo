@@ -6,19 +6,22 @@ public struct DesktopCaptureOptions: Sendable, Codable, Equatable {
     public var focus: CaptureFocus
     public var visualizerMode: CaptureVisualizerMode
     public var includeMenuBar: Bool
+    public var roi: CaptureRegionOfInterest?
 
     public init(
         engine: CaptureEnginePreference = .auto,
         scale: CaptureScalePreference = .logical1x,
         focus: CaptureFocus = .background,
         visualizerMode: CaptureVisualizerMode = .none,
-        includeMenuBar: Bool = false)
+        includeMenuBar: Bool = false,
+        roi: CaptureRegionOfInterest? = nil)
     {
         self.engine = engine
         self.scale = scale
         self.focus = focus
         self.visualizerMode = visualizerMode
         self.includeMenuBar = includeMenuBar
+        self.roi = roi
     }
 }
 

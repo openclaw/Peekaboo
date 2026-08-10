@@ -1,4 +1,6 @@
 import Commander
+import CoreGraphics
+import PeekabooAutomationKit
 import Testing
 @testable import PeekabooCLI
 
@@ -68,6 +70,13 @@ struct Phase3CommandParsingTests {
         #expect(try indexedWindow.observationTargetForCaptureWithDetectionIfPossible() ==
             .app(identifier: "TextEdit", window: .index(2)))
 
+        let roi = try SeeCommand.parse(["--window-id", "42", "--roi", "10,20,300,200"])
+        try roi.validateMergedOptions()
+        let parsedROI = try #require(try roi.captureROI())
+        #expect(parsedROI.bounds == CGRect(x: 10, y: 20, width: 300, height: 200))
+        let observationROI = try #require(try roi.makeObservationRequest(target: .windowID(42)).capture.roi)
+        #expect(observationROI.bounds == CGRect(x: 10, y: 20, width: 300, height: 200))
+
         let tree = try SeeCommand.parse([
             "--tree",
             "--no-screenshot",
@@ -102,11 +111,22 @@ struct Phase3CommandParsingTests {
             ["--no-elements", "--mode", "multi", "--window-title", "Document", "--app", "TextEdit"],
             ["--no-elements", "--mode", "frontmost", "--pid", "123"],
             ["--path", "-", "--tree"],
+            ["--window-id", "0"],
+            ["--window-id", "4294967296"],
+            ["--roi", "0,0,100,100"],
+            ["--window-id", "42", "--roi", "0,0,100,100", "--no-elements"],
+            ["--window-id", "42", "--roi", "0,0,100,100", "--no-screenshot", "--tree"],
+            ["--window-id", "42", "--roi", "0,0,100,100", "--path", "-"],
         ] {
             let invalid = try SeeCommand.parse(arguments)
             #expect(throws: ValidationError.self) {
                 try invalid.validateMergedOptions()
             }
+        }
+
+        let invalidROI = try SeeCommand.parse(["--window-id", "42", "--roi", "0,0,0,100"])
+        #expect(throws: ValidationError.self) {
+            try invalidROI.validateMergedOptions()
         }
     }
 

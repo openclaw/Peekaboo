@@ -20,6 +20,16 @@ struct ObservationAnnotationLog {
 
 @MainActor
 public enum ObservationAnnotationCoordinateMapper {
+    public static func logicalBounds(for detectionResult: ElementDetectionResult, imageSize: CGSize) -> CGRect {
+        if let bounds = detectionResult.metadata.captureCoordinateContext?.logicalBounds {
+            return bounds
+        }
+        if let windowBounds = detectionResult.metadata.windowContext?.windowBounds {
+            return windowBounds
+        }
+        return CGRect(origin: self.windowOrigin(for: detectionResult), size: imageSize)
+    }
+
     public static func windowOrigin(for detectionResult: ElementDetectionResult) -> CGPoint {
         if let windowBounds = detectionResult.metadata.windowContext?.windowBounds {
             return windowBounds.origin
@@ -37,19 +47,36 @@ public enum ObservationAnnotationCoordinateMapper {
     public static func drawingRect(
         for element: DetectedElement,
         imageSize: CGSize,
-        windowOrigin: CGPoint) -> NSRect
+        logicalBounds: CGRect) -> NSRect
     {
+        let clipped = element.bounds.intersection(logicalBounds)
+        guard !clipped.isNull, clipped.width > 0, clipped.height > 0,
+              logicalBounds.width > 0, logicalBounds.height > 0
+        else { return .zero }
+        let scaleX = imageSize.width / logicalBounds.width
+        let scaleY = imageSize.height / logicalBounds.height
         let elementFrame = CGRect(
-            x: element.bounds.origin.x - windowOrigin.x,
-            y: element.bounds.origin.y - windowOrigin.y,
-            width: element.bounds.width,
-            height: element.bounds.height)
+            x: (clipped.origin.x - logicalBounds.origin.x) * scaleX,
+            y: (clipped.origin.y - logicalBounds.origin.y) * scaleY,
+            width: clipped.width * scaleX,
+            height: clipped.height * scaleY)
 
         return NSRect(
             x: elementFrame.origin.x,
             y: imageSize.height - elementFrame.origin.y - elementFrame.height,
             width: elementFrame.width,
             height: elementFrame.height)
+    }
+
+    public static func drawingRect(
+        for element: DetectedElement,
+        imageSize: CGSize,
+        windowOrigin: CGPoint) -> NSRect
+    {
+        self.drawingRect(
+            for: element,
+            imageSize: imageSize,
+            logicalBounds: CGRect(origin: windowOrigin, size: imageSize))
     }
 }
 
@@ -131,8 +158,10 @@ public final class ObservationAnnotationRenderer {
             .foregroundColor: NSColor.white,
         ]
 
-        let windowOrigin = ObservationAnnotationCoordinateMapper.windowOrigin(for: detectionResult)
-        self.logger.verbose("Using annotation window origin: \(windowOrigin)")
+        let logicalBounds = ObservationAnnotationCoordinateMapper.logicalBounds(
+            for: detectionResult,
+            imageSize: imageSize)
+        self.logger.verbose("Using annotation logical bounds: \(logicalBounds)")
 
         let elementRects = enabledElements.map { element in
             (
@@ -140,7 +169,7 @@ public final class ObservationAnnotationRenderer {
                 rect: ObservationAnnotationCoordinateMapper.drawingRect(
                     for: element,
                     imageSize: imageSize,
-                    windowOrigin: windowOrigin))
+                    logicalBounds: logicalBounds))
         }
         let allElements = elementRects.map { ($0.element, $0.rect) }
         let labelPlacer = SmartLabelPlacer(

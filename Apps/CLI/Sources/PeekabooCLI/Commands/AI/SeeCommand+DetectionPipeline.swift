@@ -56,7 +56,11 @@ extension SeeCommand {
                 applicationProcessId: captureResult.metadata.applicationInfo.map { Int32($0.processIdentifier) },
                 applicationName: windowContext.applicationName,
                 windowTitle: windowContext.windowTitle,
-                windowBounds: windowContext.windowBounds
+                windowBounds: windowContext.windowBounds,
+                captureCoordinateContext: CaptureCoordinateContext(
+                    metadata: captureResult.metadata,
+                    referenceID: snapshotID
+                )
             )
         )
 
@@ -71,7 +75,10 @@ extension SeeCommand {
             annotatedPath: nil,
             elements: detectionResult.elements,
             metadata: detectionResult.metadata,
-            observation: nil
+            observation: nil,
+            coordinateContext: captureResult.metadata.viewport.map { _ in
+                CaptureCoordinateContext(metadata: captureResult.metadata, referenceID: snapshotID)
+            }
         )
     }
 
@@ -107,7 +114,8 @@ extension SeeCommand {
             annotatedPath: nil,
             elements: bound.elements,
             metadata: bound.metadata,
-            observation: nil
+            observation: nil,
+            coordinateContext: nil
         )
     }
 
@@ -231,6 +239,10 @@ extension SeeCommand {
             observation: SeeObservationDiagnostics(
                 timings: observation.timings,
                 diagnostics: observation.diagnostics
+            ),
+            coordinateContext: CaptureCoordinateContext(
+                metadata: observation.capture.metadata,
+                referenceID: snapshotID
             )
         )
     }

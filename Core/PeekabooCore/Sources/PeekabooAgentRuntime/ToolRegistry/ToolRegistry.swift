@@ -79,6 +79,7 @@ public enum ToolRegistry {
             examples: [
                 "peekaboo click \"Submit\" --app Safari --snapshot \"$SNAPSHOT_ID\" --wait-for 1500ms",
                 "peekaboo click --on \"$ELEMENT_ID\" --snapshot \"$SNAPSHOT_ID\"",
+                "peekaboo click --on \"$ELEMENT_ID\" --snapshot \"$SNAPSHOT_ID\" --double",
             ],
             agentGuidance: "Prefer ID-based clicks when possible. Use default background delivery, and add " +
                 "`--foreground` only when the app requires focused input. If fuzzy text fails, capture again and " +

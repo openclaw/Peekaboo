@@ -8,6 +8,8 @@ extension InMemorySnapshotManager {
             snapshotData.screenshotPath = result.screenshotPath
         }
         snapshotData.lastUpdateTime = Date()
+        snapshotData.captureCoordinateContext = result.metadata.captureCoordinateContext ?? snapshotData
+            .captureCoordinateContext
 
         if let context = result.metadata.windowContext {
             self.applyWindowContext(context, to: &snapshotData)
@@ -105,7 +107,10 @@ extension InMemorySnapshotManager {
             elementCount: snapshotData.uiMap.count,
             method: "memory-cache",
             warnings: self.buildWarnings(from: snapshotData),
-            windowContext: self.windowContext(from: snapshotData))
+            windowContext: self.windowContext(from: snapshotData),
+            isDialog: false,
+            truncationInfo: nil,
+            captureCoordinateContext: snapshotData.captureCoordinateContext)
 
         return ElementDetectionResult(
             snapshotId: snapshotId,

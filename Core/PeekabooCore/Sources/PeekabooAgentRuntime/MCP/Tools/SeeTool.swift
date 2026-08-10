@@ -43,8 +43,8 @@ public struct SeeTool: MCPTool {
                     """),
                 "window_id": SchemaBuilder.integer(
                     description: """
-                    Optional. Exact CoreGraphics window ID. Requires an application or PID app_target; Peekaboo
-                    verifies the window belongs to that owner. Numeric app_target suffixes remain window indexes.
+                    Optional. Exact CoreGraphics window ID. May be used alone; when app_target names an application
+                    or PID, Peekaboo also verifies owner agreement. Numeric app_target suffixes remain window indexes.
                     """,
                     minimum: 1,
                     maximum: Int(UInt32.max)),
@@ -61,6 +61,12 @@ public struct SeeTool: MCPTool {
                     Optional. Add interaction markers and IDs to the returned screenshot.
                     """,
                     default: false),
+                "roi": SchemaBuilder.string(
+                    description: """
+                    Optional. Crop the exact window as x,y,width,height in window-local logical points. Requires
+                    window_id, creates a fresh snapshot, and returns ROI-local element bounds plus a coordinate
+                    context for image_pixels or normalized clicks.
+                    """),
                 "web_focus": SchemaBuilder.boolean(
                     description: "Optional. Allow an AXPress retry on sparse Chromium/Tauri web content.",
                     default: false),
@@ -83,7 +89,7 @@ public struct SeeTool: MCPTool {
 
     @MainActor
     public func execute(arguments: ToolArguments) async throws -> ToolResponse {
-        let request = SeeRequest(arguments: arguments)
+        let request = try SeeRequest(arguments: arguments)
         var newlyCreatedSnapshotID: String?
         var newlyCreatedSnapshotWasPending = false
 
@@ -100,10 +106,8 @@ public struct SeeTool: MCPTool {
             newlyCreatedSnapshotWasPending = selection.isNew && MCPToolContext.snapshotObservationStartedAt != nil
             let observation = try await self.observeDesktop(
                 target: target,
+                request: request,
                 path: captureArtifact.observationPath,
-                annotate: request.annotate,
-                webFocus: request.webFocus,
-                traversalBudget: request.traversalBudget,
                 snapshot: snapshot)
             let (elements, detectedElements) = try await self.detectUIElements(
                 observation: observation,
@@ -177,23 +181,21 @@ public struct SeeTool: MCPTool {
 
     private func observeDesktop(
         target: ObservationTargetArgument,
+        request: SeeRequest,
         path: String?,
-        annotate: Bool,
-        webFocus: Bool,
-        traversalBudget: AXTraversalBudget,
         snapshot: UISnapshot) async throws -> DesktopObservationResult
     {
         try await self.context.desktopObservation.observe(DesktopObservationRequest(
             target: target.observationTarget,
-            capture: DesktopCaptureOptions(visualizerMode: .none),
+            capture: DesktopCaptureOptions(visualizerMode: .none, roi: request.roi),
             detection: DesktopDetectionOptions(
                 mode: .accessibility,
-                allowWebFocusFallback: webFocus,
-                traversalBudget: traversalBudget),
+                allowWebFocusFallback: request.webFocus,
+                traversalBudget: request.traversalBudget),
             output: DesktopObservationOutputOptions(
                 path: path,
                 saveRawScreenshot: true,
-                saveAnnotatedScreenshot: annotate,
+                saveAnnotatedScreenshot: request.annotate,
                 saveSnapshot: true,
                 snapshotID: snapshot.id)))
     }
@@ -278,9 +280,12 @@ public struct SeeTool: MCPTool {
 
         let detectedElements = await MainActor.run { detectionResult.elements.all }
         await self.emitElementDetectionVisualizer(from: detectedElements)
-        let elements = self.convertElements(detectedElements)
+        let storedElements = self.convertElements(detectedElements)
+        let elements = DesktopObservationROIProcessor.presentationElements(
+            storedElements,
+            viewport: observation.capture.metadata.viewport)
         self.logger.info("Detected \(elements.count) UI elements")
-        await snapshot.setUIElements(elements)
+        await snapshot.setUIElements(storedElements)
         return (elements, detectedElements)
     }
 

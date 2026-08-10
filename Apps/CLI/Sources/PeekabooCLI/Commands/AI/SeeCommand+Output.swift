@@ -90,7 +90,8 @@ extension SeeCommand {
             ui_elements: uiElements,
             menu_bar: context.menuBar,
             truncation: SeeTruncationSummary(metadata: context.metadata),
-            observation: context.observation
+            observation: context.observation,
+            coordinate_context: context.coordinateContext
         )
 
         outputSuccessCodable(data: output, logger: self.outputLogger)

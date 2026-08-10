@@ -41,6 +41,11 @@ extension SeeCommand: CommanderSignatureProviding {
                     long: "region"
                 ),
                 .commandOption(
+                    "roi",
+                    help: "Exact-window crop as x,y,width,height in window-local logical points",
+                    long: "roi"
+                ),
+                .commandOption(
                     "format",
                     help: "Image format (png or jpg)",
                     long: "format"

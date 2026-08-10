@@ -109,6 +109,24 @@ struct FocusErrorMappingTests {
     }
 
     @Test
+    func `ROI errors distinguish invalid stale and capture failures`() {
+        #expect(errorCode(for: CaptureROIError.invalidBounds) == .INVALID_ARGUMENT)
+        #expect(errorCode(for: CaptureROIError.outOfBounds) == .INVALID_ARGUMENT)
+        #expect(errorCode(for: CaptureROIError.missingExactWindowReceipt) == .SNAPSHOT_STALE)
+        #expect(errorCode(for: CaptureROIError.hostDidNotApplyROI) == .CAPTURE_FAILED)
+        #expect(errorCode(for: PeekabooBridgeErrorEnvelope(
+            code: .invalidRequest,
+            message: "stale",
+            context: "capture_roi:missing_exact_window_receipt"
+        )) == .SNAPSHOT_STALE)
+        #expect(errorCode(for: PeekabooBridgeErrorEnvelope(
+            code: .internalError,
+            message: "host mismatch",
+            context: "capture_roi:host_did_not_apply_roi"
+        )) == .CAPTURE_FAILED)
+    }
+
+    @Test
     func `bridge elementNotFound kind maps to ELEMENT_NOT_FOUND`() {
         let envelope = PeekabooBridgeErrorEnvelope(
             code: .notFound,

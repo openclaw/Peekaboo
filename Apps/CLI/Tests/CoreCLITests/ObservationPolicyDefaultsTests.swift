@@ -12,7 +12,7 @@ struct ObservationPolicyDefaultsTests {
 
         #expect(!command.webFocus)
         #expect(!command.noWebFocus)
-        let request = command.makeObservationRequest(target: .frontmost)
+        let request = try command.makeObservationRequest(target: .frontmost)
         #expect(request.capture.focus == .background)
         #expect(!request.detection.allowWebFocusFallback)
         #expect(request.timeout.overall == 20)
@@ -26,20 +26,20 @@ struct ObservationPolicyDefaultsTests {
         var analyzed = try SeeCommand.parse([])
         analyzed.analyze = "summarize"
 
-        #expect(configured.makeObservationRequest(target: .frontmost).timeout.overall == 45)
-        #expect(configured.makeObservationRequest(target: .frontmost).timeout.detection == 45)
-        #expect(analyzed.makeObservationRequest(target: .frontmost).timeout.overall == 60)
+        #expect(try configured.makeObservationRequest(target: .frontmost).timeout.overall == 45)
+        #expect(try configured.makeObservationRequest(target: .frontmost).timeout.detection == 45)
+        #expect(try analyzed.makeObservationRequest(target: .frontmost).timeout.overall == 60)
     }
 
     @Test
     func `See web focus fallback is a positive opt in`() throws {
         let enabled = try SeeCommand.parse(["--web-focus"])
         #expect(enabled.webFocus)
-        #expect(enabled.makeObservationRequest(target: .frontmost).detection.allowWebFocusFallback)
+        #expect(try enabled.makeObservationRequest(target: .frontmost).detection.allowWebFocusFallback)
 
         let compatibility = try SeeCommand.parse(["--no-web-focus"])
         #expect(compatibility.noWebFocus)
-        #expect(!compatibility.makeObservationRequest(target: .frontmost).detection.allowWebFocusFallback)
+        #expect(try !(compatibility.makeObservationRequest(target: .frontmost).detection.allowWebFocusFallback))
     }
 
     @Test

@@ -43,8 +43,12 @@ extension InMemorySnapshotManager {
             snapshotData: UIAutomationSnapshot(creatorProcessId: getpid()))
 
         entry.lastAccessedAt = Date()
-        entry.detectionResult = result
         self.applyDetectionResult(result, to: &entry.snapshotData)
+        entry.detectionResult = ElementDetectionResult(
+            snapshotId: result.snapshotId,
+            screenshotPath: result.screenshotPath,
+            elements: result.elements,
+            metadata: result.metadata.withCaptureCoordinateContext(entry.snapshotData.captureCoordinateContext))
         self.entries[snapshotId] = entry
         self.pruneIfNeeded()
     }

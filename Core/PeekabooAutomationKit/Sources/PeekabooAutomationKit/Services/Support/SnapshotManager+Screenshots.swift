@@ -22,6 +22,10 @@ extension SnapshotManager {
         if FileManager.default.fileExists(atPath: rawPath.path) {
             try FileManager.default.removeItem(at: rawPath)
         }
+        let annotatedPath = snapshotPath.appendingPathComponent("annotated.png")
+        if FileManager.default.fileExists(atPath: annotatedPath.path) {
+            try FileManager.default.removeItem(at: annotatedPath)
+        }
         do {
             try FileManager.default.copyItem(at: sourceURL, to: rawPath)
         } catch {
@@ -30,6 +34,8 @@ extension SnapshotManager {
         }
 
         snapshotData.screenshotPath = rawPath.path
+        snapshotData.annotatedPath = nil
+        snapshotData.uiMap = [:]
         snapshotData.applicationName = request.applicationName
         snapshotData.applicationBundleId = request.applicationBundleId
         snapshotData.applicationProcessId = request.applicationProcessId
@@ -37,6 +43,7 @@ extension SnapshotManager {
         snapshotData.windowBounds = request.windowBounds
         snapshotData.windowID = request.windowID.flatMap { CGWindowID(exactly: $0) }
         snapshotData.windowMutationIdentity = request.windowMutationIdentity
+        snapshotData.captureCoordinateContext = request.captureCoordinateContext
         snapshotData.lastUpdateTime = Date()
 
         try await self.snapshotActor.saveSnapshot(snapshotId: request.snapshotId, data: snapshotData, at: snapshotPath)

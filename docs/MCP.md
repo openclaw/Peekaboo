@@ -139,11 +139,12 @@ The MCP `image` and `see` tools share target parsing with the desktop observatio
 observation surface. Use `see` when element detection and snapshot IDs are required. The `press` tool accepts either
 `keys: ["cmd+c", "Return"]` for a chord sequence or `key: "c"` plus `modifiers: ["cmd"]` for one chord.
 
-The `see` and `inspect_ui` tools additionally accept an exact CoreGraphics `window_id` when `app_target` names the
-owning application or PID. Peekaboo verifies that ownership before using the ID. Do not combine `window_id` with a
-window title or index suffix in `app_target`; choose one window selector so stale inputs cannot redirect work to a
-sibling window from the same process. `window_id` is a positive 32-bit integer; strings, fractional numbers, zero,
-negative values, and out-of-range values fail before capture or Accessibility traversal begins.
+The `see` tool accepts an exact CoreGraphics `window_id` by itself or with an `app_target` naming the owning
+application or PID. `inspect_ui` requires that application/PID owner hint. Peekaboo resolves and generation-pins the
+real owner before using the ID. Do not combine `window_id` with a window title or index suffix in `app_target`; choose
+one window selector so stale inputs cannot redirect work to a sibling window from the same process. `window_id` is a
+positive 32-bit integer; strings, fractional numbers, zero, negative values, and out-of-range values fail before
+capture or Accessibility traversal begins.
 
 Every successful MCP `see` response includes the selected raw or annotated screenshot as inline image content. When
 multiple calls intentionally share the same `path`, each response still returns pixels owned by its own capture; the
@@ -164,8 +165,27 @@ The `image` and `see` tools include an additive, versioned `coordinate_context` 
 - `output_scale`: the delivered raster's effective pixel-to-point scale;
 - `display` and `window`: the resolved capture identities when available;
 - `reference_id`: the snapshot ID for `see` results, or `null` for standalone `image` results.
+- `viewport`: present for ROI results, with the full source window, requested/delivered crop rectangles, global crop
+  bounds, and uncropped source raster size.
 
 Consumers should check `version` before interpreting the object. Version `1` uses `logical_space: "global_display_points"` and `origin: "top_left"`. To convert an image-local pixel `(px, py)` to a global logical point, scale it against `delivered_image_size` and add the `logical_bounds` origin; do not assume a fixed Retina factor. The fields are additive, so clients that do not understand them can continue ignoring `_meta`.
+
+### Exact-window ROI
+
+MCP `see` accepts `roi: "x,y,width,height"` in top-left-origin, window-local logical points. ROI requires an exact
+`window_id` and must create a fresh snapshot, so omit `snapshot`. Peekaboo captures and inspects the generation-pinned
+full window, then returns only the pixel-aligned crop. AX/OCR results are filtered to intersecting elements, and
+response element frames are clipped and translated into ROI-local logical coordinates. The stored snapshot retains
+global frames for element-ID actions.
+
+The response's `coordinate_context.viewport.source_logical_bounds` remains the full window receipt used for freshness
+and dispatch validation; `logical_bounds` describes only the delivered crop. `click` with `coordinate_space:
+"image_pixels"` or `"normalized"` maps through the crop while still rejecting moved, resized, missing, reused, or
+owner-changed windows before dispatch. Reusing the snapshot for a later full-window observation replaces the ROI
+mapping and clears stale annotation state.
+
+`image` intentionally has no ROI argument: screenshot-only calls do not create the fresh snapshot/reference binding
+required for safe follow-up background coordinates. Use `see` for a crop that will drive automation.
 
 The `click` tool accepts screenshot-relative coordinates when they are explicitly bound to a `see` snapshot. Pass `coordinate_space: "image_pixels"` for delivered-raster pixels or `coordinate_space: "normalized"` for values from 0 through 1, plus the snapshot's `reference_id` as `coordinate_reference`. Missing, empty, stale, out-of-bounds, moved-window, owner-changed, or process-generation-changed references fail before automation. Every background coordinate click requires a nonempty exact-window capture reference; a bare PID/app plus global coordinates is ambiguous and is refused. Validation errors include `mutation_dispatched: false` and `retry_safe: true`, and do not invalidate snapshots as mutations. Foreground global coordinates remain snapshot-free only when neither `snapshot` nor `coordinate_reference` is supplied; either reference opts into capture-context and live-target validation even when `coordinate_space` is omitted.
 

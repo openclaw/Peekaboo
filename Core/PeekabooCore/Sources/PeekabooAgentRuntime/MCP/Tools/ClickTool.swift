@@ -395,6 +395,7 @@ public struct ClickTool: MCPTool {
         guard
             let contextWindow = coordinateContext.window,
             let contextBounds = coordinateContext.logicalBounds,
+            let sourceBounds = coordinateContext.viewport?.sourceLogicalBounds ?? coordinateContext.logicalBounds,
             let processIdentifier = snapshot.applicationProcessId,
             let windowID = snapshot.windowID,
             let bounds = snapshot.windowBounds,
@@ -402,7 +403,8 @@ public struct ClickTool: MCPTool {
             contextWindow.windowID == windowID,
             identity.windowID == windowID,
             identity.ownerProcessIdentifier == processIdentifier,
-            contextBounds == bounds,
+            sourceBounds == bounds,
+            bounds.insetBy(dx: -0.000_001, dy: -0.000_001).contains(contextBounds),
             explicitPID.map({ $0 == processIdentifier }) ?? true
         else {
             let requirement = requiresExactWindow ? "exact PID/window generation and bounds" : "window capture data"
@@ -420,7 +422,8 @@ public struct ClickTool: MCPTool {
 
     private func validateForegroundCoordinateContext(_ captured: CapturedCoordinateSnapshot) async throws {
         guard let window = captured.coordinateContext.window,
-              let bounds = captured.coordinateContext.logicalBounds
+              let bounds = captured.coordinateContext.viewport?.sourceLogicalBounds ?? captured.coordinateContext
+                  .logicalBounds
         else { return }
         let matches = try await self.context.windows.listWindows(target: .windowId(window.windowID))
         let exactMatches = matches.filter { $0.windowID == window.windowID }
