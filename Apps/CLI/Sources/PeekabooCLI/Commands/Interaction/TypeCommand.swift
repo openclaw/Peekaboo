@@ -13,7 +13,7 @@ struct TypeCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormatt
     @Option(name: .customLong("text"), help: "Text to type (alternative to positional argument)")
     var textOption: String?
 
-    @Option(help: "Snapshot ID, or 'latest'")
+    @Option(help: "Snapshot ID (or explicit 'latest'); no snapshot is inferred when omitted")
     var snapshot: String?
 
     @Option(help: "Delay between keystrokes (bare values are milliseconds)")

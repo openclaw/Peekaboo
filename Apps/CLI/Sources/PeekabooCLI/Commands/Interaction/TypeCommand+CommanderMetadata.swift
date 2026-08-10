@@ -18,7 +18,7 @@ extension TypeCommand: CommanderSignatureProviding {
                 ),
                 .commandOption(
                     "snapshot",
-                    help: "Snapshot ID, or 'latest' (uses latest if not specified)",
+                    help: "Snapshot ID (or explicit 'latest'); no snapshot is inferred when omitted",
                     long: "snapshot"
                 ),
                 .commandOption(

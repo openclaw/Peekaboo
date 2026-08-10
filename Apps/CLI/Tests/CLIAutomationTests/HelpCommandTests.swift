@@ -104,6 +104,44 @@ struct HelpCommandTests {
     }
 
     @Test
+    func `Removed command errors include migration advice in text and JSON`() async throws {
+        let textResult = try await runPeekaboo(["hotkey"])
+        #expect(textResult.exitStatus == 1)
+        #expect(textResult.stderr.contains("peekaboo press"))
+
+        let jsonResult = try await runPeekaboo(["image", "--json"])
+        #expect(jsonResult.exitStatus == 1)
+        #expect(jsonResult.stderr.isEmpty)
+        let data = try #require(jsonResult.stdout.data(using: .utf8))
+        let payload = try JSONDecoder().decode(JSONResponse.self, from: data)
+        #expect(payload.error?.code == ErrorCode.INVALID_ARGUMENT.rawValue)
+        #expect(payload.error?.message.contains("peekaboo see --no-elements") == true)
+    }
+
+    @Test
+    func `Removed option JSON errors include exact replacement`() async throws {
+        let result = try await runPeekaboo(["click", "--coords", "10,20", "--json"])
+
+        #expect(result.exitStatus == 1)
+        #expect(result.stderr.isEmpty)
+        let data = try #require(result.stdout.data(using: .utf8))
+        let payload = try JSONDecoder().decode(JSONResponse.self, from: data)
+        #expect(payload.error?.code == ErrorCode.INVALID_ARGUMENT.rawValue)
+        #expect(payload.error?.message.contains("Option '--coords' was removed in v4") == true)
+        #expect(payload.error?.message.contains("--at") == true)
+    }
+
+    @Test
+    func `Help tells users where runtime flags belong`() async throws {
+        let rootHelp = try await runPeekaboo(["--help"])
+        #expect(rootHelp.stdout.contains("[runtime flags]"))
+        #expect(rootHelp.stdout.contains("Place these after the leaf command"))
+
+        let pressHelp = try await runPeekaboo(["press", "--help"])
+        #expect(pressHelp.stdout.contains("peekaboo press [<chord> ...]"))
+    }
+
+    @Test
     func `Subcommand --help flag`() async throws {
         // Test that each subcommand's --help flag works
         let subcommands = ["screen", "config", "agent", "see", "click", "press", "action"]

@@ -21,7 +21,7 @@ extension CommanderRuntimeRouter {
     static func renderRootUsageCard(theme: HelpTheme) -> String {
         var lines: [String] = []
         lines.append(theme.heading("Usage"))
-        lines.append("  \(theme.accent("peekaboo <command> [options]"))")
+        lines.append("  \(theme.accent("peekaboo <command> [options] [runtime flags]"))")
         lines.append("")
         lines.append(theme.heading("Tip"))
         lines.append("  When developing locally, rebuild via \(theme.accent("pnpm run build:cli")) to test fresh bits.")
@@ -77,6 +77,7 @@ extension CommanderRuntimeRouter {
     static func renderGlobalFlagsSection(theme: HelpTheme) -> String {
         var lines: [String] = []
         lines.append(theme.heading("Global Runtime Flags"))
+        lines.append("  Place these after the leaf command, e.g. `peekaboo see --json`.")
         for entry in self.globalFlagSummaries(theme: theme) {
             lines.append("  \(entry)")
         }
@@ -112,7 +113,8 @@ extension CommanderRuntimeRouter {
 
         for argument in signature.arguments {
             let placeholder = self.argumentPlaceholder(for: argument)
-            tokens.append(argument.isOptional ? "[\(placeholder)]" : "<\(placeholder)>")
+            let rendered = argument.label.hasSuffix("...") ? "<\(placeholder)> ..." : "<\(placeholder)>"
+            tokens.append(argument.isOptional ? "[\(rendered)]" : rendered)
         }
 
         if !signature.options.isEmpty || !signature.flags.isEmpty {
@@ -123,7 +125,8 @@ extension CommanderRuntimeRouter {
     }
 
     static func argumentPlaceholder(for argument: ArgumentDefinition) -> String {
-        let lowered = argument.label.replacingOccurrences(of: "_", with: "-")
+        let label = argument.label.hasSuffix("...") ? String(argument.label.dropLast(3)) : argument.label
+        let lowered = label.replacingOccurrences(of: "_", with: "-")
         return Self.kebabCased(lowered)
     }
 
