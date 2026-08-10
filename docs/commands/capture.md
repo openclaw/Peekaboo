@@ -74,6 +74,7 @@ peekaboo capture video /path/to/demo.mov --every 500ms --no-diff
 ## Design notes
 - Live defaults: max duration 180s, `--max-frames` 800, resolution cap 1440, diff strategy `fast` unless `--diff-strategy quality` is set.
 - Action capture uses the same live sampler and can stop it early once the child command and post-roll complete.
+- Background live capture of an exact PID/window reacquires a generation-pinned read lane for each frame. Unrelated app mutations can overlap, while a queued mutation for the captured process runs before the next frame. Screen, area, frontmost, unresolved, foreground, and focus-capable observations remain globally exclusive.
 - Video ingest uses the same diff/keep logic as live; `--no-diff` keeps every sampled frame. When no motion is detected, you may end up with a single kept frame plus a `noMotion` warning.
 - Core types: `CaptureScope/Options/Result` with a pluggable `CaptureFrameSource` (ScreenCapture for live, AVAssetReader for video). Optional MP4 is written by `VideoWriter` when `--video-out` is set.
 - Quick smokes:

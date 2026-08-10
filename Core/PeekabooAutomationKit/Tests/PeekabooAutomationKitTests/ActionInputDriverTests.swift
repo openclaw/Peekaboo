@@ -436,6 +436,69 @@ struct ActionInputDriverTests {
 
     @MainActor
     @Test
+    func `exact snapshot set value waits only for its process observation frame`() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekaboo-set-value-process-lane-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let coordinator = DesktopOperationLaneCoordinator(coordinationRootURL: root)
+        let firstProcess = ApplicationProcessIdentity(processIdentifier: 610, processStartIdentity: 11)
+        let secondProcess = ApplicationProcessIdentity(processIdentifier: 611, processStartIdentity: 12)
+        let frameStarted = ActionLaneLatch()
+        let frameRelease = ActionLaneLatch()
+        let firstResolved = ActionLaneLatch()
+        let secondResolved = ActionLaneLatch()
+        let firstIdentity = self.windowIdentity(windowID: 301, process: firstProcess)
+        let secondIdentity = self.windowIdentity(windowID: 302, process: secondProcess)
+        let firstService = self.makeScopedSetValueService(
+            snapshotID: "first",
+            identity: firstIdentity,
+            coordinator: coordinator,
+            currentGeneration: { pid in
+                pid == firstProcess.processIdentifier
+                    ? firstProcess.processStartIdentity
+                    : secondProcess.processStartIdentity
+            },
+            onResolve: { Task { await firstResolved.open() } })
+        let secondService = self.makeScopedSetValueService(
+            snapshotID: "second",
+            identity: secondIdentity,
+            coordinator: coordinator,
+            currentGeneration: { pid in
+                pid == firstProcess.processIdentifier
+                    ? firstProcess.processStartIdentity
+                    : secondProcess.processStartIdentity
+            },
+            onResolve: { Task { await secondResolved.open() } })
+
+        let frame = Task {
+            try await coordinator.run(scope: .window(firstIdentity), access: .read) {
+                await frameStarted.open()
+                await frameRelease.wait()
+            }
+        }
+        await frameStarted.wait()
+        let firstMutation = Task {
+            try? await firstService.setValue(target: "B1", value: .string("one"), snapshotId: "first")
+        }
+        let secondMutation = Task {
+            try? await secondService.setValue(target: "B1", value: .string("two"), snapshotId: "second")
+        }
+
+        let secondOverlapped = await secondResolved.opensWithin(.seconds(1))
+        let firstOverlapped = await firstResolved.opensWithin(.milliseconds(100))
+        #expect(secondOverlapped)
+        #expect(!firstOverlapped)
+        await frameRelease.open()
+
+        try await frame.value
+        _ = await firstMutation.value
+        _ = await secondMutation.value
+        let firstEventuallyResolved = await firstResolved.isOpen
+        #expect(firstEventuallyResolved)
+    }
+
+    @MainActor
+    @Test
     func `mock element can exercise action click without live AX`() throws {
         let element = MockAutomationElement(
             role: AXRoleNames.kAXButtonRole,
@@ -683,6 +746,54 @@ struct ActionInputDriverTests {
             Issue.record("Unexpected error: \(error)")
         }
     }
+
+    @MainActor
+    private func makeScopedSetValueService(
+        snapshotID: String,
+        identity: WindowMutationIdentity,
+        coordinator: DesktopOperationLaneCoordinator,
+        currentGeneration: @escaping @Sendable (pid_t) -> UInt64?,
+        onResolve: @escaping @MainActor () -> Void) -> UIAutomationService
+    {
+        let detected = DetectedElement(
+            id: "B1",
+            type: .textField,
+            label: "Value",
+            bounds: CGRect(x: 10, y: 10, width: 80, height: 24))
+        let context = WindowContext(
+            applicationProcessId: identity.ownerProcessIdentifier,
+            windowID: identity.windowID,
+            windowBounds: identity.capturedBounds,
+            windowMutationIdentity: identity)
+        let detectionResult = ElementDetectionResult(
+            snapshotId: snapshotID,
+            screenshotPath: "/tmp/\(snapshotID).png",
+            elements: DetectedElements(textFields: [detected]),
+            metadata: DetectionMetadata(
+                detectionTime: 0.01,
+                elementCount: 1,
+                method: "test",
+                windowContext: context))
+        return UIAutomationService(
+            snapshotManager: InMemorySnapshotManager(detectionResult: detectionResult),
+            inputPolicy: UIInputPolicy(defaultStrategy: .actionOnly),
+            actionInputDriver: RecordingActionInputDriver(elementActionError: .staleElement),
+            automationElementResolver: FixedActionAutomationElementResolver(onResolve: onResolve),
+            exactWindowIdentityValidator: { _, _ in true },
+            processStartIdentityProvider: currentGeneration,
+            operationLaneCoordinator: coordinator)
+    }
+
+    private func windowIdentity(
+        windowID: Int,
+        process: ApplicationProcessIdentity) -> WindowMutationIdentity
+    {
+        WindowMutationIdentity(
+            windowID: windowID,
+            ownerProcessIdentifier: process.processIdentifier,
+            ownerProcessStartIdentity: process.processStartIdentity,
+            capturedBounds: CGRect(x: 1, y: 2, width: 300, height: 200))
+    }
 }
 
 @MainActor
@@ -784,9 +895,15 @@ private final class RecordingActionInputDriver: ActionInputDriving {
 @MainActor
 private final class FixedActionAutomationElementResolver: AutomationElementResolving {
     private let element = AutomationElement(Element(AXUIElementCreateApplication(getpid())))
+    private let onResolve: @MainActor () -> Void
+
+    init(onResolve: @escaping @MainActor () -> Void = {}) {
+        self.onResolve = onResolve
+    }
 
     func resolve(detectedElement _: DetectedElement, windowContext _: WindowContext?) -> AutomationElement? {
-        self.element
+        self.onResolve()
+        return self.element
     }
 
     func resolve(
@@ -794,11 +911,13 @@ private final class FixedActionAutomationElementResolver: AutomationElementResol
         windowContext _: WindowContext?,
         targetProcessIdentifier _: pid_t?) -> AutomationElement?
     {
-        self.element
+        self.onResolve()
+        return self.element
     }
 
     func resolve(query _: String, windowContext _: WindowContext?, requireTextInput _: Bool) -> AutomationElement? {
-        self.element
+        self.onResolve()
+        return self.element
     }
 
     func resolve(
@@ -807,7 +926,38 @@ private final class FixedActionAutomationElementResolver: AutomationElementResol
         targetProcessIdentifier _: pid_t?,
         requireTextInput _: Bool) -> AutomationElement?
     {
-        self.element
+        self.onResolve()
+        return self.element
+    }
+}
+
+private actor ActionLaneLatch {
+    private var opened = false
+    private var continuations: [CheckedContinuation<Void, Never>] = []
+
+    var isOpen: Bool {
+        self.opened
+    }
+
+    func open() {
+        guard !self.opened else { return }
+        self.opened = true
+        let pending = self.continuations
+        self.continuations.removeAll()
+        pending.forEach { $0.resume() }
+    }
+
+    func wait() async {
+        guard !self.opened else { return }
+        await withCheckedContinuation { self.continuations.append($0) }
+    }
+
+    func opensWithin(_ duration: Duration) async -> Bool {
+        let deadline = ContinuousClock.now.advanced(by: duration)
+        while !self.opened, ContinuousClock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+        return self.opened
     }
 }
 

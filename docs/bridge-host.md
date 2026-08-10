@@ -89,6 +89,8 @@ closed if the PID was recycled. Current clients therefore require a 1.18 on-dema
 
 Protocol `1.18` adds immutable capture-time bounds to destructive window mutation receipts and a native background `restoreWindow` operation. Hosts reject a same-process replacement that reuses the selected CGWindowID with different bounds before move, resize, set-bounds, minimize, restore, maximize, or close dispatch; geometry operations then repin the requested final bounds instead of mistaking the intended transition for replacement. Restore clears only the retained exact AX window's minimized attribute and verifies its receipt without activation or focus. Window mutations are not advertised to older clients, and new clients refuse hosts that would ignore the added receipt evidence or lack restore support.
 
+Exact background PID/window reads are coordinated at the host on generation-pinned process/window read lanes. Each live frame acquires and releases its own lane, so different-process mutations overlap and queued same-process writers cannot be starved by the next frame. The host revalidates owner, process generation, and bounds after admission and completion; drift fails the request without redispatching it against a broader or recycled target. Screen, frontmost, area, unresolved, foreground, web-focus, and menu-opening paths remain globally exclusive. IPC-backed services acquire only in the execution host, never in both client and host.
+
 ## Security
 
 Peekaboo BridgeHost validates callers before processing any request:

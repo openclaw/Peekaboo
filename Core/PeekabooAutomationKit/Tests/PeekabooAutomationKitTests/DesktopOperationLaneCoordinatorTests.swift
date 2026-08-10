@@ -384,6 +384,51 @@ struct DesktopOperationLaneCoordinatorTests {
         #expect(await laterReaderStarted.isOpen)
     }
 
+    @Test
+    func `Queued process writer closes its turnstile to later window readers`() async throws {
+        let root = Self.temporaryDirectory(named: "process-writer-turnstile")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let coordinator = DesktopOperationLaneCoordinator(coordinationRootURL: root)
+        let process = ApplicationProcessIdentity(processIdentifier: 920, processStartIdentity: 2)
+        let firstWindow = Self.window(windowID: 111, process: process)
+        let secondWindow = Self.window(windowID: 112, process: process)
+        let ownerStarted = AsyncTestLatch()
+        let ownerRelease = AsyncTestLatch()
+        let writerStarted = AsyncTestLatch()
+        let writerRelease = AsyncTestLatch()
+        let laterReaderStarted = AsyncTestLatch()
+
+        let owner = Task {
+            try await coordinator.run(scope: .window(firstWindow), access: .read) {
+                await ownerStarted.open()
+                await ownerRelease.wait()
+            }
+        }
+        await ownerStarted.wait()
+        let writer = Task {
+            try await coordinator.run(scope: .process(process), access: .write) {
+                await writerStarted.open()
+                await writerRelease.wait()
+            }
+        }
+        try await Task.sleep(for: .milliseconds(100))
+        let reader = Task {
+            try await coordinator.run(scope: .window(secondWindow), access: .read) {
+                await laterReaderStarted.open()
+            }
+        }
+
+        await ownerRelease.open()
+        #expect(await writerStarted.opensWithin(.seconds(1)))
+        #expect(await !(laterReaderStarted.opensWithin(.milliseconds(100))))
+        await writerRelease.open()
+
+        try await owner.value
+        try await writer.value
+        try await reader.value
+        #expect(await laterReaderStarted.isOpen)
+    }
+
     private static func window(
         windowID: Int,
         process: ApplicationProcessIdentity = .init(processIdentifier: 600, processStartIdentity: 10),

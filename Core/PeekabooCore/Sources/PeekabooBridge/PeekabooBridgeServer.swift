@@ -5,8 +5,6 @@ import PeekabooAutomationKit
 import PeekabooFoundation
 import Security
 
-private struct ExactWindowReadLaneIdentityChanged: Error {}
-
 public struct PeekabooBridgePeer: Sendable {
     public let processIdentifier: pid_t
     public let userIdentifier: uid_t?
@@ -495,61 +493,6 @@ public final class PeekabooBridgeServer {
                 code: .invalidRequest,
                 message: "Pinned window target disappeared or changed owner/process generation/bounds")
         }
-    }
-
-    func validatedDesktopReadOperationLane(
-        for request: PeekabooBridgeRequest,
-        proposed: (scope: DesktopOperationScope, access: DesktopOperationAccess))
-        -> (scope: DesktopOperationScope, access: DesktopOperationAccess)
-    {
-        guard case .window = proposed.scope else { return proposed }
-        guard self.exactWindowReadIdentityIsCurrent(for: request) else {
-            return (.global, .write)
-        }
-        return proposed
-    }
-
-    func withValidatedDesktopReadOperationLane<T: Sendable>(
-        for request: PeekabooBridgeRequest,
-        proposed: (scope: DesktopOperationScope, access: DesktopOperationAccess),
-        operation: () async throws -> T) async throws -> T
-    {
-        let readLane = self.validatedDesktopReadOperationLane(for: request, proposed: proposed)
-        do {
-            return try await self.desktopOperationLaneCoordinator.run(
-                scope: readLane.scope,
-                access: readLane.access)
-            {
-                if case .window = readLane.scope,
-                   !self.exactWindowReadIdentityIsCurrent(for: request)
-                {
-                    throw ExactWindowReadLaneIdentityChanged()
-                }
-                let result = try await operation()
-                if case .window = readLane.scope,
-                   !self.exactWindowReadIdentityIsCurrent(for: request)
-                {
-                    throw ExactWindowReadLaneIdentityChanged()
-                }
-                return result
-            }
-        } catch is ExactWindowReadLaneIdentityChanged {
-            return try await self.desktopOperationLaneCoordinator.run(scope: .global, access: .write) {
-                try await operation()
-            }
-        }
-    }
-
-    private func exactWindowReadIdentityIsCurrent(for request: PeekabooBridgeRequest) -> Bool {
-        guard let identity = request.exactWindowReadIdentity,
-              let windowID = CGWindowID(exactly: identity.windowID),
-              self.windowOwnerProcessIdentifierProvider(windowID) == identity.ownerProcessIdentifier,
-              self.processStartIdentityProvider(identity.ownerProcessIdentifier) ==
-              identity.ownerProcessStartIdentity
-        else {
-            return false
-        }
-        return true
     }
 
     private func completeDesktopMutation(

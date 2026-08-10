@@ -762,7 +762,10 @@ struct PeekabooBridgeTests {
                 hostKind: .gui,
                 allowlistedTeams: [],
                 allowlistedBundles: [],
-                postEventAccessEvaluator: { true })
+                postEventAccessEvaluator: { true },
+                windowOwnerProcessIdentifierProvider: { _ in 42 },
+                windowBoundsProvider: { _ in CGRect(x: 10, y: 20, width: 300, height: 200) },
+                processStartIdentityProvider: { _ in 7 })
         }
 
         let request = PeekabooBridgeRequest.captureWindow(

@@ -55,7 +55,58 @@ final class DesktopObservationServiceTests: XCTestCase {
 
         XCTAssertEqual(selected?.windowID, 21)
     }
+}
 
+@MainActor
+extension DesktopObservationServiceTests {
+    func testObservationLanePlanNarrowsOnlyPassiveExactTargets() {
+        let process = ApplicationProcessIdentity(processIdentifier: 500, processStartIdentity: 70)
+        let window = WindowMutationIdentity(
+            windowID: 200,
+            ownerProcessIdentifier: process.processIdentifier,
+            ownerProcessStartIdentity: process.processStartIdentity,
+            capturedBounds: CGRect(x: 10, y: 20, width: 300, height: 200))
+        let service = DesktopObservationService(
+            screenCapture: RecordingScreenCaptureService(result: Self.captureResult(
+                app: Self.app(),
+                window: Self.window(id: 1, title: "Fixture", bounds: CGRect(x: 0, y: 0, width: 1, height: 1)))),
+            automation: RecordingUIAutomationService(),
+            applications: RecordingApplicationService(applications: [], windows: []),
+            processStartIdentityProvider: { _ in process.processStartIdentity },
+            windowMutationIdentityProvider: { _ in window })
+        let passivePID = service.operationLanePlan(for: DesktopObservationRequest(
+            target: .pid(process.processIdentifier, window: .automatic),
+            detection: DesktopDetectionOptions(mode: .none)))
+        let passiveWindow = service.operationLanePlan(for: DesktopObservationRequest(
+            target: .windowID(CGWindowID(window.windowID)),
+            detection: DesktopDetectionOptions(mode: .none)))
+        let screen = service.operationLanePlan(for: DesktopObservationRequest(
+            target: .screen(index: 0),
+            detection: DesktopDetectionOptions(mode: .none)))
+        let webFocus = service.operationLanePlan(for: DesktopObservationRequest(
+            target: .pid(process.processIdentifier, window: .automatic),
+            detection: DesktopDetectionOptions(mode: .accessibility, allowWebFocusFallback: true)))
+        let foreground = service.operationLanePlan(for: DesktopObservationRequest(
+            target: .windowID(CGWindowID(window.windowID)),
+            capture: DesktopCaptureOptions(focus: .foreground),
+            detection: DesktopDetectionOptions(mode: .none)))
+        let menuOpening = service.operationLanePlan(for: DesktopObservationRequest(
+            target: .menubarPopover(hints: ["Fixture"], openIfNeeded: .init()),
+            detection: DesktopDetectionOptions(mode: .none)))
+
+        XCTAssertEqual(passivePID.scope, .process(process))
+        XCTAssertEqual(passivePID.access, .read)
+        XCTAssertEqual(passiveWindow.scope, .window(window))
+        XCTAssertEqual(passiveWindow.access, .read)
+        for global in [screen, webFocus, foreground, menuOpening] {
+            XCTAssertEqual(global.scope, .global)
+            XCTAssertEqual(global.access, .write)
+        }
+    }
+}
+
+@MainActor
+extension DesktopObservationServiceTests {
     func testObservationWithoutDetectionCapturesResolvedWindowID() async throws {
         let imageData = Data([1, 2, 3])
         let app = Self.app()
@@ -787,7 +838,175 @@ final class DesktopObservationServiceTests: XCTestCase {
         _ = try await localObservation.value
         _ = try await remoteObservation.value
     }
+}
 
+@MainActor
+extension DesktopObservationServiceTests {
+    func testExactWindowLaneIgnoresMutableMinimizedHint() async throws {
+        let process = ApplicationProcessIdentity(processIdentifier: 123, processStartIdentity: 700)
+        let bounds = CGRect(x: 100, y: 100, width: 400, height: 300)
+        let identity = WindowMutationIdentity(
+            windowID: 42,
+            ownerProcessIdentifier: process.processIdentifier,
+            ownerProcessStartIdentity: process.processStartIdentity,
+            capturedBounds: bounds,
+            isMinimized: false)
+        let app = ServiceApplicationInfo(
+            processIdentifier: process.processIdentifier,
+            processStartIdentity: process.processStartIdentity,
+            bundleIdentifier: "com.example.fixture",
+            name: "Fixture",
+            windowCount: 1)
+        let window = Self.window(
+            id: identity.windowID,
+            title: "Captured",
+            bounds: bounds,
+            mutationIdentity: identity)
+        let service = DesktopObservationService(
+            screenCapture: RecordingScreenCaptureService(result: Self.captureResult(app: app, window: window)),
+            automation: RecordingUIAutomationService(),
+            applications: RecordingApplicationService(applications: [app], windows: [window]),
+            exactWindowMetadataProvider: StableExactWindowMetadataProvider(),
+            processStartIdentityProvider: { _ in process.processStartIdentity },
+            windowMutationIdentityProvider: { _ in identity })
+
+        let result = try await service.observe(DesktopObservationRequest(
+            target: .windowID(CGWindowID(identity.windowID)),
+            detection: DesktopDetectionOptions(mode: .none)))
+
+        XCTAssertEqual(result.target.window?.windowID, identity.windowID)
+    }
+
+    func testExactPIDObservationSerializesOnlyItsProcessFrame() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekaboo-observation-process-lane-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let coordinator = DesktopOperationLaneCoordinator(coordinationRootURL: root)
+        let process = ApplicationProcessIdentity(processIdentifier: 510, processStartIdentity: 77)
+        let otherProcess = ApplicationProcessIdentity(processIdentifier: 511, processStartIdentity: 88)
+        let bounds = CGRect(x: 100, y: 100, width: 500, height: 400)
+        let windowIdentity = WindowMutationIdentity(
+            windowID: 201,
+            ownerProcessIdentifier: process.processIdentifier,
+            ownerProcessStartIdentity: process.processStartIdentity,
+            capturedBounds: bounds)
+        let app = ServiceApplicationInfo(
+            processIdentifier: process.processIdentifier,
+            processStartIdentity: process.processStartIdentity,
+            bundleIdentifier: "com.example.fixture",
+            name: "Fixture",
+            windowCount: 1)
+        let window = Self.window(
+            id: windowIdentity.windowID,
+            title: "Scoped",
+            bounds: bounds,
+            mutationIdentity: windowIdentity)
+        let captureStarted = expectation(description: "exact PID frame started")
+        let captureSuspension = ObservationDetectionSuspension { captureStarted.fulfill() }
+        let service = DesktopObservationService(
+            screenCapture: SuspendingObservationCaptureService(
+                result: Self.captureResult(app: app, window: window),
+                suspension: captureSuspension),
+            automation: RecordingUIAutomationService(),
+            applications: RecordingApplicationService(applications: [app], windows: [window]),
+            operationLaneCoordinator: coordinator,
+            processStartIdentityProvider: { pid in
+                pid == process.processIdentifier ? process.processStartIdentity : otherProcess.processStartIdentity
+            },
+            windowMutationIdentityProvider: { _ in windowIdentity })
+        let sameProcessWriterStarted = ObservationLaneLatch()
+        let otherProcessWriterStarted = ObservationLaneLatch()
+
+        let observation = Task {
+            try await service.observe(DesktopObservationRequest(
+                target: .pid(process.processIdentifier, window: .automatic),
+                detection: DesktopDetectionOptions(mode: .none)))
+        }
+        await fulfillment(of: [captureStarted], timeout: 2)
+
+        let sameProcessWriter = Task {
+            try await coordinator.run(scope: .process(process), access: .write) {
+                await sameProcessWriterStarted.open()
+            }
+        }
+        let otherProcessWriter = Task {
+            try await coordinator.run(scope: .process(otherProcess), access: .write) {
+                await otherProcessWriterStarted.open()
+            }
+        }
+
+        let otherProcessOverlapped = await otherProcessWriterStarted.opensWithin(.seconds(1))
+        let sameProcessOverlapped = await sameProcessWriterStarted.opensWithin(.milliseconds(100))
+        XCTAssertTrue(otherProcessOverlapped)
+        XCTAssertFalse(sameProcessOverlapped)
+        captureSuspension.release()
+
+        _ = try await observation.value
+        try await sameProcessWriter.value
+        try await otherProcessWriter.value
+        let sameProcessEventuallyStarted = await sameProcessWriterStarted.isOpen
+        XCTAssertTrue(sameProcessEventuallyStarted)
+    }
+
+    func testCancelledExactPIDObservationReleasesPartialClaimsWithoutCapturing() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekaboo-observation-cancel-lane-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let coordinator = DesktopOperationLaneCoordinator(coordinationRootURL: root)
+        let process = ApplicationProcessIdentity(processIdentifier: 520, processStartIdentity: 99)
+        let ownerStarted = ObservationLaneLatch()
+        let ownerRelease = ObservationLaneLatch()
+        let captureStarted = expectation(description: "cancelled observation never captured")
+        captureStarted.isInverted = true
+        let app = ServiceApplicationInfo(
+            processIdentifier: process.processIdentifier,
+            processStartIdentity: process.processStartIdentity,
+            bundleIdentifier: "com.example.fixture",
+            name: "Fixture",
+            windowCount: 1)
+        let window = Self.window(
+            id: 202,
+            title: "Queued",
+            bounds: CGRect(x: 100, y: 100, width: 500, height: 400))
+        let service = DesktopObservationService(
+            screenCapture: RecordingScreenCaptureService(
+                result: Self.captureResult(app: app, window: window),
+                onCapture: { captureStarted.fulfill() }),
+            automation: RecordingUIAutomationService(),
+            applications: RecordingApplicationService(applications: [app], windows: [window]),
+            operationLaneCoordinator: coordinator,
+            processStartIdentityProvider: { _ in process.processStartIdentity })
+
+        let owner = Task {
+            try await coordinator.run(scope: .process(process), access: .write) {
+                await ownerStarted.open()
+                await ownerRelease.wait()
+            }
+        }
+        await ownerStarted.wait()
+        let observation = Task {
+            try await service.observe(DesktopObservationRequest(
+                target: .pid(process.processIdentifier, window: .automatic),
+                detection: DesktopDetectionOptions(mode: .none)))
+        }
+        try await Task.sleep(for: .milliseconds(50))
+        observation.cancel()
+
+        do {
+            _ = try await observation.value
+            XCTFail("Expected queued observation cancellation")
+        } catch is CancellationError {
+            // Expected: cancellation releases the already-held global ancestor claim.
+        }
+        await ownerRelease.open()
+        try await owner.value
+        await fulfillment(of: [captureStarted], timeout: 0.2)
+        try await coordinator.run(scope: .global, access: .write) {}
+    }
+}
+
+@MainActor
+extension DesktopObservationServiceTests {
     private static func app() -> ServiceApplicationInfo {
         ServiceApplicationInfo(
             processIdentifier: 123,
@@ -1196,6 +1415,96 @@ private final class RecordingOCRRecognizer: OCRRecognizing, @unchecked Sendable 
     func recognizeText(in _: Data, timeoutSeconds _: TimeInterval) async throws -> OCRTextResult {
         self.lock.withLock { self.recognizeCalls += 1 }
         return self.result
+    }
+}
+
+@MainActor
+private final class SuspendingObservationCaptureService: ScreenCaptureServiceProtocol {
+    private let result: CaptureResult
+    private let suspension: ObservationDetectionSuspension
+
+    init(result: CaptureResult, suspension: ObservationDetectionSuspension) {
+        self.result = result
+        self.suspension = suspension
+    }
+
+    func captureScreen(
+        displayIndex _: Int?,
+        visualizerMode _: CaptureVisualizerMode,
+        scale _: CaptureScalePreference) async throws -> CaptureResult
+    {
+        await self.suspension.wait()
+        return self.result
+    }
+
+    func captureWindow(
+        appIdentifier _: String,
+        windowIndex _: Int?,
+        visualizerMode _: CaptureVisualizerMode,
+        scale _: CaptureScalePreference) async throws -> CaptureResult
+    {
+        await self.suspension.wait()
+        return self.result
+    }
+
+    func captureWindow(
+        windowID _: CGWindowID,
+        visualizerMode _: CaptureVisualizerMode,
+        scale _: CaptureScalePreference) async throws -> CaptureResult
+    {
+        await self.suspension.wait()
+        return self.result
+    }
+
+    func captureFrontmost(
+        visualizerMode _: CaptureVisualizerMode,
+        scale _: CaptureScalePreference) async throws -> CaptureResult
+    {
+        await self.suspension.wait()
+        return self.result
+    }
+
+    func captureArea(
+        _: CGRect,
+        visualizerMode _: CaptureVisualizerMode,
+        scale _: CaptureScalePreference) async throws -> CaptureResult
+    {
+        await self.suspension.wait()
+        return self.result
+    }
+
+    func hasScreenRecordingPermission() async -> Bool {
+        true
+    }
+}
+
+private actor ObservationLaneLatch {
+    private var opened = false
+    private var continuations: [CheckedContinuation<Void, Never>] = []
+
+    var isOpen: Bool {
+        self.opened
+    }
+
+    func open() {
+        guard !self.opened else { return }
+        self.opened = true
+        let pending = self.continuations
+        self.continuations.removeAll()
+        pending.forEach { $0.resume() }
+    }
+
+    func wait() async {
+        guard !self.opened else { return }
+        await withCheckedContinuation { self.continuations.append($0) }
+    }
+
+    func opensWithin(_ duration: Duration) async -> Bool {
+        let deadline = ContinuousClock.now.advanced(by: duration)
+        while !self.opened, ContinuousClock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+        return self.opened
     }
 }
 

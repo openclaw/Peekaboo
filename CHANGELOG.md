@@ -9,6 +9,7 @@
 - Keep background app launch/open ownership through verified focus reconciliation, restoring only the exact prior process generation while treating transient frontmost uncertainty and later user foreground choices conservatively.
 - Stop probing, requesting, advertising, or showing AppleScript Automation permission now that application, Dock, and UI operations use native macOS APIs; remove the stale checked-in CLI binary and AppleScript code from shipped executables while retaining legacy wire/error decoding for older Bridge hosts.
 - Return generation-pinned CG window inventory promptly when AX enrichment stalls; detached per-process enrichment now times out without holding the Bridge request or desktop lane after its caller disconnects.
+- Let generation-pinned background PID/window observations use fair process/window read lanes so unrelated app mutations overlap and queued same-process writes run between live frames; keep unresolved or focus-capable capture globally exclusive and fail closed on identity drift.
 - Stop `peekaboo learn` from presenting `shell` as a CLI command: it remains a built-in Agent capability but is not in the MCP catalog and has no `peekaboo shell` CLI root; guard both curated Agent overrides and rendered CLI roots against future drift.
 - Ensure action-command JSON validation failures before dispatch report
   `effect: refused`, including parser and binding errors.

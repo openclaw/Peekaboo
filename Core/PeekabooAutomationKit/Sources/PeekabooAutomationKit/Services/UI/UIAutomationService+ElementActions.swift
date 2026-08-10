@@ -1,16 +1,29 @@
 import Foundation
 import PeekabooFoundation
 
+private struct ElementSetValueLanePlan: Sendable {
+    let scope: DesktopOperationScope
+    let expectedProcessIdentity: ApplicationProcessIdentity?
+    let expectedWindowIdentity: WindowMutationIdentity?
+
+    static let global = ElementSetValueLanePlan(
+        scope: .global,
+        expectedProcessIdentity: nil,
+        expectedWindowIdentity: nil)
+}
+
 extension UIAutomationService: ElementActionAutomationServiceProtocol {
     public func setValue(
         target: String,
         value: UIElementValue,
         snapshotId: String?) async throws -> ElementActionResult
     {
-        try await self.operationLaneCoordinator.run(scope: .global, access: .write) {
+        let lanePlan = await self.setValueLanePlan(snapshotId: snapshotId)
+        return try await self.operationLaneCoordinator.run(scope: lanePlan.scope, access: .write) {
             self.logger.debug("Set value requested - target: \(target, privacy: .public)")
             defer { self.elementDetectionService.invalidateCache() }
             let resolved = try await self.resolveActionTarget(target, snapshotId: snapshotId)
+            try self.validateSetValueTarget(resolved.windowContext, plan: lanePlan)
             let oldValue = self.safeValueDescription(resolved.element.value)
                 ?? resolved.element.selectedValue.map(String.init)
             let result = try await self.normalizingSnapshotErrors {
@@ -95,7 +108,7 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
     }
 
     private func resolveActionTarget(_ target: String, snapshotId: String?) async throws
-        -> (element: AutomationElement, description: String, bundleIdentifier: String?)
+        -> (element: AutomationElement, description: String, bundleIdentifier: String?, windowContext: WindowContext?)
     {
         let normalized = target.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalized.isEmpty else {
@@ -127,7 +140,8 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
                 return (
                     element,
                     Self.describe(detected),
-                    detectionResult.metadata.windowContext?.applicationBundleId)
+                    detectionResult.metadata.windowContext?.applicationBundleId,
+                    detectionResult.metadata.windowContext)
             }
 
             throw NotFoundError.element(normalized)
@@ -138,7 +152,7 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
             windowContext: nil,
             requireTextInput: false)
         {
-            return (element, element.name ?? normalized, nil)
+            return (element, element.name ?? normalized, nil, nil)
         }
 
         throw PeekabooError.invalidInput(
@@ -167,6 +181,65 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
     private static func describe(_ element: DetectedElement) -> String {
         let label = element.label ?? element.value ?? element.attributes["title"] ?? "untitled"
         return "\(element.id) \(element.type.rawValue): \(label)"
+    }
+
+    private func setValueLanePlan(snapshotId: String?) async -> ElementSetValueLanePlan {
+        guard let snapshotId,
+              let detectionResult = try? await self.snapshotManager.getDetectionResult(snapshotId: snapshotId),
+              let context = detectionResult.metadata.windowContext,
+              let identity = context.windowMutationIdentity,
+              let bounds = context.windowBounds,
+              context.applicationProcessId == identity.ownerProcessIdentifier,
+              context.windowID == identity.windowID,
+              identity.capturedBounds == bounds,
+              self.processStartIdentityProvider(identity.ownerProcessIdentifier) ==
+              identity.ownerProcessStartIdentity,
+              self.exactWindowIdentityValidator(identity, bounds)
+        else {
+            return .global
+        }
+        let processIdentity = ApplicationProcessIdentity(
+            processIdentifier: identity.ownerProcessIdentifier,
+            processStartIdentity: identity.ownerProcessStartIdentity)
+        return ElementSetValueLanePlan(
+            scope: .process(processIdentity),
+            expectedProcessIdentity: processIdentity,
+            expectedWindowIdentity: identity)
+    }
+
+    private func validateSetValueTarget(
+        _ context: WindowContext?,
+        plan: ElementSetValueLanePlan) throws
+    {
+        guard let expectedProcessIdentity = plan.expectedProcessIdentity,
+              let expectedWindowIdentity = plan.expectedWindowIdentity
+        else {
+            return
+        }
+        guard let context,
+              context.applicationProcessId == expectedProcessIdentity.processIdentifier,
+              context.windowID == expectedWindowIdentity.windowID,
+              context.windowBounds == expectedWindowIdentity.capturedBounds,
+              let resolvedWindowIdentity = context.windowMutationIdentity,
+              Self.sameSetValueWindowIdentity(resolvedWindowIdentity, expectedWindowIdentity),
+              self.processStartIdentityProvider(expectedProcessIdentity.processIdentifier) ==
+              expectedProcessIdentity.processStartIdentity,
+              let bounds = expectedWindowIdentity.capturedBounds,
+              self.exactWindowIdentityValidator(expectedWindowIdentity, bounds)
+        else {
+            throw PeekabooError.snapshotStale(
+                "target window owner, process generation, or bounds changed before value dispatch")
+        }
+    }
+
+    private nonisolated static func sameSetValueWindowIdentity(
+        _ lhs: WindowMutationIdentity,
+        _ rhs: WindowMutationIdentity) -> Bool
+    {
+        lhs.windowID == rhs.windowID &&
+            lhs.ownerProcessIdentifier == rhs.ownerProcessIdentifier &&
+            lhs.ownerProcessStartIdentity == rhs.ownerProcessStartIdentity &&
+            lhs.capturedBounds == rhs.capturedBounds
     }
 
     private static func isValidActionName(_ actionName: String) -> Bool {
