@@ -51,8 +51,8 @@ enum TestChildProcess {
                 error: .string(limit: .max)
             )
             return Result(
-                standardOutput: collected.standardOutput ?? "",
-                standardError: collected.standardError ?? "",
+                standardOutput: collected.standardOutput,
+                standardError: collected.standardError,
                 status: collected.terminationStatus
             )
         }
@@ -69,8 +69,8 @@ enum TestChildProcess {
             error: .string(limit: .max)
         )
         return Result(
-            standardOutput: collected.standardOutput ?? "",
-            standardError: collected.standardError ?? "",
+            standardOutput: collected.standardOutput,
+            standardError: collected.standardError,
             status: collected.terminationStatus
         )
     }

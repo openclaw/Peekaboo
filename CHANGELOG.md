@@ -10,6 +10,7 @@
 - Add `app focus` and positional app targets across quit, relaunch, hide, unhide, and switch while rejecting conflicting positional/flag targets (v4 breaking change).
 
 ### Changed
+- Update Swift Subprocess to 1.0.0 and pnpm to 11.21.0.
 - Convert clipboard and menubar actions, agent modes, permission requests, and flat config provider/credential operations into real nested subcommands (v4 breaking change).
 - Add `app launch --wait-ready` and repeatable `--open` targets as the surviving launch/open surface (v4 breaking change).
 - Redesign automation feedback around a natural agent cursor, a quiet target-window input HUD, and capture borders, suppressing window feedback whenever its target is not visibly active.
