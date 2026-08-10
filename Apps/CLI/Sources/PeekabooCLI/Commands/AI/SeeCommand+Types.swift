@@ -185,7 +185,6 @@ struct SeeResult: Codable {
     let truncation: SeeTruncationSummary?
     let menu_bar: MenuBarSummary?
     let observation: SeeObservationDiagnostics?
-    var success: Bool = true
 
     init(
         snapshot_id: String,
@@ -203,8 +202,7 @@ struct SeeResult: Codable {
         ui_elements: [UIElementSummary],
         menu_bar: MenuBarSummary?,
         truncation: SeeTruncationSummary? = nil,
-        observation: SeeObservationDiagnostics? = nil,
-        success: Bool = true
+        observation: SeeObservationDiagnostics? = nil
     ) {
         self.snapshot_id = snapshot_id
         self.screenshot_raw = screenshot_raw
@@ -222,7 +220,6 @@ struct SeeResult: Codable {
         self.truncation = truncation
         self.menu_bar = menu_bar
         self.observation = observation
-        self.success = success
     }
 }
 
