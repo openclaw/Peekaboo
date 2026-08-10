@@ -91,12 +91,13 @@ struct CommanderBinderMenuDockTests {
 
     @Test
     func `Dock launch binding`() throws {
-        let parsed = ParsedValues(positional: ["Safari"], options: [:], flags: [])
+        let parsed = ParsedValues(positional: ["Safari"], options: [:], flags: ["foreground"])
         let command = try CommanderCLIBinder.instantiateCommand(
             ofType: DockCommand.LaunchSubcommand.self,
             parsedValues: parsed
         )
         #expect(command.app == "Safari")
+        #expect(command.foreground)
     }
 
     @Test
@@ -107,7 +108,7 @@ struct CommanderBinderMenuDockTests {
                 "app": ["Finder"],
                 "select": ["New Window"]
             ],
-            flags: []
+            flags: ["foreground"]
         )
         let command = try CommanderCLIBinder.instantiateCommand(
             ofType: DockCommand.RightClickSubcommand.self,
@@ -115,6 +116,7 @@ struct CommanderBinderMenuDockTests {
         )
         #expect(command.app == "Finder")
         #expect(command.select == "New Window")
+        #expect(command.foreground)
     }
 
     @Test

@@ -15,10 +15,10 @@ struct DockCommand: ParsableCommand {
 
                 EXAMPLES:
                   # Launch an app from the Dock
-                  peekaboo dock launch Safari
+                  peekaboo dock launch Safari --foreground
 
                   # Right-click a Dock item
-                  peekaboo dock right-click --app Finder --select "New Window"
+                  peekaboo dock right-click --app Finder --select "New Window" --foreground
 
                   # Show/hide the Dock
                   peekaboo dock hide
@@ -58,6 +58,7 @@ extension DockCommand.LaunchSubcommand: CommanderBindableCommand {
     mutating func applyCommanderValues(_ values: CommanderBindableValues) throws {
         self.app = try values.decodePositional(0, label: "app")
         self.verify = values.flag("verify")
+        self.foreground = values.flag("foreground")
     }
 }
 
@@ -80,6 +81,7 @@ extension DockCommand.RightClickSubcommand: CommanderBindableCommand {
     mutating func applyCommanderValues(_ values: CommanderBindableValues) throws {
         self.app = try values.requireOption("app", as: String.self)
         self.select = values.singleOption("select")
+        self.foreground = values.flag("foreground")
     }
 }
 

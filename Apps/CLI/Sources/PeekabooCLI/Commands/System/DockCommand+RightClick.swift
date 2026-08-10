@@ -5,12 +5,16 @@ extension DockCommand {
     // MARK: - Right-Click Dock Item
 
     @MainActor
-    struct RightClickSubcommand: ConfirmedActionOutputFormattable, OutputFormattable, InjectedRuntimeBackedCommand {
+    struct RightClickSubcommand: ConfirmedActionOutputFormattable, ErrorHandlingCommand, OutputFormattable,
+    InjectedRuntimeBackedCommand {
         @Option(help: "Application name in the Dock")
         var app: String
 
         @Option(help: "Menu item to select after right-clicking")
         var select: String?
+
+        @Flag(help: "Confirm opening the global Dock context menu")
+        var foreground = false
         @RuntimeStorage var runtime: CommandRuntime?
 
         @MainActor
@@ -19,6 +23,12 @@ extension DockCommand {
             self.logger.setJsonOutputMode(self.jsonOutput)
 
             do {
+                guard self.foreground else {
+                    throw ActionRefusalError(
+                        message: "dock right-click opens global Dock UI and requires explicit foreground consent.",
+                        hint: "Use --foreground to allow the Dock context menu to open."
+                    )
+                }
                 let dockItem = try await DockServiceBridge.findDockItem(dock: self.services.dock, name: self.app)
                 self.resolvedRuntime.beginInteractionMutation()
                 try await DockServiceBridge.rightClickDockItem(
@@ -51,7 +61,7 @@ extension DockCommand {
                 handleDockServiceError(error, jsonOutput: self.jsonOutput, logger: self.outputLogger)
                 throw ExitCode(1)
             } catch {
-                handleGenericError(error, jsonOutput: self.jsonOutput, logger: self.outputLogger)
+                self.handleError(error)
                 throw ExitCode(1)
             }
         }

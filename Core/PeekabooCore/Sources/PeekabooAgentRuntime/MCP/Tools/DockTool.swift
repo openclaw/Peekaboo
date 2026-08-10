@@ -16,6 +16,7 @@ public struct DockTool: MCPTool {
         """
         Interact with the macOS Dock - launch apps, show context menus, hide/show dock.
         Actions: launch, right-click (with menu selection), hide, show, list
+        launch and right-click activate global Dock UI and require foreground=true.
         Can list all dock items including persistent and running applications.
         \(PeekabooMCPVersion.banner) using openai/gpt-5.6
         and anthropic/claude-opus-5
@@ -32,6 +33,9 @@ public struct DockTool: MCPTool {
                     description: "Application name for launch/right-click actions"),
                 "select": SchemaBuilder.string(
                     description: "Menu item to select after right-clicking"),
+                "foreground": SchemaBuilder.boolean(
+                    description: "Confirm foreground/global Dock UI for launch and right-click actions.",
+                    default: false),
                 "include_all": SchemaBuilder.boolean(
                     description: "Include all items when listing (default: false)",
                     default: false),
@@ -52,6 +56,12 @@ public struct DockTool: MCPTool {
         let app = arguments.getString("app")
         let select = arguments.getString("select")
         let includeAll = arguments.getBool("include_all") ?? false
+        let foreground = arguments.getBool("foreground") ?? false
+
+        if action == "launch" || action == "right-click", !foreground {
+            return ToolResponse.error(
+                "Dock \(action) activates global Dock UI and requires foreground=true.")
+        }
 
         let dockService = self.context.dock
 

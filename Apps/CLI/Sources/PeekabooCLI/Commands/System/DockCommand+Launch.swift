@@ -7,12 +7,16 @@ extension DockCommand {
     // MARK: - Launch from Dock
 
     @MainActor
-    struct LaunchSubcommand: ConfirmedActionOutputFormattable, OutputFormattable, InjectedRuntimeBackedCommand {
+    struct LaunchSubcommand: ConfirmedActionOutputFormattable, ErrorHandlingCommand, OutputFormattable,
+    InjectedRuntimeBackedCommand {
         @Argument(help: "Application name in the Dock")
         var app: String
 
         @Flag(help: "Verify the app is running after launch")
         var verify = false
+
+        @Flag(help: "Confirm activation of the Dock item and its application")
+        var foreground = false
         @RuntimeStorage var runtime: CommandRuntime?
 
         @MainActor
@@ -21,6 +25,12 @@ extension DockCommand {
             self.logger.setJsonOutputMode(self.jsonOutput)
 
             do {
+                guard self.foreground else {
+                    throw ActionRefusalError(
+                        message: "dock launch activates its target and requires explicit foreground consent.",
+                        hint: "Use --foreground to allow the Dock and target application to come forward."
+                    )
+                }
                 self.resolvedRuntime.beginInteractionMutation()
                 try await DockServiceBridge.launchFromDock(dock: self.services.dock, appName: self.app)
                 let dockItem = try await DockServiceBridge.findDockItem(dock: self.services.dock, name: self.app)
@@ -44,7 +54,7 @@ extension DockCommand {
                 handleDockServiceError(error, jsonOutput: self.jsonOutput, logger: self.outputLogger)
                 throw ExitCode(1)
             } catch {
-                handleGenericError(error, jsonOutput: self.jsonOutput, logger: self.outputLogger)
+                self.handleError(error)
                 throw ExitCode(1)
             }
         }
