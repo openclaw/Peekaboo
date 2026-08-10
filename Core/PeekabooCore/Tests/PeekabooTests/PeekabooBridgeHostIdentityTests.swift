@@ -1,0 +1,133 @@
+import Darwin
+import Foundation
+import PeekabooAutomationKit
+import PeekabooCore
+import Testing
+@testable import PeekabooBridge
+
+struct PeekabooBridgeHostIdentityTests {
+    private struct LegacyHandshakeResponse: Codable {
+        let negotiatedVersion: PeekabooBridgeProtocolVersion
+        let hostKind: PeekabooBridgeHostKind
+        let build: String?
+        let supportedOperations: [PeekabooBridgeOperation]
+        let permissionTags: [String: [PeekabooBridgePermissionKind]]?
+    }
+
+    @Test
+    @MainActor
+    func `current host identity comes from the serving process`() {
+        let identity = PeekabooBridgeHostIdentity.current()
+
+        #expect(identity.processIdentifier == getpid())
+        #expect(identity.processStartIdentity == SystemIdentityResolver.processStartIdentity(getpid()))
+    }
+
+    @Test
+    @MainActor
+    func `missing generation and signature evidence remain unknown`() {
+        let server = PeekabooBridgeServer(
+            services: PeekabooServices(),
+            hostKind: .gui,
+            allowlistedTeams: [],
+            allowlistedBundles: [],
+            hostIdentity: .init(
+                processIdentifier: 4242,
+                processStartIdentity: nil,
+                bundleIdentifier: "boo.peekaboo.mac",
+                bundleShortVersion: "4.0.0",
+                bundleVersion: "400",
+                codeSignatureHash: nil))
+
+        #expect(!server.hostCapabilities.contains(PeekabooBridgeHostCapability.hostGenerationIdentity))
+        #expect(!server.hostCapabilities.contains(PeekabooBridgeHostCapability.codeSignatureBuildIdentity))
+    }
+
+    @Test
+    func `handshake advertises injected host generation build and launch capabilities`() async throws {
+        let hostIdentity = PeekabooBridgeHostIdentity(
+            processIdentifier: 4242,
+            processStartIdentity: 9_876_543,
+            bundleIdentifier: "boo.peekaboo.mac",
+            bundleShortVersion: "4.0.0",
+            bundleVersion: "400",
+            codeSignatureHash: "abcdef")
+        let server = await MainActor.run {
+            PeekabooBridgeServer(
+                services: PeekabooServices(),
+                hostKind: .gui,
+                allowlistedTeams: [],
+                allowlistedBundles: [],
+                hostIdentity: hostIdentity,
+                hostCapabilities: [PeekabooBridgeHostCapability.backgroundBridgeHost])
+        }
+        let request = PeekabooBridgeRequest.handshake(.init(
+            protocolVersion: PeekabooBridgeConstants.protocolVersion,
+            client: .init(
+                bundleIdentifier: "dev.peeka.cli",
+                teamIdentifier: nil,
+                processIdentifier: getpid()),
+            requestedHostKind: .gui))
+
+        let responseData = try await server.decodeAndHandle(
+            JSONEncoder.peekabooBridgeEncoder().encode(request),
+            peer: nil)
+        let response = try JSONDecoder.peekabooBridgeDecoder().decode(PeekabooBridgeResponse.self, from: responseData)
+        guard case let .handshake(handshake) = response else {
+            Issue.record("Expected handshake response, got \(response)")
+            return
+        }
+
+        #expect(handshake.hostIdentity == hostIdentity)
+        #expect(handshake.hostCapabilities == [
+            PeekabooBridgeHostCapability.backgroundBridgeHost,
+            PeekabooBridgeHostCapability.codeSignatureBuildIdentity,
+            PeekabooBridgeHostCapability.hostGenerationIdentity,
+        ])
+    }
+
+    @Test
+    func `new clients decode legacy handshakes without host identity`() throws {
+        let data = Data(#"""
+        {
+            "negotiatedVersion":{"major":1,"minor":0},
+            "hostKind":"gui",
+            "build":"3.9.6 (396)",
+            "supportedOperations":[],
+            "permissionTags":{}
+        }
+        """#.utf8)
+
+        let handshake = try JSONDecoder.peekabooBridgeDecoder().decode(
+            PeekabooBridgeHandshakeResponse.self,
+            from: data)
+
+        #expect(handshake.hostIdentity == nil)
+        #expect(handshake.hostCapabilities == nil)
+    }
+
+    @Test
+    func `legacy clients ignore additive host handshake fields`() throws {
+        let response = PeekabooBridgeHandshakeResponse(
+            negotiatedVersion: PeekabooBridgeConstants.protocolVersion,
+            hostKind: .gui,
+            build: "4.0.0 (400)",
+            supportedOperations: [],
+            hostIdentity: .init(
+                processIdentifier: 4242,
+                processStartIdentity: 9_876_543,
+                bundleIdentifier: "boo.peekaboo.mac",
+                bundleShortVersion: "4.0.0",
+                bundleVersion: "400",
+                codeSignatureHash: "abcdef"),
+            hostCapabilities: [PeekabooBridgeHostCapability.backgroundBridgeHost])
+
+        let data = try JSONEncoder.peekabooBridgeEncoder().encode(response)
+        let legacy = try JSONDecoder.peekabooBridgeDecoder().decode(LegacyHandshakeResponse.self, from: data)
+
+        #expect(legacy.negotiatedVersion == response.negotiatedVersion)
+        #expect(legacy.hostKind == .gui)
+        #expect(legacy.build == response.build)
+        #expect(legacy.supportedOperations.isEmpty)
+    }
+}

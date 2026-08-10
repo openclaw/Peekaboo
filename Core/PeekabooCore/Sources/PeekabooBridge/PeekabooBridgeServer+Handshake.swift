@@ -96,7 +96,9 @@ extension PeekabooBridgeServer {
             supportedOperations: advertisedOps,
             permissions: permissions,
             enabledOperations: Array(enabledOps).sorted { $0.rawValue < $1.rawValue },
-            permissionTags: permissionTags)
+            permissionTags: permissionTags,
+            hostIdentity: self.hostIdentity,
+            hostCapabilities: self.hostCapabilities.sorted())
         return .handshake(response)
     }
 

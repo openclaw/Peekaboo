@@ -17,8 +17,11 @@ final class DockIconManager: NSObject {
     private var windowsObservation: NSKeyValueObservation?
     private let logger = Logger(subsystem: "boo.peekaboo", category: "DockIconManager")
     private var settings: PeekabooSettings?
+    private var isBackgroundBridgeHost = false
+    private var didAcceptExplicitPresentation = false
 
     override private init() {
+        self.isBackgroundBridgeHost = PeekabooAppLaunchPolicy.current.isBackgroundBridgeHost
         super.init()
         self.setupObservers()
         self.updateDockVisibility()
@@ -37,12 +40,27 @@ final class DockIconManager: NSObject {
         self.updateDockVisibility()
     }
 
+    /// Pins an unattended Bridge host to accessory mode regardless of persisted UI preferences.
+    func setBackgroundBridgeHostMode(_ enabled: Bool) {
+        self.isBackgroundBridgeHost = enabled
+        if !enabled {
+            self.didAcceptExplicitPresentation = false
+        }
+        self.updateDockVisibility()
+    }
+
     /// Update dock visibility based on current state.
     /// Call this when user preferences change or when you need to ensure proper state.
     func updateDockVisibility() {
         // Ensure NSApp is available before proceeding
         guard NSApp != nil else {
             self.logger.warning("NSApp not available yet, skipping dock visibility update")
+            return
+        }
+
+        if self.isBackgroundBridgeHost, !self.didAcceptExplicitPresentation {
+            self.logger.debug("Keeping background Bridge host out of the Dock")
+            NSApp.setActivationPolicy(.accessory)
             return
         }
 
@@ -82,6 +100,7 @@ final class DockIconManager: NSObject {
             self.logger.warning("NSApp not available, cannot temporarily show dock")
             return
         }
+        self.didAcceptExplicitPresentation = true
         NSApp.setActivationPolicy(.regular)
     }
 

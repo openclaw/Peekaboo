@@ -23,6 +23,9 @@ read_when:
 - Hosts validate callers by code signature TeamID. If the host rejects the client (`unauthorizedClient`), install a signed Peekaboo CLI build or enable the debug-only escape hatch on the host.
 - If `bridge status` reports `internalError` / “Bridge host returned no response”, the probed host likely closed the socket without replying (older host builds). Hosts built from `main` after 2025-12-18 return a structured `unauthorizedClient` error instead, which is much easier to debug.
 - If a candidate reports `perm: SR=N`, grant Screen Recording to that host app. For capture-only subprocesses whose caller already has Screen Recording, bypass Bridge with `--no-remote --capture-engine cg`.
+- Structured status includes optional `hostIdentity` and `hostCapabilities` from current hosts.
+  `hostIdentity` carries the serving PID/process-start identity plus bundle versions and the exact
+  executable code-signature hash; older hosts omit these fields and continue to decode normally.
 
 ## Examples
 ```bash

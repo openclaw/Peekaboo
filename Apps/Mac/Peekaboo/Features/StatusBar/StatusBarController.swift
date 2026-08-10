@@ -502,6 +502,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
               let session = sessionStore.sessions.first(where: { $0.id == sessionId }) else { return }
 
         // Open session detail window
+        DockIconManager.shared.temporarilyShowDock()
         NSApp.activate(ignoringOtherApps: true)
 
         let window = NSWindow(
@@ -528,6 +529,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         self.logger.info("openMainWindow action triggered from menu")
 
         // First ensure the app is active
+        DockIconManager.shared.temporarilyShowDock()
         NSApp.activate(ignoringOtherApps: true)
 
         // Post notification to open main window

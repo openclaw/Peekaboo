@@ -12,6 +12,7 @@ final class PermissionsOnboardingController {
     private var window: NSWindow?
 
     func show(permissions: Permissions) {
+        guard PeekabooAppLaunchPolicy.current.allowsPermissionsOnboarding else { return }
         if let window {
             window.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)

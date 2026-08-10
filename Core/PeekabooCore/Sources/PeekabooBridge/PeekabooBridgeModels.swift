@@ -254,6 +254,44 @@ public struct PeekabooBridgeHandshake: Codable, Sendable {
     }
 }
 
+/// Generation and exact-build evidence for the process serving a Bridge socket.
+///
+/// Every field is additive and optional at the handshake level so current clients continue to
+/// decode older hosts. Installers should require the fields they need rather than inferring a
+/// process from a socket path or a display version alone.
+public struct PeekabooBridgeHostIdentity: Codable, Sendable, Equatable {
+    public let processIdentifier: pid_t
+    public let processStartIdentity: UInt64?
+    public let bundleIdentifier: String?
+    public let bundleShortVersion: String?
+    public let bundleVersion: String?
+    public let codeSignatureHash: String?
+
+    public init(
+        processIdentifier: pid_t,
+        processStartIdentity: UInt64?,
+        bundleIdentifier: String?,
+        bundleShortVersion: String?,
+        bundleVersion: String?,
+        codeSignatureHash: String?)
+    {
+        self.processIdentifier = processIdentifier
+        self.processStartIdentity = processStartIdentity
+        self.bundleIdentifier = bundleIdentifier
+        self.bundleShortVersion = bundleShortVersion
+        self.bundleVersion = bundleVersion
+        self.codeSignatureHash = codeSignatureHash
+    }
+}
+
+/// Stable raw capability names advertised by current hosts. The wire representation remains an
+/// array of strings so clients can safely ignore capabilities introduced by later builds.
+public enum PeekabooBridgeHostCapability {
+    public static let hostGenerationIdentity = "hostGenerationIdentity"
+    public static let codeSignatureBuildIdentity = "codeSignatureBuildIdentity"
+    public static let backgroundBridgeHost = "backgroundBridgeHost"
+}
+
 public struct PeekabooBridgeHandshakeResponse: Codable, Sendable {
     public let negotiatedVersion: PeekabooBridgeProtocolVersion
     public let hostKind: PeekabooBridgeHostKind
@@ -265,6 +303,10 @@ public struct PeekabooBridgeHandshakeResponse: Codable, Sendable {
     public let enabledOperations: [PeekabooBridgeOperation]?
     /// Map of operation rawValue to the permissions it requires so clients can surface missing grants.
     public let permissionTags: [String: [PeekabooBridgePermissionKind]]
+    /// Optional exact process/build identity for generation-safe readiness checks.
+    public let hostIdentity: PeekabooBridgeHostIdentity?
+    /// Optional raw capabilities of this host process and its launch mode.
+    public let hostCapabilities: [String]?
 
     public init(
         negotiatedVersion: PeekabooBridgeProtocolVersion,
@@ -273,7 +315,9 @@ public struct PeekabooBridgeHandshakeResponse: Codable, Sendable {
         supportedOperations: [PeekabooBridgeOperation],
         permissions: PermissionsStatus? = nil,
         enabledOperations: [PeekabooBridgeOperation]? = nil,
-        permissionTags: [String: [PeekabooBridgePermissionKind]] = [:])
+        permissionTags: [String: [PeekabooBridgePermissionKind]] = [:],
+        hostIdentity: PeekabooBridgeHostIdentity? = nil,
+        hostCapabilities: [String]? = nil)
     {
         self.negotiatedVersion = negotiatedVersion
         self.hostKind = hostKind
@@ -282,6 +326,8 @@ public struct PeekabooBridgeHandshakeResponse: Codable, Sendable {
         self.permissions = permissions
         self.enabledOperations = enabledOperations
         self.permissionTags = permissionTags
+        self.hostIdentity = hostIdentity
+        self.hostCapabilities = hostCapabilities
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -292,6 +338,8 @@ public struct PeekabooBridgeHandshakeResponse: Codable, Sendable {
         case permissions
         case enabledOperations
         case permissionTags
+        case hostIdentity
+        case hostCapabilities
     }
 
     public init(from decoder: any Decoder) throws {
@@ -307,6 +355,8 @@ public struct PeekabooBridgeHandshakeResponse: Codable, Sendable {
         self.permissionTags = try container.decodeIfPresent(
             [String: [PeekabooBridgePermissionKind]].self,
             forKey: .permissionTags) ?? [:]
+        self.hostIdentity = try container.decodeIfPresent(PeekabooBridgeHostIdentity.self, forKey: .hostIdentity)
+        self.hostCapabilities = try container.decodeIfPresent([String].self, forKey: .hostCapabilities)
     }
 
     public func encode(to encoder: any Encoder) throws {
@@ -319,6 +369,10 @@ public struct PeekabooBridgeHandshakeResponse: Codable, Sendable {
         try container.encodeIfPresent(self.enabledOperations, forKey: .enabledOperations)
         if !self.permissionTags.isEmpty {
             try container.encode(self.permissionTags, forKey: .permissionTags)
+        }
+        try container.encodeIfPresent(self.hostIdentity, forKey: .hostIdentity)
+        if let hostCapabilities, !hostCapabilities.isEmpty {
+            try container.encode(hostCapabilities, forKey: .hostCapabilities)
         }
     }
 }

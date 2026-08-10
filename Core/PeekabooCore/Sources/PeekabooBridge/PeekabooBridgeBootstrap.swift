@@ -13,6 +13,8 @@ public enum PeekabooBridgeBootstrap {
         daemonControl: (any PeekabooDaemonControlProviding)? = nil,
         automationActivityObserver: (@Sendable (pid_t) -> Void)? = nil,
         allowedOperations: Set<PeekabooBridgeOperation> = PeekabooBridgeOperation.remoteDefaultAllowlist,
+        hostIdentity: PeekabooBridgeHostIdentity? = .current(),
+        hostCapabilities: Set<String> = [],
         maxMessageBytes: Int = 64 * 1024 * 1024,
         requestTimeoutSec: TimeInterval = 10) -> PeekabooBridgeHost
     {
@@ -22,6 +24,8 @@ public enum PeekabooBridgeBootstrap {
             allowlistedTeams: allowlistedTeams,
             allowlistedBundles: allowlistedBundles,
             allowedOperations: allowedOperations,
+            hostIdentity: hostIdentity,
+            hostCapabilities: hostCapabilities,
             daemonControl: daemonControl,
             desktopMutationWatermarkStore: DesktopMutationWatermarkStore(),
             automationActivityObserver: automationActivityObserver)
@@ -47,6 +51,8 @@ public enum PeekabooBridgeBootstrap {
         daemonControl: (any PeekabooDaemonControlProviding)? = nil,
         automationActivityObserver: (@Sendable (pid_t) -> Void)? = nil,
         allowedOperations: Set<PeekabooBridgeOperation> = PeekabooBridgeOperation.remoteDefaultAllowlist,
+        hostIdentity: PeekabooBridgeHostIdentity? = .current(),
+        hostCapabilities: Set<String> = [],
         maxMessageBytes: Int = 64 * 1024 * 1024,
         requestTimeoutSec: TimeInterval = 10) async throws -> PeekabooBridgeHost
     {
@@ -56,6 +62,8 @@ public enum PeekabooBridgeBootstrap {
             allowlistedTeams: allowlistedTeams,
             allowlistedBundles: allowlistedBundles,
             allowedOperations: allowedOperations,
+            hostIdentity: hostIdentity,
+            hostCapabilities: hostCapabilities,
             daemonControl: daemonControl,
             desktopMutationWatermarkStore: DesktopMutationWatermarkStore(),
             automationActivityObserver: automationActivityObserver)

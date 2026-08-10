@@ -32,6 +32,8 @@ public final class PeekabooBridgeServer {
     let allowlistedBundles: Set<String>
     let supportedVersions: ClosedRange<PeekabooBridgeProtocolVersion>
     let allowedOperations: Set<PeekabooBridgeOperation>
+    let hostIdentity: PeekabooBridgeHostIdentity?
+    let hostCapabilities: Set<String>
     let daemonControl: (any PeekabooDaemonControlProviding)?
     let postEventAccessEvaluator: @MainActor @Sendable () -> Bool
     let postEventAccessRequester: @MainActor @Sendable () -> Bool
@@ -53,6 +55,8 @@ public final class PeekabooBridgeServer {
         allowlistedBundles: Set<String>,
         supportedVersions: ClosedRange<PeekabooBridgeProtocolVersion> = PeekabooBridgeConstants.supportedProtocolRange,
         allowedOperations: Set<PeekabooBridgeOperation> = PeekabooBridgeOperation.remoteDefaultAllowlist,
+        hostIdentity: PeekabooBridgeHostIdentity? = .current(),
+        hostCapabilities: Set<String> = [],
         daemonControl: (any PeekabooDaemonControlProviding)? = nil,
         desktopMutationWatermarkStore: DesktopMutationWatermarkStore? = nil,
         desktopOperationLaneCoordinator: DesktopOperationLaneCoordinator = .shared,
@@ -76,6 +80,15 @@ public final class PeekabooBridgeServer {
         self.allowlistedBundles = allowlistedBundles
         self.supportedVersions = supportedVersions
         self.allowedOperations = allowedOperations.subtracting([._appleScriptProbe])
+        self.hostIdentity = hostIdentity
+        var resolvedHostCapabilities = hostCapabilities
+        if hostIdentity?.processStartIdentity != nil {
+            resolvedHostCapabilities.insert(PeekabooBridgeHostCapability.hostGenerationIdentity)
+        }
+        if hostIdentity?.codeSignatureHash != nil {
+            resolvedHostCapabilities.insert(PeekabooBridgeHostCapability.codeSignatureBuildIdentity)
+        }
+        self.hostCapabilities = resolvedHostCapabilities
         self.daemonControl = daemonControl
         self.desktopMutationWatermarkStore = desktopMutationWatermarkStore
         self.desktopOperationLaneCoordinator = desktopOperationLaneCoordinator

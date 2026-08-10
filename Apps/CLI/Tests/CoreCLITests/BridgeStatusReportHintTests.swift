@@ -1,3 +1,4 @@
+import Foundation
 import PeekabooBridge
 import PeekabooCore
 import Testing
@@ -96,5 +97,37 @@ struct BridgeStatusReportHintTests {
         }
         #expect(!status.candidates[0].humanSummary.contains("AS="))
         #expect(handshake.permissions?.appleScript == false)
+    }
+
+    @Test
+    func `Bridge report preserves host generation build and launch capabilities`() throws {
+        let identity = PeekabooBridgeHostIdentity(
+            processIdentifier: 4242,
+            processStartIdentity: 9_876_543,
+            bundleIdentifier: "boo.peekaboo.mac",
+            bundleShortVersion: "4.0.0",
+            bundleVersion: "400",
+            codeSignatureHash: "abcdef"
+        )
+        let handshake = PeekabooBridgeHandshakeResponse(
+            negotiatedVersion: PeekabooBridgeProtocolVersion(major: 1, minor: 21),
+            hostKind: .gui,
+            build: "4.0.0 (400)",
+            supportedOperations: [],
+            hostIdentity: identity,
+            hostCapabilities: [PeekabooBridgeHostCapability.backgroundBridgeHost]
+        )
+        let report = BridgeHandshakeReport(from: handshake)
+        let selection = BridgeSelectionReport.remote(socketPath: "/tmp/gui.sock", handshake: report)
+
+        #expect(report.hostIdentity == identity)
+        #expect(report.hostCapabilities == [PeekabooBridgeHostCapability.backgroundBridgeHost])
+        #expect(selection.humanSummary.contains("pid=4242"))
+
+        let object = try #require(
+            JSONSerialization.jsonObject(with: JSONEncoder().encode(report)) as? [String: Any]
+        )
+        #expect((object["hostIdentity"] as? [String: Any])?["processIdentifier"] as? Int == 4242)
+        #expect(object["hostCapabilities"] as? [String] == [PeekabooBridgeHostCapability.backgroundBridgeHost])
     }
 }

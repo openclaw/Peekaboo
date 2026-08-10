@@ -121,6 +121,8 @@ struct BridgeHandshakeReport: Codable {
     let permissions: PermissionsStatus?
     let enabledOperations: [PeekabooBridgeOperation]?
     let permissionTags: [String: [PeekabooBridgePermissionKind]]
+    let hostIdentity: PeekabooBridgeHostIdentity?
+    let hostCapabilities: [String]?
 
     init(from handshake: PeekabooBridgeHandshakeResponse) {
         self.negotiatedVersion = handshake.negotiatedVersion
@@ -130,6 +132,8 @@ struct BridgeHandshakeReport: Codable {
         self.permissions = handshake.permissions
         self.enabledOperations = handshake.enabledOperations
         self.permissionTags = handshake.permissionTags
+        self.hostIdentity = handshake.hostIdentity
+        self.hostCapabilities = handshake.hostCapabilities
     }
 }
 
@@ -208,10 +212,11 @@ struct BridgeSelectionReport: Codable {
         case .remote:
             let kind = self.handshake?.hostKind.rawValue ?? "remote"
             let buildSuffix = self.handshake?.build.map { " (build \($0))" } ?? ""
+            let processSuffix = self.handshake?.hostIdentity.map { " pid=\($0.processIdentifier)" } ?? ""
             if let socketPath {
-                return "remote \(kind) via \(socketPath)\(buildSuffix)"
+                return "remote \(kind) via \(socketPath)\(buildSuffix)\(processSuffix)"
             }
-            return "remote \(kind)\(buildSuffix)"
+            return "remote \(kind)\(buildSuffix)\(processSuffix)"
         }
     }
 }
