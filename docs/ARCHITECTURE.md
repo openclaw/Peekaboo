@@ -170,7 +170,7 @@ PeekabooCore integrates with Tachikoma through `PeekabooAgentService`:
 let services = PeekabooServices()
 services.installAgentRuntimeDefaults()
 let ai = PeekabooAIService(configuration: services.configuration)
-let model = ai.resolveConfiguredModel("anthropic/claude-opus-4-8") ?? .anthropic(.opus48)
+let model = ai.resolveConfiguredModel("anthropic/claude-opus-5") ?? .anthropic(.opus5)
 let agent = try PeekabooAgentService(services: services, defaultModel: model)
 ```
 

@@ -198,7 +198,7 @@ extension PeekabooServices {
         if let configuredModel = PeekabooAIService(configuration: configuration).resolveConfiguredModel(modelString) {
             return configuredModel
         }
-        return LanguageModel.parse(from: modelString) ?? .openai(.gpt55)
+        return LanguageModel.parse(from: modelString) ?? .openai(.gpt56Sol)
     }
 
     private static func logModelConflict(_ determination: ModelDetermination, logger: SystemLogger) {
@@ -237,10 +237,10 @@ extension PeekabooServices {
             model = nil
             resolvedModel = nil
         } else if sources.hasAnthropic {
-            model = "claude-opus-4-8"
+            model = "claude-opus-5"
             resolvedModel = nil
         } else if sources.hasOpenAI {
-            model = "gpt-5.5"
+            model = "gpt-5.6"
             resolvedModel = nil
         } else if sources.hasGemini {
             model = "gemini-3.5-flash"
@@ -270,7 +270,7 @@ extension PeekabooServices {
             model = customDefaultModel.description
             resolvedModel = customDefaultModel
         } else {
-            model = "gpt-5.5"
+            model = "gpt-5.6"
             resolvedModel = nil
         }
 

@@ -101,11 +101,11 @@ public enum AIProviderParser {
             switch config.provider.lowercased() {
             case "openai":
                 if hasOpenAI {
-                    return "gpt-5.5"
+                    return "gpt-5.6"
                 }
             case "anthropic":
                 if hasAnthropic {
-                    return "claude-opus-4-8"
+                    return "claude-opus-5"
                 }
             case "google", "gemini":
                 if hasGemini {
@@ -130,9 +130,9 @@ public enum AIProviderParser {
 
         // Fall back to hardcoded defaults based on what's available
         if hasAnthropic {
-            return "claude-opus-4-8"
+            return "claude-opus-5"
         } else if hasOpenAI {
-            return "gpt-5.5"
+            return "gpt-5.6"
         } else if hasGemini {
             return "gemini-3.5-flash"
         } else if hasMiniMaxChina {
@@ -140,7 +140,7 @@ public enum AIProviderParser {
         } else if hasMiniMax {
             return "MiniMax-M2.7"
         } else {
-            return "gpt-5.5"
+            return "gpt-5.6"
         }
     }
 }

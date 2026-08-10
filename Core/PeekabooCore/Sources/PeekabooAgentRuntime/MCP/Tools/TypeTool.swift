@@ -19,8 +19,8 @@ public struct TypeTool: MCPTool {
         Background delivery requires an element/snapshot/app/pid target. Set `foreground=true` for intentional input
         at the current keyboard focus or when the app must be focused first. app and pid are alternatives; provide at
         most one window selector, and pair window_title/window_index with app or pid.
-        \(PeekabooMCPVersion.banner) using openai/gpt-5.5
-        and anthropic/claude-opus-4-8
+        \(PeekabooMCPVersion.banner) using openai/gpt-5.6
+        and anthropic/claude-opus-5
         """
     }
 

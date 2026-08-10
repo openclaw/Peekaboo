@@ -87,7 +87,7 @@ struct AgentCommand: RuntimeBackedCommand {
     @Option(
         name: .long,
         help: """
-        AI model to use (for example: gpt-5.6, gpt-5.5, claude-fable-5, claude-sonnet-5, \
+        AI model to use (for example: gpt-5.6, claude-opus-5, claude-fable-5, claude-sonnet-5, \
         gemini-3.5-flash, grok-4.3, minimax-m2.7, minimax-cn/m2.7, \
         ollama/<model>, lmstudio/<model>, or <custom-provider>/<model>)
         """
@@ -244,7 +244,7 @@ extension AgentCommand {
             )
         let usesPersistedSessionModel = self.shouldUsePersistedSessionModel(requestedModel: requestedModel)
         if self.listSessions {
-            let listingModel = selectedModel ?? existingAgentModel ?? .anthropic(.opus48)
+            let listingModel = selectedModel ?? existingAgentModel ?? .anthropic(.opus5)
             let agentService: any AgentServiceProtocol = if let existing = existingAgent {
                 existing
             } else {
@@ -271,7 +271,7 @@ extension AgentCommand {
             try self.failAgentUnavailable()
         }
 
-        let serviceDefaultModel = selectedModel ?? existingAgentModel ?? .anthropic(.opus48)
+        let serviceDefaultModel = selectedModel ?? existingAgentModel ?? .anthropic(.opus5)
         if !usesPersistedSessionModel,
            !self.hasCredentials(for: serviceDefaultModel),
            !self.isLocalModel(serviceDefaultModel) {

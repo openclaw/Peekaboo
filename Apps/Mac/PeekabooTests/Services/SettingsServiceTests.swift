@@ -45,7 +45,7 @@ struct PeekabooSettingsTests {
             let settings = PeekabooSettings()
             #expect(settings.openAIAPIKey.isEmpty)
             #expect(settings.selectedProvider == "anthropic")
-            #expect(settings.selectedModel == "claude-opus-4-8")
+            #expect(settings.selectedModel == "claude-opus-5")
             #expect(settings.alwaysOnTop == false)
             #expect(settings.showInDock == true)
             #expect(settings.launchAtLogin == false)
@@ -79,7 +79,7 @@ struct PeekabooSettingsTests {
     func `Model selection updates correctly`() throws {
         try withIsolatedSettingsEnvironment { _ in
             let settings = PeekabooSettings()
-            let models = ["gpt-5.5", "gpt-5-mini", "gpt-5-nano"]
+            let models = ["gpt-5.6", "gpt-5-mini", "gpt-5-nano"]
 
             for model in models {
                 settings.selectedModel = model
@@ -850,6 +850,7 @@ struct PeekabooSettingsConfigHydrationTests {
         #expect(AgentSettingsView.builtinName(forModelId: "gpt-5.6-sol") == "GPT-5.6 Sol")
         #expect(AgentSettingsView.builtinName(forModelId: "gpt-5.6-terra") == "GPT-5.6 Terra")
         #expect(AgentSettingsView.builtinName(forModelId: "gpt-5.6-luna") == "GPT-5.6 Luna")
+        #expect(AgentSettingsView.builtinName(forModelId: "claude-opus-5") == "Claude Opus 5")
         #expect(AgentSettingsView.builtinName(forModelId: "claude-fable-5") == "Claude Fable 5")
         #expect(AgentSettingsView.builtinName(forModelId: "claude-sonnet-5") == "Claude Sonnet 5")
 
@@ -861,7 +862,8 @@ struct PeekabooSettingsConfigHydrationTests {
             "gpt-5.6-luna",
             "gpt-5.5",
         ])
-        #expect(anthropic.models.prefix(2).map(\.id) == [
+        #expect(anthropic.models.prefix(3).map(\.id) == [
+            "claude-opus-5",
             "claude-fable-5",
             "claude-sonnet-5",
         ])
@@ -1100,16 +1102,16 @@ extension PeekabooSettingsConfigHydrationTests {
             try settings.removeCustomProvider(id: "local-proxy")
 
             #expect(settings.selectedProvider == "anthropic")
-            #expect(settings.selectedModel == "claude-opus-4-8")
+            #expect(settings.selectedModel == "claude-opus-5")
 
             let persistedData = try Data(contentsOf: configPath)
             let persistedJSON = try #require(JSONSerialization.jsonObject(with: persistedData) as? [String: Any])
             let agent = try #require(persistedJSON["agent"] as? [String: Any])
             let aiProviders = try #require(persistedJSON["aiProviders"] as? [String: Any])
-            #expect(agent["defaultModel"] as? String == "claude-opus-4-8")
+            #expect(agent["defaultModel"] as? String == "claude-opus-5")
             #expect(
                 aiProviders["providers"] as? String ==
-                    "anthropic/claude-opus-4-8,ollama/llava:latest")
+                    "anthropic/claude-opus-5,ollama/llava:latest")
         }
     }
 

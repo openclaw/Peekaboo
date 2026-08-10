@@ -16,7 +16,7 @@ public struct DragTool: MCPTool {
         Perform drag and drop operations between UI elements or coordinates.
         Supports element queries, specific IDs, or raw coordinates for both start and end points.
         This always changes the shared physical cursor and requires foreground=true.
-        \(PeekabooMCPVersion.banner) using openai/gpt-5.5, anthropic/claude-opus-4-8
+        \(PeekabooMCPVersion.banner) using openai/gpt-5.6, anthropic/claude-opus-5
         """
     }
 

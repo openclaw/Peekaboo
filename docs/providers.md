@@ -18,8 +18,8 @@ pages instead of duplicating provider lists in multiple places.
 
 | Provider | Example model IDs | Credential |
 | --- | --- | --- |
-| **OpenAI** | gpt-5.6-sol, gpt-5.6-terra, gpt-5.6-luna, gpt-5.5, gpt-5-mini, gpt-4.1 | `OPENAI_API_KEY` |
-| **Anthropic** | claude-fable-5, claude-sonnet-5, claude-opus-4-8, claude-sonnet-4-6, claude-haiku-4-5 | `ANTHROPIC_API_KEY` |
+| **OpenAI** | gpt-5.6, gpt-5.6-sol, gpt-5.6-terra, gpt-5.6-luna, gpt-5-mini, gpt-4.1 | `OPENAI_API_KEY` |
+| **Anthropic** | claude-opus-5, claude-fable-5, claude-sonnet-5, claude-sonnet-4-6, claude-haiku-4-5 | `ANTHROPIC_API_KEY` |
 | **xAI** | grok-4 | `XAI_API_KEY` |
 | **Google** | gemini-3.1-pro-preview, gemini-3-flash | `GEMINI_API_KEY` |
 | **MiniMax** | MiniMax-M3, MiniMax-M2.7, MiniMax-M2.7-highspeed | `MINIMAX_API_KEY` |
@@ -60,7 +60,7 @@ peekaboo agent --model gpt-5.6 "summarize this window"
 peekaboo agent --model gpt-5.6-terra "summarize this window"
 peekaboo agent --model claude-fable-5 "summarize this window"
 peekaboo agent --model claude-sonnet-5 "summarize this window"
-peekaboo agent --model claude-opus-4-8 "summarize this window"
+peekaboo agent --model claude-opus-5 "summarize this window"
 peekaboo agent --model gemini-3-flash "summarize this window"
 peekaboo agent --model minimax/MiniMax-M3 "summarize this window"
 peekaboo agent --model minimax-cn/MiniMax-M3 "summarize this window"
@@ -71,10 +71,11 @@ peekaboo agent --model ollama/llama3.1:8b "open System Settings"
 peekaboo agent --model lmstudio/openai/gpt-oss-120b "summarize this window"
 ```
 
-Defaults come from `agent.defaultModel` in `~/.peekaboo/config.json`. Anthropic defaults stay on Opus 4.8 for zero-retention compatibility; select Fable 5 or Sonnet 5 explicitly when your Anthropic organization allows it. Set a per-project default with `PEEKABOO_AGENT_MODEL`.
+Defaults come from `agent.defaultModel` in `~/.peekaboo/config.json`. Anthropic defaults use Opus 5; select Fable 5,
+Sonnet 5, or an older model explicitly when needed. Set a per-project default with `PEEKABOO_AGENT_MODEL`.
 
 The app and CLI share `agent.temperature` and `agent.maxTokens`. Peekaboo clamps those requests to provider
-capabilities; Peekaboo currently catalogs Fable 5 and Sonnet 5 with 1M context windows and up to 128K output. See
+capabilities; Peekaboo currently catalogs Opus 5, Fable 5, and Sonnet 5 with 1M context windows and up to 128K output. See
 [configuration.md](configuration.md#agent-generation-settings).
 
 ## Tool calling

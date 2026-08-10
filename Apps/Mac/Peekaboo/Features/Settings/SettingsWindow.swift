@@ -281,6 +281,7 @@ struct AgentSettingsView: View {
             ("gpt-5-mini", "GPT-5 mini"),
         ]),
         ("anthropic", [
+            ("claude-opus-5", "Claude Opus 5"),
             ("claude-fable-5", "Claude Fable 5"),
             ("claude-sonnet-5", "Claude Sonnet 5"),
             ("claude-opus-4-8", "Claude Opus 4.8"),
@@ -426,6 +427,8 @@ struct AgentSettingsView: View {
             "claude-fable-5": "Claude Fable 5 with 1M context for demanding " +
                 "reasoning and long-horizon agent tasks.",
             "claude-sonnet-5": "Claude Sonnet 5 with 1M context for fast, capable agent tasks.",
+            "claude-opus-5": "Claude Opus 5 with 1M context and up to 128K output for long-running " +
+                "automation and computer-use tasks.",
             "claude-opus-4-8": "Claude Opus 4.8 with 1M context for long-running " +
                 "automation and computer-use tasks.",
             "claude-sonnet-4-6": "Claude Sonnet 4.6 with new tools + computer use, " +

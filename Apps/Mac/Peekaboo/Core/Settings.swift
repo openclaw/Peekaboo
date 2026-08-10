@@ -90,7 +90,7 @@ final class PeekabooSettings {
         didSet { self.save() }
     }
 
-    var selectedModel: String = "claude-opus-4-8" {
+    var selectedModel: String = "claude-opus-5" {
         didSet {
             self.save()
             self.updateConfigFile()
@@ -108,7 +108,7 @@ final class PeekabooSettings {
         }
     }
 
-    var customVisionModel: String = "gpt-5.5" {
+    var customVisionModel: String = "gpt-5.6" {
         didSet {
             self.save()
             self.updateConfigFile()
@@ -389,7 +389,7 @@ extension PeekabooSettings {
         let defaultModel = self.defaultModel(for: self.selectedProvider)
         self.selectedModel = self.userDefaults.string(forKey: self.namespaced("selectedModel")) ?? defaultModel
         self.useCustomVisionModel = self.userDefaults.bool(forKey: self.namespaced("useCustomVisionModel"))
-        self.customVisionModel = self.userDefaults.string(forKey: self.namespaced("customVisionModel")) ?? "gpt-5.5"
+        self.customVisionModel = self.userDefaults.string(forKey: self.namespaced("customVisionModel")) ?? "gpt-5.6"
 
         self.temperature = self.nonZeroDouble(forKey: "temperature", fallback: 0.7)
         self.maxTokens = self.nonZeroInt(forKey: "maxTokens", fallback: 16384)
@@ -591,7 +591,7 @@ extension PeekabooSettings {
                 case "openrouter":
                     "openrouter/\(self.selectedModel)"
                 default:
-                    "anthropic/claude-opus-4-8"
+                    "anthropic/claude-opus-5"
                 }
 
                 // Set providers string with fallbacks
@@ -707,7 +707,7 @@ extension PeekabooSettings {
             if self.customProviders[self.selectedProvider] != nil {
                 "\(self.selectedProvider)/\(self.selectedModel)"
             } else {
-                "anthropic/claude-opus-4-8"
+                "anthropic/claude-opus-5"
             }
         }
     }
@@ -939,9 +939,9 @@ extension PeekabooSettings {
 
         return switch provider {
         case "openai":
-            "gpt-5.5"
+            "gpt-5.6-sol"
         case "anthropic":
-            "claude-opus-4-8"
+            "claude-opus-5"
         case "grok":
             "grok-4.3"
         case "google":

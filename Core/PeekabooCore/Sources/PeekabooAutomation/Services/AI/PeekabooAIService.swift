@@ -193,7 +193,7 @@ public final class PeekabooAIService {
         _ = configuration.loadConfiguration()
         configuration.applyAIProviderKeys()
         self.resolvedModels = Self.resolveAvailableModels(configuration: configuration)
-        self.defaultModel = self.resolvedModels.first ?? .openai(.gpt55)
+        self.defaultModel = self.resolvedModels.first ?? .openai(.gpt56Sol)
         self.defaultVisionModel = self.resolvedModels.first { $0.supportsVision }
     }
 
@@ -492,7 +492,7 @@ public final class PeekabooAIService {
 
         // Fallback: prefer Anthropic if any auth (API key or OAuth) is present
         if configuration.hasAnthropicAuth() {
-            return self.appendingGeneratedVisionFallbacks(from: parsed, to: [.anthropic(.opus48)])
+            return self.appendingGeneratedVisionFallbacks(from: parsed, to: [.anthropic(.opus5)])
         }
         if let key = configuration.getGeminiAPIKey(), !key.isEmpty {
             return self.appendingGeneratedVisionFallbacks(from: parsed, to: [.google(.gemini35Flash)])
@@ -518,7 +518,7 @@ public final class PeekabooAIService {
         if !customModels.isEmpty {
             return self.appendingGeneratedVisionFallbacks(from: parsed, to: customModels)
         }
-        return [.openai(.gpt55), .anthropic(.opus48)]
+        return [.openai(.gpt56Sol), .anthropic(.opus5)]
     }
 
     private static func appendingGeneratedVisionFallbacks(
@@ -560,7 +560,8 @@ public final class PeekabooAIService {
             .split(separator: ",")
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
 
-        if entries == ["openai/gpt-5.5", "anthropic/claude-opus-4-7"] ||
+        if entries == ["openai/gpt-5.6", "anthropic/claude-opus-5"] ||
+            entries == ["openai/gpt-5.5", "anthropic/claude-opus-4-7"] ||
             entries == ["openai/gpt-5.5", "anthropic/claude-opus-4-8"]
         {
             return true

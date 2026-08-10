@@ -18,7 +18,7 @@ read_when:
 | `chat [initial-prompt]` | Start the interactive chat loop. |
 | `--dry-run` | Validate and echo the task without calling a model, invoking tools, or creating a session. |
 | `--max-steps <n>` | Cap model turns to `1...100` (default: 100). One turn may contain multiple tool calls. |
-| `--model gpt-5.6|gpt-5.5|claude-fable-5|claude-sonnet-5|gemini-3-flash|minimax|minimax-cn/<model>|openrouter/<provider>/<model>|ollama/<model>|lmstudio/<model>` | Override the default model (`gpt-5.5`). Input is validated against supported hosted providers and local model providers. |
+| `--model gpt-5.6|claude-opus-5|claude-fable-5|claude-sonnet-5|gemini-3-flash|minimax|minimax-cn/<model>|openrouter/<provider>/<model>|ollama/<model>|lmstudio/<model>` | Override the default model (`claude-opus-5`). Input is validated against supported hosted providers and local model providers. |
 | `--no-cache` | Run ephemerally without saving a resumable session. Cannot be combined with resume/list flags. |
 | `--quiet` / `--simple` / `--no-color` / `--debug-terminal` | Control output mode; the command auto-detects terminal capabilities when you don’t override it. |
 | `--audio` / `--audio-file <path>` | Use microphone input or pipe audio from disk. |
@@ -74,8 +74,8 @@ For automation flows that cannot attach to a TTY, use `agent chat` with standard
 
 ## Examples
 ```bash
-# Let the agent sign into Slack using GPT-5.5 with verbose tracing
-peekaboo agent "Check Slack mentions" --model gpt-5.5 --verbose
+# Let the agent sign into Slack using GPT-5.6 with verbose tracing
+peekaboo agent "Check Slack mentions" --model gpt-5.6 --verbose
 
 # Use GPT-5.6 Sol (the gpt-5.6 shortcut selects Sol)
 peekaboo agent "Check the current window" --model gpt-5.6

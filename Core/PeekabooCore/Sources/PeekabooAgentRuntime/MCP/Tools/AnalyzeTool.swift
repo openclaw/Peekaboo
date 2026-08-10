@@ -32,7 +32,7 @@ public struct AnalyzeTool: MCPTool {
         { "image_path": "/tmp/chart.png", "question": "Which category has the highest value in this bar chart?" }
         The AI will analyze the image and attempt to answer your question based on its visual content.
 
-        \(PeekabooMCPVersion.banner) using openai/gpt-5.5, anthropic/claude-opus-4-8
+        \(PeekabooMCPVersion.banner) using openai/gpt-5.6, anthropic/claude-opus-5
         """
     }
 
@@ -176,7 +176,7 @@ public struct AnalyzeTool: MCPTool {
 
         switch provider {
         case "openai":
-            guard let model else { return .openai(.gpt55) }
+            guard let model else { return .openai(.gpt56Sol) }
             if Self.isUnsupportedLegacyModel(provider: provider, model: model) {
                 throw PeekabooError.invalidInput("Unsupported OpenAI model: \(model)")
             }
@@ -185,7 +185,7 @@ public struct AnalyzeTool: MCPTool {
             }
             return .openai(.custom(model))
         case "anthropic":
-            guard let model else { return .anthropic(.opus48) }
+            guard let model else { return .anthropic(.opus5) }
             if Self.isUnsupportedLegacyModel(provider: provider, model: model) {
                 throw PeekabooError.invalidInput("Unsupported Anthropic model: \(model)")
             }

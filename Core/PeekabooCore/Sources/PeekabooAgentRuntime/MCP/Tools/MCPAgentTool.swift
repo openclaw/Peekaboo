@@ -50,7 +50,7 @@ public struct MCPAgentTool: MCPTool {
                     description: "Task to perform in natural language (omit when only listing sessions)"),
                 "model": SchemaBuilder.string(
                     description: """
-                    OpenAI model to use (e.g., gpt-5.5, gpt-5-mini).
+                    OpenAI model to use (e.g., gpt-5.6, gpt-5-mini).
                     Call `list_models` first to see available presets and descriptions.
                     Choose 'FastChat' for quick responses, 'DeepAnalysis' for complex reasoning, etc.
                     If omitted, the tool auto-selects the first mode-compatible preset.

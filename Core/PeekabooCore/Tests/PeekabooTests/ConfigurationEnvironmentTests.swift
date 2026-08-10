@@ -168,6 +168,24 @@ struct ConfigurationManagerEnvironmentTests {
     }
 
     @Test
+    func `Anthropic custom provider probe uses configured model`() {
+        let configured = Configuration.CustomProvider(
+            name: "Compatible Endpoint",
+            type: .anthropic,
+            options: .init(baseURL: "https://api.example.com", apiKey: "test-key"),
+            models: [
+                "claude-opus-4-8": .init(name: "Claude Opus 4.8"),
+            ])
+        let unconfigured = Configuration.CustomProvider(
+            name: "Compatible Endpoint",
+            type: .anthropic,
+            options: .init(baseURL: "https://api.example.com", apiKey: "test-key"))
+
+        #expect(ConfigurationManager.anthropicProbeModel(for: configured) == "claude-opus-4-8")
+        #expect(ConfigurationManager.anthropicProbeModel(for: unconfigured) == "claude-opus-5")
+    }
+
+    @Test
     func `custom provider apiKey env references stay literal when config is saved`() throws {
         let key = "PEEKABOO_CUSTOM_PROVIDER_KEY"
         setenv(key, "secret-that-must-not-be-written", 1)

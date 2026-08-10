@@ -85,19 +85,46 @@ final class SessionTitleGenerator {
         hasOpenAI: Bool,
         hasAnthropic: Bool) -> LanguageModel
     {
-        if providers.contains("anthropic/claude-fable-5"), hasAnthropic {
-            return .anthropic(.fable5)
+        if hasAnthropic,
+           let configuredAnthropic = self.configuredModel(for: "anthropic", in: providers)
+        {
+            return configuredAnthropic
         }
         if providers.contains(where: { $0 == "anthropic" || $0.hasPrefix("anthropic/") }), hasAnthropic {
-            return .anthropic(.opus48)
+            return .anthropic(.opus5)
+        }
+        if hasOpenAI,
+           let configuredOpenAI = self.configuredModel(for: "openai", in: providers)
+        {
+            return configuredOpenAI
         }
         if providers.contains(where: { $0 == "openai" || $0.hasPrefix("openai/") }), hasOpenAI {
-            return .openai(.gpt55)
+            return .openai(.gpt56Sol)
         }
         if providers.contains(where: { $0 == "ollama" || $0.hasPrefix("ollama/") }) {
             return .ollama(.llama33)
         }
-        return .anthropic(.opus48)
+        return .anthropic(.opus5)
+    }
+
+    private static func configuredModel(for provider: String, in selections: [String]) -> LanguageModel? {
+        for selection in selections {
+            let components = selection.split(separator: "/", maxSplits: 1).map(String.init)
+            guard components.count == 2,
+                  components[0].caseInsensitiveCompare(provider) == .orderedSame,
+                  let model = LanguageModel.parse(from: components[1])
+            else {
+                continue
+            }
+
+            switch (provider, model) {
+            case ("anthropic", .anthropic), ("openai", .openai):
+                return model
+            default:
+                continue
+            }
+        }
+        return nil
     }
 
     private func generationSettings(for model: LanguageModel) -> GenerationSettings {

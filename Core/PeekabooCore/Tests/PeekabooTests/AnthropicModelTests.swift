@@ -32,14 +32,14 @@ struct AnthropicModelTests {
 
     @Test
     func `Anthropic default model selection`() {
-        // Tachikoma keeps the library-level Claude shortcut stable; Peekaboo chooses Fable separately.
+        // Tachikoma's library-level default and Claude shortcut both track the current Opus generation.
         let defaultModel = Model.default
         let claudeModel = Model.claude
 
         #expect(defaultModel.providerName == "Anthropic")
         #expect(claudeModel.providerName == "Anthropic")
-        #expect(defaultModel.modelId == "claude-opus-4-8")
-        #expect(claudeModel.modelId == "claude-opus-4-8")
+        #expect(defaultModel.modelId == "claude-opus-5")
+        #expect(claudeModel.modelId == "claude-opus-5")
 
         // Test model shortcuts
         let anthropicModels = [

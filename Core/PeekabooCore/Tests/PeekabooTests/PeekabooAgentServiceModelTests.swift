@@ -26,8 +26,7 @@ extension PeekabooAgentServiceTests {
         let mockServices = self.makeServices()
         let agentService = try PeekabooAgentService(services: mockServices)
 
-        // Should default to Claude Opus 4.8 for Anthropic zero-retention compatibility.
-        #expect(agentService.defaultModel == LanguageModel.anthropic(.opus48).description)
+        #expect(agentService.defaultModel == LanguageModel.anthropic(.opus5).description)
     }
 
     @Test
@@ -61,7 +60,7 @@ extension PeekabooAgentServiceTests {
                 let agentService = try PeekabooAgentService(services: services)
 
                 let fableSettings = agentService.generationSettings(for: .anthropic(.fable5))
-                let opusSettings = agentService.generationSettings(for: .anthropic(.opus48))
+                let opusSettings = agentService.generationSettings(for: .anthropic(.opus5))
 
                 #expect(fableSettings.maxTokens == 128_000)
                 #expect(fableSettings.temperature == 0.2)
@@ -1163,7 +1162,7 @@ extension PeekabooAgentServiceTests {
             let services = self.makeServices()
             let agentService = try #require(services.agent as? PeekabooAgentService)
 
-            #expect(agentService.defaultModel == LanguageModel.openai(.gpt55).description)
+            #expect(agentService.defaultModel == LanguageModel.openai(.gpt56Sol).description)
         }
     }
 
@@ -1613,7 +1612,7 @@ extension PeekabooAgentServiceTests {
                 let services = self.makeServices()
                 let agentService = try #require(services.agent as? PeekabooAgentService)
 
-                #expect(agentService.defaultModel == LanguageModel.openai(.gpt55).description)
+                #expect(agentService.defaultModel == LanguageModel.openai(.gpt56Sol).description)
             }
     }
 

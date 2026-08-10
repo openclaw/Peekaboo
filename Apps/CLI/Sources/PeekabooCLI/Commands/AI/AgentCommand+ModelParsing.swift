@@ -24,7 +24,7 @@ extension AgentCommand {
 
         if trimmed.caseInsensitiveCompare("claude") == .orderedSame ||
             trimmed.caseInsensitiveCompare("anthropic") == .orderedSame {
-            return .anthropic(.opus48)
+            return .anthropic(.opus5)
         }
 
         if trimmed.caseInsensitiveCompare("sonnet") == .orderedSame {
@@ -57,11 +57,11 @@ extension AgentCommand {
         case let .openai(model):
             if Self.supportedOpenAIInputs.contains(model) {
                 // GPT-5.6 models route as themselves; older supported aliases
-                // collapse to the flagship.
+                // collapse to the current flagship.
                 if Self.gpt56Models.contains(model) {
                     return .openai(model)
                 }
-                return .openai(.gpt55)
+                return .openai(.gpt56Sol)
             }
         case let .anthropic(model):
             if Self.supportedAnthropicInputs.contains(model) {
@@ -255,6 +255,7 @@ extension AgentCommand {
     ]
 
     private static let supportedAnthropicInputs: Set<LanguageModel.Anthropic> = [
+        .opus5,
         .fable5,
         .sonnet5,
         .opus48,

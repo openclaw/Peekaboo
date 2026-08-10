@@ -34,7 +34,7 @@ extension ConfigurationManager {
             cliValue: cliValue,
             envVar: "PEEKABOO_AI_PROVIDERS",
             configValue: self.configuration?.aiProviders?.providers,
-            defaultValue: "openai/gpt-5.5,anthropic/claude-opus-4-8")
+            defaultValue: "openai/gpt-5.6,anthropic/claude-opus-5")
     }
 
     /// Whether the provider list came from an explicit user selection rather than an app-generated fallback list.
@@ -63,7 +63,8 @@ extension ConfigurationManager {
             .split(separator: ",")
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
 
-        if entries == ["openai/gpt-5.5", "anthropic/claude-opus-4-7"] ||
+        if entries == ["openai/gpt-5.6", "anthropic/claude-opus-5"] ||
+            entries == ["openai/gpt-5.5", "anthropic/claude-opus-4-7"] ||
             entries == ["openai/gpt-5.5", "anthropic/claude-opus-4-8"]
         {
             return true

@@ -14,9 +14,10 @@ tool calls, vision, thinking blocks, and provider-specific event handling.
 
 | Model | Context | Max output | Notes |
 | --- | ---: | ---: | --- |
+| `claude-opus-5` | 1M | 128K | Default Anthropic choice. |
 | `claude-fable-5` | 1M | 128K | Explicit opt-in for long-horizon agent work. |
 | `claude-sonnet-5` | 1M | 128K | Explicit opt-in; not the automatic Anthropic default. |
-| `claude-opus-4-8` | 1M | 128K | Default Anthropic choice; compatible with zero-retention organizations. |
+| `claude-opus-4-8` | 1M | 128K | Previous-generation option; compatible with zero-retention organizations. |
 | `claude-sonnet-4-6` | 1M | 64K | Balanced speed and capability. |
 | `claude-haiku-4-5` | 200K | 64K | Fast, lower-cost tasks. |
 
@@ -40,7 +41,7 @@ Environment credentials remain available for automation:
 
 ```bash
 ANTHROPIC_API_KEY=sk-ant-... \
-  peekaboo agent --model claude-opus-4-8 "describe the current window"
+  peekaboo agent --model claude-opus-5 "describe the current window"
 ```
 
 ## Generation settings
@@ -49,7 +50,7 @@ The app and CLI read the same `agent.temperature` and `agent.maxTokens` values f
 `~/.peekaboo/config.json`. Peekaboo clamps the token request to the selected model's output capability and strips
 sampling parameters from current adaptive-thinking models when the Anthropic API does not accept them.
 
-Fable 5, Sonnet 5, and Opus 4.8 currently use the non-streaming generation path so signed thinking history and
+Opus 5, Fable 5, Sonnet 5, and Opus 4.8 currently use the non-streaming generation path so signed thinking history and
 rollback behavior remain valid. Agent progress events still report start, assistant output, tool activity, completion,
 and errors.
 

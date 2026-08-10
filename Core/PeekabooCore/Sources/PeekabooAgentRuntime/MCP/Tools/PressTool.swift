@@ -19,7 +19,7 @@ public struct PressTool: MCPTool {
         mutually exclusive. Background delivery requires app/pid targeting; set foreground=true for intentional
         OS-global shortcuts or to focus a specific window first. app and pid are alternatives; provide at most one of
         window_id, window_title, or window_index, and pair title/index with app or pid.
-        \(PeekabooMCPVersion.banner) using openai/gpt-5.5, anthropic/claude-opus-4-8
+        \(PeekabooMCPVersion.banner) using openai/gpt-5.6, anthropic/claude-opus-5
         """
     }
 

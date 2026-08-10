@@ -38,7 +38,7 @@ public struct WindowTool: MCPTool {
         - { "action": "restore", "app": "PID:1234", "window_id": 5678 }
         - { "action": "set-bounds", "app": "Terminal", "x": 0, "y": 0, "width": 1280, "height": 720 }
         - { "action": "close", "app": "Safari", "title": "Grindr Web" }
-        \(PeekabooMCPVersion.banner) using openai/gpt-5.5, anthropic/claude-opus-4-8
+        \(PeekabooMCPVersion.banner) using openai/gpt-5.6, anthropic/claude-opus-5
         """
     }
 

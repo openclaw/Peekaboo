@@ -966,7 +966,7 @@ struct PeekabooAgentStepLimitTests {
 
     @MainActor
     private func makeAgentService(
-        defaultModel: LanguageModel = .anthropic(.opus48)) throws -> (
+        defaultModel: LanguageModel = .anthropic(.opus5)) throws -> (
         service: PeekabooAgentService,
         store: IsolatedAgentSessionStore)
     {

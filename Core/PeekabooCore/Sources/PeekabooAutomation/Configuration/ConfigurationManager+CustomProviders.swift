@@ -185,7 +185,7 @@ extension ConfigurationManager {
         }
 
         let testPayload: [String: Any] = [
-            "model": "claude-opus-4-8",
+            "model": Self.anthropicProbeModel(for: provider),
             "max_tokens": 10,
             "messages": [["role": "user", "content": "Hi"]],
         ]
@@ -202,6 +202,10 @@ extension ConfigurationManager {
 
         let errorMessage = String(data: data, encoding: .utf8) ?? "HTTP \(httpResponse.statusCode)"
         return (false, errorMessage)
+    }
+
+    static func anthropicProbeModel(for provider: Configuration.CustomProvider) -> String {
+        provider.models?.keys.min() ?? "claude-opus-5"
     }
 
     private func discoverOpenAICompatibleModels(

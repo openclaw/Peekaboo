@@ -18,8 +18,8 @@ public struct ScrollTool: MCPTool {
         """
         Scrolls a UI target through Accessibility without interrupting the user by default.
         Set foreground=true to focus the target and allow synthetic wheel events at the pointer.
-        \(PeekabooMCPVersion.banner) using openai/gpt-5.5
-        and anthropic/claude-opus-4-8
+        \(PeekabooMCPVersion.banner) using openai/gpt-5.6
+        and anthropic/claude-opus-5
         """
     }
 

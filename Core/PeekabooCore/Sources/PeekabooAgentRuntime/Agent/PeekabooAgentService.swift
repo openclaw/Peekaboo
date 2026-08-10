@@ -176,7 +176,7 @@ public final class PeekabooAgentService: AgentServiceProtocol {
 
     public init(
         services: any PeekabooServiceProviding,
-        defaultModel: LanguageModel = .anthropic(.opus48),
+        defaultModel: LanguageModel = .anthropic(.opus5),
         snapshotMutationCoordinator: (any MCPToolSnapshotMutationCoordinating)? = nil,
         snapshotExecutionGate: MCPToolSnapshotExecutionGate = MCPToolSnapshotExecutionGate(),
         sessionManager: AgentSessionManager? = nil)
