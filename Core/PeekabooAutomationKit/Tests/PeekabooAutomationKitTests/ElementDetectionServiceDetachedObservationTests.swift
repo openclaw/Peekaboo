@@ -9,6 +9,23 @@ import Testing
 @MainActor
 struct ElementDetectionServiceDetachedObservationTests {
     @Test
+    func `cooperative AX deadline returns partial evidence before the hard escape timer`() async throws {
+        let request = RunnerState().makeRequest(timeoutSeconds: 1)
+        let result = try await ElementDetectionTimeoutRunner.runDetached(
+            targetProcessIdentifier: request.processIdentifier,
+            targetProcessStartIdentity: request.expectedProcessStartIdentity,
+            seconds: request.timing.hardTimeoutSeconds)
+        {
+            try Self.resolutionFailure(
+                request,
+                delay: request.timing.cooperativeDeadlineSeconds + 0.02)
+        }
+
+        #expect(result.truncationInfo?.deadlineReached == true)
+        #expect(result.truncationInfo?.incompleteAccessibilityRead == false)
+    }
+
+    @Test
     func `explicit timeout above twenty seconds reaches delayed worker and incomplete read is retried`() async throws {
         let cache = ElementDetectionCache()
         let cacheKey = try #require(cache.key(windowID: 42, processID: 123, allowWebFocus: false))
@@ -23,7 +40,7 @@ struct ElementDetectionServiceDetachedObservationTests {
                     return try await ElementDetectionTimeoutRunner.runDetached(
                         targetProcessIdentifier: request.processIdentifier,
                         targetProcessStartIdentity: request.expectedProcessStartIdentity,
-                        seconds: request.timeoutSeconds)
+                        seconds: request.timing.hardTimeoutSeconds)
                     {
                         try Self.resolutionFailure(
                             request,
@@ -42,7 +59,7 @@ struct ElementDetectionServiceDetachedObservationTests {
         #expect(first.usedCache == false)
         #expect(first.truncationInfo?.incompleteAccessibilityRead == true)
         #expect(first.truncationInfo?.deadlineReached == false)
-        #expect(state.requests.map(\.timeoutSeconds) == [60])
+        #expect(state.requests.map(\.timing.hardTimeoutSeconds) == [60])
         #expect(cache.result(for: cacheKey) == nil)
 
         let second = try await service.cachedOrRunDetachedAXObservation(
@@ -52,7 +69,7 @@ struct ElementDetectionServiceDetachedObservationTests {
             makeRequest: { state.makeRequest(timeoutSeconds: 60) })
         #expect(second.usedCache == false)
         #expect(second.elements.map(\.id) == ["elem_complete"])
-        #expect(state.requests.map(\.timeoutSeconds) == [60, 60])
+        #expect(state.requests.map(\.timing.hardTimeoutSeconds) == [60, 60])
         #expect(cache.result(for: cacheKey)?.elements.map(\.id) == ["elem_complete"])
 
         let third = try await service.cachedOrRunDetachedAXObservation(
@@ -192,6 +209,6 @@ private final class RunnerState {
             includeMenuBarElements: false,
             appIsActive: false,
             traversalBudget: AXTraversalBudget(),
-            timeoutSeconds: timeoutSeconds)
+            timing: DetachedAXObservationTiming(hardTimeoutSeconds: timeoutSeconds))
     }
 }

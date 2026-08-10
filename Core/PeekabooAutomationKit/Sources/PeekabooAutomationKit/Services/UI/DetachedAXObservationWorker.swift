@@ -33,7 +33,26 @@ struct DetachedAXObservationRequest: Sendable {
     let includeMenuBarElements: Bool
     let appIsActive: Bool
     let traversalBudget: AXTraversalBudget
-    let timeoutSeconds: TimeInterval
+    let timing: DetachedAXObservationTiming
+}
+
+struct DetachedAXObservationTiming: Sendable, Equatable {
+    // AX calls are not cooperatively cancellable. Stop traversal early enough for one bounded
+    // native call plus result publication before the caller's hard timeout abandons the lane.
+    private static let maximumCompletionGrace: TimeInterval = 0.25
+    private static let minimumCompletionGrace: TimeInterval = 0.01
+
+    let cooperativeDeadlineSeconds: TimeInterval
+    let hardTimeoutSeconds: TimeInterval
+
+    init(hardTimeoutSeconds: TimeInterval) {
+        let proportionalGrace = hardTimeoutSeconds * 0.1
+        let completionGrace = min(
+            Self.maximumCompletionGrace,
+            max(Self.minimumCompletionGrace, proportionalGrace))
+        self.cooperativeDeadlineSeconds = max(0.001, hardTimeoutSeconds - completionGrace)
+        self.hardTimeoutSeconds = hardTimeoutSeconds
+    }
 }
 
 struct DetachedAXObservationResult: Sendable {
@@ -202,7 +221,7 @@ enum DetachedAXObservationWorker {
         -> DetachedAXObservationResult
     {
         try validateIdentity(request)
-        let deadline = ContinuousClock.now.advanced(by: .seconds(request.timeoutSeconds))
+        let deadline = ContinuousClock.now.advanced(by: .seconds(request.timing.cooperativeDeadlineSeconds))
         let application = AXUIElementCreateApplication(request.processIdentifier)
         self.prepare(application, deadline: deadline)
 

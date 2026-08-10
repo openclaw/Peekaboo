@@ -77,7 +77,7 @@ public final class ElementDetectionService {
                 try await ElementDetectionTimeoutRunner.runDetached(
                     targetProcessIdentifier: request.processIdentifier,
                     targetProcessStartIdentity: request.expectedProcessStartIdentity,
-                    seconds: request.timeoutSeconds)
+                    seconds: request.timing.hardTimeoutSeconds)
                 {
                     try DetachedAXObservationWorker.inspect(request)
                 }
@@ -360,7 +360,7 @@ public final class ElementDetectionService {
                 includeMenuBarElements: includeMenuBarElements,
                 appIsActive: targetApp.isActive,
                 traversalBudget: budget,
-                timeoutSeconds: timeoutSeconds)
+                timing: DetachedAXObservationTiming(hardTimeoutSeconds: timeoutSeconds))
         }
 
         let resolvedContext = WindowContext(

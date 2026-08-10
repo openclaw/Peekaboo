@@ -195,6 +195,17 @@ struct DetachedAXObservationWorkerTests {
     }
 
     @Test
+    func `AX worker reserves bounded completion grace before the hard timeout`() {
+        let long = DetachedAXObservationTiming(hardTimeoutSeconds: 60)
+        #expect(long.cooperativeDeadlineSeconds == 59.75)
+        #expect(long.hardTimeoutSeconds == 60)
+
+        let short = DetachedAXObservationTiming(hardTimeoutSeconds: 0.05)
+        #expect(abs(short.cooperativeDeadlineSeconds - 0.04) < 0.000_001)
+        #expect(short.hardTimeoutSeconds == 0.05)
+    }
+
+    @Test
     @MainActor
     func `materially different traversal budgets bypass AX cache`() {
         #expect(ElementDetectionService.shouldUseAXTreeCache(
@@ -281,7 +292,7 @@ struct DetachedAXObservationWorkerTests {
             includeMenuBarElements: false,
             appIsActive: false,
             traversalBudget: AXTraversalBudget(),
-            timeoutSeconds: 1)
+            timing: DetachedAXObservationTiming(hardTimeoutSeconds: 1))
     }
 
     private static func errorValue(_ error: AXError) throws -> AXValue {
