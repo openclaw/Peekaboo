@@ -14,8 +14,8 @@ import Testing
 )
 struct MoveCommandTests {
     @Test
-    func `Move rejects positional and option coordinates together`() throws {
-        var command = try MoveCommand.parse(["10,20", "--at", "30,40", "--foreground"])
+    func `Move rejects conflicting address forms`() throws {
+        var command = try MoveCommand.parse(["--at", "30,40", "--on", "B1", "--foreground"])
 
         #expect(throws: ValidationError.self) {
             try command.validate()
@@ -35,7 +35,7 @@ struct MoveCommandTests {
     func `Coordinate moves call automation service`() async throws {
         let context = await self.makeContext()
         let result = try await self.runMove(
-            arguments: ["100,200", "--duration", "750", "--steps", "10", "--foreground"],
+            arguments: ["--at", "100,200", "--duration", "750", "--steps", "10", "--foreground"],
             context: context
         )
 
@@ -89,7 +89,7 @@ struct MoveCommandTests {
     }
 
     @Test
-    func `Move by element ID accepts id alias`() async throws {
+    func `Move by element ID is repeatable`() async throws {
         let context = await self.makeContext()
         let element = DetectedElement(
             id: "B1",
@@ -118,44 +118,9 @@ struct MoveCommandTests {
     }
 
     @Test
-    func `Move by query waits for element using automation service`() async throws {
-        let snapshotId = "snapshot-query"
-        let element = DetectedElement(
-            id: "B2",
-            type: .button,
-            label: "Continue",
-            bounds: CGRect(x: 200, y: 300, width: 80, height: 24)
-        )
-        let context = await self.makeContext { automation, snapshots in
-            snapshots.mostRecentSnapshotId = snapshotId
-            automation.setWaitForElementResult(
-                WaitForElementResult(found: true, element: element, waitTime: 0.05),
-                for: .query("Continue")
-            )
-        }
-        let detection = ElementDetectionResult(
-            snapshotId: snapshotId,
-            screenshotPath: "/tmp/screenshot.png",
-            elements: DetectedElements(buttons: [element]),
-            metadata: DetectionMetadata(detectionTime: 0, elementCount: 1, method: "stub")
-        )
-        try await context.snapshots.storeDetectionResult(snapshotId: snapshotId, result: detection)
-
-        let result = try await self.runMove(arguments: ["--to", "Continue", "--foreground"], context: context)
-
-        #expect(result.exitStatus == 0)
-        let waitCalls = await self.automationState(context) { $0.waitForElementCalls }
-        #expect(waitCalls.count == 1)
-        let moveCalls = await self.automationState(context) { $0.moveMouseCalls }
-        let call = try #require(moveCalls.first)
-        #expect(call.destination == CGPoint(x: 240, y: 312)) // mid-point of element bounds
-        #expect(call.profile == .linear)
-    }
-
-    @Test
     func `JSON output contains expected shape`() async throws {
         let context = await self.makeContext()
-        let result = try await self.runMove(arguments: ["150,250", "--json", "--foreground"], context: context)
+        let result = try await self.runMove(arguments: ["--at", "150,250", "--json", "--foreground"], context: context)
 
         #expect(result.exitStatus == 0)
         let data = try #require(self.output(from: result).data(using: .utf8))
@@ -174,7 +139,7 @@ struct MoveCommandTests {
             automation.stubCurrentMouseLocation = CGPoint(x: 30, y: 40)
         }
 
-        let result = try await self.runMove(arguments: ["33,44", "--json", "--foreground"], context: context)
+        let result = try await self.runMove(arguments: ["--at", "33,44", "--json", "--foreground"], context: context)
 
         #expect(result.exitStatus == 0)
         let data = try #require(self.output(from: result).data(using: .utf8))
@@ -188,7 +153,7 @@ struct MoveCommandTests {
     func `Human profile toggles movement mode`() async throws {
         let context = await self.makeContext()
         let result = try await self.runMove(
-            arguments: ["100,200", "--profile", "human", "--foreground"],
+            arguments: ["--at", "100,200", "--profile", "human", "--foreground"],
             context: context
         )
 
@@ -203,7 +168,10 @@ struct MoveCommandTests {
     @Test
     func `Smooth defaults to natural human movement`() async throws {
         let context = await self.makeContext()
-        let result = try await self.runMove(arguments: ["100,200", "--smooth", "--foreground"], context: context)
+        let result = try await self.runMove(
+            arguments: ["--at", "100,200", "--smooth", "--foreground"],
+            context: context
+        )
 
         #expect(result.exitStatus == 0)
         let call = try #require(await self.automationState(context) { $0.moveMouseCalls }.first)
@@ -216,7 +184,7 @@ struct MoveCommandTests {
     func `Explicit linear profile preserves straight smooth movement`() async throws {
         let context = await self.makeContext()
         let result = try await self.runMove(
-            arguments: ["100,200", "--smooth", "--profile", "linear", "--steps", "8", "--foreground"],
+            arguments: ["--at", "100,200", "--smooth", "--profile", "linear", "--steps", "8", "--foreground"],
             context: context
         )
 
@@ -231,7 +199,7 @@ struct MoveCommandTests {
     func `Human profile honors explicit sample count`() async throws {
         let context = await self.makeContext()
         let result = try await self.runMove(
-            arguments: ["100,200", "--profile", "human", "--steps", "8", "--foreground"],
+            arguments: ["--at", "100,200", "--profile", "human", "--steps", "8", "--foreground"],
             context: context
         )
 
@@ -245,7 +213,7 @@ struct MoveCommandTests {
     func `Human profile honors explicit zero duration`() async throws {
         let context = await self.makeContext()
         let result = try await self.runMove(
-            arguments: ["100,200", "--profile", "human", "--duration", "0", "--foreground"],
+            arguments: ["--at", "100,200", "--profile", "human", "--duration", "0", "--foreground"],
             context: context
         )
 
@@ -258,7 +226,7 @@ struct MoveCommandTests {
     @Test
     func `Move requires explicit foreground consent`() async throws {
         let context = await self.makeContext()
-        let result = try await self.runMove(arguments: ["100,200"], context: context)
+        let result = try await self.runMove(arguments: ["--at", "100,200"], context: context)
 
         #expect(result.exitStatus != 0)
         #expect(self.output(from: result).contains("requires explicit --foreground"))

@@ -14,11 +14,9 @@ extension MoveCommand: ParsableCommand {
                     on UI elements detected by 'see'. Supports instant and smooth movement.
 
                     EXAMPLES:
-                      peekaboo move 100,200 --foreground
-                      peekaboo move --to "Submit Button" --foreground
+                      peekaboo move --at 100,200 --foreground
                       peekaboo move --on "$ELEMENT_ID" --foreground
-                      peekaboo move 500,300 --smooth --foreground
-                      peekaboo move --center --foreground
+                      peekaboo move --at 500,300 --smooth --foreground
 
                     MOVEMENT MODES:
                       - Instant (default): Immediate cursor positioning
@@ -44,12 +42,9 @@ extension MoveCommand: AsyncRuntimeCommand {}
 @MainActor
 extension MoveCommand: CommanderBindableCommand {
     mutating func applyCommanderValues(_ values: CommanderBindableValues) throws {
-        self.coordinates = try values.decodeOptionalPositional(0, label: "coordinates")
         self.at = values.singleOption("at")
-        self.to = values.singleOption("to")
         self.on = values.singleOption("on")
         self.target = try values.makeInteractionTargetOptions()
-        self.center = values.flag("center")
         self.smooth = values.flag("smooth")
         if let duration: CLIDuration = try values.decodeOption("duration", as: CLIDuration.self) {
             self.duration = duration
@@ -67,24 +62,12 @@ extension MoveCommand: CommanderBindableCommand {
 extension MoveCommand: CommanderSignatureProviding {
     static func commanderSignature() -> CommandSignature {
         CommandSignature(
-            arguments: [
-                .make(
-                    label: "coordinates",
-                    help: "Coordinates as x,y",
-                    isOptional: true
-                ),
-            ],
             options: [
                 .commandOption(
                     "at",
                     help: "x,y — target-relative when --app/--window-* given; global otherwise " +
                         "(use --global for explicit global)",
                     long: "at"
-                ),
-                .commandOption(
-                    "to",
-                    help: "Move to element by text/label",
-                    long: "to"
                 ),
                 .commandOption(
                     "on",
@@ -113,11 +96,6 @@ extension MoveCommand: CommanderSignatureProviding {
                 ),
             ],
             flags: [
-                .commandFlag(
-                    "center",
-                    help: "Move to screen center",
-                    long: "center"
-                ),
                 .commandFlag(
                     "smooth",
                     help: "Use natural smooth movement",

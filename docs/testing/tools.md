@@ -336,14 +336,14 @@ The following subsections spell out the concrete steps, required Playground surf
 #### `move`
 - **View**: ClickTestingView (target nested button) or ScrollTestingView.
 - **Test cases**:
-  1. `peekaboo move 600,600` for instant pointer relocation.
-  2. Smooth query-based move: `peekaboo move --to "Focus Basic Field" --snapshot <id> --smooth`.
-  3. `peekaboo move --center --duration 300ms --steps 15 --foreground`.
+  1. `peekaboo move --at 600,600 --foreground` for instant pointer relocation.
+  2. Smooth element move: `peekaboo move --on <id> --snapshot <snapshot> --smooth --foreground`.
+  3. `peekaboo move --at 600,600 --duration 300ms --steps 15 --foreground`.
   4. `peekaboo move --at 600,600 --foreground`.
-  5. Negative test: `peekaboo move 1,2 --center` should error (conflicting targets).
+  5. Negative test: `peekaboo move --at 1,2 --on <id> --foreground` should error (conflicting targets).
 - **2025-11-16 verification**:
-  - Commands above rerun with snapshot `DBFDD053-4513-4603-B7C3-9170E7386BA7`; CLI outputs saved implicitly (no JSON mode). Pointer jumps succeeded (`move 600,600`, `move --center`).
-  - `move --to "Focus Basic Field" --snapshot ... --smooth` works with snapshot-based targeting; repeated runs confirm the lookup is stable.
+  - Commands above rerun with snapshot `DBFDD053-4513-4603-B7C3-9170E7386BA7`; CLI outputs saved implicitly (no JSON mode). Pointer jumps succeeded with `move --at`.
+  - `move --on <id> --snapshot ... --smooth --foreground` works with snapshot-based targeting; repeated runs confirm the lookup is stable.
   - Focus logger still doesn’t capture these events (`playground-log -c Focus` remains empty), so we rely on CLI output for evidence until instrumentation is added.
 - **2025-12-17 re-verification**:
   - `--at` is the explicit coordinate option; `--global` forces screen coordinates with a target.

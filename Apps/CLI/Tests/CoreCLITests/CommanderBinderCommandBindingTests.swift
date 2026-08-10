@@ -621,28 +621,6 @@ struct CommanderBinderCommandBindingTests {
     }
 
     @Test
-    func `Move command binding with coordinates`() throws {
-        let parsed = ParsedValues(
-            positional: ["100,200"],
-            options: [
-                "duration": ["750"],
-                "steps": ["30"],
-                "profile": ["human"],
-                "snapshot": ["sess-1"]
-            ],
-            flags: ["smooth", "foreground"]
-        )
-        let command = try CommanderCLIBinder.instantiateCommand(ofType: MoveCommand.self, parsedValues: parsed)
-        #expect(command.coordinates == "100,200")
-        #expect(command.duration?.roundedMilliseconds == 750)
-        #expect(command.steps == 30)
-        #expect(command.profile == "human")
-        #expect(command.snapshot == "sess-1")
-        #expect(command.smooth == true)
-        #expect(command.focusOptions.foreground)
-    }
-
-    @Test
     func `Move command binding with --at`() throws {
         let parsed = ParsedValues(
             positional: [],
@@ -657,7 +635,6 @@ struct CommanderBinderCommandBindingTests {
         )
         let command = try CommanderCLIBinder.instantiateCommand(ofType: MoveCommand.self, parsedValues: parsed)
         #expect(command.at == "100,200")
-        #expect(command.coordinates == nil)
         #expect(command.duration?.roundedMilliseconds == 750)
         #expect(command.steps == 30)
         #expect(command.profile == "human")
@@ -692,7 +669,11 @@ struct CommanderBinderCommandBindingTests {
 
     @Test
     func `Move command rejects conflicting targets`() throws {
-        let parsed = ParsedValues(positional: ["100,200"], options: [:], flags: ["center"])
+        let parsed = ParsedValues(
+            positional: [],
+            options: ["at": ["100,200"], "on": ["B1"]],
+            flags: ["foreground"]
+        )
         var command = try CommanderCLIBinder.instantiateCommand(ofType: MoveCommand.self, parsedValues: parsed)
         #expect(throws: ValidationError.self) {
             try command.validate()

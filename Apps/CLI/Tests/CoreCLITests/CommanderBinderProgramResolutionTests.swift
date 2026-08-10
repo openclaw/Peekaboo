@@ -406,23 +406,20 @@ struct CommanderBinderProgramResolutionTests {
         let invocation = try program.resolve(argv: [
             "peekaboo",
             "move",
-            "120,240",
-            "--to", "Submit",
+            "--at", "120,240",
             "--on", "B2",
             "--duration", "750",
             "--steps", "30",
             "--snapshot", "sess-20",
-            "--center",
             "--smooth"
         ])
         let values = invocation.parsedValues
-        #expect(values.positional == ["120,240"])
-        #expect(values.options["to"] == ["Submit"])
+        #expect(values.positional.isEmpty)
+        #expect(values.options["at"] == ["120,240"])
         #expect(values.options["on"] == ["B2"])
         #expect(values.options["duration"] == ["750"])
         #expect(values.options["steps"] == ["30"])
         #expect(values.options["snapshot"] == ["sess-20"])
-        #expect(values.flags.contains("center"))
         #expect(values.flags.contains("smooth"))
     }
 

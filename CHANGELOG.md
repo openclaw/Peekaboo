@@ -26,7 +26,7 @@
 - Add strict bridge 1.11 capabilities for background scrolling, dialog buttons, and window close so stale hosts fail before unsafe fallback dispatch.
 
 ### Removed
-- Remove unit-encoded and legacy coordinate flag spellings including `--timeout-seconds`, `--focus-timeout-seconds`, `--restore-delay-ms`, `--coords`, `--global-coords`, daemon unit suffixes, and capture unit suffixes such as `--every-ms`/`--pre-roll-ms` (v4 breaking change).
+- Remove unit-encoded and legacy coordinate flag spellings including `--timeout-seconds`, `--focus-timeout-seconds`, `--restore-delay-ms`, `--coords`, `--global-coords`, daemon/capture unit suffixes, and move's positional/`--to`/`--center` targeting in favor of `--at`/`--on` (v4 breaking change).
 - Remove the CLI `hotkey`, `swipe`, `image`, `inspect-ui`, and `perform-action` roots plus the MCP `hotkey` and `swipe` tools; MCP keeps screenshot-only `image` and AX-only `inspect_ui` tools (v4 breaking change).
 - Remove clipboard `-a`/`--action`, the duplicate clipboard `load` action, flat config provider/credential spellings, agent mode flags, and the three compound permission-request command names; ClipboardTool payload parameters are now `file_path` and `data_base64` with no image-path alias (v4 breaking change).
 - Remove the CLI `sleep`, `open`, `run`, `commander`, and root `list` commands; remove `capture watch`, `menu click-extra`, `menu list-all`, and `agent permission` aliases/subtrees (v4 breaking change).

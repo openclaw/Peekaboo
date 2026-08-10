@@ -35,7 +35,7 @@ Timing flags share one grammar: bare numbers mean milliseconds, while `ms` and `
 - [`scroll`](commands/scroll.md) – Directional scrolling with optional element targeting and smooth mode.
 - [`drag`](commands/drag.md) – Drag between element IDs or coordinates with modifiers and left/right button selection.
 - [`action`](commands/action.md) – Invoke a named accessibility action such as `AXPress` on an element.
-- [`move`](commands/move.md) – Position the cursor at coordinates, element centers, or screen center with optional smoothing.
+- [`move`](commands/move.md) – Position the cursor at coordinates or element centers with optional smoothing.
 
 ## Windows, Menus, Apps, Spaces
 
