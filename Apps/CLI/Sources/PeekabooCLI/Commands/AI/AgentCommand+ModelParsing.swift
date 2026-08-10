@@ -143,7 +143,7 @@ extension AgentCommand {
             if let known = LanguageModel.parse(from: modelString), !known.supportsTools {
                 throw PeekabooError.invalidInput(
                     "Model '\(modelString)' does not support tool calling, which `peekaboo agent` requires. " +
-                        "Use it for vision instead (`peekaboo image --analyze` / `see --analyze`), " +
+                        "Use it for vision instead (`peekaboo see --analyze`), " +
                         "or pick a tool-capable model."
                 )
             }

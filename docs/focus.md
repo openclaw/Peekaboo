@@ -53,7 +53,7 @@ When you execute a foreground interaction command (`type`, `click --foreground`,
 1. **Retrieves window info** from the current snapshot
 2. **Checks if window still exists** (handles closed windows gracefully)
 3. **Detects which Space** contains the window
-4. **Switches to that Space** if different from current
+4. **Switches or moves Spaces** only when `--space-switch` or `--bring-to-current-space` is explicit
 5. **Brings app to front** and focuses the specific window
 6. **Verifies focus succeeded** before proceeding
 7. **Executes your command** on the correctly focused window
@@ -64,11 +64,11 @@ Foreground interaction commands automatically handle focus:
 
 ```bash
 # These commands all include automatic focus management:
-peekaboo click "Submit" --foreground
-peekaboo type "Hello world"
+peekaboo click "Submit" --app Safari --foreground
+peekaboo type "Hello world" --app TextEdit --foreground
 peekaboo scroll --direction down --foreground
 peekaboo menu click --app Safari --item "New Tab"
-peekaboo press cmd+s
+peekaboo press cmd+s --app TextEdit --foreground
 peekaboo drag --from "$SOURCE_ID" --to "$TARGET_ID" --foreground
 ```
 
@@ -76,7 +76,7 @@ peekaboo drag --from "$SOURCE_ID" --to "$TARGET_ID" --foreground
 
 By default, Peekaboo will:
 - ✅ Focus the target window before interaction
-- ✅ Switch Spaces if the window is on a different desktop
+- ✅ Refuse an unintended Space switch unless `--space-switch` or `--bring-to-current-space` is explicit
 - ✅ Wait up to 5 seconds for focus to complete
 - ✅ Retry up to 3 times if focus fails
 - ✅ Verify focus before proceeding
@@ -102,7 +102,9 @@ Uses command-supported background delivery instead of activating the target app.
 
 ```bash
 peekaboo press cmd+l --app Safari
-peekaboo click --at 420,180 --app Safari
+peekaboo window list --app Safari --json
+peekaboo see --window-id "$WINDOW_ID" --no-elements --json
+peekaboo click --window-id "$WINDOW_ID" --snapshot "$SNAPSHOT_ID" --at 420,180
 peekaboo type "hello" --app TextEdit
 ```
 
@@ -169,21 +171,20 @@ Use cases:
 For explicit window management, use the `window focus` command:
 
 ```bash
-# Basic usage - focus window and switch Space if needed
+# Basic usage on the current Space
 peekaboo window focus --app Safari
 
 # Focus specific window by title
 peekaboo window focus --app Chrome --window-title "Gmail"
 
-# Control Space behavior
-peekaboo window focus --app Terminal --space-switch never
-peekaboo window focus --app "VS Code" --space-switch always
+# Switch to the target window's Space
+peekaboo window focus --app Terminal --space-switch
 
 # Move window to current Space
-peekaboo window focus --app TextEdit --move-here
+peekaboo window focus --app TextEdit --bring-to-current-space
 
-# Skip focus verification for speed
-peekaboo window focus --app Finder --no-verify
+# Request an explicit post-focus verification
+peekaboo window focus --app Finder --verify
 ```
 
 ### Options
@@ -191,9 +192,9 @@ peekaboo window focus --app Finder --no-verify
 - `--app <name>` - Application name, bundle ID, or PID
 - `--window-title <title>` - Specific window title (partial match)
 - `--window-index <number>` - Window index (0-based)
-- `--space-switch [auto|always|never]` - Space switching behavior
-- `--move-here` - Move window to current Space
-- `--no-verify` - Skip focus verification
+- `--space-switch` - Switch to the target window's Space
+- `--bring-to-current-space` - Move the target window to the current Space
+- `--verify` - Verify the exact window is focused after the action
 
 ## Space Management
 
@@ -205,19 +206,14 @@ Peekaboo provides comprehensive Space (virtual desktop) management:
 # List all user Spaces
 peekaboo space list
 
-# Include system and fullscreen Spaces
-peekaboo space list --all
+# Include detailed window assignments
+peekaboo space list --detailed
 
 # JSON output
 peekaboo space list --json
 ```
 
-### Current Space Info
-
-```bash
-# Show current Space details
-peekaboo space current
-```
+The list marks the active Space for each display; add `--json` when a script needs the active ID.
 
 ### Switch Spaces
 
@@ -225,8 +221,6 @@ peekaboo space current
 # Switch to Space 2 (1-based numbering)
 peekaboo space switch --to 2
 
-# Switch without waiting for animation
-peekaboo space switch --to 3 --no-wait
 ```
 
 ### Move Windows Between Spaces
@@ -242,11 +236,8 @@ peekaboo space move-window --app Chrome --window-title "Gmail" --to 2
 ### Find Windows
 
 ```bash
-# Find which Space contains a window
-peekaboo space where-is --app "Visual Studio Code"
-
-# Find specific window
-peekaboo space where-is --app Chrome --window-title "GitHub"
+# Include each Space's windows, then match the app or title in the result
+peekaboo space list --detailed --json
 ```
 
 ## Best Practices
@@ -256,13 +247,11 @@ peekaboo space where-is --app Chrome --window-title "GitHub"
 Always start with `see` to establish a snapshot:
 
 ```bash
-# Good: Establishes snapshot with window tracking
-peekaboo see --app Safari
+# Good: Establish an exact-window snapshot before acting
+peekaboo window list --app Safari --json
+peekaboo see --window-id "$WINDOW_ID" --json
 peekaboo click "Login" --foreground
-peekaboo type "username"
-
-# Less reliable: No window tracking
-peekaboo click "Login" --at 100,200 --foreground
+peekaboo type "username" --app Safari
 ```
 
 ### 2. Let Peekaboo Handle Focus
@@ -287,7 +276,7 @@ Be aware that Space switching takes time:
 peekaboo click "Save" --foreground --focus-timeout 10s
 
 # Or move windows to avoid switching
-peekaboo type "Important data" --bring-to-current-space
+peekaboo type "Important data" --app TextEdit --foreground --bring-to-current-space
 ```
 
 ### 4. Test Cross-Space Workflows
@@ -297,8 +286,8 @@ Test your automation across different Space configurations:
 ```bash
 # Test with window on different Space
 peekaboo space move-window --app YourApp --to 2
-peekaboo see --app YourApp  # Should auto-switch
-peekaboo click "Test Button" --foreground
+peekaboo see --app YourApp  # Read-only observation does not switch Spaces
+peekaboo click "Test Button" --app YourApp --foreground --space-switch
 ```
 
 ## Troubleshooting
@@ -308,15 +297,15 @@ peekaboo click "Test Button" --foreground
 This occurs when Space switching is disabled:
 
 ```bash
-# Solution 1: Allow Space switching (default)
-peekaboo click "Button" --foreground  # Will auto-switch
+# Solution 1: Explicitly allow Space switching
+peekaboo click "Button" --app YourApp --foreground --space-switch
 
 # Solution 2: Move window to current Space
-peekaboo click "Button" --foreground --bring-to-current-space
+peekaboo click "Button" --app YourApp --foreground --bring-to-current-space
 
 # Solution 3: Manually switch first
 peekaboo space switch --to 2
-peekaboo click "Button" --foreground
+peekaboo click "Button" --app YourApp --foreground
 ```
 
 ### "Window not found" Error
@@ -329,7 +318,7 @@ peekaboo window list --app YourApp
 
 # For minimized windows, restore first
 peekaboo window restore --app YourApp
-peekaboo click "Button" --foreground
+peekaboo click "Button" --app YourApp --foreground
 ```
 
 ### "Focus timeout" Error
@@ -338,10 +327,10 @@ The window is taking too long to focus:
 
 ```bash
 # Increase timeout
-peekaboo click "Button" --foreground --focus-timeout 10s
+peekaboo click "Button" --app YourApp --foreground --focus-timeout 10s
 
 # Or increase retry count
-peekaboo click "Button" --foreground --focus-retry-count 5
+peekaboo click "Button" --app YourApp --foreground --focus-retry-count 5
 ```
 
 ### Focus Not Working
@@ -356,13 +345,13 @@ peekaboo window focus --app YourApp --verbose
 peekaboo permissions status
 
 # Try without focus (for testing)
-peekaboo click "Button" --foreground --no-auto-focus
+peekaboo click "Button" --app YourApp --foreground --no-auto-focus
 ```
 
 ## Implementation notes (internal)
 - Window identity prefers `CGWindowID`, with `AXIdentifier`/title/index as fallbacks; sessions persist the ID for follow-up commands.
 - Space management uses CGS APIs (`CGSCopySpaces`, `CGSManagedDisplaySetCurrentSpace`, add/remove windows to spaces) via `SpaceUtilities`.
-- Focus pipeline: resolve window → ensure it exists → detect space → switch or move → bring app frontmost → focus window → verify → run command. Flags map to helpers (`--space-switch`, `--move-here`, retries/timeouts).
+- Focus pipeline: resolve window → ensure it exists → detect space → switch or move → bring app frontmost → focus window → verify → run command. Flags map to helpers (`--space-switch`, `--bring-to-current-space`, `--verify`, retries/timeouts).
 - Tests live in CLI/Core; keep them in sync when changing SpaceUtilities or focus options.
 
 ## Technical Details

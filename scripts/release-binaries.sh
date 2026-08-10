@@ -507,13 +507,13 @@ peekaboo --version
 
 \`\`\`bash
 # Capture screenshot
-peekaboo image --app Safari --path screenshot.png
+peekaboo see --no-elements --app Safari --path screenshot.png
 
 # List applications
-peekaboo list apps
+peekaboo app list
 
 # Capture and analyze a window with AI
-peekaboo image --app Safari --analyze "What is shown?"
+peekaboo see --app Safari --analyze "What is shown?"
 \`\`\`
 
 ## Documentation

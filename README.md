@@ -76,10 +76,10 @@ Agent runs need a configured model provider. See [agent setup](docs/commands/age
 
 | Goal | Commands | Guide |
 | --- | --- | --- |
-| Observe the desktop | `image`, `see`, `list`, `screen` | [Capture and inspection](docs/quickstart.md) |
-| Interact with UI | `click`, `type`, `press`, `scroll`, `drag`, `set-value`, `perform-action` | [Automation](docs/automation.md) |
+| Observe the desktop | `see`, `capture`, `app list`, `window list`, `screen list` | [Capture and inspection](docs/quickstart.md) |
+| Interact with UI | `click`, `type`, `press`, `scroll`, `drag`, `move`, `set-value`, `action` | [Automation](docs/automation.md) |
 | Control macOS | `app`, `window`, `menu`, `menubar`, `dock`, `dialog`, `space` | [Command reference](docs/commands/README.md) |
-| Run workflows | `agent`, `run` | [Agent](docs/commands/agent.md) · [Scripts](docs/commands/run.md) |
+| Run workflows | `agent`, `capture action` | [Agent](docs/commands/agent.md) · [Action capture](docs/commands/capture.md) |
 | Integrate with clients | `mcp`, `browser`, `tools` | [MCP](docs/MCP.md) |
 
 Run `peekaboo help <command>` for live CLI help. The [complete command index](docs/commands/README.md) links to flags, examples, and troubleshooting for every command.

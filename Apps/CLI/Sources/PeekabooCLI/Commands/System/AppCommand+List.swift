@@ -15,10 +15,8 @@ extension AppCommand {
             abstract: "List running applications",
             discussion: """
             App-management view of running applications. Hidden and background apps are
-            filtered unless --include-hidden or --include-background is passed.
-
-            For a broader inventory payload, use `peekaboo list apps`; it accepts the same
-            visibility flags for parity and emits both `applications` and preferred `apps`.
+            filtered unless --include-hidden or --include-background is passed. This is the
+            canonical v4 process inventory command; JSON emits `count` and `apps`.
             """
         )
 

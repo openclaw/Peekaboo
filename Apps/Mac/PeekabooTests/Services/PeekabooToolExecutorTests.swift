@@ -19,10 +19,12 @@ struct ToolRegistryTests {
             "click",
             "type",
             "scroll",
-            "hotkey",
-            "launch_app",
+            "press",
+            "action",
+            "drag",
+            "move",
             "app",
-            "list",
+            "window",
             "menu",
             "dialog",
             "dock",
@@ -32,6 +34,7 @@ struct ToolRegistryTests {
         ]
 
         #expect(toolNames.isSuperset(of: expectedTools))
+        #expect(toolNames.isDisjoint(with: ["hotkey", "launch_app", "list"]))
     }
 
     @Test

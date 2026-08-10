@@ -61,7 +61,7 @@ struct WindowCommandCLITests {
     }
 
     @Test
-    func `Window list delegates to list windows`() async throws {
+    func `Window list returns a structured error for a missing app`() async throws {
         let result = try await runCommand(["window", "list", "--app", "NonExistentApp", "--json"])
         #expect(result.status != 0)
 

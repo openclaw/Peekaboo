@@ -43,5 +43,5 @@ peekaboo scroll --direction right --smooth --app Keynote --foreground --space-sw
 
 ## Troubleshooting
 - Background element scroll needs Accessibility; foreground wheel input needs Event Synthesizing (`peekaboo permissions status`).
-- Confirm your target (app/window/selector) with `peekaboo list`/`peekaboo see` before rerunning.
+- Confirm your process with `peekaboo app list`, its exact window with `peekaboo window list`, and current UI with `peekaboo see` before rerunning.
 - Re-run with `--json` or `--verbose` to surface detailed errors.

@@ -47,7 +47,8 @@ public enum ToolRegistry {
             category: .automation,
             abstract: "High-precision UI clicking with fuzzy matching and snapshot-aware targeting.",
             discussion: """
-            Clicks on UI elements or coordinates. Supports IDs from `see` or `inspect_ui`,
+            Clicks on UI elements or coordinates. CLI interactions use IDs from `see`;
+            agent/MCP interactions may also use IDs from `inspect_ui`,
             fuzzy text queries, or raw coordinates. Clicks use background delivery by default;
             pass `--foreground` only when the target must receive a foreground mouse event.
 
@@ -57,16 +58,17 @@ public enum ToolRegistry {
             - Snapshot-aware IDs avoid ambiguity when multiple matches exist
 
             EXAMPLE
-            peekaboo click --foreground --wait-for 1500 --double \"Submit\"
-            peekaboo click --on "$ELEMENT_ID" --foreground --space-switch
+            peekaboo see --app Safari --json
+            peekaboo click \"Submit\" --app Safari --snapshot "$SNAPSHOT_ID" --wait-for 1500ms
+            peekaboo click --on "$ELEMENT_ID" --snapshot "$SNAPSHOT_ID"
 
             TROUBLESHOOTING
             If the element isn't found, refresh the snapshot with a fresh observation (`peekaboo see`
             in CLI, or `see`/`inspect_ui` in MCP), or provide a more precise query.
             """,
             examples: [
-                "peekaboo click \"Submit\"",
-                "peekaboo click --foreground --wait-for 2000 --double \"Save\"",
+                "peekaboo click \"Submit\" --app Safari --snapshot \"$SNAPSHOT_ID\" --wait-for 1500ms",
+                "peekaboo click --on \"$ELEMENT_ID\" --snapshot \"$SNAPSHOT_ID\"",
             ],
             agentGuidance: "Prefer ID-based clicks when possible. Use default background delivery, and add " +
                 "`--foreground` only when the app requires focused input. If fuzzy text fails, capture again and " +
@@ -81,16 +83,16 @@ public enum ToolRegistry {
             - Use "\\\\" or the word "escape" to send a literal backslash
 
             EXAMPLE
-            peekaboo type \"Hello\\nWorld\"
-            peekaboo type --text \"Press\\tescape\" --delay 50
+            peekaboo type \"Hello\\nWorld\" --app TextEdit
+            peekaboo type --text \"Press\\tescape\" --app TextEdit --delay 50ms
 
             TROUBLESHOOTING
             If the text appears in the wrong place, pass `--app`, `--pid`, `--window-id`, or `--snapshot` so
             Peekaboo can resolve a background target process. Use `--foreground` for apps that require focused input.
             """,
             examples: [
-                "peekaboo type \"Hello\\nWorld\"",
-                "peekaboo type --text \"Name:\\tJohn\" --delay 25",
+                "peekaboo type \"Hello\\nWorld\" --app TextEdit",
+                "peekaboo type --text \"Name:\\tJohn\" --app TextEdit --delay 25ms",
             ],
             agentGuidance: "Remember to escape newline/tab characters when providing prompts; " +
                 "literal newlines may be interpreted by the shell."),

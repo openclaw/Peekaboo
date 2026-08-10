@@ -31,7 +31,7 @@ struct AppCommand: ParsableCommand {
 
           # Relaunch applications
           peekaboo app relaunch Safari --foreground
-          peekaboo app relaunch "Visual Studio Code" --wait 3 --wait-until-ready
+          peekaboo app relaunch "Visual Studio Code" --wait 3s --wait-until-ready
         """,
         subcommands: [
             LaunchSubcommand.self,
