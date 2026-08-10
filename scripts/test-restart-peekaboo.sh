@@ -71,6 +71,7 @@ run_restart() {
     PEEKABOO_KILL_BIN="${case_dir}/bin/kill" \
     PEEKABOO_SLEEP_BIN="${case_dir}/bin/sleep" \
     PEEKABOO_LAUNCH_VERIFY_ATTEMPTS=2 \
+    PEEKABOO_APP_SIGN_IDENTITY='Developer ID Application: Test (TESTTEAM)' \
     "$@" \
     "${ROOT_DIR}/scripts/restart-peekaboo.sh" >/dev/null
 }
@@ -96,6 +97,8 @@ else
 fi
 if [[ -f "${state_dir}/apple-development-build" ]]; then
   printf '%s\n' 'apple-development' >"${bundle}/.requirement"
+elif [[ -f "${state_dir}/other-developer-id-build" ]]; then
+  printf '%s\n' 'other-developer-id' >"${bundle}/.requirement"
 else
   printf '%s\n' 'developer-id' >"${bundle}/.requirement"
 fi
@@ -162,6 +165,8 @@ if [[ "${1:-}" == "-dv" ]]; then
   else
     if [[ "${requirement}" == "apple-development" ]]; then
       authority='Apple Development: Test'
+    elif [[ "${requirement}" == "other-developer-id" ]]; then
+      authority='Developer ID Application: Other (TESTTEAM)'
     else
       authority='Developer ID Application: Test (TESTTEAM)'
     fi
@@ -291,6 +296,11 @@ EOF
 
 chmod +x "${TEMPLATE_BIN}"/*
 
+# Derived dependency/build sources are not shipped production source and must not poison policy checks.
+mkdir -p "${TEMPLATE_SOURCE}/Apps/CLI/.build/checkouts/Dependency"
+printf 'import AppKit\nlet script: NSAppleScript?\n' \
+  >"${TEMPLATE_SOURCE}/Apps/CLI/.build/checkouts/Dependency/Generated.swift"
+
 "${ROOT_DIR}/scripts/verify-native-only-app.sh" --source-root "${ROOT_DIR}"
 
 help_output="$("${ROOT_DIR}/scripts/restart-peekaboo.sh" --help)"
@@ -413,6 +423,18 @@ touch "${resign_dir}/apple-development-build" "${resign_dir}/identity-available"
 run_restart "${resign_dir}" PEEKABOO_APP_SIGN_IDENTITY='Developer ID Application: Test (TESTTEAM)'
 assert_text "${resign_target}/build-id" new
 [[ "$(grep -c '^sign$' "${resign_dir}/events")" == "2" ]] || fail 'expected Developer ID re-signing passes'
+
+# A stable signature from another Developer ID is not accepted when the required signer is unavailable.
+wrong_signer_dir="$(new_case wrong-signer-refusal)"
+mkdir -p "${wrong_signer_dir}/Applications"
+touch "${wrong_signer_dir}/other-developer-id-build"
+if run_restart "${wrong_signer_dir}"; then
+  fail 'expected wrong stable signer refusal'
+fi
+[[ ! -e "${wrong_signer_dir}/dist/Peekaboo.app" ]] || fail 'wrong signer payload was installed'
+if [[ -f "${wrong_signer_dir}/open-log" ]] || grep -q '^stop$' "${wrong_signer_dir}/events"; then
+  fail 'wrong signer refusal stopped or launched the app'
+fi
 
 # Without the configured identity, same Team ID and bundle ID cannot bridge a different requirement.
 requirement_dir="$(new_case requirement-refusal)"

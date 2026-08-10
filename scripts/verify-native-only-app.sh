@@ -61,7 +61,11 @@ if [[ -n "${SOURCE_ROOT}" ]]; then
       if grep -Fq 'NSAppleScript' "${source_path}"; then
         fail "Production Swift source imports NSAppleScript: ${source_path#"${SOURCE_ROOT}/"}"
       fi
-    done < <(find "${SOURCE_ROOT}/${source_dir}" -type f -name '*.swift' -print0)
+    done < <(
+      find "${SOURCE_ROOT}/${source_dir}" \
+        -type d \( -name .build -o -name DerivedData \) -prune -o \
+        -type f -name '*.swift' -print0
+    )
   done
 fi
 

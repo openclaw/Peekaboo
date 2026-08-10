@@ -205,23 +205,26 @@ verify_build_output() {
 }
 
 sign_build_if_needed() {
-  local authority identities identity_available=0
+  local authority="" identities identity_available=0
+
+  if verify_signed_bundle "${BUILT_APP_BUNDLE}" >/dev/null 2>&1; then
+    authority="$(bundle_authority "${BUILT_APP_BUNDLE}" 2>/dev/null || true)"
+    if [[ "${authority}" == "${SIGN_IDENTITY}" ]]; then
+      return 0
+    fi
+  fi
 
   if identities="$("${SECURITY_BIN}" find-identity -v -p codesigning 2>/dev/null)" && \
      [[ "${identities}" == *"${SIGN_IDENTITY}"* ]]; then
     identity_available=1
   fi
   if ((identity_available == 0)); then
-    if verify_signed_bundle "${BUILT_APP_BUNDLE}" >/dev/null 2>&1; then
-      return 0
+    if [[ -n "${authority}" ]]; then
+      printf 'Built app authority (%s) does not match the required identity (%s)\n' \
+        "${authority}" "${SIGN_IDENTITY}" >&2
     fi
     printf 'Signing identity not available: %s\n' "${SIGN_IDENTITY}" >&2
     return 1
-  fi
-  if verify_signed_bundle "${BUILT_APP_BUNDLE}" >/dev/null 2>&1 && \
-     authority="$(bundle_authority "${BUILT_APP_BUNDLE}")" && \
-     [[ "${authority}" == "${SIGN_IDENTITY}"* ]]; then
-    return 0
   fi
   if [[ ! -f "${ENTITLEMENTS_PATH}" ]]; then
     printf 'Entitlements file not found: %s\n' "${ENTITLEMENTS_PATH}" >&2
