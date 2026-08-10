@@ -74,6 +74,8 @@ public final class ApplicationService: ApplicationServiceProtocol {
     typealias ApplicationActivationSleepHandler = @MainActor (_ duration: Duration) async throws -> Void
     typealias ProcessStartIdentityProvider = @MainActor (_ processIdentifier: pid_t) -> UInt64?
     typealias ApplicationQuitHandler = @MainActor (_ application: NSRunningApplication, _ force: Bool) -> Bool
+    typealias BackgroundActivationLeaseFactory = @MainActor (
+        _ activationGraceDuration: Duration) -> BackgroundLaunchActivationLease
 
     let logger = Logger(subsystem: "boo.peekaboo.core", category: "ApplicationService")
     let windowIdentityService = WindowIdentityService()
@@ -97,6 +99,7 @@ public final class ApplicationService: ApplicationServiceProtocol {
     let applicationActivationTimeout: Duration
     let backgroundLaunchActivationGraceDuration: Duration
     let backgroundOpenActivationGraceDuration: Duration
+    let backgroundActivationLeaseFactory: BackgroundActivationLeaseFactory
     let operationLaneCoordinator: DesktopOperationLaneCoordinator
 
     /// Timeout for accessibility API calls to prevent hangs
@@ -159,7 +162,10 @@ public final class ApplicationService: ApplicationServiceProtocol {
         applicationReadinessTimeout: TimeInterval = 10,
         applicationActivationTimeout: Duration = .seconds(2),
         backgroundLaunchActivationGraceDuration: Duration = .milliseconds(500),
-        backgroundOpenActivationGraceDuration: Duration = .seconds(2))
+        backgroundOpenActivationGraceDuration: Duration = .seconds(2),
+        backgroundActivationLeaseFactory: @escaping BackgroundActivationLeaseFactory = { duration in
+            BackgroundLaunchActivationLease(activationGraceDuration: duration)
+        })
     {
         // Set global AX timeout to prevent hangs
         AXTimeoutConfiguration.setGlobalTimeout(Self.axTimeout)
@@ -184,6 +190,7 @@ public final class ApplicationService: ApplicationServiceProtocol {
         self.applicationActivationTimeout = applicationActivationTimeout
         self.backgroundLaunchActivationGraceDuration = backgroundLaunchActivationGraceDuration
         self.backgroundOpenActivationGraceDuration = backgroundOpenActivationGraceDuration
+        self.backgroundActivationLeaseFactory = backgroundActivationLeaseFactory
 
         // Connect to visual feedback if available.
         let isMacApp = Bundle.main.bundleIdentifier?.hasPrefix("boo.peekaboo.mac") == true

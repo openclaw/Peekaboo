@@ -104,8 +104,9 @@ extension ApplicationService {
         let backgroundActivationGraceDuration: Duration = launch.openURLs.isEmpty
             ? self.backgroundLaunchActivationGraceDuration
             : self.backgroundOpenActivationGraceDuration
-        let activationLease = launch.activates ? nil : BackgroundLaunchActivationLease(
-            activationGraceDuration: backgroundActivationGraceDuration)
+        let activationLease = launch.activates
+            ? nil
+            : self.backgroundActivationLeaseFactory(backgroundActivationGraceDuration)
 
         do {
             let runningApp: NSRunningApplication

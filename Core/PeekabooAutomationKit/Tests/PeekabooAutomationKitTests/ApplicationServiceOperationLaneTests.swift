@@ -66,8 +66,11 @@ struct ApplicationServiceOperationLaneTests {
         defer { try? FileManager.default.removeItem(at: root) }
         let coordinator = DesktopOperationLaneCoordinator(coordinationRootURL: root)
         let launchWaiting = ApplicationOperationLatch()
+        let heartbeatStarted = ApplicationOperationLatch()
+        let heartbeatRelease = ApplicationOperationLatch()
         let contenderStarted = ApplicationOperationLatch()
         let generation = SystemIdentityResolver.processStartIdentity(runningApplication.processIdentifier) ?? 70
+        let activationNow = ContinuousClock.now
         let service = ApplicationService(
             operationLaneCoordinator: coordinator,
             applicationOpenHandler: { _, _, _ in runningApplication },
@@ -77,7 +80,19 @@ struct ApplicationServiceOperationLaneTests {
             },
             processStartIdentityProvider: { _ in generation },
             applicationReadinessTimeout: 5,
-            backgroundLaunchActivationGraceDuration: .milliseconds(250))
+            backgroundLaunchActivationGraceDuration: .milliseconds(250),
+            backgroundActivationLeaseFactory: { duration in
+                BackgroundLaunchActivationLease(
+                    observeActivations: false,
+                    activationGraceDuration: duration,
+                    nowProvider: { activationNow },
+                    sleepHandler: { _ in
+                        await heartbeatStarted.open()
+                        await heartbeatRelease.wait()
+                    },
+                    frontmostProcessIdentifierProvider: { nil },
+                    restorationHandler: { _ in })
+            })
 
         let launch = Task { @MainActor in
             try await service.launchApplication(request: ApplicationLaunchRequest(
@@ -87,6 +102,7 @@ struct ApplicationServiceOperationLaneTests {
         }
         await launchWaiting.wait()
         launch.cancel()
+        await heartbeatStarted.wait()
         let contender = Task {
             try await coordinator.run(scope: .global, access: .write) {
                 await contenderStarted.open()
@@ -94,6 +110,7 @@ struct ApplicationServiceOperationLaneTests {
         }
 
         #expect(await !(contenderStarted.opensWithin(.milliseconds(100))))
+        await heartbeatRelease.open()
         await #expect(throws: CancellationError.self) {
             try await launch.value
         }
