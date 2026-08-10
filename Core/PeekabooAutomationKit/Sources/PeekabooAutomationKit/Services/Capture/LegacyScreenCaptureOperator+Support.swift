@@ -8,14 +8,16 @@ extension LegacyScreenCaptureOperator {
     @MainActor
     func captureWindowWithCGWindowList(
         windowID: CGWindowID,
-        correlationId: String) async throws -> CGImage
+        correlationId: String,
+        scale: CaptureScalePreference) async throws -> CGImage
     {
         let allowsPrivateSCKLookup = ScreenCaptureService.captureEnginePreference != .legacy
         if Self.privateScreenCaptureKitWindowLookupEnabled(), allowsPrivateSCKLookup {
             do {
                 return try await self.captureWindowWithPrivateScreenCaptureKit(
                     windowID: windowID,
-                    correlationId: correlationId)
+                    correlationId: correlationId,
+                    scale: scale)
             } catch {
                 self.logger.warning(
                     "Private ScreenCaptureKit window capture failed, falling back to system screencapture",

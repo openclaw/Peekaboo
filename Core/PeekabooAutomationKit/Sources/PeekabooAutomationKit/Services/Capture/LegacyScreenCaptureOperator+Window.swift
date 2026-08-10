@@ -73,7 +73,10 @@ extension LegacyScreenCaptureOperator {
             ],
             correlationId: correlationId)
 
-        let image = try await self.captureWindowImage(windowID: windowID, correlationId: correlationId)
+        let image = try await self.captureWindowImage(
+            windowID: windowID,
+            correlationId: correlationId,
+            scale: scale)
         let mutationIdentity: WindowMutationIdentity? = mutationSnapshot.flatMap { snapshot in
             guard snapshot.ownerProcessStartIdentity == app.processStartIdentity else { return nil }
             return Self.validatedMutationIdentity(snapshot)
@@ -178,7 +181,10 @@ extension LegacyScreenCaptureOperator {
             ],
             correlationId: correlationId)
 
-        let image = try await self.captureWindowImage(windowID: windowID, correlationId: correlationId)
+        let image = try await self.captureWindowImage(
+            windowID: windowID,
+            correlationId: correlationId,
+            scale: scale)
         let mutationIdentity = mutationSnapshot.flatMap(Self.validatedMutationIdentity)
 
         let bounds = Self.windowBounds(from: targetWindow, fallbackImage: image)
@@ -276,11 +282,13 @@ extension LegacyScreenCaptureOperator {
 
     private func captureWindowImage(
         windowID: CGWindowID,
-        correlationId: String) async throws -> CGImage
+        correlationId: String,
+        scale: CaptureScalePreference) async throws -> CGImage
     {
         let image = try await self.captureWindowWithCGWindowList(
             windowID: windowID,
-            correlationId: correlationId)
+            correlationId: correlationId,
+            scale: scale)
         self.logger.debug(
             "Captured window via isolated legacy path",
             metadata: ["windowID": String(windowID)],

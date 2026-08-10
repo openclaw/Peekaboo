@@ -6,6 +6,21 @@ import Testing
 
 struct ScreenCaptureKitTimeoutRaceTests {
     @Test
+    func `callback bridge returns success and failure without the SDK async overlay`() async throws {
+        let value = try await ScreenCaptureKitCallbackBridge<Int>.wait { completion in
+            completion(.success(42))
+        }
+        #expect(value == 42)
+
+        struct ExpectedError: Error {}
+        await #expect(throws: ExpectedError.self) {
+            try await ScreenCaptureKitCallbackBridge<Int>.wait { completion in
+                completion(.failure(ExpectedError()))
+            }
+        }
+    }
+
+    @Test
     func `cancellation before continuation installation still resumes the caller`() async {
         let race = ScreenCaptureKitTimeoutRace<Int>()
         race.cancel()

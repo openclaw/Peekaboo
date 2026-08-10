@@ -79,9 +79,7 @@ extension ScreenCaptureKitOperator {
         let image = try await self.captureWindowImage(
             targetWindow,
             scale: scale,
-            scalePlan: scalePlan,
-            display: targetDisplay,
-            useDisplayBoundFilter: resolution.isMapped)
+            scalePlan: scalePlan)
         let imageData = try image.pngData()
         let mutationIdentity: WindowMutationIdentity? = mutationSnapshot.flatMap { snapshot in
             guard snapshot.ownerProcessStartIdentity == app.processStartIdentity else { return nil }
@@ -167,9 +165,7 @@ extension ScreenCaptureKitOperator {
         let image = try await self.captureWindowImage(
             targetWindow,
             scale: scale,
-            scalePlan: scalePlan,
-            display: targetDisplay,
-            useDisplayBoundFilter: resolution.isMapped)
+            scalePlan: scalePlan)
         let imageData = try image.pngData()
         let mutationIdentity = mutationSnapshot.flatMap(Self.validatedMutationIdentity)
 
@@ -229,68 +225,59 @@ extension ScreenCaptureKitOperator {
     func captureWindowImage(
         _ window: SCWindow,
         scale: CaptureScalePreference,
-        scalePlan: ScreenCaptureScaleResolver.Plan,
-        display: SCDisplay,
-        useDisplayBoundFilter: Bool = true) async throws -> CGImage
+        scalePlan: ScreenCaptureScaleResolver.Plan) async throws -> CGImage
     {
         try await RetryHandler.withRetry(policy: .standard) {
             try await self.createScreenshot(
                 of: window,
                 scale: scale,
-                targetScale: scalePlan.nativeScale,
-                display: display,
-                useDisplayBoundFilter: useDisplayBoundFilter)
+                targetScale: scalePlan.nativeScale)
         }
     }
 
     /// Capture a window screenshot.
     ///
-    /// When `useDisplayBoundFilter` is `true` (the default), uses `SCContentFilter(display:including:)`
-    /// which stays reliable for GPU-rendered windows such as the iOS Simulator. When `false`, falls
-    /// back to `SCContentFilter(desktopIndependentWindow:)` — the ScreenCaptureKit API designed to
-    /// capture a window without needing to identify which display it lives on. The fallback path is
-    /// used when display resolution failed (multi-display setups with partial enumeration), keeping
-    /// the iOS Simulator behavior intact for the common case.
+    /// Window capture uses ScreenCaptureKit's desktop-independent filter. A display-bound filter describes a
+    /// display canvas with selected windows composited into it; on macOS 27 that path can return a display-sized
+    /// transparent surface or fail to invoke the screenshot callback. The desktop-independent contract instead
+    /// returns only the requested window while display resolution remains available for scale and metadata.
     func createScreenshot(
         of window: SCWindow,
         scale: CaptureScalePreference,
-        targetScale: CGFloat,
-        display: SCDisplay,
-        useDisplayBoundFilter: Bool = true) async throws -> CGImage
+        targetScale: CGFloat) async throws -> CGImage
     {
-        let scaleValue = scale == .native ? targetScale : 1.0
-
         let config = SCStreamConfiguration()
         config.captureResolution = .best
         config.showsCursor = false
-
-        let filter: SCContentFilter
-        let pixelSize: (width: Int, height: Int)
-        if useDisplayBoundFilter {
-            filter = SCContentFilter(display: display, including: [window])
-            pixelSize = ScreenCapturePlanner.capturePixelSize(for: window.frame, scale: scaleValue)
-            // `window.frame` is global desktop coordinates; display-bound filters require display-local `sourceRect`.
-            config.sourceRect = ScreenCapturePlanner.displayLocalSourceRect(
-                globalRect: window.frame,
-                displayFrame: display.frame)
-        } else {
-            // `desktopIndependentWindow` captures the window's full content without referencing any
-            // display, so no `sourceRect` is needed. This rescues capture on multi-display Macs where
-            // `SCShareableContent.displays` enumeration misses the display the window actually lives on.
-            filter = SCContentFilter(desktopIndependentWindow: window)
-            let filterScale = CGFloat(filter.pointPixelScale)
-            let outputScale = scale == .native && filterScale.isFinite && filterScale > 0 ? filterScale : scaleValue
-            pixelSize = ScreenCapturePlanner.capturePixelSize(
-                for: filter.contentRect,
-                fallbackFrame: window.frame,
-                scale: outputScale)
+        config.ignoreShadowsSingleWindow = true
+        config.scalesToFit = true
+        if #available(macOS 14.2, *) {
+            config.includeChildWindows = false
         }
+
+        let filter = SCContentFilter(desktopIndependentWindow: window)
+        let pixelSize = ScreenCapturePlanner.desktopIndependentWindowPixelSize(
+            filterContentRect: filter.contentRect,
+            fallbackWindowFrame: window.frame,
+            pointPixelScale: CGFloat(filter.pointPixelScale),
+            fallbackNativeScale: targetScale,
+            useNativeScale: scale == .native)
         config.width = pixelSize.width
         config.height = pixelSize.height
 
-        return try await ScreenCaptureKitCaptureGate.captureImage(
+        let image = try await ScreenCaptureKitCaptureGate.captureImage(
             contentFilter: filter,
             configuration: config)
+        guard ScreenCapturePlanner.matchesExpectedWindowPixelSize(
+            imageWidth: image.width,
+            imageHeight: image.height,
+            expected: pixelSize)
+        else {
+            throw OperationError.captureFailed(
+                reason: "ScreenCaptureKit returned \(image.width)x\(image.height) for a " +
+                    "\(pixelSize.width)x\(pixelSize.height) window capture")
+        }
+        return image
     }
 
     func windowMetadata(

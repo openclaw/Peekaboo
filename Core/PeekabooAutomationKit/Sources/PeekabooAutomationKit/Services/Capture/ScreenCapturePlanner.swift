@@ -42,6 +42,38 @@ import Foundation
             height: self.capturePixelDimension(sourceFrame.height, scale: scale))
     }
 
+    /// Resolve the exact output size for a desktop-independent window filter.
+    ///
+    /// The filter's content rect is authoritative because ScreenCaptureKit may report a capture extent
+    /// that differs from the global WindowServer frame. The window frame remains a defensive fallback for
+    /// older/buggy framework results. Logical captures are always 1x; native captures prefer the filter's
+    /// point-to-pixel scale and fall back to the display-derived scale.
+    public static func desktopIndependentWindowPixelSize(
+        filterContentRect: CGRect,
+        fallbackWindowFrame: CGRect,
+        pointPixelScale: CGFloat,
+        fallbackNativeScale: CGFloat,
+        useNativeScale: Bool) -> (width: Int, height: Int)
+    {
+        let nativeScale = if pointPixelScale.isFinite, pointPixelScale > 0 {
+            pointPixelScale
+        } else {
+            fallbackNativeScale
+        }
+        return self.capturePixelSize(
+            for: filterContentRect,
+            fallbackFrame: fallbackWindowFrame,
+            scale: useNativeScale ? nativeScale : 1)
+    }
+
+    public static func matchesExpectedWindowPixelSize(
+        imageWidth: Int,
+        imageHeight: Int,
+        expected: (width: Int, height: Int)) -> Bool
+    {
+        imageWidth == expected.width && imageHeight == expected.height
+    }
+
     private static func captureSizeSourceFrame(_ frame: CGRect, fallbackFrame: CGRect?) -> CGRect {
         if self.isUsableCaptureSizeFrame(frame) {
             return frame

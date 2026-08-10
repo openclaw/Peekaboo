@@ -62,9 +62,19 @@ enum ScreenCaptureKitCaptureGate {
             seconds: 3.0,
             operationName: "SCScreenshotManager.captureImage")
         {
-            try await SCScreenshotManager.captureImage(
-                contentFilter: contentFilter,
-                configuration: configuration)
+            try await ScreenCaptureKitCallbackBridge<CGImage>.wait { completion in
+                SCScreenshotManager.captureImage(
+                    contentFilter: contentFilter,
+                    configuration: configuration)
+                { image, error in
+                    if let image {
+                        completion(.success(image))
+                    } else {
+                        completion(.failure(error ?? OperationError.captureFailed(
+                            reason: "SCScreenshotManager returned neither an image nor an error")))
+                    }
+                }
+            }
         }
     }
 
@@ -90,6 +100,23 @@ enum ScreenCaptureKitCaptureGate {
             try await SCShareableContent.excludingDesktopWindows(
                 excludingDesktopWindows,
                 onScreenWindowsOnly: onScreenWindowsOnly)
+        }
+    }
+}
+
+/// ScreenCaptureKit has shipped completion paths that never call back. The outer operation coordinator owns
+/// that abandoned lifetime and quarantines the SCK lane until a late callback arrives. An unsafe continuation is
+/// intentional here: unlike the SDK-generated checked async overlay, process teardown cannot emit a misleading
+/// continuation-leak diagnostic for framework work that Peekaboo has already timed out and quarantined.
+enum ScreenCaptureKitCallbackBridge<Value: Sendable> {
+    static func wait(
+        _ start: @escaping @Sendable (@escaping @Sendable (Result<Value, any Error>) -> Void) -> Void) async throws
+        -> Value
+    {
+        try await withUnsafeThrowingContinuation { continuation in
+            start { result in
+                continuation.resume(with: result)
+            }
         }
     }
 }

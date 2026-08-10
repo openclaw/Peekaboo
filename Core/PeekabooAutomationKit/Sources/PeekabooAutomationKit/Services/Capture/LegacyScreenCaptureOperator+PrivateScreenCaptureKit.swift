@@ -42,7 +42,8 @@ extension LegacyScreenCaptureOperator {
 
     func captureWindowWithPrivateScreenCaptureKit(
         windowID: CGWindowID,
-        correlationId: String) async throws -> CGImage
+        correlationId: String,
+        scale: CaptureScalePreference) async throws -> CGImage
     {
         #if PEEKABOO_DISABLE_PRIVATE_SCK_WINDOW_LOOKUP
         throw OperationError.captureFailed(
@@ -53,9 +54,18 @@ extension LegacyScreenCaptureOperator {
         let config = self.makeScreenshotConfiguration()
         config.captureResolution = .best
         config.ignoreShadowsSingleWindow = true
+        config.scalesToFit = true
         if #available(macOS 14.2, *) {
             config.includeChildWindows = false
         }
+        let pixelSize = ScreenCapturePlanner.desktopIndependentWindowPixelSize(
+            filterContentRect: filter.contentRect,
+            fallbackWindowFrame: scWindow.frame,
+            pointPixelScale: CGFloat(filter.pointPixelScale),
+            fallbackNativeScale: 1,
+            useNativeScale: scale == .native)
+        config.width = pixelSize.width
+        config.height = pixelSize.height
 
         self.logger.debug(
             "Capturing window via private ScreenCaptureKit window-id lookup",
@@ -65,9 +75,19 @@ extension LegacyScreenCaptureOperator {
             ],
             correlationId: correlationId)
 
-        return try await ScreenCaptureKitCaptureGate.captureImage(
+        let image = try await ScreenCaptureKitCaptureGate.captureImage(
             contentFilter: filter,
             configuration: config)
+        guard ScreenCapturePlanner.matchesExpectedWindowPixelSize(
+            imageWidth: image.width,
+            imageHeight: image.height,
+            expected: pixelSize)
+        else {
+            throw OperationError.captureFailed(
+                reason: "Private ScreenCaptureKit returned \(image.width)x\(image.height) for a " +
+                    "\(pixelSize.width)x\(pixelSize.height) window capture")
+        }
+        return image
         #endif
     }
 
