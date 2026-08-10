@@ -46,7 +46,7 @@ struct ClickCommandTests {
     func `Long press uses foreground stationary click type`() async throws {
         let context = await makeContext()
         let result = try await InProcessCommandRunner.run(
-            ["click", "--at", "100,200", "--long-press", "--json"],
+            ["click", "--at", "100,200", "--long-press", "--foreground", "--json"],
             services: context.services
         )
 
@@ -55,6 +55,53 @@ struct ClickCommandTests {
         let call = try #require(calls.first)
         #expect(call.clickType == .longPress)
         #expect(await self.automationState(context) { $0.targetedClickCalls }.isEmpty)
+    }
+
+    @Test
+    func `Targetless long press requires explicit foreground before mutation`() async throws {
+        let context = await makeContext()
+        let result = try await InProcessCommandRunner.run(
+            ["click", "--at", "100,200", "--long-press", "--json"],
+            services: context.services
+        )
+
+        #expect(result.exitStatus == 1)
+        #expect(result.combinedOutput.contains("requires explicit --foreground"))
+        #expect(await self.automationState(context) { $0.clickCalls }.isEmpty)
+        #expect(await self.automationState(context) { $0.targetedClickCalls }.isEmpty)
+        #expect(context.snapshots.invalidationCutoffs.isEmpty)
+    }
+
+    @Test
+    @MainActor
+    func `Targeted long press requires explicit foreground before focus or mutation`() async throws {
+        let application = Self.makeApplication()
+        let targetWindow = Self.makeWindow(id: 42, title: "Editor", index: 0)
+        let applications = StubApplicationService(
+            applications: [application],
+            windowsByApp: [application.name: [targetWindow]]
+        )
+        let windows = StubWindowService(windowsByApp: [application.name: [targetWindow]])
+        let context = TestServicesFactory.makeAutomationTestContext(
+            applications: applications,
+            windows: windows
+        )
+
+        let result = try await InProcessCommandRunner.run(
+            [
+                "click", "--at", "100,200", "--app", application.name,
+                "--long-press", "--json",
+            ],
+            services: context.services
+        )
+
+        #expect(result.exitStatus == 1)
+        #expect(result.combinedOutput.contains("requires explicit --foreground"))
+        #expect(applications.activateCalls.isEmpty)
+        #expect(windows.focusCalls.isEmpty)
+        #expect(context.automation.clickCalls.isEmpty)
+        #expect(context.automation.targetedClickCalls.isEmpty)
+        #expect(context.snapshots.invalidationCutoffs.isEmpty)
     }
 
     @Test

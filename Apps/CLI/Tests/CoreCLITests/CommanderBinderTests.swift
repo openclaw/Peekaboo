@@ -585,11 +585,19 @@ struct CommanderBinderTests {
             ),
             commandType: ClickCommand.self
         )
-        let longPress = try CommanderCLIBinder.makeRuntimeOptions(
+        let unconsentedLongPress = try CommanderCLIBinder.makeRuntimeOptions(
             from: ParsedValues(
                 positional: [],
                 options: ["on": ["B1"]],
                 flags: ["longPress"]
+            ),
+            commandType: ClickCommand.self
+        )
+        let longPress = try CommanderCLIBinder.makeRuntimeOptions(
+            from: ParsedValues(
+                positional: [],
+                options: ["on": ["B1"]],
+                flags: ["longPress", "foreground"]
             ),
             commandType: ClickCommand.self
         )
@@ -645,8 +653,12 @@ struct CommanderBinderTests {
         #expect(!coordinate.requiresPostEventPermission)
         #expect(!coordinateDouble.requiresPostEventPermission)
         #expect(!coordinateRight.requiresPostEventPermission)
+        #expect(!unconsentedLongPress.requiresPostEventPermission)
+        #expect(!unconsentedLongPress.requiresLongPressClick)
+        #expect(unconsentedLongPress.requiresAccessibilityPermission)
         #expect(longPress.requiresPostEventPermission)
         #expect(longPress.requiresLongPressClick)
+        #expect(!longPress.requiresAccessibilityPermission)
         #expect(!doubleClick.requiresPostEventPermission)
         #expect(!singleClick.requiresPostEventPermission)
         #expect(!rightClick.requiresPostEventPermission)
@@ -794,7 +806,7 @@ extension CommanderBinderTests {
             from: ParsedValues(
                 positional: [],
                 options: ["windowId": ["42"]],
-                flags: ["longPress"]
+                flags: ["longPress", "foreground"]
             ),
             commandType: ClickCommand.self
         )
