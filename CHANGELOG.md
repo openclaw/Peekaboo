@@ -37,6 +37,7 @@
 
 ### Fixed
 - Reject conflicting app/PID and window selectors across interaction CLI and MCP entry points before focus, observation, or mutation.
+- Require explicit `--foreground` for long-press clicks so the shared physical cursor cannot be used through an implicit delivery-mode promotion.
 - Preserve stable `verify_state` proof for a directly matched exact AX identifier/value when only unrelated accessibility siblings are unreadable, while keeping absence, mismatch, ambiguity, and target drift fail-closed.
 - Preserve the requested characters during background typing on non-US keyboard layouts instead of interpreting fixed US key positions through the active layout. Thanks @canvascoding for #330.
 - Wait for WindowServer to settle after an exact background maximize dispatch before repinning its final bounds, avoiding false failures without relaxing owner-generation checks.
