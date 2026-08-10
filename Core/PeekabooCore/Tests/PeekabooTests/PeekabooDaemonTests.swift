@@ -1,8 +1,8 @@
 import Foundation
 import PeekabooAutomationKit
 import PeekabooBridge
-import PeekabooCore
 import Testing
+@testable import PeekabooCore
 
 @Suite(.tags(.safe))
 @MainActor
@@ -39,6 +39,35 @@ struct PeekabooDaemonTests {
         #expect(status.activity?.idleExitAt != nil)
 
         _ = await daemon.requestStop()
+    }
+
+    @Test
+    func `cancelled idle timers cannot reschedule and cancel their successors`() async throws {
+        let daemon = PeekabooDaemon(configuration: .init(
+            mode: .auto,
+            bridgeSocketPath: "/tmp/peekaboo-test.sock",
+            allowlistedTeams: [],
+            windowTrackingEnabled: false,
+            hostKind: .onDemand,
+            idleTimeout: 0.25,
+            bridgeHostingEnabled: false))
+
+        for _ in 0..<50 {
+            #expect(await daemon.admitActivity(operation: .listApplications))
+            await daemon.recordActivityEnd(operation: .listApplications)
+        }
+
+        let expectedGeneration = daemon.idleShutdownGenerationForTesting
+        #expect(expectedGeneration == 50)
+
+        for _ in 0..<20 {
+            await Task.yield()
+        }
+        try await Task.sleep(for: .milliseconds(20))
+
+        #expect(daemon.idleShutdownGenerationForTesting == expectedGeneration)
+        #expect(await daemon.requestStop())
+        await daemon.waitUntilStopped()
     }
 
     @Test

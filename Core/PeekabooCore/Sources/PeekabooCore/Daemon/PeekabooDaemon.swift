@@ -113,6 +113,7 @@ public final class PeekabooDaemon: PeekabooConditionalDaemonControlProviding {
     private var activeRequestCount = 0
     private var lastActivityAt: Date?
     private var idleShutdownTask: Task<Void, Never>?
+    private var idleShutdownGeneration: UInt64 = 0
     private var shutdownTask: Task<Void, Never>?
 
     public init(configuration: Configuration) {
@@ -350,14 +351,26 @@ public final class PeekabooDaemon: PeekabooConditionalDaemonControlProviding {
         self.idleShutdownTask?.cancel()
         let lastActivityAt = self.lastActivityAt ?? Date()
         let remaining = max(0.05, lastActivityAt.addingTimeInterval(idleTimeout).timeIntervalSinceNow)
+        self.idleShutdownGeneration &+= 1
+        let generation = self.idleShutdownGeneration
         self.idleShutdownTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: UInt64(remaining * 1_000_000_000))
-            await self?.stopIfIdleTimedOut()
+            do {
+                try await Task.sleep(nanoseconds: UInt64(remaining * 1_000_000_000))
+            } catch {
+                return
+            }
+            guard !Task.isCancelled else { return }
+            await self?.stopIfIdleTimedOut(generation: generation)
         }
     }
 
-    private func stopIfIdleTimedOut() async {
-        guard !self.isStopping,
+    var idleShutdownGenerationForTesting: UInt64 {
+        self.idleShutdownGeneration
+    }
+
+    private func stopIfIdleTimedOut(generation: UInt64) async {
+        guard generation == self.idleShutdownGeneration,
+              !self.isStopping,
               self.activeRequestCount == 0,
               let idleTimeout = self.configuration.idleTimeout,
               let lastActivityAt = self.lastActivityAt,
