@@ -22,27 +22,25 @@ target app without changing the frontmost app.
 
 ## Running Local Tests
 
-To run the local-only tests:
+Run the repository-owned local automation entry point from the repository root:
 
 ```bash
-cd peekaboo-cli
-./run-local-tests.sh
+pnpm run test:automation:local
 ```
 
-Or manually:
+The runner builds the current CLI, exports its exact path through `PEEKABOO_CLI_PATH`, includes the automation test target, and enables both local read and action suites. To run only the Playground-backed `see` test manually:
 
 ```bash
-# Enable local tests
-export RUN_LOCAL_TESTS=true
-
-# Run all local-only tests
-swift test --filter "localOnly"
-
-# Run specific test categories
-swift test --filter "screenshot"
-swift test --filter "permissions"
-swift test --filter "multiWindow"
+cli_bin_dir="$(swift build --package-path Apps/CLI --show-bin-path)"
+swift build --package-path Apps/CLI --product peekaboo
+PEEKABOO_INCLUDE_AUTOMATION_TESTS=true RUN_LOCAL_TESTS=true \
+  PEEKABOO_CLI_PATH="$cli_bin_dir/peekaboo" \
+  swift test --package-path Apps/CLI --filter SeeCommandPlaygroundTests
 ```
+
+If LaunchServices cannot resolve `Playground` by name, also set `PEEKABOO_PLAYGROUND_APP` to an absolute, team-signed `Playground.app` path. The test launches its own instance and cleans up only the returned PID/process generation.
+
+`RUN_AUTOMATION_READ=true` and `RUN_AUTOMATION_ACTIONS=true` select the reusable automation suites used by `test:automation:read` and `test:automation:actions`. `RUN_LOCAL_TESTS=true` enables tests that require locally built companion fixtures or an interactive Aqua session. Do not introduce one-off per-test environment flags; route new tests through these shared selectors.
 
 ## Test Categories
 
@@ -64,7 +62,7 @@ swift test --filter "multiWindow"
 
 When adding new local-only tests:
 
-1. Tag them with `.localOnly` to ensure they don't run on CI
+1. Tag them with `.localOnly` and gate them with `RUN_LOCAL_TESTS` to ensure they don't run on CI
 2. Use the test host app for controlled testing scenarios
 3. Clean up any created files/windows in test cleanup
 4. Document any special requirements
@@ -87,7 +85,7 @@ The tests will automatically check for required permissions and attempt to trigg
 ## CI Considerations
 
 These tests are automatically skipped on CI because:
-- The `RUN_LOCAL_TESTS` environment variable is not set
+- The `RUN_LOCAL_TESTS` environment variable is not set by CI or the safe automation-read runner
 - CI environments typically lack screen recording permissions
 - There's no graphical environment for window creation
 

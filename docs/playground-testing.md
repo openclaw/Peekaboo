@@ -31,6 +31,7 @@ Before starting tests:
 - Clear any previous test artifacts
 - Open terminal for log monitoring
 - Run `"$PEEKABOO_BIN" visualizer` with Peekaboo.app open to confirm visual feedback is working (treat this as part of the pre-flight check).
+- Use `pnpm run test:automation:local` for the repository-owned local runner, or set both `PEEKABOO_INCLUDE_AUTOMATION_TESTS=true` and `RUN_LOCAL_TESTS=true` when invoking a filtered Swift suite directly. Read-only/action CI lanes use `RUN_AUTOMATION_READ` / `RUN_AUTOMATION_ACTIONS`; do not add per-test environment switches.
 
 ### 2. For Each Command
 

@@ -167,6 +167,27 @@ quit_with_process_receipt() {
     fi
 }
 
+verified_maximize_result() {
+    local result_file="$1"
+    jq -e '
+        .success == true and
+        .effect == "confirmed" and
+        .data.action == "maximize" and
+        .data.new_bounds.width > 0 and
+        .data.new_bounds.height > 0
+    ' "$result_file" >/dev/null
+}
+
+confirmed_element_scroll_result() {
+    local result_file="$1"
+    jq -e '
+        .success == true and
+        .effect == "confirmed" and
+        .data.targetPoint.source == "element" and
+        .data.totalTicks > 0
+    ' "$result_file" >/dev/null
+}
+
 if $SELF_TEST_ONLY; then
     "$PROBE_BIN" process-identity --pid "$$" \
         --output "$ARTIFACT_ROOT/probe-process-identity.json"
@@ -227,6 +248,28 @@ if $SELF_TEST_ONLY; then
         "app quit --pid 102 --expected-process-start-identity 9 --json" ]] || \
        quit_with_process_receipt 103 "" true; then
         echo "Generation-pinned cleanup command self-test failed." >&2
+        exit 1
+    fi
+    VALID_MAXIMIZE_RESULT="$ARTIFACT_ROOT/valid-maximize-result.json"
+    STALE_MAXIMIZE_RESULT="$ARTIFACT_ROOT/stale-maximize-result.json"
+    VALID_SCROLL_RESULT="$ARTIFACT_ROOT/valid-scroll-result.json"
+    STALE_SCROLL_RESULT="$ARTIFACT_ROOT/stale-scroll-result.json"
+    printf '%s\n' \
+        '{"success":true,"effect":"confirmed","data":{"action":"maximize","new_bounds":{"width":800,"height":600}}}' \
+        > "$VALID_MAXIMIZE_RESULT"
+    printf '%s\n' \
+        '{"success":true,"data":{"success":true,"new_bounds":{"width":800,"height":600}}}' \
+        > "$STALE_MAXIMIZE_RESULT"
+    printf '%s\n' \
+        '{"success":true,"effect":"confirmed","data":{"targetPoint":{"source":"element"},"totalTicks":1}}' \
+        > "$VALID_SCROLL_RESULT"
+    printf '%s\n' \
+        '{"success":false,"effect":"refused","data":null}' > "$STALE_SCROLL_RESULT"
+    if ! verified_maximize_result "$VALID_MAXIMIZE_RESULT" || \
+       verified_maximize_result "$STALE_MAXIMIZE_RESULT" || \
+       ! confirmed_element_scroll_result "$VALID_SCROLL_RESULT" || \
+       confirmed_element_scroll_result "$STALE_SCROLL_RESULT"; then
+        echo "Current maximize/scroll result contract self-test failed." >&2
         exit 1
     fi
     echo "Probe self-test passed: $ARTIFACT_ROOT/probe-self-test.json"
@@ -615,8 +658,7 @@ if read_lifecycle_launch_receipt lifecycle-launch-maximize-close "$LAST_RESULT";
     MAXIMIZE_TEXTEDIT_WINDOW_ID="$LIFECYCLE_WINDOW_ID"
     run_checked_case lifecycle-maximize unchanged success \
         window maximize --window-id "$MAXIMIZE_TEXTEDIT_WINDOW_ID" || true
-    if ! jq -e '.data.success == true and .data.new_bounds.width > 0 and .data.new_bounds.height > 0' \
-        "$LAST_RESULT" >/dev/null; then
+    if ! verified_maximize_result "$LAST_RESULT"; then
         record_failure "lifecycle-maximize did not return verified settled bounds"
     fi
     run_checked_case lifecycle-close unchanged success \
@@ -790,10 +832,12 @@ VERTICAL_SCROLL_ID="$(element_id_from_result "$LAST_RESULT" vertical-scroll)"
 if [[ -z "$SCROLL_SNAPSHOT" || -z "$VERTICAL_SCROLL_ID" ]]; then
     record_failure "scroll fixture snapshot was missing the vertical scroll target"
 else
-    run_checked_case scroll-action-unsupported unchanged failure \
+    run_checked_case scroll-action-background unchanged success \
         scroll --direction down --amount 1 --delay 0ms --on "$VERTICAL_SCROLL_ID" \
         --snapshot "$SCROLL_SNAPSHOT" --pid "$PLAYGROUND_PID" --window-id "$SCROLL_WINDOW_ID" || true
-    assert_result_contains scroll-action-unsupported "$LAST_RESULT" "Accessibility-only" || true
+    if ! confirmed_element_scroll_result "$LAST_RESULT"; then
+        record_failure "scroll-action-background did not confirm exact element scrolling"
+    fi
 fi
 
 sleep 0.3
