@@ -15,7 +15,7 @@ public struct TypeTool: MCPTool {
     public var description: String {
         """
         Types text into UI elements or a targeted app process.
-        Supports special keys ({return}, {tab}, etc.) plus human typing (--wpm) or fixed-delay (--delay) pacing.
+        Supports human typing (--wpm) or fixed-delay (--delay) pacing. Use `press` for key presses and chords.
         Background delivery requires an element/snapshot/app/pid target. Set `foreground=true` for intentional input
         at the current keyboard focus or when the app must be focused first.
         \(PeekabooMCPVersion.banner) using openai/gpt-5.5
@@ -26,8 +26,7 @@ public struct TypeTool: MCPTool {
     public var inputSchema: Value {
         SchemaBuilder.object(
             properties: [
-                "text": SchemaBuilder.string(
-                    description: "The text to type. If not specified, can use special key flags instead."),
+                "text": SchemaBuilder.string(description: "The text to type."),
                 "on": SchemaBuilder.string(
                     description: "Optional. Element ID to type into (from `see` or `inspect_ui`). " +
                         "If omitted, provide snapshot/app/pid for background delivery or set foreground=true."),
@@ -43,17 +42,6 @@ public struct TypeTool: MCPTool {
                     description: "Optional. Human typing speed (80-220 WPM). Overrides delay when set."),
                 "clear": SchemaBuilder.boolean(
                     description: "Optional. Clear the field before typing (Cmd+A, Delete).",
-                    default: false),
-                "press_return": SchemaBuilder.boolean(
-                    description: "Optional. Press return/enter after typing.",
-                    default: false),
-                "tab": SchemaBuilder.number(
-                    description: "Optional. Press tab N times."),
-                "escape": SchemaBuilder.boolean(
-                    description: "Optional. Press escape key.",
-                    default: false),
-                "delete": SchemaBuilder.boolean(
-                    description: "Optional. Press delete/backspace key.",
                     default: false),
                 "foreground": SchemaBuilder.boolean(
                     description: "Optional. Focus a supplied target or intentionally send global keyboard input.",
@@ -114,15 +102,11 @@ public struct TypeTool: MCPTool {
             profile: profile,
             wordsPerMinute: wordsPerMinute,
             clearField: arguments.getBool("clear") ?? false,
-            pressReturn: arguments.getBool("press_return") ?? false,
-            tabCount: arguments.getNumber("tab").map { Int($0) },
-            pressEscape: arguments.getBool("escape") ?? false,
-            pressDelete: arguments.getBool("delete") ?? false,
             foreground: arguments.getBool("foreground") ?? false,
             target: target)
 
         guard request.hasActions else {
-            throw TypeToolValidationError("Must specify text to type or special key actions")
+            throw TypeToolValidationError("Must specify text to type or clear=true")
         }
 
         if let wpm = request.wordsPerMinute, !(80...220).contains(wpm) {

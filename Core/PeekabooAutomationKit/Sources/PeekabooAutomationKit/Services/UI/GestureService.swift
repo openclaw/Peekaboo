@@ -78,7 +78,7 @@ public final class GestureService {
             modifierEvents.up.forEach { $0.post(tap: .cghidEventTap) }
         }
 
-        try await self.performDrag(path: path, start: request.from)
+        try await self.performDrag(path: path, start: request.from, button: request.button)
 
         self.logger.debug("Drag completed")
     }
@@ -157,9 +157,14 @@ public final class GestureService {
 
     private func performDrag(
         path: HumanMousePath,
-        start: CGPoint) async throws
+        start: CGPoint,
+        button: DragButton) async throws
     {
-        try await self.playDragPath(path.points, from: start, button: .left, duration: path.duration)
+        try await self.playDragPath(
+            path.points,
+            from: start,
+            button: button == .right ? .right : .left,
+            duration: path.duration)
     }
 
     private func makeModifierEvents(for keys: [HeldModifierKey]) throws -> (down: [CGEvent], up: [CGEvent]) {

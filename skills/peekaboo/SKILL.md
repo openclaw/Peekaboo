@@ -41,7 +41,7 @@ Peekaboo is a macOS automation CLI and agent runtime. Prefer the freshly built r
 
 ## Observation Strategy
 
-- Use `peekaboo inspect-ui` (CLI) or `inspect_ui` (MCP) for native macOS AX text, labels, buttons, text fields, control state, and element IDs when a screenshot would add noise.
+- Use `peekaboo see --tree --no-screenshot` (CLI) or `inspect_ui` (MCP) for native macOS AX text, labels, buttons, text fields, control state, and element IDs when a screenshot would add noise.
 - Use `peekaboo see` for screenshots, visual layout, annotated maps, pixels, colors, screen/menu-bar targets, or cases where AX text is missing or incomplete.
 - Use `browser` for browser page content, forms, DOM/a11y snapshots, console, network, page screenshots, and performance traces when browser tooling is available.
 - Use native Peekaboo tools for app chrome, browser toolbars, menus, dialogs, permissions, windows, and non-browser apps.
@@ -49,12 +49,12 @@ Peekaboo is a macOS automation CLI and agent runtime. Prefer the freshly built r
 
 ## Operating Rules
 
-- Use `peekaboo see --json --path /tmp/<name>.png` or `peekaboo inspect-ui --json` before element interactions so you have fresh element IDs and snapshot IDs.
+- Use `peekaboo see --json --path /tmp/<name>.png` or `peekaboo see --tree --no-screenshot --json` before element interactions so you have fresh element IDs and snapshot IDs.
 - Prefer the exact element ID string from the current snapshot for clicks and typing; treat ID shapes as opaque. Use labels when IDs are unavailable and coordinates only as a last resort.
 - Check `peekaboo permissions status --json` before assuming a capture or control failure is a CLI bug.
 - Use `--json` when another tool or agent needs to parse results.
 - Respect the user's desktop: avoid destructive app/window actions unless requested.
-- If a command fails because the target UI changed, recapture with `see` or `inspect-ui` before retrying.
+- If a command fails because the target UI changed, recapture with `see` before retrying.
 - `see --json` element bounds are screen coordinates. Snapshot IDs keep element actions tied to the observed UI.
 - When using `see` in agent smoke tests, pass an explicit `/tmp` `--path` so capture artifacts do not land in a user-visible default location.
 - Prefer `--foreground` only when an app requires a key window, Space switch, or foreground mouse event. Background delivery is the default when Peekaboo can resolve a target process.
@@ -63,7 +63,7 @@ Peekaboo is a macOS automation CLI and agent runtime. Prefer the freshly built r
 
 ```bash
 # AX-only state when a screenshot would add noise.
-peekaboo inspect-ui --app Calculator --json > /tmp/peekaboo-calc-ax.json
+peekaboo see --tree --no-screenshot --app Calculator --json > /tmp/peekaboo-calc-ax.json
 
 # Visual layout plus element IDs and snapshot ID.
 peekaboo see --app Calculator --path /tmp/calc.png --json > /tmp/calc.json
@@ -108,7 +108,7 @@ ELEMENT_ID="<element-id-from-current-snapshot>"
 peekaboo click --on "$ELEMENT_ID" --snapshot "$SNAP" --input-strategy actionOnly --json --focus-background
 
 # Direct accessibility action; good for proving UIAX independent of pointer events.
-peekaboo perform-action --on "$ELEMENT_ID" --action AXPress --snapshot "$SNAP" --json
+peekaboo action AXPress --on "$ELEMENT_ID" --snapshot "$SNAP" --json
 
 # Synthetic click path; allow focus if you need visible app state to mutate.
 peekaboo click --on "$ELEMENT_ID" --snapshot "$SNAP" --input-strategy synthOnly --json --foreground
@@ -121,7 +121,7 @@ Interpretation:
 
 - `actionOnly` success proves live AX re-resolution and action invocation.
 - `synthOnly` success proves coordinate resolution and event delivery, but verify app state independently.
-- `perform-action AXPress` is the cleanest UIAX smoke test.
+- `action AXPress` is the cleanest UIAX smoke test.
 - Compare with Computer Use or another AX inspector when labels/descriptions differ.
 
 ## Calculator Smoke Test
@@ -132,20 +132,20 @@ Calculator is a handy fixture because it exposes descriptions and identifiers.
 BIN="$(swift build --package-path Apps/CLI --show-bin-path)/peekaboo"
 "$BIN" permissions status --json > /tmp/peekaboo-skill-refresh-permissions.json
 "$BIN" tools --json > /tmp/peekaboo-skill-refresh-tools.json
-"$BIN" inspect-ui --app Calculator --json > /tmp/peekaboo-skill-refresh-calc-ax.json
+"$BIN" see --tree --no-screenshot --app Calculator --json > /tmp/peekaboo-skill-refresh-calc-ax.json
 "$BIN" see --app Calculator --path /tmp/peekaboo-skill-refresh-calc.png --json --timeout-seconds 10 > /tmp/calc.json
 ruby -rjson -e 'j=JSON.parse(File.read("/tmp/calc.json")); puts JSON.pretty_generate((j.dig("data","ui_elements")||[]).select{|e| ["Clear","AllClear","One","Two","Add","Equals","StandardInputView"].include?(e["identifier"].to_s)}.map{|e| e.slice("id","label","identifier","description","help","bounds")})'
 
 SNAP=$(ruby -rjson -e 'j=JSON.parse(File.read("/tmp/calc.json")); puts j.dig("data","snapshot_id")')
 BUTTON_ID="<button-id-from-current-snapshot>"
-"$BIN" perform-action --on "$BUTTON_ID" --action AXPress --snapshot "$SNAP" --json
+"$BIN" action AXPress --on "$BUTTON_ID" --snapshot "$SNAP" --json
 "$BIN" click --on "$BUTTON_ID" --snapshot "$SNAP" --input-strategy actionOnly --json --focus-background
 ```
 
 Expected current behavior:
 
 - `see --json` includes `bounds` for each `ui_elements` entry.
-- `inspect-ui --json` and `see --json` should expose element IDs plus Calculator identifiers such as `One`, `Two`, and `StandardInputView`. Copy the returned ID exactly instead of assuming a prefix or shape.
+- `see --tree --no-screenshot --json` and `see --json` should expose element IDs plus Calculator identifiers such as `One`, `Two`, and `StandardInputView`. Copy the returned ID exactly instead of assuming a prefix or shape.
 - `tools --json` should include `browser`, `click`, `inspect_ui`, and `see`.
 - Snapshot-backed UIAX must use the captured app/window, not the frontmost app.
 
@@ -160,7 +160,7 @@ pnpm run build:cli
 BIN="$(swift build --package-path Apps/CLI --show-bin-path)/peekaboo"; "$BIN" --version
 "$BIN" click --help | rg -- '--foreground|--focus-background|--input-strategy|Opaque element ID'
 "$BIN" see --help | rg -- '--json|--annotate|--app|--no-web-focus'
-"$BIN" inspect-ui --help | rg 'inspect_ui|--app|--snapshot|--json'
+"$BIN" see --help | rg '\-\-tree|\-\-no-screenshot|\-\-app|\-\-json'
 git diff --check -- skills/peekaboo/SKILL.md docs/agent-skill.md docs/commands/see.md docs/automation.md scripts/docs-lint.mjs
 ```
 

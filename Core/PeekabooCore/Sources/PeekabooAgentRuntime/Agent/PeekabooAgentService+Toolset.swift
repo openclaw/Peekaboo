@@ -166,12 +166,11 @@ extension PeekabooAgentService {
         agentTools.append(createClickTool())
         agentTools.append(createTypeTool())
         agentTools.append(createSetValueTool())
-        agentTools.append(createPerformActionTool())
+        agentTools.append(createActionTool())
         agentTools.append(createScrollTool())
-        agentTools.append(createHotkeyTool())
+        agentTools.append(createPressTool())
         agentTools.append(createDragTool())
         agentTools.append(createMoveTool())
-        agentTools.append(createSwipeTool())
 
         // Window management
         agentTools.append(createWindowTool())

@@ -77,7 +77,7 @@ public final class ToolFormatterRegistry: @unchecked Sendable {
         let elementFormatter = ElementToolFormatter(toolType: .findElement)
         self.register(
             elementFormatter,
-            for: [.setValue, .performAction, .findElement, .listElements, .focused, .inspectUI, .verifyState])
+            for: [.setValue, .action, .performAction, .findElement, .listElements, .focused, .inspectUI, .verifyState])
 
         // Communication tools (use standard)
         let commFormatter = CommunicationToolFormatter(toolType: .taskCompleted)

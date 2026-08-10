@@ -61,7 +61,7 @@ struct AgentSystemPromptTests {
         guard #available(macOS 14.0, *) else { return }
         let prompt = AgentSystemPrompt.generate()
         #expect(
-            prompt.contains(#""item_type": "application_windows", "app": "Safari""#),
+            prompt.contains(#""action": "list", "app": "Safari""#),
             "Prompt should include the required `app` argument when listing application windows.")
     }
 

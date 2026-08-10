@@ -19,9 +19,9 @@ In both modes, MCP never publishes `daemon.sock`, `bridge.sock`, or another Brid
 
 Action-oriented UI tools include:
 
-- `click`, `scroll`, `type`, `hotkey` for the common interaction surface.
+- `click`, `scroll`, `type`, `press`, and `drag` for the common interaction surface.
 - `set_value` for direct accessibility value mutation on settable fields and controls.
-- `perform_action` for invoking a named accessibility action such as `AXPress`, `AXShowMenu`, or `AXIncrement`.
+- `action` for invoking a named accessibility action such as `AXPress`, `AXShowMenu`, or `AXIncrement`.
 
 Inventory is exposed on the nouns: use `app` with `action: "list"` for running applications and `window` with
 `action: "list"` plus `app` for window IDs, bounds, and off-screen state. The former generic `list` tool and its
@@ -29,8 +29,8 @@ duplicate `server_status` view are not exposed. `menu` supports only application
 status items use the dedicated menubar surface. MCP retains `sleep` because an MCP client may not have shell access.
 
 Call `see` first and pass element IDs through these tools when possible. Element-targeted calls preserve action-first routing; coordinate calls always use the synthetic path.
-The same action tools are available to CLI users as `peekaboo set-value` and `peekaboo perform-action`.
-`set_value` and `perform_action` are exposed only when their resolved input strategy enables action invocation
+The same action tools are available to CLI users as `peekaboo set-value` and `peekaboo action`.
+`set_value` and `action` are exposed only when their resolved input strategy enables action invocation
 (`actionFirst` or `actionOnly`). They are hidden under `synthFirst` or `synthOnly`, because these operations do not
 have a synthetic-input equivalent.
 
@@ -135,6 +135,10 @@ The MCP `image` and `see` tools share target parsing with the desktop observatio
 - pass `menubar` for menu-bar capture;
 - pass `PID:1234`, `PID:1234:2`, `App Name`, `App Name:2`, or `App Name:Window Title` for app/window capture.
 
+`image` is the cheap screenshot-only tool and accepts `app_target`, `path`, and `format` naming shared with the
+observation surface. Use `see` when element detection and snapshot IDs are required. The `press` tool accepts either
+`keys: ["cmd+c", "Return"]` for a chord sequence or `key: "c"` plus `modifiers: ["cmd"]` for one chord.
+
 The `see` and `inspect_ui` tools additionally accept an exact CoreGraphics `window_id` when `app_target` names the
 owning application or PID. Peekaboo verifies that ownership before using the ID. Do not combine `window_id` with a
 window title or index suffix in `app_target`; choose one window selector so stale inputs cannot redirect work to a
@@ -179,7 +183,7 @@ count, `characters_typed` reports that lower bound. Rich/binary and current-clip
 exact-window capability before clipboard mutation or Cmd+V dispatch, then return the normal retry-unsafe
 may-have-pasted result because macOS does not acknowledge receiver consumption.
 
-Pointer tools use an explicit interruption policy. `scroll` is background-safe only when `on` identifies an Accessibility-scrollable element; it never falls back to the shared cursor. Set `foreground: true` for targetless, smooth, or delayed scrolling. `move`, `drag`, and `swipe` always manipulate the shared physical cursor, require `foreground: true`, and abort if a requested target cannot be focused. MCP schemas intentionally omit background/auto-focus fields for those global pointer tools.
+Pointer tools use an explicit interruption policy. `scroll` is background-safe only when `on` identifies an Accessibility-scrollable element; it never falls back to the shared cursor. Set `foreground: true` for targetless, smooth, or delayed scrolling. `move` and `drag` always manipulate the shared physical cursor, require `foreground: true`, and abort if a requested target cannot be focused. MCP schemas intentionally omit background/auto-focus fields for those global pointer tools.
 
 ```json
 {

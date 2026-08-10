@@ -48,7 +48,7 @@ extension ImageTool {
     func savedFiles(for captureSet: ImageCaptureSet, request: ImageRequest) throws -> [MCPSavedFile] {
         guard let result = captureSet.captures.first else { return [] }
         guard let path = captureSet.observation?.files.rawScreenshotPath else {
-            if request.outputPath != nil || request.question != nil || request.format == .data {
+            if request.outputPath != nil || request.format == .data {
                 throw OperationError.captureFailed(reason: "Observation completed without a saved screenshot path")
             }
             return []
@@ -66,7 +66,7 @@ extension ImageTool {
     }
 
     func temporaryOutputPathIfNeeded(for request: ImageRequest) -> String? {
-        guard request.question != nil || request.format == .data else {
+        guard request.format == .data else {
             return nil
         }
 
@@ -117,33 +117,6 @@ extension ImageTool {
         }
 
         return ImageCaptureSet(captures: downscaledCaptures, observation: captureSet.observation)
-    }
-
-    func performAnalysis(
-        question: String,
-        savedFiles: [MCPSavedFile],
-        captureResults: [CaptureResult],
-        observation: DesktopObservationResult?) async throws -> ToolResponse
-    {
-        guard let firstCapture = captureResults.first else {
-            throw OperationError.captureFailed(reason: "No capture data available")
-        }
-
-        let imagePath = try savedFiles.first?.path ?? saveTemporaryImage(firstCapture.imageData)
-        let analysis = try await analyzeImage(at: imagePath, question: question)
-        let baseMeta = ObservationDiagnosticsMetadata.merge(observation, into: .object([
-            "coordinate_context": CaptureCoordinateContextMetadata.value(for: firstCapture.metadata),
-            "model": .string(analysis.modelUsed),
-            "savedFiles": .array(savedFiles.map { Value.string($0.path) }),
-            "question": .string(question),
-        ]))
-        let summary = ToolEventSummary(
-            actionDescription: "Image Analyze",
-            notes: question)
-
-        return ToolResponse.text(
-            analysis.text,
-            meta: ToolEventSummary.merge(summary: summary, into: baseMeta))
     }
 
     func buildCaptureResponse(

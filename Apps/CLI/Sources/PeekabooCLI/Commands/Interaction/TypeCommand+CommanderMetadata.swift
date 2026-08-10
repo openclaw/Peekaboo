@@ -36,28 +36,8 @@ extension TypeCommand: CommanderSignatureProviding {
                     help: "Approximate human typing speed (words per minute)",
                     long: "wpm"
                 ),
-                .commandOption(
-                    "tab",
-                    help: "Press tab N times",
-                    long: "tab"
-                ),
             ],
             flags: [
-                .commandFlag(
-                    "pressReturn",
-                    help: "Press return/enter after typing",
-                    long: "return"
-                ),
-                .commandFlag(
-                    "escape",
-                    help: "Press escape",
-                    long: "escape"
-                ),
-                .commandFlag(
-                    "delete",
-                    help: "Press delete/backspace",
-                    long: "delete"
-                ),
                 .commandFlag(
                     "clear",
                     help: "Clear the field before typing (Cmd+A, Delete)",

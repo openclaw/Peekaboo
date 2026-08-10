@@ -7,7 +7,7 @@ read_when:
 
 # `peekaboo tools`
 
-`peekaboo tools` prints the MCP/agent tool catalog that `peekaboo mcp` exposes (Image, See, Click, Window, Browser, Inspect UI, etc.). `peekaboo tools describe <name>` prints one tool's complete JSON input schema for token-cheap, on-demand discovery. Some tools also have dedicated top-level CLI wrappers, including `peekaboo browser` and `peekaboo inspect-ui`; run `peekaboo --help` for the full CLI command list.
+`peekaboo tools` prints the MCP/agent tool catalog that `peekaboo mcp` exposes (Image, See, Click, Press, Action, Window, Browser, Inspect UI, etc.). `peekaboo tools describe <name>` prints one tool's complete JSON input schema for token-cheap, on-demand discovery. These names are the tools available to agents and MCP clients. The CLI keeps `browser` as a dedicated wrapper and exposes AX-only inspection through `peekaboo see --tree --no-screenshot`; run `peekaboo --help` for the full CLI command list.
 
 ## Key options
 | Flag | Description |

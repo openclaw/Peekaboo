@@ -13,7 +13,7 @@ read_when:
 | Flag | Description |
 | --- | --- |
 | `[query]` | Optional positional text query (case-insensitive substring match). |
-| `--on <id>` | Target an opaque Peekaboo element ID copied exactly from current `see` or `inspect-ui` output. |
+| `--on <id>` | Target an opaque Peekaboo element ID copied exactly from current `see` or MCP `inspect_ui` output. |
 | `--coords x,y` | Click coordinates. With target flags, coordinates are relative to the resolved target window; without target flags, they are global screen coordinates. |
 | `--global-coords` | Treat `--coords` as global screen coordinates even when target flags are supplied. |
 | `--snapshot <id>` | Reuse a prior snapshot; defaults to the latest snapshot for element/query clicks. Background coordinate clicks require an explicit nonempty snapshot from a fresh exact-window `see`. |

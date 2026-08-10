@@ -38,7 +38,7 @@ Check the permissions available to Peekaboo, then take a screenshot:
 
 ```sh
 peekaboo permissions status
-peekaboo image --mode screen --path /tmp/peekaboo-screen.png
+peekaboo see --no-elements --mode screen --path /tmp/peekaboo-screen.png
 ```
 
 Screen capture requires Screen Recording permission. Accessibility permission enables UI inspection and control; the [permissions guide](docs/permissions.md) covers setup and the additional permission used for synthetic input.
@@ -57,7 +57,7 @@ Target an element by its accessible label, then send text to the same app:
 
 ```sh
 peekaboo click "Address and search bar" --app Safari
-peekaboo type "github.com/openclaw/Peekaboo" --app Safari --return
+peekaboo type "github.com/openclaw/Peekaboo" --app Safari && peekaboo press Return --app Safari
 ```
 
 Targeted input uses background delivery when Peekaboo can resolve the process, so the app does not have to become frontmost. Add `--foreground` when an app only accepts input in its focused key window. See the [automation guide](docs/automation.md) for element IDs, coordinates, snapshots, waits, and input behavior.

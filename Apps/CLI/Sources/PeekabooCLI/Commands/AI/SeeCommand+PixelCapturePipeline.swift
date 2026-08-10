@@ -6,8 +6,8 @@ import PeekabooCore
 import PeekabooFoundation
 
 @MainActor
-extension ImageCommand {
-    func performCapture() async throws -> [ImageCapturedFile] {
+extension SeeCommand {
+    func performPixelCapture() async throws -> [ImageCapturedFile] {
         if let appName = self.app?.lowercased() {
             switch appName {
             case "menubar":
@@ -24,7 +24,7 @@ extension ImageCommand {
 
         switch captureMode {
         case .screen:
-            results = try await self.captureScreens()
+            results = try await self.captureScreens(allScreens: false)
         case .window:
             if let windowId = self.windowId {
                 results = try await self.captureWindowById(windowId)
@@ -37,7 +37,7 @@ extension ImageCommand {
                 let identifier = try self.resolveApplicationIdentifier()
                 results = try await self.captureAllApplicationWindows(identifier)
             } else {
-                results = try await self.captureScreens()
+                results = try await self.captureScreens(allScreens: true)
             }
         case .frontmost:
             results = try await self.captureFrontmost()
@@ -46,23 +46,6 @@ extension ImageCommand {
         }
 
         return results
-    }
-
-    private func determineMode() -> PeekabooCore.CaptureMode {
-        if let mode {
-            return mode
-        }
-
-        if self.region != nil {
-            return .area
-        }
-
-        if self.app != nil || self.pid != nil || self.windowTitle != nil || self.windowIndex != nil || self
-            .windowId != nil {
-            return .window
-        }
-
-        return .frontmost
     }
 
     private func captureWindowById(_ windowId: Int) async throws -> [ImageCapturedFile] {
@@ -89,8 +72,8 @@ extension ImageCommand {
         ]
     }
 
-    private func captureScreens() async throws -> [ImageCapturedFile] {
-        if let index = self.screenIndex {
+    private func captureScreens(allScreens: Bool) async throws -> [ImageCapturedFile] {
+        if let index = self.screenIndex ?? (allScreens ? nil : 0) {
             let observation = try await self.captureObservation(
                 target: .screen(index: index),
                 preferredName: "screen\(index)",
@@ -106,7 +89,7 @@ extension ImageCommand {
         }
 
         let screens = self.services.screens.listScreens()
-        let indexes = screens.isEmpty ? [0] : Array(screens.indices)
+        let indexes = self.pixelScreenIndexes(allScreens: allScreens, availableScreenCount: screens.count)
 
         var savedFiles: [ImageCapturedFile] = []
         for (ordinal, displayIndex) in indexes.indexed() {
@@ -123,6 +106,16 @@ extension ImageCommand {
         }
 
         return savedFiles
+    }
+
+    func pixelScreenIndexes(allScreens: Bool, availableScreenCount: Int) -> [Int] {
+        if let screenIndex {
+            return [screenIndex]
+        }
+        if !allScreens || availableScreenCount == 0 {
+            return [0]
+        }
+        return Array(0..<availableScreenCount)
     }
 
     private func captureApplicationWindow(_ target: ImageWindowObservationTarget) async throws -> [ImageCapturedFile] {
@@ -257,7 +250,7 @@ extension ImageCommand {
     ) async throws -> DesktopObservationResult {
         let url = self.makeOutputURL(preferredName: preferredName, index: index)
 
-        return try await self.services.desktopObservation.observe(self.makeObservationRequest(
+        return try await self.services.desktopObservation.observe(self.makePixelObservationRequest(
             target: target,
             outputURL: url
         ))

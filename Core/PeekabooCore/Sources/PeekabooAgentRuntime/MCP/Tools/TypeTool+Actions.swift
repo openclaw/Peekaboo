@@ -29,24 +29,8 @@ extension TypeTool {
             actions.append(.text(text))
         }
 
-        if let tabCount = request.tabCount, tabCount > 0 {
-            actions.append(contentsOf: Array(repeating: .key(.tab), count: tabCount))
-        }
-
-        if request.pressEscape {
-            actions.append(.key(.escape))
-        }
-
-        if request.pressDelete {
-            actions.append(.key(.delete))
-        }
-
-        if request.pressReturn {
-            actions.append(.key(.return))
-        }
-
         guard !actions.isEmpty else {
-            throw TypeToolValidationError("Specify text or key actions to run the type tool")
+            throw TypeToolValidationError("Specify text or clear=true to run the type tool")
         }
 
         return actions
@@ -66,22 +50,6 @@ extension TypeTool {
         if let text = request.text {
             let displayText = text.count > 50 ? String(text.prefix(50)) + "..." : text
             actions.append("Typed: \"\(displayText)\"")
-        }
-
-        if let tabCount = request.tabCount {
-            actions.append("Pressed Tab \(tabCount) time\(tabCount == 1 ? "" : "s")")
-        }
-
-        if request.pressEscape {
-            actions.append("Pressed Escape")
-        }
-
-        if request.pressDelete {
-            actions.append("Pressed Delete")
-        }
-
-        if request.pressReturn {
-            actions.append("Pressed Return")
         }
 
         if let wpm = request.wordsPerMinute {
@@ -120,22 +88,6 @@ extension TypeTool {
         if let text = request.text, !text.isEmpty {
             return "Typed"
         }
-        var actions: [String] = []
-        if let tabs = request.tabCount, tabs > 0 {
-            actions.append("Tab×\(tabs)")
-        }
-        if request.pressReturn {
-            actions.append("Return")
-        }
-        if request.pressEscape {
-            actions.append("Escape")
-        }
-        if request.pressDelete {
-            actions.append("Delete")
-        }
-        if request.clearField {
-            actions.append("Clear Field")
-        }
-        return actions.isEmpty ? "Type" : actions.joined(separator: ", ")
+        return request.clearField ? "Clear and Type" : "Type"
     }
 }

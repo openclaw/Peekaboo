@@ -5,11 +5,11 @@ import PeekabooAutomation
 import PeekabooAutomationKit
 import TachikomaMCP
 
-public struct PerformActionTool: MCPTool {
-    private let logger = os.Logger(subsystem: "boo.peekaboo.mcp", category: "PerformActionTool")
+public struct ActionTool: MCPTool {
+    private let logger = os.Logger(subsystem: "boo.peekaboo.mcp", category: "ActionTool")
     private let context: MCPToolContext
 
-    public let name = "perform_action"
+    public let name = "action"
 
     public var description: String {
         """
@@ -23,13 +23,11 @@ public struct PerformActionTool: MCPTool {
         SchemaBuilder.object(
             properties: [
                 "on": SchemaBuilder.string(
-                    description: "Opaque element ID copied exactly from current `see` or `inspect_ui` output, " +
-                        "or a query string."),
+                    description: "Opaque element ID from current `see` or `inspect_ui` output, or a query string."),
                 "action": SchemaBuilder.string(
                     description: "Accessibility action name to invoke, e.g. AXPress, AXShowMenu, AXIncrement."),
                 "snapshot": SchemaBuilder.string(
-                    description: "Optional. Snapshot ID from `see` or `inspect_ui`. " +
-                        "Uses latest snapshot if not specified."),
+                    description: "Optional snapshot ID from `see` or `inspect_ui`; latest is used when omitted."),
             ],
             required: ["on", "action"])
     }
@@ -41,9 +39,9 @@ public struct PerformActionTool: MCPTool {
     @MainActor
     public func execute(arguments: ToolArguments) async throws -> ToolResponse {
         do {
-            let request = try PerformActionRequest(arguments: arguments)
+            let request = try ActionRequest(arguments: arguments)
             guard let automation = self.context.automation as? any ElementActionAutomationServiceProtocol else {
-                return ToolResponse.error("perform_action is not supported by this automation host")
+                return ToolResponse.error("action is not supported by this automation host")
             }
 
             let startTime = Date()
@@ -53,16 +51,15 @@ public struct PerformActionTool: MCPTool {
                 actionName: request.actionName,
                 snapshotId: effectiveSnapshotId)
             let invalidatedSnapshotId = await UISnapshotManager.shared.invalidateActiveSnapshot(id: effectiveSnapshotId)
-            let elapsed = Date().timeIntervalSince(startTime)
             return self.buildResponse(
                 result: result,
                 requestedAction: request.actionName,
-                executionTime: elapsed,
+                executionTime: Date().timeIntervalSince(startTime),
                 invalidatedSnapshotId: invalidatedSnapshotId)
-        } catch let error as PerformActionToolError {
+        } catch let error as ActionToolError {
             return ToolResponse.error(error.message)
         } catch {
-            self.logger.error("perform_action failed: \(error.localizedDescription)")
+            self.logger.error("action failed: \(error.localizedDescription)")
             return ToolResponse.error("Failed to perform action: \(error.localizedDescription)")
         }
     }
@@ -70,12 +67,10 @@ public struct PerformActionTool: MCPTool {
     private func effectiveSnapshotId(_ requestedSnapshotId: String?) async throws -> String? {
         if let requestedSnapshotId {
             guard let snapshot = await UISnapshotManager.shared.getSnapshot(id: requestedSnapshotId) else {
-                throw PerformActionToolError(
-                    "Snapshot '\(requestedSnapshotId)' not found. Run 'see' or 'inspect_ui' again.")
+                throw ActionToolError("Snapshot '\(requestedSnapshotId)' not found. Run 'see' or 'inspect_ui' again.")
             }
             return snapshot.id
         }
-
         return await UISnapshotManager.shared.getSnapshot(id: nil)?.id
     }
 
@@ -88,28 +83,23 @@ public struct PerformActionTool: MCPTool {
         let actionName = result.actionName ?? requestedAction
         let message = "\(AgentDisplayTokens.Status.success) Performed \(actionName) on \(result.target) in " +
             "\(String(format: "%.2f", executionTime))s"
-
         var meta: [String: Value] = [
             "execution_time": .double(executionTime),
             "target": .string(result.target),
             "action_name": .string(actionName),
         ]
         if let anchor = result.anchorPoint {
-            meta["anchor"] = .object([
-                "x": .double(Double(anchor.x)),
-                "y": .double(Double(anchor.y)),
-            ])
+            meta["anchor"] = .object(["x": .double(anchor.x), "y": .double(anchor.y)])
         }
         if let invalidatedSnapshotId {
             meta["invalidated_snapshot"] = .string(invalidatedSnapshotId)
             meta["requires_fresh_observation"] = .bool(true)
         }
-
         return ToolResponse.text(message, meta: .object(meta))
     }
 }
 
-private struct PerformActionRequest {
+private struct ActionRequest {
     let target: String
     let actionName: String
     let snapshotId: String?
@@ -118,21 +108,20 @@ private struct PerformActionRequest {
         guard let target = arguments.getString("on")?.trimmingCharacters(in: .whitespacesAndNewlines),
               !target.isEmpty
         else {
-            throw PerformActionToolError("Element target 'on' is required")
+            throw ActionToolError("Element target 'on' is required")
         }
         guard let actionName = arguments.getString("action")?.trimmingCharacters(in: .whitespacesAndNewlines),
               !actionName.isEmpty
         else {
-            throw PerformActionToolError("Action name is required")
+            throw ActionToolError("Action name is required")
         }
-
         self.target = target
         self.actionName = actionName
         self.snapshotId = arguments.getString("snapshot")
     }
 }
 
-private struct PerformActionToolError: Error {
+private struct ActionToolError: Error {
     let message: String
     init(_ message: String) {
         self.message = message

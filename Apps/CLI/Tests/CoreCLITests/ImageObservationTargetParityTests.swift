@@ -8,7 +8,7 @@ import Testing
 struct ImageObservationTargetParityTests {
     @Test(.tags(.fast))
     func `image window selection prefers title over index`() throws {
-        let command = try ImageCommand.parse([
+        let command = try SeeCommand.parse([
             "--mode", "window",
             "--app", "Safari",
             "--window-title", "Inbox",
@@ -20,7 +20,7 @@ struct ImageObservationTargetParityTests {
 
     @Test(.tags(.fast))
     func `image app title target matches MCP parser`() throws {
-        let command = try ImageCommand.parse([
+        let command = try SeeCommand.parse([
             "--mode", "window",
             "--app", "Safari",
             "--window-title", "Inbox",
@@ -36,7 +36,7 @@ struct ImageObservationTargetParityTests {
 
     @Test(.tags(.fast))
     func `image pid target matches MCP parser`() throws {
-        let command = try ImageCommand.parse([
+        let command = try SeeCommand.parse([
             "--mode", "window",
             "--pid", "123",
         ])
@@ -51,7 +51,7 @@ struct ImageObservationTargetParityTests {
 
     @Test(.tags(.fast))
     func `image app PID target maps to pid observation target`() throws {
-        let command = try ImageCommand.parse([
+        let command = try SeeCommand.parse([
             "--mode", "window",
             "--app", "PID:123",
         ])
@@ -64,21 +64,21 @@ struct ImageObservationTargetParityTests {
 
     @Test(.tags(.fast))
     func `image exact window preserves owner and rejects conflicting selectors`() throws {
-        let appCommand = try ImageCommand.parse([
+        let appCommand = try SeeCommand.parse([
             "--app", "Safari",
             "--window-id", "42",
         ])
         #expect(try appCommand.observationTargetForExactWindowCapture(42) ==
             .app(identifier: "Safari", window: .id(42)))
 
-        let pidCommand = try ImageCommand.parse([
+        let pidCommand = try SeeCommand.parse([
             "--pid", "123",
             "--window-id", "42",
         ])
         #expect(try pidCommand.observationTargetForExactWindowCapture(42) ==
             .pid(123, window: .id(42)))
 
-        let conflicting = try ImageCommand.parse([
+        let conflicting = try SeeCommand.parse([
             "--app", "Safari",
             "--window-id", "42",
             "--window-index", "1",

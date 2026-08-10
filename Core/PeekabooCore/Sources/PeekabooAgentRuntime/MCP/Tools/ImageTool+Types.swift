@@ -15,14 +15,13 @@ struct ImageInput: Codable {
     let path: String?
     let format: ImageFormatOption?
     let appTarget: String?
-    let question: String?
     let captureFocus: CaptureFocus?
     let scale: String?
     let retina: Bool?
     let maxDimension: Int?
 
     enum CodingKeys: String, CodingKey {
-        case path, format, question, scale, retina
+        case path, format, scale, retina
         case appTarget = "app_target"
         case captureFocus = "capture_focus"
         case maxDimension = "max_dimension"
@@ -33,7 +32,6 @@ struct ImageRequest {
     let path: String?
     let format: ImageFormatOption
     let target: ObservationTargetArgument
-    let question: String?
     let captureFocus: CaptureFocus
     let scale: CaptureScalePreference
     let maxDimension: Int?
@@ -41,7 +39,6 @@ struct ImageRequest {
     init(arguments: ToolArguments) throws {
         let input = try arguments.decode(ImageInput.self)
         self.path = input.path
-        self.question = input.question
         self.captureFocus = input.captureFocus ?? .background
         self.format = input.format ?? .png
         self.target = try ObservationTargetArgument.parse(input.appTarget)
@@ -133,12 +130,6 @@ func buildImageSummary(savedFiles: [MCPSavedFile], captureCount: Int) -> String 
     }
 
     return lines.joined(separator: "\n")
-}
-
-func analyzeImage(at path: String, question: String) async throws -> (text: String, modelUsed: String) {
-    let aiService = await MainActor.run { PeekabooAIService() }
-    let result = try await aiService.analyzeImageFileDetailed(at: path, question: question)
-    return (text: result.text, modelUsed: result.model)
 }
 
 struct MCPSavedFile {

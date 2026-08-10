@@ -9,22 +9,13 @@ struct TypeRequest {
     let profile: TypingProfile
     let wordsPerMinute: Int?
     let clearField: Bool
-    let pressReturn: Bool
-    let tabCount: Int?
-    let pressEscape: Bool
-    let pressDelete: Bool
     let foreground: Bool
     let target: MCPInteractionTarget
 
     static let defaultHumanWPM = 140
 
     var hasActions: Bool {
-        self.text != nil ||
-            self.tabCount != nil ||
-            self.pressEscape ||
-            self.pressDelete ||
-            self.pressReturn ||
-            self.clearField
+        self.text != nil || self.clearField
     }
 
     var cadence: TypingCadence {

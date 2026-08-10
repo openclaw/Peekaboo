@@ -15,7 +15,7 @@ public class ElementToolFormatter: BaseToolFormatter {
                 return "\(target) to \(self.truncate(String(describing: value), maxLength: 30))"
             }
             return target
-        case .performAction:
+        case .action, .performAction:
             let action = arguments["action"] as? String ?? "action"
             let target = arguments["on"] as? String ?? "element"
             return "\(action) on \(target)"

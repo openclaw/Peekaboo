@@ -87,11 +87,13 @@ enum CommanderCLIBinder {
         options.requiresSilentCapture = Self.requiresSilentCapture(commandType, parsedValues: parsedValues)
         options.requiresPinnedWindowMutations = Self.requiresPinnedWindowMutations(commandType)
         options.requiresWindowRestore = commandType == WindowCommand.RestoreSubcommand.self
-        options.requiresScreenCapturePermission = Self.requiresScreenCapturePermission(commandType)
+        options.requiresScreenCapturePermission = Self.requiresScreenCapturePermission(
+            commandType,
+            parsedValues: parsedValues
+        )
         options.requestsHostPermissionGrant = Self.isInteractivePermissionRequest(commandType)
         options.usesPerToolSnapshotInvalidation = Self.isAgentExecutionCommand(commandType) ||
             commandType == MCPCommand.Serve.self ||
-            commandType == InspectUICommand.self ||
             commandType == VerifyCommand.self
         options.verbose = parsedValues.flags.contains("verbose")
         options.jsonOutput = parsedValues.flags.contains("jsonOutput")
@@ -153,10 +155,10 @@ enum CommanderCLIBinder {
         if let socketPath = explicitBridgeSocket, !socketPath.isEmpty {
             options.bridgeSocketPath = socketPath
         }
-        if commandType == SetValueCommand.self || commandType == PerformActionCommand.self {
+        if commandType == SetValueCommand.self || commandType == ActionCommand.self {
             options.requiresElementActions = true
         }
-        if commandType == InspectUICommand.self {
+        if commandType == SeeCommand.self, values.flag("noScreenshot") {
             options.requiresInspectAccessibilityTree = true
         }
         if commandType == BrowserCommand.self {
@@ -188,9 +190,14 @@ enum CommanderCLIBinder {
     /// observation) and therefore need a remote host that holds the Screen Recording permission.
     /// Interaction commands (`click`/`scroll`/`type`) are excluded: they target cached snapshots and
     /// their optional observation barrier degrades gracefully without Screen Recording.
-    private static func requiresScreenCapturePermission(_ commandType: (any ParsableCommand.Type)?) -> Bool {
-        commandType == ImageCommand.self ||
-            commandType == SeeCommand.self ||
+    private static func requiresScreenCapturePermission(
+        _ commandType: (any ParsableCommand.Type)?,
+        parsedValues: ParsedValues
+    ) -> Bool {
+        if commandType == SeeCommand.self {
+            return !CommanderBindableValues(parsedValues: parsedValues).flag("noScreenshot")
+        }
+        return
             commandType == CaptureLiveCommand.self ||
             commandType == CaptureVideoCommand.self ||
             commandType == CaptureActionCommand.self
@@ -206,8 +213,7 @@ enum CommanderCLIBinder {
             return true
         }
         let values = CommanderBindableValues(parsedValues: parsedValues)
-        if commandType == ImageCommand.self ||
-            commandType == CaptureLiveCommand.self ||
+        if commandType == CaptureLiveCommand.self ||
             commandType == CaptureActionCommand.self {
             let focus = values.singleOption("captureFocus")?
                 .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -223,8 +229,11 @@ enum CommanderCLIBinder {
                 values.positionalValue(at: 0)?.isEmpty == false
             return values.flag("foreground") && hasElementTarget
         }
-        if commandType == SwipeCommand.self || commandType == DragCommand.self {
-            return values.singleOption("from") != nil || values.singleOption("to") != nil
+        if commandType == DragCommand.self {
+            let endpoints = [values.singleOption("from"), values.singleOption("to")]
+            return endpoints.contains { endpoint in
+                endpoint != nil && !DragCommand.isCoordinateTarget(endpoint)
+            }
         }
         if commandType == MoveCommand.self {
             return values.singleOption("to") != nil ||
@@ -259,8 +268,7 @@ enum CommanderCLIBinder {
         if commandType == MenuCommand.ListSubcommand.self {
             return self.menuListMayFocus(parsedValues)
         }
-        if commandType == ImageCommand.self ||
-            commandType == CaptureLiveCommand.self {
+        if commandType == CaptureLiveCommand.self {
             return self.captureCommandMayFocus(commandType, parsedValues: parsedValues)
         }
         return commandType == AppCommand.LaunchSubcommand.self ||
@@ -274,13 +282,11 @@ enum CommanderCLIBinder {
             commandType == MoveCommand.self ||
             commandType == TypeCommand.self ||
             commandType == PressCommand.self ||
-            commandType == HotkeyCommand.self ||
             commandType == PasteCommand.self ||
             commandType == ScrollCommand.self ||
-            commandType == SwipeCommand.self ||
             commandType == DragCommand.self ||
             commandType == SetValueCommand.self ||
-            commandType == PerformActionCommand.self ||
+            commandType == ActionCommand.self ||
             commandType == CaptureActionCommand.self ||
             commandType == WindowCommand.FocusSubcommand.self ||
             commandType == WindowCommand.CloseSubcommand.self ||
@@ -357,41 +363,10 @@ enum CommanderCLIBinder {
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let hasApplicationTarget = app?.isEmpty == false || values.singleOption("pid") != nil
 
-        if commandType == ImageCommand.self {
-            let normalizedApp = app?.lowercased()
-            guard normalizedApp != "menubar", normalizedApp != "frontmost" else { return false }
-
-            let mode = values.singleOption("mode")?
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-                .lowercased() ?? Self.inferredImageCaptureMode(values)
-            switch mode {
-            case "window":
-                return values.singleOption("windowId") == nil && hasApplicationTarget
-            case "multi":
-                return hasApplicationTarget
-            default:
-                return false
-            }
-        }
-
         let mode = values.singleOption("mode")?
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased() ?? Self.inferredLiveCaptureMode(values)
         return mode == "window" && hasApplicationTarget
-    }
-
-    private static func inferredImageCaptureMode(_ values: CommanderBindableValues) -> String {
-        if values.singleOption("region") != nil {
-            return "area"
-        }
-        if values.singleOption("app") != nil ||
-            values.singleOption("pid") != nil ||
-            values.singleOption("windowTitle") != nil ||
-            values.singleOption("windowIndex") != nil ||
-            values.singleOption("windowId") != nil {
-            return "window"
-        }
-        return "frontmost"
     }
 
     private static func inferredLiveCaptureMode(_ values: CommanderBindableValues) -> String {
@@ -431,7 +406,7 @@ enum CommanderCLIBinder {
         parsedValues: ParsedValues
     ) -> Bool {
         let values = CommanderBindableValues(parsedValues: parsedValues)
-        if commandType == MoveCommand.self || commandType == DragCommand.self || commandType == SwipeCommand.self {
+        if commandType == MoveCommand.self || commandType == DragCommand.self {
             return true
         }
         if commandType == ScrollCommand.self {

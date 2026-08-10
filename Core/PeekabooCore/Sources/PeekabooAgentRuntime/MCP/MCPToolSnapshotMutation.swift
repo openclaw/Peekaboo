@@ -193,7 +193,7 @@ enum MCPToolSnapshotMutationPolicy {
 
     static func explicitEffect(toolName: String, arguments: ToolArguments) -> MCPToolSnapshotEffect? {
         switch toolName {
-        case "click", "type", "set_value", "perform_action", "scroll", "hotkey", "swipe", "drag", "move",
+        case "click", "type", "set_value", "action", "scroll", "press", "drag", "move",
              "paste", "shell":
             .mutation
         case "see":

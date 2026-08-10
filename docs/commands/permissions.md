@@ -50,11 +50,11 @@ peekaboo permissions request event-synthesizing
 - Verify Screen Recording + Accessibility permissions (`peekaboo permissions status`).
 - Check the printed `Source:` line. If it says `Peekaboo Bridge`, the status reflects an explicit socket, the selected
   reusable daemon, or a healthy Peekaboo.app fallback and its TCC grants. Grant Screen Recording to that host process,
-  or force a local image capture with `peekaboo image --no-remote --capture-engine cg` only when the caller process is
+  or force a local pixel capture with `peekaboo see --no-elements --no-remote --capture-engine cg` only when the caller process is
   running in the active
   Aqua GUI session and already has permission. SSH, LaunchAgent, Codex, and other background launchd sessions can
   still return wallpaper-only pixels despite TCC grants, so prefer Bridge there.
-- Treat `image --capture-engine` as a local-debug override: it disables Bridge selection for that capture command.
+- Treat `see --no-elements --capture-engine` as a local-debug override: it disables Bridge selection for that capture command.
 - If capture returns a blank desktop, wallpaper, or no windows while `permissions status` reports Screen Recording as denied, run `peekaboo permissions request screen-recording` and then restart the affected Peekaboo process. Homebrew upgrades can move the CLI to a new Cellar path, so confirm the enabled System Settings row belongs to the current binary.
 - Confirm your target with `peekaboo app list`, `peekaboo window list`, or `peekaboo see` before rerunning.
 - Re-run with `--json` or `--verbose` to surface detailed errors.

@@ -81,7 +81,7 @@ capabilities; Peekaboo currently catalogs Fable 5 and Sonnet 5 with 1M context w
 
 The agent requires a tool-calling capable model. Peekaboo rejects a configured model marked `supportsTools: false`;
 only opt that model into tools when its endpoint actually implements tool calling. Vision is a separate capability, so
-use `peekaboo image --analyze` / `see --analyze` only with a model that also supports vision. Ollama capabilities vary
+use `peekaboo see --analyze` only with a model that also supports vision. Ollama capabilities vary
 by model and tag; see the [Ollama provider guide](providers/ollama.md) before assuming a locally installed model
 supports tools.
 

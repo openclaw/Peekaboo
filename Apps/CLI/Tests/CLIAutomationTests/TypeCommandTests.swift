@@ -14,7 +14,6 @@ struct TypeCommandTests {
         #expect(command.text == "Hello World")
         #expect(command.jsonOutput == true)
         #expect(command.delay == 0) // default delay
-        #expect(command.pressReturn == false)
         #expect(command.clear == false)
     }
 
@@ -33,17 +32,6 @@ struct TypeCommandTests {
         #expect(throws: ValidationError.self) {
             try command.validate()
         }
-    }
-
-    @Test
-    func `Type command with special keys`() throws {
-        let command = try TypeCommand.parse(["--tab", "2", "--return", "--json"])
-
-        #expect(command.text == nil)
-        #expect(command.tab == 2)
-        #expect(command.pressReturn == true)
-        #expect(command.escape == false)
-        #expect(command.delete == false)
     }
 
     @Test
@@ -298,32 +286,19 @@ struct TypeCommandTests {
 
     @Test
     func `Type command argument parsing`() throws {
-        let command = try TypeCommand.parse(["Hello World", "--delay", "10", "--return"])
+        let command = try TypeCommand.parse(["Hello World", "--delay", "10"])
 
         #expect(command.text == "Hello World")
         #expect(command.delay == 10)
-        #expect(command.pressReturn == true)
     }
 
     @Test
-    func `Type command with all special keys`() throws {
-        let command = try TypeCommand.parse([
-            "Test",
-            "--clear",
-            "--tab",
-            "1",
-            "--return",
-            "--escape",
-            "--delete",
-            "--json"
-        ])
-
-        #expect(command.text == "Test")
-        #expect(command.clear == true)
-        #expect(command.tab == 1)
-        #expect(command.pressReturn == true)
-        #expect(command.escape == true)
-        #expect(command.delete == true)
+    func `Type command rejects removed key flags`() {
+        for flag in ["--return", "--tab", "--escape", "--delete"] {
+            #expect(throws: (any Error).self) {
+                _ = try TypeCommand.parse(["Test", flag])
+            }
+        }
     }
 
     @Test

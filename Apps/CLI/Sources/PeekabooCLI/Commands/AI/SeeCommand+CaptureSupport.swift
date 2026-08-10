@@ -12,15 +12,15 @@ extension SeeCommand {
     func screenshotOutputPath(snapshotID: String? = nil) -> String {
         if self.usesTemporaryScreenshotOutput {
             return self.temporaryScreenshotDirectory(snapshotID: snapshotID)
-                .appendingPathComponent("raw.png")
+                .appendingPathComponent("raw.\(self.format.fileExtension)")
                 .path
         }
 
         let timestamp = Date().timeIntervalSince1970
-        let filename = "peekaboo_see_\(Int(timestamp)).png"
+        let filename = "peekaboo_see_\(Int(timestamp)).\(self.format.fileExtension)"
         return ObservationCommandSupport.outputPath(
             path: self.path,
-            format: .png,
+            format: self.format,
             defaultDirectory: ConfigurationManager.shared.getDefaultSavePath(cliValue: nil),
             defaultFileName: filename
         )

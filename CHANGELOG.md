@@ -12,6 +12,8 @@
 
 ### Changed
 - Update Swift Subprocess to 1.0.0 and pnpm to 11.21.0.
+- Merge keyboard shortcuts into xdotool-style `press` chords, fold swipe gestures into dual-target `drag`, consolidate screenshot and AX-tree CLI reads under `see`, and rename CLI/MCP `perform-action`/`perform_action` to `action` (v4 breaking change).
+- Make `type` text-only apart from `--clear`; use `press` for Return, Tab, Escape, Delete, and chord sequences (v4 breaking change).
 - Convert clipboard and menubar actions, agent modes, permission requests, and flat config provider/credential operations into real nested subcommands (v4 breaking change).
 - Add `app launch --wait-ready` and repeatable `--open` targets as the surviving launch/open surface (v4 breaking change).
 - Redesign automation feedback around a natural agent cursor, a quiet target-window input HUD, and capture borders, suppressing window feedback whenever its target is not visibly active.
@@ -23,6 +25,7 @@
 - Add strict bridge 1.11 capabilities for background scrolling, dialog buttons, and window close so stale hosts fail before unsafe fallback dispatch.
 
 ### Removed
+- Remove the CLI `hotkey`, `swipe`, `image`, `inspect-ui`, and `perform-action` roots plus the MCP `hotkey` and `swipe` tools; MCP keeps screenshot-only `image` and AX-only `inspect_ui` tools (v4 breaking change).
 - Remove clipboard `-a`/`--action`, the duplicate clipboard `load` action, flat config provider/credential spellings, agent mode flags, and the three compound permission-request command names; ClipboardTool payload parameters are now `file_path` and `data_base64` with no image-path alias (v4 breaking change).
 - Remove the CLI `sleep`, `open`, `run`, `commander`, and root `list` commands; remove `capture watch`, `menu click-extra`, `menu list-all`, and `agent permission` aliases/subtrees (v4 breaking change).
 - Remove CLI flag aliases `--id`, `--image-path`, and `--app-target`; Commander’s submodule-owned `--json-output` alias remains (v4 breaking change).

@@ -15,8 +15,8 @@ Peekaboo's `human` profile makes cursor motion look hand-driven without forcing 
 
 ## Using the profile
 
-- **CLI**: use `--smooth` for a natural `peekaboo move`, or add `--profile human` to `move`, `drag`, or `swipe`. Duration/sample counts pick sensible defaults per distance. Explicit `--duration` and `--steps` values are honored; human paths never emit more than 96 samples.
-- **Agents / MCP**: include `"profile": "human"` in the move/drag/swipe tool arguments. Optional `duration` and `steps` fields work the same way as in the CLI-you only need them when you want to clamp the adaptive heuristics.
+- **CLI**: use `--smooth` for a natural `peekaboo move`, or add `--profile human` to `move` or `drag`. Duration/sample counts pick sensible defaults per distance. Explicit `--duration` and `--steps` values are honored; human paths never emit more than 96 samples.
+- **Agents / MCP**: include `"profile": "human"` in move/drag tool arguments. Optional `duration` and `steps` fields work the same way as in the CLI—you only need them when you want to clamp the adaptive heuristics.
 
 ## Defaults at a glance
 

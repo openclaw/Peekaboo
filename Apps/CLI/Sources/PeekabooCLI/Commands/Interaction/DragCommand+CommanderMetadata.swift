@@ -6,23 +6,13 @@ extension DragCommand: CommanderSignatureProviding {
             options: [
                 .commandOption(
                     "from",
-                    help: "Starting element ID from snapshot",
+                    help: "Starting element ID or coordinates as 'x,y'",
                     long: "from"
                 ),
                 .commandOption(
-                    "fromCoords",
-                    help: "Starting coordinates as 'x,y'",
-                    long: "from-coords"
-                ),
-                .commandOption(
                     "to",
-                    help: "Target element ID from snapshot",
+                    help: "Target element ID or coordinates as 'x,y'",
                     long: "to"
-                ),
-                .commandOption(
-                    "toCoords",
-                    help: "Target coordinates as 'x,y'",
-                    long: "to-coords"
                 ),
                 .commandOption(
                     "toApp",
@@ -48,6 +38,11 @@ extension DragCommand: CommanderSignatureProviding {
                     "modifiers",
                     help: "Modifier keys to hold during drag",
                     long: "modifiers"
+                ),
+                .commandOption(
+                    "button",
+                    help: "Mouse button to hold during drag (left or right)",
+                    long: "button"
                 ),
                 .commandOption(
                     "profile",

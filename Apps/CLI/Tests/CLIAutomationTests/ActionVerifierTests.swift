@@ -34,11 +34,11 @@ struct ActionDescriptorTests {
     @Test
     func `Action descriptor with minimal properties`() {
         let descriptor = ActionDescriptor(
-            toolName: "hotkey",
+            toolName: "press",
             arguments: ["keys": "cmd+c"]
         )
 
-        #expect(descriptor.toolName == "hotkey")
+        #expect(descriptor.toolName == "press")
         #expect(descriptor.arguments == ["keys": "cmd+c"])
         #expect(descriptor.targetElement == nil)
         #expect(descriptor.targetPoint == nil)

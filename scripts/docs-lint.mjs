@@ -11,9 +11,17 @@ const failures = [];
 const extraMarkdownFiles = [path.resolve('README.md')];
 const skillMarkdownFiles = [path.resolve('skills/peekaboo/SKILL.md')];
 const staleCliPatterns = [
-  [/peekaboo capture --output\b/, 'use `peekaboo image --path` or `peekaboo capture live --path`'],
-  [/peekaboo capture --window-focused\b/, 'use `peekaboo image --mode frontmost`'],
-  [/--press-return\b/, 'use `--return`'],
+  [/peekaboo capture --output\b/, 'use `peekaboo see --no-elements --path` or `peekaboo capture live --path`'],
+  [/peekaboo capture --window-focused\b/, 'use `peekaboo see --no-elements --mode frontmost`'],
+  [/--press-return\b/, 'chain `peekaboo press Return`'],
+  [/peekaboo image\b/, 'use `peekaboo see --no-elements`'],
+  [/peekaboo hotkey\b/, 'use `peekaboo press` with xdotool chord syntax'],
+  [/peekaboo swipe\b/, 'use `peekaboo drag`'],
+  [/peekaboo inspect-ui\b/, 'use `peekaboo see --tree --no-screenshot`'],
+  [/peekaboo perform-action\b/, 'use `peekaboo action`'],
+  [/--(?:from|to)-coords\b/, 'pass coordinates directly to `--from` or `--to`'],
+  [/--max-depth\b/, 'use `--depth`'],
+  [/peekaboo type[^\n]*--(?:return|escape|delete|tab)\b/, 'chain `peekaboo press` for key input'],
   [/--delay-ms\b/, 'use `--delay`'],
   [/--repeat\b/, 'use `--count`'],
   [/--label\b/, 'use positional query text or `--on`'],

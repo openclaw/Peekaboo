@@ -27,7 +27,7 @@ Most commands that work with applications support two parameters:
 
 ```bash
 # By application name
-peekaboo image --app Safari
+peekaboo see --no-elements --app Safari
 
 # By bundle ID
 peekaboo window close --app com.apple.Safari
@@ -49,7 +49,7 @@ peekaboo window focus --app Safari --pid 12345
 The most common method - uses the localized application name:
 
 ```bash
-peekaboo image --app "Google Chrome"
+peekaboo see --no-elements --app "Google Chrome"
 peekaboo window list --app TextEdit
 ```
 
@@ -98,9 +98,9 @@ Peekaboo supports partial name matching for convenience:
 
 ```bash
 # Matches "Visual Studio Code"
-peekaboo image --app "visual"
-peekaboo image --app "code"
-peekaboo image --app "studio"
+peekaboo see --no-elements --app "visual"
+peekaboo see --no-elements --app "code"
+peekaboo see --no-elements --app "studio"
 
 # Matches "Google Chrome"
 peekaboo window list --app chrome
@@ -124,7 +124,7 @@ These are all valid and equivalent:
 peekaboo window close --app "PID:12345" --pid 12345
 
 # Name and PID for same app
-peekaboo image --app Safari --pid 67890  # If PID 67890 is Safari
+peekaboo see --no-elements --app Safari --pid 67890  # If PID 67890 is Safari
 ```
 
 ### Conflict Detection
@@ -135,7 +135,7 @@ These will produce errors:
 peekaboo window close --app "PID:12345" --pid 67890
 
 # Name doesn't match PID
-peekaboo image --app Safari --pid 12345  # If PID 12345 is Chrome
+peekaboo see --no-elements --app Safari --pid 12345  # If PID 12345 is Chrome
 ```
 
 ## Implementation Details

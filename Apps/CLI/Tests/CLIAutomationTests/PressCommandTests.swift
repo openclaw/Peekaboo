@@ -17,7 +17,7 @@ struct PressCommandTests {
         let result = try await self.runPress(arguments: ["--help"], context: context)
 
         #expect(result.exitStatus == 0)
-        #expect(self.output(from: result).contains("Press individual keys or key sequences"))
+        #expect(self.output(from: result).contains("Press keyboard chords or chord sequences"))
     }
 
     @Test
@@ -60,6 +60,19 @@ struct PressCommandTests {
         #expect(result.exitStatus == 0)
         let calls = await self.automationState(context) { $0.hotkeyCalls }
         #expect(calls.map(\.keys) == ["up", "down", "left", "right"])
+    }
+
+    @Test
+    func `Press command supports xdotool chord sequences`() async throws {
+        let context = await self.makeContext()
+        let result = try await self.runPress(
+            arguments: ["cmd+shift+t", "Return", "--foreground"],
+            context: context
+        )
+
+        #expect(result.exitStatus == 0)
+        let calls = await self.automationState(context) { $0.hotkeyCalls }
+        #expect(calls.map(\.keys) == ["cmd,shift,t", "return"])
     }
 
     @Test

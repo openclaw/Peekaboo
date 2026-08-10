@@ -125,7 +125,9 @@ extension SeeCommand {
 
     private func outputTextResults(context: SeeCommandRenderContext) throws {
         try Task.checkCancellation()
-        print("🖼️  Screenshot saved to: \(context.screenshotPath)")
+        if !self.noScreenshot {
+            print("🖼️  Screenshot saved to: \(context.screenshotPath)")
+        }
         if let annotatedPath = context.annotatedPath {
             print("📝 Annotated screenshot: \(annotatedPath)")
         }
@@ -151,7 +153,9 @@ extension SeeCommand {
             print("\n🤖 AI Analysis\n\(analysis.text)")
         }
 
-        if context.metadata.elementCount > 0 {
+        if self.tree {
+            self.printTree(context.elements.all)
+        } else if context.metadata.elementCount > 0 {
             print("\n🔍 Element Summary")
             for element in context.elements.all.prefix(10) {
                 let summaryLabel = element.label ?? element.attributes["title"] ?? element.value ?? "Untitled"
@@ -172,6 +176,20 @@ extension SeeCommand {
         let terminalCapabilities = TerminalDetector.detectCapabilities()
         if terminalCapabilities.recommendedOutputMode == .minimal {
             print("Agent: Use a tool like view_image to inspect it.")
+        }
+    }
+
+    private func printTree(_ elements: [DetectedElement]) {
+        print("\nAccessibility Tree")
+        guard !elements.isEmpty else {
+            print("No accessible UI elements found.")
+            return
+        }
+        for element in elements {
+            let label = element.label ?? element.attributes["title"] ?? element.value ?? ""
+            let value = element.value.map { " value=\"\($0)\"" } ?? ""
+            let state = element.isEnabled ? "" : " disabled"
+            print("  \(element.id) [\(element.type.rawValue)] \(label)\(value)\(state)")
         }
     }
 

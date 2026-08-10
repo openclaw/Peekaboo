@@ -12,14 +12,15 @@ read_when:
 ## Key options
 | Flag | Description |
 | --- | --- |
-| `--from <id>` / `--from-coords x,y` | Source handle. Exactly one of these is required. |
-| `--to <id>` / `--to-coords x,y` / `--to-app <name>` | Destination. Use `--to-app Trash` for Dock drops or any bundle ID/name for app-centric drops. |
+| `--from <id-or-x,y>` | Source element ID or coordinates. |
+| `--to <id-or-x,y>` / `--to-app <name>` | Destination element, coordinates, or app. Use `--to-app Trash` for Dock drops. |
 | `--snapshot <id>` | Needed whenever IDs are involved. Defaults to the most recent snapshot otherwise. |
 | `--foreground` | Required confirmation that Peekaboo may use the shared physical cursor. |
 | Target flags | `--app <name>`, `--pid <pid>`, `--window-id <id>`, `--window-title <title>`, `--window-index <n>` — focus a specific app/window before dragging. (`--window-title`/`--window-index` require `--app` or `--pid`; `--window-id` does not.) |
 | `--duration <ms>` | Drag length (default 500 ms). |
 | `--steps <count>` | Number of interpolation points (default 20) to control smoothness. |
 | `--modifiers cmd,shift,…` | Comma-separated list of modifier keys held during the drag. |
+| `--button left\|right` | Mouse button held during the drag (default `left`). |
 | `--profile <linear\|human>` | `human` enables natural-looking arcs and jitter; defaults to `linear`. |
 | Focus flags | `FocusCommandOptions` ensure the correct window is frontmost before the drag starts. |
 
@@ -37,10 +38,10 @@ read_when:
 peekaboo drag --from file_tile_3 --to-app Trash --foreground
 
 # Coordinate → coordinate drag with longer duration
-peekaboo drag --from-coords "120,880" --to-coords "480,220" --duration 1200 --steps 40 --foreground
+peekaboo drag --from "120,880" --to "480,220" --duration 1200 --steps 40 --foreground
 
 # Human-style drag with adaptive timing
-peekaboo drag --from-coords "80,80" --to-coords "420,260" --profile human --foreground
+peekaboo drag --from "80,80" --to "420,260" --profile human --button right --foreground
 
 # Range-select items by holding Shift
 peekaboo drag --from row_1 --to row_5 --modifiers shift --foreground

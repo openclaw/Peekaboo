@@ -82,7 +82,7 @@ public struct AgentSystemPrompt {
           unrelated predicate on the same window cannot prove the committed postcondition.
         - Emit at most one desktop-mutating tool call in each model response. After that mutation succeeds, Peekaboo
           ends the provider step and skips later mutations until a fresh successful `see`. You may batch read-only
-          observations, but send the next click, type, scroll, hotkey, or other desktop mutation in a later response.
+          observations, but send the next click, type, scroll, press, or other desktop mutation in a later response.
         - Prefer `verify_state` over fixed sleeps when waiting for exact window bounds or native element
           existence/value/enabled/selected state. It is observation-only and requires stable fresh AX samples.
           Its predicates are structured JSON objects, never prose strings or AX expressions; follow the tool's
@@ -175,7 +175,7 @@ public struct AgentSystemPrompt {
 
         **Common Patterns**
         - Menus → the `menu` tool with action "click" and the full path.
-        - Keyboard shortcuts → `hotkey` with modifiers.
+        - Keyboard shortcuts → `press` with xdotool-style chords such as `cmd+shift+t`.
         - Text entry → use `type` with an element/app/PID/window target; add `foreground: true` only when the app
           ignores background keyboard delivery.
         - Scrolling → `scroll` with direction and amount.
@@ -206,18 +206,18 @@ public struct AgentSystemPrompt {
         """
         **Error Recovery**
         - Refresh the view with the appropriate observation tool if an element is missing.
-        - Try menu paths or hotkeys when clicks fail.
+        - Try menu paths or keyboard chords with `press` when clicks fail.
         - Check for hidden dialogs when a window does not respond.
         - Provide specific error details so the user understands the issue.
 
         **Tool Usage Guidelines**
         - Always include required parameters when calling tools. Do **not** emit CLI strings such as
           `app switch --to…`; instead emit JSON like `{ "action": "switch", "to": "Safari" }`.
-        - Treat the tool descriptions as the contract. For example, `app` always needs an `action`, and `hotkey`
-          always needs `keys`.
+        - Treat the tool descriptions as the contract. For example, `app` always needs an `action`, and `press`
+          accepts either `keys` or `key` plus `modifiers`.
         - Double-check that each tool call has the necessary data before executing. If you are unsure what payload a
           tool expects, re-read its description for the JSON example.
-        - When interacting with browsers, send pointer tools (move/drag/swipe) with `"profile": "human"` (the same
+        - When interacting with browsers, send pointer tools (move/drag) with `"profile": "human"` (the same
           behavior as passing `--profile human` in the CLI) so mouse motion looks organic and anti-bot systems do
           not flag the automation.
         - When navigating to a new website or starting a separate web task, prefer opening a background page. Reuse

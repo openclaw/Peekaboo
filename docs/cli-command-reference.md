@@ -7,15 +7,14 @@ read_when:
 
 # CLI Command Reference
 
-Peekaboo’s CLI covers most of what agents can do, and selected MCP/agent tools also have dedicated per-tool CLI wrappers such as `browser` and `inspect-ui`. Run `peekaboo tools` to see the MCP/agent catalog and `peekaboo --help` for the CLI command list. Commands share the same snapshot cache and most support `--json` (alias: `--json-output`) for scripting. Run `peekaboo` with no arguments to print the root help menu, and `peekaboo --version` at any time to see the embedded build/commit metadata stamped into the binary.
+Peekaboo’s CLI covers most of what agents can do, and selected MCP/agent tools also have dedicated CLI surfaces such as `browser`. Run `peekaboo tools` to see the MCP/agent catalog and `peekaboo --help` for the CLI command list. Commands share the same snapshot cache and most support `--json` for scripting. Run `peekaboo` with no arguments to print the root help menu, and `peekaboo --version` at any time to see the embedded build/commit metadata stamped into the binary.
 
 Use `peekaboo <command> --help` for inline flag descriptions; this page links to the authoritative docs in `docs/commands/`.
 
 ## Vision & Capture
 
-- [`see`](commands/see.md) – Capture annotated UI maps, produce snapshot IDs, and optionally run AI analysis.
+- [`see`](commands/see.md) – Capture pixels and annotated UI maps, print AX trees, produce snapshot IDs, and optionally run AI analysis.
 - [`verify`](commands/verify.md) – Poll stable window and element predicates with satisfied, unsatisfied, or unknown results.
-- [`image`](commands/image.md) – Save raw PNG/JPG captures of screens, windows, or menu bar regions; supports `--analyze` prompts.
 - `capture` – Long-running capture. `capture live` (adaptive PNG frames) replaces watch; `capture action` records around a child command; `capture video` ingests a video and samples frames. Outputs frames, contact sheet, metadata, optional MP4.
 - [`tools`](commands/tools.md) – List the MCP/agent tool catalog, or use `tools describe <name>` for one full input schema.
 - [`completions`](commands/completions.md) – Generate shell-native completions for zsh, bash, and fish from Commander metadata.
@@ -28,13 +27,12 @@ Use `peekaboo <command> --help` for inline flag descriptions; this page links to
 ## Interaction
 
 - [`click`](commands/click.md) – Target elements by ID/query/coords with smart waits and focus helpers.
-- [`type`](commands/type.md) – Send text and control keys; supports `--clear`, `--delay`, tab counts, etc.
-- [`press`](commands/press.md) – Fire `SpecialKey` sequences with repeat counts.
-- [`hotkey`](commands/hotkey.md) – Emit modifier combos like `cmd,shift,t` in one shot.
+- [`type`](commands/type.md) – Send text with `--clear`, fixed-delay, or human cadence.
+- [`press`](commands/press.md) – Send xdotool-style chords such as `cmd+shift+t` and chord sequences.
 - [`paste`](commands/paste.md) – Atomically set clipboard → paste (Cmd+V) → restore clipboard.
 - [`scroll`](commands/scroll.md) – Directional scrolling with optional element targeting and smooth mode.
-- [`swipe`](commands/swipe.md) – Gesture-style drags between IDs or coordinates (`--duration`, `--steps`).
-- [`drag`](commands/drag.md) – Drag-and-drop across elements, coordinates, or Dock destinations with modifiers.
+- [`drag`](commands/drag.md) – Drag between element IDs or coordinates with modifiers and left/right button selection.
+- [`action`](commands/action.md) – Invoke a named accessibility action such as `AXPress` on an element.
 - [`move`](commands/move.md) – Position the cursor at coordinates, element centers, or screen center with optional smoothing.
 
 ## Windows, Menus, Apps, Spaces
@@ -52,7 +50,7 @@ Use `peekaboo <command> --help` for inline flag descriptions; this page links to
 
 - [`agent`](commands/agent.md) – `run` (default), `resume`, `sessions`, and `chat`, with dry-run planning, audio modes, and model overrides.
 - [`browser`](browser-mcp.md) – Dedicated CLI wrapper for the browser MCP tool: Chrome page status/connect/navigation/snapshot/click/fill/type/console/network/screenshot/trace.
-- `inspect-ui` – Dedicated CLI wrapper for the `inspect_ui` MCP tool, useful for accessibility-tree text/control inspection without screenshots.
+- `see --tree --no-screenshot` – Accessibility-tree text/control inspection without pixel capture.
 - [`mcp`](commands/mcp.md) – Run Peekaboo's MCP server; `serve` is the only subcommand and stdio is the implemented transport.
 
 Need structured payloads? Pass `--json` (or the Commander-provided `--json-output` alias) where supported and compose commands with your shell.

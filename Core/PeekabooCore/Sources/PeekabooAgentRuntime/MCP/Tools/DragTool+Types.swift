@@ -11,6 +11,7 @@ struct DragRequest {
     let durationOverride: Int?
     let stepsOverride: Int?
     let modifiers: String?
+    let button: DragButton
     let profile: MovementProfileOption
 
     init(arguments: ToolArguments) throws {
@@ -33,6 +34,10 @@ struct DragRequest {
         let profileName = (arguments.getString("profile") ?? "linear").lowercased()
         guard let profile = MovementProfileOption(rawValue: profileName) else {
             throw DragToolError("Invalid profile '\(profileName)'. Use 'linear' or 'human'.")
+        }
+        let buttonName = (arguments.getString("button") ?? "left").lowercased()
+        guard let button = DragButton(rawValue: buttonName) else {
+            throw DragToolError("Invalid button '\(buttonName)'. Use 'left' or 'right'.")
         }
 
         let durationProvided = arguments.getValue(for: "duration") != nil
@@ -65,6 +70,7 @@ struct DragRequest {
         self.durationOverride = durationOverride
         self.stepsOverride = stepsOverride
         self.modifiers = arguments.getString("modifiers")
+        self.button = button
         self.profile = profile
     }
 }

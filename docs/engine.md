@@ -18,7 +18,7 @@ Peekaboo supports two capture backends:
   - Back-compat: `PEEKABOO_USE_MODERN_CAPTURE=true|false|modern-only|legacy`
 - CLI flags (set the env for this invocation):
   - `peekaboo capture live --capture-engine auto|modern|sckit|classic|cg`
-  - `peekaboo image --capture-engine ...`
+  - `peekaboo see --no-elements --capture-engine ...`
   - `peekaboo see --capture-engine ...`
 
 Aliases:

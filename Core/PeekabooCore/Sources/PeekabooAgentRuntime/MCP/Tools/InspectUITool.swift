@@ -20,7 +20,7 @@ public struct InspectUITool: MCPTool {
 
         Use this when you only need to read UI text or discover interactive elements and do not
         need a visual screenshot. Inspection does not focus the target by default. For visual layout
-        or when AX text is incomplete, use `see`.
+        or when AX text is incomplete, use `see`. The CLI equivalent is `peekaboo see --tree --no-screenshot`.
         """
     }
 

@@ -15,7 +15,7 @@ struct CommanderBinderInteractionAliasTests {
     func `Press command accepts key option alias`() throws {
         let parsed = ParsedValues(positional: [], options: ["key": ["return"]], flags: [])
         let command = try CommanderCLIBinder.instantiateCommand(ofType: PressCommand.self, parsedValues: parsed)
-        #expect(command.keys == ["return"])
+        #expect(command.chords == ["return"])
     }
 
     @Test

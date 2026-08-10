@@ -68,7 +68,7 @@ peekaboo click "Submit" --foreground
 peekaboo type "Hello world"
 peekaboo scroll --direction down --foreground
 peekaboo menu click --app Safari --item "New Tab"
-peekaboo hotkey --keys "cmd,s"
+peekaboo press cmd+s
 peekaboo drag --from "$SOURCE_ID" --to "$TARGET_ID" --foreground
 ```
 
@@ -83,7 +83,7 @@ By default, Peekaboo will:
 
 ## Focus Options
 
-Interaction commands that use foreground delivery support these focus-related options. `click`, `type`, `hotkey`, `press`, and `paste` default to background delivery when Peekaboo can resolve a target process; pass `--foreground` when you want focus behavior. Targeted scroll is background Accessibility-only, while targetless/smooth scroll and all move/drag/swipe operations require explicit foreground mode.
+Interaction commands that use foreground delivery support these focus-related options. `click`, `type`, `press`, and `paste` default to background delivery when Peekaboo can resolve a target process; pass `--foreground` when you want focus behavior. Targeted scroll is background Accessibility-only, while targetless/smooth scroll and all move/drag operations require explicit foreground mode.
 
 ### `--no-auto-focus`
 Disables automatic focus management (not recommended).
@@ -101,7 +101,7 @@ Use cases:
 Uses command-supported background delivery instead of activating the target app. For input commands that can resolve a target process, this is now the default; the flag is a legacy alias where still exposed.
 
 ```bash
-peekaboo hotkey "cmd,l" --app Safari
+peekaboo press cmd+l --app Safari
 peekaboo click --coords 420,180 --app Safari
 peekaboo type "hello" --app TextEdit
 ```

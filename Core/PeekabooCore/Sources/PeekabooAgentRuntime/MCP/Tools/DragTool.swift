@@ -48,6 +48,10 @@ public struct DragTool: MCPTool {
                     default: "linear"),
                 "modifiers": SchemaBuilder.string(
                     description: "Optional. Comma-separated modifiers (cmd, shift, alt, ctrl)"),
+                "button": SchemaBuilder.string(
+                    description: "Optional. Mouse button to hold during drag.",
+                    enum: ["left", "right"],
+                    default: "left"),
                 "foreground": SchemaBuilder.boolean(
                     description: "Required. Confirm foreground use of the shared physical cursor."),
             ],
@@ -100,6 +104,7 @@ public struct DragTool: MCPTool {
                     duration: movement.duration,
                     steps: movement.steps,
                     modifiers: request.modifiers,
+                    button: request.button,
                     profile: movement.profile))
 
             let executionTime = Date().timeIntervalSince(startTime)

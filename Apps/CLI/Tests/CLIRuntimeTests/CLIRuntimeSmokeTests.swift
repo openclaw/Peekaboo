@@ -113,7 +113,10 @@ struct CLIRuntimeSmokeTests {
         #expect(names.contains("capture"))
         #expect(names.contains("paste"))
         #expect(names.contains("set_value"))
-        #expect(names.contains("perform_action"))
+        #expect(names.contains("action"))
+        #expect(names.contains("press"))
+        #expect(!names.contains("hotkey"))
+        #expect(!names.contains("swipe"))
     }
 
     @Test

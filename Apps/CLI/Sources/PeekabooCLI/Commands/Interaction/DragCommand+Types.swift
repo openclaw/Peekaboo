@@ -9,6 +9,7 @@ struct DragResult: Codable {
     let steps: Int
     let profile: String
     let modifiers: String
+    let button: String
     let fromTargetPoint: InteractionTargetPointDiagnostics?
     let toTargetPoint: InteractionTargetPointDiagnostics?
     let executionTime: TimeInterval

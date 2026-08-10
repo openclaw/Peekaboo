@@ -156,7 +156,7 @@ struct ImageAnalyzeResult: Codable {
 }
 
 @MainActor
-extension ImageCommand {
+extension SeeCommand {
     var streamsImageToStdout: Bool {
         self.path?.trimmingCharacters(in: .whitespacesAndNewlines) == "-"
     }

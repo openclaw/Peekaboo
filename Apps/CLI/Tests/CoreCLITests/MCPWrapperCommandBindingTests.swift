@@ -74,36 +74,26 @@ struct MCPWrapperCommandBindingTests {
     }
 
     @Test
-    func `Inspect UI command binding`() throws {
+    func `See tree command binding`() throws {
         let parsed = ParsedValues(
             positional: [],
             options: [
                 "app": ["TextEdit"],
                 "snapshot": ["snapshot-123"],
-                "maxDepth": ["4"],
+                "depth": ["4"],
                 "maxElements": ["200"],
                 "maxChildren": ["20"],
             ],
-            flags: []
+            flags: ["tree", "noScreenshot"]
         )
-        let command = try CommanderCLIBinder.instantiateCommand(ofType: InspectUICommand.self, parsedValues: parsed)
-        #expect(command.appTarget == "TextEdit")
-        #expect(command.snapshot == "snapshot-123")
-        #expect(command.maxDepth == 4)
+        let command = try CommanderCLIBinder.instantiateCommand(ofType: SeeCommand.self, parsedValues: parsed)
+        #expect(command.app == "TextEdit")
+        #expect(command.depth == 4)
         #expect(command.maxElements == 200)
         #expect(command.maxChildren == 20)
-    }
-
-    @Test
-    func `Inspect UI command requires remote inspect capability`() throws {
-        let command = try CommanderCLIBinder.instantiateCommand(
-            ofType: InspectUICommand.self,
-            parsedValues: ParsedValues(positional: [], options: [:], flags: [])
-        )
-
+        #expect(command.tree)
+        #expect(command.noScreenshot)
         #expect(command.runtimeOptions.requiresInspectAccessibilityTree == true)
-        #expect(command.runtimeOptions.requiresImplicitSnapshotInvalidation == false)
-        #expect(command.runtimeOptions.usesPerToolSnapshotInvalidation == true)
     }
 
     @Test

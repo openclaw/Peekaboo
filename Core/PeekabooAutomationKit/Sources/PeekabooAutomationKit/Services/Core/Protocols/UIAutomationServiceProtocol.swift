@@ -3,12 +3,18 @@ import Darwin
 import Foundation
 import PeekabooFoundation
 
+public enum DragButton: String, Sendable, Equatable, Codable {
+    case left
+    case right
+}
+
 public struct DragOperationRequest: Sendable, Equatable {
     public let from: CGPoint
     public let to: CGPoint
     public let duration: Int
     public let steps: Int
     public let modifiers: String?
+    public let button: DragButton
     public let profile: MouseMovementProfile
 
     public init(
@@ -17,6 +23,7 @@ public struct DragOperationRequest: Sendable, Equatable {
         duration: Int,
         steps: Int,
         modifiers: String?,
+        button: DragButton = .left,
         profile: MouseMovementProfile)
     {
         self.from = from
@@ -24,6 +31,7 @@ public struct DragOperationRequest: Sendable, Equatable {
         self.duration = duration
         self.steps = steps
         self.modifiers = modifiers
+        self.button = button
         self.profile = profile
     }
 }

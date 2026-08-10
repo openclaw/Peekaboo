@@ -10,7 +10,12 @@ extension SeeCommand {
     func determineMode() -> PeekabooCore.CaptureMode {
         if let mode = self.mode {
             mode
-        } else if self.app != nil || self.pid != nil || self.windowTitle != nil || self.windowId != nil {
+        } else if self.region != nil {
+            .area
+        } else if self.screenIndex != nil {
+            .screen
+        } else if self.app != nil || self.pid != nil || self.windowTitle != nil || self.windowIndex != nil ||
+            self.windowId != nil {
             .window
         } else {
             .frontmost
@@ -67,22 +72,13 @@ extension SeeCommand {
             return .frontmost
 
         case .screen:
-            if let screenIndex {
-                return .screen(index: screenIndex)
-            }
-            if self.analyze != nil {
-                return .screen(index: 0)
-            }
-            return nil
+            return .screen(index: self.screenIndex)
 
         case .multi:
             return nil
 
         case .area:
-            throw ValidationError(
-                "Area capture mode is not supported by `see`; use `image --mode area --region x,y,width,height` " +
-                    "or a window/screen target."
-            )
+            return try .area(self.areaCaptureRect())
         }
     }
 
@@ -94,12 +90,13 @@ extension SeeCommand {
             target: target,
             capture: DesktopCaptureOptions(
                 engine: self.observationCaptureEnginePreference,
-                scale: .logical1x,
+                scale: self.retina ? .native : .logical1x,
                 visualizerMode: .none
             ),
             detection: self.observationDetectionOptions(for: target),
             output: DesktopObservationOutputOptions(
                 path: self.screenshotOutputPath(snapshotID: snapshotID),
+                format: self.format,
                 saveRawScreenshot: true,
                 saveAnnotatedScreenshot: self.annotate && self.allowsAnnotation(for: target),
                 saveSnapshot: true,
@@ -139,6 +136,9 @@ extension SeeCommand {
         if let windowTitle {
             return .title(windowTitle)
         }
+        if let windowIndex {
+            return .index(windowIndex)
+        }
         return .automatic
     }
 
@@ -171,7 +171,7 @@ extension SeeCommand {
 
     func axTraversalBudget() -> AXTraversalBudget {
         AXTraversalBudget.resolved(
-            maxDepth: self.validatedTraversalLimit(self.maxDepth, option: "--max-depth"),
+            maxDepth: self.validatedTraversalLimit(self.depth, option: "--depth"),
             maxElementCount: self.validatedTraversalLimit(self.maxElements, option: "--max-elements"),
             maxChildrenPerNode: self.validatedTraversalLimit(self.maxChildren, option: "--max-children")
         )

@@ -3,12 +3,12 @@ summary: 'Heuristics for filtering CG windows before screenshotting'
 read_when:
   - 'touching ImageCommand/SeeCommand window selection logic'
   - 'plumbing CGWindow metadata into ServiceWindowInfo'
-  - 'debugging why peekaboo image skips or captures overlays'
+  - 'debugging why peekaboo see --no-elements skips or captures overlays'
 ---
 
 # Window Screenshot "Smart Select" Guide
 
-Peekaboo’s screenshot tooling (`peekaboo image`, `see`, agent capture flows) must avoid the long tail of junk windows returned by CoreGraphics. This document explains how we map `CGWindow` metadata into `ServiceWindowInfo` and the heuristics every caller should apply before attempting a capture.
+Peekaboo’s screenshot tooling (`peekaboo see`, agent capture flows) must avoid the long tail of junk windows returned by CoreGraphics. This document explains how we map `CGWindow` metadata into `ServiceWindowInfo` and the heuristics every caller should apply before attempting a capture.
 
 ## 1. Metadata We Need
 
@@ -58,6 +58,6 @@ The live capture and observation paths reuse the filter:
 
 1. **Unit tests** for capture/list mode differences, size, sharing state, visibility, and deduplication.
 2. **Metadata tests** that feed canned CoreGraphics dictionaries into `ObservationWindowMetadataCatalog`.
-3. **CLI tests** ensuring `peekaboo image` errors when only hidden windows exist and succeeds when a shareable window is available.
+3. **CLI tests** ensuring `peekaboo see --no-elements` errors when only hidden windows exist and succeeds when a shareable window is available.
 
 Keep fixtures small (two windows per app) so we can reason about why each candidate passes or fails the heuristic chain.

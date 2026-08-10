@@ -70,12 +70,11 @@ struct CommanderBinderCommandBindingTests {
                 "windowIndex": ["2"],
                 "screenIndex": ["1"],
                 "format": ["jpg"],
-                "captureFocus": ["foreground"],
                 "analyze": ["describe"]
             ],
             flags: []
         )
-        let command = try CommanderCLIBinder.instantiateCommand(ofType: ImageCommand.self, parsedValues: parsed)
+        let command = try CommanderCLIBinder.instantiateCommand(ofType: SeeCommand.self, parsedValues: parsed)
         #expect(command.app == "Safari")
         #expect(command.pid == 123)
         #expect(command.path == "/tmp/out.jpg")
@@ -84,7 +83,7 @@ struct CommanderBinderCommandBindingTests {
         #expect(command.windowIndex == 2)
         #expect(command.screenIndex == 1)
         #expect(command.format == .jpg)
-        #expect(command.captureFocus == .foreground)
+        #expect(command.captureFocus == .background)
         #expect(command.analyze == "describe")
     }
 
@@ -96,7 +95,27 @@ struct CommanderBinderCommandBindingTests {
             value: "banana",
             reason: "Unknown value for CaptureMode"
         )) {
-            _ = try CommanderCLIBinder.instantiateCommand(ofType: ImageCommand.self, parsedValues: parsed)
+            _ = try CommanderCLIBinder.instantiateCommand(ofType: SeeCommand.self, parsedValues: parsed)
+        }
+    }
+
+    @Test
+    func `See infers format from path and rejects conflicts`() throws {
+        let inferred = try CommanderCLIBinder.instantiateCommand(
+            ofType: SeeCommand.self,
+            parsedValues: ParsedValues(positional: [], options: ["path": ["/tmp/capture.jpg"]], flags: [])
+        )
+        #expect(inferred.format == .jpg)
+
+        #expect(throws: CommanderBindingError.self) {
+            _ = try CommanderCLIBinder.instantiateCommand(
+                ofType: SeeCommand.self,
+                parsedValues: ParsedValues(
+                    positional: [],
+                    options: ["path": ["/tmp/capture.png"], "format": ["jpg"]],
+                    flags: []
+                )
+            )
         }
     }
 
@@ -112,7 +131,7 @@ struct CommanderBinderCommandBindingTests {
                 "path": ["/tmp/see.png"],
                 "screenIndex": ["2"],
                 "analyze": ["describe"],
-                "maxDepth": ["8"],
+                "depth": ["8"],
                 "maxElements": ["500"],
                 "maxChildren": ["100"]
             ],
@@ -127,7 +146,7 @@ struct CommanderBinderCommandBindingTests {
         #expect(command.screenIndex == 2)
         #expect(command.annotate == true)
         #expect(command.analyze == "describe")
-        #expect(command.maxDepth == 8)
+        #expect(command.depth == 8)
         #expect(command.maxElements == 500)
         #expect(command.maxChildren == 100)
     }
@@ -343,12 +362,11 @@ struct CommanderBinderCommandBindingTests {
                 "snapshot": ["xyz"],
                 "delay": ["10"],
                 "wpm": ["150"],
-                "tab": ["2"],
                 "app": ["Notes"],
                 "windowId": ["424242"],
                 "focusTimeoutSeconds": ["3.5"]
             ],
-            flags: ["pressReturn", "escape", "delete", "clear", "spaceSwitch"]
+            flags: ["clear", "spaceSwitch"]
         )
         let command = try CommanderCLIBinder.instantiateCommand(ofType: TypeCommand.self, parsedValues: parsed)
         #expect(command.text == "Hello")
@@ -356,10 +374,6 @@ struct CommanderBinderCommandBindingTests {
         #expect(command.delay == 10)
         #expect(command.profileOption == nil)
         #expect(command.wordsPerMinute == 150)
-        #expect(command.tab == 2)
-        #expect(command.pressReturn == true)
-        #expect(command.escape == true)
-        #expect(command.delete == true)
         #expect(command.clear == true)
         #expect(command.target.app == "Notes")
         #expect(command.target.windowId == 424_242)
@@ -400,7 +414,7 @@ struct CommanderBinderCommandBindingTests {
     }
 
     @Test
-    func `Perform action command binding`() throws {
+    func `Action command binding`() throws {
         let parsed = ParsedValues(
             positional: [],
             options: [
@@ -410,16 +424,17 @@ struct CommanderBinderCommandBindingTests {
             ],
             flags: []
         )
-        let command = try CommanderCLIBinder.instantiateCommand(ofType: PerformActionCommand.self, parsedValues: parsed)
+        let command = try CommanderCLIBinder.instantiateCommand(ofType: ActionCommand.self, parsedValues: parsed)
         #expect(command.on == "B1")
         #expect(command.action == "AXPress")
+        #expect(command.actionName == nil)
         #expect(command.snapshot == "abc")
     }
 
     @Test
     func `Press command binding`() throws {
         let parsed = ParsedValues(
-            positional: ["cmd", "c"],
+            positional: ["cmd+c", "Return"],
             options: [
                 "count": ["3"],
                 "delay": ["25"],
@@ -429,7 +444,7 @@ struct CommanderBinderCommandBindingTests {
             flags: ["noAutoFocus"]
         )
         let command = try CommanderCLIBinder.instantiateCommand(ofType: PressCommand.self, parsedValues: parsed)
-        #expect(command.keys == ["cmd", "c"])
+        #expect(command.chords == ["cmd+c", "Return"])
         #expect(command.count == 3)
         #expect(command.delay == 25)
         #expect(command.hold == 75)
@@ -526,28 +541,6 @@ struct CommanderBinderCommandBindingTests {
     }
 
     @Test
-    func `Hotkey command binding (positional wins)`() throws {
-        let parsed = ParsedValues(
-            positional: ["cmd,space"],
-            options: ["keys": ["cmd,c"], "holdDuration": ["120"]],
-            flags: ["focusBackground"]
-        )
-        let command = try CommanderCLIBinder.instantiateCommand(ofType: HotkeyCommand.self, parsedValues: parsed)
-        #expect(command.resolvedKeys == "cmd,space")
-        #expect(command.holdDuration == 120)
-        #expect(command.focusOptions.focusBackground)
-        #expect(command.focusOptions.autoFocus == true)
-    }
-
-    @Test
-    func `Hotkey command requires keys`() {
-        let parsed = ParsedValues(positional: [], options: [:], flags: [])
-        #expect(throws: ValidationError.self) {
-            _ = try CommanderCLIBinder.instantiateCommand(ofType: HotkeyCommand.self, parsedValues: parsed)
-        }
-    }
-
-    @Test
     func `Paste command binding (text + target)`() throws {
         let defaultCommand = try CommanderCLIBinder.instantiateCommand(
             ofType: PasteCommand.self,
@@ -614,14 +607,14 @@ struct CommanderBinderCommandBindingTests {
             flags: []
         )
 
-        let command = try CommanderCLIBinder.instantiateCommand(ofType: ImageCommand.self, parsedValues: parsed)
+        let command = try CommanderCLIBinder.instantiateCommand(ofType: SeeCommand.self, parsedValues: parsed)
         #expect(command.captureEngine == "modern")
         #expect(command.runtimeOptions.captureEnginePreference == "modern")
     }
 
     @Test
     func `Image command mode help lists all supported modes`() {
-        let signature = ImageCommand.commanderSignature()
+        let signature = SeeCommand.commanderSignature()
         let modeOption = signature.options.first { $0.label == "mode" }
         #expect(modeOption?.help?.contains("multi") == true)
         #expect(modeOption?.help?.contains("area") == true)
@@ -731,38 +724,5 @@ struct CommanderBinderCommandBindingTests {
         #expect(command.snapshot == "sess-drag")
         #expect(command.focusOptions.spaceSwitch == true)
         #expect(command.foreground)
-    }
-
-    @Test
-    func `Swipe command binding`() throws {
-        let parsed = ParsedValues(
-            positional: [],
-            options: [
-                "fromCoords": ["10,20"],
-                "toCoords": ["30,40"],
-                "duration": ["900"],
-                "steps": ["25"],
-                "profile": ["linear"],
-                "snapshot": ["sess-swipe"]
-            ],
-            flags: ["foreground"]
-        )
-        let command = try CommanderCLIBinder.instantiateCommand(ofType: SwipeCommand.self, parsedValues: parsed)
-        #expect(command.fromCoords == "10,20")
-        #expect(command.toCoords == "30,40")
-        #expect(command.duration == 900)
-        #expect(command.steps == 25)
-        #expect(command.profile == "linear")
-        #expect(command.snapshot == "sess-swipe")
-        #expect(command.foreground)
-    }
-
-    @Test
-    func `Swipe command requires from/to`() async throws {
-        let parsed = ParsedValues(positional: [], options: [:], flags: [])
-        var command = try CommanderCLIBinder.instantiateCommand(ofType: SwipeCommand.self, parsedValues: parsed)
-        await #expect(throws: ExitCode.self) {
-            try await command.run(using: CommandRuntime.makeDefault())
-        }
     }
 }

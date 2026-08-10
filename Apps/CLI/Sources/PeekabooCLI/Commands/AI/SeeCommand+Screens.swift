@@ -21,7 +21,7 @@ extension SeeCommand {
             let result = try await self.services.screenCapture.captureScreen(
                 displayIndex: index,
                 visualizerMode: .none,
-                scale: .logical1x
+                scale: self.retina ? .native : .logical1x
             )
 
             if !self.jsonOutput, let displayInfo = result.metadata.displayInfo {
@@ -97,7 +97,7 @@ extension SeeCommand {
                 let result = try await self.services.screenCapture.captureScreen(
                     displayIndex: display.index,
                     visualizerMode: .none,
-                    scale: .logical1x
+                    scale: self.retina ? .native : .logical1x
                 )
                 results.append(result)
             } catch {

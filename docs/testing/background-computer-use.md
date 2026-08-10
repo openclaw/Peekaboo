@@ -15,8 +15,8 @@ scripts/test-background-computer-use.sh
 
 It builds the Playground fixture, signs it with the OpenClaw Foundation Developer ID, launches it without activation,
 and keeps Calculator as a controlled foreground sentinel. It then exercises fresh, exact PID/window snapshots through
-`see`, `inspect-ui`, `image`, `capture live`, click by ID and query, `type`, `press`, `hotkey`, `paste`, `set-value`,
-`perform-action`, and Accessibility-only targeted scroll. Stale snapshots and unsupported actions—including a target
+`see` (including AX-only and screenshot-only modes), `capture live`, click by ID and query, `type`, `press`, `paste`,
+`set-value`, `action`, and Accessibility-only targeted scroll. Stale snapshots and unsupported actions—including a target
 without an AX scroll action—must fail nonzero instead of falling back to foreground synthesis.
 The monitored lifecycle phase also launches distinct TextEdit processes with exact window receipts, maximizes and
 closes one exact background window, and rejects any quit success receipt while the other process remains alive. An app

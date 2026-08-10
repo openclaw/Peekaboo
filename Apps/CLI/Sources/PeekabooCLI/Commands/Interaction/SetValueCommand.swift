@@ -15,6 +15,9 @@ struct SetValueCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedCo
     @Option(help: "Snapshot ID, or 'latest' (uses latest if not specified)")
     var snapshot: String?
 
+    @OptionGroup var target: InteractionTargetOptions
+    @OptionGroup var focusOptions: FocusCommandOptions
+
     @RuntimeStorage var runtime: CommandRuntime?
     var runtimeOptions = CommandRuntimeOptions()
 
@@ -25,7 +28,9 @@ struct SetValueCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedCo
             context: ElementActionCommandContext(
                 runtime: runtime,
                 snapshot: self.snapshot,
-                invalidationReason: "set-value"
+                invalidationReason: "set-value",
+                target: self.target,
+                focusOptions: self.focusOptions
             ),
             prepare: {
                 try (self.requireTarget(), self.requireValue())
@@ -91,6 +96,8 @@ extension SetValueCommand: CommanderBindableCommand {
         self.value = try values.decodeOptionalPositional(0, label: "value") ?? values.singleOption("value")
         self.on = values.singleOption("on")
         self.snapshot = values.singleOption("snapshot")
+        self.target = try values.makeInteractionTargetOptions()
+        self.focusOptions = try values.makeFocusOptions()
     }
 }
 
@@ -108,6 +115,10 @@ extension SetValueCommand: CommanderSignatureProviding {
                     help: "Snapshot ID, or 'latest' (uses latest if not specified)",
                     long: "snapshot"
                 ),
+            ],
+            optionGroups: [
+                InteractionTargetOptions.commanderSignature(),
+                FocusCommandOptions.commanderSignature(),
             ]
         )
     }
@@ -126,6 +137,8 @@ struct ElementActionCommandContext {
     let runtime: CommandRuntime
     let snapshot: String?
     let invalidationReason: String
+    let target: InteractionTargetOptions
+    let focusOptions: FocusCommandOptions
 }
 
 @MainActor
@@ -148,6 +161,8 @@ enum ElementActionCommandExecutor {
         logger.setJsonOutputMode(runtime.configuration.jsonOutput)
 
         do {
+            var target = context.target
+            try target.validate()
             let prepared = try prepare()
             let observation = await InteractionObservationContext.resolve(
                 explicitSnapshot: context.snapshot,
@@ -157,6 +172,14 @@ enum ElementActionCommandExecutor {
             try await observation.validateIfExplicit(using: services.snapshots)
             let startTime = Date()
             runtime.beginInteractionMutation()
+            if target.hasAnyTarget {
+                try await ensureFocused(
+                    snapshotId: observation.focusSnapshotId(for: target),
+                    target: target,
+                    options: context.focusOptions,
+                    services: services
+                )
+            }
             let result = try await operation(
                 services.automation,
                 prepared.target,

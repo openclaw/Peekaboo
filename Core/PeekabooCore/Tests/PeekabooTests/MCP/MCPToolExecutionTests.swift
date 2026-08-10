@@ -736,10 +736,10 @@ struct MCPElementActionToolExecutionTests {
     }
 
     @Test
-    func `perform_action tool validates request shape`() async throws {
+    func `action tool validates request shape`() async throws {
         let automation = await MainActor.run { MockElementActionAutomationService(accessibilityGranted: true) }
         let context = await MCPToolTestHelpers.makeContext(automation: automation)
-        let tool = PerformActionTool(context: context)
+        let tool = ActionTool(context: context)
         let snapshot = await UISnapshotManager.shared.createSnapshot()
         let snapshotId = await snapshot.id
 

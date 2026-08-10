@@ -5,15 +5,15 @@ extension PressCommand: CommanderSignatureProviding {
         CommandSignature(
             arguments: [
                 .make(
-                    label: "keys",
-                    help: "Key(s) to press",
+                    label: "chords",
+                    help: "Chord(s) to press. Chord syntax matches xdotool key (cmd+shift+t).",
                     isOptional: true
                 ),
             ],
             options: [
                 .commandOption(
                     "key",
-                    help: "Key to press (alternative to positional argument)",
+                    help: "Chord to press (alternative to positional argument)",
                     long: "key"
                 ),
                 .commandOption(

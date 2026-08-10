@@ -38,10 +38,9 @@ public enum MCPToolCatalog {
             ClickTool(context: context),
             TypeTool(context: context),
             SetValueTool(context: context),
-            PerformActionTool(context: context),
+            ActionTool(context: context),
             ScrollTool(context: context),
-            HotkeyTool(context: context),
-            SwipeTool(context: context),
+            PressTool(context: context),
             DragTool(context: context),
             MoveTool(context: context),
 

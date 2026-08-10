@@ -118,13 +118,13 @@ These commands work fine without `--no-remote`:
 
 - `peekaboo click` (uses Accessibility API)
 - `peekaboo type` (uses Accessibility API)
-- `peekaboo hotkey` (uses Accessibility API)
+- `peekaboo press` (uses the keyboard automation service)
 - `peekaboo app list` (public API)
 - `peekaboo permissions` (just reads TCC database)
 
 Only **capture commands** need the workaround:
 - `peekaboo see`
-- `peekaboo image`
+- `peekaboo see --no-elements`
 - `peekaboo capture`
 
 ## Performance Considerations

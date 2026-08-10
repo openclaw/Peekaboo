@@ -25,16 +25,16 @@ peekaboo permissions request screen-recording
 
 ```bash
 # whole screen -> ./screen.png
-peekaboo image --mode screen --path screen.png
+peekaboo see --no-elements --mode screen --path screen.png
 
 # only the focused window
-peekaboo image --mode frontmost --path focused.png
+peekaboo see --no-elements --mode frontmost --path focused.png
 
 # a specific app's frontmost window
-peekaboo image --app Safari --path safari.png
+peekaboo see --no-elements --app Safari --path safari.png
 ```
 
-The output is a regular PNG. Add `--format jpeg --quality 85` for smaller files. See [commands/image.md](commands/image.md) for every flag.
+The output is a regular PNG. Add `--format jpg` for JPEG output. See [commands/see.md](commands/see.md) for every flag.
 
 If you are running from SSH, a LaunchAgent, Codex, or another background launchd session, use a Peekaboo Bridge
 host with Screen Recording permission. Local capture-engine overrides are for debugging and can produce
@@ -63,14 +63,14 @@ Each element has `id`, `role`, `label`, `frame`, and `actions`. Pass an `id` to 
 
 ```bash
 peekaboo click "Address and search bar" --app Safari
-peekaboo type "github.com/openclaw/Peekaboo" --app Safari --return
+peekaboo type "github.com/openclaw/Peekaboo" --app Safari && peekaboo press Return --app Safari
 ```
 
 Coordinates also work: `peekaboo click --coords 480,120 --app Safari`. With app/window target flags, click coordinates are target-window-relative; add `--global-coords` for screen coordinates. Add `--foreground` only when the target app requires focused input. See [automation.md](automation.md) for the full input vocabulary.
 
 By default these targeted commands use background delivery: Safari can receive the click and text without becoming frontmost. If the target field ignores background input, rerun the same command with `--foreground` to focus the target first.
 
-Targeted `scroll --on <id>` is also background-safe through Accessibility. Targetless/smooth scroll, `move`, `drag`, and `swipe` use the shared physical cursor and require explicit `--foreground`.
+Targeted `scroll --on <id>` is also background-safe through Accessibility. Targetless/smooth scroll, `move`, and `drag` use the shared physical cursor and require explicit `--foreground`.
 
 ## 5. Run an agent
 

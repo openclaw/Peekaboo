@@ -2,7 +2,7 @@ import Foundation
 import PeekabooCore
 
 @MainActor
-extension ImageCommand {
+extension SeeCommand {
     func focusIfNeeded(appIdentifier: String) async throws {
         switch captureFocus {
         case .background:

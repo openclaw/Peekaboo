@@ -271,6 +271,7 @@ public struct PeekabooBridgeDragRequest: Codable, Sendable {
     public let duration: Int
     public let steps: Int
     public let modifiers: String?
+    public let button: String?
     public let profile: MouseMovementProfile
 
     public init(_ request: DragOperationRequest) {
@@ -279,6 +280,7 @@ public struct PeekabooBridgeDragRequest: Codable, Sendable {
         self.duration = request.duration
         self.steps = request.steps
         self.modifiers = request.modifiers
+        self.button = request.button.rawValue
         self.profile = request.profile
     }
 
@@ -289,6 +291,7 @@ public struct PeekabooBridgeDragRequest: Codable, Sendable {
             duration: self.duration,
             steps: self.steps,
             modifiers: self.modifiers,
+            button: self.button.flatMap(DragButton.init(rawValue:)) ?? .left,
             profile: self.profile)
     }
 }

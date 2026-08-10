@@ -21,7 +21,7 @@ public struct PasteTool: MCPTool {
 
         Use this when you want fewer steps than:
         - clipboard set
-        - hotkey cmd+v
+        - press cmd+v
         - clipboard restore
 
         Targeting:

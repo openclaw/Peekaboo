@@ -3,12 +3,12 @@ import Foundation
 import PeekabooCore
 import PeekabooFoundation
 
-/// Press individual keys or key sequences
+/// Press keyboard chords or chord sequences.
 @available(macOS 14.0, *)
 @MainActor
 struct PressCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConfigurable {
-    @Argument(help: "Key(s) to press")
-    var keys: [String]
+    @Argument(help: "Chord(s) to press. Chord syntax matches xdotool key (cmd+shift+t).")
+    var chords: [String]
 
     @OptionGroup var target: InteractionTargetOptions
 
@@ -90,36 +90,28 @@ struct PressCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
                 )
             }
 
-            let normalizedKeys = self.keys.map { $0.lowercased() }
+            let parsedChords = try self.parsedChords()
             var completedPresses = 0
 
             for repetition in 0..<self.count {
-                for (index, key) in normalizedKeys.indexed() {
+                for (index, chord) in parsedChords.indexed() {
                     if let targetPID {
-                        guard let specialKey = SpecialKey(rawValue: key) else {
-                            throw ValidationError(
-                                "Unknown key: '\(key)'. Run 'peekaboo press --help' for available keys."
-                            )
-                        }
-                        _ = try await AutomationServiceBridge.typeActions(
+                        try await AutomationServiceBridge.hotkey(
                             automation: self.services.automation,
-                            request: TypeActionsRequest(
-                                actions: [.key(specialKey)],
-                                cadence: .fixed(milliseconds: 0),
-                                snapshotId: observation.snapshotId
-                            ),
+                            keys: chord.serviceKeys,
+                            holdDuration: self.hold,
                             targetProcessIdentifier: targetPID
                         )
                     } else {
                         try await AutomationServiceBridge.hotkey(
                             automation: self.services.automation,
-                            keys: key,
+                            keys: chord.serviceKeys,
                             holdDuration: self.hold
                         )
                     }
                     completedPresses += 1
 
-                    let isLastKey = index == normalizedKeys.count - 1
+                    let isLastKey = index == parsedChords.count - 1
                     let isLastRepetition = repetition == self.count - 1
                     if self.delay > 0, !(isLastKey && isLastRepetition) {
                         try await Task.sleep(nanoseconds: UInt64(self.delay) * 1_000_000)
@@ -136,7 +128,7 @@ struct PressCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
             // Output results
             let pressResult = PressResult(
                 success: true,
-                keys: keys,
+                keys: parsedChords.map(\.displayValue),
                 totalPresses: completedPresses,
                 count: self.count,
                 deliveryMode: targetPID == nil ? KeyboardDeliveryMode.foreground.rawValue :
@@ -147,7 +139,7 @@ struct PressCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
 
             output(pressResult) {
                 print("✅ Key press completed")
-                print("🔑 Keys: \(self.keys.joined(separator: " → "))")
+                print("🔑 Chords: \(parsedChords.map(\.displayValue).joined(separator: " → "))")
                 if self.count > 1 {
                     print("🔢 Repeated: \(self.count) times")
                 }
@@ -181,9 +173,15 @@ struct PressCommand: ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConf
         guard self.hold >= 0 else {
             throw ValidationError("--hold must be greater than or equal to 0")
         }
-        for key in self.keys {
-            guard SpecialKey(rawValue: key.lowercased()) != nil else {
-                throw ValidationError("Unknown key: '\(key)'. Run 'peekaboo press --help' for available keys.")
+        _ = try self.parsedChords()
+    }
+
+    func parsedChords() throws -> [KeyboardChord] {
+        try self.chords.map { value in
+            do {
+                return try KeyboardChord(parsing: value)
+            } catch {
+                throw ValidationError(error.localizedDescription)
             }
         }
     }
@@ -221,30 +219,25 @@ extension PressCommand: ParsableCommand {
         MainActorCommandDescription.describe {
             CommandDescription(
                 commandName: "press",
-                abstract: "Press individual keys or key sequences",
+                abstract: "Press keyboard chords or chord sequences",
                 discussion: """
-                    The 'press' command sends individual key presses or sequences.
-                    It's designed for special keys and navigation, not for typing text.
+                    The 'press' command sends keyboard chords in sequence.
+                    Chord syntax matches xdotool key (cmd+shift+t).
 
                     EXAMPLES:
-                      peekaboo press return --foreground   # Press focused Enter/Return
-                      peekaboo press return --app TextEdit # Background-target TextEdit
-                      peekaboo press tab --count 3 --app Safari
-                      peekaboo press escape --foreground
-                      peekaboo press delete --app TextEdit
-                      peekaboo press up down left right --app Safari
+                      peekaboo press cmd+c --foreground
+                      peekaboo press Return --app TextEdit
+                      peekaboo press cmd+shift+4 --foreground
+                      peekaboo press ctrl+a Delete --app TextEdit
 
-                    AVAILABLE KEYS:
-                      Navigation: up, down, left, right, home, end, pageup, pagedown
-                      Editing: delete (backspace), forward_delete, clear
-                      Control: return, enter, tab, escape, space
-                      Function: f1-f12
-                      Special: caps_lock, help
+                    MODIFIERS:
+                      cmd/command, shift, option/alt, ctrl/control, fn
 
-                    KEY SEQUENCES:
-                      Multiple keys can be pressed in sequence with optional delay:
-                      peekaboo press tab tab return --app Safari
-                      peekaboo press down down return --foreground
+                    KEYS:
+                      return, tab, escape, delete, arrows, f1-f12, letters, digits, space
+
+                    SEQUENCES:
+                      Separate chords with spaces: peekaboo press ctrl+a Delete
 
                     TIMING:
                       Use --delay to control timing between key presses (default: 100ms)
@@ -266,15 +259,15 @@ extension PressCommand: AsyncRuntimeCommand {}
 @MainActor
 extension PressCommand: CommanderBindableCommand {
     mutating func applyCommanderValues(_ values: CommanderBindableValues) throws {
-        let resolvedKeys = if values.positional.isEmpty {
+        let resolvedChords = if values.positional.isEmpty {
             values.singleOption("key").map { [$0] } ?? []
         } else {
             values.positional
         }
-        guard !resolvedKeys.isEmpty else {
-            throw CommanderBindingError.missingArgument(label: "keys")
+        guard !resolvedChords.isEmpty else {
+            throw CommanderBindingError.missingArgument(label: "chords")
         }
-        self.keys = resolvedKeys
+        self.chords = resolvedChords
         self.target = try values.makeInteractionTargetOptions()
         if let count: Int = try values.decodeOption("count", as: Int.self) {
             self.count = count

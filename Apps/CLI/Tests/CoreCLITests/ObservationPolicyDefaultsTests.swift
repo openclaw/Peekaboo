@@ -43,23 +43,16 @@ struct ObservationPolicyDefaultsTests {
     }
 
     @Test
-    func `Inspect UI exposes explicit web focus without enabling it by default`() throws {
-        let background = try CommanderCLIBinder.instantiateCommand(
-            ofType: InspectUICommand.self,
-            parsedValues: ParsedValues(positional: [], options: [:], flags: [])
-        )
-        let focused = try CommanderCLIBinder.instantiateCommand(
-            ofType: InspectUICommand.self,
-            parsedValues: ParsedValues(positional: [], options: [:], flags: ["webFocus"])
-        )
-
-        #expect(!background.webFocus)
-        #expect(focused.webFocus)
+    func `See exposes AX tree inspection without enabling web focus`() throws {
+        let command = try SeeCommand.parse(["--tree", "--no-screenshot"])
+        #expect(command.tree)
+        #expect(command.noScreenshot)
+        #expect(!command.webFocus)
     }
 
     @Test
-    func `Image and live capture default to background focus policy`() throws {
-        #expect(try ImageCommand.parse([]).captureFocus == .background)
+    func `See pixel capture and live capture default to background focus policy`() throws {
+        #expect(try SeeCommand.parse(["--no-elements"]).captureFocus == .background)
         #expect(try CaptureLiveCommand.parse([]).captureFocus == .background)
         #expect(CaptureActionCommand().captureFocus == .background)
     }

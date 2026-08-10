@@ -111,9 +111,10 @@ struct ObservationCommandConcurrencyTests {
 
         try await probe.waitForSeeDetection()
 
-        var image = try ImageCommand.parse([
+        var image = try SeeCommand.parse([
             "--mode", "screen",
             "--screen-index", "0",
+            "--no-elements",
             "--path", imagePath.path,
         ])
         let imageRuntime = CommandRuntime(

@@ -30,7 +30,7 @@ public struct MCPAgentTool: MCPTool {
         - UI element interaction (click, type, scroll)
         - Application control (launch, quit, focus)
         - Window management (move, resize, close)
-        - System interaction (hotkeys, shell commands)
+        - System interaction (keyboard chords, shell commands)
 
         Example tasks:
         - "Open Safari and navigate to apple.com"

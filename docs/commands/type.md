@@ -7,7 +7,7 @@ read_when:
 
 # `peekaboo type`
 
-`type` sends text, special keys, or a mix of both through the automation service. Background delivery is the default and requires an explicit app, PID, or snapshot whose metadata identifies a process. Pass `--foreground` for intentional input at the current keyboard focus.
+`type` sends text through the automation service. Background delivery is the default and requires an explicit app, PID, or snapshot whose metadata identifies a process. Use `press` for standalone keys or chords.
 
 ## Key options
 | Flag | Description |
@@ -18,7 +18,6 @@ read_when:
 | `--wpm <80-220>` | Enable human-typing cadence at the chosen words per minute. |
 | `--profile <linear|human>` | Switch between linear (default, honors `--delay`) and human (honors `--wpm`). |
 | `--clear` | Issue Cmd+A, Delete before typing any new text. |
-| `--return`, `--tab <count>`, `--escape`, `--delete` | Append those keypresses after (or without) the text payload. |
 | Target flags | `--app <name>` or `--pid <pid>` for process-targeted background input. Window selectors require `--foreground`. |
 | `--foreground` | Focus a supplied target or intentionally send foreground/global keyboard input. |
 | Focus flags | Foreground focus controls (`--no-auto-focus`, `--space-switch`, etc.). |
@@ -29,7 +28,7 @@ read_when:
 - If no target process can be resolved, `type` fails before sending input. Add `--foreground` only when global delivery is intentional.
 
 ## Implementation notes
-- You can omit the text entirely and rely on the key flags (e.g., just `--tab 2 --return`). Validation only requires *some* action to be specified.
+- Text may be omitted only when `--clear` is used. Chain a following `press` command for Return, Tab, Escape, or Delete.
 - Escape handling splits literal text and key presses: `"Hello\nWorld"` becomes `text("Hello"), key(.return), text("World")`, so newlines don’t require separate flags.
 - Window selectors are rejected in background mode because process-targeted events cannot prove which window owns the process's focused element. Use `--foreground` to focus that window first.
 - Default profile is `linear`, using no inter-key delay for fast deterministic input. Passing `--wpm` opts into human cadence; `--profile human` uses 140 WPM when `--wpm` is omitted.
@@ -45,11 +44,8 @@ peekaboo type "open ~/Downloads\n" --app "Terminal"
 # Force foreground typing when an app ignores background keyboard events
 peekaboo type "status report ready" --app TextEdit --foreground
 
-# Clear the current field, type a username, tab twice, then hit Return
-peekaboo type alice@example.com --app Safari --clear --tab 2 --return
-
-# Send only control keys during a form walk
-peekaboo type --tab 1 --tab 1 --return --app Safari
+# Clear the field, type a username, tab twice, then hit Return
+peekaboo type alice@example.com --app Safari --clear && peekaboo press Tab Tab Return --app Safari
 
 # Opt into human typing at 140 WPM
 peekaboo type "status report ready" --app TextEdit --wpm 140

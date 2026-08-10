@@ -123,10 +123,10 @@ struct SeeCommandAnnotationTests {
 
     @Test
     @MainActor
-    func `All screen captures stay on legacy multi-file path`() throws {
+    func `Screen capture without index targets the primary display`() throws {
         let command = try SeeCommand.parse(["--mode", "screen"])
 
-        #expect(try command.observationTargetForCaptureWithDetectionIfPossible() == nil)
+        #expect(try command.observationTargetForCaptureWithDetectionIfPossible() == .screen(index: nil))
     }
 
     @Test
@@ -134,7 +134,7 @@ struct SeeCommandAnnotationTests {
     func `Screen analysis captures primary display through observation`() throws {
         let command = try SeeCommand.parse(["--mode", "screen", "--analyze", "summarize"])
 
-        #expect(try command.observationTargetForCaptureWithDetectionIfPossible() == .screen(index: 0))
+        #expect(try command.observationTargetForCaptureWithDetectionIfPossible() == .screen(index: nil))
     }
 
     @Test
@@ -157,25 +157,19 @@ struct SeeCommandAnnotationTests {
 
     @Test
     @MainActor
-    func `Area mode is rejected before capture fallback`() throws {
-        #expect(throws: CommanderBindingError.invalidArgument(
-            label: "mode",
-            value: "area",
-            reason: "`see` supports screen, window, frontmost, or multi"
-        )) {
-            _ = try SeeCommand.parse(["--mode", "area"])
+    func `Area mode requires a region`() throws {
+        let command = try SeeCommand.parse(["--mode", "area"])
+        #expect(throws: ValidationError.self) {
+            _ = try command.observationTargetForCaptureWithDetectionIfPossible()
         }
     }
 
     @Test
     @MainActor
-    func `Area observation target fails explicitly`() throws {
-        var command = SeeCommand()
-        command.mode = .area
-
-        #expect(throws: ValidationError.self) {
-            _ = try command.observationTargetForCaptureWithDetectionIfPossible()
-        }
+    func `Area observation target uses the requested region`() throws {
+        let command = try SeeCommand.parse(["--region", "10,20,300,400"])
+        #expect(try command.observationTargetForCaptureWithDetectionIfPossible() ==
+            .area(CGRect(x: 10, y: 20, width: 300, height: 400)))
     }
 
     @Test

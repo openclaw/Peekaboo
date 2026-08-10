@@ -40,6 +40,8 @@ struct MCPToolSnapshotMutationTests {
         #expect(Self.effect("browser", ["action": "snapshot"]) == .none)
         #expect(Self.effect("browser", ["action": "click"]) == .mutation)
         #expect(Self.effect("agent", [:]) == .none)
+        #expect(Self.effect("press", [:]) == .mutation)
+        #expect(Self.effect("action", [:]) == .mutation)
     }
 
     @Test

@@ -123,12 +123,12 @@ struct LearnCommand {
         2. Click in the center of elements for reliable interactions.
         3. Verify each action before proceeding; use `see` again if needed.
         4. Manage windows with the `window` tool's `list` and `focus` actions before automation.
-        5. Recover from errors by trying alternative interactions (menus, hotkeys).
+        5. Recover from errors by trying alternative interactions (menus, keyboard chords).
         6. Common workflows:
-           - Screenshot: `image` with `--app` or `--mode screen`.
+           - Screenshot: `see --no-elements` with `--app` or `--mode screen`.
            - Typing: `click` the field, then `type --app ...` the text; add `--foreground` only if needed.
            - Menus: `menu click --path ...`.
-           - Keyboard shortcuts: `hotkey`.
+           - Keyboard shortcuts: `press cmd+shift+t` style chords.
         """, to: &output)
     }
 
@@ -136,10 +136,10 @@ struct LearnCommand {
         print("""
         ## Quick Reference
         - **Vision**: see, image, capture
-        - **UI Automation**: click, type, scroll, hotkey, swipe, drag
+        - **UI Automation**: click, type, press, scroll, drag
         - **Window Management**: window, space
         - **Applications**: app
-        - **Elements**: inspect_ui, verify_state, set_value, perform_action
+        - **Elements**: inspect_ui, verify_state, set_value, action
         - **Menu/Dialog**: menu, dialog
         - **System**: shell, done, need_info
 

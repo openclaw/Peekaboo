@@ -114,7 +114,7 @@ struct VerifiableActionTypeTests {
         #expect(VerifiableActionType.click.rawValue == "click")
         #expect(VerifiableActionType.type.rawValue == "type")
         #expect(VerifiableActionType.scroll.rawValue == "scroll")
-        #expect(VerifiableActionType.hotkey.rawValue == "hotkey")
+        #expect(VerifiableActionType.press.rawValue == "press")
         #expect(VerifiableActionType.drag.rawValue == "drag")
         #expect(VerifiableActionType.launchApp.rawValue == "launch_app")
         #expect(VerifiableActionType.menu.rawValue == "menu")

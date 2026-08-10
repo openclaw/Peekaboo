@@ -173,7 +173,7 @@ public enum ToolFiltering {
             let isAvailable = switch name {
             case "set_value":
                 self.supportsActionInvocation(policy: policy, verb: .setValue)
-            case "perform_action":
+            case "action":
                 self.supportsActionInvocation(policy: policy, verb: .performAction)
             default:
                 true

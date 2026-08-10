@@ -88,7 +88,7 @@ struct SnapshotNotFoundRegressionTests {
         try await context.snapshots.cleanSnapshot(snapshotId: snapshotId)
 
         let result = try await InProcessCommandRunner.run(
-            ["swipe", "--from", "B1", "--to", "B1", "--snapshot", snapshotId, "--foreground", "--json"],
+            ["drag", "--from", "B1", "--to", "B1", "--snapshot", snapshotId, "--foreground", "--json"],
             services: context.services
         )
 
@@ -124,7 +124,7 @@ struct SnapshotNotFoundRegressionTests {
         try await context.snapshots.cleanSnapshot(snapshotId: snapshotId)
 
         let result = try await InProcessCommandRunner.run(
-            ["hotkey", "cmd,c", "--snapshot", snapshotId, "--json", "--no-auto-focus"],
+            ["press", "cmd+c", "--snapshot", snapshotId, "--json", "--no-auto-focus"],
             services: context.services
         )
 

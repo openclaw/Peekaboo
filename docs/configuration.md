@@ -149,7 +149,7 @@ peekaboo click --on "$ELEMENT_ID" --input-strategy actionFirst
 
 ```bash
 # Single command
-PEEKABOO_AI_PROVIDERS="ollama/llava:latest" peekaboo image --analyze "Describe this UI" --path img.png
+PEEKABOO_AI_PROVIDERS="ollama/llava:latest" peekaboo see --analyze "Describe this UI" --path img.png
 
 # Session exports
 export OPENAI_API_KEY="sk-..."

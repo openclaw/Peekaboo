@@ -32,7 +32,6 @@ struct CommandDefinition: Codable {
 enum CommandRegistry {
     @MainActor
     static let entries: [CommandRegistryEntry] = [
-        .init(type: ImageCommand.self, category: .core),
         .init(type: CaptureCommand.self, category: .core),
         .init(type: BridgeCommand.self, category: .core),
         .init(type: DaemonCommand.self, category: .core),
@@ -46,12 +45,10 @@ enum CommandRegistry {
         .init(type: ClickCommand.self, category: .interaction),
         .init(type: TypeCommand.self, category: .interaction),
         .init(type: SetValueCommand.self, category: .interaction),
-        .init(type: PerformActionCommand.self, category: .interaction),
+        .init(type: ActionCommand.self, category: .interaction),
         .init(type: PressCommand.self, category: .interaction),
         .init(type: ScrollCommand.self, category: .interaction),
-        .init(type: HotkeyCommand.self, category: .interaction),
         .init(type: PasteCommand.self, category: .interaction),
-        .init(type: SwipeCommand.self, category: .interaction),
         .init(type: DragCommand.self, category: .interaction),
         .init(type: MoveCommand.self, category: .interaction),
         .init(type: CleanCommand.self, category: .core),
@@ -67,7 +64,6 @@ enum CommandRegistry {
         .init(type: CompletionsCommand.self, category: .core),
         .init(type: AgentRootCommand.self, category: .ai),
         .init(type: BrowserCommand.self, category: .mcp),
-        .init(type: InspectUICommand.self, category: .mcp),
         .init(type: MCPCommand.self, category: .mcp),
     ]
 

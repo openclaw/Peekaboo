@@ -262,11 +262,11 @@ struct MCPSpecificToolTests {
         }
     }
 
-    // MARK: - Hotkey Tool Tests
+    // MARK: - Press Tool Tests
 
     @Test
-    func `Hotkey tool schema includes modifier combinations`() {
-        let tool = makeTestTool(HotkeyTool.init)
+    func `Press tool schema includes both chord shapes`() {
+        let tool = makeTestTool(PressTool.init)
 
         guard case let .object(schema) = tool.inputSchema,
               let properties = schema["properties"],
@@ -277,14 +277,9 @@ struct MCPSpecificToolTests {
         }
 
         #expect(props["keys"] != nil)
-        #expect(props["hold_duration"] != nil)
-
-        // Verify keys is required
-        if let required = schema["required"],
-           case let .array(requiredArray) = required
-        {
-            #expect(requiredArray.contains(.string("keys")))
-        }
+        #expect(props["key"] != nil)
+        #expect(props["modifiers"] != nil)
+        #expect(props["hold"] != nil)
     }
 
     // MARK: - Drag Tool Tests
@@ -386,36 +381,6 @@ struct MCPSpecificToolTests {
         }
     }
 
-    // MARK: - Swipe Tool Tests
-
-    @Test
-    func `Swipe tool direction validation`() {
-        let tool = makeTestTool(SwipeTool.init)
-
-        guard case let .object(schema) = tool.inputSchema,
-              let properties = schema["properties"],
-              case let .object(props) = properties
-        else {
-            Issue.record("Expected object schema with properties")
-            return
-        }
-
-        #expect(props["from"] != nil)
-        #expect(props["to"] != nil)
-        #expect(props["duration"] != nil)
-        #expect(props["steps"] != nil)
-        #expect(props["foreground"] != nil)
-
-        // Swipe tool has from/to required fields
-        if let required = schema["required"],
-           case let .array(requiredArray) = required
-        {
-            #expect(requiredArray.contains(.string("from")))
-            #expect(requiredArray.contains(.string("to")))
-            #expect(requiredArray.contains(.string("foreground")))
-        }
-    }
-
     @Test
     func `Scroll tool exposes background-safe and foreground modes`() {
         let tool = makeTestTool(ScrollTool.init)
@@ -440,15 +405,11 @@ struct MCPSpecificToolTests {
             "from_coords": "10,10",
             "to_coords": "20,20",
         ]))
-        let swipe = try await makeTestTool(SwipeTool.init).execute(arguments: ToolArguments(raw: [
-            "from": "10,10",
-            "to": "20,20",
-        ]))
         let scroll = try await makeTestTool(ScrollTool.init).execute(arguments: ToolArguments(raw: [
             "direction": "down",
         ]))
 
-        for response in [move, drag, swipe, scroll] {
+        for response in [move, drag, scroll] {
             #expect(response.isError)
             guard case let .text(text: message, annotations: _, _meta: _) = response.content.first else {
                 Issue.record("Expected text validation error")
@@ -797,7 +758,7 @@ struct MCPToolDescriptionTests {
             makeTestTool(ClickTool.init),
             makeTestTool(TypeTool.init),
             makeTestTool(SetValueTool.init),
-            makeTestTool(PerformActionTool.init),
+            makeTestTool(ActionTool.init),
             makeTestTool(MCPAgentTool.init),
         ]
 
@@ -832,10 +793,9 @@ struct MCPToolDescriptionTests {
             makeTestTool(ClickTool.init),
             makeTestTool(TypeTool.init),
             makeTestTool(SetValueTool.init),
-            makeTestTool(PerformActionTool.init),
+            makeTestTool(ActionTool.init),
             makeTestTool(ScrollTool.init),
-            makeTestTool(HotkeyTool.init),
-            makeTestTool(SwipeTool.init),
+            makeTestTool(PressTool.init),
             makeTestTool(DragTool.init),
             makeTestTool(MoveTool.init),
             makeTestTool(AppTool.init),

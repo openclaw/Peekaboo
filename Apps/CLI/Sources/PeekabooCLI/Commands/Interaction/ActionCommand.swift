@@ -5,15 +5,21 @@ import PeekabooCore
 
 @available(macOS 14.0, *)
 @MainActor
-struct PerformActionCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedCommand {
+struct ActionCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedCommand {
+    @Argument(help: "Accessibility action name, e.g. AXPress, AXShowMenu, AXIncrement")
+    var actionName: String?
+
+    @Option(help: "Accessibility action name (alternative to the positional argument)")
+    var action: String?
+
     @Option(help: "Element ID or query to act on")
     var on: String?
 
-    @Option(help: "Accessibility action name, e.g. AXPress, AXShowMenu, AXIncrement")
-    var action: String?
-
     @Option(help: "Snapshot ID, or 'latest' (uses latest if not specified)")
     var snapshot: String?
+
+    @OptionGroup var target: InteractionTargetOptions
+    @OptionGroup var focusOptions: FocusCommandOptions
 
     @RuntimeStorage var runtime: CommandRuntime?
     var runtimeOptions = CommandRuntimeOptions()
@@ -25,7 +31,9 @@ struct PerformActionCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBac
             context: ElementActionCommandContext(
                 runtime: runtime,
                 snapshot: self.snapshot,
-                invalidationReason: "perform-action"
+                invalidationReason: "action",
+                target: self.target,
+                focusOptions: self.focusOptions
             ),
             prepare: {
                 try (self.requireTarget(), self.requireAction())
@@ -38,9 +46,9 @@ struct PerformActionCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBac
                     snapshotId: snapshotId
                 )
             },
-            render: { result, outputPayload, actionName in
+            render: { result, outputPayload, requestedAction in
                 self.output(outputPayload) {
-                    print("✅ Performed \(result.actionName ?? actionName) on \(result.target)")
+                    print("✅ Performed \(result.actionName ?? requestedAction) on \(result.target)")
                 }
             },
             handleError: { self.handleError($0) }
@@ -54,58 +62,72 @@ struct PerformActionCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBac
         return on
     }
 
-    private func requireAction() throws -> String {
-        guard let action = self.action?.trimmingCharacters(in: .whitespacesAndNewlines), !action.isEmpty else {
-            throw ValidationError("--action is required")
+    func requireAction() throws -> String {
+        if self.actionName != nil, self.action != nil {
+            throw ValidationError("Provide the action name positionally or with --action, not both")
         }
-        return action
+        guard let value = self.actionName ?? self.action
+        else {
+            throw ValidationError("Action name is required")
+        }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            throw ValidationError("Action name is required")
+        }
+        return trimmed
     }
 }
 
 @MainActor
-extension PerformActionCommand: ParsableCommand {
+extension ActionCommand: ParsableCommand {
     nonisolated(unsafe) static var commandDescription: CommandDescription {
         CommandDescription(
-            commandName: "perform-action",
+            commandName: "action",
             abstract: "Invoke a named accessibility action on an element",
             discussion: """
                 Invokes an accessibility action without synthesizing a mouse or keyboard event.
 
                 EXAMPLES:
-                  peekaboo perform-action --on "$ELEMENT_ID" --action AXPress
-                  peekaboo perform-action --on Stepper --action AXIncrement
+                  peekaboo action AXPress --on "$ELEMENT_ID"
+                  peekaboo action --action AXIncrement --on Stepper --app Calculator
             """,
             showHelpOnEmptyInvocation: true
         )
     }
 }
 
-extension PerformActionCommand: AsyncRuntimeCommand {}
+extension ActionCommand: AsyncRuntimeCommand {}
 
 @MainActor
-extension PerformActionCommand: CommanderBindableCommand {
+extension ActionCommand: CommanderBindableCommand {
     mutating func applyCommanderValues(_ values: CommanderBindableValues) throws {
-        self.on = values.singleOption("on")
+        self.actionName = try values.decodeOptionalPositional(0, label: "actionName")
         self.action = values.singleOption("action")
+        self.on = values.singleOption("on")
         self.snapshot = values.singleOption("snapshot")
+        self.target = try values.makeInteractionTargetOptions()
+        self.focusOptions = try values.makeFocusOptions()
     }
 }
 
-extension PerformActionCommand: CommanderSignatureProviding {
+extension ActionCommand: CommanderSignatureProviding {
     static func commanderSignature() -> CommandSignature {
         CommandSignature(
+            arguments: [
+                .make(label: "actionName", help: "Accessibility action name", isOptional: true),
+            ],
             options: [
+                .commandOption("action", help: "Action name (alternative to positional argument)", long: "action"),
                 .commandOption("on", help: "Element ID or query to act on", long: "on"),
-                .commandOption(
-                    "action",
-                    help: "Accessibility action name, e.g. AXPress, AXShowMenu, AXIncrement",
-                    long: "action"
-                ),
                 .commandOption(
                     "snapshot",
                     help: "Snapshot ID, or 'latest' (uses latest if not specified)",
                     long: "snapshot"
                 ),
+            ],
+            optionGroups: [
+                InteractionTargetOptions.commanderSignature(),
+                FocusCommandOptions.commanderSignature(),
             ]
         )
     }

@@ -55,7 +55,7 @@ struct ToolFilteringTests {
 
     @Test
     func `Action-only tools are hidden when strategy disables action invocation`() {
-        let tools = makeTools(["see", "set_value", "perform_action", "click"])
+        let tools = makeTools(["see", "set_value", "action", "click"])
         let policy = UIInputPolicy(
             defaultStrategy: .synthFirst,
             setValue: .synthOnly,
@@ -70,12 +70,12 @@ struct ToolFilteringTests {
 
         #expect(names == ["see", "click"])
         #expect(logs.contains { $0.contains("set_value") && $0.contains("disables action invocation") })
-        #expect(logs.contains { $0.contains("perform_action") && $0.contains("disables action invocation") })
+        #expect(logs.contains { $0.contains("action") && $0.contains("disables action invocation") })
     }
 
     @Test
     func `Action-only tools remain visible when action invocation is enabled`() {
-        let tools = makeTools(["see", "set_value", "perform_action"])
+        let tools = makeTools(["see", "set_value", "action"])
         let policy = UIInputPolicy(
             defaultStrategy: .synthFirst,
             setValue: .actionOnly,
@@ -83,12 +83,12 @@ struct ToolFilteringTests {
 
         let names = ToolFiltering.applyInputStrategyAvailability(tools, policy: policy).map(\.name)
 
-        #expect(names == ["see", "set_value", "perform_action"])
+        #expect(names == ["see", "set_value", "action"])
     }
 
     @Test
     func `Action-only tools remain visible when per-app strategy enables action invocation`() {
-        let tools = makeTools(["see", "set_value", "perform_action"])
+        let tools = makeTools(["see", "set_value", "action"])
         let policy = UIInputPolicy(
             defaultStrategy: .synthOnly,
             setValue: .synthOnly,
@@ -101,12 +101,12 @@ struct ToolFilteringTests {
 
         let names = ToolFiltering.applyInputStrategyAvailability(tools, policy: policy).map(\.name)
 
-        #expect(names == ["see", "set_value", "perform_action"])
+        #expect(names == ["see", "set_value", "action"])
     }
 
     @Test
     func `Action-only tools remain visible when per-app default enables action invocation`() {
-        let tools = makeTools(["see", "set_value", "perform_action"])
+        let tools = makeTools(["see", "set_value", "action"])
         let policy = UIInputPolicy(
             defaultStrategy: .synthOnly,
             setValue: .synthOnly,
@@ -117,7 +117,7 @@ struct ToolFilteringTests {
 
         let names = ToolFiltering.applyInputStrategyAvailability(tools, policy: policy).map(\.name)
 
-        #expect(names == ["see", "set_value", "perform_action"])
+        #expect(names == ["see", "set_value", "action"])
     }
 
     @Test
@@ -132,7 +132,7 @@ struct ToolFilteringTests {
         let names = await agent.buildToolset(for: .anthropic(.sonnet45)).map(\.name)
 
         #expect(!names.contains("set_value"))
-        #expect(!names.contains("perform_action"))
+        #expect(!names.contains("action"))
     }
 }
 

@@ -238,21 +238,6 @@ enum AutomationServiceBridge {
         )
     }
 
-    static func swipe(
-        automation: any UIAutomationServiceProtocol,
-        request: SwipeRequest
-    ) async throws {
-        try await Task { @MainActor in
-            try await automation.swipe(
-                from: request.from,
-                to: request.to,
-                duration: request.duration,
-                steps: request.steps,
-                profile: request.profile
-            )
-        }.value
-    }
-
     static func drag(
         automation: any UIAutomationServiceProtocol,
         request: DragRequest
@@ -265,6 +250,7 @@ enum AutomationServiceBridge {
                     duration: request.duration,
                     steps: request.steps,
                     modifiers: request.modifiers,
+                    button: request.button,
                     profile: request.profile
                 )
             )
@@ -311,20 +297,13 @@ struct TypeActionsRequest {
     let snapshotId: String?
 }
 
-struct SwipeRequest {
-    let from: CGPoint
-    let to: CGPoint
-    let duration: Int
-    let steps: Int
-    let profile: MouseMovementProfile
-}
-
 struct DragRequest {
     let from: CGPoint
     let to: CGPoint
     let duration: Int
     let steps: Int
     let modifiers: String?
+    let button: DragButton
     let profile: MouseMovementProfile
 }
 

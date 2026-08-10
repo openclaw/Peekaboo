@@ -15,14 +15,26 @@ struct SeeCommand: ApplicationResolvable, ErrorHandlingCommand, RuntimeBackedCom
     @Option(help: "Specific window title to capture")
     var windowTitle: String?
 
+    @Option(help: "Window index to capture")
+    var windowIndex: Int?
+
     @Option(
         name: .long,
         help: "Target window by CoreGraphics window id (window_id from `peekaboo window list --json`)"
     )
     var windowId: Int?
 
-    @Option(help: "Capture mode (screen, window, frontmost)")
+    @Option(help: "Capture mode (screen, window, frontmost, multi, area)")
     var mode: PeekabooCore.CaptureMode?
+
+    @Option(help: "Region for area captures as x,y,width,height in global display coordinates")
+    var region: String?
+
+    @Option(help: "Image format: png or jpg")
+    var format: PeekabooCore.ImageFormat = .png
+
+    @Flag(help: "Capture at native Retina scale (default stores 1x logical resolution)")
+    var retina = false
 
     @Option(
         names: [.automatic, .customLong("save"), .customLong("output"), .customShort("o", allowingJoined: false)],
@@ -38,6 +50,15 @@ struct SeeCommand: ApplicationResolvable, ErrorHandlingCommand, RuntimeBackedCom
 
     @Flag(help: "Generate annotated screenshot with interaction markers")
     var annotate = false
+
+    @Flag(help: "Skip element detection for a faster screenshot-only capture")
+    var noElements = false
+
+    @Flag(help: "Print the accessibility text tree")
+    var tree = false
+
+    @Flag(help: "Skip image capture; requires --tree")
+    var noScreenshot = false
 
     @Flag(name: .long, help: "Capture menu bar popovers via window list + OCR")
     var menubar = false
@@ -71,7 +92,7 @@ struct SeeCommand: ApplicationResolvable, ErrorHandlingCommand, RuntimeBackedCom
     var noWebFocus = false
 
     @Option(name: .long, help: "Maximum AX traversal depth (env: PEEKABOO_AX_MAX_DEPTH)")
-    var maxDepth: Int?
+    var depth: Int?
 
     @Option(name: .long, help: "Maximum AX elements to collect (env: PEEKABOO_AX_MAX_ELEMENTS)")
     var maxElements: Int?
@@ -90,6 +111,14 @@ struct SeeCommand: ApplicationResolvable, ErrorHandlingCommand, RuntimeBackedCom
         self.runtime?.configuration.captureEnginePreference
     }
 
+    var captureFocus: PeekabooCore.CaptureFocus {
+        .background
+    }
+
+    func withCaptureFocusMutation(_ operation: () async throws -> Void) async rethrows {
+        try await self.resolvedRuntime.withCaptureFocusMutation(operation)
+    }
+
     @MainActor
     mutating func run(using runtime: CommandRuntime) async throws {
         self.runtime = runtime
@@ -106,6 +135,19 @@ struct SeeCommand: ApplicationResolvable, ErrorHandlingCommand, RuntimeBackedCom
             "menubar": self.menubar,
             "hasAnalyzePrompt": self.analyze != nil,
         ])
+
+        do {
+            try self.validateMergedOptions()
+            if self.usesPixelOnlyCapture {
+                try await self.runPixelOnlyCapture()
+                logger.operationComplete("see_command", metadata: ["success": true, "pixelOnly": true])
+                return
+            }
+        } catch {
+            logger.operationComplete("see_command", success: false, metadata: ["error": error.localizedDescription])
+            self.handleError(error)
+            throw ExitCode.failure
+        }
 
         let commandCopy = self
         let mayFocusWebContent = commandCopy.webFocus
@@ -218,6 +260,113 @@ struct SeeCommand: ApplicationResolvable, ErrorHandlingCommand, RuntimeBackedCom
             )
             self.handleError(error)
             throw ExitCode.failure
+        }
+    }
+
+    var usesPixelOnlyCapture: Bool {
+        self.noElements || self.streamsImageToStdout || self.determineMode() == .multi || self.determineMode() == .area
+    }
+
+    func validateMergedOptions() throws {
+        let resolvedMode = self.determineMode()
+        let forcesPixelOnlyMode = resolvedMode == .area || resolvedMode == .multi
+        if self.tree, self.noElements {
+            throw ValidationError("--tree cannot be combined with --no-elements")
+        }
+        if self.noScreenshot, !self.tree {
+            throw ValidationError("--no-screenshot requires --tree")
+        }
+        if self.noScreenshot, self.annotate || self.analyze != nil {
+            throw ValidationError("--no-screenshot cannot be combined with --annotate or --analyze")
+        }
+        if self.noScreenshot,
+           resolvedMode == .screen || forcesPixelOnlyMode || self.screenIndex != nil || self.menubar ||
+           self.app?.lowercased() == "menubar" {
+            throw ValidationError("--no-screenshot supports frontmost or app/window accessibility targets only")
+        }
+        if self.noElements, self.annotate {
+            throw ValidationError("--annotate requires element detection")
+        }
+        if self.streamsImageToStdout, self.tree || self.annotate || self.noScreenshot || self.menubar {
+            throw ValidationError("--path - is screenshot-only and cannot be combined with tree or annotation output")
+        }
+        if forcesPixelOnlyMode, self.tree || self.annotate {
+            throw ValidationError("area and multi capture modes do not support --tree or --annotate")
+        }
+        if self.menubar, self.noElements || forcesPixelOnlyMode {
+            throw ValidationError("--menubar requires element detection; use --app menubar for screenshot-only capture")
+        }
+        if self.region != nil, self.mode != nil, self.mode != .area {
+            throw ValidationError("--region can only be combined with --mode area")
+        }
+        if self.app != nil, self.pid != nil {
+            throw ValidationError("Use either --app or --pid, not both")
+        }
+        let windowSelectorCount = [self.windowTitle != nil, self.windowIndex != nil, self.windowId != nil]
+            .count(where: { $0 })
+        if windowSelectorCount > 1 {
+            throw ValidationError("Use only one of --window-title, --window-index, or --window-id")
+        }
+        if let appAlias = self.app?.lowercased(), appAlias == "frontmost" || appAlias == "menubar" {
+            let allowedModes: Set<PeekabooCore.CaptureMode> = appAlias == "frontmost"
+                ? [.window, .frontmost]
+                : [.window]
+            let hasConflictingMode = self.mode.map { !allowedModes.contains($0) } ?? false
+            if hasConflictingMode || self.region != nil || self.screenIndex != nil || windowSelectorCount > 0 ||
+                self.menubar {
+                throw ValidationError("--app \(appAlias) cannot be combined with another capture target")
+            }
+        }
+        if self.menubar {
+            if self.mode != nil || self.pid != nil || self.region != nil || self.screenIndex != nil ||
+                windowSelectorCount > 0 {
+                throw ValidationError("--menubar cannot be combined with another capture target")
+            }
+            return
+        }
+
+        let hasProcessTarget = self.app != nil || self.pid != nil
+        switch resolvedMode {
+        case .screen:
+            if hasProcessTarget || windowSelectorCount > 0 || self.region != nil {
+                throw ValidationError("screen mode accepts only --screen-index as a capture target")
+            }
+        case .area:
+            if self.region == nil {
+                throw ValidationError("area mode requires --region x,y,width,height")
+            }
+            if hasProcessTarget || windowSelectorCount > 0 || self.screenIndex != nil {
+                throw ValidationError("area mode cannot be combined with app, window, or screen targets")
+            }
+        case .frontmost:
+            let usesFrontmostAlias = self.app?.lowercased() == "frontmost"
+            if self.pid != nil || windowSelectorCount > 0 || self.screenIndex != nil || self.region != nil ||
+                (self.app != nil && !usesFrontmostAlias) {
+                throw ValidationError("frontmost mode cannot be combined with another capture target")
+            }
+        case .window:
+            if self.screenIndex != nil || self.region != nil {
+                throw ValidationError("window mode cannot be combined with screen or area targets")
+            }
+        case .multi:
+            if windowSelectorCount > 0 || self.screenIndex != nil || self.region != nil {
+                throw ValidationError(
+                    "multi mode accepts an optional app or pid, but not window, screen, or area targets"
+                )
+            }
+        }
+    }
+
+    private func runPixelOnlyCapture() async throws {
+        try self.validateStdoutStreamingOptions()
+        let captures = try await self.performPixelCapture()
+        if self.streamsImageToStdout {
+            try self.outputImageToStdout(captures)
+        } else if let prompt = self.analyze, let firstFile = captures.first?.file {
+            let analysis = try await self.analyzeImage(at: firstFile.path, with: prompt)
+            self.outputResultsWithAnalysis(captures, analysis: analysis)
+        } else {
+            self.outputResults(captures)
         }
     }
 
@@ -400,28 +549,57 @@ extension SeeCommand: CommanderBindableCommand {
         self.app = values.singleOption("app")
         self.pid = try values.decodeOption("pid", as: Int32.self)
         self.windowTitle = values.singleOption("windowTitle")
+        self.windowIndex = try values.decodeOption("windowIndex", as: Int.self)
         self.windowId = try values.decodeOption("windowId", as: Int.self)
         if let parsedMode: PeekabooCore.CaptureMode = try values.decodeOptionEnum("mode", caseInsensitive: false) {
-            guard parsedMode != .area else {
-                throw CommanderBindingError.invalidArgument(
-                    label: "mode",
-                    value: parsedMode.rawValue,
-                    reason: "`see` supports screen, window, frontmost, or multi"
-                )
-            }
             self.mode = parsedMode
         }
+        self.region = values.singleOption("region")
+        let parsedFormat: PeekabooCore.ImageFormat? = try values.decodeOptionEnum("format")
+        if let parsedFormat {
+            self.format = parsedFormat
+        }
         self.path = values.singleOption("path")
+        if let path = self.path?.trimmingCharacters(in: .whitespacesAndNewlines), !path.isEmpty {
+            let expanded = (path as NSString).expandingTildeInPath
+            let ext = URL(fileURLWithPath: expanded).pathExtension.lowercased()
+            let inferred: PeekabooCore.ImageFormat? = switch ext {
+            case "jpg", "jpeg": .jpg
+            case "png": .png
+            default: nil
+            }
+            if let parsedFormat, let inferred, parsedFormat != inferred {
+                throw CommanderBindingError.invalidArgument(
+                    label: "path",
+                    value: path,
+                    reason: "Conflicts with --format \(parsedFormat.rawValue). " +
+                        "Use a .\(parsedFormat.fileExtension) path (or omit --format)."
+                )
+            }
+            if parsedFormat == nil, let inferred {
+                self.format = inferred
+            }
+        }
         self.screenIndex = try values.decodeOption("screenIndex", as: Int.self)
         self.captureEngine = values.singleOption("captureEngine")
         self.annotate = values.flag("annotate")
         self.analyze = values.singleOption("analyze")
         self.timeoutSeconds = try values.decodeOption("timeoutSeconds", as: Int.self)
-        self.maxDepth = try values.decodeOption("maxDepth", as: Int.self)
+        self.depth = try values.decodeOption("depth", as: Int.self)
         self.maxElements = try values.decodeOption("maxElements", as: Int.self)
         self.maxChildren = try values.decodeOption("maxChildren", as: Int.self)
         self.webFocus = values.flag("webFocus")
         self.noWebFocus = values.flag("noWebFocus")
         self.menubar = values.flag("menubar")
+        self.retina = values.flag("retina")
+        self.noElements = values.flag("noElements")
+        self.tree = values.flag("tree")
+        self.noScreenshot = values.flag("noScreenshot")
+    }
+}
+
+extension SeeCommand: RuntimeOptionsConfigurable {
+    mutating func setRuntimeOptions(_ options: CommandRuntimeOptions) {
+        self.runtimeOptions = options
     }
 }

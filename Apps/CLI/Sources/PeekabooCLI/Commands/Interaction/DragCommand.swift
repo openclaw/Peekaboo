@@ -10,17 +10,11 @@ import PeekabooFoundation
 struct DragCommand: ErrorHandlingCommand, OutputFormattable, InjectedRuntimeBackedCommand {
     @OptionGroup var target: InteractionTargetOptions
 
-    @Option(help: "Starting element ID from snapshot")
+    @Option(help: "Starting element ID or coordinates as 'x,y'")
     var from: String?
 
-    @Option(help: "Starting coordinates as 'x,y'")
-    var fromCoords: String?
-
-    @Option(help: "Target element ID from snapshot")
+    @Option(help: "Target element ID or coordinates as 'x,y'")
     var to: String?
-
-    @Option(help: "Target coordinates as 'x,y'")
-    var toCoords: String?
 
     @Option(help: "Target application (e.g., 'Trash', 'Finder')")
     var toApp: String?
@@ -36,6 +30,9 @@ struct DragCommand: ErrorHandlingCommand, OutputFormattable, InjectedRuntimeBack
 
     @Option(help: "Modifier keys to hold during drag (comma-separated: cmd,shift,option,ctrl)")
     var modifiers: String?
+
+    @Option(help: "Mouse button to hold during drag (left or right)")
+    var button = "left"
 
     @Option(help: "Movement profile (linear or human)")
     var profile: String?
@@ -54,7 +51,9 @@ struct DragCommand: ErrorHandlingCommand, OutputFormattable, InjectedRuntimeBack
         do {
             try self.validateInputs()
 
-            let needsSnapshot = self.from != nil || self.to != nil
+            let fromInput = self.splitTarget(self.from)
+            let toInput = self.splitTarget(self.to)
+            let needsSnapshot = fromInput.element != nil || toInput.element != nil
             var observation = await InteractionObservationContext.resolve(
                 explicitSnapshot: self.snapshot,
                 fallbackToLatest: needsSnapshot,
@@ -63,7 +62,7 @@ struct DragCommand: ErrorHandlingCommand, OutputFormattable, InjectedRuntimeBack
             let refreshRuntime = self.resolvedRuntime
             observation = try await InteractionObservationRefresher.refreshForMissingElementsIfNeeded(
                 observation,
-                elementIds: [self.from, self.to],
+                elementIds: [fromInput.element, toInput.element],
                 target: self.target,
                 services: self.services,
                 logger: self.logger,
@@ -86,8 +85,8 @@ struct DragCommand: ErrorHandlingCommand, OutputFormattable, InjectedRuntimeBack
             )
 
             let startResolution = try await self.resolvePoint(
-                elementId: self.from,
-                coords: self.fromCoords,
+                elementId: fromInput.element,
+                coords: fromInput.coordinates,
                 snapshotId: observation.snapshotId,
                 description: "from"
             )
@@ -101,8 +100,8 @@ struct DragCommand: ErrorHandlingCommand, OutputFormattable, InjectedRuntimeBack
                 )
             } else {
                 try await self.resolvePoint(
-                    elementId: self.to,
-                    coords: self.toCoords,
+                    elementId: toInput.element,
+                    coords: toInput.coordinates,
                     snapshotId: observation.snapshotId,
                     description: "to"
                 )
@@ -132,6 +131,7 @@ struct DragCommand: ErrorHandlingCommand, OutputFormattable, InjectedRuntimeBack
                 duration: movement.duration,
                 steps: movement.steps,
                 modifiers: self.modifiers,
+                button: self.resolvedButton ?? .left,
                 profile: movement.profile
             )
             try await AutomationServiceBridge.drag(automation: self.services.automation, request: dragRequest)
@@ -158,6 +158,7 @@ struct DragCommand: ErrorHandlingCommand, OutputFormattable, InjectedRuntimeBack
                 steps: movement.steps,
                 profile: movement.profileName,
                 modifiers: self.modifiers ?? "none",
+                button: self.button.lowercased(),
                 fromTargetPoint: startResolution.diagnostics,
                 toTargetPoint: endResolution.diagnostics,
                 executionTime: Date().timeIntervalSince(startTime)
@@ -172,6 +173,7 @@ struct DragCommand: ErrorHandlingCommand, OutputFormattable, InjectedRuntimeBack
                 if let mods = modifiers {
                     print("⌨️  Modifiers: \(mods)")
                 }
+                print("🖱️  Button: \(self.button.lowercased())")
                 print("⏱️  Completed in \(String(format: "%.2f", Date().timeIntervalSince(startTime)))s")
             }
         } catch {
@@ -188,28 +190,52 @@ struct DragCommand: ErrorHandlingCommand, OutputFormattable, InjectedRuntimeBack
                 "drag changes the physical cursor and requires explicit --foreground consent."
             )
         }
-        guard self.from != nil || self.fromCoords != nil else {
-            throw ValidationError("Must specify either --from or --from-coords")
+        guard self.from != nil else {
+            throw ValidationError("Must specify --from as an element ID or x,y coordinates")
         }
 
-        guard self.to != nil || self.toCoords != nil || self.toApp != nil else {
-            throw ValidationError("Must specify either --to, --to-coords, or --to-app")
+        guard self.to != nil || self.toApp != nil else {
+            throw ValidationError("Must specify --to as an element ID or x,y coordinates, or use --to-app")
         }
 
-        if self.to != nil || self.toCoords != nil {
-            guard (self.to != nil) != (self.toCoords != nil) else {
-                throw ValidationError("Specify only one of --to or --to-coords")
-            }
+        if self.to != nil, self.toApp != nil {
+            throw ValidationError("Specify only one of --to or --to-app")
         }
-
-        if self.from != nil && self.fromCoords != nil {
-            throw ValidationError("Specify only one of --from or --from-coords")
+        guard self.resolvedButton != nil else {
+            throw ValidationError("--button must be either 'left' or 'right'")
         }
 
         if let profileName = self.profile?.lowercased(),
            CursorMovementProfileSelection(rawValue: profileName) == nil {
             throw ValidationError("Invalid profile '\(profileName)'. Use 'linear' or 'human'.")
         }
+    }
+
+    var resolvedButton: DragButton? {
+        switch self.button.lowercased() {
+        case "left": .left
+        case "right": .right
+        default: nil
+        }
+    }
+
+    func splitTarget(_ value: String?) -> (element: String?, coordinates: String?) {
+        guard let value else { return (nil, nil) }
+        if Self.isCoordinateTarget(value) {
+            return (nil, value)
+        }
+        return (value, nil)
+    }
+
+    static func isCoordinateTarget(_ value: String?) -> Bool {
+        guard let value else { return false }
+        let pieces = value.split(separator: ",", omittingEmptySubsequences: false)
+        if pieces.count == 2,
+           Double(pieces[0].trimmingCharacters(in: .whitespacesAndNewlines)) != nil,
+           Double(pieces[1].trimmingCharacters(in: .whitespacesAndNewlines)) != nil {
+            return true
+        }
+        return false
     }
 
     private func resolvePoint(
@@ -245,10 +271,11 @@ extension DragCommand: ParsableCommand {
 
                 EXAMPLES:
                   peekaboo drag --from "$SOURCE_ID" --to "$TARGET_ID" --foreground
-                  peekaboo drag --from-coords "100,200" --to-coords "400,300" --foreground
+                  peekaboo drag --from "100,200" --to "400,300" --foreground
                   peekaboo drag --from "$SOURCE_ID" --to-app Trash --foreground
-                  peekaboo drag --from "$SOURCE_ID" --to-coords "500,250" --duration 2000 --foreground
+                  peekaboo drag --from "$SOURCE_ID" --to "500,250" --duration 2000 --foreground
                   peekaboo drag --from "$SOURCE_ID" --to "$TARGET_ID" --modifiers shift --foreground
+                  peekaboo drag --from "100,200" --to "400,300" --button right --foreground
 
                 Drag always changes the shared physical cursor and requires --foreground.
                 """,
@@ -266,9 +293,7 @@ extension DragCommand: CommanderBindableCommand {
     mutating func applyCommanderValues(_ values: CommanderBindableValues) throws {
         self.target = try values.makeInteractionTargetOptions()
         self.from = values.singleOption("from")
-        self.fromCoords = values.singleOption("fromCoords")
         self.to = values.singleOption("to")
-        self.toCoords = values.singleOption("toCoords")
         self.toApp = values.singleOption("toApp")
         self.snapshot = values.singleOption("snapshot")
         if let duration: Int = try values.decodeOption("duration", as: Int.self) {
@@ -278,6 +303,7 @@ extension DragCommand: CommanderBindableCommand {
             self.steps = steps
         }
         self.modifiers = values.singleOption("modifiers")
+        self.button = values.singleOption("button") ?? "left"
         self.profile = values.singleOption("profile")
         self.foreground = values.flag("foreground")
         self.focusOptions = try values.makeFocusOptions()

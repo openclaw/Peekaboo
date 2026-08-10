@@ -1,10 +1,16 @@
+import Commander
 import Foundation
 import PeekabooCore
+import PeekabooFoundation
 
 @available(macOS 14.0, *)
 @MainActor
 extension SeeCommand {
     func performCaptureWithDetection(snapshotID: String) async throws -> CaptureAndDetectionResult {
+        if self.noScreenshot {
+            return try await self.performTreeOnlyDetection(snapshotID: snapshotID)
+        }
+
         if let observationResult = try await self.performObservationCaptureWithDetectionIfPossible(
             snapshotID: snapshotID
         ) {
@@ -67,6 +73,69 @@ extension SeeCommand {
             metadata: detectionResult.metadata,
             observation: nil
         )
+    }
+
+    private func performTreeOnlyDetection(snapshotID: String) async throws -> CaptureAndDetectionResult {
+        if self.app != nil, self.pid != nil {
+            throw ValidationError("Use either --app or --pid, not both")
+        }
+        let appName: String? = if self.app?.lowercased() == "frontmost" {
+            nil
+        } else {
+            self.app
+        }
+        let result = try await self.services.automation.inspectAccessibilityTree(
+            windowContext: WindowContext(
+                applicationName: appName,
+                applicationProcessId: self.pid,
+                windowTitle: self.windowTitle,
+                windowID: self.resolvedTreeWindowID(),
+                shouldFocusWebContent: self.webFocus,
+                traversalBudget: self.axTraversalBudget()
+            )
+        )
+        let bound = ElementDetectionResult(
+            snapshotId: snapshotID,
+            screenshotPath: "",
+            elements: result.elements,
+            metadata: result.metadata
+        )
+        try await self.services.snapshots.storeDetectionResult(snapshotId: snapshotID, result: bound)
+        return CaptureAndDetectionResult(
+            snapshotId: snapshotID,
+            screenshotPath: "",
+            annotatedPath: nil,
+            elements: bound.elements,
+            metadata: bound.metadata,
+            observation: nil
+        )
+    }
+
+    func resolvedTreeWindowID() async throws -> Int? {
+        if let windowId = self.windowId {
+            return windowId
+        }
+        guard let windowIndex = self.windowIndex else {
+            return nil
+        }
+        let identifier: String
+        if let pid = self.pid {
+            identifier = "PID:\(pid)"
+        } else if self.app != nil {
+            identifier = try self.resolveApplicationIdentifier()
+        } else {
+            throw ValidationError("--window-index requires --app or --pid")
+        }
+        let windows = try await WindowServiceBridge.listWindows(
+            windows: self.services.windows,
+            target: .index(app: identifier, index: windowIndex)
+        )
+        guard let windowID = windows.first?.windowID else {
+            throw PeekabooError.windowNotFound(
+                criteria: "No window at index \(windowIndex) for \(identifier)"
+            )
+        }
+        return windowID
     }
 
     private func detectElements(

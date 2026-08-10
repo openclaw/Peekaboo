@@ -25,18 +25,6 @@ struct TypeCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedComman
     @Option(name: .customLong("profile"), help: "Typing profile: linear (default) or human")
     var profileOption: String?
 
-    @Flag(names: [.customLong("return"), .long], help: "Press return/enter after typing")
-    var pressReturn = false
-
-    @Option(help: "Press tab N times")
-    var tab: Int?
-
-    @Flag(help: "Press escape")
-    var escape = false
-
-    @Flag(help: "Press delete/backspace")
-    var delete = false
-
     @Flag(help: "Clear the field before typing (Cmd+A, Delete)")
     var clear = false
 
@@ -126,24 +114,8 @@ struct TypeCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedComman
             actions.append(contentsOf: Self.processTextWithEscapes(textToType))
         }
 
-        if let tabCount = tab {
-            actions.append(contentsOf: Array(repeating: TypeAction.key(.tab), count: tabCount))
-        }
-
-        if self.escape {
-            actions.append(.key(.escape))
-        }
-
-        if self.delete {
-            actions.append(.key(.delete))
-        }
-
-        if self.pressReturn {
-            actions.append(.key(.return))
-        }
-
         guard !actions.isEmpty else {
-            throw ValidationError("No input specified. Provide text or key flags.")
+            throw ValidationError("No input specified. Provide text or use --clear.")
         }
 
         return actions
@@ -298,10 +270,6 @@ extension TypeCommand: CommanderBindableCommand {
         if let profile = values.singleOption("profileOption") ?? values.singleOption("profile") {
             self.profileOption = profile
         }
-        self.tab = try values.decodeOption("tab", as: Int.self)
-        self.pressReturn = values.flag("pressReturn")
-        self.escape = values.flag("escape")
-        self.delete = values.flag("delete")
         self.clear = values.flag("clear")
         self.foreground = values.flag("foreground")
         self.target = try values.makeInteractionTargetOptions()
@@ -317,7 +285,7 @@ extension TypeCommand: ParsableCommand {
         MainActorCommandDescription.describe {
             CommandDescription(
                 commandName: "type",
-                abstract: "Type text or send keyboard input",
+                abstract: "Type text into an app or UI element",
                 discussion: """
                     The 'type' command sends keyboard input to a targeted app or snapshot
                     process. Background delivery is the default and requires a process target.
@@ -329,20 +297,14 @@ extension TypeCommand: ParsableCommand {
                       peekaboo type "text" --app TextEdit --delay 0
                       peekaboo type "text" --app TextEdit --delay 50
                       peekaboo type "text" --app TextEdit --wpm 150
-                      peekaboo type "password" --app Safari --return
-                      peekaboo type --tab 3 --app Safari
                       peekaboo type "text" --app TextEdit --clear
                       peekaboo type "Line 1\nLine 2" --app TextEdit
                       peekaboo type "Name:\tJohn" --app TextEdit
                       peekaboo type "Path: C:\\data" --app TextEdit
 
-                    SPECIAL KEYS:
-                      Use flags for special keys:
-                      --return    Press return/enter
-                      --tab       Press tab (with optional count)
-                      --escape    Press escape
-                      --delete    Press delete
-                      --clear     Clear current field (Cmd+A, Delete)
+                    KEY PRESSES:
+                      Chain `type` with `press` for Return, Tab, Escape, Delete, or chords.
+                      Use --clear to clear the current field before typing.
 
                     ESCAPE SEQUENCES:
                       Supported escape sequences in text:

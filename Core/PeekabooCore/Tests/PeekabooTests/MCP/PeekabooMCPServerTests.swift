@@ -18,7 +18,7 @@ struct PeekabooMCPServerTests {
         let server = try await makeServer()
         let names = await server.registeredToolNamesForTesting()
 
-        #expect(names.count == 27)
+        #expect(names.count == 26)
         #expect(names == names.sorted())
         #expect(names.contains("capture"))
         #expect(names.contains("image"))
@@ -28,7 +28,10 @@ struct PeekabooMCPServerTests {
         #expect(names.contains("clipboard"))
         #expect(names.contains("paste"))
         #expect(names.contains("set_value"))
-        #expect(names.contains("perform_action"))
+        #expect(names.contains("action"))
+        #expect(names.contains("press"))
+        #expect(!names.contains("hotkey"))
+        #expect(!names.contains("swipe"))
     }
 
     @Test
@@ -66,7 +69,7 @@ struct PeekabooMCPServerTests {
         let names = await server.registeredToolNamesForTesting()
 
         #expect(!names.contains("set_value"))
-        #expect(!names.contains("perform_action"))
+        #expect(!names.contains("action"))
     }
 
     @Test

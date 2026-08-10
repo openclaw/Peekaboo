@@ -18,7 +18,6 @@ struct TargetedInteractionDefaultDeliveryTests {
         for arguments in [
             ["type", "hello"],
             ["press", "return"],
-            ["hotkey", "cmd,l"],
             ["paste", "--text", "hello"],
         ] {
             let result = try await InProcessCommandRunner.run(arguments + ["--no-remote"], services: services)
@@ -50,17 +49,16 @@ struct TargetedInteractionDefaultDeliveryTests {
         for arguments in [
             ["type", "hello", "--app", "TextEdit", "--no-auto-focus"],
             ["press", "return", "--app", "TextEdit", "--no-auto-focus"],
-            ["hotkey", "cmd,l", "--app", "TextEdit", "--no-auto-focus"],
             ["paste", "--text", "hello", "--app", "TextEdit", "--no-auto-focus"],
         ] {
             let result = try await InProcessCommandRunner.run(arguments + ["--no-remote"], services: services)
             #expect(result.exitStatus == 0, "Expected targeted input to succeed: \(arguments)")
         }
 
-        #expect(automation.targetedTypeActionsCalls.count == 3)
+        #expect(automation.targetedTypeActionsCalls.count == 2)
         #expect(automation.targetedTypeActionsCalls.allSatisfy { $0.targetProcessIdentifier == 2468 })
         #expect(automation.targetedHotkeyCalls.count == 1)
-        #expect(automation.targetedHotkeyCalls.first?.targetProcessIdentifier == 2468)
+        #expect(automation.targetedHotkeyCalls.allSatisfy { $0.targetProcessIdentifier == 2468 })
         #expect(automation.hotkeyCalls.isEmpty)
         #expect(applications.activateCalls.isEmpty)
     }
@@ -77,7 +75,6 @@ struct TargetedInteractionDefaultDeliveryTests {
         for arguments in [
             ["type", "hello", "--app", "Missing"],
             ["press", "return", "--app", "Missing"],
-            ["hotkey", "cmd,l", "--app", "Missing"],
             ["paste", "--text", "hello", "--app", "Missing"],
         ] {
             let result = try await InProcessCommandRunner.run(arguments + ["--no-remote"], services: services)
@@ -101,7 +98,6 @@ struct TargetedInteractionDefaultDeliveryTests {
         for arguments in [
             ["type", "hello", "--foreground"],
             ["press", "return", "--foreground"],
-            ["hotkey", "cmd,space", "--foreground"],
             ["paste", "--text", "hello", "--foreground", "--restore-delay-ms", "0"],
         ] {
             let result = try await InProcessCommandRunner.run(arguments + ["--no-remote"], services: services)
@@ -110,7 +106,7 @@ struct TargetedInteractionDefaultDeliveryTests {
 
         #expect(automation.targetedTypeActionsCalls.isEmpty)
         #expect(automation.targetedHotkeyCalls.isEmpty)
-        #expect(automation.hotkeyCalls.map(\.keys) == ["return", "cmd,space", "cmd,v"])
+        #expect(automation.hotkeyCalls.map(\.keys) == ["return", "cmd,v"])
     }
 
     @Test
@@ -130,7 +126,6 @@ struct TargetedInteractionDefaultDeliveryTests {
         for arguments in [
             ["type", "hello", "--app", "TextEdit", "--window-title", "Document"],
             ["press", "return", "--app", "TextEdit", "--window-title", "Document"],
-            ["hotkey", "cmd,l", "--app", "TextEdit", "--window-title", "Document"],
             ["paste", "--text", "hello", "--app", "TextEdit", "--window-title", "Document"],
         ] {
             let result = try await InProcessCommandRunner.run(arguments + ["--no-remote"], services: services)
@@ -170,7 +165,6 @@ struct TargetedInteractionDefaultDeliveryTests {
         for arguments in [
             ["type", "hello", "--snapshot", snapshotId, "--no-auto-focus"],
             ["press", "return", "--snapshot", snapshotId, "--no-auto-focus"],
-            ["hotkey", "cmd,l", "--snapshot", snapshotId, "--no-auto-focus"],
         ] {
             let result = try await InProcessCommandRunner.run(
                 arguments + ["--no-remote"],
@@ -179,7 +173,7 @@ struct TargetedInteractionDefaultDeliveryTests {
             #expect(result.exitStatus == 0, "Expected snapshot-targeted input to succeed: \(arguments)")
         }
 
-        #expect(context.automation.targetedTypeActionsCalls.count == 2)
+        #expect(context.automation.targetedTypeActionsCalls.count == 1)
         #expect(context.automation.targetedTypeActionsCalls.allSatisfy { $0.targetProcessIdentifier == 2468 })
         #expect(context.automation.targetedHotkeyCalls.count == 1)
         #expect(context.automation.targetedHotkeyCalls.first?.targetProcessIdentifier == 2468)
@@ -243,7 +237,6 @@ struct TargetedInteractionDefaultDeliveryTests {
 
         try await self.assertTypeDefaultsToBackground(services: services, automation: automation)
         try await self.assertPressDefaultsToBackground(services: services, automation: automation)
-        try await self.assertHotkeyDefaultsToBackground(services: services, automation: automation)
         try await self.assertPasteDefaultsToBackground(services: services, automation: automation)
         try await self.assertClickDefaultsToBackground(
             services: services,
@@ -283,35 +276,12 @@ struct TargetedInteractionDefaultDeliveryTests {
         )
 
         #expect(result.exitStatus == 0)
-        let call = try #require(automation.targetedTypeActionsCalls.last)
+        let call = try #require(automation.targetedHotkeyCalls.last)
         #expect(call.targetProcessIdentifier == 2468)
-        if case .key(.return) = call.actions.first {} else {
-            Issue.record("Expected press to use a targeted return key action")
-        }
+        #expect(call.keys == "return")
         let payload = try ExternalCommandRunner.decodeJSONResponse(
             from: result,
             as: CodableJSONResponse<PressResult>.self
-        )
-        #expect(payload.data.deliveryMode == "background")
-        #expect(payload.data.targetPID == 2468)
-    }
-
-    private func assertHotkeyDefaultsToBackground(
-        services: PeekabooServices,
-        automation: StubAutomationService
-    ) async throws {
-        let result = try await InProcessCommandRunner.run(
-            ["hotkey", "cmd,l", "--app", "TextEdit", "--json", "--no-remote"],
-            services: services
-        )
-
-        #expect(result.exitStatus == 0)
-        let call = try #require(automation.targetedHotkeyCalls.last)
-        #expect(call.keys == "cmd,l")
-        #expect(call.targetProcessIdentifier == 2468)
-        let payload = try ExternalCommandRunner.decodeJSONResponse(
-            from: result,
-            as: CodableJSONResponse<HotkeyResult>.self
         )
         #expect(payload.data.deliveryMode == "background")
         #expect(payload.data.targetPID == 2468)

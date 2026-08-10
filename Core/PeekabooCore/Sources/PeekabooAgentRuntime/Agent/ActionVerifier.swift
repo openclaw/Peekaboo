@@ -149,9 +149,9 @@ public final class ActionVerifier {
             let direction = action.arguments["direction"] ?? "down"
             return "The content should have scrolled \(direction), showing different content than before"
 
-        case "hotkey":
+        case "press":
             let keys = action.arguments["keys"] ?? "keys"
-            return "The hotkey '\(keys)' should have triggered an action - look for any visible change"
+            return "The keyboard chord '\(keys)' should have triggered an action - look for any visible change"
 
         case "app":
             let actionName = action.arguments["action"] ?? "requested app action"
@@ -179,9 +179,6 @@ public final class ActionVerifier {
         case "move":
             return "The mouse pointer should now be at the requested screen location or element"
 
-        case "swipe":
-            return "The swipe gesture should have moved or changed the visible content"
-
         case "paste":
             return "The pasted content should now be visible in the focused target"
 
@@ -189,7 +186,7 @@ public final class ActionVerifier {
             let value = action.arguments["value"] ?? "the requested value"
             return "The target element should now have the value '\(value)'"
 
-        case "perform_action":
+        case "action":
             let actionName = action.arguments["action"] ?? "requested accessibility action"
             return "The accessibility action '\(actionName)' should have completed with the expected UI change"
 

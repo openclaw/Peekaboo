@@ -45,7 +45,7 @@ struct CommanderBinderTests {
     @Test
     func `Runtime options map capture engine option and force local mode`() throws {
         let parsed = ParsedValues(positional: [], options: ["captureEngine": ["cg"]], flags: [])
-        let options = try CommanderCLIBinder.makeRuntimeOptions(from: parsed, commandType: ImageCommand.self)
+        let options = try CommanderCLIBinder.makeRuntimeOptions(from: parsed, commandType: SeeCommand.self)
         #expect(options.captureEnginePreference == "cg")
         #expect(options.preferRemote == false)
     }
@@ -243,13 +243,11 @@ struct CommanderBinderTests {
             MoveCommand.self,
             TypeCommand.self,
             PressCommand.self,
-            HotkeyCommand.self,
             PasteCommand.self,
             ScrollCommand.self,
-            SwipeCommand.self,
             DragCommand.self,
             SetValueCommand.self,
-            PerformActionCommand.self,
+            ActionCommand.self,
             CaptureActionCommand.self,
             WindowCommand.FocusSubcommand.self,
             WindowCommand.CloseSubcommand.self,
@@ -291,13 +289,6 @@ struct CommanderBinderTests {
             commandType: ClickCommand.self
         )
         #expect(!remoteHostedClick.requiresCallerDesktopMutationBarrier)
-
-        let inspectOptions = try CommanderCLIBinder.makeRuntimeOptions(
-            from: parsed,
-            commandType: InspectUICommand.self
-        )
-        #expect(!inspectOptions.requiresImplicitSnapshotInvalidation)
-        #expect(inspectOptions.usesPerToolSnapshotInvalidation)
 
         let menuBarClick = try CommanderCLIBinder.makeRuntimeOptions(
             from: parsed,
@@ -470,25 +461,15 @@ struct CommanderBinderTests {
         )
 
         let readOnlyCaptures: [(any ParsableCommand.Type, ParsedValues)] = [
-            (ImageCommand.self, ParsedValues(positional: [], options: [:], flags: [])),
-            (ImageCommand.self, ParsedValues(
+            (SeeCommand.self, ParsedValues(positional: [], options: [:], flags: [])),
+            (SeeCommand.self, ParsedValues(
                 positional: [],
                 options: ["mode": ["screen"], "app": ["TextEdit"]],
                 flags: []
             )),
-            (ImageCommand.self, ParsedValues(
+            (SeeCommand.self, ParsedValues(
                 positional: [],
                 options: ["app": ["TextEdit"]],
-                flags: []
-            )),
-            (ImageCommand.self, ParsedValues(
-                positional: [],
-                options: ["app": ["TextEdit"], "captureFocus": ["background"]],
-                flags: []
-            )),
-            (ImageCommand.self, ParsedValues(
-                positional: [],
-                options: ["windowId": ["42"], "captureFocus": ["foreground"]],
                 flags: []
             )),
             (CaptureLiveCommand.self, ParsedValues(
@@ -515,11 +496,6 @@ struct CommanderBinderTests {
         }
 
         let focusingCaptures: [(any ParsableCommand.Type, ParsedValues)] = [
-            (ImageCommand.self, ParsedValues(
-                positional: [],
-                options: ["mode": ["multi"], "pid": ["123"], "captureFocus": ["auto"]],
-                flags: []
-            )),
             (CaptureLiveCommand.self, ParsedValues(
                 positional: [],
                 options: ["app": ["TextEdit"], "captureFocus": ["foreground"]],
@@ -1027,7 +1003,7 @@ extension CommanderBinderTests {
         )
         let performActionOptions = try CommanderCLIBinder.makeRuntimeOptions(
             from: ParsedValues(positional: [], options: [:], flags: []),
-            commandType: PerformActionCommand.self
+            commandType: ActionCommand.self
         )
         let seeOptions = try CommanderCLIBinder.makeRuntimeOptions(
             from: ParsedValues(positional: [], options: [:], flags: []),
@@ -1175,7 +1151,7 @@ extension CommanderBinderTests {
     @Test
     func `Image runtime defaults to daemon host mode`() throws {
         let parsed = ParsedValues(positional: [], options: [:], flags: [])
-        let options = try CommanderCLIBinder.makeRuntimeOptions(from: parsed, commandType: ImageCommand.self)
+        let options = try CommanderCLIBinder.makeRuntimeOptions(from: parsed, commandType: SeeCommand.self)
         #expect(options.preferRemote == true)
     }
 
@@ -1333,7 +1309,7 @@ extension CommanderBinderTests {
             options: ["bridge-socket": ["/tmp/peekaboo.sock"]],
             flags: []
         )
-        let options = try CommanderCLIBinder.makeRuntimeOptions(from: parsed, commandType: ImageCommand.self)
+        let options = try CommanderCLIBinder.makeRuntimeOptions(from: parsed, commandType: SeeCommand.self)
         #expect(options.preferRemote == true)
         #expect(options.bridgeSocketPath == "/tmp/peekaboo.sock")
     }
@@ -1359,7 +1335,7 @@ extension CommanderBinderTests {
         )
         let captureOptions = try CommanderCLIBinder.makeRuntimeOptions(
             from: parsed,
-            commandType: ImageCommand.self
+            commandType: SeeCommand.self
         )
         #expect(requestOptions.requestsHostPermissionGrant)
         #expect(!captureOptions.requestsHostPermissionGrant)
@@ -1369,7 +1345,6 @@ extension CommanderBinderTests {
     func `Screen capture permission is required only by capture commands`() throws {
         let parsed = ParsedValues(positional: [], options: [:], flags: [])
         let captureCommands: [any ParsableCommand.Type] = [
-            ImageCommand.self,
             SeeCommand.self,
             CaptureLiveCommand.self,
             CaptureVideoCommand.self,
@@ -1391,13 +1366,18 @@ extension CommanderBinderTests {
             let options = try CommanderCLIBinder.makeRuntimeOptions(from: parsed, commandType: commandType)
             #expect(!options.requiresScreenCapturePermission, "Unexpected capture gating for \(commandType)")
         }
+        let treeOnly = try CommanderCLIBinder.makeRuntimeOptions(
+            from: ParsedValues(positional: [], options: [:], flags: ["tree", "noScreenshot"]),
+            commandType: SeeCommand.self
+        )
+        #expect(!treeOnly.requiresScreenCapturePermission)
+        #expect(treeOnly.requiresInspectAccessibilityTree)
     }
 
     @Test
     func `Commands with implicit silent observation reject pre-1_12 bridge hosts`() throws {
         let parsed = ParsedValues(positional: [], options: [:], flags: [])
         let silentCommands: [(any ParsableCommand.Type, ParsedValues)] = [
-            (ImageCommand.self, parsed),
             (SeeCommand.self, parsed),
             (CaptureLiveCommand.self, parsed),
             (CaptureActionCommand.self, parsed),
@@ -1412,11 +1392,6 @@ extension CommanderBinderTests {
                 positional: [],
                 options: ["on": ["S1"]],
                 flags: []
-            )),
-            (SwipeCommand.self, ParsedValues(
-                positional: [],
-                options: ["from": ["B1"], "to": ["B2"]],
-                flags: ["foreground"]
             )),
             (MoveCommand.self, ParsedValues(
                 positional: [],
@@ -1449,14 +1424,6 @@ extension CommanderBinderTests {
 
         let legacyVisualizerOnly = try [
             CommanderCLIBinder.makeRuntimeOptions(
-                from: ParsedValues(
-                    positional: [],
-                    options: ["captureFocus": ["foreground"]],
-                    flags: []
-                ),
-                commandType: ImageCommand.self
-            ),
-            CommanderCLIBinder.makeRuntimeOptions(
                 from: ParsedValues(positional: [], options: ["on": ["B1"]], flags: []),
                 commandType: ClickCommand.self
             ),
@@ -1471,5 +1438,28 @@ extension CommanderBinderTests {
         silentOptions.requiresSilentCapture = true
         #expect(!CommandRuntime.supportsRemoteRequirements(for: legacy, options: silentOptions))
         #expect(CommandRuntime.supportsRemoteRequirements(for: current, options: silentOptions))
+    }
+
+    @Test
+    func `Coordinate-only drag does not require silent capture`() throws {
+        let coordinates = try CommanderCLIBinder.makeRuntimeOptions(
+            from: ParsedValues(
+                positional: [],
+                options: ["from": ["100,200"], "to": ["300,400"]],
+                flags: ["foreground"]
+            ),
+            commandType: DragCommand.self
+        )
+        #expect(!coordinates.requiresSilentCapture)
+
+        let elements = try CommanderCLIBinder.makeRuntimeOptions(
+            from: ParsedValues(
+                positional: [],
+                options: ["from": ["source-id"], "to": ["300,400"]],
+                flags: ["foreground"]
+            ),
+            commandType: DragCommand.self
+        )
+        #expect(elements.requiresSilentCapture)
     }
 }

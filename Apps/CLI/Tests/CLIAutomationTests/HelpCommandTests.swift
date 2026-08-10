@@ -41,8 +41,6 @@ struct HelpCommandTests {
             "click",
             "type",
             "scroll",
-            "hotkey",
-            "swipe",
             "drag",
             "move",
             "clean",

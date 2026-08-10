@@ -10,7 +10,7 @@ struct ImageWindowObservationTarget {
 }
 
 @MainActor
-extension ImageCommand {
+extension SeeCommand {
     var observationWindowSelection: WindowSelection {
         if let windowTitle {
             return .title(windowTitle)
@@ -53,14 +53,14 @@ extension ImageCommand {
         return .windowID(CGWindowID(windowID))
     }
 
-    func makeObservationRequest(
+    func makePixelObservationRequest(
         target: DesktopObservationTargetRequest,
         outputURL: URL
     ) -> DesktopObservationRequest {
         DesktopObservationRequest(
             target: target,
             capture: DesktopCaptureOptions(
-                engine: self.observationCaptureEnginePreference,
+                engine: self.pixelObservationCaptureEnginePreference,
                 scale: self.captureScale,
                 focus: self.captureFocus,
                 visualizerMode: .resolved(for: self.captureFocus, visibleMode: .screenshotFlash)
@@ -78,7 +78,7 @@ extension ImageCommand {
         self.retina ? .native : .logical1x
     }
 
-    private var observationCaptureEnginePreference: CaptureEnginePreference {
+    private var pixelObservationCaptureEnginePreference: CaptureEnginePreference {
         ObservationCommandSupport.captureEnginePreference(
             cliValue: self.captureEngine,
             configuredValue: self.configuredCaptureEnginePreference

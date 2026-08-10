@@ -9,7 +9,7 @@ read_when:
 
 `peekaboo see` captures the current macOS UI, extracts accessibility metadata, and (optionally) saves annotated screenshots. CLI and agent flows rely on these UI maps to find fresh element IDs, bounds, labels, and snapshot IDs.
 
-Observation is read-only with respect to focus: targeting a background app does not activate it or move its windows. The same is true of `peekaboo inspect-ui`.
+Observation is read-only with respect to focus: targeting a background app does not activate it or move its windows.
 
 ```bash
 # Capture frontmost window, print JSON, and save an annotated PNG
@@ -31,7 +31,12 @@ peekaboo see --app "Google Chrome" --window-title "Login" --json --path /tmp/chr
 | --- | --- |
 | `--app`, `--window-title`, `--pid` | Limit capture to a known app/window/process. |
 | `--window-id <id>` | Observe one exact WindowServer window. Pair it with `--app` or `--pid` to require that owner. It cannot be combined with `--window-title`. |
-| `--mode screen|window|frontmost|multi` | Override the auto target picker. `area` is intentionally rejected because `see` does not expose rectangle coordinates; use `peekaboo image --mode area --region x,y,width,height` for raw region screenshots. |
+| `--mode screen|window|frontmost|multi|area` | Override the target picker. `multi` captures every screen; `area` uses `--region`. |
+| `--region x,y,width,height` | Capture a rectangular region (`area` mode is inferred). |
+| `--format png|jpg` / `--retina` | Select the image encoding and native display scale. |
+| `--no-elements` | Skip element detection for the cheapest screenshot-only CLI path. |
+| `--tree` | Print the accessibility text tree. |
+| `--no-screenshot` | Skip pixel capture; requires `--tree`. This is the AX-only inspection form. |
 | `--annotate` | Overlay element bounds/IDs on the output image. |
 | `--path <file>` / `--save` / `--output` / `-o` | Save the screenshot/annotation to disk. |
 | `--json` | Emit structured metadata (recommended for scripting). |
@@ -39,13 +44,13 @@ peekaboo see --app "Google Chrome" --window-title "Login" --json --path /tmp/chr
 | `--timeout-seconds <seconds>` | Increase overall timeout for large/complex windows (defaults to 20s, or 60s with `--analyze`). |
 | `--web-focus` | Opt into an `AXPress` retry on the target `AXWebArea` when a sparse Chromium/Tauri tree hides its content. This can change keyboard focus. |
 | `--no-web-focus` | Deprecated compatibility flag. Web focus is already disabled by default. |
-| `--max-depth <n>` | Override AX traversal depth (`PEEKABOO_AX_MAX_DEPTH` fallback, default 12). |
+| `--depth <n>` | Override AX traversal depth (`PEEKABOO_AX_MAX_DEPTH` fallback, default 12). |
 | `--max-elements <n>` | Override maximum collected AX elements (`PEEKABOO_AX_MAX_ELEMENTS` fallback, default 1000). |
 | `--max-children <n>` | Override maximum AX children visited per node (`PEEKABOO_AX_MAX_CHILDREN` fallback, default 250). |
 
 Note: `--app menubar` captures only the menu bar strip; `--menubar` attempts to find the active popover and OCR its text.
 
-For agent and automation runs, pass `--path` to a known temporary file when using `see` so capture artifacts land where expected. Use `peekaboo inspect-ui --json` when you need AX metadata and no screenshot artifact.
+For agent and automation runs, pass `--path` to a known temporary file when using `see` so capture artifacts land where expected. Use `peekaboo see --tree --no-screenshot --json` when you need AX metadata without a screenshot artifact.
 
 When `--json` is used without `--path`, Peekaboo retains the raw image only in managed snapshot storage and returns empty `screenshot_raw` and `screenshot_annotated` fields. Pass `--path` when the caller needs a directly accessible image file.
 
@@ -84,7 +89,7 @@ peekaboo see --app "Google Chrome" --json --path /tmp/chrome-see.png \
 ## Troubleshooting tips
 
 - If the CLI reports **blind typing**, pass an explicit `--app`, `--pid`, `--window-id`, or fresh `--snapshot` so `type` can resolve a background target process, or add `--foreground` when the target app requires focused keyboard input.
-- If JSON/text output reports `AX tree truncated`, rerun with larger `--max-depth`, `--max-elements`, or `--max-children` values. For repeated captures, export the matching `PEEKABOO_AX_MAX_*` environment variable before launching Peekaboo.
+- If JSON/text output reports `AX tree truncated`, rerun with larger `--depth`, `--max-elements`, or `--max-children` values. For repeated captures, export the matching `PEEKABOO_AX_MAX_*` environment variable before launching Peekaboo.
 - Missing text fields after an explicit `--web-focus` retry usually means the page is shielding its inputs from AX entirely. For Chrome targets, use the `browser` tool (`status` → `connect` → `snapshot`/`fill`/`click`) after enabling Chrome remote debugging; otherwise rely on image-based hit tests.
 - For repeatable local tests, run `RUN_LOCAL_TESTS=true swift test --filter SeeCommandPlaygroundTests` to exercise the Playground fixtures mentioned in `docs/research/interaction-debugging.md`.
 - Rapid repeated `see` calls for the same window reuse a short-lived AX cache (~1.5s); wait a beat if you need a fully fresh traversal.

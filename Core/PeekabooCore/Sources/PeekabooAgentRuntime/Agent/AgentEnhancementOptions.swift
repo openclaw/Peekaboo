@@ -101,15 +101,14 @@ public enum VerifiableActionType: String, Sendable, Hashable, CaseIterable {
     case dialog
     case dock
     case drag
-    case hotkey
+    case press
     case launchApp = "launch_app"
     case menu
     case paste
-    case performAction = "perform_action"
+    case action
     case scroll
     case setValue = "set_value"
     case space
-    case swipe
     case type
     case window
 

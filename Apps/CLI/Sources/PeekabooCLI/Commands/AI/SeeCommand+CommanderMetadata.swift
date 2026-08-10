@@ -20,6 +20,11 @@ extension SeeCommand: CommanderSignatureProviding {
                     long: "window-title"
                 ),
                 .commandOption(
+                    "windowIndex",
+                    help: "Window index to capture",
+                    long: "window-index"
+                ),
+                .commandOption(
                     "windowId",
                     help: "Capture a specific window by CoreGraphics window id "
                         + "(window_id from `peekaboo window list --json`)",
@@ -27,8 +32,18 @@ extension SeeCommand: CommanderSignatureProviding {
                 ),
                 .commandOption(
                     "mode",
-                    help: "Capture mode (screen, window, frontmost, multi)",
+                    help: "Capture mode (screen, window, frontmost, multi, area)",
                     long: "mode"
+                ),
+                .commandOption(
+                    "region",
+                    help: "Region for area captures as x,y,width,height",
+                    long: "region"
+                ),
+                .commandOption(
+                    "format",
+                    help: "Image format (png or jpg)",
+                    long: "format"
                 ),
                 .make(
                     label: "path",
@@ -62,9 +77,9 @@ extension SeeCommand: CommanderSignatureProviding {
                     long: "timeout-seconds"
                 ),
                 .commandOption(
-                    "maxDepth",
+                    "depth",
                     help: "Maximum AX traversal depth (env: PEEKABOO_AX_MAX_DEPTH)",
-                    long: "max-depth"
+                    long: "depth"
                 ),
                 .commandOption(
                     "maxElements",
@@ -82,6 +97,26 @@ extension SeeCommand: CommanderSignatureProviding {
                     "annotate",
                     help: "Generate annotated screenshot with interaction markers",
                     long: "annotate"
+                ),
+                .commandFlag(
+                    "retina",
+                    help: "Capture at native Retina resolution instead of 1x logical",
+                    long: "retina"
+                ),
+                .commandFlag(
+                    "noElements",
+                    help: "Skip element detection for a faster screenshot-only capture",
+                    long: "no-elements"
+                ),
+                .commandFlag(
+                    "tree",
+                    help: "Print the accessibility text tree",
+                    long: "tree"
+                ),
+                .commandFlag(
+                    "noScreenshot",
+                    help: "Skip image capture; requires --tree",
+                    long: "no-screenshot"
                 ),
                 .commandFlag(
                     "menubar",

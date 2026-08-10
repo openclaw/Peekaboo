@@ -5,12 +5,13 @@ import Testing
 struct CommanderBinderProgramResolutionTests {
     @Test
     @MainActor
-    func `Commander program resolves image command options`() throws {
+    func `Commander program resolves screenshot-only see options`() throws {
         let descriptors = CommanderRegistryBuilder.buildDescriptors()
         let program = Program(descriptors: descriptors.map(\.metadata))
         let invocation = try program.resolve(argv: [
             "peekaboo",
-            "image",
+            "see",
+            "--no-elements",
             "--app", "Safari",
             "--window-title", "Inbox",
             "--mode", "screen",
@@ -23,6 +24,7 @@ struct CommanderBinderProgramResolutionTests {
         #expect(values.options["mode"] == ["screen"])
         #expect(values.options["captureEngine"] == ["cg"])
         #expect(values.options["path"] == ["/tmp/sample.png"])
+        #expect(values.flags.contains("noElements"))
     }
 
     @Test
@@ -55,13 +57,13 @@ struct CommanderBinderProgramResolutionTests {
                 "peekaboo",
                 "see",
                 alias, "/tmp/see.png",
-                "--max-depth", "8",
+                "--depth", "8",
                 "--max-elements", "500",
                 "--max-children", "100",
             ])
             let values = invocation.parsedValues
             #expect(values.options["path"] == ["/tmp/see.png"])
-            #expect(values.options["maxDepth"] == ["8"])
+            #expect(values.options["depth"] == ["8"])
             #expect(values.options["maxElements"] == ["500"])
             #expect(values.options["maxChildren"] == ["100"])
         }
@@ -130,29 +132,35 @@ struct CommanderBinderProgramResolutionTests {
 
     @Test
     @MainActor
-    func `Commander program resolves inspect UI command`() throws {
+    func `Commander program resolves AX-only see command`() throws {
         let descriptors = CommanderRegistryBuilder.buildDescriptors()
         let program = Program(descriptors: descriptors.map(\.metadata))
         let invocation = try program.resolve(argv: [
             "peekaboo",
-            "inspect-ui",
+            "see",
+            "--tree",
+            "--no-screenshot",
             "--app", "TextEdit",
             "--max-elements", "200",
         ])
         let values = invocation.parsedValues
-        #expect(invocation.path == ["inspect-ui"])
+        #expect(invocation.path == ["see"])
         #expect(values.options["app"] == ["TextEdit"])
         #expect(values.options["maxElements"] == ["200"])
+        #expect(values.flags.contains("tree"))
+        #expect(values.flags.contains("noScreenshot"))
     }
 
     @Test
     @MainActor
-    func `Commander program resolves inspect UI app target`() throws {
+    func `Commander program resolves AX-only see app target`() throws {
         let descriptors = CommanderRegistryBuilder.buildDescriptors()
         let program = Program(descriptors: descriptors.map(\.metadata))
         let invocation = try program.resolve(argv: [
             "peekaboo",
-            "inspect-ui",
+            "see",
+            "--tree",
+            "--no-screenshot",
             "--app", "TextEdit",
         ])
         #expect(invocation.parsedValues.options["app"] == ["TextEdit"])
@@ -264,24 +272,6 @@ struct CommanderBinderProgramResolutionTests {
 
     @Test
     @MainActor
-    func `Commander program resolves hotkey background focus flag`() throws {
-        let descriptors = CommanderRegistryBuilder.buildDescriptors()
-        let program = Program(descriptors: descriptors.map(\.metadata))
-        let invocation = try program.resolve(argv: [
-            "peekaboo",
-            "hotkey",
-            "cmd,l",
-            "--app", "Safari",
-            "--focus-background"
-        ])
-        let values = invocation.parsedValues
-        #expect(values.positional == ["cmd,l"])
-        #expect(values.options["app"] == ["Safari"])
-        #expect(values.flags.contains("focusBackground"))
-    }
-
-    @Test
-    @MainActor
     func `Commander program resolves click background focus flag`() throws {
         let descriptors = CommanderRegistryBuilder.buildDescriptors()
         let program = Program(descriptors: descriptors.map(\.metadata))
@@ -309,10 +299,6 @@ struct CommanderBinderProgramResolutionTests {
             "Hello",
             "--snapshot", "xyz",
             "--delay", "10",
-            "--tab", "2",
-            "--return",
-            "--escape",
-            "--delete",
             "--clear",
             "--app", "Notes",
             "--focus-timeout-seconds", "3.5",
@@ -322,11 +308,7 @@ struct CommanderBinderProgramResolutionTests {
         #expect(values.positional == ["Hello"])
         #expect(values.options["snapshot"] == ["xyz"])
         #expect(values.options["delay"] == ["10"])
-        #expect(values.options["tab"] == ["2"])
         #expect(values.options["app"] == ["Notes"])
-        #expect(values.flags.contains("pressReturn"))
-        #expect(values.flags.contains("escape"))
-        #expect(values.flags.contains("delete"))
         #expect(values.flags.contains("clear"))
         #expect(values.options["focusTimeoutSeconds"] == ["3.5"])
         #expect(values.flags.contains("spaceSwitch"))
@@ -340,8 +322,7 @@ struct CommanderBinderProgramResolutionTests {
         let invocation = try program.resolve(argv: [
             "peekaboo",
             "press",
-            "cmd",
-            "c",
+            "cmd+c",
             "--count", "3",
             "--delay", "25",
             "--hold", "75",
@@ -349,7 +330,7 @@ struct CommanderBinderProgramResolutionTests {
             "--no-auto-focus"
         ])
         let values = invocation.parsedValues
-        #expect(values.positional == ["cmd", "c"])
+        #expect(values.positional == ["cmd+c"])
         #expect(values.options["count"] == ["3"])
         #expect(values.options["delay"] == ["25"])
         #expect(values.options["hold"] == ["75"])
@@ -419,26 +400,6 @@ struct CommanderBinderProgramResolutionTests {
 
     @Test
     @MainActor
-    func `Commander program resolves hotkey command options`() throws {
-        let descriptors = CommanderRegistryBuilder.buildDescriptors()
-        let program = Program(descriptors: descriptors.map(\.metadata))
-        let invocation = try program.resolve(argv: [
-            "peekaboo",
-            "hotkey",
-            "--keys", "cmd,c",
-            "--hold-duration", "120",
-            "--snapshot", "sess-11",
-            "--no-auto-focus"
-        ])
-        let values = invocation.parsedValues
-        #expect(values.options["keys"] == ["cmd,c"])
-        #expect(values.options["holdDuration"] == ["120"])
-        #expect(values.options["snapshot"] == ["sess-11"])
-        #expect(values.flags.contains("noAutoFocus"))
-    }
-
-    @Test
-    @MainActor
     func `Commander program resolves move command options`() throws {
         let descriptors = CommanderRegistryBuilder.buildDescriptors()
         let program = Program(descriptors: descriptors.map(\.metadata))
@@ -474,44 +435,22 @@ struct CommanderBinderProgramResolutionTests {
             "peekaboo",
             "drag",
             "--from", "A1",
-            "--to-coords", "300,400",
+            "--to", "300,400",
             "--snapshot", "sess-9",
             "--duration", "900",
             "--steps", "15",
             "--modifiers", "cmd,shift",
+            "--button", "right",
             "--bring-to-current-space"
         ])
         let values = invocation.parsedValues
         #expect(values.options["from"] == ["A1"])
-        #expect(values.options["toCoords"] == ["300,400"])
+        #expect(values.options["to"] == ["300,400"])
         #expect(values.options["snapshot"] == ["sess-9"])
         #expect(values.options["duration"] == ["900"])
         #expect(values.options["steps"] == ["15"])
         #expect(values.options["modifiers"] == ["cmd,shift"])
+        #expect(values.options["button"] == ["right"])
         #expect(values.flags.contains("bringToCurrentSpace"))
-    }
-
-    @Test
-    @MainActor
-    func `Commander program resolves swipe command options`() throws {
-        let descriptors = CommanderRegistryBuilder.buildDescriptors()
-        let program = Program(descriptors: descriptors.map(\.metadata))
-        let invocation = try program.resolve(argv: [
-            "peekaboo",
-            "swipe",
-            "--from-coords", "10,20",
-            "--to", "B1",
-            "--snapshot", "sess-8",
-            "--duration", "600",
-            "--steps", "12",
-            "--right-button"
-        ])
-        let values = invocation.parsedValues
-        #expect(values.options["fromCoords"] == ["10,20"])
-        #expect(values.options["to"] == ["B1"])
-        #expect(values.options["snapshot"] == ["sess-8"])
-        #expect(values.options["duration"] == ["600"])
-        #expect(values.options["steps"] == ["12"])
-        #expect(values.flags.contains("rightButton"))
     }
 }

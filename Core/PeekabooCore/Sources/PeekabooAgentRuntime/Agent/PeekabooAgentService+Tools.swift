@@ -82,16 +82,16 @@ extension PeekabooAgentService {
         self.makeAgentTool(from: SetValueTool(context: self.makeToolContext()))
     }
 
-    public func createPerformActionTool() -> AgentTool {
-        self.makeAgentTool(from: PerformActionTool(context: self.makeToolContext()))
+    public func createActionTool() -> AgentTool {
+        self.makeAgentTool(from: ActionTool(context: self.makeToolContext()))
     }
 
     public func createScrollTool() -> AgentTool {
         self.makeAgentTool(from: ScrollTool(context: self.makeToolContext()))
     }
 
-    public func createHotkeyTool() -> AgentTool {
-        self.makeAgentTool(from: HotkeyTool(context: self.makeToolContext()))
+    public func createPressTool() -> AgentTool {
+        self.makeAgentTool(from: PressTool(context: self.makeToolContext()))
     }
 
     public func createDragTool() -> AgentTool {
@@ -154,12 +154,6 @@ extension PeekabooAgentService {
 
     public func createPasteTool() -> AgentTool {
         self.makeAgentTool(from: PasteTool(context: self.makeToolContext()))
-    }
-
-    // MARK: - Gesture Support
-
-    public func createSwipeTool() -> AgentTool {
-        self.makeAgentTool(from: SwipeTool(context: self.makeToolContext()))
     }
 
     // MARK: - Permissions Check

@@ -3,7 +3,7 @@ import PeekabooCore
 import PeekabooFoundation
 
 @MainActor
-extension ImageCommand {
+extension SeeCommand {
     func capturedFile(
         from observation: DesktopObservationResult,
         preferredName: String?,

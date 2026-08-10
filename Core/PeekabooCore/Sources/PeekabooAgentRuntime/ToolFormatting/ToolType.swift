@@ -24,16 +24,17 @@ public enum ToolType: String, CaseIterable, Sendable {
     case click
     case type
     case setValue = "set_value"
-    case performAction = "perform_action"
-    case scroll
-    case hotkey
+    case action
+    case press
     case drag
     case move
-    case swipe
+    case scroll
     case paste
 
-    /// Historical split-tool name retained for persisted sessions.
-    case press
+    // Historical tool names retained so persisted sessions keep rich formatting.
+    case performAction = "perform_action"
+    case hotkey
+    case swipe
 
     // MARK: - Application Management
 
@@ -124,7 +125,8 @@ public enum ToolType: String, CaseIterable, Sendable {
         switch self {
         case .see, .image, .capture, .screenshot, .windowCapture, .analyze:
             .vision
-        case .click, .type, .setValue, .performAction, .scroll, .hotkey, .drag, .move, .swipe, .paste, .press:
+        case .click, .type, .setValue, .action, .press, .drag, .move, .scroll, .paste,
+             .performAction, .hotkey, .swipe:
             .ui
         case .app, .launchApp, .listApps, .quitApp, .focusApp, .hideApp, .unhideApp, .switchApp:
             .app
@@ -180,6 +182,7 @@ public enum ToolType: String, CaseIterable, Sendable {
         case .image: "Capture Image"
         case .capture: "Capture Activity"
         case .setValue: "Set Value"
+        case .action: "Action"
         case .performAction: "Perform Action"
         case .paste: "Paste"
         case .app: "Application"

@@ -151,12 +151,12 @@ struct AgentEnhancementIntegrationTests {
     func `verification options can target accessibility mutation tools`() {
         let options = AgentEnhancementOptions(
             verifyActions: true,
-            verifyActionTypes: [.setValue, .performAction])
+            verifyActionTypes: [.setValue, .action])
 
         #expect(options.verifyActionTypes.contains(.setValue))
-        #expect(options.verifyActionTypes.contains(.performAction))
+        #expect(options.verifyActionTypes.contains(.action))
         #expect(VerifiableActionType.setValue.isMutating)
-        #expect(VerifiableActionType.performAction.isMutating)
+        #expect(VerifiableActionType.action.isMutating)
     }
 
     @Test
@@ -178,13 +178,12 @@ struct AgentEnhancementIntegrationTests {
             "click",
             "dock",
             "drag",
-            "hotkey",
+            "press",
             "paste",
-            "perform_action",
+            "action",
             "scroll",
             "set_value",
             "space",
-            "swipe",
             "type",
             "window",
         ]

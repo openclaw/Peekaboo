@@ -196,8 +196,8 @@ private enum AgentExecutionTraceBuilder {
             .replacingOccurrences(of: "-", with: "_")
             .lowercased()
         let mutatingTools: Set = [
-            "app", "click", "dialog", "dock", "drag", "hotkey", "menu", "move", "paste",
-            "perform_action", "scroll", "set_value", "space", "swipe", "type", "window",
+            "action", "app", "click", "dialog", "dock", "drag", "menu", "move", "paste", "press",
+            "scroll", "set_value", "space", "type", "window",
         ]
         guard mutatingTools.contains(name) else { return false }
 

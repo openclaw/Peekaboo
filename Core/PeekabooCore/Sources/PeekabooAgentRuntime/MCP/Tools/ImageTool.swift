@@ -13,12 +13,12 @@ public struct ImageTool: MCPTool {
 
     public var description: String {
         """
-        Captures macOS screen content and optionally analyzes it.
+        Screenshot only; use see for element detection.
+        Captures macOS screen content without building an element map or running AI analysis.
         Targets include entire displays, the frontmost window, app-specific windows (`app_target`),
         or the menu bar. Capture is background-only by default; set `capture_focus` to `foreground`
         to activate the target before capture.
         Output can be written to disk or returned inline as Base64 data (`format: "data"`).
-        When `question` is supplied the capture is analyzed with the configured AI model.
         Window shadows/frames are excluded automatically.
         """
     }
@@ -33,8 +33,6 @@ public struct ImageTool: MCPTool {
                     enum: ["png", "jpg", "data"]),
                 "app_target": SchemaBuilder.string(
                     description: "Optional. Specifies the capture target."),
-                "question": SchemaBuilder.string(
-                    description: "Optional. If provided, the captured image will be analyzed."),
                 "capture_focus": SchemaBuilder.string(
                     description: "Optional. background (default), foreground (activate target), or legacy auto.",
                     enum: ["background", "auto", "foreground"],
@@ -76,14 +74,6 @@ public struct ImageTool: MCPTool {
         captureSet = try self.downscaledCaptureSetIfNeeded(captureSet, request: request)
         let captureResults = captureSet.captures
         let savedFiles = try self.savedFiles(for: captureSet, request: request)
-
-        if let question = request.question {
-            return try await self.performAnalysis(
-                question: question,
-                savedFiles: savedFiles,
-                captureResults: captureResults,
-                observation: captureSet.observation)
-        }
 
         return self.buildCaptureResponse(
             format: request.format,

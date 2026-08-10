@@ -120,7 +120,7 @@ struct AgentToolDescriptionTests {
     func `Agent interaction tool schemas accept snapshots from see or inspect ui`() throws {
         let service = try PeekabooAgentService(services: PeekabooServices())
         let tools = service.createAgentTools()
-        let interactionToolNames = Set(["click", "type", "set_value", "perform_action", "scroll", "drag", "move"])
+        let interactionToolNames = Set(["click", "type", "set_value", "action", "scroll", "drag", "move"])
         let stalePhrases = [
             "from see command",
             "from see output",

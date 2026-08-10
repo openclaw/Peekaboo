@@ -10,6 +10,31 @@ import UniformTypeIdentifiers
 @Suite(.serialized)
 struct MCPKeyboardBackgroundToolTests {
     @Test
+    func `Press tool accepts both deliberate schema shapes`() throws {
+        let sequence = try PressTool.parseChords(arguments: ToolArguments(raw: [
+            "keys": ["cmd+shift+t", "Return"],
+        ]))
+        #expect(sequence.map(\.serviceKeys) == ["cmd,shift,t", "return"])
+
+        let single = try PressTool.parseChords(arguments: ToolArguments(raw: [
+            "key": "c",
+            "modifiers": ["command", "shift"],
+        ]))
+        #expect(single.map(\.serviceKeys) == ["cmd,shift,c"])
+    }
+
+    @Test
+    func `Press tool rejects mixed schema shapes`() {
+        #expect(throws: KeyboardChordError.self) {
+            _ = try PressTool.parseChords(arguments: ToolArguments(raw: [
+                "keys": ["cmd+c"],
+                "key": "v",
+                "modifiers": ["cmd"],
+            ]))
+        }
+    }
+
+    @Test
     func `Keyboard tools reject targetless input instead of injecting globally`() async throws {
         let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
         let context = await MCPToolTestHelpers.makeContext(
@@ -19,8 +44,8 @@ struct MCPKeyboardBackgroundToolTests {
         let typeResponse = try await TypeTool(context: context).execute(arguments: ToolArguments(raw: [
             "text": "hello",
         ]))
-        let hotkeyResponse = try await HotkeyTool(context: context).execute(arguments: ToolArguments(raw: [
-            "keys": "cmd,space",
+        let hotkeyResponse = try await PressTool(context: context).execute(arguments: ToolArguments(raw: [
+            "keys": ["cmd+space"],
         ]))
         let pasteResponse = try await PasteTool(context: context).execute(arguments: ToolArguments(raw: [
             "text": "hello",
@@ -49,9 +74,9 @@ struct MCPKeyboardBackgroundToolTests {
             "app": "Missing",
             "text": "hello",
         ]))
-        let hotkeyResponse = try await HotkeyTool(context: context).execute(arguments: ToolArguments(raw: [
+        let hotkeyResponse = try await PressTool(context: context).execute(arguments: ToolArguments(raw: [
             "app": "Missing",
-            "keys": "cmd,l",
+            "keys": ["cmd+l"],
         ]))
         let pasteResponse = try await PasteTool(context: context).execute(arguments: ToolArguments(raw: [
             "app": "Missing",
@@ -79,8 +104,8 @@ struct MCPKeyboardBackgroundToolTests {
             "text": "hello",
             "foreground": true,
         ]))
-        let hotkeyResponse = try await HotkeyTool(context: context).execute(arguments: ToolArguments(raw: [
-            "keys": "cmd,space",
+        let hotkeyResponse = try await PressTool(context: context).execute(arguments: ToolArguments(raw: [
+            "keys": ["cmd+space"],
             "foreground": true,
         ]))
         let pasteResponse = try await PasteTool(context: context).execute(arguments: ToolArguments(raw: [
@@ -164,10 +189,10 @@ struct MCPKeyboardBackgroundToolTests {
             "window_title": "Document",
             "text": "hello",
         ]))
-        let hotkeyResponse = try await HotkeyTool(context: context).execute(arguments: ToolArguments(raw: [
+        let hotkeyResponse = try await PressTool(context: context).execute(arguments: ToolArguments(raw: [
             "app": "Editor",
             "window_title": "Document",
-            "keys": "cmd,l",
+            "keys": ["cmd+l"],
         ]))
         let pasteResponse = try await PasteTool(context: context).execute(arguments: ToolArguments(raw: [
             "app": "Editor",
@@ -240,13 +265,13 @@ struct MCPKeyboardBackgroundToolTests {
     }
 
     @Test
-    func `Hotkey tool uses targeted delivery when pid is supplied`() async throws {
+    func `Press tool uses targeted delivery when pid is supplied`() async throws {
         let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
         let context = await MCPToolTestHelpers.makeContext(automation: automation)
-        let tool = HotkeyTool(context: context)
+        let tool = PressTool(context: context)
 
         let response = try await tool.execute(arguments: ToolArguments(raw: [
-            "keys": "cmd,l",
+            "keys": ["cmd+l"],
             "pid": 222,
         ]))
 
@@ -265,7 +290,7 @@ struct MCPKeyboardBackgroundToolTests {
     }
 
     @Test
-    func `Type and hotkey tools use targeted delivery when app process is known`() async throws {
+    func `Type and press tools use targeted delivery when app process is known`() async throws {
         let app = ServiceApplicationInfo(
             processIdentifier: 333,
             bundleIdentifier: "com.example.editor",
@@ -282,9 +307,9 @@ struct MCPKeyboardBackgroundToolTests {
             "app": "Editor",
             "text": "hello",
         ]))
-        let hotkeyResponse = try await HotkeyTool(context: context).execute(arguments: ToolArguments(raw: [
+        let hotkeyResponse = try await PressTool(context: context).execute(arguments: ToolArguments(raw: [
             "app": "Editor",
-            "keys": "cmd,l",
+            "keys": ["cmd+l"],
         ]))
 
         #expect(typeResponse.isError == false)

@@ -63,7 +63,7 @@ physical-pointer phase), use [Background computer-use validation](background-com
 | Tool | Playground coverage | Log focus | Sample CLI entry point | Status | Latest log |
 | --- | --- | --- | --- | --- | --- |
 | `see` | Prefer fixture windows (“Click Fixture”, “Scroll Fixture”, etc.) | Capture snapshot metadata via CLI output + optional Playground logs for follow-on actions | `peekaboo see --app Playground --mode window --window-title "Click Fixture"` | Verified – `--window-title` now resolves against ScreenCaptureKit windows and element detection is pinned to the captured `CGWindowID` | `.artifacts/playground-tools/20251217-153107-see-click-for-move.json` |
-| `image` | Playground window (full or element-specific) | Use `Image` artifacts; note timestamp in `LOG_FILE` | `peekaboo image window --app Playground --output /tmp/playground-window.png` | Verified – window + screen captures succeed after capture fallback fix | `.artifacts/playground-tools/20251116-082109-image-window-playground.json`, `.artifacts/playground-tools/20251116-082125-image-screen0.json` |
+| `see --no-elements` | Playground window (full or element-specific) | Use screenshot artifacts; note timestamp in `LOG_FILE` | `peekaboo see --no-elements --mode window --app Playground --path /tmp/playground-window.png` | Replaces the former image CLI path | Historical image artifacts remain valid evidence. |
 | `capture` | `capture live` against Playground (5–10s) + `capture video` ingest smoke | Verify artifacts (`metadata.json`, `contact.png`, frames) + optional MP4 (`--video-out`) | `peekaboo capture live --mode window --app Playground --duration 5 --threshold 0 --json-output` | Verified – live writes contact sheet + metadata; video ingest + `--video-out` covered | `.artifacts/playground-tools/20251217-133751-capture-live.json`, `.artifacts/playground-tools/20251217-180155-capture-video.json`, `.artifacts/playground-tools/20251217-184010-capture-live-videoout.json`, `.artifacts/playground-tools/20251217-184010-capture-video-videoout.json` |
 | noun-based inventory | Validate `app list`, `window list`, `screen list`, `menubar list`, and `permissions status` while Playground is running | `playground-log` optional (`Window` for focus changes) | `peekaboo window list --app Playground` etc. | Verified | Existing inventory artifacts remain historical evidence. |
 | `tools` | Compare CLI output against ToolRegistry | No Playground log required; attach output to notes | `peekaboo tools > $LOG_ROOT/tools.txt` | Verified – native tool listing captured 2025-12-19 | `.artifacts/playground-tools/20251219-001215-tools.txt` |
@@ -79,11 +79,9 @@ physical-pointer phase), use [Background computer-use validation](background-com
 | --- | --- | --- | --- | --- | --- |
 | `click` | Click Fixture window | `Click` | `peekaboo click "Single Click" --app boo.peekaboo.playground.debug --snapshot <id>` | Verified – Click Fixture E2E incl. double/right/context menu (2025-12-18) | `.artifacts/playground-tools/20251218-004335-click.log`, `.artifacts/playground-tools/20251218-004335-menu.log` |
 | `type` | Text Fixture window | `Text` + `Focus` | `peekaboo type "Hello Playground" --clear --snapshot <id>` | Verified – Text Fixture E2E + text-field focusing (2025-12-18) | `.artifacts/playground-tools/20251218-001923-text.log` |
-| `press` | Keyboard Fixture window | `Keyboard` | `peekaboo press return --snapshot <id>` | Verified – keypresses + repeats logged (2025-12-17) | `.artifacts/playground-tools/20251217-152138-keyboard.log` |
-| `hotkey` | Playground menu shortcuts | `Keyboard` & `Menu` | `peekaboo hotkey --keys "cmd,1"` | Verified – digit hotkeys (2025-12-17) | `.artifacts/playground-tools/20251217-152100-menu.log` |
+| `press` | Keyboard Fixture window and menu shortcuts | `Keyboard` & `Menu` | `peekaboo press cmd+1` | Covers bare keys, repeats, and xdotool-style chords | Historical keypress/hotkey logs remain valid evidence. |
 | `scroll` | Scroll Fixture window | `Scroll` | `peekaboo scroll --direction down --amount 8 --on vertical-scroll --snapshot <id>` | Verified – scroll offsets logged (2025-12-18) | `.artifacts/playground-tools/20251218-012323-scroll.log` |
-| `swipe` | Scroll Fixture gesture area | `Gesture` | `peekaboo swipe --from-coords <x,y> --to-coords <x,y>` | Verified – swipe direction + distance logged (2025-12-18), plus long-press hold | `.artifacts/playground-tools/20251218-012323-gesture.log` |
-| `drag` | Drag Fixture window | `Drag` | `peekaboo drag --from <elem> --to <elem> --snapshot <id>` | Verified – item dropped into zone (2025-12-18) | `.artifacts/playground-tools/20251218-002005-drag.log` |
+| `drag` | Drag Fixture and gesture area | `Drag` / `Gesture` | `peekaboo drag --from <id-or-x,y> --to <id-or-x,y> --snapshot <id>` | Covers element/coordinate endpoints and left/right buttons | Historical drag/swipe logs remain valid evidence. |
 | `move` | Click Fixture mouse probe | `Control` | `peekaboo move --on <elem> --snapshot <id> --smooth` | Verified – cursor movement emits deterministic probe logs (2025-12-17) | `.artifacts/playground-tools/20251217-153107-control.log` |
 
 ### Windows, Menus, Apps
@@ -332,7 +330,7 @@ The following subsections spell out the concrete steps, required Playground surf
   - Captured a second run with JSON output (`.artifacts/playground-tools/20251116-085346-drag-elem17.json`) dragging Item B to zone2 so we have structured metadata (coords, duration, profile) for regression diffs.
   - We still keep the older coordinate-only recipe around as a fallback, but the default regression loop is now: **focus Playground → `see` → `click --on elem_79` → `drag --snapshot … --from elem_XX --to elem_YY` → archive the Drag log + CLI JSON.**
 - **2025-12-17 Controls Fixture add-on**:
-  - Slider adjustment works via `drag` when you compute a `--to-coords` inside the slider’s frame using the snapshot JSON.
+  - Slider adjustment works via `drag` when you compute a coordinate inside the slider’s frame and pass it directly to `--to`.
   - Evidence: `.artifacts/playground-tools/20251217-230454-drag-slider.json` and the corresponding `[Control] Slider moved …` lines in `.artifacts/playground-tools/20251217-230454-control.log`.
 
 #### `move`
