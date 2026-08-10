@@ -75,4 +75,19 @@ struct PeekabooBridgeAppleScriptCompatibilityTests {
         }
         #expect(envelope.code == .operationNotSupported)
     }
+
+    @Test
+    func `Legacy client probe API refuses before transport`() async {
+        let client = PeekabooBridgeClient(
+            socketPath: "/tmp/peekaboo-legacy-probe-\(UUID().uuidString).sock")
+
+        do {
+            try await client.appleScriptProbe()
+            Issue.record("Expected the legacy client API to refuse locally")
+        } catch let envelope as PeekabooBridgeErrorEnvelope {
+            #expect(envelope.code == .operationNotSupported)
+        } catch {
+            Issue.record("Expected a structured unsupported-operation error, got \(error)")
+        }
+    }
 }
