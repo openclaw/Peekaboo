@@ -151,6 +151,8 @@ struct BridgeCandidateErrorReport: Codable, Sendable {
         case .internalError:
             "Host closed the connection without a valid response. This commonly indicates code-sign checks " +
                 "or a mismatched Bridge protocol."
+        case .timeout:
+            "Inspect or restart this specific host; other diagnostic candidates were still probed."
         default:
             nil
         }

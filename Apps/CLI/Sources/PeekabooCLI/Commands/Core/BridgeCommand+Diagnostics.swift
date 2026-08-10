@@ -10,6 +10,7 @@ struct BridgeDiagnostics {
     ) async throws -> PeekabooBridgeHandshakeResponse
 
     nonisolated static let maxConcurrentProbes = 8
+    nonisolated static let probeTimeoutSeconds: TimeInterval = 1
 
     private let logger: Logger
 
@@ -182,8 +183,19 @@ struct BridgeDiagnostics {
         socketPath: String,
         identity: PeekabooBridgeClientIdentity
     ) async throws -> PeekabooBridgeHandshakeResponse {
-        let client = PeekabooBridgeClient(socketPath: socketPath)
-        return try await client.handshake(client: identity, requestedHost: nil)
+        let client = PeekabooBridgeClient(
+            socketPath: socketPath,
+            requestTimeoutSec: Self.probeTimeoutSeconds
+        )
+        do {
+            return try await client.handshake(client: identity, requestedHost: nil)
+        } catch let error as POSIXError where error.code == .ETIMEDOUT {
+            throw PeekabooBridgeErrorEnvelope(
+                code: .timeout,
+                message: "Bridge diagnostic handshake timed out after \(Self.probeTimeoutSeconds)s",
+                details: "The host at \(socketPath) did not answer before the diagnostic deadline."
+            )
+        }
     }
 
     static func remoteSkipReason(

@@ -78,6 +78,38 @@ struct BridgeDiagnosticsConcurrencyTests {
         #expect(await Set(starts.paths) == Set(["/one", "/two"]))
     }
 
+    @Test
+    func `probe failures preserve typed errors and candidate order`() async throws {
+        let paths = ["/slow", "/healthy"]
+        let results = try await BridgeDiagnostics.probeCandidates(
+            socketPaths: paths,
+            identity: self.identity,
+            maxConcurrentProbes: 2,
+            probe: { socketPath, _ in
+                if socketPath == "/slow" {
+                    throw PeekabooBridgeErrorEnvelope(
+                        code: .timeout,
+                        message: "diagnostic deadline exceeded"
+                    )
+                }
+                return Self.handshake(build: socketPath)
+            }
+        )
+
+        #expect(results.map(\.socketPath) == paths)
+        guard case let .failure(failure) = results[0].outcome else {
+            Issue.record("Expected the first diagnostic candidate to fail")
+            return
+        }
+        #expect(failure.code == PeekabooBridgeErrorCode.timeout.rawValue)
+        #expect(failure.message == "diagnostic deadline exceeded")
+        guard case let .success(handshake) = results[1].outcome else {
+            Issue.record("Expected the second diagnostic candidate to succeed")
+            return
+        }
+        #expect(handshake.build == "/healthy")
+    }
+
     private nonisolated static func handshake(build: String) -> PeekabooBridgeHandshakeResponse {
         PeekabooBridgeHandshakeResponse(
             negotiatedVersion: PeekabooBridgeConstants.protocolVersion,
