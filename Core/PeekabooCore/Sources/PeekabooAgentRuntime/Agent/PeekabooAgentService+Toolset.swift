@@ -3,107 +3,11 @@
 //  PeekabooCore
 //
 
-import Foundation
-import MCP
 import PeekabooAutomation
 import Tachikoma
 
-// MARK: - Tool Creation Helpers
-
-extension AgentToolParameters {
-    static let empty = AgentToolParameters(properties: [:], required: [])
-}
-
 @available(macOS 14.0, *)
 extension PeekabooAgentService {
-    /// Convert MCP Value schema to AgentToolParameters
-    private func convertMCPValueToAgentParameters(_ value: MCP.Value) -> AgentToolParameters {
-        guard case let .object(schemaDict) = value else {
-            return .empty
-        }
-
-        let required = self.parseRequiredFields(in: schemaDict)
-
-        guard let propertiesValue = schemaDict["properties"],
-              case let .object(properties) = propertiesValue
-        else {
-            return AgentToolParameters(properties: [:], required: required)
-        }
-
-        let agentProperties = self.convertPropertyMap(properties)
-        return AgentToolParameters(properties: agentProperties, required: required)
-    }
-
-    private func parseRequiredFields(in schemaDict: [String: MCP.Value]) -> [String] {
-        guard let requiredValue = schemaDict["required"],
-              case let .array(requiredArray) = requiredValue
-        else {
-            return []
-        }
-
-        return requiredArray.compactMap { value in
-            if case let .string(stringValue) = value {
-                return stringValue
-            }
-            return nil
-        }
-    }
-
-    private func convertPropertyMap(
-        _ properties: [String: MCP.Value]) -> [String: AgentToolParameterProperty]
-    {
-        var agentProperties: [String: AgentToolParameterProperty] = [:]
-
-        for (name, value) in properties {
-            guard let property = self.convertProperty(name: name, value: value) else { continue }
-            agentProperties[name] = property
-        }
-
-        return agentProperties
-    }
-
-    private func convertProperty(
-        name: String,
-        value: MCP.Value) -> AgentToolParameterProperty?
-    {
-        guard case let .object(propertyDict) = value else { return nil }
-
-        return AgentToolParameterProperty(
-            name: name,
-            type: self.parameterType(from: propertyDict["type"]),
-            description: self.propertyDescription(from: propertyDict["description"], defaultName: name))
-    }
-
-    private func parameterType(
-        from value: MCP.Value?) -> AgentToolParameterProperty.ParameterType
-    {
-        guard case let .string(typeString) = value else { return .string }
-
-        switch typeString {
-        case "string":
-            return .string
-        case "number":
-            return .number
-        case "integer":
-            return .integer
-        case "boolean":
-            return .boolean
-        case "array":
-            return .array
-        case "object":
-            return .object
-        default:
-            return .string
-        }
-    }
-
-    private func propertyDescription(from value: MCP.Value?, defaultName: String) -> String {
-        if case let .string(description) = value {
-            return description
-        }
-        return "Parameter \(defaultName)"
-    }
-
     func buildToolset(for model: LanguageModel) async -> [AgentTool] {
         let tools = self.createAgentTools()
 

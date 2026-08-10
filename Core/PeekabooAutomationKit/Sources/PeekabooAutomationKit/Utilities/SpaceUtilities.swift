@@ -355,12 +355,4 @@ public final class SpaceManagementService {
 
         try self.moveWindowToSpace(windowID: windowID, spaceID: currentSpace.id)
     }
-
-    // MARK: - Private Helpers
-
-    private func getDisplayForSpace(_ spaceID: CGSSpaceID) -> CGDirectDisplayID? {
-        // Simplified implementation that avoids the problematic CGSManagedDisplayGetCurrentSpace
-        // For now, just return the main display ID
-        CGMainDisplayID()
-    }
 }

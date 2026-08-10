@@ -68,11 +68,6 @@ enum CommandRegistry {
     ]
 
     @MainActor
-    static var rootCommandTypes: [any ParsableCommand.Type] {
-        self.entries.map(\.type)
-    }
-
-    @MainActor
     static func definitions() -> [CommandDefinition] {
         self.entries.map { entry in
             let description = entry.type.commandDescription

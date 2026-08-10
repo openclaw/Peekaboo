@@ -7,11 +7,9 @@
 
 import CoreGraphics
 import Foundation
-import IOKit.ps
 import Observation
 import os
 import PeekabooFoundation
-import PeekabooProtocols
 import SwiftUI
 
 /// Coordinates all visual feedback animations for a host app.
@@ -78,7 +76,6 @@ public final class VisualizerCoordinator {
         // Must cover the cursor path's maximum curve excursion (bend/2 = 27pt,
         // see AgentCursorPath) plus the glyph+halo envelope (~24pt from hotspot).
         static let agentCursor: CGFloat = 56
-        static let elementHighlight: CGFloat = 32
         static let annotatedScreenshot: CGFloat = 64
     }
 
@@ -131,10 +128,6 @@ public final class VisualizerCoordinator {
 
     var animationSpeedScale: Double {
         max(0.1, min(2.0, self.settings?.visualizerAnimationSpeed ?? Self.defaultVisualizerAnimationSpeed))
-    }
-
-    var durationScaledAnimationSpeed: Double {
-        self.animationSpeedScale * Self.animationSlowdownFactor
     }
 
     var lastWatchHUDDate = Date.distantPast
@@ -196,23 +189,6 @@ public final class VisualizerCoordinator {
 
     func visibleTargetWindow(_ target: VisualizerTargetWindow) -> VisualizerTargetWindow? {
         self.visibleTargetResolver(target)
-    }
-
-    /// Check if running on battery power
-    private func isOnBatteryPower() -> Bool {
-        let snapshot = IOPSCopyPowerSourcesInfo().takeRetainedValue()
-        let sources = IOPSCopyPowerSourcesList(snapshot).takeRetainedValue() as Array
-
-        for source in sources {
-            if let sourceInfo = IOPSGetPowerSourceDescription(snapshot, source)
-                .takeUnretainedValue() as? [String: Any],
-                let powerSourceState = sourceInfo[kIOPSPowerSourceStateKey] as? String
-            {
-                return powerSourceState == kIOPSBatteryPowerValue
-            }
-        }
-
-        return false
     }
 
     /// Get the appropriate screen for displaying visualizations based on context

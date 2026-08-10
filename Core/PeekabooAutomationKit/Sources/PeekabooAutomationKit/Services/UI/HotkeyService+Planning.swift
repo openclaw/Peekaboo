@@ -3,10 +3,6 @@ import Foundation
 import PeekabooFoundation
 
 extension HotkeyService {
-    func makeHotkeyPlan(_ keys: String) throws -> HotkeyPlan {
-        try self.makeHotkeyPlan(self.parsedKeys(keys))
-    }
-
     func makeHotkeyPlan(_ keys: [String]) throws -> HotkeyPlan {
         try HotkeyChord(keys: keys).plan
     }

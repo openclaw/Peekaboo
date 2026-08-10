@@ -5,17 +5,11 @@
 //  Created by Peekaboo on 2025-01-30.
 //
 
-import AppKit
-import CoreGraphics
 import Foundation
-import os
 
 /// Optimized animation queue with batching and resource management
 actor OptimizedAnimationQueue {
     // MARK: - Properties
-
-    /// Logger
-    private let logger = Logger(subsystem: "boo.peekaboo.visualizer", category: "AnimationQueue")
 
     /// Maximum concurrent animations
     private let maxConcurrentAnimations = 5
@@ -79,12 +73,6 @@ actor OptimizedAnimationQueue {
 
         // Wait for completion
         return await queuedAnimation.completion
-    }
-
-    /// Cancel all queued animations
-    func cancelAll() {
-        self.queuedAnimations.removeAll()
-        self.logger.info("Cancelled all queued animations")
     }
 
     /// Get queue status
@@ -187,72 +175,5 @@ actor OptimizedAnimationQueue {
         func complete(with result: Bool) {
             self.continuation?.resume(returning: result)
         }
-    }
-}
-
-// MARK: - Resource Pool
-
-/// Manages reusable animation resources
-@MainActor
-final class AnimationResourcePool {
-    /// Shared instance
-    static let shared = AnimationResourcePool()
-
-    /// Pool of reusable windows
-    private var windowPool: [NSWindow] = []
-    private let maxPoolSize = 10
-
-    /// Logger
-    private let logger = Logger(subsystem: "boo.peekaboo.visualizer", category: "ResourcePool")
-
-    private init() {}
-
-    /// Get a window from the pool or create new
-    func acquireWindow() -> NSWindow {
-        if let window = windowPool.popLast() {
-            self.logger.debug("Reusing window from pool")
-            return window
-        }
-
-        self.logger.debug("Creating new window")
-        return self.createWindow()
-    }
-
-    /// Return a window to the pool
-    func releaseWindow(_ window: NSWindow) {
-        // Reset window state
-        window.orderOut(nil)
-        window.contentView = nil
-        window.alphaValue = 1.0
-
-        if self.windowPool.count < self.maxPoolSize {
-            self.windowPool.append(window)
-            self.logger.debug("Returned window to pool (size: \(self.windowPool.count))")
-        } else {
-            // Pool is full, let it be deallocated
-            self.logger.debug("Pool full, releasing window")
-        }
-    }
-
-    /// Clean up pool
-    func cleanup() {
-        self.logger.info("Cleaning up resource pool")
-        self.windowPool.removeAll()
-    }
-
-    private func createWindow() -> NSWindow {
-        let window = NSWindow(
-            contentRect: .zero,
-            styleMask: [.borderless],
-            backing: .buffered,
-            defer: false)
-
-        window.isOpaque = false
-        window.backgroundColor = .clear
-        window.level = .screenSaver
-        window.ignoresMouseEvents = true
-        window.hasShadow = false
-
-        return window
     }
 }
