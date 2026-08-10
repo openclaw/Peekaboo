@@ -309,13 +309,7 @@ verify_app_payload() {
   file "$executable_path" | grep -q 'Mach-O' ||
     fail "Main executable is not a Mach-O binary: $executable_path"
 
-  if /usr/libexec/PlistBuddy -c 'Print :NSAppleEventsUsageDescription' \
-    "$app_path/Contents/Info.plist" >/dev/null 2>&1; then
-    fail "App unexpectedly embeds NSAppleEventsUsageDescription: $app_path"
-  fi
-  if nm -u "$executable_path" | grep -F 'NSAppleScript' >/dev/null; then
-    fail "App main executable imports NSAppleScript: $executable_path"
-  fi
+  "$ROOT_DIR/scripts/verify-native-only-app.sh" --app "$app_path"
 
   local sparkle_binary="$app_path/Contents/Frameworks/Sparkle.framework/Sparkle"
   if [[ -e "$sparkle_binary" ]]; then
