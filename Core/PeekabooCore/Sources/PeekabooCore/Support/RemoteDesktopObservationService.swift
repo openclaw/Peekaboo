@@ -1,19 +1,34 @@
 import Foundation
+import ImageIO
 import PeekabooAutomationKit
 import PeekabooBridge
+import PeekabooFoundation
 
 @MainActor
 public final class RemoteDesktopObservationService: DesktopObservationServiceProtocol {
     private let client: PeekabooBridgeClient
+    private let supportsExactWindowROIObservation: Bool
 
-    public init(client: PeekabooBridgeClient) {
+    public init(
+        client: PeekabooBridgeClient,
+        supportsExactWindowROIObservation: Bool = false)
+    {
         self.client = client
+        self.supportsExactWindowROIObservation = supportsExactWindowROIObservation
     }
 
     public func observe(_ request: DesktopObservationRequest) async throws -> DesktopObservationResult {
         guard request.capture.roi != nil else {
             return try await self.client.desktopObservation(request)
         }
+        guard self.supportsExactWindowROIObservation else {
+            throw PeekabooBridgeErrorEnvelope(
+                code: .operationNotSupported,
+                message: "Bridge host lacks protocol 1.20 exact-window ROI observation support")
+        }
+        let overallTimeout = request.timeout.overall
+        let deadline = try Self.postProcessingDeadline(timeout: overallTimeout)
+        try Self.checkPostProcessingAllowance(deadline: deadline, timeout: overallTimeout)
 
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("peekaboo-remote-roi-\(UUID().uuidString)", isDirectory: true)
@@ -24,6 +39,10 @@ public final class RemoteDesktopObservationService: DesktopObservationServicePro
             .path
         var remoteRequest = request
         remoteRequest.output.path = quarantinePath
+        // The client owns ROI validation and publication. Force one quarantined raster for proof,
+        // and defer snapshot publication until the receipt and every requested artifact pass.
+        remoteRequest.output.saveRawScreenshot = true
+        remoteRequest.output.saveSnapshot = false
 
         let result: DesktopObservationResult
         do {
@@ -42,46 +61,92 @@ public final class RemoteDesktopObservationService: DesktopObservationServicePro
             requestTarget: request.target,
             resolvedTarget: result.target,
             capture: result.capture)
-        return try self.publishROIResult(
+        try Self.checkPostProcessingAllowance(deadline: deadline, timeout: overallTimeout)
+        let prepared = try self.prepareROIResult(
             result,
             request: request,
-            quarantinePath: quarantinePath)
+            quarantinePath: quarantinePath,
+            deadline: deadline,
+            timeout: overallTimeout)
+        let stagedArtifacts = try Self.stageArtifacts(
+            prepared.artifacts,
+            deadline: deadline,
+            timeout: overallTimeout)
+        try Self.checkPostProcessingAllowance(deadline: deadline, timeout: overallTimeout)
+        let commitTask = Task { @MainActor in
+            try Self.commitArtifacts(stagedArtifacts)
+            try await self.storeSnapshotIfNeeded(
+                prepared,
+                request: request,
+                deadline: deadline,
+                timeout: overallTimeout)
+            return prepared.result
+        }
+        return try await commitTask.value
     }
 
-    private func publishROIResult(
+    private struct PreparedROIResult {
+        let result: DesktopObservationResult
+        let artifacts: [(data: Data, path: String)]
+        let quarantineRawPath: String
+        let quarantineAnnotatedPath: String?
+    }
+
+    private func prepareROIResult(
         _ result: DesktopObservationResult,
         request: DesktopObservationRequest,
-        quarantinePath: String) throws -> DesktopObservationResult
+        quarantinePath: String,
+        deadline: ContinuousClock.Instant?,
+        timeout: TimeInterval?) throws -> PreparedROIResult
     {
+        try Self.checkPostProcessingAllowance(deadline: deadline, timeout: timeout)
+        guard Self.sameFile(result.files.rawScreenshotPath, quarantinePath) else {
+            throw CaptureROIError.hostDidNotApplyROI
+        }
+        let rawData = try Self.validatedArtifactData(
+            at: quarantinePath,
+            expectedPixelSize: result.capture.metadata.size)
+        try Self.checkPostProcessingAllowance(deadline: deadline, timeout: timeout)
         let expectsRawArtifact = request.output.saveRawScreenshot ||
             request.output.saveAnnotatedScreenshot ||
             request.output.saveSnapshot
-        var rawPath: String?
-        if expectsRawArtifact {
-            guard Self.sameFile(result.files.rawScreenshotPath, quarantinePath) else {
-                throw CaptureROIError.hostDidNotApplyROI
-            }
-            let destination = request.output.path ?? FileManager.default.temporaryDirectory
-                .appendingPathComponent("peekaboo-roi-\(UUID().uuidString).\(request.output.format.rawValue)")
-                .path
-            try Self.publishArtifact(from: quarantinePath, to: destination)
-            rawPath = destination
-        }
+        let rawPath = expectsRawArtifact
+            ? ObservationOutputPathResolver.resolve(
+                path: request.output.path,
+                format: request.output.format,
+                defaultFileName: "peekaboo-roi-\(UUID().uuidString).\(request.output.format.rawValue)")
+            .standardizedFileURL
+            .path
+            : nil
 
         var annotatedPath: String?
-        if let reportedAnnotatedPath = result.files.annotatedScreenshotPath {
-            let quarantineAnnotatedPath = ObservationOutputWriter.annotatedScreenshotPath(
+        var annotatedData: Data?
+        var quarantineAnnotatedPath: String?
+        if request.output.saveAnnotatedScreenshot {
+            guard let rawPath else {
+                throw CaptureROIError.hostDidNotApplyROI
+            }
+            annotatedPath = ObservationOutputWriter.annotatedScreenshotPath(forRawScreenshotPath: rawPath)
+            quarantineAnnotatedPath = ObservationOutputWriter.annotatedScreenshotPath(
                 forRawScreenshotPath: quarantinePath)
-            guard Self.sameFile(reportedAnnotatedPath, quarantineAnnotatedPath),
-                  let rawPath
+            guard let quarantineAnnotatedPath,
+                  Self.sameFile(result.files.annotatedScreenshotPath, quarantineAnnotatedPath)
             else {
                 throw CaptureROIError.hostDidNotApplyROI
             }
-            let destination = ObservationOutputWriter.annotatedScreenshotPath(forRawScreenshotPath: rawPath)
-            try Self.publishArtifact(from: quarantineAnnotatedPath, to: destination)
-            annotatedPath = destination
+            annotatedData = try Self.validatedArtifactData(
+                at: quarantineAnnotatedPath,
+                expectedPixelSize: result.capture.metadata.size)
+            try Self.checkPostProcessingAllowance(deadline: deadline, timeout: timeout)
         }
 
+        var artifacts: [(data: Data, path: String)] = []
+        if let rawPath {
+            artifacts.append((rawData, rawPath))
+        }
+        if let annotatedPath, let annotatedData {
+            artifacts.append((annotatedData, annotatedPath))
+        }
         let capture = CaptureResult(
             imageData: result.capture.imageData,
             savedPath: rawPath,
@@ -94,16 +159,108 @@ public final class RemoteDesktopObservationService: DesktopObservationServicePro
                 elements: $0.elements,
                 metadata: $0.metadata)
         }
-        return DesktopObservationResult(
-            target: result.target,
-            capture: capture,
-            elements: elements,
-            ocr: result.ocr,
-            files: DesktopObservationFiles(
-                rawScreenshotPath: rawPath,
-                annotatedScreenshotPath: annotatedPath),
-            timings: result.timings,
-            diagnostics: result.diagnostics)
+        return PreparedROIResult(
+            result: DesktopObservationResult(
+                target: result.target,
+                capture: capture,
+                elements: elements,
+                ocr: result.ocr,
+                files: DesktopObservationFiles(
+                    rawScreenshotPath: rawPath,
+                    annotatedScreenshotPath: annotatedPath),
+                timings: result.timings,
+                diagnostics: result.diagnostics),
+            artifacts: artifacts,
+            quarantineRawPath: quarantinePath,
+            quarantineAnnotatedPath: quarantineAnnotatedPath)
+    }
+
+    private func storeSnapshotIfNeeded(
+        _ prepared: PreparedROIResult,
+        request: DesktopObservationRequest,
+        deadline: ContinuousClock.Instant?,
+        timeout: TimeInterval?) async throws
+    {
+        let result = prepared.result
+        guard request.output.saveSnapshot,
+              let snapshotID = request.output.snapshotID ?? result.elements?.snapshotId
+        else { return }
+
+        try Self.checkPostProcessingAllowance(deadline: deadline, timeout: timeout)
+        let windowContext = result.elements?.metadata.windowContext
+        try await self.client.storeScreenshot(
+            PeekabooBridgeStoreScreenshotRequest(SnapshotScreenshotRequest(
+                snapshotId: snapshotID,
+                screenshotPath: prepared.quarantineRawPath,
+                applicationBundleId: windowContext?.applicationBundleId ?? result.capture.metadata.applicationInfo?
+                    .bundleIdentifier,
+                applicationProcessId: windowContext?.applicationProcessId ?? result.capture.metadata.applicationInfo?
+                    .processIdentifier,
+                applicationName: windowContext?.applicationName ?? result.capture.metadata.applicationInfo?.name,
+                windowTitle: windowContext?.windowTitle ?? result.capture.metadata.windowInfo?.title,
+                windowBounds: windowContext?.windowBounds ?? result.capture.metadata.windowInfo?.bounds,
+                windowID: windowContext?.windowID ?? result.capture.metadata.windowInfo?.windowID,
+                windowMutationIdentity: windowContext?.windowMutationIdentity ?? result.capture.metadata.windowInfo?
+                    .mutationIdentity,
+                captureCoordinateContext: CaptureCoordinateContext(
+                    metadata: result.capture.metadata,
+                    referenceID: snapshotID))),
+            timeoutSec: Self.remainingPostProcessingTime(deadline: deadline, timeout: timeout))
+        try Self.checkPostProcessingAllowance(deadline: deadline, timeout: timeout)
+
+        if let elements = result.elements {
+            try await self.client.storeDetectionResult(
+                snapshotId: snapshotID,
+                result: ElementDetectionResult(
+                    snapshotId: snapshotID,
+                    screenshotPath: prepared.quarantineRawPath,
+                    elements: elements.elements,
+                    metadata: elements.metadata),
+                timeoutSec: Self.remainingPostProcessingTime(deadline: deadline, timeout: timeout))
+            try Self.checkPostProcessingAllowance(deadline: deadline, timeout: timeout)
+        }
+        if let annotatedPath = prepared.quarantineAnnotatedPath {
+            try await self.client.storeAnnotatedScreenshot(
+                snapshotId: snapshotID,
+                annotatedScreenshotPath: annotatedPath,
+                timeoutSec: Self.remainingPostProcessingTime(deadline: deadline, timeout: timeout))
+            try Self.checkPostProcessingAllowance(deadline: deadline, timeout: timeout)
+        }
+    }
+
+    private static func postProcessingDeadline(
+        timeout: TimeInterval?) throws -> ContinuousClock.Instant?
+    {
+        guard let timeout else { return nil }
+        guard timeout.isFinite, timeout > 0 else {
+            throw CaptureError.detectionTimedOut(timeout)
+        }
+        return ContinuousClock.now.advanced(by: .seconds(timeout))
+    }
+
+    private static func checkPostProcessingAllowance(
+        deadline: ContinuousClock.Instant?,
+        timeout: TimeInterval?) throws
+    {
+        try Task.checkCancellation()
+        guard let deadline, ContinuousClock.now >= deadline else { return }
+        throw CaptureError.detectionTimedOut(timeout ?? 0)
+    }
+
+    private static func remainingPostProcessingTime(
+        deadline: ContinuousClock.Instant?,
+        timeout: TimeInterval?) throws -> TimeInterval?
+    {
+        try self.checkPostProcessingAllowance(deadline: deadline, timeout: timeout)
+        guard let deadline else { return nil }
+        let duration = ContinuousClock.now.duration(to: deadline)
+        let components = duration.components
+        let seconds = Double(components.seconds) +
+            Double(components.attoseconds) / 1_000_000_000_000_000_000
+        guard seconds > 0 else {
+            throw CaptureError.detectionTimedOut(timeout ?? 0)
+        }
+        return seconds
     }
 
     private static func sameFile(_ lhs: String?, _ rhs: String) -> Bool {
@@ -111,21 +268,129 @@ public final class RemoteDesktopObservationService: DesktopObservationServicePro
         return URL(fileURLWithPath: lhs).standardizedFileURL == URL(fileURLWithPath: rhs).standardizedFileURL
     }
 
-    private static func publishArtifact(from sourcePath: String, to destinationPath: String) throws {
+    private static func validatedArtifactData(at path: String, expectedPixelSize: CGSize) throws -> Data {
         let data: Data
         do {
-            data = try Data(contentsOf: URL(fileURLWithPath: sourcePath))
+            data = try Data(contentsOf: URL(fileURLWithPath: path))
         } catch {
             throw CaptureROIError.invalidSourceImage
         }
-        let destinationURL = URL(fileURLWithPath: destinationPath)
-        try FileManager.default.createDirectory(
-            at: destinationURL.deletingLastPathComponent(),
-            withIntermediateDirectories: true)
+        return try self.validatedRasterData(data, expectedPixelSize: expectedPixelSize)
+    }
+
+    private static func validatedRasterData(_ data: Data, expectedPixelSize: CGSize) throws -> Data {
+        guard expectedPixelSize.width.isFinite,
+              expectedPixelSize.height.isFinite,
+              expectedPixelSize.width > 0,
+              expectedPixelSize.height > 0,
+              let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let image = CGImageSourceCreateImageAtIndex(source, 0, nil),
+              CGFloat(image.width) == expectedPixelSize.width,
+              CGFloat(image.height) == expectedPixelSize.height
+        else {
+            throw CaptureROIError.hostDidNotApplyROI
+        }
+        return data
+    }
+
+    private struct ArtifactPublication {
+        let destinationURL: URL
+        let stagedURL: URL
+        let backupURL: URL
+        var backedUp = false
+        var installed = false
+    }
+
+    private static func stageArtifacts(
+        _ artifacts: [(data: Data, path: String)],
+        deadline: ContinuousClock.Instant?,
+        timeout: TimeInterval?) throws -> [ArtifactPublication]
+    {
+        var publications: [ArtifactPublication] = []
         do {
-            try data.write(to: destinationURL, options: .atomic)
+            for artifact in artifacts {
+                try self.checkPostProcessingAllowance(deadline: deadline, timeout: timeout)
+                let destinationURL = URL(fileURLWithPath: artifact.path).standardizedFileURL
+                let directory = destinationURL.deletingLastPathComponent()
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                _ = try self.regularFileExists(at: destinationURL)
+                let token = UUID().uuidString
+                let stagedURL = directory.appendingPathComponent(".peekaboo-stage-\(token)")
+                let backupURL = directory.appendingPathComponent(".peekaboo-backup-\(token)")
+                try artifact.data.write(to: stagedURL, options: .atomic)
+                publications.append(ArtifactPublication(
+                    destinationURL: destinationURL,
+                    stagedURL: stagedURL,
+                    backupURL: backupURL))
+            }
+            return publications
         } catch {
+            for publication in publications {
+                try? FileManager.default.removeItem(at: publication.stagedURL)
+            }
+            if error is CancellationError || error is CaptureError {
+                throw error
+            }
             throw CaptureROIError.invalidSourceImage
         }
+    }
+
+    private static func commitArtifacts(_ stagedArtifacts: [ArtifactPublication]) throws {
+        var publications = stagedArtifacts
+        do {
+            for index in publications.indices {
+                if try self.regularFileExists(at: publications[index].destinationURL) {
+                    try FileManager.default.moveItem(
+                        at: publications[index].destinationURL,
+                        to: publications[index].backupURL)
+                    guard try self.regularFileExists(at: publications[index].backupURL) else {
+                        try? FileManager.default.moveItem(
+                            at: publications[index].backupURL,
+                            to: publications[index].destinationURL)
+                        throw CaptureROIError.invalidSourceImage
+                    }
+                    publications[index].backedUp = true
+                }
+                do {
+                    try FileManager.default.moveItem(
+                        at: publications[index].stagedURL,
+                        to: publications[index].destinationURL)
+                    publications[index].installed = true
+                } catch {
+                    if publications[index].backedUp {
+                        try? FileManager.default.moveItem(
+                            at: publications[index].backupURL,
+                            to: publications[index].destinationURL)
+                    }
+                    throw error
+                }
+            }
+
+            for publication in publications where publication.backedUp {
+                try? FileManager.default.removeItem(at: publication.backupURL)
+            }
+        } catch {
+            for publication in publications.reversed() where publication.installed {
+                try? FileManager.default.removeItem(at: publication.destinationURL)
+                if publication.backedUp {
+                    try? FileManager.default.moveItem(
+                        at: publication.backupURL,
+                        to: publication.destinationURL)
+                }
+            }
+            for publication in publications {
+                try? FileManager.default.removeItem(at: publication.stagedURL)
+            }
+            throw CaptureROIError.invalidSourceImage
+        }
+    }
+
+    private static func regularFileExists(at url: URL) throws -> Bool {
+        guard FileManager.default.fileExists(atPath: url.path) else { return false }
+        let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+        guard attributes[.type] as? FileAttributeType == .typeRegular else {
+            throw CaptureROIError.invalidSourceImage
+        }
+        return true
     }
 }

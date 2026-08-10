@@ -78,8 +78,11 @@ extension PeekabooBridgeClient {
         return response
     }
 
-    func sendExpectOK(_ request: PeekabooBridgeRequest) async throws {
-        let response = try await self.send(request)
+    func sendExpectOK(
+        _ request: PeekabooBridgeRequest,
+        timeoutSec: TimeInterval? = nil) async throws
+    {
+        let response = try await self.send(request, timeoutSec: timeoutSec)
         switch response {
         case .ok:
             return

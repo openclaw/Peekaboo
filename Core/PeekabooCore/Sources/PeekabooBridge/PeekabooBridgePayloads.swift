@@ -529,6 +529,8 @@ public struct PeekabooBridgeStoreScreenshotRequest: Codable, Sendable {
     public let applicationName: String?
     public let windowTitle: String?
     public let windowBounds: CGRect?
+    public let windowID: Int?
+    public let windowMutationIdentity: WindowMutationIdentity?
     public let captureCoordinateContext: CaptureCoordinateContext?
 
     public init(_ request: SnapshotScreenshotRequest) {
@@ -539,6 +541,8 @@ public struct PeekabooBridgeStoreScreenshotRequest: Codable, Sendable {
         self.applicationName = request.applicationName
         self.windowTitle = request.windowTitle
         self.windowBounds = request.windowBounds
+        self.windowID = request.windowID
+        self.windowMutationIdentity = request.windowMutationIdentity
         self.captureCoordinateContext = request.captureCoordinateContext
     }
 
@@ -551,6 +555,8 @@ public struct PeekabooBridgeStoreScreenshotRequest: Codable, Sendable {
             applicationName: self.applicationName,
             windowTitle: self.windowTitle,
             windowBounds: self.windowBounds,
+            windowID: self.windowID,
+            windowMutationIdentity: self.windowMutationIdentity,
             captureCoordinateContext: self.captureCoordinateContext)
     }
 }

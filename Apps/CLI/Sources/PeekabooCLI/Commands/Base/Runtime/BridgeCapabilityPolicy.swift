@@ -27,6 +27,11 @@ enum BridgeCapabilityPolicy {
             return false
         }
 
+        if options.requiresExactWindowROIObservation,
+           !self.supportsExactWindowROIObservation(for: handshake) {
+            return false
+        }
+
         if !self.supportsInteractionRequirements(for: handshake, options: options) {
             return false
         }
@@ -282,7 +287,19 @@ enum BridgeCapabilityPolicy {
 
     static func supportsDesktopObservation(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {
         handshake.negotiatedVersion >= PeekabooBridgeProtocolVersion(major: 1, minor: 5) &&
-            handshake.supportedOperations.contains(.desktopObservation)
+            self.supportsOperation(.desktopObservation, for: handshake)
+    }
+
+    static func supportsExactWindowROIObservation(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {
+        guard handshake.negotiatedVersion >= PeekabooBridgeConstants.exactWindowROIObservationVersion else {
+            return false
+        }
+        return [
+            PeekabooBridgeOperation.desktopObservation,
+            .storeScreenshot,
+            .storeDetectionResult,
+            .storeAnnotatedScreenshot,
+        ].allSatisfy { self.supportsOperation($0, for: handshake) }
     }
 
     static func supportsSilentCapture(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {

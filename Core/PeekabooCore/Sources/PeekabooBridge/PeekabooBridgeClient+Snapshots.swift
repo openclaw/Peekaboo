@@ -16,8 +16,14 @@ extension PeekabooBridgeClient {
         }
     }
 
-    public func storeDetectionResult(snapshotId: String, result: ElementDetectionResult) async throws {
-        try await self.sendExpectOK(.storeDetectionResult(.init(snapshotId: snapshotId, result: result)))
+    public func storeDetectionResult(
+        snapshotId: String,
+        result: ElementDetectionResult,
+        timeoutSec: TimeInterval? = nil) async throws
+    {
+        try await self.sendExpectOK(
+            .storeDetectionResult(.init(snapshotId: snapshotId, result: result)),
+            timeoutSec: timeoutSec)
     }
 
     public func getDetectionResult(snapshotId: String) async throws -> ElementDetectionResult {
@@ -30,16 +36,24 @@ extension PeekabooBridgeClient {
         }
     }
 
-    public func storeScreenshot(_ request: PeekabooBridgeStoreScreenshotRequest) async throws {
-        try await self.sendExpectOK(.storeScreenshot(request))
+    public func storeScreenshot(
+        _ request: PeekabooBridgeStoreScreenshotRequest,
+        timeoutSec: TimeInterval? = nil) async throws
+    {
+        try await self.sendExpectOK(.storeScreenshot(request), timeoutSec: timeoutSec)
     }
 
-    public func storeAnnotatedScreenshot(snapshotId: String, annotatedScreenshotPath: String) async throws {
+    public func storeAnnotatedScreenshot(
+        snapshotId: String,
+        annotatedScreenshotPath: String,
+        timeoutSec: TimeInterval? = nil) async throws
+    {
         try await self.sendExpectOK(
             .storeAnnotatedScreenshot(
                 .init(
                     snapshotId: snapshotId,
-                    annotatedScreenshotPath: annotatedScreenshotPath)))
+                    annotatedScreenshotPath: annotatedScreenshotPath)),
+            timeoutSec: timeoutSec)
     }
 
     public func listSnapshots() async throws -> [SnapshotInfo] {

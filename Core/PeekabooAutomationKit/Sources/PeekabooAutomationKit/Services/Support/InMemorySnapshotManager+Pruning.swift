@@ -66,6 +66,16 @@ extension InMemorySnapshotManager {
         }
     }
 
+    func deleteManagedTemporaryArtifact(at path: String) {
+        guard Self.isManagedTemporaryArtifact(path) else { return }
+        let url = URL(fileURLWithPath: path).standardizedFileURL
+        try? FileManager.default.removeItem(at: url)
+        let directory = url.deletingLastPathComponent()
+        if (try? FileManager.default.contentsOfDirectory(atPath: directory.path).isEmpty) == true {
+            try? FileManager.default.removeItem(at: directory)
+        }
+    }
+
     private static func isManagedTemporaryArtifact(_ path: String) -> Bool {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("peekaboo-see", isDirectory: true)

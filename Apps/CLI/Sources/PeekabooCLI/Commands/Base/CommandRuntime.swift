@@ -49,6 +49,9 @@ struct CommandRuntimeOptions {
     /// Protocol 1.12 added the silent capture visualizer mode used by background observation.
     /// Older hosts cannot decode that enum value, so commands that can send it must fail preflight.
     var requiresSilentCapture = false
+    /// Protocol 1.20 carries exact-window ROI requests, cropped viewport receipts, and snapshot
+    /// coordinate context. Older hosts would ignore the crop and return full-window pixels.
+    var requiresExactWindowROIObservation = false
     var requiresTargetedFocusedElement = false
     var requiresExactWindowTargetedKeyboard = false
     /// Protocol 1.18 pins window mutations to the PID, process generation, CGWindowID, and
@@ -326,6 +329,10 @@ extension CommandRuntime {
 
     static func supportsDesktopObservation(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {
         BridgeCapabilityPolicy.supportsDesktopObservation(for: handshake)
+    }
+
+    static func supportsExactWindowROIObservation(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {
+        BridgeCapabilityPolicy.supportsExactWindowROIObservation(for: handshake)
     }
 
     static func supportsInspectAccessibilityTree(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {

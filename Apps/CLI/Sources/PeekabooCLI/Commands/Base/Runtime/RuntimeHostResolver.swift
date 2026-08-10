@@ -550,6 +550,8 @@ enum RuntimeHostResolver {
                         ),
                         supportsElementActions: BridgeCapabilityPolicy.supportsElementActions(for: handshake),
                         supportsDesktopObservation: BridgeCapabilityPolicy.supportsDesktopObservation(for: handshake),
+                        supportsExactWindowROIObservation:
+                        BridgeCapabilityPolicy.supportsExactWindowROIObservation(for: handshake),
                         supportsImplicitLatestSnapshotInvalidation:
                         BridgeCapabilityPolicy.supportsImplicitSnapshotInvalidation(for: handshake),
                         supportsApplicationLaunchOptions:

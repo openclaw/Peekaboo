@@ -30,6 +30,26 @@ struct BridgeStrictBackgroundOperationTests {
     }
 
     @Test
+    func `ordinary desktop observation remains compatible while ROI advances protocol 1_20`() {
+        let operation: Set<PeekabooBridgeOperation> = [.desktopObservation]
+
+        #expect(PeekabooBridgeConstants.exactWindowROIObservationVersion ==
+            PeekabooBridgeProtocolVersion(major: 1, minor: 20))
+        #expect(PeekabooBridgeOperation.compatible(
+            operation,
+            with: PeekabooBridgeProtocolVersion(major: 1, minor: 4)).isEmpty)
+        #expect(PeekabooBridgeOperation.compatible(
+            operation,
+            with: PeekabooBridgeProtocolVersion(major: 1, minor: 5)) == operation)
+        #expect(PeekabooBridgeOperation.compatible(
+            operation,
+            with: PeekabooBridgeProtocolVersion(major: 1, minor: 19)) == operation)
+        #expect(PeekabooBridgeOperation.compatible(
+            operation,
+            with: PeekabooBridgeConstants.exactWindowROIObservationVersion) == operation)
+    }
+
+    @Test
     func `remote background window close fails before dispatch when unsupported`() async {
         let client = PeekabooBridgeClient(socketPath: "/nonexistent/peekaboo-test.sock")
         let service = RemoteWindowManagementService(client: client, supportsBackgroundClose: false)

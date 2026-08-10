@@ -1,11 +1,15 @@
 import CoreGraphics
 import Foundation
+import PeekabooFoundation
 
 extension InMemorySnapshotManager {
     // MARK: - Screenshot + UI map helpers
 
     public func storeScreenshot(_ request: SnapshotScreenshotRequest) async throws {
         self.pruneIfNeeded()
+        let storedPath = try self.storedArtifactPath(
+            sourcePath: request.screenshotPath,
+            preferredName: "raw")
 
         var entry = self.entries[request.snapshotId] ?? Entry(
             createdAt: Date(),
@@ -14,10 +18,13 @@ extension InMemorySnapshotManager {
             isPending: false,
             detectionResult: nil,
             snapshotData: UIAutomationSnapshot(creatorProcessId: getpid()))
+        if self.options.copyArtifactsOnStore {
+            self.deleteManagedTemporaryArtifacts(for: entry.snapshotData)
+        }
 
         entry.lastAccessedAt = Date()
         entry.detectionResult = nil
-        entry.snapshotData.screenshotPath = request.screenshotPath
+        entry.snapshotData.screenshotPath = storedPath
         entry.snapshotData.annotatedPath = nil
         entry.snapshotData.uiMap = [:]
         entry.snapshotData.applicationName = request.applicationName
@@ -35,6 +42,9 @@ extension InMemorySnapshotManager {
 
     public func storeAnnotatedScreenshot(snapshotId: String, annotatedScreenshotPath: String) async throws {
         self.pruneIfNeeded()
+        let storedPath = try self.storedArtifactPath(
+            sourcePath: annotatedScreenshotPath,
+            preferredName: "annotated")
 
         var entry = self.entries[snapshotId] ?? Entry(
             createdAt: Date(),
@@ -45,7 +55,13 @@ extension InMemorySnapshotManager {
             snapshotData: UIAutomationSnapshot(creatorProcessId: getpid()))
 
         entry.lastAccessedAt = Date()
-        entry.snapshotData.annotatedPath = annotatedScreenshotPath
+        if self.options.copyArtifactsOnStore,
+           let existing = entry.snapshotData.annotatedPath,
+           existing != entry.snapshotData.screenshotPath
+        {
+            self.deleteManagedTemporaryArtifact(at: existing)
+        }
+        entry.snapshotData.annotatedPath = storedPath
         entry.snapshotData.lastUpdateTime = Date()
         self.entries[snapshotId] = entry
         self.pruneIfNeeded()
@@ -90,5 +106,29 @@ extension InMemorySnapshotManager {
         entry.lastAccessedAt = Date()
         self.entries[snapshotId] = entry
         return entry.snapshotData
+    }
+
+    private func storedArtifactPath(sourcePath: String, preferredName: String) throws -> String {
+        let sourceURL = URL(fileURLWithPath: sourcePath).standardizedFileURL
+        guard self.options.copyArtifactsOnStore else { return sourceURL.path }
+        let attributes = try FileManager.default.attributesOfItem(atPath: sourceURL.path)
+        guard attributes[.type] as? FileAttributeType == .typeRegular else {
+            throw CaptureError.fileIOError("Snapshot artifact is not a regular file: \(sourceURL.path)")
+        }
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekaboo-see", isDirectory: true)
+            .appendingPathComponent("host-snapshot-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let pathExtension = sourceURL.pathExtension.isEmpty ? "png" : sourceURL.pathExtension
+        let destinationURL = directory
+            .appendingPathComponent(preferredName, isDirectory: false)
+            .appendingPathExtension(pathExtension)
+        do {
+            try FileManager.default.copyItem(at: sourceURL, to: destinationURL)
+            return destinationURL.path
+        } catch {
+            try? FileManager.default.removeItem(at: directory)
+            throw CaptureError.fileIOError("Failed to copy snapshot artifact: \(error.localizedDescription)")
+        }
     }
 }

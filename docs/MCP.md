@@ -187,6 +187,12 @@ mapping and clears stale annotation state.
 `image` intentionally has no ROI argument: screenshot-only calls do not create the fresh snapshot/reference binding
 required for safe follow-up background coordinates. Use `see` for a crop that will drive automation.
 
+ROI requires Bridge protocol 1.20. CLI host selection and MCP remote dispatch reject older hosts before sending the
+request, so a pre-1.20 host cannot ignore the new field and capture or return full-window pixels. After dispatch, the
+client also decodes the quarantined raster and checks its real pixel dimensions against the crop receipt before
+publishing files or the snapshot. A compatible host must enable desktop observation plus the snapshot-publication
+operations used to finalize the validated result.
+
 The `click` tool accepts screenshot-relative coordinates when they are explicitly bound to a `see` snapshot. Pass `coordinate_space: "image_pixels"` for delivered-raster pixels or `coordinate_space: "normalized"` for values from 0 through 1, plus the snapshot's `reference_id` as `coordinate_reference`. Missing, empty, stale, out-of-bounds, moved-window, owner-changed, or process-generation-changed references fail before automation. Every background coordinate click requires a nonempty exact-window capture reference; a bare PID/app plus global coordinates is ambiguous and is refused. Validation errors include `mutation_dispatched: false` and `retry_safe: true`, and do not invalidate snapshots as mutations. Foreground global coordinates remain snapshot-free only when neither `snapshot` nor `coordinate_reference` is supplied; either reference opts into capture-context and live-target validation even when `coordinate_space` is omitted.
 
 Background right- and double-clicks use exact PID/window-routed native events without activating the app or moving the physical cursor. Every event revalidates the window owner, process generation, and bounds. Since macOS provides no application-level acknowledgment for routed pointer events, successful dispatch responses include `verified: false` and `effect: "unverifiable"`; an unprovable or changed route is refused rather than redirected through the desktop-global event tap.

@@ -10,6 +10,9 @@ import PeekabooFoundation
 @MainActor
 public final class InMemorySnapshotManager: SnapshotManagerProtocol {
     public let supportsImplicitLatestSnapshotInvalidation = true
+    public var copiesScreenshotArtifactsIntoStorage: Bool {
+        self.options.copyArtifactsOnStore
+    }
 
     public var effectiveImplicitLatestInvalidationWatermark: Date? {
         SnapshotManager.latestWatermark(
@@ -27,14 +30,19 @@ public final class InMemorySnapshotManager: SnapshotManagerProtocol {
         /// If enabled, attempts to delete any referenced screenshot artifacts on snapshot cleanup.
         public var deleteArtifactsOnCleanup: Bool
 
+        /// Copy screenshot artifacts into a manager-owned temporary directory before storing paths.
+        public var copyArtifactsOnStore: Bool
+
         public init(
             snapshotValidityWindow: TimeInterval = 600,
             maxSnapshots: Int = 25,
-            deleteArtifactsOnCleanup: Bool = false)
+            deleteArtifactsOnCleanup: Bool = false,
+            copyArtifactsOnStore: Bool = false)
         {
             self.snapshotValidityWindow = snapshotValidityWindow
             self.maxSnapshots = max(1, maxSnapshots)
             self.deleteArtifactsOnCleanup = deleteArtifactsOnCleanup
+            self.copyArtifactsOnStore = copyArtifactsOnStore
         }
     }
 

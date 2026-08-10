@@ -120,6 +120,7 @@ public final class PeekabooDaemon: PeekabooConditionalDaemonControlProviding {
         self.configuration = configuration
         self.services = PeekabooServices(
             snapshotManager: InMemorySnapshotManager(
+                options: .init(copyArtifactsOnStore: true),
                 desktopMutationWatermarkStore: DesktopMutationWatermarkStore()))
         self.startTime = Date()
     }

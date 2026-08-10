@@ -55,6 +55,7 @@ public final class RemotePeekabooServices: PeekabooServiceProviding {
         supportsPostEventPermissionRequest: Bool = false,
         supportsElementActions: Bool = false,
         supportsDesktopObservation: Bool = false,
+        supportsExactWindowROIObservation: Bool = false,
         supportsImplicitLatestSnapshotInvalidation: Bool = false,
         supportsApplicationLaunchOptions: Bool = false,
         supportsNewApplicationInstanceLaunch: Bool = false,
@@ -129,15 +130,17 @@ public final class RemotePeekabooServices: PeekabooServiceProviding {
         let screenService = ScreenService()
 
         self.desktopObservation = if supportsDesktopObservation {
-            RemoteDesktopObservationService(client: client)
+            RemoteDesktopObservationService(
+                client: client,
+                supportsExactWindowROIObservation: supportsExactWindowROIObservation)
         } else {
-            DesktopObservationService(
+            ExactWindowROIUnsupportedDesktopObservationService(delegate: DesktopObservationService(
                 screenCapture: self.screenCapture,
                 automation: self.automation,
                 applications: self.applications,
                 menu: menuService,
                 screens: screenService,
-                snapshotManager: snapshotManager)
+                snapshotManager: snapshotManager))
         }
         self.menu = menuService
         self.dock = RemoteDockService(client: client)
@@ -174,5 +177,23 @@ public final class RemotePeekabooServices: PeekabooServiceProviding {
         }
 
         return try await self.client.requestPostEventPermission()
+    }
+}
+
+@MainActor
+private final class ExactWindowROIUnsupportedDesktopObservationService: DesktopObservationServiceProtocol {
+    private let delegate: any DesktopObservationServiceProtocol
+
+    init(delegate: any DesktopObservationServiceProtocol) {
+        self.delegate = delegate
+    }
+
+    func observe(_ request: DesktopObservationRequest) async throws -> DesktopObservationResult {
+        guard request.capture.roi == nil else {
+            throw PeekabooBridgeErrorEnvelope(
+                code: .operationNotSupported,
+                message: "Bridge host lacks protocol 1.20 exact-window ROI observation support")
+        }
+        return try await self.delegate.observe(request)
     }
 }

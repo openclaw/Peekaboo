@@ -15,6 +15,7 @@ struct PeekabooApp: App {
 
     @State private var services = PeekabooServices(
         snapshotManager: InMemorySnapshotManager(
+            options: .init(copyArtifactsOnStore: true),
             desktopMutationWatermarkStore: DesktopMutationWatermarkStore()))
     // Core state - initialized together for proper dependencies
     @State private var settings = PeekabooSettings()

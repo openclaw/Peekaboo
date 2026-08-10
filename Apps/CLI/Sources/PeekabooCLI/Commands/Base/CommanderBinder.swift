@@ -87,6 +87,8 @@ enum CommanderCLIBinder {
         options.requiresBackgroundDialogClick = commandType == DialogCommand.ClickSubcommand.self &&
             !commandValues.flag("foreground")
         options.requiresSilentCapture = Self.requiresSilentCapture(commandType, parsedValues: parsedValues)
+        options.requiresExactWindowROIObservation = commandType == SeeCommand.self &&
+            commandValues.singleOption("roi")?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
         options.requiresPinnedWindowMutations = Self.requiresPinnedWindowMutations(commandType)
         options.requiresWindowRestore = commandType == WindowCommand.RestoreSubcommand.self
         options.requiresScreenCapturePermission = Self.requiresScreenCapturePermission(

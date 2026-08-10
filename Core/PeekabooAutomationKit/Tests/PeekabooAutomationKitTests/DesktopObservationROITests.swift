@@ -117,7 +117,7 @@ struct DesktopObservationROITests {
         #expect(viewport.requestedWindowRelativeBounds == roi.bounds)
         #expect(viewport.logicalBounds == CGRect(x: 210, y: 320, width: 30, height: 20))
         #expect(result.elements?.elements.all.map(\.id).sorted() == ["inside", "partial"])
-        #expect(result.elements?.screenshotPath == "")
+        #expect(result.elements?.screenshotPath.isEmpty == true)
         #expect(result.elements?.metadata.captureCoordinateContext?.referenceID == "roi-snapshot")
         let projectedOCR = try #require(result.ocr)
         #expect(projectedOCR.imageSize == result.capture.metadata.size)
@@ -140,6 +140,36 @@ struct DesktopObservationROITests {
             in: .imagePixels,
             context: context)
         #expect(mapped == CGPoint(x: 225, y: 330))
+    }
+
+    @Test(arguments: [CGFloat(1), CGFloat(2)])
+    func `ROI uses top left raster orientation for colored quadrants`(scale: CGFloat) throws {
+        let fullBounds = CGRect(x: 200, y: 300, width: 4, height: 4)
+        let baseCapture = try Self.capture(bounds: fullBounds, scale: scale)
+        let capture = try CaptureResult(
+            imageData: Self.quadrantImageData(scale: Int(scale)),
+            metadata: baseCapture.metadata)
+        let cases: [(CGRect, TestRGB)] = [
+            (CGRect(x: 0, y: 0, width: 2, height: 2), TestRGB(red: 1, green: 0, blue: 0)),
+            (CGRect(x: 2, y: 0, width: 2, height: 2), TestRGB(red: 0, green: 1, blue: 0)),
+            (CGRect(x: 0, y: 2, width: 2, height: 2), TestRGB(red: 0, green: 0, blue: 1)),
+            (CGRect(x: 2, y: 2, width: 2, height: 2), TestRGB(red: 1, green: 1, blue: 0)),
+        ]
+
+        for (bounds, expectedColor) in cases {
+            let result = try DesktopObservationROIProcessor.apply(
+                CaptureRegionOfInterest(bounds: bounds),
+                target: Self.target(bounds: fullBounds),
+                capture: capture,
+                elements: nil,
+                ocr: nil)
+
+            #expect(result.capture.metadata.size == CGSize(width: 2 * scale, height: 2 * scale))
+            let actualColor = try Self.averageRGB(in: result.capture.imageData)
+            #expect(abs(actualColor.red - expectedColor.red) < 0.01)
+            #expect(abs(actualColor.green - expectedColor.green) < 0.01)
+            #expect(abs(actualColor.blue - expectedColor.blue) < 0.01)
+        }
     }
 
     @Test
@@ -493,4 +523,95 @@ struct DesktopObservationROITests {
                     scaleSource: "test",
                     finalPixelSize: CGSize(width: width, height: height))))
     }
+
+    private static func quadrantImageData(scale: Int) throws -> Data {
+        let width = 4 * scale
+        let height = 4 * scale
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        let colors: [TestRGB] = [
+            TestRGB(red: 1, green: 0, blue: 0),
+            TestRGB(red: 0, green: 1, blue: 0),
+            TestRGB(red: 0, green: 0, blue: 1),
+            TestRGB(red: 1, green: 1, blue: 0),
+        ]
+        for y in 0..<height {
+            for x in 0..<width {
+                let quadrant = (y < height / 2 ? 0 : 2) + (x < width / 2 ? 0 : 1)
+                let color = colors[quadrant]
+                let offset = (y * width + x) * 4
+                pixels[offset] = UInt8(color.red * 255)
+                pixels[offset + 1] = UInt8(color.green * 255)
+                pixels[offset + 2] = UInt8(color.blue * 255)
+                pixels[offset + 3] = 255
+            }
+        }
+
+        let provider = try #require(CGDataProvider(data: Data(pixels) as CFData))
+        let colorSpace = try #require(CGColorSpace(name: CGColorSpace.sRGB))
+        let bitmapInfo = CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue)
+            .union(.byteOrder32Big)
+        let image = try #require(CGImage(
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bitsPerPixel: 32,
+            bytesPerRow: width * 4,
+            space: colorSpace,
+            bitmapInfo: bitmapInfo,
+            provider: provider,
+            decode: nil,
+            shouldInterpolate: false,
+            intent: .defaultIntent))
+        let data = NSMutableData()
+        let destination = try #require(CGImageDestinationCreateWithData(
+            data,
+            UTType.png.identifier as CFString,
+            1,
+            nil))
+        CGImageDestinationAddImage(destination, image, nil)
+        try #require(CGImageDestinationFinalize(destination))
+        return data as Data
+    }
+
+    private static func averageRGB(in data: Data) throws -> TestRGB {
+        let source = try #require(CGImageSourceCreateWithData(data as CFData, nil))
+        let image = try #require(CGImageSourceCreateImageAtIndex(source, 0, nil))
+        var pixels = [UInt8](repeating: 0, count: image.width * image.height * 4)
+        let colorSpace = try #require(CGColorSpace(name: CGColorSpace.sRGB))
+        let bitmapInfo = CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue)
+            .union(.byteOrder32Big)
+        try pixels.withUnsafeMutableBytes { buffer in
+            let context = try #require(CGContext(
+                data: buffer.baseAddress,
+                width: image.width,
+                height: image.height,
+                bitsPerComponent: 8,
+                bytesPerRow: image.width * 4,
+                space: colorSpace,
+                bitmapInfo: bitmapInfo.rawValue))
+            context.interpolationQuality = .none
+            context.setBlendMode(.copy)
+            context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+        }
+
+        var red = 0
+        var green = 0
+        var blue = 0
+        for offset in stride(from: 0, to: pixels.count, by: 4) {
+            red += Int(pixels[offset])
+            green += Int(pixels[offset + 1])
+            blue += Int(pixels[offset + 2])
+        }
+        let denominator = CGFloat(image.width * image.height * 255)
+        return TestRGB(
+            red: CGFloat(red) / denominator,
+            green: CGFloat(green) / denominator,
+            blue: CGFloat(blue) / denominator)
+    }
+}
+
+private struct TestRGB {
+    let red: CGFloat
+    let green: CGFloat
+    let blue: CGFloat
 }

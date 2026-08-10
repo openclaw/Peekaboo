@@ -3,10 +3,10 @@ import Foundation
 import PeekabooAgentRuntime
 import PeekabooAutomationKit
 import PeekabooBridge
+@testable import PeekabooCLI
 import PeekabooCore
 import Tachikoma
 import Testing
-@testable import PeekabooCLI
 
 struct CommandRuntimeInjectionTests {
     @Test
@@ -296,10 +296,18 @@ struct CommandRuntimeInjectionTests {
             build: nil,
             supportedOperations: [.captureScreen]
         )
+        let disabled = PeekabooBridgeHandshakeResponse(
+            negotiatedVersion: PeekabooBridgeProtocolVersion(major: 1, minor: 5),
+            hostKind: .gui,
+            build: nil,
+            supportedOperations: [.captureScreen, .desktopObservation],
+            enabledOperations: [.captureScreen]
+        )
 
         #expect(CommandRuntime.supportsDesktopObservation(for: supported))
         #expect(!CommandRuntime.supportsDesktopObservation(for: older))
         #expect(!CommandRuntime.supportsDesktopObservation(for: hidden))
+        #expect(!CommandRuntime.supportsDesktopObservation(for: disabled))
     }
 
     @Test
@@ -856,74 +864,74 @@ final class RecordingPeekabooServices: PeekabooServiceProviding {
     private(set) var ensureVisualizerConnectionCallCount = 0
 
     func ensureVisualizerConnection() {
-        self.ensureVisualizerConnectionCallCount += 1
+        ensureVisualizerConnectionCallCount += 1
     }
 
     var logging: any LoggingServiceProtocol {
-        self.base.logging
+        base.logging
     }
 
     var screenCapture: any ScreenCaptureServiceProtocol {
-        self.base.screenCapture
+        base.screenCapture
     }
 
     var applications: any ApplicationServiceProtocol {
-        self.base.applications
+        base.applications
     }
 
     var automation: any UIAutomationServiceProtocol {
-        self.base.automation
+        base.automation
     }
 
     var windows: any WindowManagementServiceProtocol {
-        self.base.windows
+        base.windows
     }
 
     var menu: any MenuServiceProtocol {
-        self.base.menu
+        base.menu
     }
 
     var dock: any DockServiceProtocol {
-        self.base.dock
+        base.dock
     }
 
     var dialogs: any DialogServiceProtocol {
-        self.base.dialogs
+        base.dialogs
     }
 
     var snapshots: any SnapshotManagerProtocol {
-        self.base.snapshots
+        base.snapshots
     }
 
     var files: any FileServiceProtocol {
-        self.base.files
+        base.files
     }
 
     var clipboard: any ClipboardServiceProtocol {
-        self.base.clipboard
+        base.clipboard
     }
 
     var configuration: PeekabooCore.ConfigurationManager {
-        self.base.configuration
+        base.configuration
     }
 
     var permissions: PermissionsService {
-        self.base.permissions
+        base.permissions
     }
 
     var audioInput: AudioInputService {
-        self.base.audioInput
+        base.audioInput
     }
 
     var screens: any ScreenServiceProtocol {
-        self.base.screens
+        base.screens
     }
 
     var browser: any BrowserMCPClientProviding {
-        self.base.browser
+        base.browser
     }
 
     var agent: (any AgentServiceProtocol)? {
-        self.base.agent
+        base.agent
     }
 }

@@ -62,6 +62,8 @@ When `--json` is used without `--path`, Peekaboo retains the raw image only in m
 
 `--roi` is a stateless output crop, not persistent window zoom. Peekaboo first resolves and generation-pins one exact WindowServer window, captures and inspects that full window, then emits only the requested rectangle. The request fails if the window moves, resizes, changes owner, is recycled, or the rectangle extends outside the captured window. Pixel output is limited to 8192 pixels per edge and 64 megapixels.
 
+Remote ROI requires Bridge protocol 1.20 with enabled observation and snapshot-publication operations and is rejected before dispatch against an older or restricted host. Returned files and snapshots remain quarantined or unpublished until the client verifies both the exact-window/viewport receipt and every raster's real cropped pixel dimensions. Ordinary full-window `see` remains compatible with older desktop-observation hosts.
+
 ROI coordinates are `x,y,width,height` in top-left-origin, window-local logical points. `--retina` changes the delivered pixel density, not that coordinate system. Pixel alignment can expand a fractional logical rectangle by less than one source pixel; JSON reports both the requested and delivered rectangles.
 
 ROI JSON adds `coordinate_context.viewport`:
