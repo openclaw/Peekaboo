@@ -43,12 +43,14 @@ Docs:
 
 ### PR #47 “enhancements” scaffolding
 
-These types and helpers were merged into `main` but are largely **not integrated** into the production tool-call path yet:
+PR #47 introduced these types and helpers. The production streaming path now passes
+`AgentEnhancementOptions` and calls `executeToolWithVerification`; the uncalled
+`runEnhancedStreamingLoop` compatibility wrapper was later removed in the v4 dead-code sweep.
 
 - `AgentEnhancementOptions`
 - `SmartCaptureService` (diff-aware capture, region capture)
 - `ActionVerifier` (post-action screenshot verification via AI)
-- `PeekabooAgentService+Enhancements.swift` helpers (`executeToolWithVerification`, `runEnhancedStreamingLoop`, …)
+- `PeekabooAgentService+Enhancements.swift` verification helpers
 
 ## What did not ship from PR #47
 
@@ -272,4 +274,3 @@ This reduces prompt injection “instruction smuggling” across nodes.
   - cheapest vision model available,
   - or local/offline (Ollama) when configured?
 - How to keep verification from creating privacy regressions (unnecessary screenshot uploads)?
-
