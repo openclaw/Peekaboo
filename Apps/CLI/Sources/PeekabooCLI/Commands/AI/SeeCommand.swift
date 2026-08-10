@@ -1,6 +1,7 @@
 import Commander
 import CoreGraphics
 import Foundation
+import PeekabooBridge
 import PeekabooCore
 import PeekabooFoundation
 
@@ -141,6 +142,12 @@ struct SeeCommand: ApplicationResolvable, ErrorHandlingCommand, RuntimeBackedCom
         ])
 
         do {
+            if let requiredHostFailure = runtime.requiredHostFailure {
+                throw PeekabooBridgeErrorEnvelope(
+                    code: .operationNotSupported,
+                    message: requiredHostFailure
+                )
+            }
             try self.validateMergedOptions()
             if self.usesPixelOnlyCapture {
                 try await self.runPixelOnlyCapture()

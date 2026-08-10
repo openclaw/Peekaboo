@@ -41,7 +41,7 @@ struct RemoteCaptureGateOwnershipTests {
     }
 
     @Test
-    func `remote ROI rejects a pre 1_20 host before transport`() async {
+    func `remote ROI rejects a pre 1_21 host before transport`() async {
         let remote = RemoteDesktopObservationService(client: PeekabooBridgeClient(
             socketPath: "/tmp/nonexistent-roi-\(UUID().uuidString).sock",
             requestTimeoutSec: 1))
@@ -293,6 +293,7 @@ struct RemoteCaptureGateOwnershipTests {
             services: StubServices(snapshots: snapshots, desktopObservation: observation),
             allowedOperations: [
                 .desktopObservation,
+                .storeObservationSnapshot,
                 .storeScreenshot,
                 .storeDetectionResult,
             ])
@@ -395,7 +396,12 @@ struct RemoteCaptureGateOwnershipTests {
         let observation = ROIFileObservationService(mode: .validWithElements)
         let server = self.makeROIServer(
             services: StubServices(snapshots: snapshots, desktopObservation: observation),
-            allowedOperations: [.desktopObservation, .storeScreenshot, .storeDetectionResult])
+            allowedOperations: [
+                .desktopObservation,
+                .storeObservationSnapshot,
+                .storeScreenshot,
+                .storeDetectionResult,
+            ])
         let host = PeekabooBridgeHost(
             socketPath: socketPath,
             server: server,

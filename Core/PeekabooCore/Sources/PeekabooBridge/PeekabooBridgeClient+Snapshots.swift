@@ -43,6 +43,15 @@ extension PeekabooBridgeClient {
         try await self.sendExpectOK(.storeScreenshot(request), timeoutSec: timeoutSec)
     }
 
+    public func storeObservationSnapshot(
+        _ request: SnapshotObservationPublicationRequest,
+        timeoutSec: TimeInterval? = nil) async throws
+    {
+        try await self.sendExpectOK(
+            .storeObservationSnapshot(PeekabooBridgeStoreObservationSnapshotRequest(request)),
+            timeoutSec: timeoutSec)
+    }
+
     public func storeAnnotatedScreenshot(
         snapshotId: String,
         annotatedScreenshotPath: String,

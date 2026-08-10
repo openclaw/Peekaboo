@@ -561,6 +561,25 @@ public struct PeekabooBridgeStoreScreenshotRequest: Codable, Sendable {
     }
 }
 
+public struct PeekabooBridgeStoreObservationSnapshotRequest: Codable, Sendable {
+    public let screenshot: PeekabooBridgeStoreScreenshotRequest
+    public let detectionResult: ElementDetectionResult?
+    public let annotatedScreenshotPath: String?
+
+    public init(_ request: SnapshotObservationPublicationRequest) {
+        self.screenshot = PeekabooBridgeStoreScreenshotRequest(request.screenshot)
+        self.detectionResult = request.detectionResult
+        self.annotatedScreenshotPath = request.annotatedScreenshotPath
+    }
+
+    public var publicationRequest: SnapshotObservationPublicationRequest {
+        SnapshotObservationPublicationRequest(
+            screenshot: self.screenshot.snapshotRequest,
+            detectionResult: self.detectionResult,
+            annotatedScreenshotPath: self.annotatedScreenshotPath)
+    }
+}
+
 public struct PeekabooBridgeStoreAnnotatedScreenshotRequest: Codable, Sendable {
     public let snapshotId: String
     public let annotatedScreenshotPath: String

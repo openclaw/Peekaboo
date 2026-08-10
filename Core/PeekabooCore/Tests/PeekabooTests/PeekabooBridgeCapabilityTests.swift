@@ -100,10 +100,11 @@ struct PeekabooBridgeCapabilityTests {
     }
 
     @Test
-    func `handshake omits implicit invalidation for legacy snapshot managers`() async throws {
+    func `handshake omits transactional capabilities for legacy snapshot managers`() async throws {
+        let snapshots = await MainActor.run { LegacySnapshotManager() }
         let server = await MainActor.run {
             PeekabooBridgeServer(
-                services: StubServices(snapshots: LegacySnapshotManager()),
+                services: StubServices(snapshots: snapshots),
                 hostKind: .gui,
                 allowlistedTeams: [],
                 allowlistedBundles: [])
@@ -112,6 +113,22 @@ struct PeekabooBridgeCapabilityTests {
 
         #expect(!handshake.supportedOperations.contains(.invalidateImplicitLatestSnapshot))
         #expect(handshake.enabledOperations?.contains(.invalidateImplicitLatestSnapshot) != true)
+        #expect(!handshake.supportedOperations.contains(.storeObservationSnapshot))
+        #expect(handshake.enabledOperations?.contains(.storeObservationSnapshot) != true)
+
+        await #expect(throws: SnapshotError.self) {
+            try await snapshots.storeObservationSnapshot(SnapshotObservationPublicationRequest(
+                screenshot: SnapshotScreenshotRequest(
+                    snapshotId: "existing",
+                    screenshotPath: "/tmp/unused.png",
+                    applicationBundleId: nil,
+                    applicationProcessId: nil,
+                    applicationName: nil,
+                    windowTitle: nil,
+                    windowBounds: nil),
+                detectionResult: nil,
+                annotatedScreenshotPath: nil))
+        }
     }
 
     @Test

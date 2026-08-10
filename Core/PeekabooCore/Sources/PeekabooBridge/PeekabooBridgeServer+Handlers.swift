@@ -45,7 +45,8 @@ extension PeekabooBridgeServer {
              .dialogListElements:
             try await self.handleDialogRequest(request)
         case .createSnapshot, .storeDetectionResult, .getDetectionResult, .storeScreenshot,
-             .storeAnnotatedScreenshot, .listSnapshots, .getMostRecentSnapshot, .cleanSnapshot,
+             .storeObservationSnapshot, .storeAnnotatedScreenshot, .listSnapshots, .getMostRecentSnapshot,
+             .cleanSnapshot,
              .invalidateImplicitLatestSnapshot, .cleanSnapshotsOlderThan, .cleanAllSnapshots:
             try await self.handleSnapshotRequest(request)
         case ._appleScriptProbe:

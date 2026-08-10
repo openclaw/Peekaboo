@@ -385,6 +385,95 @@ struct DesktopObservationROITests {
             screenshotPath: screenshotURL.path)
     }
 
+    @Test
+    @MainActor
+    func `atomic observation snapshot preserves the previous entry when artifact staging fails`() async throws {
+        let sourceDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekaboo-atomic-observation-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: sourceDirectory, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: sourceDirectory) }
+        let originalURL = sourceDirectory.appendingPathComponent("original.png")
+        let replacementURL = sourceDirectory.appendingPathComponent("replacement.png")
+        let missingAnnotationURL = sourceDirectory.appendingPathComponent("missing-annotation.png")
+        let originalData = try Self.capture(
+            bounds: CGRect(x: 0, y: 0, width: 8, height: 8),
+            scale: 1).imageData
+        let replacementData = try Self.capture(
+            bounds: CGRect(x: 0, y: 0, width: 4, height: 4),
+            scale: 1).imageData
+        try originalData.write(to: originalURL)
+        try replacementData.write(to: replacementURL)
+
+        let manager = InMemorySnapshotManager(options: .init(copyArtifactsOnStore: true))
+        #expect(manager.supportsAtomicObservationSnapshotPublication)
+        let snapshotID = try await manager.createSnapshot()
+        try await manager.storeScreenshot(SnapshotScreenshotRequest(
+            snapshotId: snapshotID,
+            screenshotPath: originalURL.path,
+            applicationBundleId: "test.original",
+            applicationProcessId: 123,
+            applicationName: "Original",
+            windowTitle: "Original",
+            windowBounds: CGRect(x: 0, y: 0, width: 8, height: 8)))
+        let originalSnapshot = try #require(try await manager.getUIAutomationSnapshot(snapshotId: snapshotID))
+        let storedOriginalPath = try #require(originalSnapshot.screenshotPath)
+
+        await #expect(throws: (any Error).self) {
+            try await manager.storeObservationSnapshot(SnapshotObservationPublicationRequest(
+                screenshot: SnapshotScreenshotRequest(
+                    snapshotId: snapshotID,
+                    screenshotPath: replacementURL.path,
+                    applicationBundleId: "test.replacement",
+                    applicationProcessId: 456,
+                    applicationName: "Replacement",
+                    windowTitle: "Replacement",
+                    windowBounds: CGRect(x: 0, y: 0, width: 4, height: 4)),
+                detectionResult: nil,
+                annotatedScreenshotPath: missingAnnotationURL.path))
+        }
+
+        let retained = try #require(try await manager.getUIAutomationSnapshot(snapshotId: snapshotID))
+        #expect(retained.applicationBundleId == "test.original")
+        #expect(retained.screenshotPath == storedOriginalPath)
+        #expect(try Data(contentsOf: URL(fileURLWithPath: storedOriginalPath)) == originalData)
+        try await manager.cleanSnapshot(snapshotId: snapshotID)
+    }
+
+    @Test
+    @MainActor
+    func `atomic observation snapshot preserves pending visibility until mutation publication`() async throws {
+        let sourceURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekaboo-pending-observation-\(UUID().uuidString).png")
+        let imageData = try Self.capture(
+            bounds: CGRect(x: 0, y: 0, width: 8, height: 8),
+            scale: 1).imageData
+        try imageData.write(to: sourceURL)
+        defer { try? FileManager.default.removeItem(at: sourceURL) }
+
+        let manager = InMemorySnapshotManager(options: .init(copyArtifactsOnStore: true))
+        let startedAt = Date()
+        let snapshotID = try await manager.createSnapshot(pendingAt: startedAt)
+        try await manager.storeObservationSnapshot(SnapshotObservationPublicationRequest(
+            screenshot: SnapshotScreenshotRequest(
+                snapshotId: snapshotID,
+                screenshotPath: sourceURL.path,
+                applicationBundleId: "test.pending",
+                applicationProcessId: 123,
+                applicationName: "Pending",
+                windowTitle: "Pending",
+                windowBounds: CGRect(x: 0, y: 0, width: 8, height: 8)),
+            detectionResult: nil,
+            annotatedScreenshotPath: nil))
+
+        #expect(try await manager.listSnapshots().contains { $0.id == snapshotID } == false)
+        _ = try await manager.invalidateImplicitLatestSnapshot(
+            through: Date(),
+            preserving: snapshotID,
+            preservedAt: Date())
+        #expect(try await manager.listSnapshots().contains { $0.id == snapshotID })
+        try await manager.cleanSnapshot(snapshotId: snapshotID)
+    }
+
     @MainActor
     private static func verifyFullRefreshClearsROI(
         manager: any SnapshotManagerProtocol,

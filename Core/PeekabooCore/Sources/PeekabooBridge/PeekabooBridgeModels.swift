@@ -131,6 +131,7 @@ public enum PeekabooBridgeOperation: String, Codable, Sendable, CaseIterable, Ha
     case storeDetectionResult
     case getDetectionResult
     case storeScreenshot
+    case storeObservationSnapshot
     case storeAnnotatedScreenshot
     case listSnapshots
     case getMostRecentSnapshot
@@ -209,6 +210,9 @@ public enum PeekabooBridgeOperation: String, Codable, Sendable, CaseIterable, Ha
             compatible.remove(.exactWindowTargetedClick)
             compatible.remove(.exactWindowTargetedTypeActions)
             compatible.remove(.exactWindowTargetedHotkey)
+        }
+        if version < PeekabooBridgeConstants.atomicObservationSnapshotPublicationVersion {
+            compatible.remove(.storeObservationSnapshot)
         }
         return compatible
     }

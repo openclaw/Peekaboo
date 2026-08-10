@@ -192,7 +192,7 @@ private final class ExactWindowROIUnsupportedDesktopObservationService: DesktopO
         guard request.capture.roi == nil else {
             throw PeekabooBridgeErrorEnvelope(
                 code: .operationNotSupported,
-                message: "Bridge host lacks protocol 1.20 exact-window ROI observation support")
+                message: "Bridge host lacks protocol 1.21 exact-window ROI observation support")
         }
         return try await self.delegate.observe(request)
     }

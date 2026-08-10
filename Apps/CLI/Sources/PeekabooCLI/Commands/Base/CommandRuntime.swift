@@ -49,8 +49,8 @@ struct CommandRuntimeOptions {
     /// Protocol 1.12 added the silent capture visualizer mode used by background observation.
     /// Older hosts cannot decode that enum value, so commands that can send it must fail preflight.
     var requiresSilentCapture = false
-    /// Protocol 1.20 carries exact-window ROI requests, cropped viewport receipts, and snapshot
-    /// coordinate context. Older hosts would ignore the crop and return full-window pixels.
+    /// Protocol 1.21 carries exact-window ROI receipts and atomic snapshot publication.
+    /// Older hosts could ignore the crop or acknowledge only part of the snapshot.
     var requiresExactWindowROIObservation = false
     var requiresTargetedFocusedElement = false
     var requiresExactWindowTargetedKeyboard = false
@@ -121,6 +121,7 @@ struct CommandRuntime {
     let selectedRemoteHostProcessIdentifier: pid_t?
     let snapshotInvalidationRemoteSocketPaths: [String]
     let applicationRelaunchAllowed: Bool
+    let requiredHostFailure: String?
     let interactionMutationTracker: InteractionMutationTracker
     @MainActor let services: any PeekabooServiceProviding
     @MainActor let logger: Logger
@@ -142,6 +143,7 @@ struct CommandRuntime {
         selectedRemoteHostProcessIdentifier: pid_t? = nil,
         snapshotInvalidationRemoteSocketPaths: [String] = [],
         applicationRelaunchAllowed: Bool = true,
+        requiredHostFailure: String? = nil,
         interactionMutationTracker: InteractionMutationTracker = InteractionMutationTracker()
     ) {
         // Keep Tachikoma credential/profile resolution aligned with Peekaboo CLI storage.
@@ -154,6 +156,7 @@ struct CommandRuntime {
         self.selectedRemoteHostProcessIdentifier = selectedRemoteHostProcessIdentifier
         self.snapshotInvalidationRemoteSocketPaths = snapshotInvalidationRemoteSocketPaths
         self.applicationRelaunchAllowed = applicationRelaunchAllowed
+        self.requiredHostFailure = requiredHostFailure
         self.interactionMutationTracker = interactionMutationTracker
         self.logger = Logger.shared
 
@@ -229,7 +232,8 @@ extension CommandRuntime {
             selectedRemoteSocketPath: resolution.selectedRemoteSocketPath,
             selectedRemoteHostProcessIdentifier: resolution.selectedRemoteHostProcessIdentifier,
             snapshotInvalidationRemoteSocketPaths: resolution.snapshotInvalidationRemoteSocketPaths,
-            applicationRelaunchAllowed: resolution.applicationRelaunchAllowed
+            applicationRelaunchAllowed: resolution.applicationRelaunchAllowed,
+            requiredHostFailure: resolution.requiredHostFailure
         )
     }
 

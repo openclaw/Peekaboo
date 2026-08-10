@@ -13,6 +13,7 @@ enum RuntimeHostResolver {
         let selectedRemoteHostProcessIdentifier: pid_t?
         let snapshotInvalidationRemoteSocketPaths: [String]
         let applicationRelaunchAllowed: Bool
+        let requiredHostFailure: String?
     }
 
     struct ImplicitRemoteCandidate: Equatable {
@@ -56,7 +57,8 @@ enum RuntimeHostResolver {
                 selectedRemoteSocketPath: nil,
                 selectedRemoteHostProcessIdentifier: nil,
                 snapshotInvalidationRemoteSocketPaths: [],
-                applicationRelaunchAllowed: true
+                applicationRelaunchAllowed: true,
+                requiredHostFailure: nil
             )
         }
 
@@ -85,7 +87,8 @@ enum RuntimeHostResolver {
                 selectedRemoteSocketPath: nil,
                 selectedRemoteHostProcessIdentifier: nil,
                 snapshotInvalidationRemoteSocketPaths: localSnapshotInvalidationPaths,
-                applicationRelaunchAllowed: true
+                applicationRelaunchAllowed: true,
+                requiredHostFailure: nil
             )
         }
 
@@ -199,8 +202,18 @@ enum RuntimeHostResolver {
             selectedRemoteSocketPath: nil,
             selectedRemoteHostProcessIdentifier: nil,
             snapshotInvalidationRemoteSocketPaths: snapshotInvalidationRemoteSocketPaths,
-            applicationRelaunchAllowed: !options.requiresApplicationRelaunch
+            applicationRelaunchAllowed: !options.requiresApplicationRelaunch,
+            requiredHostFailure: self.requiredHostFailure(
+                explicitSocket: explicitSocket,
+                options: options
+            )
         )
+    }
+
+    static func requiredHostFailure(explicitSocket: String?, options: CommandRuntimeOptions) -> String? {
+        guard explicitSocket != nil, options.requiresExactWindowROIObservation else { return nil }
+        return "The explicitly selected Bridge host does not support exact-window ROI observation; " +
+            "protocol 1.21 with enabled observation and atomic snapshot publication is required."
     }
 
     static func remoteRoutingAllowed(
@@ -571,7 +584,8 @@ enum RuntimeHostResolver {
                     selectedRemoteSocketPath: NSString(string: socketPath).standardizingPath,
                     selectedRemoteHostProcessIdentifier: reusableDaemonStatus?.pid,
                     snapshotInvalidationRemoteSocketPaths: snapshotInvalidationRemoteSocketPaths,
-                    applicationRelaunchAllowed: BridgeCapabilityPolicy.supportsApplicationRelaunch(for: handshake)
+                    applicationRelaunchAllowed: BridgeCapabilityPolicy.supportsApplicationRelaunch(for: handshake),
+                    requiredHostFailure: nil
                 )
             } catch {
                 continue

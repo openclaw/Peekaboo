@@ -341,6 +341,7 @@ extension PeekabooBridgeOperation {
              .storeDetectionResult,
              .getDetectionResult,
              .storeScreenshot,
+             .storeObservationSnapshot,
              .storeAnnotatedScreenshot,
              .listSnapshots,
              .getMostRecentSnapshot,

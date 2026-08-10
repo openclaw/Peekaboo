@@ -8,35 +8,40 @@ import Testing
 struct ExactWindowROIRuntimeCapabilityTests {
     private static let roiOperations: [PeekabooBridgeOperation] = [
         .desktopObservation,
+        .storeObservationSnapshot,
         .storeScreenshot,
         .storeDetectionResult,
         .storeAnnotatedScreenshot,
     ]
 
     @Test
-    func `exact window ROI requires protocol 1_20 and enabled publication operations`() {
+    func `exact window ROI requires protocol 1_21 and enabled publication operations`() {
+        let minimalOperations: [PeekabooBridgeOperation] = [
+            .desktopObservation,
+            .storeObservationSnapshot,
+        ]
         let supported = Self.handshake(
-            minor: 20,
+            minor: 21,
             hostKind: .gui,
-            operations: Self.roiOperations,
-            enabledOperations: Self.roiOperations
+            operations: minimalOperations,
+            enabledOperations: minimalOperations
         )
         let older = Self.handshake(
-            minor: 19,
+            minor: 20,
             hostKind: .gui,
             operations: Self.roiOperations,
             enabledOperations: Self.roiOperations
         )
         let disabledOperations = Self.roiOperations.filter { $0 != .desktopObservation }
         let disabled = Self.handshake(
-            minor: 20,
+            minor: 21,
             hostKind: .gui,
             operations: Self.roiOperations,
             enabledOperations: disabledOperations
         )
-        let incompleteOperations = Self.roiOperations.filter { $0 != .storeAnnotatedScreenshot }
+        let incompleteOperations = Self.roiOperations.filter { $0 != .storeObservationSnapshot }
         let incomplete = Self.handshake(
-            minor: 20,
+            minor: 21,
             hostKind: .gui,
             operations: incompleteOperations,
             enabledOperations: incompleteOperations
@@ -49,7 +54,7 @@ struct ExactWindowROIRuntimeCapabilityTests {
     }
 
     @Test
-    func `See ROI requires protocol 1_20 while ordinary see remains compatible`() throws {
+    func `See ROI requires protocol 1_21 while ordinary see remains compatible`() throws {
         let roi = try CommanderCLIBinder.makeRuntimeOptions(
             from: ParsedValues(
                 positional: [],
@@ -67,11 +72,11 @@ struct ExactWindowROIRuntimeCapabilityTests {
             commandType: SeeCommand.self
         )
         let operations = [PeekabooBridgeOperation.captureScreen] + Self.roiOperations
-        let older = Self.handshake(minor: 19, hostKind: .onDemand, operations: operations)
-        let current = Self.handshake(minor: 20, hostKind: .onDemand, operations: operations)
+        let older = Self.handshake(minor: 20, hostKind: .onDemand, operations: operations)
+        let current = Self.handshake(minor: 21, hostKind: .onDemand, operations: operations)
         let disabledOperations = operations.filter { $0 != .desktopObservation }
         let disabled = Self.handshake(
-            minor: 20,
+            minor: 21,
             hostKind: .onDemand,
             operations: operations,
             enabledOperations: disabledOperations
@@ -96,20 +101,20 @@ struct ExactWindowROIRuntimeCapabilityTests {
         var options = CommandRuntimeOptions()
         options.requiresExactWindowROIObservation = true
         let older = Self.handshake(
-            minor: 19,
+            minor: 20,
             hostKind: .onDemand,
             operations: Self.roiOperations,
             enabledOperations: Self.roiOperations
         )
         let current = Self.handshake(
-            minor: 20,
+            minor: 21,
             hostKind: .onDemand,
             operations: Self.roiOperations,
             enabledOperations: Self.roiOperations
         )
         let disabledOperations = Self.roiOperations.filter { $0 != .desktopObservation }
         let disabled = Self.handshake(
-            minor: 20,
+            minor: 21,
             hostKind: .onDemand,
             operations: Self.roiOperations,
             enabledOperations: disabledOperations
@@ -129,6 +134,25 @@ struct ExactWindowROIRuntimeCapabilityTests {
             candidate,
             handshake: disabled,
             options: options
+        ) == nil)
+    }
+
+    @Test
+    func `explicit incompatible ROI host fails instead of falling back locally`() {
+        var roi = CommandRuntimeOptions()
+        roi.requiresExactWindowROIObservation = true
+
+        #expect(RuntimeHostResolver.requiredHostFailure(
+            explicitSocket: "/tmp/legacy.sock",
+            options: roi
+        )?.contains("protocol 1.21") == true)
+        #expect(RuntimeHostResolver.requiredHostFailure(explicitSocket: nil, options: roi) == nil)
+
+        var ordinary = CommandRuntimeOptions()
+        ordinary.requiresExactWindowROIObservation = false
+        #expect(RuntimeHostResolver.requiredHostFailure(
+            explicitSocket: "/tmp/legacy.sock",
+            options: ordinary
         ) == nil)
     }
 

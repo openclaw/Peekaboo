@@ -14,6 +14,8 @@ public final class InMemorySnapshotManager: SnapshotManagerProtocol {
         self.options.copyArtifactsOnStore
     }
 
+    public let supportsAtomicObservationSnapshotPublication = true
+
     public var effectiveImplicitLatestInvalidationWatermark: Date? {
         SnapshotManager.latestWatermark(
             self.implicitLatestInvalidatedAt,

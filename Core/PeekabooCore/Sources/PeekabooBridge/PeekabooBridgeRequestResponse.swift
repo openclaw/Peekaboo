@@ -90,6 +90,7 @@ public enum PeekabooBridgeRequest: Codable, Sendable {
     case storeDetectionResult(PeekabooBridgeStoreDetectionRequest)
     case getDetectionResult(PeekabooBridgeGetDetectionRequest)
     case storeScreenshot(PeekabooBridgeStoreScreenshotRequest)
+    case storeObservationSnapshot(PeekabooBridgeStoreObservationSnapshotRequest)
     case storeAnnotatedScreenshot(PeekabooBridgeStoreAnnotatedScreenshotRequest)
     case listSnapshots
     case getMostRecentSnapshot(PeekabooBridgeGetMostRecentSnapshotRequest)
@@ -191,6 +192,7 @@ extension PeekabooBridgeRequest {
         case .storeDetectionResult: .storeDetectionResult
         case .getDetectionResult: .getDetectionResult
         case .storeScreenshot: .storeScreenshot
+        case .storeObservationSnapshot: .storeObservationSnapshot
         case .storeAnnotatedScreenshot: .storeAnnotatedScreenshot
         case .listSnapshots: .listSnapshots
         case .getMostRecentSnapshot: .getMostRecentSnapshot

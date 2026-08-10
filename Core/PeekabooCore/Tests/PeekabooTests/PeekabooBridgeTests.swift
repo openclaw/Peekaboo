@@ -143,6 +143,27 @@ struct PeekabooBridgeTests {
     }
 
     @Test
+    @MainActor
+    func `desktop observation misses retain typed Bridge errors`() {
+        let notFound = PeekabooBridgeServer.bridgeErrorEnvelope(
+            for: DesktopObservationError.targetNotFound("window id 42"),
+            operation: .desktopObservation)
+        #expect(notFound.code == .notFound)
+        #expect(notFound.kind == .windowNotFound)
+
+        let changed = PeekabooBridgeServer.bridgeErrorEnvelope(
+            for: DesktopObservationError.targetChanged("window moved"),
+            operation: .desktopObservation)
+        #expect(changed.code == .notFound)
+        #expect(changed.kind == .windowNotFound)
+
+        let ambiguous = PeekabooBridgeServer.bridgeErrorEnvelope(
+            for: DesktopObservationError.ambiguousWindowTitle("Settings", candidates: "1, 2"),
+            operation: .desktopObservation)
+        #expect(ambiguous.code == .invalidRequest)
+    }
+
+    @Test
     func `handshake negotiates version`() async throws {
         let server = await MainActor.run {
             PeekabooBridgeServer(

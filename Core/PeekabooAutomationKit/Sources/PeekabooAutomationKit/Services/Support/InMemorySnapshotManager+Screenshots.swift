@@ -40,6 +40,64 @@ extension InMemorySnapshotManager {
         self.pruneIfNeeded()
     }
 
+    public func storeObservationSnapshot(_ request: SnapshotObservationPublicationRequest) async throws {
+        let storedRawPath = try self.storedArtifactPath(
+            sourcePath: request.screenshot.screenshotPath,
+            preferredName: "raw")
+        var storedAnnotatedPath: String?
+        do {
+            if let annotatedScreenshotPath = request.annotatedScreenshotPath {
+                storedAnnotatedPath = try self.storedArtifactPath(
+                    sourcePath: annotatedScreenshotPath,
+                    preferredName: "annotated")
+            }
+        } catch {
+            self.deleteManagedTemporaryArtifact(at: storedRawPath)
+            throw error
+        }
+
+        var entry = self.entries[request.screenshot.snapshotId] ?? Entry(
+            createdAt: Date(),
+            lastAccessedAt: Date(),
+            processId: getpid(),
+            isPending: false,
+            detectionResult: nil,
+            snapshotData: UIAutomationSnapshot(creatorProcessId: getpid()))
+        // Pending visibility belongs to the outer mutation coordinator. Ordinary reservations are already visible;
+        // web-focus observations must stay pending until their mutation and preservation boundary is published.
+        let previousSnapshotData = entry.snapshotData
+        entry.lastAccessedAt = Date()
+        entry.snapshotData.screenshotPath = storedRawPath
+        entry.snapshotData.annotatedPath = storedAnnotatedPath
+        entry.snapshotData.uiMap = [:]
+        entry.snapshotData.applicationName = request.screenshot.applicationName
+        entry.snapshotData.applicationBundleId = request.screenshot.applicationBundleId
+        entry.snapshotData.applicationProcessId = request.screenshot.applicationProcessId
+        entry.snapshotData.windowTitle = request.screenshot.windowTitle
+        entry.snapshotData.windowBounds = request.screenshot.windowBounds
+        entry.snapshotData.windowID = request.screenshot.windowID.flatMap { CGWindowID(exactly: $0) }
+        entry.snapshotData.windowMutationIdentity = request.screenshot.windowMutationIdentity
+        entry.snapshotData.captureCoordinateContext = request.screenshot.captureCoordinateContext
+        entry.snapshotData.lastUpdateTime = Date()
+        if let detectionResult = request.detectionResult {
+            self.applyDetectionResult(detectionResult, to: &entry.snapshotData)
+            entry.detectionResult = ElementDetectionResult(
+                snapshotId: detectionResult.snapshotId,
+                screenshotPath: storedRawPath,
+                elements: detectionResult.elements,
+                metadata: detectionResult.metadata.withCaptureCoordinateContext(
+                    entry.snapshotData.captureCoordinateContext))
+        } else {
+            entry.detectionResult = nil
+        }
+
+        self.entries[request.screenshot.snapshotId] = entry
+        if self.options.copyArtifactsOnStore {
+            self.deleteManagedTemporaryArtifacts(for: previousSnapshotData)
+        }
+        self.pruneIfNeeded()
+    }
+
     public func storeAnnotatedScreenshot(snapshotId: String, annotatedScreenshotPath: String) async throws {
         self.pruneIfNeeded()
         let storedPath = try self.storedArtifactPath(

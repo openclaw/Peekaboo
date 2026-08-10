@@ -30,11 +30,12 @@ struct BridgeStrictBackgroundOperationTests {
     }
 
     @Test
-    func `ordinary desktop observation remains compatible while ROI advances protocol 1_20`() {
+    func `ordinary desktop observation remains compatible while ROI advances protocol 1_21`() {
         let operation: Set<PeekabooBridgeOperation> = [.desktopObservation]
+        let atomicPublication: Set<PeekabooBridgeOperation> = [.storeObservationSnapshot]
 
         #expect(PeekabooBridgeConstants.exactWindowROIObservationVersion ==
-            PeekabooBridgeProtocolVersion(major: 1, minor: 20))
+            PeekabooBridgeProtocolVersion(major: 1, minor: 21))
         #expect(PeekabooBridgeOperation.compatible(
             operation,
             with: PeekabooBridgeProtocolVersion(major: 1, minor: 4)).isEmpty)
@@ -47,6 +48,12 @@ struct BridgeStrictBackgroundOperationTests {
         #expect(PeekabooBridgeOperation.compatible(
             operation,
             with: PeekabooBridgeConstants.exactWindowROIObservationVersion) == operation)
+        #expect(PeekabooBridgeOperation.compatible(
+            atomicPublication,
+            with: PeekabooBridgeProtocolVersion(major: 1, minor: 20)).isEmpty)
+        #expect(PeekabooBridgeOperation.compatible(
+            atomicPublication,
+            with: PeekabooBridgeConstants.exactWindowROIObservationVersion) == atomicPublication)
     }
 
     @Test

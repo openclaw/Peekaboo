@@ -37,7 +37,7 @@ public final class RemoteDesktopObservationService: DesktopObservationServicePro
         guard self.supportsExactWindowROIObservation else {
             throw PeekabooBridgeErrorEnvelope(
                 code: .operationNotSupported,
-                message: "Bridge host lacks protocol 1.20 exact-window ROI observation support")
+                message: "Bridge host lacks protocol 1.21 exact-window ROI observation support")
         }
         let overallTimeout = request.timeout.overall
         let deadline = try Self.postProcessingDeadline(timeout: overallTimeout)
@@ -212,44 +212,36 @@ public final class RemoteDesktopObservationService: DesktopObservationServicePro
 
         try Self.checkPostProcessingAllowance(deadline: deadline, timeout: timeout)
         let windowContext = result.elements?.metadata.windowContext
-        try await self.client.storeScreenshot(
-            PeekabooBridgeStoreScreenshotRequest(SnapshotScreenshotRequest(
+        let detectionResult = result.elements.map {
+            ElementDetectionResult(
                 snapshotId: snapshotID,
-                screenshotPath: prepared.quarantineRawPath,
-                applicationBundleId: windowContext?.applicationBundleId ?? result.capture.metadata.applicationInfo?
-                    .bundleIdentifier,
-                applicationProcessId: windowContext?.applicationProcessId ?? result.capture.metadata.applicationInfo?
-                    .processIdentifier,
-                applicationName: windowContext?.applicationName ?? result.capture.metadata.applicationInfo?.name,
-                windowTitle: windowContext?.windowTitle ?? result.capture.metadata.windowInfo?.title,
-                windowBounds: windowContext?.windowBounds ?? result.capture.metadata.windowInfo?.bounds,
-                windowID: windowContext?.windowID ?? result.capture.metadata.windowInfo?.windowID,
-                windowMutationIdentity: windowContext?.windowMutationIdentity ?? result.capture.metadata.windowInfo?
-                    .mutationIdentity,
-                captureCoordinateContext: CaptureCoordinateContext(
-                    metadata: result.capture.metadata,
-                    referenceID: snapshotID))),
+                screenshotPath: "",
+                elements: $0.elements,
+                metadata: $0.metadata)
+        }
+        try await self.client.storeObservationSnapshot(
+            SnapshotObservationPublicationRequest(
+                screenshot: SnapshotScreenshotRequest(
+                    snapshotId: snapshotID,
+                    screenshotPath: prepared.quarantineRawPath,
+                    applicationBundleId: windowContext?.applicationBundleId ?? result.capture.metadata.applicationInfo?
+                        .bundleIdentifier,
+                    applicationProcessId: windowContext?.applicationProcessId ?? result.capture.metadata
+                        .applicationInfo?
+                        .processIdentifier,
+                    applicationName: windowContext?.applicationName ?? result.capture.metadata.applicationInfo?.name,
+                    windowTitle: windowContext?.windowTitle ?? result.capture.metadata.windowInfo?.title,
+                    windowBounds: windowContext?.windowBounds ?? result.capture.metadata.windowInfo?.bounds,
+                    windowID: windowContext?.windowID ?? result.capture.metadata.windowInfo?.windowID,
+                    windowMutationIdentity: windowContext?.windowMutationIdentity ?? result.capture.metadata.windowInfo?
+                        .mutationIdentity,
+                    captureCoordinateContext: CaptureCoordinateContext(
+                        metadata: result.capture.metadata,
+                        referenceID: snapshotID)),
+                detectionResult: detectionResult,
+                annotatedScreenshotPath: prepared.quarantineAnnotatedPath),
             timeoutSec: Self.remainingPostProcessingTime(deadline: deadline, timeout: timeout))
         try Self.checkPostProcessingAllowance(deadline: deadline, timeout: timeout)
-
-        if let elements = result.elements {
-            try await self.client.storeDetectionResult(
-                snapshotId: snapshotID,
-                result: ElementDetectionResult(
-                    snapshotId: snapshotID,
-                    screenshotPath: "",
-                    elements: elements.elements,
-                    metadata: elements.metadata),
-                timeoutSec: Self.remainingPostProcessingTime(deadline: deadline, timeout: timeout))
-            try Self.checkPostProcessingAllowance(deadline: deadline, timeout: timeout)
-        }
-        if let annotatedPath = prepared.quarantineAnnotatedPath {
-            try await self.client.storeAnnotatedScreenshot(
-                snapshotId: snapshotID,
-                annotatedScreenshotPath: annotatedPath,
-                timeoutSec: Self.remainingPostProcessingTime(deadline: deadline, timeout: timeout))
-            try Self.checkPostProcessingAllowance(deadline: deadline, timeout: timeout)
-        }
     }
 
     private static func postProcessingDeadline(

@@ -187,8 +187,8 @@ mapping and clears stale annotation state.
 `image` intentionally has no ROI argument: screenshot-only calls do not create the fresh snapshot/reference binding
 required for safe follow-up background coordinates. Use `see` for a crop that will drive automation.
 
-ROI requires Bridge protocol 1.20. CLI host selection and MCP remote dispatch reject older hosts before sending the
-request, so a pre-1.20 host cannot ignore the new field and capture or return full-window pixels. After dispatch, the
+ROI requires Bridge protocol 1.21. CLI host selection and MCP remote dispatch reject older hosts before sending the
+request, so a pre-1.21 host cannot ignore the crop or acknowledge only part of the snapshot. After dispatch, the
 client also decodes the quarantined raster and checks its real pixel dimensions against the crop receipt before
 publishing files or the snapshot. A compatible host must enable desktop observation plus the snapshot-publication
 operations used to finalize the validated result.

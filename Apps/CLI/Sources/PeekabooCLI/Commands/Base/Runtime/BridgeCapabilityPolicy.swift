@@ -296,9 +296,7 @@ enum BridgeCapabilityPolicy {
         }
         return [
             PeekabooBridgeOperation.desktopObservation,
-            .storeScreenshot,
-            .storeDetectionResult,
-            .storeAnnotatedScreenshot,
+            .storeObservationSnapshot,
         ].allSatisfy { self.supportsOperation($0, for: handshake) }
     }
 

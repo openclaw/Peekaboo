@@ -146,6 +146,9 @@ extension PeekabooBridgeServer {
         if !self.services.snapshots.supportsImplicitLatestSnapshotInvalidation {
             operations.remove(.invalidateImplicitLatestSnapshot)
         }
+        if !self.services.snapshots.supportsAtomicObservationSnapshotPublication {
+            operations.remove(.storeObservationSnapshot)
+        }
         if !self.services.applications.supportsApplicationLaunchOptions {
             operations.remove(.launchApplicationWithOptions)
         }

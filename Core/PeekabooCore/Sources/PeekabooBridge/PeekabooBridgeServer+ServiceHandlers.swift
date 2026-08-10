@@ -220,6 +220,12 @@ extension PeekabooBridgeServer {
         case let .storeScreenshot(payload):
             try await self.services.snapshots.storeScreenshot(payload.snapshotRequest)
             return .ok
+        case let .storeObservationSnapshot(payload):
+            let publication = Task { @MainActor in
+                try await self.services.snapshots.storeObservationSnapshot(payload.publicationRequest)
+            }
+            try await publication.value
+            return .ok
         case let .storeAnnotatedScreenshot(payload):
             try await self.services.snapshots.storeAnnotatedScreenshot(
                 snapshotId: payload.snapshotId,
