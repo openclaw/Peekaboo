@@ -103,9 +103,11 @@ struct AppCommandTests {
 
     @Test
     func `App focus preserves an exact PID target`() async throws {
-        let (_, service) = try await runAppCommandWithService([
+        let (output, service) = try await runAppCommandWithService([
             "app", "focus", "--pid", "202", "--json",
         ])
+        let object = try #require(JSONSerialization.jsonObject(with: Data(output.utf8)) as? [String: Any])
+        #expect(object["effect"] as? String == "confirmed")
         #expect(await appServiceState(service) { $0.activateCalls } == ["PID:202"])
     }
 

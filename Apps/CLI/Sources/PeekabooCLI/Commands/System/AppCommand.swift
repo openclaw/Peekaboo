@@ -404,7 +404,7 @@ extension AppCommand.SwitchSubcommand: CommanderBindableCommand {
     }
 }
 
-extension AppCommand.FocusSubcommand: ActionOutputFormattable, AsyncRuntimeCommand, ErrorHandlingCommand,
+extension AppCommand.FocusSubcommand: ConfirmedActionOutputFormattable, AsyncRuntimeCommand, ErrorHandlingCommand,
     OutputFormattable,
     ApplicationResolvable, ApplicationResolver {}
 @MainActor
