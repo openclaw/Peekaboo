@@ -13,7 +13,7 @@ concurrency:
 jobs:
   peekaboo-core:
     name: PeekabooCore build & tests
-    runs-on: macos-15
+    runs-on: macos-26
     env:
       PEEKABOO_INCLUDE_AUTOMATION_TESTS: "false"
       RUN_AUTOMATION_TESTS: "false"
@@ -32,10 +32,10 @@ jobs:
       - name: Docs lint
         run: node scripts/docs-lint.mjs
 
-      - name: Select Xcode 26.2 (if present) or fallback to default
+      - name: Select Xcode 26.6 (if present) or fallback to default
         run: |
           set -euo pipefail
-          for candidate in /Applications/Xcode_26.2.app /Applications/Xcode_26.1.app /Applications/Xcode_26.0.app /Applications/Xcode_16.4.app /Applications/Xcode_16.3.app /Applications/Xcode.app; do
+          for candidate in /Applications/Xcode_26.6.app /Applications/Xcode_26.5.app /Applications/Xcode_26.4.1.app /Applications/Xcode_26.3.app /Applications/Xcode_26.2.app /Applications/Xcode.app; do
             if [[ -d "$candidate" ]]; then
               sudo xcode-select -s "$candidate"
               echo "DEVELOPER_DIR=${candidate}/Contents/Developer" >> "$GITHUB_ENV"
@@ -132,7 +132,7 @@ jobs:
 
   peekaboo-cli:
     name: Peekaboo CLI build & tests
-    runs-on: macos-15
+    runs-on: macos-26
     needs: peekaboo-core
     env:
       PEEKABOO_INCLUDE_AUTOMATION_TESTS: "false"
@@ -143,10 +143,10 @@ jobs:
           submodules: recursive
           fetch-depth: 1
 
-      - name: Select Xcode 26.2 (if present) or fallback to default
+      - name: Select Xcode 26.6 (if present) or fallback to default
         run: |
           set -euo pipefail
-          for candidate in /Applications/Xcode_26.2.app /Applications/Xcode_26.1.app /Applications/Xcode_26.0.app /Applications/Xcode_16.4.app /Applications/Xcode_16.3.app /Applications/Xcode.app; do
+          for candidate in /Applications/Xcode_26.6.app /Applications/Xcode_26.5.app /Applications/Xcode_26.4.1.app /Applications/Xcode_26.3.app /Applications/Xcode_26.2.app /Applications/Xcode.app; do
             if [[ -d "$candidate" ]]; then
               sudo xcode-select -s "$candidate"
               echo "DEVELOPER_DIR=${candidate}/Contents/Developer" >> "$GITHUB_ENV"
@@ -249,7 +249,7 @@ jobs:
 
   tachikoma:
     name: Tachikoma build & tests
-    runs-on: macos-15
+    runs-on: macos-26
     needs: peekaboo-cli
     env:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -260,10 +260,10 @@ jobs:
           submodules: recursive
           fetch-depth: 1
 
-      - name: Select Xcode 26.2 (if present) or fallback to default
+      - name: Select Xcode 26.6 (if present) or fallback to default
         run: |
           set -euo pipefail
-          for candidate in /Applications/Xcode_26.2.app /Applications/Xcode_26.1.app /Applications/Xcode_26.0.app /Applications/Xcode_16.4.app /Applications/Xcode_16.3.app /Applications/Xcode.app; do
+          for candidate in /Applications/Xcode_26.6.app /Applications/Xcode_26.5.app /Applications/Xcode_26.4.1.app /Applications/Xcode_26.3.app /Applications/Xcode_26.2.app /Applications/Xcode.app; do
             if [[ -d "$candidate" ]]; then
               sudo xcode-select -s "$candidate"
               echo "DEVELOPER_DIR=${candidate}/Contents/Developer" >> "$GITHUB_ENV"
@@ -360,7 +360,7 @@ jobs:
 
   mac-apps:
     name: Build macOS apps (Peekaboo + Inspector)
-    runs-on: macos-15
+    runs-on: macos-26
     needs: [peekaboo-cli, tachikoma]
     steps:
       - uses: actions/checkout@v7
@@ -368,10 +368,10 @@ jobs:
           submodules: recursive
           fetch-depth: 1
 
-      - name: Select Xcode 26.2 (if present) or fallback to default
+      - name: Select Xcode 26.6 (if present) or fallback to default
         run: |
           set -euo pipefail
-          for candidate in /Applications/Xcode_26.2.app /Applications/Xcode_26.1.app /Applications/Xcode_26.0.app /Applications/Xcode_16.4.app /Applications/Xcode_16.3.app /Applications/Xcode.app; do
+          for candidate in /Applications/Xcode_26.6.app /Applications/Xcode_26.5.app /Applications/Xcode_26.4.1.app /Applications/Xcode_26.3.app /Applications/Xcode_26.2.app /Applications/Xcode.app; do
             if [[ -d "$candidate" ]]; then
               sudo xcode-select -s "$candidate"
               echo "DEVELOPER_DIR=${candidate}/Contents/Developer" >> "$GITHUB_ENV"
@@ -420,7 +420,7 @@ jobs:
 
   lint:
     name: SwiftLint (core + CLI)
-    runs-on: macos-15
+    runs-on: macos-26
     needs: [peekaboo-cli, tachikoma, mac-apps]
     steps:
       - uses: actions/checkout@v7
