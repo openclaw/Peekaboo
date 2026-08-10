@@ -9,7 +9,7 @@ struct BridgeStatusReport: Codable {
     let candidates: [BridgeCandidateReport]
     let client: BridgeClientReport
 
-    /// Every candidate summary prints `perm: SR=… AX=… AS=… ES=…`, so a denial is visible but its remedy
+    /// Every candidate summary prints `perm: SR=… AX=… ES=…`, so a denial is visible but its remedy
     /// is not: the grant belongs to the host app behind that socket, never the CLI or terminal. One hint
     /// per denied candidate — a single first-match hint leaves the other probed hosts unexplained.
     var bridgeDeniedPermissionsHints: [String] {
@@ -60,9 +60,8 @@ struct BridgeCandidateReport: Codable {
         return nil
     }
 
-    /// Covers every permission `humanSummary` reports as SR/AX/AS/ES, so no denial the summary shows
-    /// can appear without a matching grant hint. Names match the `peekaboo permissions` labels where
-    /// they exist; AppleScript has no entry there and uses its System Settings name.
+    /// Covers every permission `humanSummary` reports as SR/AX/ES, so no denial the summary shows
+    /// can appear without a matching grant hint. Names match the `peekaboo permissions` labels.
     var deniedPermissionNames: [String] {
         guard case let .success(handshake) = self.result, let status = handshake.permissions else {
             return []
@@ -73,9 +72,6 @@ struct BridgeCandidateReport: Codable {
         }
         if !status.accessibility {
             denied.append("Accessibility")
-        }
-        if !status.appleScript {
-            denied.append("Automation (AppleScript)")
         }
         if !status.postEvent {
             denied.append("Event Synthesizing")
@@ -98,9 +94,8 @@ struct BridgeCandidateReport: Codable {
             let permissionsSummary = handshake.permissions.map { status in
                 let sr = status.screenRecording ? "Y" : "N"
                 let ax = status.accessibility ? "Y" : "N"
-                let appleScript = status.appleScript ? "Y" : "N"
                 let eventSynthesizing = status.postEvent ? "Y" : "N"
-                return "perm: SR=\(sr) AX=\(ax) AS=\(appleScript) ES=\(eventSynthesizing)"
+                return "perm: SR=\(sr) AX=\(ax) ES=\(eventSynthesizing)"
             }
             if let permissionsSummary {
                 return "\(self.socketPath) — OK (\(handshake.hostKind.rawValue), \(opsSummary), \(permissionsSummary))"

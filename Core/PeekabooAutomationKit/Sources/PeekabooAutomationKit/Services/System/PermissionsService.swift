@@ -1,4 +1,3 @@
-import ApplicationServices
 import AXorcist
 import CoreGraphics
 import Foundation
@@ -249,116 +248,18 @@ public final class PermissionsService {
         return hasPermission
     }
 
-    /// Check if AppleScript permission is granted
+    /// Legacy source-compatible API. Current Peekaboo operations use native services and never require Apple Events.
+    @available(*, deprecated, message: "Peekaboo no longer uses AppleScript automation")
     public func checkAppleScriptPermission() -> Bool {
-        self.checkAppleScriptPermission(allowTargetLaunch: true)
+        false
     }
 
-    private func checkAppleScriptPermission(allowTargetLaunch: Bool) -> Bool {
-        self.logger.debug("Checking AppleScript permission")
-
-        // Apple Events automation permission is evaluated against a target app.
-        // We probe System Events since it's the most common automation target.
-        let bundleIdentifier = "com.apple.systemevents"
-
-        var permissionStatus = Self.determineAppleScriptAutomationPermissionStatus(
-            targetBundleIdentifier: bundleIdentifier,
-            askUser: false)
-
-        if permissionStatus == procNotFound, allowTargetLaunch, !Self.isRunningUnderTests {
-            self.logger.debug("AppleScript permission probe returned procNotFound; launching target and retrying")
-            Self.launchApplication(bundleIdentifier: bundleIdentifier, logger: self.logger)
-            permissionStatus = Self.determineAppleScriptAutomationPermissionStatus(
-                targetBundleIdentifier: bundleIdentifier,
-                askUser: false)
-        }
-
-        let hasPermission = permissionStatus == noErr
-        self.logger.info("AppleScript permission status: \(permissionStatus), has permission: \(hasPermission)")
-        return hasPermission
-    }
-
+    /// Legacy source-compatible API. It intentionally never prompts or launches an Apple Events target.
     @discardableResult
+    @available(*, deprecated, message: "Peekaboo no longer uses AppleScript automation")
     public func requestAppleScriptPermission(interactive: Bool = true) -> Bool {
-        self.logger.debug("Requesting AppleScript permission")
-
-        guard interactive else { return self.checkAppleScriptPermission() }
-        if Self.isRunningUnderTests {
-            return self.checkAppleScriptPermission()
-        }
-
-        let bundleIdentifier = "com.apple.systemevents"
-
-        var permissionStatus = Self.determineAppleScriptAutomationPermissionStatus(
-            targetBundleIdentifier: bundleIdentifier,
-            askUser: true)
-
-        if permissionStatus == procNotFound {
-            self.logger.debug("AppleScript permission request returned procNotFound; launching target and retrying")
-            Self.launchApplication(bundleIdentifier: bundleIdentifier, logger: self.logger)
-            permissionStatus = Self.determineAppleScriptAutomationPermissionStatus(
-                targetBundleIdentifier: bundleIdentifier,
-                askUser: true)
-        }
-
-        let hasPermission = permissionStatus == noErr
-        self.logger.info("AppleScript permission request status: \(permissionStatus), has permission: \(hasPermission)")
-        return self.checkAppleScriptPermission()
-    }
-
-    private static func determineAppleScriptAutomationPermissionStatus(
-        targetBundleIdentifier: String,
-        askUser: Bool) -> OSStatus
-    {
-        guard var addressDesc = makeAppleEventTargetAddressDesc(bundleIdentifier: targetBundleIdentifier) else {
-            return OSStatus(paramErr)
-        }
-        defer { AEDisposeDesc(&addressDesc) }
-
-        // IMPORTANT:
-        // Use an Apple Event that reflects *automation* (not just launching an app). `oapp` (open app)
-        // can succeed even when automation is not authorized, and will not reliably trigger the TCC prompt.
-        //
-        // `core/getd` (get data) is a common, benign automation event that maps well to "tell app ... return ...".
-        let eventClass = AEEventClass(0x636F_7265) // 'core'
-        let eventID = AEEventID(0x6765_7464) // 'getd'
-
-        return autoreleasepool {
-            AEDeterminePermissionToAutomateTarget(&addressDesc, eventClass, eventID, askUser)
-        }
-    }
-
-    static func makeAppleEventTargetAddressDesc(bundleIdentifier: String) -> AEDesc? {
-        guard let bundleIDData = bundleIdentifier.data(using: .utf8), !bundleIDData.isEmpty else {
-            return nil
-        }
-
-        var addressDesc = AEDesc()
-        let status = bundleIDData.withUnsafeBytes { buffer -> OSStatus in
-            guard let baseAddress = buffer.baseAddress else { return OSStatus(paramErr) }
-            return OSStatus(AECreateDesc(DescType(typeApplicationBundleID), baseAddress, buffer.count, &addressDesc))
-        }
-        guard status == noErr else { return nil }
-        return addressDesc
-    }
-
-    private static func launchApplication(bundleIdentifier: String, logger: Logger) {
-        guard !self.isRunningUnderTests else { return }
-
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-        process.arguments = ["-g", "-b", bundleIdentifier]
-
-        do {
-            try process.run()
-        } catch {
-            logger
-                .debug(
-                    """
-                    Failed to launch app \(bundleIdentifier, privacy: .public): \
-                    \(String(describing: error), privacy: .public)
-                    """)
-        }
+        _ = interactive
+        return false
     }
 
     /// Require Screen Recording permission, throwing if not granted
@@ -383,31 +284,25 @@ public final class PermissionsService {
         }
     }
 
-    /// Require AppleScript permission, throwing if not granted
+    /// Legacy source-compatible API. Current Peekaboo operations never call this path.
+    @available(*, deprecated, message: "Peekaboo no longer uses AppleScript automation")
     public func requireAppleScriptPermission() throws {
-        // Require AppleScript permission, throwing if not granted
-        self.logger.debug("Requiring AppleScript permission")
-
-        if !self.checkAppleScriptPermission() {
-            self.logger.error("AppleScript permission denied")
-            throw PeekabooError.operationError(message: "AppleScript permission denied")
-        }
+        throw PeekabooError.operationError(message: "AppleScript automation is no longer supported or required")
     }
 
     /// Check all permissions and return their status
-    public func checkAllPermissions(allowAppleScriptLaunch: Bool = true) -> PermissionsStatus {
+    public func checkAllPermissions(allowAppleScriptLaunch _: Bool = false) -> PermissionsStatus {
         // Check all permissions and return their status
         self.logger.debug("Checking all permissions")
 
         let screenRecording = self.checkScreenRecordingPermission()
         let accessibility = self.checkAccessibilityPermission()
-        let appleScript = self.checkAppleScriptPermission(allowTargetLaunch: allowAppleScriptLaunch)
         let postEvent = self.checkPostEventPermission()
 
         return PermissionsStatus(
             screenRecording: screenRecording,
             accessibility: accessibility,
-            appleScript: appleScript,
+            appleScript: false,
             postEvent: postEvent)
     }
 }
@@ -416,6 +311,7 @@ public final class PermissionsService {
 public struct PermissionsStatus: Sendable, Codable {
     public let screenRecording: Bool
     public let accessibility: Bool
+    /// Retained for decoding older Bridge hosts. Current hosts always report false and never probe Apple Events.
     public let appleScript: Bool
     public let postEvent: Bool
 
@@ -456,9 +352,6 @@ public struct PermissionsStatus: Sendable, Codable {
 
     public var missingOptionalPermissions: [String] {
         var missing: [String] = []
-        if !self.appleScript {
-            missing.append("AppleScript")
-        }
         if !self.postEvent {
             missing.append("Event Synthesizing")
         }

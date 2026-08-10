@@ -9,6 +9,10 @@ read_when:
 
 `peekaboo permissions` centralizes entitlement checks. The default `status` subcommand reports the runtime view of Screen Recording, Accessibility, and Event Synthesizing. `grant` prints the same table plus human-readable steps so you can fix issues without hunting through docs.
 
+Peekaboo's application, Dock, and UI operations use native macOS APIs. It does not probe, request, or require
+Automation (AppleScript) permission. The Bridge protocol still decodes the legacy field so mixed-version clients
+receive a structured compatibility result instead of failing the whole handshake.
+
 ## Subcommands
 | Name | Purpose |
 | --- | --- |

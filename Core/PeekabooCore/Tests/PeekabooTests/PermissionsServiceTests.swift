@@ -148,5 +148,17 @@ struct PermissionsServiceTests {
         // The values should match individual checks
         #expect(status.screenRecording == self.permissionsService.checkScreenRecordingPermission())
         #expect(status.accessibility == self.permissionsService.checkAccessibilityPermission())
+        #expect(!status.appleScript)
+        #expect(!status.missingOptionalPermissions.contains("AppleScript"))
+    }
+
+    @Test
+    func `Legacy AppleScript permission field still decodes`() throws {
+        let data = Data(
+            #"{"screenRecording":true,"accessibility":true,"appleScript":true,"postEvent":false}"#.utf8)
+        let status = try JSONDecoder().decode(PermissionsStatus.self, from: data)
+
+        #expect(status.appleScript)
+        #expect(status.missingOptionalPermissions == ["Event Synthesizing"])
     }
 }

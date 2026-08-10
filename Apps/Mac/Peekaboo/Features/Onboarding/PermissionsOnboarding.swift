@@ -85,7 +85,7 @@ struct PermissionsOnboardingView: View {
             Text(
                 "Peekaboo 3.9.6 completes the move to the OpenClaw Foundation signing identity. " +
                     "macOS may treat it as a new permission client, so re-grant Screen Recording, " +
-                    "Accessibility, and any Automation access you use.")
+                    "Accessibility, and Event Synthesizing if you use background hotkeys.")
                 .font(.body)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)

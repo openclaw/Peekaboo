@@ -57,7 +57,7 @@ extension PeekabooBridgeServer {
             max(payload.protocolVersion, self.supportedVersions.lowerBound),
             self.supportedVersions.upperBound)
 
-        let permissions = self.currentPermissions(allowAppleScriptLaunch: false)
+        let permissions = self.currentPermissions()
         let advertisedOps = Array(self.operationsCompatibleWithNegotiatedVersion(
             self.allowedOperationsToAdvertise(),
             negotiated)).sorted { $0.rawValue < $1.rawValue }
@@ -109,6 +109,8 @@ extension PeekabooBridgeServer {
 
     func allowedOperationsToAdvertise() -> Set<PeekabooBridgeOperation> {
         var operations = self.allowedOperations
+        // Retain the wire enum for old-client decoding, but current hosts never advertise or execute the probe.
+        operations.remove(._appleScriptProbe)
         if self.daemonControl == nil {
             operations.remove(.daemonStatus)
             operations.remove(.daemonStop)
@@ -192,8 +194,8 @@ extension PeekabooBridgeServer {
         return granted
     }
 
-    func currentPermissions(allowAppleScriptLaunch: Bool = true) -> PermissionsStatus {
-        self.permissionStatusEvaluator(allowAppleScriptLaunch)
+    func currentPermissions() -> PermissionsStatus {
+        self.permissionStatusEvaluator(false)
             .withPostEvent(self.postEventAccessEvaluator())
     }
 

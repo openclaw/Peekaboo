@@ -75,7 +75,7 @@ struct BridgeStatusReportHintTests {
     }
 
     @Test
-    func `fully granted candidates produce no hints`() {
+    func `current native permissions produce no hints`() {
         let status = self.report(candidates: [
             self.candidate(
                 socketPath: "/tmp/gui.sock",
@@ -83,12 +83,18 @@ struct BridgeStatusReportHintTests {
                 permissions: PermissionsStatus(
                     screenRecording: true,
                     accessibility: true,
-                    appleScript: true,
+                    appleScript: false,
                     postEvent: true
                 )
             ),
         ])
 
         #expect(status.bridgeDeniedPermissionsHints.isEmpty)
+        guard case let .success(handshake) = status.candidates[0].result else {
+            Issue.record("Expected a successful Bridge candidate")
+            return
+        }
+        #expect(!status.candidates[0].humanSummary.contains("AS="))
+        #expect(handshake.permissions?.appleScript == false)
     }
 }

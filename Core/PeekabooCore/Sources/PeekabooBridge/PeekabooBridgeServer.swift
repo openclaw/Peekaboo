@@ -94,8 +94,8 @@ public final class PeekabooBridgeServer {
         if let permissionStatusEvaluator {
             self.permissionStatusEvaluator = permissionStatusEvaluator
         } else {
-            self.permissionStatusEvaluator = { [services] allowAppleScriptLaunch in
-                services.permissions.checkAllPermissions(allowAppleScriptLaunch: allowAppleScriptLaunch)
+            self.permissionStatusEvaluator = { [services] _ in
+                services.permissions.checkAllPermissions()
             }
         }
         self.encoder = encoder
@@ -146,7 +146,7 @@ public final class PeekabooBridgeServer {
         }
 
         let op = request.operation
-        let permissions = self.currentPermissions(allowAppleScriptLaunch: op.requiredPermissions.contains(.appleScript))
+        let permissions = self.currentPermissions()
         let effectiveOps = self.effectiveAllowedOperations(permissions: permissions)
 
         do {

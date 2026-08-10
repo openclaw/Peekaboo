@@ -49,7 +49,9 @@ extension PeekabooBridgeServer {
              .invalidateImplicitLatestSnapshot, .cleanSnapshotsOlderThan, .cleanAllSnapshots:
             try await self.handleSnapshotRequest(request)
         case ._appleScriptProbe:
-            try self.handleAppleScriptProbe()
+            throw PeekabooBridgeErrorEnvelope(
+                code: .operationNotSupported,
+                message: "AppleScript probing is no longer supported; current operations use native macOS APIs")
         }
     }
 
@@ -75,7 +77,7 @@ extension PeekabooBridgeServer {
     {
         switch request {
         case .permissionsStatus:
-            return .permissionsStatus(self.currentPermissions(allowAppleScriptLaunch: false))
+            return .permissionsStatus(self.currentPermissions())
         case .requestPostEventPermission:
             return .bool(self.postEventAccessRequester())
         case .daemonStatus:

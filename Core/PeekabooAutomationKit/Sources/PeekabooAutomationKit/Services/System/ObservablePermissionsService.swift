@@ -9,13 +9,14 @@ public protocol ObservablePermissionsServiceProtocol: AnyObject {
     var appleScriptStatus: ObservablePermissionsService.PermissionState { get }
     var postEventStatus: ObservablePermissionsService.PermissionState { get }
     var hasAllPermissions: Bool { get }
-    /// Refresh permission states, optionally including the slower Apple Events probe.
+    /// Refresh permission states, optionally including Event Synthesizing.
     func checkPermissions(includeOptionalPermissions: Bool, forceScreenRecordingProbe: Bool) async
     /// Trigger the screen recording permission prompt if needed.
     func requestScreenRecording() async
     /// Trigger the accessibility permission prompt if needed.
     func requestAccessibility() async
-    /// Trigger the AppleScript permission prompt if needed.
+    /// Legacy source-compatible no-op; current Peekaboo operations do not use AppleScript.
+    @available(*, deprecated, message: "Peekaboo no longer uses AppleScript automation")
     func requestAppleScript() async
     /// Trigger the event-synthesizing permission prompt if needed.
     func requestPostEvent() async
@@ -77,16 +78,13 @@ public final class ObservablePermissionsService: ObservablePermissionsServicePro
         self.logger.debug("Checking all permissions")
         let screenRecording = await self.core.checkScreenRecordingPermissionLive(forceProbe: forceScreenRecordingProbe)
         let accessibility = self.core.checkAccessibilityPermission()
-        let appleScript = includeOptionalPermissions
-            ? self.core.checkAppleScriptPermission()
-            : self.status.appleScript
         let postEvent = includeOptionalPermissions
             ? self.core.checkPostEventPermission()
             : self.status.postEvent
         self.status = PermissionsStatus(
             screenRecording: screenRecording,
             accessibility: accessibility,
-            appleScript: appleScript,
+            appleScript: self.status.appleScript,
             postEvent: postEvent)
         self.updatePermissionStates()
     }
@@ -105,11 +103,10 @@ public final class ObservablePermissionsService: ObservablePermissionsServicePro
         await self.checkPermissions(includeOptionalPermissions: false, forceScreenRecordingProbe: true)
     }
 
-    /// Request AppleScript permission
+    /// Legacy source-compatible no-op; it never probes, prompts, or launches a target application.
+    @available(*, deprecated, message: "Peekaboo no longer uses AppleScript automation")
     public func requestAppleScript() async {
-        let granted = self.core.requestAppleScriptPermission(interactive: true)
-        self.updateStatus(appleScript: granted)
-        await self.checkPermissions(includeOptionalPermissions: true, forceScreenRecordingProbe: true)
+        self.updateStatus(appleScript: false)
     }
 
     /// Request event-synthesizing permission
@@ -186,7 +183,7 @@ extension ObservablePermissionsService {
                 case .accessibility:
                     "Required to interact with UI elements and send input events"
                 case .appleScript:
-                    "Required to control applications and automate system tasks"
+                    "Legacy compatibility only; current Peekaboo operations use native macOS APIs"
                 case .postEvent:
                     "Required to send background hotkeys to a target process"
                 }
@@ -222,12 +219,6 @@ extension ObservablePermissionsService {
                 displayName: PermissionInfo.PermissionType.accessibility.displayName,
                 explanation: PermissionInfo.PermissionType.accessibility.explanation,
                 settingsURL: URL(string: PermissionInfo.PermissionType.accessibility.settingsURLString)),
-            PermissionInfo(
-                type: .appleScript,
-                status: self.appleScriptStatus,
-                displayName: PermissionInfo.PermissionType.appleScript.displayName,
-                explanation: PermissionInfo.PermissionType.appleScript.explanation,
-                settingsURL: URL(string: PermissionInfo.PermissionType.appleScript.settingsURLString)),
             PermissionInfo(
                 type: .postEvent,
                 status: self.postEventStatus,

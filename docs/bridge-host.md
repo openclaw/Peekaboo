@@ -8,7 +8,7 @@ read_when:
 
 # Peekaboo Bridge Host
 
-Peekaboo Bridge is a **socket-based** broker for permission-bound operations (Screen Recording, Accessibility, AppleScript). It lets a CLI (or other client process) drive automation via a host app that already has the necessary TCC grants.
+Peekaboo Bridge is a **socket-based** broker for permission-bound operations (Screen Recording, Accessibility, and Event Synthesizing). It lets a CLI (or other client process) drive automation via a host app that already has the necessary TCC grants.
 
 This replaces the previous XPC-based helper approach.
 

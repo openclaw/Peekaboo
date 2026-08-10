@@ -48,6 +48,7 @@ struct PermissionsTests {
         // Initial state should be unknown since we haven't checked yet
         #expect(self.permissions.screenRecordingStatus == .notDetermined)
         #expect(self.permissions.accessibilityStatus == .notDetermined)
+        #expect(PermissionCapability.allCases == [.screenRecording, .accessibility, .postEvent])
     }
 
     @Test

@@ -8,7 +8,7 @@ read_when:
 
 # `peekaboo bridge`
 
-`peekaboo bridge` reports how the CLI resolves a Peekaboo Bridge host (the socket-based TCC broker used for Screen Recording / Accessibility / AppleScript operations).
+`peekaboo bridge` reports how the CLI resolves a Peekaboo Bridge host (the socket-based TCC broker used for Screen Recording, Accessibility, and Event Synthesizing).
 
 ## Subcommands
 | Name | Purpose |

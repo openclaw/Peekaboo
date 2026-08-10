@@ -157,6 +157,5 @@ extension PeekabooBridgeOperation {
         .cleanSnapshot,
         .cleanSnapshotsOlderThan,
         .cleanAllSnapshots,
-        ._appleScriptProbe,
     ]
 }

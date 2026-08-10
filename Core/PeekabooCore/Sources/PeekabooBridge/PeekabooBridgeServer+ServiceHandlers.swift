@@ -270,14 +270,4 @@ extension PeekabooBridgeServer {
 
         return .snapshotId(id)
     }
-
-    func handleAppleScriptProbe() throws -> PeekabooBridgeResponse {
-        guard self.services.permissions.checkAppleScriptPermission() else {
-            throw PeekabooBridgeErrorEnvelope(
-                code: .permissionDenied,
-                message: "AppleScript permission not granted")
-        }
-
-        return .ok
-    }
 }

@@ -22,10 +22,6 @@ final class Permissions {
         self.permissionsService.accessibilityStatus
     }
 
-    var appleScriptStatus: ObservablePermissionsService.PermissionState {
-        self.permissionsService.appleScriptStatus
-    }
-
     var postEventStatus: ObservablePermissionsService.PermissionState {
         self.permissionsService.postEventStatus
     }
@@ -71,10 +67,6 @@ final class Permissions {
 
     func requestAccessibility() async {
         await self.permissionsService.requestAccessibility()
-    }
-
-    func requestAppleScript() async {
-        await self.permissionsService.requestAppleScript()
     }
 
     func requestPostEvent() async {

@@ -7,7 +7,7 @@ struct BridgeCommand: ParsableCommand {
         abstract: "Inspect Peekaboo Bridge host connectivity",
         discussion: """
         Peekaboo Bridge lets the CLI run permission-bound operations (Screen Recording, Accessibility,
-        AppleScript) via a host app that already has the needed TCC grants.
+        and Event Synthesizing) via a host app that already has the needed TCC grants.
 
         By default, automation commands use the dedicated Peekaboo daemon and fall back to local execution.
         Peekaboo.app, Claude.app, and ClawdBot.app sockets are shown for diagnostics and can be selected explicitly.

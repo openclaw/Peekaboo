@@ -643,9 +643,7 @@ enum DaemonStatusPrinter {
             print("-----------")
             print("Screen Recording: \(permissions.screenRecording ? "granted" : "missing")")
             print("Accessibility: \(permissions.accessibility ? "granted" : "missing")")
-            if permissions.appleScript {
-                print("AppleScript: granted")
-            }
+            print("Event Synthesizing: \(permissions.postEvent ? "granted" : "missing")")
         }
 
         if let snapshots = status.snapshots {
