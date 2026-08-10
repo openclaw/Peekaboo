@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Ensure action-command JSON validation failures before dispatch report `effect: refused`, including parser and binding errors.
+- Verify app focus against the exact active Workspace PID and visible frontmost-window PID, retry through native AX activation, and report the verified effect as confirmed instead of claiming success for an unfulfilled request.
 
 ## [4.0.0] - 2026-08-10
 
