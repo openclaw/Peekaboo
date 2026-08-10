@@ -55,6 +55,22 @@ struct ElementLabelResolverTests {
     }
 
     @Test
+    func `Semantic description wins over control value and generic role description`() {
+        let info = ElementLabelInfo(
+            role: "AXSlider",
+            label: nil,
+            title: nil,
+            value: "0.5",
+            roleDescription: "slider",
+            description: "Liquid Glass Tint Amount",
+            identifier: nil,
+            placeholder: nil)
+
+        let resolved = ElementLabelResolver.resolve(info: info, childTexts: [], identifierCleaner: { $0 })
+        #expect(resolved == "Liquid Glass Tint Amount")
+    }
+
+    @Test
     func `Only unlabeled buttons need child text lookup`() {
         let labeledButton = ElementLabelInfo(
             role: "AXButton",

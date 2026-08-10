@@ -131,6 +131,35 @@ struct SnapshotManagerTests {
     }
 
     @Test
+    func `Snapshot managers preserve accessibility control metadata`() async throws {
+        try await Self.verifyAccessibilityMetadataRoundTrip(SnapshotManager())
+        try await Self.verifyAccessibilityMetadataRoundTrip(InMemorySnapshotManager())
+    }
+
+    @Test
+    func `UI element decodes the legacy v1 metadata shape`() throws {
+        let legacy = UIElement(
+            id: "B1",
+            elementId: "element_0",
+            role: "AXButton",
+            label: "Save",
+            frame: CGRect(x: 10, y: 20, width: 80, height: 30),
+            isActionable: true)
+        let encoded = try JSONEncoder().encode(legacy)
+        let object = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        #expect(object["isEnabled"] == nil)
+        #expect(object["isSelected"] == nil)
+        #expect(object["isValueSettable"] == nil)
+
+        let decoded = try JSONDecoder().decode(UIElement.self, from: encoded)
+        #expect(decoded.id == "B1")
+        #expect(decoded.isActionable)
+        #expect(decoded.isEnabled == nil)
+        #expect(decoded.isSelected == nil)
+        #expect(decoded.isValueSettable == nil)
+    }
+
+    @Test
     func `Find elements by query`() async throws {
         // Create a snapshot
         let snapshotId = try await snapshotManager.createSnapshot()
@@ -209,5 +238,59 @@ struct SnapshotManagerTests {
         #expect(!snapshots.contains { $0.id == snapshot1 })
         #expect(!snapshots.contains { $0.id == snapshot2 })
         #expect(!snapshots.contains { $0.id == snapshot3 })
+    }
+
+    private static func verifyAccessibilityMetadataRoundTrip(
+        _ manager: any SnapshotManagerProtocol) async throws
+    {
+        let snapshotId = try await manager.createSnapshot()
+        let slider = DetectedElement(
+            id: "elem_1",
+            type: .slider,
+            label: "Liquid Glass Tint Amount",
+            value: "0.5",
+            bounds: CGRect(x: 10, y: 20, width: 200, height: 16),
+            isEnabled: true,
+            attributes: [
+                "role": "AXSlider",
+                "description": "Liquid Glass Tint Amount",
+                "help": "Adjust tint",
+                "roleDescription": "slider",
+                "identifier": "tint-amount",
+                "isActionable": "true",
+                "isValueSettable": "true",
+                "axEnabledKnown": "true",
+            ])
+        let result = ElementDetectionResult(
+            snapshotId: snapshotId,
+            screenshotPath: "/tmp/appearance.png",
+            elements: DetectedElements(sliders: [slider]),
+            metadata: DetectionMetadata(detectionTime: 0.1, elementCount: 1, method: "test"))
+
+        try await manager.storeDetectionResult(snapshotId: snapshotId, result: result)
+
+        let stored = try #require(try await manager.getUIAutomationSnapshot(snapshotId: snapshotId))
+        let storedSlider = try #require(stored.uiMap[slider.id])
+        #expect(storedSlider.role == "AXSlider")
+        #expect(storedSlider.label == "Liquid Glass Tint Amount")
+        #expect(storedSlider.value == "0.5")
+        #expect(storedSlider.description == "Liquid Glass Tint Amount")
+        #expect(storedSlider.help == "Adjust tint")
+        #expect(storedSlider.roleDescription == "slider")
+        #expect(storedSlider.identifier == "tint-amount")
+        #expect(storedSlider.isActionable)
+        #expect(storedSlider.isEnabled == true)
+        #expect(storedSlider.isValueSettable == true)
+
+        let hydrated = try #require(try await manager.getDetectionResult(snapshotId: snapshotId))
+        let hydratedSlider = try #require(hydrated.elements.sliders.first)
+        #expect(hydratedSlider.value == "0.5")
+        #expect(hydratedSlider.attributes["description"] == "Liquid Glass Tint Amount")
+        #expect(hydratedSlider.attributes["help"] == "Adjust tint")
+        #expect(hydratedSlider.attributes["roleDescription"] == "slider")
+        #expect(hydratedSlider.knownIsEnabled == true)
+        #expect(hydratedSlider.isActionable)
+        #expect(hydratedSlider.isValueSettable == true)
+        try await manager.cleanSnapshot(snapshotId: snapshotId)
     }
 }

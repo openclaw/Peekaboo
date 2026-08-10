@@ -95,13 +95,19 @@ public final class SnapshotManager: SnapshotManagerProtocol {
             let uiElement = UIElement(
                 id: element.id,
                 elementId: "element_\(uiMap.count)",
-                role: self.convertElementTypeToRole(element.type),
-                title: element.label,
+                role: element.attributes["role"] ?? self.convertElementTypeToRole(element.type),
+                title: element.attributes["title"],
                 label: element.label,
                 value: element.value,
+                description: element.attributes["description"],
+                help: element.attributes["help"],
+                roleDescription: element.attributes["roleDescription"],
                 identifier: element.attributes["identifier"],
                 frame: element.bounds,
-                isActionable: self.isActionableType(element.type),
+                isActionable: element.isActionable,
+                isEnabled: element.knownIsEnabled,
+                isSelected: element.isSelected,
+                isValueSettable: element.isValueSettable,
                 keyboardShortcut: element.attributes["keyboardShortcut"])
             uiMap[element.id] = uiElement
         }
@@ -137,13 +143,32 @@ public final class SnapshotManager: SnapshotManagerProtocol {
             if let shortcut = uiElement.keyboardShortcut {
                 attributes["keyboardShortcut"] = shortcut
             }
+            attributes["role"] = uiElement.role
+            if let title = uiElement.title {
+                attributes["title"] = title
+            }
+            if let description = uiElement.description {
+                attributes["description"] = description
+            }
+            if let help = uiElement.help {
+                attributes["help"] = help
+            }
+            if let roleDescription = uiElement.roleDescription {
+                attributes["roleDescription"] = roleDescription
+            }
+            attributes["isActionable"] = String(uiElement.isActionable)
+            attributes["axEnabledKnown"] = String(uiElement.isEnabled != nil)
+            if let isValueSettable = uiElement.isValueSettable {
+                attributes["isValueSettable"] = String(isValueSettable)
+            }
             let detectedElement = DetectedElement(
                 id: uiElement.id,
                 type: self.convertRoleToElementType(uiElement.role),
                 label: uiElement.label ?? uiElement.title,
                 value: uiElement.value,
                 bounds: uiElement.frame,
-                isEnabled: uiElement.isActionable,
+                isEnabled: uiElement.isEnabled ?? uiElement.isActionable,
+                isSelected: uiElement.isSelected,
                 attributes: attributes)
             allElements.append(detectedElement)
         }

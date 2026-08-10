@@ -466,15 +466,6 @@ extension SnapshotManager {
         }
     }
 
-    func isActionableType(_ type: ElementType) -> Bool {
-        switch type {
-        case .button, .textField, .link, .checkbox, .slider, .menu, .menuItem, .radioButton:
-            true
-        case .image, .group, .other, .staticText, .window, .dialog:
-            false
-        }
-    }
-
     func organizeElementsByType(_ elements: [DetectedElement]) -> DetectedElements {
         var buttons: [DetectedElement] = []
         var textFields: [DetectedElement] = []

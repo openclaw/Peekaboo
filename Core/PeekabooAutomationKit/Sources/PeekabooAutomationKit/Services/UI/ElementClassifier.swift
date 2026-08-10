@@ -55,6 +55,11 @@ import PeekabooFoundation
         "axbutton", "axpopupbutton", "axcheckbox", "axradiobutton",
         "axmenuitem", "axtab",
     ]
+    private static let valueMetadataRoles: Set<String> = [
+        "axcheckbox", "axcombobox", "axdatefield", "axincrementor", "axpopupbutton",
+        "axradiobutton", "axscrollbar", "axsearchfield", "axsecuretextfield", "axslider",
+        "axswitch", "axtextarea", "axtextfield",
+    ]
 
     public static func elementType(for role: String) -> ElementType {
         let normalizedRole = role.lowercased()
@@ -108,6 +113,10 @@ import PeekabooFoundation
 
     public static func supportsKeyboardShortcut(for role: String) -> Bool {
         self.keyboardShortcutRoles.contains(role.lowercased())
+    }
+
+    public static func supportsValueMetadata(for role: String) -> Bool {
+        self.valueMetadataRoles.contains(role.lowercased())
     }
 
     public static func attributes(from input: AttributeInput) -> [String: String] {

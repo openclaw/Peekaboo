@@ -102,6 +102,35 @@ public struct DetectedElement: Sendable, Codable {
     /// Additional attributes
     public let attributes: [String: String]
 
+    /// Whether the enabled element exposes an actionable control surface.
+    /// Explicit AX action metadata wins; older/synthetic elements retain the role-based fallback.
+    public var isActionable: Bool {
+        guard self.knownIsEnabled != false else { return false }
+        if self.isValueSettable == true {
+            return true
+        }
+        if let explicit = self.attributes["isActionable"] {
+            return explicit == "true"
+        }
+        switch self.type {
+        case .button, .textField, .link, .slider, .checkbox, .menu, .radioButton, .menuItem:
+            return true
+        case .image, .group, .staticText, .window, .dialog, .other:
+            return false
+        }
+    }
+
+    public var isValueSettable: Bool? {
+        self.attributes["isValueSettable"].flatMap(Bool.init)
+    }
+
+    public var knownIsEnabled: Bool? {
+        guard let enabledKnown = self.attributes["axEnabledKnown"] else {
+            return self.isEnabled
+        }
+        return enabledKnown == "true" ? self.isEnabled : nil
+    }
+
     public init(
         id: String,
         type: ElementType,

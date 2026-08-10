@@ -48,14 +48,19 @@ struct SeeCommandRenderContext {
 struct UIElementSummary: Codable {
     let id: String
     let role: String
+    let ax_role: String?
     let title: String?
     let label: String?
+    let value: String?
     let description: String?
     let role_description: String?
     let help: String?
     let identifier: String?
     let bounds: UIElementBounds
     let is_actionable: Bool
+    let is_enabled: Bool?
+    let is_selected: Bool?
+    let is_value_settable: Bool?
     let keyboard_shortcut: String?
 }
 

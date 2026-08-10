@@ -14,6 +14,7 @@
 ### Fixed
 - Probe Bridge diagnostic sockets concurrently under a one-second per-host deadline with bounded cancellation while preserving runtime selection and candidate order, so `bridge status --verbose` neither accumulates nor inherits a wedged host's full handshake latency.
 - Require explicit foreground consent before Dock/menu-bar global UI or targetless frontmost application-menu clicks; keep discovery read-only/background and return typed refusals before lookup or dispatch.
+- Preserve semantic AX labels, scalar values, roles, descriptions, enabled/selected state, and bounded value-settable capability through background `see` output, persisted snapshots, and agent summaries instead of reducing controls to generic role names.
 - Keep background app launch/open ownership through verified focus reconciliation, restoring only the exact prior process generation while treating transient frontmost uncertainty and later user foreground choices conservatively.
 - Stop probing, requesting, advertising, or showing AppleScript Automation permission now that application, Dock, and UI operations use native macOS APIs; remove the stale checked-in CLI binary and AppleScript code from shipped executables while retaining legacy wire/error decoding for older Bridge hosts.
 - Return generation-pinned CG window inventory promptly when AX enrichment stalls; detached per-process enrichment now times out without holding the Bridge request or desktop lane after its caller disconnects.

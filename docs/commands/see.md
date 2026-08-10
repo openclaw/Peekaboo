@@ -92,10 +92,10 @@ When `--json` is supplied, the CLI prints:
 
 - `snapshot_id` – reference for subsequent `click --snapshot …` and `type --snapshot …`.
 - `ui_map` – path to the persisted snapshot file (`~/.peekaboo/snapshots/<id>/snapshot.json`).
-- `ui_elements` – flattened list of actionable nodes (buttons, text fields, links, etc.).
+- `ui_elements` – flattened AX nodes with honest `is_actionable` and optional `is_value_settable` capability metadata.
 - `coordinate_context` – capture-owned raster mapping. ROI results include the full-window and cropped viewport rectangles described above.
 - `interactable_count`, `element_count`, `capture_mode`, and performance metadata for debugging.
-- Each `ui_elements[n]` entry now mirrors the raw AX metadata we capture—`title`, `label`, **`description`**, `role_description`, `help`, `identifier`, and the keyboard shortcut if one exists. That makes Chrome toolbar icons (which frequently hide their name in `AXDescription`) searchable without relying on coordinates.
+- Each `ui_elements[n]` entry mirrors the raw AX metadata we capture—semantic `role`, raw `ax_role`, `title`, `label`, scalar `value`, **`description`**, `role_description`, `help`, `identifier`, known enabled/selected state, value-settable capability, and the keyboard shortcut if one exists. The persisted `ui_map` keeps the same fields for follow-up tools. That makes controls whose name lives only in `AXDescription`, including Chrome toolbar icons and unlabeled sliders, searchable without relying on coordinates.
 - GLM vision model analysis responses are converted from the model's 0-1000 bounding box coordinate space into screenshot pixel coordinates before they are printed, so follow-up `click --at` calls can use returned box centers directly.
 
 Use `jq` or any JSON parser to find elements:

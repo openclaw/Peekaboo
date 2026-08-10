@@ -163,14 +163,19 @@ struct SeeCommandTests {
         let element = UIElementSummary(
             id: "B1",
             role: "button",
+            ax_role: "AXButton",
             title: "Save",
             label: nil,
+            value: nil,
             description: nil,
             role_description: nil,
             help: nil,
             identifier: nil,
             bounds: UIElementBounds(CGRect(x: 0, y: 0, width: 100, height: 30)),
             is_actionable: true,
+            is_enabled: true,
+            is_selected: nil,
+            is_value_settable: nil,
             keyboard_shortcut: nil
         )
 
@@ -860,15 +865,19 @@ struct SeeCommandRuntimeTests {
             id: "B42",
             type: .button,
             label: nil,
-            value: nil,
+            value: "0.5",
             bounds: CGRect(x: 50, y: 60, width: 34, height: 34),
             isEnabled: true,
-            isSelected: nil,
+            isSelected: true,
             attributes: [
+                "role": "AXButton",
                 "description": "Wingman Grindr Session Helper",
                 "roleDescription": "Pop Up Button",
                 "help": "Pinned extension button",
                 "identifier": "wingman-session-helper",
+                "isActionable": "true",
+                "isValueSettable": "true",
+                "axEnabledKnown": "true",
             ]
         )
 
@@ -912,9 +921,15 @@ struct SeeCommandRuntimeTests {
             #expect(rawResponse["success"] as? Bool == true)
             #expect(rawData["success"] == nil)
             #expect(element.description == "Wingman Grindr Session Helper")
+            #expect(element.ax_role == "AXButton")
             #expect(element.role_description == "Pop Up Button")
             #expect(element.help == "Pinned extension button")
             #expect(element.identifier == "wingman-session-helper")
+            #expect(element.value == "0.5")
+            #expect(element.is_actionable)
+            #expect(element.is_enabled == true)
+            #expect(element.is_selected == true)
+            #expect(element.is_value_settable == true)
         }
     }
 

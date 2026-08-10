@@ -26,6 +26,9 @@ struct SeeElementTextFormatter {
         if let identifier = element.identifier, !identifier.isEmpty {
             parts.append("identifier: \(identifier)")
         }
+        if let isValueSettable = element.isValueSettable {
+            parts.append(isValueSettable ? "[value settable]" : "[value read-only]")
+        }
         if !element.isActionable {
             parts.append("[not actionable]")
         }

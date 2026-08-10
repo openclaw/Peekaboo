@@ -39,7 +39,14 @@ import Foundation
         -> String?
     {
         let baseLabel = ElementLabelResolver.firstNonGeneric(
-            candidates: [info.label, info.title, info.value, info.placeholder, info.roleDescription])
+            candidates: [
+                info.label,
+                info.title,
+                info.description,
+                info.placeholder,
+                info.value,
+                info.roleDescription,
+            ])
 
         guard info.role.lowercased() == "axbutton" else {
             return baseLabel
@@ -47,10 +54,6 @@ import Foundation
 
         if let baseLabel {
             return baseLabel
-        }
-
-        if let description = ElementLabelResolver.normalize(info.description) {
-            return description
         }
 
         if let child = childTexts.compactMap(ElementLabelResolver.normalize).first {
@@ -72,12 +75,19 @@ import Foundation
         }
 
         let baseLabel = ElementLabelResolver.firstNonGeneric(
-            candidates: [info.label, info.title, info.value, info.placeholder, info.roleDescription])
+            candidates: [
+                info.label,
+                info.title,
+                info.description,
+                info.placeholder,
+                info.value,
+                info.roleDescription,
+            ])
         guard baseLabel == nil else {
             return false
         }
 
-        return ElementLabelResolver.normalize(info.description) == nil
+        return true
     }
 
     private static func firstNonGeneric(candidates: [String?]) -> String? {

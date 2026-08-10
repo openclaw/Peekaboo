@@ -60,14 +60,19 @@ extension SeeCommand {
             UIElementSummary(
                 id: element.id,
                 role: element.type.rawValue,
+                ax_role: element.attributes["role"],
                 title: element.attributes["title"],
                 label: element.label,
+                value: element.value,
                 description: element.attributes["description"],
                 role_description: element.attributes["roleDescription"],
                 help: element.attributes["help"],
                 identifier: element.attributes["identifier"],
                 bounds: UIElementBounds(element.bounds),
-                is_actionable: element.isEnabled,
+                is_actionable: element.isActionable,
+                is_enabled: element.knownIsEnabled,
+                is_selected: element.isSelected,
+                is_value_settable: element.isValueSettable,
                 keyboard_shortcut: element.attributes["keyboardShortcut"]
             )
         }
@@ -83,7 +88,7 @@ extension SeeCommand {
             window_title: context.metadata.windowContext?.windowTitle,
             is_dialog: context.metadata.isDialog,
             element_count: context.metadata.elementCount,
-            interactable_count: context.elements.all.count { $0.isEnabled },
+            interactable_count: context.elements.all.count(where: \.isActionable),
             capture_mode: self.determineMode().rawValue,
             analysis: context.analysis,
             execution_time: context.executionTime,
@@ -143,7 +148,7 @@ extension SeeCommand {
         }
         print("🧊 Detection method: \(context.metadata.method)")
         print("📊 UI elements detected: \(context.metadata.elementCount)")
-        print("⚙️  Interactable elements: \(context.elements.all.count { $0.isEnabled })")
+        print("⚙️  Interactable elements: \(context.elements.all.count(where: \.isActionable))")
         if let truncationInfo = context.metadata.truncationInfo, truncationInfo.isTruncated {
             print("⚠️  \(truncationInfo.remediationMessage(budget: context.metadata.windowContext?.traversalBudget))")
         }
@@ -189,8 +194,9 @@ extension SeeCommand {
         for element in elements {
             let label = element.label ?? element.attributes["title"] ?? element.value ?? ""
             let value = element.value.map { " value=\"\($0)\"" } ?? ""
-            let state = element.isEnabled ? "" : " disabled"
-            print("  \(element.id) [\(element.type.rawValue)] \(label)\(value)\(state)")
+            let valueSettable = element.isValueSettable.map { " value_settable=\($0)" } ?? ""
+            let state = element.knownIsEnabled == false ? " disabled" : ""
+            print("  \(element.id) [\(element.type.rawValue)] \(label)\(value)\(valueSettable)\(state)")
         }
     }
 

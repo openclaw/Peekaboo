@@ -18,6 +18,7 @@ struct MCPTextFormattingTests {
             identifier: "continue.button",
             frame: CGRect(x: 540, y: 320, width: 80, height: 32),
             isActionable: false,
+            isValueSettable: true,
             keyboardShortcut: "⏎")
 
         let line = SeeElementTextFormatter.describe(element)
@@ -30,10 +31,41 @@ struct MCPTextFormattingTests {
             #"help: "Press to continue""#,
             "shortcut: ⏎",
             "identifier: continue.button",
+            "[value settable]",
             "[not actionable]",
         ].joined(separator: " - ")
 
         #expect(line == expected)
+    }
+
+    @Test
+    func `Detected element conversion preserves accessibility metadata`() throws {
+        let detected = DetectedElement(
+            id: "S1",
+            type: .slider,
+            label: "Liquid Glass Tint Amount",
+            value: "0.5",
+            bounds: CGRect(x: 10, y: 20, width: 200, height: 16),
+            isEnabled: true,
+            attributes: [
+                "role": "AXSlider",
+                "description": "Liquid Glass Tint Amount",
+                "roleDescription": "slider",
+                "isActionable": "true",
+                "isValueSettable": "true",
+                "axEnabledKnown": "true",
+            ])
+
+        let converted = try #require(DetectedElementSnapshotConverter.convert([detected]).first)
+        #expect(converted.role == "AXSlider")
+        #expect(converted.title == nil)
+        #expect(converted.label == "Liquid Glass Tint Amount")
+        #expect(converted.value == "0.5")
+        #expect(converted.description == "Liquid Glass Tint Amount")
+        #expect(converted.roleDescription == "slider")
+        #expect(converted.isActionable)
+        #expect(converted.isEnabled == true)
+        #expect(converted.isValueSettable == true)
     }
 
     @Test

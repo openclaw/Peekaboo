@@ -6,8 +6,8 @@ enum DetectedElementSnapshotConverter {
             UIElement(
                 id: element.id,
                 elementId: element.id,
-                role: element.type.rawValue,
-                title: element.label,
+                role: element.attributes["role"] ?? element.type.rawValue,
+                title: element.attributes["title"],
                 label: element.label,
                 value: element.value,
                 description: element.attributes["description"],
@@ -15,7 +15,10 @@ enum DetectedElementSnapshotConverter {
                 roleDescription: element.attributes["roleDescription"],
                 identifier: element.attributes["identifier"],
                 frame: element.bounds,
-                isActionable: element.isEnabled,
+                isActionable: element.isActionable,
+                isEnabled: element.knownIsEnabled,
+                isSelected: element.isSelected,
+                isValueSettable: element.isValueSettable,
                 parentId: nil,
                 children: [],
                 keyboardShortcut: element.attributes["keyboardShortcut"])

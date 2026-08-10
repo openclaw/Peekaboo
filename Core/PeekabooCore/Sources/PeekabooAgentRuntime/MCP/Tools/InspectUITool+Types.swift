@@ -104,7 +104,7 @@ struct InspectUISummaryBuilder {
     }
 
     private func roleHeader(role: String, elements: [DetectedElement]) -> String {
-        let actionableCount = elements.count(where: { $0.isEnabled })
+        let actionableCount = elements.count(where: \.isActionable)
         return "\(role) (\(elements.count) found, \(actionableCount) actionable):"
     }
 
@@ -130,7 +130,10 @@ struct InspectUISummaryBuilder {
         if let identifier = self.clipped(element.attributes["identifier"]) {
             parts.append("identifier: \(identifier)")
         }
-        if !element.isEnabled {
+        if let isValueSettable = element.isValueSettable {
+            parts.append(isValueSettable ? "[value settable]" : "[value read-only]")
+        }
+        if element.knownIsEnabled == false {
             parts.append("[not actionable]")
         }
         return parts.joined(separator: " - ")

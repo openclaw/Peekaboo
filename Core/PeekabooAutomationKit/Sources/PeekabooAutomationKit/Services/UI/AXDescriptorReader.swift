@@ -198,7 +198,7 @@ import CoreGraphics
             role: role,
             title: self.stringValue(valueByName[AttributeName.title]),
             label: self.stringValue(valueByName["AXLabel"]),
-            value: self.stringValue(valueByName[AttributeName.value]),
+            value: self.displayValue(valueByName[AttributeName.value]),
             description: self.stringValue(valueByName[AttributeName.description]),
             help: self.stringValue(valueByName[AttributeName.help]),
             roleDescription: self.stringValue(valueByName[AttributeName.roleDescription]),
@@ -288,6 +288,23 @@ import CoreGraphics
 
     @_spi(Testing) public static func stringValue(_ value: Any?) -> String? {
         value as? String
+    }
+
+    /// Normalizes the scalar shapes AXValue uses for user-visible control state.
+    /// Descriptor strings such as titles must remain string-only, but values can legitimately be numbers or booleans.
+    @_spi(Testing) public static func displayValue(_ value: Any?) -> String? {
+        if let string = value as? String {
+            return string
+        }
+        guard let value else { return nil }
+        let cfValue = value as CFTypeRef
+        if CFGetTypeID(cfValue) == CFBooleanGetTypeID() {
+            return (value as? NSNumber)?.boolValue == true ? "true" : "false"
+        }
+        if CFGetTypeID(cfValue) == CFNumberGetTypeID(), let number = value as? NSNumber {
+            return number.stringValue
+        }
+        return nil
     }
 
     @_spi(Testing) public static func boolValue(_ value: Any?) -> Bool? {

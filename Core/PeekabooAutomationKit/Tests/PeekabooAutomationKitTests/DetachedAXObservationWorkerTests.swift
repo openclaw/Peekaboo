@@ -226,6 +226,19 @@ struct DetachedAXObservationWorkerTests {
     }
 
     @Test
+    func `settable metadata is omitted when the bounded AX query is inconclusive`() {
+        #expect(DetachedAXObservationWorker.valueSettableMetadata(
+            error: .success,
+            isSettable: true) == true)
+        #expect(DetachedAXObservationWorker.valueSettableMetadata(
+            error: .success,
+            isSettable: false) == false)
+        #expect(DetachedAXObservationWorker.valueSettableMetadata(
+            error: .cannotComplete,
+            isSettable: true) == nil)
+    }
+
+    @Test
     func `process reuse before detached worker fails closed`() {
         let request = Self.identityRequest()
 
