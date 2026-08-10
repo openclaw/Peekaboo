@@ -85,18 +85,14 @@ public final class RemoteDesktopObservationService: DesktopObservationServicePro
             prepared.artifacts,
             deadline: deadline,
             timeout: overallTimeout)
+        defer { Self.discardStagedArtifacts(stagedArtifacts) }
         try Self.checkPostProcessingAllowance(deadline: deadline, timeout: overallTimeout)
         let commitTask = Task { @MainActor in
-            do {
-                try await self.storeSnapshotIfNeeded(
-                    prepared,
-                    request: request,
-                    deadline: deadline,
-                    timeout: overallTimeout)
-            } catch {
-                Self.discardStagedArtifacts(stagedArtifacts)
-                throw error
-            }
+            try await self.storeSnapshotIfNeeded(
+                prepared,
+                request: request,
+                deadline: deadline,
+                timeout: overallTimeout)
             let installedArtifacts: [ArtifactPublication]
             try self.artifactInstallationPreflight()
             do {
@@ -176,7 +172,7 @@ public final class RemoteDesktopObservationService: DesktopObservationServicePro
             artifacts.append((annotatedData, annotatedPath))
         }
         let capture = CaptureResult(
-            imageData: result.capture.imageData,
+            imageData: rawData,
             savedPath: rawPath,
             metadata: result.capture.metadata,
             warning: result.capture.warning)

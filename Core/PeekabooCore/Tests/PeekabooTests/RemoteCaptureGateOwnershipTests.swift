@@ -209,6 +209,39 @@ struct RemoteCaptureGateOwnershipTests {
     }
 
     @Test
+    func `remote ROI returns validated artifact bytes instead of untrusted in memory pixels`() async throws {
+        let socketPath = "/tmp/peekaboo-remote-memory-roi-\(UUID().uuidString).sock"
+        let outputURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekaboo-remote-memory-roi-public-\(UUID().uuidString).png")
+        defer { try? FileManager.default.removeItem(at: outputURL) }
+        let observation = ROIFileObservationService(mode: .mismatchedCaptureData)
+        let server = self.makeROIServer(services: StubServices(desktopObservation: observation))
+        let host = PeekabooBridgeHost(
+            socketPath: socketPath,
+            server: server,
+            allowedTeamIDs: [],
+            requestTimeoutSec: 1)
+        try await host.startChecked()
+        defer { Task { await host.stop() } }
+        let remote = RemoteDesktopObservationService(
+            client: PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 1),
+            supportsExactWindowROIObservation: true)
+
+        let result = try await remote.observe(DesktopObservationRequest(
+            target: .windowID(42),
+            capture: DesktopCaptureOptions(
+                roi: CaptureRegionOfInterest(bounds: CGRect(x: 0, y: 0, width: 10, height: 10))),
+            output: DesktopObservationOutputOptions(
+                path: outputURL.path,
+                saveRawScreenshot: true)))
+
+        #expect(result.capture.imageData == ROIFileObservationService.croppedData)
+        #expect(try Data(contentsOf: outputURL) == ROIFileObservationService.croppedData)
+        #expect(result.capture.imageData != ROIFileObservationService.fullWindowData)
+        await host.stop()
+    }
+
+    @Test
     func `remote ROI resolves an existing output directory without replacing it`() async throws {
         let socketPath = "/tmp/peekaboo-remote-directory-roi-\(UUID().uuidString).sock"
         let outputDirectory = FileManager.default.temporaryDirectory
@@ -405,6 +438,47 @@ struct RemoteCaptureGateOwnershipTests {
     }
 
     @Test
+    func `remote ROI discards staged artifacts when publication preflight throws`() async throws {
+        let socketPath = "/tmp/peekaboo-remote-staged-cleanup-roi-\(UUID().uuidString).sock"
+        let outputDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekaboo-remote-staged-cleanup-roi-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: outputDirectory) }
+        let outputURL = outputDirectory.appendingPathComponent("existing.png")
+        let existingData = Data("existing-public-output".utf8)
+        try existingData.write(to: outputURL, options: .atomic)
+        let observation = ROIFileObservationService(mode: .valid)
+        let server = self.makeROIServer(services: StubServices(desktopObservation: observation))
+        let host = PeekabooBridgeHost(
+            socketPath: socketPath,
+            server: server,
+            allowedTeamIDs: [],
+            requestTimeoutSec: 1)
+        try await host.startChecked()
+        defer { Task { await host.stop() } }
+        let remote = RemoteDesktopObservationService(
+            client: PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 1),
+            supportsExactWindowROIObservation: true,
+            artifactInstallationPreflight: {
+                throw StagedArtifactPreflightError.expected
+            })
+
+        await #expect(throws: StagedArtifactPreflightError.expected) {
+            _ = try await remote.observe(DesktopObservationRequest(
+                target: .windowID(42),
+                capture: DesktopCaptureOptions(
+                    roi: CaptureRegionOfInterest(bounds: CGRect(x: 0, y: 0, width: 10, height: 10))),
+                output: DesktopObservationOutputOptions(
+                    path: outputURL.path,
+                    saveRawScreenshot: true)))
+        }
+
+        #expect(try Data(contentsOf: outputURL) == existingData)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: outputDirectory.path) == ["existing.png"])
+        await host.stop()
+    }
+
+    @Test
     func `remote ROI rejects full window pixels behind a valid crop receipt`() async throws {
         let socketPath = "/tmp/peekaboo-remote-mismatched-roi-\(UUID().uuidString).sock"
         let outputURL = FileManager.default.temporaryDirectory
@@ -593,6 +667,7 @@ private final class ROIFileObservationService: DesktopObservationServiceProtocol
         case ignored
         case mismatchedArtifact
         case mismatchedAnnotatedArtifact
+        case mismatchedCaptureData
     }
 
     static let croppedData = makeROITestImageData(width: 10, height: 10, red: 0.2, green: 0.7, blue: 0.3)
@@ -679,7 +754,7 @@ private final class ROIFileObservationService: DesktopObservationServiceProtocol
                 bounds: bounds,
                 detectionContext: windowContext),
             capture: CaptureResult(
-                imageData: Self.croppedData,
+                imageData: self.mode == .mismatchedCaptureData ? Self.fullWindowData : Self.croppedData,
                 savedPath: path,
                 metadata: CaptureMetadata(
                     size: roi.bounds.size,
@@ -711,6 +786,10 @@ private final class ROIFileObservationService: DesktopObservationServiceProtocol
                     ? ObservationOutputWriter.annotatedScreenshotPath(forRawScreenshotPath: path)
                     : nil))
     }
+}
+
+private enum StagedArtifactPreflightError: Error {
+    case expected
 }
 
 private func makeROITestImageData(

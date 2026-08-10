@@ -242,9 +242,7 @@ public struct SeeTool: MCPTool {
         guard Self.sameFile(observation.files.rawScreenshotPath, captureArtifact.observationPath) else {
             throw OperationError.captureFailed(reason: "Observation did not produce a screenshot path")
         }
-        let rawData = observation.capture.imageData.isEmpty
-            ? try Self.readCaptureArtifact(captureArtifact.observationPath, label: "raw screenshot")
-            : observation.capture.imageData
+        let rawData = try Self.readCaptureArtifact(captureArtifact.observationPath, label: "raw screenshot")
         guard annotate else {
             return (rawData, nil)
         }

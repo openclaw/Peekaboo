@@ -110,6 +110,31 @@ struct SeeToolImageOwnershipTests {
     }
 
     @Test
+    func `response ignores untrusted in memory pixels and returns its owned artifact`() async throws {
+        let ownedPixels = Data("owned-artifact".utf8)
+        let untrustedPixels = Data("untrusted-in-memory-capture".utf8)
+        let observation = await MainActor.run {
+            AnnotatedFileOnlyObservationService(
+                rawData: ownedPixels,
+                annotatedData: Data("unused".utf8),
+                captureData: untrustedPixels)
+        }
+        let context = await self.makeContext(desktopObservation: observation)
+        let outputURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekaboo-see-owned-raster-\(UUID().uuidString).png")
+        defer { try? FileManager.default.removeItem(at: outputURL) }
+
+        let response = try await SeeTool(context: context).execute(arguments: ToolArguments(raw: [
+            "path": outputURL.path,
+        ]))
+
+        #expect(response.isError == false)
+        #expect(try Self.imageData(response) == ownedPixels)
+        #expect(try Self.imageData(response) != untrustedPixels)
+        #expect(try Data(contentsOf: outputURL) == ownedPixels)
+    }
+
+    @Test
     func `ROI response exposes local elements and snapshot bound coordinate metadata`() async throws {
         let observation = await MainActor.run { ROIFileObservationService() }
         let context = await self.makeContext(desktopObservation: observation)
@@ -243,10 +268,12 @@ private final class CoordinatedFileOnlyObservationService: DesktopObservationSer
 private final class AnnotatedFileOnlyObservationService: DesktopObservationServiceProtocol {
     private let rawData: Data
     private let annotatedData: Data
+    private let captureData: Data
 
-    init(rawData: Data, annotatedData: Data) {
+    init(rawData: Data, annotatedData: Data, captureData: Data = Data()) {
         self.rawData = rawData
         self.annotatedData = annotatedData
+        self.captureData = captureData
     }
 
     func observe(_ request: DesktopObservationRequest) async throws -> DesktopObservationResult {
@@ -257,7 +284,7 @@ private final class AnnotatedFileOnlyObservationService: DesktopObservationServi
         return DesktopObservationResult(
             target: ResolvedObservationTarget(kind: .screen(index: 0)),
             capture: CaptureResult(
-                imageData: Data(),
+                imageData: self.captureData,
                 savedPath: path,
                 metadata: CaptureMetadata(
                     size: CGSize(width: 1, height: 1),
