@@ -115,7 +115,8 @@ struct HelpCommandTests {
         let data = try #require(jsonResult.stdout.data(using: .utf8))
         let payload = try JSONDecoder().decode(JSONResponse.self, from: data)
         #expect(payload.error?.code == ErrorCode.INVALID_ARGUMENT.rawValue)
-        #expect(payload.error?.message.contains("peekaboo see --no-elements") == true)
+        #expect(payload.error?.message.contains("Command 'peekaboo image' was removed in v4") == true)
+        #expect(payload.error?.hint?.contains("peekaboo see --no-elements") == true)
     }
 
     @Test
@@ -128,7 +129,7 @@ struct HelpCommandTests {
         let payload = try JSONDecoder().decode(JSONResponse.self, from: data)
         #expect(payload.error?.code == ErrorCode.INVALID_ARGUMENT.rawValue)
         #expect(payload.error?.message.contains("Option '--coords' was removed in v4") == true)
-        #expect(payload.error?.message.contains("--at") == true)
+        #expect(payload.error?.hint?.contains("--at") == true)
     }
 
     @Test
