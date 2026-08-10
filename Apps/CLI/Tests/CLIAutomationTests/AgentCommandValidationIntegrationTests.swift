@@ -11,7 +11,7 @@ struct AgentCommandValidationIntegrationTests {
     @Test
     func `No cache session conflicts return one validation JSON object`() async throws {
         let result = try await InProcessCommandRunner.runShared(
-            ["agent", "continuation", "--no-cache", "--resume", "--json", "--verbose"],
+            ["agent", "resume", "missing-session", "--no-cache", "--json", "--verbose"],
             allowedExitCodes: [1]
         )
 
@@ -46,7 +46,7 @@ struct AgentCommandValidationIntegrationTests {
         let result = try await InProcessCommandRunner.runShared(
             [
                 "agent",
-                "--resume-session",
+                "resume",
                 "missing-session-\(UUID().uuidString)",
             ],
             allowedExitCodes: [1]
@@ -105,7 +105,7 @@ struct AgentCommandValidationIntegrationTests {
 
             let result = try await self.withInteractiveOutput {
                 try await InProcessCommandRunner.run(
-                    ["agent", "--resume-session", sessionId, "--max-steps", "1"],
+                    ["agent", "resume", sessionId, "--max-steps", "1"],
                     services: services,
                     standardInput: "Continue the task\n"
                 )
@@ -172,7 +172,7 @@ struct AgentCommandValidationIntegrationTests {
 
             let result = try await self.withInteractiveOutput {
                 try await InProcessCommandRunner.run(
-                    ["agent", "--resume-session", sessionId],
+                    ["agent", "resume", sessionId],
                     services: services,
                     standardInput: "Continue the task\n"
                 )
@@ -218,7 +218,7 @@ struct AgentCommandValidationIntegrationTests {
             services.agent = agentService
 
             let result = try await InProcessCommandRunner.run(
-                ["agent", "--chat"],
+                ["agent", "chat"],
                 services: services,
                 standardInput: "Cancel this turn\n"
             )
@@ -262,7 +262,7 @@ struct AgentCommandValidationIntegrationTests {
             services.agent = agentService
 
             let result = try await InProcessCommandRunner.run(
-                ["agent", "--chat"],
+                ["agent", "chat"],
                 services: services,
                 standardInput: "Fail this turn\n"
             )
@@ -307,7 +307,7 @@ struct AgentCommandValidationIntegrationTests {
             services.agent = agentService
 
             let result = try await InProcessCommandRunner.run(
-                ["agent", "Fail this turn", "--chat"],
+                ["agent", "chat", "Fail this turn"],
                 services: services,
                 standardInput: ""
             )

@@ -17,7 +17,14 @@ struct AgentExecutionOptions: CommanderParsable {
     @Option(name: .long, help: "Queue mode for queued prompts: one-at-a-time (default) or all")
     var queueMode: String?
 
-    @Option(name: .long, help: "AI model to use")
+    @Option(
+        name: .long,
+        help: """
+        AI model to use (for example: gpt-5.6, gpt-5.5, claude-fable-5, claude-sonnet-5, \
+        gemini-3.5-flash, grok-4.3, minimax-m2.7, minimax-cn/m2.7, \
+        ollama/<model>, lmstudio/<model>, or <custom-provider>/<model>)
+        """
+    )
     var model: String?
 
     @Flag(name: .long, help: "Run without saving a resumable session")
