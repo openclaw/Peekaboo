@@ -172,7 +172,12 @@ enum ElementActionCommandExecutor {
             let refreshRuntime = runtime
             observation = try await InteractionObservationRefresher.refreshForTargetIfNeeded(
                 observation,
-                elementTarget: prepared.target,
+                options: TargetedElementObservationRefreshOptions(
+                    elementTarget: prepared.target,
+                    allowWebFocusFallback: Self.shouldAllowWebFocusFallback(
+                        focusOptions: context.focusOptions
+                    )
+                ),
                 target: target,
                 services: services,
                 logger: logger,
@@ -183,7 +188,7 @@ enum ElementActionCommandExecutor {
             try await observation.validateIfExplicit(using: services.snapshots)
             let startTime = Date()
             runtime.beginInteractionMutation()
-            if target.hasAnyTarget {
+            if Self.shouldFocus(target: target, focusOptions: context.focusOptions) {
                 try await ensureFocused(
                     snapshotId: observation.focusSnapshotId(for: target),
                     target: target,
@@ -215,5 +220,16 @@ enum ElementActionCommandExecutor {
             handleError(error)
             throw ExitCode.failure
         }
+    }
+
+    static func shouldFocus(
+        target: InteractionTargetOptions,
+        focusOptions: FocusCommandOptions
+    ) -> Bool {
+        target.hasAnyTarget && focusOptions.foreground && focusOptions.autoFocus
+    }
+
+    static func shouldAllowWebFocusFallback(focusOptions: FocusCommandOptions) -> Bool {
+        focusOptions.foreground && focusOptions.autoFocus
     }
 }

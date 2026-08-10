@@ -704,7 +704,10 @@ struct InteractionObservationContextTests {
 
         let refreshed = try await InteractionObservationRefresher.refreshForTargetIfNeeded(
             observation,
-            elementTarget: "B1",
+            options: TargetedElementObservationRefreshOptions(
+                elementTarget: "B1",
+                allowWebFocusFallback: false
+            ),
             target: target,
             dependencies: InteractionObservationRefreshDependencies(
                 desktopObservation: desktopObservation,
@@ -720,6 +723,62 @@ struct InteractionObservationContextTests {
             #expect(identifier == "TargetApp")
         default:
             Issue.record("Expected targeted app observation")
+        }
+    }
+
+    @Test
+    func `Targeted element action refresh preserves scope and explicit web focus policy`() async throws {
+        var appTarget = InteractionTargetOptions()
+        appTarget.app = "TargetApp"
+        var pidTarget = InteractionTargetOptions()
+        pidTarget.pid = 4242
+        var windowTarget = InteractionTargetOptions()
+        windowTarget.windowId = 7373
+
+        let cases: [(InteractionTargetOptions, DesktopObservationTargetRequest)] = [
+            (appTarget, .app(identifier: "TargetApp", window: nil)),
+            (pidTarget, .pid(4242, window: nil)),
+            (windowTarget, .windowID(7373)),
+        ]
+
+        for (target, expectedTarget) in cases {
+            for allowWebFocusFallback in [false, true] {
+                let snapshots = CoreSnapshotManagerStub()
+                let observation = await InteractionObservationContext.resolve(
+                    explicitSnapshot: nil,
+                    fallbackToLatest: true,
+                    snapshots: snapshots
+                )
+                let freshDetection = Self.detectionResult(
+                    snapshotId: "fresh-snapshot",
+                    element: Self.buttonElement(id: "B1")
+                )
+                let desktopObservation = RecordingDesktopObservationService(
+                    elements: freshDetection,
+                    snapshots: snapshots
+                )
+
+                let refreshed = try await InteractionObservationRefresher.refreshForTargetIfNeeded(
+                    observation,
+                    options: TargetedElementObservationRefreshOptions(
+                        elementTarget: "B1",
+                        allowWebFocusFallback: allowWebFocusFallback
+                    ),
+                    target: target,
+                    dependencies: InteractionObservationRefreshDependencies(
+                        desktopObservation: desktopObservation,
+                        snapshots: snapshots
+                    ),
+                    logger: Logger.shared
+                )
+
+                let request = try #require(desktopObservation.requests.first)
+                let refreshedSnapshotID = try #require(refreshed.snapshotId)
+                #expect(request.target == expectedTarget)
+                #expect(request.detection.allowWebFocusFallback == allowWebFocusFallback)
+                #expect(request.output.snapshotID == refreshedSnapshotID)
+                #expect(try await snapshots.getDetectionResult(snapshotId: refreshedSnapshotID) != nil)
+            }
         }
     }
 
@@ -741,7 +800,10 @@ struct InteractionObservationContextTests {
         await #expect(throws: PeekabooError.self) {
             _ = try await InteractionObservationRefresher.refreshForTargetIfNeeded(
                 observation,
-                elementTarget: "B1",
+                options: TargetedElementObservationRefreshOptions(
+                    elementTarget: "B1",
+                    allowWebFocusFallback: false
+                ),
                 target: target,
                 dependencies: InteractionObservationRefreshDependencies(
                     desktopObservation: desktopObservation,

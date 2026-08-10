@@ -175,11 +175,16 @@ struct InteractionObservationRefreshDependencies {
     }
 }
 
+struct TargetedElementObservationRefreshOptions {
+    let elementTarget: String
+    let allowWebFocusFallback: Bool
+}
+
 @MainActor
 enum InteractionObservationRefresher {
     static func refreshForTargetIfNeeded(
         _ observation: InteractionObservationContext,
-        elementTarget: String,
+        options: TargetedElementObservationRefreshOptions,
         target: InteractionTargetOptions,
         services: any PeekabooServiceProviding,
         logger: Logger,
@@ -187,7 +192,7 @@ enum InteractionObservationRefresher {
     ) async throws -> InteractionObservationContext {
         try await self.refreshForTargetIfNeeded(
             observation,
-            elementTarget: elementTarget,
+            options: options,
             target: target,
             dependencies: InteractionObservationRefreshDependencies(
                 desktopObservation: services.desktopObservation,
@@ -200,7 +205,7 @@ enum InteractionObservationRefresher {
 
     static func refreshForTargetIfNeeded(
         _ observation: InteractionObservationContext,
-        elementTarget: String,
+        options: TargetedElementObservationRefreshOptions,
         target: InteractionTargetOptions,
         dependencies: InteractionObservationRefreshDependencies,
         logger: Logger
@@ -217,8 +222,9 @@ enum InteractionObservationRefresher {
 
         return try await self.refreshObservation(
             observation,
-            reason: "explicit target for element '\(elementTarget)'",
+            reason: "explicit target for element '\(options.elementTarget)'",
             target: target,
+            allowWebFocusFallback: options.allowWebFocusFallback,
             dependencies: dependencies,
             logger: logger
         )
@@ -344,6 +350,7 @@ enum InteractionObservationRefresher {
         _ observation: InteractionObservationContext,
         reason: String,
         target: InteractionTargetOptions,
+        allowWebFocusFallback: Bool = true,
         dependencies: InteractionObservationRefreshDependencies,
         logger: Logger
     ) async throws -> InteractionObservationContext {
@@ -360,7 +367,10 @@ enum InteractionObservationRefresher {
                     scale: .logical1x,
                     visualizerMode: .none
                 ),
-                detection: DesktopDetectionOptions(mode: .accessibility, allowWebFocusFallback: true),
+                detection: DesktopDetectionOptions(
+                    mode: .accessibility,
+                    allowWebFocusFallback: allowWebFocusFallback
+                ),
                 output: DesktopObservationOutputOptions(
                     saveSnapshot: true,
                     snapshotID: snapshotID

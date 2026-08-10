@@ -130,6 +130,71 @@ struct Phase3CommandParsingTests {
     }
 
     @Test
+    func `Direct element actions focus and web press only with explicit foreground`() throws {
+        let targetArguments = [
+            ["--app", "TextEdit"],
+            ["--pid", "4242"],
+            ["--window-id", "7373"],
+        ]
+
+        for arguments in targetArguments {
+            let backgroundAction = try ActionCommand.parse(
+                ["AXPress", "--on", "B7"] + arguments
+            )
+            let foregroundAction = try ActionCommand.parse(
+                ["AXPress", "--on", "B7"] + arguments + ["--foreground"]
+            )
+            let backgroundSetValue = try SetValueCommand.parse(
+                ["hello", "--on", "T1"] + arguments
+            )
+            let foregroundSetValue = try SetValueCommand.parse(
+                ["hello", "--on", "T1"] + arguments + ["--foreground"]
+            )
+
+            for command in [
+                (backgroundAction.target, backgroundAction.focusOptions),
+                (backgroundSetValue.target, backgroundSetValue.focusOptions),
+            ] {
+                #expect(!ElementActionCommandExecutor.shouldFocus(
+                    target: command.0,
+                    focusOptions: command.1
+                ))
+                #expect(!ElementActionCommandExecutor.shouldAllowWebFocusFallback(
+                    focusOptions: command.1
+                ))
+            }
+
+            for command in [
+                (foregroundAction.target, foregroundAction.focusOptions),
+                (foregroundSetValue.target, foregroundSetValue.focusOptions),
+            ] {
+                #expect(ElementActionCommandExecutor.shouldFocus(
+                    target: command.0,
+                    focusOptions: command.1
+                ))
+                #expect(ElementActionCommandExecutor.shouldAllowWebFocusFallback(
+                    focusOptions: command.1
+                ))
+            }
+        }
+    }
+
+    @Test
+    func `Explicit foreground respects no auto focus for direct element actions`() throws {
+        let command = try ActionCommand.parse([
+            "AXPress", "--on", "B7", "--app", "TextEdit", "--foreground", "--no-auto-focus",
+        ])
+
+        #expect(!ElementActionCommandExecutor.shouldFocus(
+            target: command.target,
+            focusOptions: command.focusOptions
+        ))
+        #expect(!ElementActionCommandExecutor.shouldAllowWebFocusFallback(
+            focusOptions: command.focusOptions
+        ))
+    }
+
+    @Test
     func `Removed root commands are unknown`() throws {
         let descriptors = CommanderRegistryBuilder.buildDescriptors()
         let program = Program(descriptors: descriptors.map(\.metadata))

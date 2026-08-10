@@ -16,4 +16,5 @@ peekaboo action --action AXShowMenu --on "$ELEMENT_ID" --pid 1234
 
 Use `--app`, `--pid`, `--window-id`, `--window-title`, or `--window-index` to resolve the intended target without
 activating it. Window title/index selectors require an app or PID. Add `--foreground` only when the action depends on
-focused-window state. The equivalent MCP tool is `action`.
+focused-window state; this also permits web-content discovery to focus the page when required. The equivalent MCP tool
+is `action`.

@@ -16,7 +16,8 @@ read_when:
 | `<value>` | String value to write. |
 | `--on <id-or-query>` | Element ID from `peekaboo see`, or a query used by the automation service. Required. |
 | `--snapshot <id>` | Snapshot ID from `peekaboo see`; uses the latest action context when omitted. |
-| Target flags | `--app`, `--pid`, `--window-id`, `--window-title`, and `--window-index` focus the intended target before mutation. |
+| Target flags | `--app`, `--pid`, `--window-id`, `--window-title`, and `--window-index` scope the mutation without activating the app. |
+| `--foreground` | Explicitly focus the target before mutation and allow web-content discovery to focus the page when required. |
 
 ## Notes
 
