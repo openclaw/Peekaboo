@@ -194,6 +194,7 @@ struct MCPToolRegistryIntegrationTests {
         #expect(names.contains("inspect_ui"))
         #expect(names.contains("verify_state"))
         #expect(names.contains("capture"))
+        #expect(!names.contains("shell"))
     }
 
     @Test

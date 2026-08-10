@@ -9,11 +9,12 @@ import TachikomaMCP
 struct ToolsCommand: ParsableCommand {
     static let commandDescription = CommandDescription(
         commandName: "tools",
-        abstract: "List the MCP/agent tool catalog",
+        abstract: "List the MCP tool catalog",
         discussion: """
-        Display the Peekaboo MCP/agent tool catalog. These tools are exposed to agents
-        and `peekaboo mcp` clients (e.g. Codex, Claude Code, Cursor). Some tools also
-        have dedicated CLI wrappers, such as `peekaboo browser`.
+        Display the native tools exposed to `peekaboo mcp` clients (e.g. Codex,
+        Claude Code, Cursor). The built-in Peekaboo Agent adds agent-only capabilities,
+        including `shell`; run `peekaboo learn` for the combined guidance. Some MCP
+        tools also have dedicated CLI wrappers, such as `peekaboo browser`.
         Run `peekaboo --help` for the CLI command list.
 
         Examples:
@@ -33,7 +34,7 @@ struct ToolsCommand: ParsableCommand {
 struct ToolsListSubcommand: OutputFormattable, RuntimeBackedCommand {
     static let commandDescription = CommandDescription(
         commandName: "list",
-        abstract: "List the MCP/agent tool catalog"
+        abstract: "List the MCP tool catalog"
     )
 
     @Flag(name: .customLong("no-sort"), help: "Disable alphabetical sorting")

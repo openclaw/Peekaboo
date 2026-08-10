@@ -3,10 +3,7 @@
 ## [4.0.1] - Unreleased
 
 ### Fixed
-- Stop `peekaboo learn` from documenting a `shell` tool that no longer exists. The curated
-  agent copy kept its own name table, so agents were taught `peekaboo shell "..."`, which fails
-  with an unknown-command error and gets no migration hint. A contract test now fails if the
-  curated copy documents any tool the runtime does not expose.
+- Stop `peekaboo learn` from presenting `shell` as a CLI command: it remains a built-in Agent capability but is not in the MCP catalog and has no `peekaboo shell` CLI root; guard both curated Agent overrides and rendered CLI roots against future drift.
 - Ensure action-command JSON validation failures before dispatch report
   `effect: refused`, including parser and binding errors.
 - Verify app focus against the exact active Workspace PID and visible frontmost-window PID, retry through native AX activation, and report the verified effect as confirmed instead of claiming success for an unfulfilled request.

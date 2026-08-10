@@ -12,9 +12,11 @@ struct ToolsCommandTests {
         let config = ToolsCommand.commandDescription
 
         #expect(config.commandName == "tools")
-        #expect(config.abstract == "List the MCP/agent tool catalog")
+        #expect(config.abstract == "List the MCP tool catalog")
         #expect(config.discussion != nil)
         let discussion = config.discussion ?? ""
+        #expect(discussion.contains("built-in Peekaboo Agent adds agent-only capabilities"))
+        #expect(discussion.contains("including `shell`"))
         #expect(discussion.contains("Examples:"))
         #expect(discussion.contains("peekaboo tools"))
         #expect(discussion.contains("--verbose"))
