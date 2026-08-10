@@ -124,9 +124,6 @@ public struct DefaultElementStyleProvider: ElementStyleProvider {
     }
 }
 
-/// Temporary typealias for legacy references during migration.
-typealias ElementStyleProviderImpl = DefaultElementStyleProvider
-
 extension DefaultElementStyleProvider {
     private func normalStyle(baseColor: CGColor) -> ElementStyle {
         ElementStyle(

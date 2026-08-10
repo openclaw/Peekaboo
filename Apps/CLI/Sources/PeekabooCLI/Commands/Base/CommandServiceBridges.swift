@@ -456,18 +456,6 @@ enum MenuServiceBridge {
         }.value
     }
 
-    static func listFrontmostMenus(menu: any MenuServiceProtocol) async throws -> MenuStructure {
-        try await Task { @MainActor in
-            try await menu.listFrontmostMenus()
-        }.value
-    }
-
-    static func listMenuExtras(menu: any MenuServiceProtocol) async throws -> [MenuExtraInfo] {
-        try await Task { @MainActor in
-            try await menu.listMenuExtras()
-        }.value
-    }
-
     static func clickMenuItem(menu: any MenuServiceProtocol, appIdentifier: String, itemPath: String) async throws {
         try await Task { @MainActor in
             try await menu.clickMenuItem(app: appIdentifier, itemPath: itemPath)
@@ -481,12 +469,6 @@ enum MenuServiceBridge {
     ) async throws {
         try await Task { @MainActor in
             try await menu.clickMenuItemByName(app: appIdentifier, itemName: itemName)
-        }.value
-    }
-
-    static func clickMenuExtra(menu: any MenuServiceProtocol, title: String) async throws {
-        try await Task { @MainActor in
-            try await menu.clickMenuExtra(title: title)
         }.value
     }
 

@@ -20,11 +20,6 @@ extension SeeCommand {
         )
     }
 
-    func menuBarHeight(for screen: MenuBarPopoverDetector.ScreenBounds) -> CGFloat {
-        let height = max(0, screen.frame.maxY - screen.visibleFrame.maxY)
-        return height > 0 ? height : 24.0
-    }
-
     private func menuBarHeight(for screen: ScreenInfo) -> CGFloat {
         let height = max(0, screen.frame.maxY - screen.visibleFrame.maxY)
         return height > 0 ? height : 24.0

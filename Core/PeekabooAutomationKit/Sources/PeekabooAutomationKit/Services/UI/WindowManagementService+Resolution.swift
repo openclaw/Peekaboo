@@ -85,15 +85,6 @@ extension WindowManagementService {
             "Window \(expectedIdentity.windowID) did not reach verified requested bounds \(expectedBounds)")
     }
 
-    /// Performs a window operation within MainActor context.
-    func performWindowOperation<T: Sendable>(
-        target: WindowTarget,
-        operation: @MainActor (Element) -> T) async throws -> T
-    {
-        let window = try await self.element(for: target)
-        return operation(window)
-    }
-
     func windows(for appIdentifier: String) async throws -> [ServiceWindowInfo] {
         let output = try await self.applicationService.listWindows(for: appIdentifier, timeout: nil)
         return output.data.windows

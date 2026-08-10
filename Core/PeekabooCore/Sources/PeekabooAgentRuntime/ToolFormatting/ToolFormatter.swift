@@ -108,21 +108,6 @@ open class BaseToolFormatter: ToolFormatter {
         }
     }
 
-    /// Format keyboard shortcuts with proper symbols
-    func formatKeyboardShortcut(_ keys: String) -> String {
-        // Format keyboard shortcuts with proper symbols
-        keys.replacingOccurrences(of: "cmd", with: "⌘")
-            .replacingOccurrences(of: "command", with: "⌘")
-            .replacingOccurrences(of: "shift", with: "⇧")
-            .replacingOccurrences(of: "option", with: "⌥")
-            .replacingOccurrences(of: "opt", with: "⌥")
-            .replacingOccurrences(of: "alt", with: "⌥")
-            .replacingOccurrences(of: "control", with: "⌃")
-            .replacingOccurrences(of: "ctrl", with: "⌃")
-            .replacingOccurrences(of: ",", with: "")
-            .replacingOccurrences(of: "+", with: "")
-    }
-
     /// Truncate text if too long
     func truncate(_ text: String, maxLength: Int = 30) -> String {
         // Truncate text if too long

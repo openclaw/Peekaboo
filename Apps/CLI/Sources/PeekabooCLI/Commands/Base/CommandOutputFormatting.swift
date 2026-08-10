@@ -20,21 +20,3 @@ extension OutputFormattable {
         }
     }
 }
-
-@MainActor
-func requireScreenRecordingPermission(services: any PeekabooServiceProviding) async throws {
-    let hasPermission = await Task { @MainActor in
-        await services.screenCapture.hasScreenRecordingPermission()
-    }.value
-
-    guard hasPermission else {
-        throw CaptureError.screenRecordingPermissionDenied
-    }
-}
-
-@MainActor
-func requireAccessibilityPermission(services: any PeekabooServiceProviding) throws {
-    if !services.permissions.checkAccessibilityPermission() {
-        throw CaptureError.accessibilityPermissionDenied
-    }
-}

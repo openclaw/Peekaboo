@@ -296,27 +296,3 @@ extension ApplicationResolver {
         }
     }
 }
-
-// MARK: - Capture Error Extensions
-
-extension Error {
-    /// Convert any error to a CaptureError if possible
-    var asCaptureError: CaptureError {
-        if let captureError = self as? CaptureError {
-            return captureError
-        }
-
-        if let peekabooError = self as? PeekabooError {
-            switch peekabooError {
-            case let .appNotFound(identifier):
-                return .appNotFound(identifier)
-            case .windowNotFound:
-                return .windowNotFound
-            default:
-                return .unknownError(self.localizedDescription)
-            }
-        }
-
-        return .unknownError(self.localizedDescription)
-    }
-}

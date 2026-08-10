@@ -240,16 +240,6 @@ public enum ToolType: String, CaseIterable, Sendable {
         }
     }
 
-    /// Whether this is a communication tool that should be displayed differently
-    var isCommunicationTool: Bool {
-        switch self {
-        case .done, .taskCompleted, .needMoreInformation, .needInfo:
-            true
-        default:
-            false
-        }
-    }
-
     // MARK: - Initialization
 
     /// Initialize from a string tool name (for backward compatibility)

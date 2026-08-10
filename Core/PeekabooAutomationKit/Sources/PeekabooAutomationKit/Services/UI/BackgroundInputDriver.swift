@@ -212,21 +212,6 @@ enum BackgroundInputDriver {
         }
     }
 
-    static func type(
-        _ text: String,
-        delayPerCharacter: TimeInterval,
-        targetProcessIdentifier: pid_t) throws
-    {
-        try self.validateTarget(targetProcessIdentifier)
-
-        for character in text {
-            try self.typeCharacter(character, targetProcessIdentifier: targetProcessIdentifier)
-            if delayPerCharacter > 0 {
-                Thread.sleep(forTimeInterval: delayPerCharacter)
-            }
-        }
-    }
-
     static func typeCharacter(_ character: Character, targetProcessIdentifier: pid_t) throws {
         try self.validateTarget(targetProcessIdentifier)
         try self.postUnicodeCharacter(character, targetProcessIdentifier: targetProcessIdentifier)

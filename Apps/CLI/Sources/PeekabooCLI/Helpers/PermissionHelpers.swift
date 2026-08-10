@@ -321,28 +321,4 @@ enum PermissionHelpers {
         }
         return hint
     }
-
-    /// Format permissions for help display with dynamic status
-    static func formatPermissionsForHelp(
-        services: any PeekabooServiceProviding
-    ) async -> String {
-        // Format permissions for help display with dynamic status
-        let permissions = await getCurrentPermissions(services: services)
-        var output = ["PERMISSIONS:"]
-
-        for permission in permissions {
-            output.append("  \(self.formatPermissionStatus(permission))")
-
-            // Only show grant instructions if permission is not granted
-            if !permission.isGranted {
-                output.append("    Grant via: \(permission.grantInstructions)")
-            }
-        }
-
-        output.append("")
-        output.append("Check detailed permission status:")
-        output.append("  peekaboo permissions")
-
-        return output.joined(separator: "\n")
-    }
 }

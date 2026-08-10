@@ -73,6 +73,38 @@ struct CommanderBinderProgramResolutionTests {
 
     @Test
     @MainActor
+    func `See selector help states ownership requirements`() {
+        let options = Dictionary(uniqueKeysWithValues: SeeCommand.commanderSignature().options.map {
+            ($0.label, $0.help ?? "")
+        })
+
+        #expect(options["app"]?.contains("mutually exclusive with --pid") == true)
+        #expect(options["pid"]?.contains("mutually exclusive with --app") == true)
+        #expect(options["windowTitle"]?.contains("requires --app or --pid") == true)
+        #expect(options["windowIndex"]?.contains("requires --app or --pid") == true)
+        #expect(options["windowId"]?.contains("may be used without --app/--pid") == true)
+    }
+
+    @Test
+    @MainActor
+    func `Press usage honestly marks repeated chords and explicit snapshots`() throws {
+        let descriptor = try #require(
+            CommanderRegistryBuilder.buildDescriptors().first { $0.metadata.name == "press" }
+        )
+        let usage = CommanderRuntimeRouter.buildUsageLine(
+            path: ["press"],
+            signature: descriptor.metadata.signature
+        )
+        let snapshotHelp = PressCommand.commanderSignature().options.first { $0.label == "snapshot" }?.help
+        let typeSnapshotHelp = TypeCommand.commanderSignature().options.first { $0.label == "snapshot" }?.help
+
+        #expect(usage.contains("[<chord> ...]"))
+        #expect(snapshotHelp?.contains("no snapshot is inferred") == true)
+        #expect(typeSnapshotHelp?.contains("no snapshot is inferred") == true)
+    }
+
+    @Test
+    @MainActor
     func `Commander program preserves window documented options`() throws {
         let descriptors = CommanderRegistryBuilder.buildDescriptors()
         let program = Program(descriptors: descriptors.map(\.metadata))

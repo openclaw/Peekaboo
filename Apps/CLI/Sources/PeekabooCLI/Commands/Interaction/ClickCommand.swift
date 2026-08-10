@@ -36,7 +36,7 @@ struct ClickCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
     @Flag(help: "Right-click (secondary click)")
     var right = false
 
-    @Flag(help: "Press and hold for 1.2 seconds at a stationary point")
+    @Flag(help: "Press and hold for 1.2 seconds at a stationary point (requires --foreground)")
     var longPress = false
 
     @OptionGroup var focusOptions: FocusCommandOptions
@@ -48,7 +48,7 @@ struct ClickCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
         if self.focusOptions.backgroundDeliveryExplicitlyRequested {
             return .background
         }
-        if self.focusOptions.foreground || self.longPress {
+        if self.focusOptions.foreground {
             return .foreground
         }
         return .background
@@ -899,7 +899,7 @@ struct ClickCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
             throw ValidationError("--focus-background cannot be combined with focus options")
         }
 
-        if !self.focusOptions.foreground, !self.longPress, self.focusOptions.hasForegroundFocusOverrides {
+        if !self.focusOptions.foreground, self.focusOptions.hasForegroundFocusOverrides {
             throw ValidationError("Focus options require --foreground for click")
         }
     }

@@ -347,13 +347,6 @@ extension WindowManagementService {
         }
     }
 
-    private func windowDisappeared(windowID: Int, appIdentifier: String?) async throws -> Bool {
-        try await self.waitForWindowToDisappear(
-            windowID: windowID,
-            appIdentifier: appIdentifier,
-            timeoutSeconds: 3.0)
-    }
-
     private func attemptPinnedBackgroundClose(
         _ expectedIdentity: WindowMutationIdentity) async throws -> PinnedWindowCloseAttemptResult
     {

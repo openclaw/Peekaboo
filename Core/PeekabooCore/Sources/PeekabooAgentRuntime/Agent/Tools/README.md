@@ -79,12 +79,6 @@ func createToolNameTool() -> Tachikoma.AgentTool {
 }
 ```
 
-## Helper Functions
-
-The `ToolHelpers.swift` file provides common functionality:
-- `handleToolError` - Consistent error handling with recovery suggestions
-- Error enhancement with context-specific help
-
 ## System Prompt
 
 The `AgentSystemPrompt.swift` file contains the comprehensive system instructions that guide the agent's behavior and tool usage patterns.

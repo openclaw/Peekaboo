@@ -19,6 +19,14 @@ struct CommanderBinderInteractionAliasTests {
     }
 
     @Test
+    func `Press command rejects positional chords with key option`() {
+        let parsed = ParsedValues(positional: ["cmd+c"], options: ["key": ["return"]], flags: [])
+        #expect(throws: ValidationError.self) {
+            _ = try CommanderCLIBinder.instantiateCommand(ofType: PressCommand.self, parsedValues: parsed)
+        }
+    }
+
+    @Test
     func `Set value command accepts value option alias`() throws {
         let parsed = ParsedValues(
             positional: [],

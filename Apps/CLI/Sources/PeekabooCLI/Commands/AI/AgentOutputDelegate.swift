@@ -303,10 +303,6 @@ extension AgentOutputDelegate {
 
     // MARK: - Public Methods
 
-    func updateTokenCount(_ count: Int) {
-        self.totalTokens = count
-    }
-
     func showFinalSummaryIfNeeded(_ result: AgentExecutionResult) {
         guard !self.hasShownFinalSummary && self.outputMode != .quiet else { return }
 

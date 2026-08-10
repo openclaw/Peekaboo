@@ -6,21 +6,21 @@ import PeekabooFoundation
 /// Capture a screenshot and build an interactive UI map
 @available(macOS 14.0, *)
 struct SeeCommand: ApplicationResolvable, ErrorHandlingCommand, RuntimeBackedCommand {
-    @Option(help: "Application name to capture, or special values: 'menubar', 'frontmost'")
+    @Option(help: "Application name or bundle ID; mutually exclusive with --pid (also: menubar, frontmost)")
     var app: String?
 
-    @Option(name: .long, help: "Target application by process ID")
+    @Option(name: .long, help: "Target application by process ID; mutually exclusive with --app")
     var pid: Int32?
 
-    @Option(help: "Specific window title to capture")
+    @Option(help: "Window title selector; requires --app or --pid")
     var windowTitle: String?
 
-    @Option(help: "Window index to capture")
+    @Option(help: "Window index selector; requires --app or --pid")
     var windowIndex: Int?
 
     @Option(
         name: .long,
-        help: "Target window by CoreGraphics window id (window_id from `peekaboo window list --json`)"
+        help: "CoreGraphics window ID; may be used without --app/--pid (from `peekaboo window list --json`)"
     )
     var windowId: Int?
 
