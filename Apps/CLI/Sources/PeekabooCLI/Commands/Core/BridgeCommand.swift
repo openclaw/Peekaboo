@@ -23,7 +23,8 @@ struct BridgeCommand: ParsableCommand {
             StatusSubcommand.self,
         ],
         defaultSubcommand: StatusSubcommand.self,
-        showHelpOnEmptyInvocation: true)
+        showHelpOnEmptyInvocation: true
+    )
 }
 
 extension BridgeCommand {
@@ -33,7 +34,8 @@ extension BridgeCommand {
             MainActorCommandDescription.describe {
                 CommandDescription(
                     commandName: "status",
-                    abstract: "Report which Bridge host would be used")
+                    abstract: "Report which Bridge host would be used"
+                )
             }
         }
 

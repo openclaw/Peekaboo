@@ -8,7 +8,8 @@ struct BridgeDiagnosticsConcurrencyTests {
         bundleIdentifier: "test.peekaboo",
         teamIdentifier: nil,
         processIdentifier: 42,
-        hostname: "test-host")
+        hostname: "test-host"
+    )
 
     @Test
     func `probes run concurrently with a bound and return in candidate order`() async throws {
@@ -21,7 +22,8 @@ struct BridgeDiagnosticsConcurrencyTests {
                 maxConcurrentProbes: 2,
                 probe: { socketPath, _ in
                     await gate.probe(socketPath)
-                })
+                }
+            )
         }
 
         await gate.waitUntilStarted(count: 2)
@@ -61,7 +63,8 @@ struct BridgeDiagnosticsConcurrencyTests {
                     await starts.record(socketPath)
                     try await Task.sleep(for: .seconds(30))
                     return Self.handshake(build: socketPath)
-                })
+                }
+            )
         }
 
         await starts.waitUntilStarted(count: 2)
@@ -80,7 +83,8 @@ struct BridgeDiagnosticsConcurrencyTests {
             negotiatedVersion: PeekabooBridgeConstants.protocolVersion,
             hostKind: .onDemand,
             build: build,
-            supportedOperations: [.permissionsStatus])
+            supportedOperations: [.permissionsStatus]
+        )
     }
 }
 
@@ -99,7 +103,8 @@ private actor BridgeProbeGate {
             negotiatedVersion: PeekabooBridgeConstants.protocolVersion,
             hostKind: .onDemand,
             build: socketPath,
-            supportedOperations: [.permissionsStatus])
+            supportedOperations: [.permissionsStatus]
+        )
     }
 
     func waitUntilStarted(count: Int) async {
