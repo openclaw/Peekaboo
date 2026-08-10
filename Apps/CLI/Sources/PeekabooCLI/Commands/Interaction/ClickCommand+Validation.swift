@@ -30,8 +30,10 @@ extension ClickCommand {
             throw ValidationError("--long-press cannot be combined with --double or --right")
         }
 
-        if self.longPress && self.focusOptions.backgroundDeliveryExplicitlyRequested {
-            throw ValidationError("--long-press requires foreground delivery")
+        if self.longPress && !self.focusOptions.foreground {
+            throw ValidationError(
+                "--long-press uses the shared physical cursor and requires explicit --foreground consent"
+            )
         }
 
         if self.focusOptions.backgroundDeliveryExplicitlyRequested &&
@@ -39,7 +41,7 @@ extension ClickCommand {
             throw ValidationError("--focus-background cannot be combined with focus options")
         }
 
-        if !self.focusOptions.foreground, !self.longPress, self.focusOptions.hasForegroundFocusOverrides {
+        if !self.focusOptions.foreground, self.focusOptions.hasForegroundFocusOverrides {
             throw ValidationError("Focus options require --foreground for click")
         }
     }

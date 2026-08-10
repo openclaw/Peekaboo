@@ -1,4 +1,3 @@
-import CoreGraphics
 import Foundation
 import PeekabooCore
 import PeekabooFoundation
@@ -50,48 +49,6 @@ extension SeeCommand {
         FileManager.default.temporaryDirectory
             .appendingPathComponent("peekaboo-see", isDirectory: true)
             .appendingPathComponent(snapshotID ?? UUID().uuidString, isDirectory: true)
-    }
-
-    func resolveSeeWindowIndex(appIdentifier: String, titleFragment: String?) async throws -> Int? {
-        guard let fragment = titleFragment, !fragment.isEmpty else {
-            return nil
-        }
-
-        let appInfo = try await self.services.applications.findApplication(identifier: appIdentifier)
-        let snapshot = try await WindowListMapper.shared.snapshot()
-        let appWindows = WindowListMapper.scWindows(
-            for: appInfo.processIdentifier,
-            in: snapshot.scWindows
-        )
-
-        guard !appWindows.isEmpty else {
-            throw CaptureError.windowNotFound
-        }
-
-        if let index = WindowListMapper.scWindowIndex(
-            for: appInfo.processIdentifier,
-            titleFragment: fragment,
-            in: snapshot
-        ) {
-            return index
-        }
-
-        if let index = WindowListMapper.scWindowIndex(for: fragment, in: appWindows) {
-            return index
-        }
-
-        throw CaptureError.windowNotFound
-    }
-
-    func resolveWindowId(appIdentifier: String, titleFragment: String?) async throws -> Int? {
-        guard let fragment = titleFragment, !fragment.isEmpty else {
-            return nil
-        }
-
-        let windows = try await self.services.windows.listWindows(
-            target: .applicationAndTitle(app: appIdentifier, title: fragment)
-        )
-        return windows.first?.windowID
     }
 
     func generateAnnotatedScreenshot(

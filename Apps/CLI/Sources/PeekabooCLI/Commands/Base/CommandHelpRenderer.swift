@@ -74,8 +74,16 @@ struct CommandHelpRenderer {
     private static func renderArguments(_ arguments: [ArgumentDefinition], theme: HelpTheme?) -> String? {
         guard !arguments.isEmpty else { return nil }
         let rows = arguments.map { argument -> (String, String?) in
-            let placeholder = self.kebabCased(argument.label)
-            let label = argument.isOptional ? "[\(placeholder)]" : "<\(placeholder)>"
+            let rawLabel = argument.label.hasSuffix("...") ? String(argument.label.dropLast(3)) : argument.label
+            let placeholder = self.kebabCased(rawLabel)
+            let rendered = if argument.label.hasSuffix("...") {
+                "<\(placeholder)> ..."
+            } else if argument.isOptional {
+                placeholder
+            } else {
+                "<\(placeholder)>"
+            }
+            let label = argument.isOptional ? "[\(rendered)]" : rendered
             return (label, argument.help)
         }
         return self.makeSection(title: "ARGUMENTS", lines: self.renderKeyValueRows(rows, theme: theme), theme: theme)

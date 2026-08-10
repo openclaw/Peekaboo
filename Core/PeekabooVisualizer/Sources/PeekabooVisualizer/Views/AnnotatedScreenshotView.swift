@@ -27,10 +27,8 @@ struct AnnotatedScreenshotView: View {
     @State private var elementOpacity: Double = 0
     @State private var labelScale: Double = 0.8
 
-    // Use core visualization system
+    /// Use core visualization system
     private let styleProvider = AnnotationVisualizationPreset()
-    private let layoutEngine = ElementLayoutEngine()
-    private let idGenerator = ElementIDGenerator.shared
 
     // MARK: - Body
 

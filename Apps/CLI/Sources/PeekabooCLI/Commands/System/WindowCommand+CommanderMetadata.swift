@@ -2,7 +2,6 @@ import Commander
 
 private enum WindowCommandSignatures {
     static let windowOptions = WindowIdentificationOptions.commanderSignature()
-    static let focusOptions = FocusCommandOptions.commanderSignature(includeForeground: false)
     static let windowFocusOptions = FocusCommandOptions.commanderSignature(
         includeForeground: false,
         includeAutoFocusControl: false

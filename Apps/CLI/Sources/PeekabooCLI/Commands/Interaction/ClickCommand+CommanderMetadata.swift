@@ -81,7 +81,7 @@ extension ClickCommand: CommanderSignatureProviding {
                 ),
                 .commandFlag(
                     "longPress",
-                    help: "Press and hold for 1.2 seconds at a stationary point",
+                    help: "Press and hold for 1.2 seconds at a stationary point (requires --foreground)",
                     long: "long-press"
                 ),
                 .commandFlag(

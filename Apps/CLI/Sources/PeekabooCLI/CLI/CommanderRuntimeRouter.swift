@@ -19,6 +19,9 @@ enum CommanderRuntimeRouter {
         if Self.handleVersionRequest(arguments: trimmedArgs) {
             throw ExitCode.success
         }
+        if let migrationError = CommanderMigrationAdvisor.commandError(for: trimmedArgs) {
+            throw migrationError
+        }
         if try Self.handleBareInvocation(arguments: trimmedArgs, descriptors: descriptors) {
             throw ExitCode.success
         }
@@ -26,7 +29,24 @@ enum CommanderRuntimeRouter {
             throw ExitCode.success
         }
         let program = Program(descriptors: descriptors.map(\.metadata))
-        let invocation = try program.resolve(argv: self.normalizedDefaultSubcommandArguments(argv))
+        let invocation: CommandInvocation
+        do {
+            invocation = try program.resolve(argv: self.normalizedDefaultSubcommandArguments(argv))
+        } catch let error as CommanderProgramError {
+            let shouldAdviseOptions = switch error {
+            case .parsingError:
+                true
+            case .missingSubcommand(command: "clipboard"):
+                true
+            default:
+                false
+            }
+            if shouldAdviseOptions,
+               let migrationError = CommanderMigrationAdvisor.optionError(for: trimmedArgs) {
+                throw migrationError
+            }
+            throw error
+        }
         guard let descriptor = Self.findDescriptor(in: descriptors, matching: invocation.path) else {
             throw CommanderProgramError.unknownCommand(invocation.path.joined(separator: ":"))
         }

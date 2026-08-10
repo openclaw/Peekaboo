@@ -26,23 +26,6 @@ public protocol AgentEventDelegate: AnyObject, Sendable {
     func agentDidEmitEvent(_ event: AgentEvent)
 }
 
-// MARK: - Event Delegate Extensions
-
-/// Extension to make the existing AgentEventDelegate compatible with our usage
-extension AgentEventDelegate {
-    /// Helper method for backward compatibility
-    func agentDidStart() async {
-        // Helper method for backward compatibility
-        self.agentDidEmitEvent(.started(task: ""))
-    }
-
-    /// Helper method for backward compatibility
-    func agentDidReceiveChunk(_ chunk: String) async {
-        // Helper method for backward compatibility
-        self.agentDidEmitEvent(.assistantMessage(content: chunk))
-    }
-}
-
 // MARK: - Agent Execution Types
 
 /// Result of agent task execution containing response content, metadata, and tool usage information

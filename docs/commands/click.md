@@ -20,7 +20,7 @@ read_when:
 | Target flags | `--app <name>`, `--pid <pid>`, `--window-id <id>`, `--window-title <title>`, `--window-index <n>` — resolve the app/window that should receive the click. In background mode this does not focus the app; with `--foreground` it focuses before clicking. (`--window-title`/`--window-index` require `--app` or `--pid`; `--window-id` does not.) |
 | `--wait-for <duration>` | Timeout while waiting for the element (default `5s`; bare values are milliseconds). |
 | `--double` / `--right` | Perform double-click or secondary-click instead of the default single click. Background pixel delivery requires a provable exact PID/window route; `--foreground` remains available for shared-pointer behavior. |
-| `--long-press` | Send mouse-down, hold stationary for 1.2 seconds, then mouse-up. Long press implies foreground delivery and cannot be combined with `--double`, `--right`, or `--focus-background`. |
+| `--long-press` | Send mouse-down, hold stationary for 1.2 seconds, then mouse-up. This shared-pointer gesture requires explicit `--foreground` and cannot be combined with `--double`, `--right`, or `--focus-background`. |
 | `--foreground` | Focus target and send a foreground mouse click. Focus flags require this explicit mode. |
 | Focus flags | `--no-auto-focus`, `--focus-timeout`, `--focus-retry-count`, `--space-switch`, `--bring-to-current-space` (foreground mode only; see `FocusCommandOptions`). |
 | `--focus-background` | Legacy alias for the default background delivery. Use `--app`, `--pid`, `--window-id`, or a snapshot with process metadata. |
@@ -32,7 +32,7 @@ read_when:
 - Background clicks fail with an actionable error instead of guessing. A single left click with no pressable AX element, a routed pointer click without an exact provable window, and middle-click all fail before unsafe fallback and suggest `--foreground` where appropriate.
 - A background `AXPress` that does not complete within the delivery grace period is a failure, not success. Generic layout/web containers are never accepted as press targets even if an app advertises `AXPress` on them.
 - **Foreground** (`--foreground`) focuses the target first (via `ensureFocused`, hopping Spaces if needed) and then synthesizes a real mouse click at the resolved screen point — element and query targets are resolved to their adjusted center and clicked with genuine mouse events, so double- and right-click semantics match hardware clicks. If the target app is still not frontmost after the focus step, the command fails rather than clicking into whichever app is in front.
-- Long press (`--long-press`) uses the foreground path and emits a stationary mouse-down/1.2-second hold/mouse-up sequence. It does not synthesize drag or micro-move events, because those can cancel native long-press recognizers.
+- Long press (`--long-press --foreground`) uses the foreground path and emits a stationary mouse-down/1.2-second hold/mouse-up sequence. Peekaboo rejects the gesture before focus or pointer dispatch when `--foreground` is absent. It does not synthesize drag or micro-move events, because those can cancel native long-press recognizers.
 - Background coordinate clicks require `--snapshot` from a fresh exact-window `see`. The captured PID, window ID, process generation, and bounds are matched against any `--app`/`--pid`/window selector and revalidated immediately before dispatch. PID-only/app-only coordinates, empty snapshots, same-ID replacement windows, and moved bounds are refused before mutation. Without a capture reference, use explicit `--foreground` global coordinates.
 - Right-click (`--right`) issues `AXShowMenu` without waiting for the context menu to close: a successfully opened menu runs a nested tracking runloop in the target app, so the command reports success once the menu is up instead of timing out behind it.
 
@@ -61,7 +61,7 @@ peekaboo see --window-id "$WINDOW_ID" --no-elements --json
 peekaboo click --window-id "$WINDOW_ID" --snapshot "$SNAPSHOT_ID" --at 420,180 --right
 
 # Trigger a SwiftUI long-press gesture
-peekaboo click --window-id "$WINDOW_ID" --snapshot "$SNAPSHOT_ID" --at 640,420 --long-press
+peekaboo click --window-id "$WINDOW_ID" --snapshot "$SNAPSHOT_ID" --at 640,420 --long-press --foreground
 
 # Click 20,40 inside the freshly captured window
 peekaboo click --window-id "$WINDOW_ID" --snapshot "$SNAPSHOT_ID" --at 20,40

@@ -10,48 +10,6 @@ import PeekabooFoundation
 
 @MainActor
 extension MenuService {
-    /// Temporary stubs: keep protocol conformance without full traversal
-    func listMenusInternal(appIdentifier: String) async throws -> MenuStructure {
-        throw PeekabooError.operationError(message: "Menu traversal not yet implemented")
-    }
-
-    func listFrontmostMenusInternal() async throws -> MenuStructure {
-        throw PeekabooError.operationError(message: "Menu traversal not yet implemented")
-    }
-
-    func clickMenuItemInternal(app: String, itemPath: String) async throws {
-        _ = (app, itemPath)
-        throw PeekabooError.operationError(message: "Menu click not yet implemented")
-    }
-
-    func clickMenuItemByNameInternal(app: String, itemName: String) async throws {
-        _ = (app, itemName)
-        throw PeekabooError.operationError(message: "Menu click by name not yet implemented")
-    }
-
-    func clickMenuExtraInternal(title: String) async throws {
-        _ = title
-        throw PeekabooError.operationError(message: "Menu extra click not yet implemented")
-    }
-
-    func listMenuExtrasInternal() async throws -> [MenuExtraInfo] {
-        throw PeekabooError.operationError(message: "Menu extras listing not yet implemented")
-    }
-
-    func listMenuBarItemsInternal() async throws -> [MenuBarItemInfo] {
-        throw PeekabooError.operationError(message: "Menu bar listing not yet implemented")
-    }
-
-    func clickMenuBarItemNamedInternal(name: String) async throws -> ClickResult {
-        _ = name
-        throw PeekabooError.operationError(message: "Menu bar click not yet implemented")
-    }
-
-    func clickMenuBarItemIndexInternal(index: Int) async throws -> ClickResult {
-        _ = index
-        throw PeekabooError.operationError(message: "Menu bar click not yet implemented")
-    }
-
     public func clickMenuItem(app: String, itemPath: String) async throws {
         let appInfo = try await applicationService.findApplication(identifier: app)
         guard let processIdentity = appInfo.processIdentity else {

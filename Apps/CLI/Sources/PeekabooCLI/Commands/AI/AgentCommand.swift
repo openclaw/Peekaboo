@@ -37,11 +37,6 @@ enum OutputMode {
     case verbose // Full JSON debug information
 }
 
-/// Get icon for tool name in compact mode
-func iconForTool(_ toolName: String) -> String {
-    AgentDisplayTokens.icon(for: toolName)
-}
-
 /// AI Agent command that uses new Chat Completions API architecture
 @available(macOS 14.0, *)
 struct AgentCommand: RuntimeBackedCommand {

@@ -7,7 +7,7 @@ import PeekabooFoundation
 @available(macOS 14.0, *)
 @MainActor
 struct PressCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConfigurable {
-    @Argument(help: "Chord(s) to press. Chord syntax matches xdotool key (cmd+shift+t).")
+    @Argument(help: "One or more chords. Chord syntax matches xdotool key (cmd+shift+t).")
     var chords: [String]
 
     @OptionGroup var target: InteractionTargetOptions
@@ -21,7 +21,7 @@ struct PressCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
     @Option(help: "Hold duration for each key (bare values are milliseconds)")
     var hold: CLIDuration = .milliseconds(50)
 
-    @Option(help: "Snapshot ID, or 'latest'")
+    @Option(help: "Snapshot ID (or explicit 'latest'); no snapshot is inferred when omitted")
     var snapshot: String?
 
     @OptionGroup var focusOptions: FocusCommandOptions
@@ -246,6 +246,9 @@ extension PressCommand: AsyncRuntimeCommand {}
 @MainActor
 extension PressCommand: CommanderBindableCommand {
     mutating func applyCommanderValues(_ values: CommanderBindableValues) throws {
+        if !values.positional.isEmpty, values.singleOption("key") != nil {
+            throw ValidationError("Provide chords either positionally or with --key, not both")
+        }
         let resolvedChords = if values.positional.isEmpty {
             values.singleOption("key").map { [$0] } ?? []
         } else {

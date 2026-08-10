@@ -6,28 +6,28 @@ extension SeeCommand: CommanderSignatureProviding {
             options: [
                 .commandOption(
                     "app",
-                    help: "Application name to capture, or special values: 'menubar', 'frontmost'",
+                    help: "Application name or bundle ID; mutually exclusive with --pid (also: menubar, frontmost)",
                     long: "app"
                 ),
                 .commandOption(
                     "pid",
-                    help: "Target application by process ID",
+                    help: "Target application by process ID; mutually exclusive with --app",
                     long: "pid"
                 ),
                 .commandOption(
                     "windowTitle",
-                    help: "Specific window title to capture",
+                    help: "Window title selector; requires --app or --pid",
                     long: "window-title"
                 ),
                 .commandOption(
                     "windowIndex",
-                    help: "Window index to capture",
+                    help: "Window index selector; requires --app or --pid",
                     long: "window-index"
                 ),
                 .commandOption(
                     "windowId",
-                    help: "Capture a specific window by CoreGraphics window id "
-                        + "(window_id from `peekaboo window list --json`)",
+                    help: "CoreGraphics window ID; may be used without --app/--pid "
+                        + "(from `peekaboo window list --json`)",
                     long: "window-id"
                 ),
                 .commandOption(

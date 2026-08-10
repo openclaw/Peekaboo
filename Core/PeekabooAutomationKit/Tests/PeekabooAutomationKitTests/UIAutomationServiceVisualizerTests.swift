@@ -61,7 +61,52 @@ struct UIAutomationServiceVisualizerTests {
 
     @Test
     @MainActor
-    func `untargeted foreground interactions preserve visualizer feedback`() async throws {
+    func `targeted background interactions stay silent with a resolved target window`() async throws {
+        let feedback = RecordingAutomationFeedbackClient()
+        let target = VisualizerTargetWindow(
+            processIdentifier: 42,
+            windowID: 7,
+            frame: CGRect(x: 0, y: 0, width: 800, height: 600))
+        let detectionResult = ElementDetectionResult(
+            snapshotId: "resolved-target",
+            screenshotPath: "/tmp/resolved-target.png",
+            elements: DetectedElements(),
+            metadata: DetectionMetadata(
+                detectionTime: 0,
+                elementCount: 0,
+                method: "test",
+                windowContext: WindowContext(
+                    applicationProcessId: target.processIdentifier,
+                    windowID: Int(target.windowID),
+                    windowBounds: target.frame)))
+        let service = UIAutomationService(
+            snapshotManager: InMemorySnapshotManager(detectionResult: detectionResult),
+            feedbackClient: feedback)
+
+        try await service.visualizeClick(
+            target: .coordinates(CGPoint(x: 10, y: 20)),
+            actionAnchor: CGPoint(x: 10, y: 20),
+            clickType: .single,
+            snapshotId: detectionResult.snapshotId,
+            targetProcessIdentifier: target.processIdentifier)
+        await service.visualizeTypeActions(
+            [.text("background")],
+            cadence: .fixed(milliseconds: 0),
+            targetProcessIdentifier: target.processIdentifier,
+            visualizerTarget: target)
+        await service.visualizeHotkey(
+            keys: "cmd,shift,p",
+            targetProcessIdentifier: target.processIdentifier,
+            visualizerTarget: target)
+
+        #expect(feedback.clickCount == 0)
+        #expect(feedback.typingCount == 0)
+        #expect(feedback.hotkeyCount == 0)
+    }
+
+    @Test
+    @MainActor
+    func `explicit foreground untargeted interactions preserve visualizer feedback`() async throws {
         let feedback = RecordingAutomationFeedbackClient()
         let service = UIAutomationService(feedbackClient: feedback)
 

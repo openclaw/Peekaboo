@@ -5,8 +5,8 @@ extension PressCommand: CommanderSignatureProviding {
         CommandSignature(
             arguments: [
                 .make(
-                    label: "chords",
-                    help: "Chord(s) to press. Chord syntax matches xdotool key (cmd+shift+t).",
+                    label: "chord...",
+                    help: "One or more chords. Chord syntax matches xdotool key (cmd+shift+t).",
                     isOptional: true
                 ),
             ],
@@ -33,7 +33,7 @@ extension PressCommand: CommanderSignatureProviding {
                 ),
                 .commandOption(
                     "snapshot",
-                    help: "Snapshot ID, or 'latest' (uses latest if not specified)",
+                    help: "Snapshot ID (or explicit 'latest'); no snapshot is inferred when omitted",
                     long: "snapshot"
                 ),
             ],

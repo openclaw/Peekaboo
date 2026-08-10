@@ -1,5 +1,4 @@
 import PeekabooCore
-import PeekabooFoundation
 
 @MainActor
 protocol InjectedRuntimeBackedCommand {

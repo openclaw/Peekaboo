@@ -77,9 +77,9 @@ enum CommanderCLIBinder {
             commandType,
             parsedValues: parsedValues
         )
-        options.requiresLongPressClick = commandType == ClickCommand.self &&
-            CommanderBindableValues(parsedValues: parsedValues).flag("longPress")
         let commandValues = CommanderBindableValues(parsedValues: parsedValues)
+        options.requiresLongPressClick = commandType == ClickCommand.self &&
+            commandValues.flag("longPress") && commandValues.flag("foreground")
         options.requiresBackgroundWindowClose = commandType == WindowCommand.CloseSubcommand.self &&
             !commandValues.flag("foreground")
         options.requiresBackgroundDialogClick = commandType == DialogCommand.ClickSubcommand.self &&
@@ -435,9 +435,6 @@ enum CommanderCLIBinder {
     private static func usesBackgroundClickDelivery(_ values: CommanderBindableValues) -> Bool {
         if values.flag("focusBackground") {
             return true
-        }
-        if values.flag("longPress") {
-            return false
         }
         return !values.flag("foreground")
     }
