@@ -34,6 +34,7 @@ read_when:
 - Window selectors are rejected in background mode because process-targeted events cannot prove which window owns the process's focused element. Use `--foreground` to focus that window first.
 - Default profile is `linear`, using no inter-key delay for fast deterministic input. Passing `--wpm` opts into human cadence; `--profile human` uses 140 WPM when `--wpm` is omitted.
 - Background delivery uses process-targeted CoreGraphics keyboard events and requires Event Synthesizing access. Apps that only accept typing in a focused key window may still need `--foreground`.
+- Printable background text is carried as Unicode instead of physical US key positions, so the requested characters remain stable across active keyboard layouts.
 - JSON output reports `totalCharacters`, `keyPresses`, delivery mode, optional target PID, and elapsed time; this matches what the agent logs when executing scripted steps.
 
 ## Examples

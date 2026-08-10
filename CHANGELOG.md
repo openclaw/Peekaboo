@@ -28,6 +28,7 @@
 - Remove the MCP `list` tool, MenuTool’s status-item actions, and agent shims `list_apps`, `list_screens`, and `launch_app`; add `window` action `list` (v4 breaking change).
 
 ### Fixed
+- Preserve the requested characters during background typing on non-US keyboard layouts instead of interpreting fixed US key positions through the active layout. Thanks @canvascoding for #330.
 - Wait for WindowServer to settle after an exact background maximize dispatch before repinning its final bounds, avoiding false failures without relaxing owner-generation checks.
 - Preserve OpenAI Responses tool-error payloads without sending unsupported `failed` statuses that abort the next agent turn.
 - Coordinate concurrent CLI, agent, GUI-bridge, and daemon desktop reads and mutations with generation-scoped cross-process lanes, preserving parallel work across unrelated exact targets while preventing conflicting background operations from overlapping.

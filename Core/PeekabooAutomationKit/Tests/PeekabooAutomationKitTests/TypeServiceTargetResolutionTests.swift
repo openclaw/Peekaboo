@@ -6,6 +6,23 @@ import Testing
 
 struct TypeServiceTargetResolutionTests {
     @Test
+    func `targeted printable characters preserve their exact Unicode payload`() throws {
+        let targetPID: pid_t = 4242
+        let characters: [Character] = ["y", "z", "&", "|", "-", "\"", "ä"]
+
+        for character in characters {
+            let events = try BackgroundInputDriver.unicodeKeyboardEvents(
+                for: character,
+                targetProcessIdentifier: targetPID)
+
+            #expect(Self.unicodeString(from: events.keyDown) == String(character))
+            #expect(Self.unicodeString(from: events.keyUp) == String(character))
+            #expect(events.keyDown.getIntegerValueField(.eventTargetUnixProcessID) == Int64(targetPID))
+            #expect(events.keyUp.getIntegerValueField(.eventTargetUnixProcessID) == Int64(targetPID))
+        }
+    }
+
+    @Test
     @MainActor
     func `exact window delivery revalidates before every targeted character`() async throws {
         var typed: [Character] = []
@@ -165,6 +182,20 @@ struct TypeServiceTargetResolutionTests {
         #expect(TypeServiceSpecialKeyMapping.keyCode(for: .capsLock) == 0x39)
         #expect(TypeServiceSpecialKeyMapping.keyCode(for: .clear) == 0x47)
         #expect(TypeServiceSpecialKeyMapping.keyCode(for: .help) == 0x72)
+    }
+
+    private static func unicodeString(from event: CGEvent) -> String {
+        var length = 0
+        event.keyboardGetUnicodeString(
+            maxStringLength: 0,
+            actualStringLength: &length,
+            unicodeString: nil)
+        var buffer = [UniChar](repeating: 0, count: length)
+        event.keyboardGetUnicodeString(
+            maxStringLength: buffer.count,
+            actualStringLength: &length,
+            unicodeString: &buffer)
+        return String(utf16CodeUnits: buffer, count: length)
     }
 
     @Test
