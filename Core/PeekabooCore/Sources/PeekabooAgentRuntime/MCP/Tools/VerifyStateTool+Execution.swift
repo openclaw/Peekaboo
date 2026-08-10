@@ -303,8 +303,8 @@ extension VerifyStateTool {
             if let reason = await identityTracker.validate(application) {
                 return .unknown(reason)
             }
-            guard let window = Self.selectWindow(output.data.windows, exactID: nil) else {
-                return .missing("The application has no window")
+            guard let window = Self.selectWindow(output.data.windows, request: request) else {
+                return .missing(Self.missingWindowReason(request))
             }
             guard let selectedWindowID = CGWindowID(exactly: window.windowID) else {
                 return .unknown("Window enumeration returned invalid window ID \(window.windowID)")
@@ -467,13 +467,29 @@ extension VerifyStateTool {
         return "Application enumeration was incomplete: \(detail)"
     }
 
-    private static func selectWindow(_ windows: [ServiceWindowInfo], exactID: Int?) -> ServiceWindowInfo? {
-        if let exactID {
-            return windows.first(where: { $0.windowID == exactID })
+    private static func selectWindow(
+        _ windows: [ServiceWindowInfo],
+        request: VerifyStateRequest) -> ServiceWindowInfo?
+    {
+        if let title = request.windowTitle {
+            return windows.first(where: { $0.title.localizedCaseInsensitiveContains(title) })
+        }
+        if let index = request.windowIndex {
+            return windows.first(where: { $0.index == index })
         }
         return windows.first(where: { $0.isKeyWindow == true })
             ?? windows.first(where: \.isMainWindow)
             ?? windows.min(by: { $0.index < $1.index })
+    }
+
+    private static func missingWindowReason(_ request: VerifyStateRequest) -> String {
+        if let title = request.windowTitle {
+            return "No window title contains '\(title)'"
+        }
+        if let index = request.windowIndex {
+            return "Window index \(index) does not exist"
+        }
+        return "The application has no window"
     }
 
     private static func accessibilityTrustFailure(

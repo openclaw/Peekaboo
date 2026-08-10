@@ -3,6 +3,7 @@
 ## [3.10.1] - Unreleased
 
 ### Added
+- Add `verify` for stable window and element assertions and `tools describe` for on-demand MCP input schemas.
 - Add a Developer-ID-signed Playground validation harness that continuously detects focus, window, cursor, clipboard, and visualizer leakage during background automation.
 - Show recently automated app icons beside Peekaboo in the menu bar, with a settings toggle.
 - Add distinct background app instances and exact WindowServer readiness/ID receipts to app launch and open workflows.

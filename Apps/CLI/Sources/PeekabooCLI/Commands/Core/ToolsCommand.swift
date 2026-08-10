@@ -1,17 +1,15 @@
 import Commander
 import Foundation
+import MCP
 import PeekabooAutomation
 import PeekabooCore
 import TachikomaMCP
 
 @MainActor
-struct ToolsCommand: OutputFormattable, RuntimeBackedCommand {
-    private static let abstractText = "List the MCP/agent tool catalog"
-    private static let descriptionText = "Tools command for listing the MCP/agent tool catalog"
-
+struct ToolsCommand: ParsableCommand {
     static let commandDescription = CommandDescription(
         commandName: "tools",
-        abstract: Self.abstractText,
+        abstract: "List the MCP/agent tool catalog",
         discussion: """
         Display the Peekaboo MCP/agent tool catalog. These tools are exposed to agents
         and `peekaboo mcp` clients (e.g. Codex, Claude Code, Cursor). Some tools also
@@ -22,7 +20,20 @@ struct ToolsCommand: OutputFormattable, RuntimeBackedCommand {
           peekaboo tools                    # Show all tools
           peekaboo tools --verbose          # Show detailed information
           peekaboo tools --json             # Output in JSON format
-        """
+          peekaboo tools describe click     # Show one tool's full input schema
+        """,
+        subcommands: [ToolsListSubcommand.self, DescribeSubcommand.self],
+        defaultSubcommand: ToolsListSubcommand.self
+    )
+
+    func run() async throws {}
+}
+
+@MainActor
+struct ToolsListSubcommand: OutputFormattable, RuntimeBackedCommand {
+    static let commandDescription = CommandDescription(
+        commandName: "list",
+        abstract: "List the MCP/agent tool catalog"
     )
 
     @Flag(name: .customLong("no-sort"), help: "Disable alphabetical sorting")
@@ -31,31 +42,20 @@ struct ToolsCommand: OutputFormattable, RuntimeBackedCommand {
     var runtimeOptions = CommandRuntimeOptions()
     @RuntimeStorage var runtime: CommandRuntime?
 
-    var description: String {
-        Self.descriptionText
-    }
-
     var verbose: Bool {
         self.runtime?.configuration.verbose ?? self.runtimeOptions.verbose
-    }
-
-    private var showDetailedInfo: Bool {
-        self.verbose
     }
 
     mutating func run(using runtime: CommandRuntime) async throws {
         self.runtime = runtime
 
-        let toolContext = MCPToolContext(services: self.services)
-
-        let filters = ToolFiltering.currentFilters()
         let filteredTools = MCPToolCatalog.tools(
-            context: toolContext,
-            inputPolicy: self.inputPolicy(),
-            filters: filters,
-            log: { [logger] message in
-                logger.debug(message)
-            }
+            context: MCPToolContext(services: self.services),
+            inputPolicy: self.services.configuration.getUIInputPolicy(
+                cliStrategy: runtime.configuration.inputStrategy
+            ),
+            filters: ToolFiltering.currentFilters(),
+            log: { [logger] message in logger.debug(message) }
         )
         let sortedTools = self.noSort
             ? filteredTools
@@ -64,46 +64,30 @@ struct ToolsCommand: OutputFormattable, RuntimeBackedCommand {
         if self.jsonOutput {
             try self.outputJSON(tools: sortedTools)
         } else {
-            self.outputFormatted(tools: sortedTools, showDescription: self.showDetailedInfo)
+            self.outputFormatted(tools: sortedTools, showDescription: self.verbose)
         }
-    }
-
-    private func inputPolicy() -> UIInputPolicy {
-        self.services.configuration.getUIInputPolicy(
-            cliStrategy: self.resolvedRuntime.configuration.inputStrategy
-        )
     }
 
     // MARK: - JSON Output
 
     @MainActor
     private func outputJSON(tools: [any MCPTool]) throws {
-        struct ToolInfo: Codable {
-            let name: String
-            let description: String
+        let items = tools.map { tool in
+            Value.object(["name": .string(tool.name), "description": .string(tool.description)])
         }
-
-        struct Payload: Codable {
-            let tools: [ToolInfo]
-            let count: Int
-        }
-
-        let payload = Payload(
-            tools: tools.map { ToolInfo(name: $0.name, description: $0.description) },
-            count: tools.count
+        outputSuccessCodable(
+            data: Value.object(["tools": .array(items), "count": .int(tools.count)]),
+            logger: self.outputLogger
         )
-
-        outputSuccessCodable(data: payload, logger: self.outputLogger)
     }
 
     // MARK: - Formatted Output
 
     private func outputFormatted(tools: [any MCPTool], showDescription: Bool) {
-        if !tools.isEmpty {
-            print("Available Tools")
-            print("===============")
-            print()
-        }
+        guard !tools.isEmpty else { return }
+        print("Available Tools")
+        print("===============")
+        print()
 
         for tool in tools {
             print("• \(tool.name)")
@@ -112,19 +96,95 @@ struct ToolsCommand: OutputFormattable, RuntimeBackedCommand {
             }
         }
 
-        if !tools.isEmpty {
-            print()
-            print("Total tools: \(tools.count)")
+        print()
+        print("Total tools: \(tools.count)")
+    }
+}
+
+extension ToolsCommand {
+    struct ToolDescription: Codable {
+        let name: String
+        let description: String
+        let inputSchema: Value
+
+        enum CodingKeys: String, CodingKey {
+            case name, description
+            case inputSchema = "input_schema"
+        }
+    }
+
+    @MainActor
+    struct DescribeSubcommand: OutputFormattable, RuntimeBackedCommand {
+        @Argument(help: "MCP tool name")
+        var toolName: String = ""
+
+        @RuntimeStorage var runtime: CommandRuntime?
+        var runtimeOptions = CommandRuntimeOptions()
+
+        mutating func run(using runtime: CommandRuntime) async throws {
+            self.runtime = runtime
+            let tools = MCPToolCatalog.tools(
+                context: MCPToolContext(services: self.services),
+                inputPolicy: self.services.configuration.getUIInputPolicy(
+                    cliStrategy: runtime.configuration.inputStrategy
+                ),
+                filters: ToolFiltering.currentFilters()
+            )
+            guard let payload = Self.payload(named: self.toolName, tools: tools) else {
+                let names = tools.map(\.name).sorted().joined(separator: ", ")
+                throw ValidationError("Unknown tool '\(self.toolName)'. Valid names: \(names)")
+            }
+
+            if self.jsonOutput {
+                outputSuccessCodable(data: payload, logger: self.outputLogger)
+                return
+            }
+
+            print("Name: \(payload.name)")
+            print("Abstract: \(payload.description)")
+            print("Input schema:")
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            let data = try encoder.encode(payload.inputSchema)
+            guard let schema = String(data: data, encoding: .utf8) else {
+                throw ValidationError("Could not render input schema for '\(payload.name)'")
+            }
+            print(schema)
+        }
+
+        static func payload(named name: String, tools: [any MCPTool]) -> ToolDescription? {
+            guard let tool = tools.first(where: { $0.name == name }) else { return nil }
+            return ToolDescription(name: tool.name, description: tool.description, inputSchema: tool.inputSchema)
         }
     }
 }
 
-@MainActor
-extension ToolsCommand: ParsableCommand {}
-extension ToolsCommand: AsyncRuntimeCommand {}
+extension ToolsListSubcommand: ParsableCommand {}
+extension ToolsListSubcommand: AsyncRuntimeCommand {}
 
 @MainActor
-extension ToolsCommand: CommanderBindableCommand {
+extension ToolsCommand.DescribeSubcommand: ParsableCommand {
+    nonisolated(unsafe) static var commandDescription: CommandDescription {
+        MainActorCommandDescription.describe {
+            CommandDescription(
+                commandName: "describe",
+                abstract: "Describe one MCP tool and print its full input schema"
+            )
+        }
+    }
+}
+
+extension ToolsCommand.DescribeSubcommand: AsyncRuntimeCommand {}
+
+@MainActor
+extension ToolsCommand.DescribeSubcommand: CommanderBindableCommand {
+    mutating func applyCommanderValues(_ values: CommanderBindableValues) throws {
+        self.toolName = try values.requiredPositional(0, label: "tool-name")
+    }
+}
+
+@MainActor
+extension ToolsListSubcommand: CommanderBindableCommand {
     mutating func applyCommanderValues(_ values: CommanderBindableValues) throws {
         self.noSort = values.flag("noSort")
     }

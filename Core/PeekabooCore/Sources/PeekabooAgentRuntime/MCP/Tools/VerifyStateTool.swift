@@ -39,6 +39,12 @@ public struct VerifyStateTool: MCPTool {
                     description: "Optional exact CoreGraphics window ID. Its live PID/process ownership is verified.",
                     minimum: 1,
                     maximum: Int(UInt32.max)),
+                "window_title": SchemaBuilder.string(
+                    description: "Optional window-title substring resolved on every poll. " +
+                        "Exclusive with other window selectors."),
+                "window_index": SchemaBuilder.integer(
+                    description: "Optional window index resolved on every poll. Exclusive with other window selectors.",
+                    minimum: 0),
                 "predicates": SchemaBuilder.array(
                     items: Self.predicateSchema,
                     description: "One to eight structured predicate objects. Every predicate must be satisfied.",

@@ -107,6 +107,32 @@ struct VerifyStateToolTests {
     }
 
     @Test
+    func `Window title and index selectors participate in polling`() async throws {
+        let fixture = VerifyStateFixture()
+        let context = await fixture.context(results: [])
+        let tool = fixture.tool(context: context)
+        for selector in [["window_title": "rifi"], ["window_index": 0]] {
+            var arguments: [String: Any] = selector
+            arguments["pid"] = Int(fixture.application.processIdentifier)
+            arguments["predicates"] = [["kind": "window_exists", "expected": true]]
+            arguments["timeout_ms"] = 100
+            arguments["stable_samples"] = 1
+            let response = try await tool.execute(arguments: ToolArguments(raw: arguments))
+            #expect(Self.stringMeta("status", response) == "satisfied")
+        }
+
+        let missing = try await tool.execute(arguments: ToolArguments(raw: [
+            "pid": Int(fixture.application.processIdentifier),
+            "window_title": "Not Created Yet",
+            "predicates": [["kind": "window_exists", "expected": true]],
+            "timeout_ms": 100,
+            "stable_samples": 1,
+        ]))
+        #expect(Self.stringMeta("status", missing) == "unsatisfied")
+        #expect(Self.stringMeta("reason", missing)?.contains("Not Created Yet") == true)
+    }
+
+    @Test
     func `Truncated accessibility cannot satisfy even a positive match`() async throws {
         let fixture = await MainActor.run { VerifyStateFixture() }
         let truncated = fixture.result(truncated: true)
@@ -1173,6 +1199,14 @@ extension VerifyStateToolTests {
             "predicates": [["kind": "window_exists", "expected": true]],
         ]))
         #expect(oversizedWindowID.isError)
+
+        let conflictingWindows = try await tool.execute(arguments: ToolArguments(raw: [
+            "pid": 42,
+            "window_id": 1,
+            "window_title": "Dialog",
+            "predicates": [["kind": "window_exists", "expected": true]],
+        ]))
+        #expect(conflictingWindows.isError)
     }
 
     private static func stringMeta(_ key: String, _ response: ToolResponse) -> String? {

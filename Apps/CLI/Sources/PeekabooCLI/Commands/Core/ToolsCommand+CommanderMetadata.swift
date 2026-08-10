@@ -1,6 +1,6 @@
 import Commander
 
-extension ToolsCommand: CommanderSignatureProviding {
+extension ToolsListSubcommand: CommanderSignatureProviding {
     static func commanderSignature() -> CommandSignature {
         CommandSignature(
             flags: [
@@ -11,5 +11,13 @@ extension ToolsCommand: CommanderSignatureProviding {
                 ),
             ]
         )
+    }
+}
+
+extension ToolsCommand.DescribeSubcommand: CommanderSignatureProviding {
+    static func commanderSignature() -> CommandSignature {
+        CommandSignature(arguments: [
+            .make(label: "tool-name", help: "MCP tool name"),
+        ])
     }
 }

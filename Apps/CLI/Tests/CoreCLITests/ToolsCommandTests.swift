@@ -1,4 +1,6 @@
 import Foundation
+import PeekabooAgentRuntime
+import PeekabooCore
 import Testing
 @testable import PeekabooCLI
 
@@ -21,7 +23,7 @@ struct ToolsCommandTests {
 
     @Test
     func `ToolsCommand default values`() throws {
-        let command = try ToolsCommand.parse([])
+        let command = try ToolsListSubcommand.parse([])
 
         #expect(command.verbose == false)
         #expect(command.jsonOutput == false)
@@ -31,7 +33,7 @@ struct ToolsCommandTests {
     @Test
     func `ToolsCommand argument parsing - verbose`() throws {
         let args = ["--verbose"]
-        let command = try ToolsCommand.parse(args)
+        let command = try ToolsListSubcommand.parse(args)
 
         #expect(command.verbose == true)
     }
@@ -39,7 +41,7 @@ struct ToolsCommandTests {
     @Test
     func `ToolsCommand argument parsing - json output`() throws {
         let args = ["--json"]
-        let command = try ToolsCommand.parse(args)
+        let command = try ToolsListSubcommand.parse(args)
 
         #expect(command.jsonOutput == true)
     }
@@ -47,15 +49,33 @@ struct ToolsCommandTests {
     @Test
     func `ToolsCommand argument parsing - no sort`() throws {
         let args = ["--no-sort"]
-        let command = try ToolsCommand.parse(args)
+        let command = try ToolsListSubcommand.parse(args)
 
         #expect(command.noSort == true)
     }
 
     @Test
-    func `ToolsCommand description property`() throws {
-        let command = try ToolsCommand.parse([])
-        #expect(command.description == "Tools command for listing the MCP/agent tool catalog")
+    @MainActor
+    func `describe subcommand exposes a catalog schema`() throws {
+        let command = try ToolsCommand.DescribeSubcommand.parse(["click"])
+        #expect(command.toolName == "click")
+
+        var foundDescribe = false
+        for subcommand in ToolsCommand.commandDescription.subcommands
+            where subcommand.commandDescription.commandName == "describe" {
+            foundDescribe = true
+        }
+        #expect(foundDescribe)
+
+        let services = PeekabooServices()
+        let tools = MCPToolCatalog.unfilteredTools(context: MCPToolContext(services: services))
+        let payload = try #require(ToolsCommand.DescribeSubcommand.payload(named: "click", tools: tools))
+        #expect(payload.name == "click")
+        #expect(!payload.description.isEmpty)
+        let json = try #require(String(data: JSONEncoder().encode(payload), encoding: .utf8))
+        #expect(json.contains("\"input_schema\""))
+        #expect(json.contains("\"properties\""))
+        #expect(ToolsCommand.DescribeSubcommand.payload(named: "nonexistent", tools: tools) == nil)
     }
 }
 
@@ -64,9 +84,9 @@ struct ToolsCommandTests {
 struct ToolsCommandStructureTests {
     @Test
     func `Command has required AsyncParsableCommand conformance`() throws {
-        let command = try ToolsCommand.parse([])
+        let command = try ToolsListSubcommand.parse([])
 
-        #expect(type(of: command) == ToolsCommand.self)
+        #expect(type(of: command) == ToolsListSubcommand.self)
     }
 
     @Test
@@ -86,7 +106,7 @@ struct ToolsCommandStructureTests {
 
     @Test
     func `Command properties have correct types and attributes`() throws {
-        let command = try ToolsCommand.parse([])
+        let command = try ToolsListSubcommand.parse([])
 
         #expect(type(of: command.verbose) == Bool.self)
         #expect(type(of: command.jsonOutput) == Bool.self)

@@ -7,7 +7,7 @@ read_when:
 
 # `peekaboo tools`
 
-`peekaboo tools` prints the MCP/agent tool catalog that `peekaboo mcp` exposes (Image, See, Click, Window, Browser, Inspect UI, etc.). These names are the tools available to agents and MCP clients. Some tools also have dedicated top-level CLI wrappers, including `peekaboo browser` and `peekaboo inspect-ui`; run `peekaboo --help` for the full CLI command list.
+`peekaboo tools` prints the MCP/agent tool catalog that `peekaboo mcp` exposes (Image, See, Click, Window, Browser, Inspect UI, etc.). `peekaboo tools describe <name>` prints one tool's complete JSON input schema for token-cheap, on-demand discovery. Some tools also have dedicated top-level CLI wrappers, including `peekaboo browser` and `peekaboo inspect-ui`; run `peekaboo --help` for the full CLI command list.
 
 ## Key options
 | Flag | Description |
@@ -15,6 +15,12 @@ read_when:
 | `--no-sort` | Preserve registration order instead of alphabetizing every tool. |
 | `--verbose` | Include each tool's description alongside its name. |
 | `--json` | Emit `{tools:[…], count:n}` for machine parsing. |
+
+## Subcommands
+
+| Name | Purpose |
+| --- | --- |
+| `describe <tool-name>` | Print the tool name, abstract, and pretty JSON input schema. With `--json`, emit `{name, description, input_schema}`. Unknown names fail and list every valid name. |
 
 ## Implementation notes
 - The command and MCP server both use `MCPToolCatalog`, so tool additions only need to be registered once.
@@ -27,6 +33,10 @@ read_when:
 ```bash
 # Produce a JSON blob for an agent integration test
 peekaboo tools --json > /tmp/tools.json
+
+# Fetch only the click tool's schema
+peekaboo tools describe click
+peekaboo tools describe verify_state --json
 ```
 
 ## Troubleshooting

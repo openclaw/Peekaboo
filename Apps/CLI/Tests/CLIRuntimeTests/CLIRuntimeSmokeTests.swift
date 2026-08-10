@@ -117,7 +117,7 @@ struct CLIRuntimeSmokeTests {
     }
 
     @Test
-    func `peekaboo tools rejects unexpected positional arguments in JSON mode`() async throws {
+    func `peekaboo tools rejects unknown subcommands in JSON mode`() async throws {
         guard Self.ensureLocalRuntimeAvailable() else { return }
         let result = try await TestChildProcess.runPeekaboo(["tools", "extra", "--json", "--no-remote"])
         #expect(result.status == .exited(1))
@@ -133,7 +133,7 @@ struct CLIRuntimeSmokeTests {
 
         #expect(json["success"] as? Bool == false)
         #expect(error["code"] as? String == "INVALID_ARGUMENT")
-        #expect((error["message"] as? String)?.contains("Unexpected argument: extra") == true)
+        #expect((error["message"] as? String)?.contains("Unknown subcommand 'extra'") == true)
     }
 
     @Test

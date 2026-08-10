@@ -91,7 +91,8 @@ enum CommanderCLIBinder {
         options.requestsHostPermissionGrant = Self.isInteractivePermissionRequest(commandType)
         options.usesPerToolSnapshotInvalidation = Self.isAgentExecutionCommand(commandType) ||
             commandType == MCPCommand.Serve.self ||
-            commandType == InspectUICommand.self
+            commandType == InspectUICommand.self ||
+            commandType == VerifyCommand.self
         options.verbose = parsedValues.flags.contains("verbose")
         options.jsonOutput = parsedValues.flags.contains("jsonOutput")
         let values = CommanderBindableValues(parsedValues: parsedValues)
@@ -469,6 +470,9 @@ enum CommanderCLIBinder {
     private static func prefersLocalRuntime(_ commandType: (any ParsableCommand.Type)?) -> Bool {
         commandType == MCPCommand.Serve.self ||
             commandType == ToolsCommand.self ||
+            commandType == ToolsListSubcommand.self ||
+            commandType == ToolsCommand.DescribeSubcommand.self ||
+            commandType == VerifyCommand.self ||
             commandType == LearnCommand.self ||
             commandType == CleanCommand.self ||
             commandType == ConfigCommand.InitCommand.self ||

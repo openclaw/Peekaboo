@@ -190,7 +190,7 @@ struct CommanderBinderCommandBindingTests {
             options: [:],
             flags: ["noSort"]
         )
-        let command = try CommanderCLIBinder.instantiateCommand(ofType: ToolsCommand.self, parsedValues: parsed)
+        let command = try CommanderCLIBinder.instantiateCommand(ofType: ToolsListSubcommand.self, parsedValues: parsed)
         #expect(command.noSort == true)
     }
 

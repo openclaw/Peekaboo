@@ -14,9 +14,10 @@ Use `peekaboo <command> --help` for inline flag descriptions; this page links to
 ## Vision & Capture
 
 - [`see`](commands/see.md) – Capture annotated UI maps, produce snapshot IDs, and optionally run AI analysis.
+- [`verify`](commands/verify.md) – Poll stable window and element predicates with satisfied, unsatisfied, or unknown results.
 - [`image`](commands/image.md) – Save raw PNG/JPG captures of screens, windows, or menu bar regions; supports `--analyze` prompts.
 - `capture` – Long-running capture. `capture live` (adaptive PNG frames) replaces watch; `capture action` records around a child command; `capture video` ingests a video and samples frames. Outputs frames, contact sheet, metadata, optional MP4.
-- [`tools`](commands/tools.md) – List the MCP/agent tool catalog; supports `--verbose` and `--json`.
+- [`tools`](commands/tools.md) – List the MCP/agent tool catalog, or use `tools describe <name>` for one full input schema.
 - [`completions`](commands/completions.md) – Generate shell-native completions for zsh, bash, and fish from Commander metadata.
 - [`clean`](commands/clean.md) – Remove snapshot caches by ID, age, or all at once (`--dry-run` supported).
 - [`config`](commands/config.md) – `init`, `show`, `edit`, `validate`, `status`, `login`, plus `provider add|remove|list|test|models` and `credential set`.

@@ -43,6 +43,8 @@ struct VerifyStateRequest: Sendable {
 
     let target: Target
     let windowID: CGWindowID?
+    let windowTitle: String?
+    let windowIndex: Int?
     let predicates: [VerifyStatePredicate]
     let timeoutMilliseconds: Int
     let stableSamples: Int
@@ -51,6 +53,8 @@ struct VerifyStateRequest: Sendable {
     init(
         target: Target,
         windowID: CGWindowID?,
+        windowTitle: String? = nil,
+        windowIndex: Int? = nil,
         predicates: [VerifyStatePredicate],
         timeoutMilliseconds: Int,
         stableSamples: Int,
@@ -58,6 +62,8 @@ struct VerifyStateRequest: Sendable {
     {
         self.target = target
         self.windowID = windowID
+        self.windowTitle = windowTitle
+        self.windowIndex = windowIndex
         self.predicates = predicates
         self.timeoutMilliseconds = timeoutMilliseconds
         self.stableSamples = stableSamples
@@ -103,6 +109,16 @@ struct VerifyStateRequest: Sendable {
         } else {
             self.windowID = nil
         }
+        self.windowTitle = input.windowTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.windowIndex = input.windowIndex
+        let selectors = [self.windowID != nil, self.windowTitle?.isEmpty == false, self.windowIndex != nil]
+        guard selectors.count(where: { $0 }) <= 1 else {
+            throw VerifyStateInputError("window_id, window_title, and window_index are mutually exclusive")
+        }
+        guard self.windowTitle?.isEmpty != true else { throw VerifyStateInputError("window_title must not be empty") }
+        guard self.windowIndex.map({ $0 >= 0 }) ?? true else {
+            throw VerifyStateInputError("window_index must be 0 or greater")
+        }
 
         guard (1...8).contains(input.predicates.count) else {
             throw VerifyStateInputError("predicates must contain between 1 and 8 AND predicates")
@@ -144,6 +160,12 @@ struct VerifyStateRequest: Sendable {
         if let windowID {
             target["window_id"] = .int(Int(windowID))
         }
+        if let windowTitle {
+            target["window_title"] = .string(windowTitle)
+        }
+        if let windowIndex {
+            target["window_index"] = .int(windowIndex)
+        }
         return .object(target)
     }
 }
@@ -152,6 +174,8 @@ private struct VerifyStateInput: Decodable {
     let app: String?
     let pid: Int?
     let windowID: Int?
+    let windowTitle: String?
+    let windowIndex: Int?
     let predicates: [VerifyStatePredicateInput]
     let timeoutMilliseconds: Int?
     let stableSamples: Int?
@@ -160,6 +184,8 @@ private struct VerifyStateInput: Decodable {
     enum CodingKeys: String, CodingKey {
         case app, pid, predicates
         case windowID = "window_id"
+        case windowTitle = "window_title"
+        case windowIndex = "window_index"
         case timeoutMilliseconds = "timeout_ms"
         case stableSamples = "stable_samples"
         case finalScreenshot = "final_screenshot"
