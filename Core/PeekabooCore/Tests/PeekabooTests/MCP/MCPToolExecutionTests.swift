@@ -343,7 +343,55 @@ struct MCPToolExecutionTests {
         }
     }
 
-    // MARK: - Window List Tool Tests
+    // MARK: - Application and Window List Tool Tests
+
+    @Test
+    func `Application list preserves unknown hidden state and partial warnings`() async throws {
+        let warning = "Application metadata timed out for PID 41; hidden state is unknown"
+        let app = ServiceApplicationInfo(
+            processIdentifier: 41,
+            processStartIdentity: 7,
+            bundleIdentifier: nil,
+            name: "Poisoned Helper",
+            isHidden: false,
+            isHiddenKnown: false,
+            windowIDs: [],
+            metadataWarnings: [warning])
+        let prohibited = ServiceApplicationInfo(
+            processIdentifier: 42,
+            processStartIdentity: 8,
+            bundleIdentifier: "com.example.Daemon",
+            name: "System Daemon",
+            activationPolicy: .prohibited,
+            metadataWarnings: ["filtered prohibited warning"])
+        let applications = await MainActor.run { MockApplicationService(applications: [app, prohibited]) }
+        let context = await MCPToolTestHelpers.makeContext(applications: applications)
+
+        let response = try await AppTool(context: context).execute(arguments: ToolArguments(raw: [
+            "action": "list",
+        ]))
+
+        #expect(!response.isError)
+        let text = response.content.compactMap { content -> String? in
+            guard case let .text(value, _, _) = content else { return nil }
+            return value
+        }.joined(separator: "\n")
+        #expect(text.contains("hidden state unknown"))
+        #expect(text.contains(warning))
+        #expect(!text.contains("System Daemon"))
+        #expect(!text.contains("filtered prohibited warning"))
+        guard case let .object(meta) = response.meta,
+              case let .array(rows)? = meta["apps"],
+              case let .object(row) = rows.first,
+              case .null? = row["is_hidden"],
+              case let .array(warnings)? = meta["warnings"]
+        else {
+            Issue.record("Expected partial application metadata")
+            return
+        }
+        #expect(rows.count == 1)
+        #expect(warnings == [.string(warning)])
+    }
 
     @Test
     func `Window list returns IDs bounds and off-screen state`() async throws {
@@ -1302,13 +1350,14 @@ final class MockApplicationService: ApplicationServiceProtocol {
     }
 
     func listApplications() async throws -> UnifiedToolOutput<ServiceApplicationListData> {
-        UnifiedToolOutput(
+        let warnings = self.applications.flatMap { $0.metadataWarnings ?? [] }
+        return UnifiedToolOutput(
             data: ServiceApplicationListData(applications: self.applications),
             summary: .init(
                 brief: "Found \(self.applications.count) apps",
-                status: .success,
+                status: warnings.isEmpty ? .success : .partial,
                 counts: ["applications": self.applications.count]),
-            metadata: .init(duration: 0))
+            metadata: .init(duration: 0, warnings: warnings))
     }
 
     func findApplication(identifier: String) async throws -> ServiceApplicationInfo {

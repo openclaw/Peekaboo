@@ -74,6 +74,12 @@ public final class ApplicationService: ApplicationServiceProtocol {
     typealias ApplicationActivationSleepHandler = @MainActor (_ duration: Duration) async throws -> Void
     typealias ProcessStartIdentityProvider = @MainActor (_ processIdentifier: pid_t) -> UInt64?
     typealias ApplicationQuitHandler = @MainActor (_ application: NSRunningApplication, _ force: Bool) -> Bool
+    typealias RunningApplicationProcessIdentifiersProvider = @MainActor () -> [pid_t]
+    typealias ApplicationWindowCatalogProvider = @MainActor () -> [WindowIdentityInfo]?
+    typealias ApplicationMetadataProvider = @Sendable (
+        _ processIdentifier: pid_t,
+        _ processStartIdentity: UInt64?,
+        _ timeoutSeconds: TimeInterval) async throws -> DetachedApplicationMetadata
     typealias BackgroundActivationLeaseFactory = @MainActor (
         _ activationGraceDuration: Duration,
         _ restorationDependencies: BackgroundRestorationDependencies) -> BackgroundLaunchActivationLease
@@ -96,6 +102,12 @@ public final class ApplicationService: ApplicationServiceProtocol {
     let applicationActivationSleepHandler: ApplicationActivationSleepHandler
     let processStartIdentityProvider: ProcessStartIdentityProvider
     let applicationQuitHandler: ApplicationQuitHandler
+    let runningApplicationProcessIdentifiersProvider: RunningApplicationProcessIdentifiersProvider
+    let applicationWindowCatalogProvider: ApplicationWindowCatalogProvider
+    let applicationMetadataProvider: ApplicationMetadataProvider
+    let applicationMetadataTimeout: TimeInterval
+    let applicationInventoryOverallTimeout: TimeInterval
+    let maximumConcurrentApplicationMetadataReads: Int
     let applicationReadinessTimeout: TimeInterval
     let applicationActivationTimeout: Duration
     let backgroundLaunchActivationGraceDuration: Duration
@@ -110,6 +122,11 @@ public final class ApplicationService: ApplicationServiceProtocol {
     /// Window inventory is CG-first, so AX is bounded enrichment rather than an authoritative read.
     /// Keep this safely below the Bridge's fixed request deadline so partial CG inventory remains usable.
     static let windowAXEnrichmentTimeout: Float = 2.0
+
+    /// One unresponsive LaunchServices record must leave ample time for Bridge response encoding.
+    static let applicationMetadataTimeout: TimeInterval = 0.25
+    static let applicationInventoryOverallTimeout: TimeInterval = 1
+    static let maximumConcurrentApplicationMetadataReads = 8
 
     public convenience init(
         permissions: PermissionsService = PermissionsService(),
@@ -164,6 +181,21 @@ public final class ApplicationService: ApplicationServiceProtocol {
         applicationQuitHandler: @escaping ApplicationQuitHandler = { application, force in
             force ? application.forceTerminate() : application.terminate()
         },
+        runningApplicationProcessIdentifiersProvider: @escaping RunningApplicationProcessIdentifiersProvider = {
+            NSWorkspace.shared.runningApplications.map(\.processIdentifier)
+        },
+        applicationWindowCatalogProvider: @escaping ApplicationWindowCatalogProvider = {
+            WindowIdentityService().getWindowCatalog()
+        },
+        applicationMetadataProvider: @escaping ApplicationMetadataProvider = { pid, generation, timeout in
+            try await DetachedApplicationMetadataCoordinator.run(
+                processIdentifier: pid,
+                processStartIdentity: generation,
+                timeoutSeconds: timeout)
+        },
+        applicationMetadataTimeout: TimeInterval = ApplicationService.applicationMetadataTimeout,
+        applicationInventoryOverallTimeout: TimeInterval = ApplicationService.applicationInventoryOverallTimeout,
+        maximumConcurrentApplicationMetadataReads: Int = ApplicationService.maximumConcurrentApplicationMetadataReads,
         applicationReadinessTimeout: TimeInterval = 10,
         applicationActivationTimeout: Duration = .seconds(2),
         backgroundLaunchActivationGraceDuration: Duration = .milliseconds(500),
@@ -193,6 +225,12 @@ public final class ApplicationService: ApplicationServiceProtocol {
         self.applicationActivationSleepHandler = applicationActivationSleepHandler
         self.processStartIdentityProvider = processStartIdentityProvider
         self.applicationQuitHandler = applicationQuitHandler
+        self.runningApplicationProcessIdentifiersProvider = runningApplicationProcessIdentifiersProvider
+        self.applicationWindowCatalogProvider = applicationWindowCatalogProvider
+        self.applicationMetadataProvider = applicationMetadataProvider
+        self.applicationMetadataTimeout = applicationMetadataTimeout
+        self.applicationInventoryOverallTimeout = max(0.001, applicationInventoryOverallTimeout)
+        self.maximumConcurrentApplicationMetadataReads = max(1, maximumConcurrentApplicationMetadataReads)
         self.applicationReadinessTimeout = applicationReadinessTimeout
         self.applicationActivationTimeout = applicationActivationTimeout
         self.backgroundLaunchActivationGraceDuration = backgroundLaunchActivationGraceDuration

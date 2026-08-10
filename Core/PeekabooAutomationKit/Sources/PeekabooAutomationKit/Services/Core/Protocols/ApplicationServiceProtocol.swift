@@ -276,6 +276,13 @@ public struct ServiceApplicationInfo: Sendable, Codable, Equatable {
     /// Whether the application is hidden
     public let isHidden: Bool
 
+    /// Whether `isHidden` was read from this exact process generation.
+    ///
+    /// A current host sets this to `false` when per-process metadata exceeded its bounded
+    /// inventory deadline. Older hosts omit the field; their required `isHidden` value remains
+    /// authoritative for compatibility.
+    public let isHiddenKnown: Bool?
+
     /// Number of windows
     public var windowCount: Int
 
@@ -291,6 +298,12 @@ public struct ServiceApplicationInfo: Sendable, Codable, Equatable {
     /// Whether LaunchServices reports that the app has finished launching.
     public let isFinishedLaunching: Bool?
 
+    /// Bounded enrichment warnings scoped to this application.
+    ///
+    /// Keeping warnings on the row preserves partial-result truth across older Bridge response
+    /// envelopes that carry an application array without `UnifiedToolOutput` metadata.
+    public let metadataWarnings: [String]?
+
     public init(
         processIdentifier: Int32,
         processStartIdentity: UInt64? = nil,
@@ -299,10 +312,12 @@ public struct ServiceApplicationInfo: Sendable, Codable, Equatable {
         bundlePath: String? = nil,
         isActive: Bool = false,
         isHidden: Bool = false,
+        isHiddenKnown: Bool? = nil,
         windowCount: Int = 0,
         windowIDs: [Int]? = nil,
         activationPolicy: ServiceApplicationActivationPolicy? = nil,
-        isFinishedLaunching: Bool? = nil)
+        isFinishedLaunching: Bool? = nil,
+        metadataWarnings: [String]? = nil)
     {
         self.processIdentifier = processIdentifier
         self.processStartIdentity = processStartIdentity
@@ -311,10 +326,12 @@ public struct ServiceApplicationInfo: Sendable, Codable, Equatable {
         self.bundlePath = bundlePath
         self.isActive = isActive
         self.isHidden = isHidden
+        self.isHiddenKnown = isHiddenKnown
         self.windowCount = windowCount
         self.windowIDs = windowIDs
         self.activationPolicy = activationPolicy
         self.isFinishedLaunching = isFinishedLaunching
+        self.metadataWarnings = metadataWarnings
     }
 
     public var processIdentity: ApplicationProcessIdentity? {
@@ -331,6 +348,18 @@ public enum ServiceApplicationActivationPolicy: String, Sendable, Codable, Equat
     case accessory
     case prohibited
     case unknown
+}
+
+extension ServiceApplicationInfo {
+    /// Broad searches must not expand into system-only helpers or rows whose bounded metadata is unknown.
+    public var isUsableForBroadAutomationDiscovery: Bool {
+        self.activationPolicy != .prohibited && self.isHiddenKnown != false
+    }
+
+    /// Bulk termination is fail-closed: only an explicitly regular app with known metadata is eligible.
+    public var isEligibleForBulkQuit: Bool {
+        self.activationPolicy == .regular && self.isHiddenKnown != false
+    }
 }
 
 /// Information about a window for service layer

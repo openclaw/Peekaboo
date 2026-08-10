@@ -14,12 +14,14 @@ struct AppToolLifecyclePinningTests {
                 processIdentifier: 4070,
                 processStartIdentity: 70,
                 bundleIdentifier: "com.apple.TextEdit",
-                name: "TextEdit"),
+                name: "TextEdit",
+                activationPolicy: .regular),
             ServiceApplicationInfo(
                 processIdentifier: 4071,
                 processStartIdentity: 71,
                 bundleIdentifier: "com.apple.TextEdit",
-                name: "TextEdit"),
+                name: "TextEdit",
+                activationPolicy: .regular),
         ])
         let actions = AppToolActions(
             service: service,
@@ -66,12 +68,14 @@ struct AppToolLifecyclePinningTests {
                 processIdentifier: 4070,
                 processStartIdentity: 70,
                 bundleIdentifier: "com.apple.TextEdit",
-                name: "TextEdit"),
+                name: "TextEdit",
+                activationPolicy: .regular),
             ServiceApplicationInfo(
                 processIdentifier: 4071,
                 processStartIdentity: 71,
                 bundleIdentifier: "com.apple.TextEdit",
-                name: "TextEdit"),
+                name: "TextEdit",
+                activationPolicy: .regular),
         ])
         let actions = AppToolActions(
             service: service,
@@ -84,6 +88,49 @@ struct AppToolLifecyclePinningTests {
 
         #expect(service.quitCalls.map(\.identifier) == ["PID:4070", "PID:4071"])
         #expect(service.terminationCount == 2)
+    }
+
+    @Test
+    @MainActor
+    func `quit all excludes accessory prohibited and incomplete application metadata`() async throws {
+        let service = LifecyclePinningApplicationService(applications: [
+            ServiceApplicationInfo(
+                processIdentifier: 4080,
+                processStartIdentity: 80,
+                bundleIdentifier: "com.example.Editor",
+                name: "Editor",
+                activationPolicy: .regular),
+            ServiceApplicationInfo(
+                processIdentifier: 4081,
+                processStartIdentity: 81,
+                bundleIdentifier: "com.example.MenuExtra",
+                name: "Menu Extra",
+                activationPolicy: .accessory),
+            ServiceApplicationInfo(
+                processIdentifier: 4082,
+                processStartIdentity: 82,
+                bundleIdentifier: "com.example.Daemon",
+                name: "System Helper",
+                activationPolicy: .prohibited),
+            ServiceApplicationInfo(
+                processIdentifier: 4083,
+                processStartIdentity: 83,
+                bundleIdentifier: nil,
+                name: "Incomplete Helper",
+                isHiddenKnown: false,
+                metadataWarnings: ["metadata unavailable"]),
+        ])
+        let actions = AppToolActions(
+            service: service,
+            automation: MockAutomationService(accessibilityGranted: true),
+            logger: Logger(subsystem: "boo.peekaboo.tests", category: "AppToolLifecyclePinning"))
+
+        _ = try await actions.perform(
+            action: "quit",
+            request: Self.request(all: true))
+
+        #expect(service.quitCalls.map(\.identifier) == ["PID:4080"])
+        #expect(service.terminationCount == 1)
     }
 
     @Test

@@ -140,20 +140,25 @@ public final class DesktopContextService {
     private func gatherRecentApps() async -> [String] {
         do {
             let output = try await self.services.applications.listApplications()
-            return Array(
-                output.data.applications
-                    .sorted { lhs, rhs in
-                        if lhs.isActive != rhs.isActive {
-                            return lhs.isActive && !rhs.isActive
-                        }
-                        return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
-                    }
-                    .prefix(5)
-                    .map(\.name))
+            return Self.recentApplicationNames(output.data.applications)
         } catch {
             self.logger.debug("Failed to read running applications: \(error.localizedDescription)")
             return []
         }
+    }
+
+    nonisolated static func recentApplicationNames(_ applications: [ServiceApplicationInfo]) -> [String] {
+        Array(
+            applications
+                .filter(\.isUsableForBroadAutomationDiscovery)
+                .sorted { lhs, rhs in
+                    if lhs.isActive != rhs.isActive {
+                        return lhs.isActive && !rhs.isActive
+                    }
+                    return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+                }
+                .prefix(5)
+                .map(\.name))
     }
 }
 

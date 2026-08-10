@@ -8,6 +8,40 @@ import Testing
 
 struct RemoteApplicationServiceTests {
     @Test
+    func `remote application list preserves bounded partial metadata across Bridge`() async throws {
+        let socketPath = "/tmp/peekaboo-bridge-partial-apps-\(UUID().uuidString).sock"
+        let applications = await MainActor.run { PartialInventoryApplicationService() }
+        let server = await MainActor.run {
+            PeekabooBridgeServer(
+                services: StubServices(applications: applications),
+                hostKind: .gui,
+                allowlistedTeams: [],
+                allowlistedBundles: [])
+        }
+        let host = PeekabooBridgeHost(
+            socketPath: socketPath,
+            server: server,
+            allowedTeamIDs: [],
+            requestTimeoutSec: 2)
+        try await host.startChecked()
+        defer { Task { await host.stop() } }
+        let remote = await MainActor.run {
+            RemoteApplicationService(
+                client: PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 2))
+        }
+
+        let output = try await remote.listApplications()
+        let app = try #require(output.data.applications.first)
+
+        #expect(app.isHiddenKnown == false)
+        #expect(app.metadataWarnings == PartialInventoryApplicationService.warnings)
+        #expect(output.summary.status == .partial)
+        #expect(output.summary.counts["incompleteApplications"] == 1)
+        #expect(output.metadata.warnings == PartialInventoryApplicationService.warnings)
+        await host.stop()
+    }
+
+    @Test
     func `remote running check propagates transport failure instead of returning false`() async {
         let remote = await MainActor.run {
             RemoteApplicationService(
@@ -473,6 +507,27 @@ struct RemoteApplicationServiceTests {
         let hiddenIdentifiers = await MainActor.run { fallback.hiddenIdentifiers }
         #expect(hiddenIdentifiers.isEmpty)
         await host.stop()
+    }
+}
+
+@MainActor
+private final class PartialInventoryApplicationService: StubApplicationService {
+    nonisolated static let warnings = ["Application metadata timed out for PID 41; hidden state is unknown"]
+
+    override func listApplications() async throws -> UnifiedToolOutput<ServiceApplicationListData> {
+        let app = ServiceApplicationInfo(
+            processIdentifier: 41,
+            processStartIdentity: 7,
+            bundleIdentifier: nil,
+            name: "Poisoned Helper",
+            isHidden: false,
+            isHiddenKnown: false,
+            windowIDs: [],
+            metadataWarnings: Self.warnings)
+        return UnifiedToolOutput(
+            data: ServiceApplicationListData(applications: [app]),
+            summary: .init(brief: "1 app", status: .partial, counts: ["applications": 1]),
+            metadata: .init(duration: 0, warnings: Self.warnings))
     }
 }
 

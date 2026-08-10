@@ -12,7 +12,9 @@ extension DialogService {
 
         do {
             let applications = try await self.applicationService.listApplications()
-            for app in applications.data.applications {
+            for app in applications.data.applications
+                where app.isUsableForBroadAutomationDiscovery
+            {
                 if let appName,
                    app.name.caseInsensitiveCompare(appName) != .orderedSame,
                    app.bundleIdentifier?.caseInsensitiveCompare(appName) != .orderedSame
@@ -50,7 +52,9 @@ extension DialogService {
         let frontmostBundle = frontmostApp?.bundleIdentifier?.lowercased()
         let frontmostName = frontmostApp?.localizedName?.lowercased()
 
-        for app in applications.data.applications {
+        for app in applications.data.applications
+            where app.isUsableForBroadAutomationDiscovery
+        {
             if let appName,
                app.name.caseInsensitiveCompare(appName) != .orderedSame,
                app.bundleIdentifier?.caseInsensitiveCompare(appName) != .orderedSame

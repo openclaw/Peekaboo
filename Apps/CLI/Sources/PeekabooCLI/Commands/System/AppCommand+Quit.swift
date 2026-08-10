@@ -192,7 +192,7 @@ extension AppCommand {
                     .map { String($0).trimmingCharacters(in: .whitespaces) })
                 let systemApps = Set(["Finder", "Dock", "SystemUIServer", "WindowServer"])
                 return try await self.services.applications.listApplications().data.applications.compactMap { app in
-                    guard app.activationPolicy ?? .regular == .regular,
+                    guard app.isEligibleForBulkQuit,
                           !systemApps.contains(app.name),
                           !excluded.contains(app.name) else { return nil }
                     return try AppQuitTarget(appInfo: app)

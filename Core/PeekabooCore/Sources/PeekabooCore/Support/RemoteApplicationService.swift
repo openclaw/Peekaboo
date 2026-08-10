@@ -56,10 +56,21 @@ public final class RemoteApplicationService: ApplicationServiceProtocol {
 
     public func listApplications() async throws -> UnifiedToolOutput<ServiceApplicationListData> {
         let apps = try await self.client.listApplications()
+        let warnings = apps.reduce(into: [String]()) { result, app in
+            for warning in app.metadataWarnings ?? [] where !result.contains(warning) {
+                result.append(warning)
+            }
+        }
         return UnifiedToolOutput(
             data: ServiceApplicationListData(applications: apps),
-            summary: .init(brief: "Found \(apps.count) apps", status: .success, counts: ["applications": apps.count]),
-            metadata: .init(duration: 0))
+            summary: .init(
+                brief: "Found \(apps.count) apps",
+                status: warnings.isEmpty ? .success : .partial,
+                counts: [
+                    "applications": apps.count,
+                    "incompleteApplications": apps.count(where: { !($0.metadataWarnings ?? []).isEmpty }),
+                ]),
+            metadata: .init(duration: 0, warnings: warnings))
     }
 
     public func findApplication(identifier: String) async throws -> ServiceApplicationInfo {

@@ -48,6 +48,7 @@ import PeekabooFoundation
         targetProcessIdentifier: Int32,
         targetProcessStartIdentity: UInt64? = nil,
         seconds: TimeInterval,
+        maximumPendingOperationCount: Int? = nil,
         operation: @escaping @Sendable () throws -> T) async throws -> T
     {
         guard seconds.isFinite, seconds > 0 else {
@@ -71,9 +72,10 @@ import PeekabooFoundation
 
                 let processStartIdentity = targetProcessStartIdentity ??
                     SystemIdentityResolver.processStartIdentity(targetProcessIdentifier)
-                AXObservationWorkerPool.shared.enqueue(
+                let enqueued = AXObservationWorkerPool.shared.enqueue(
                     pid: targetProcessIdentifier,
-                    processStartIdentity: processStartIdentity)
+                    processStartIdentity: processStartIdentity,
+                    maximumPendingOperationCount: maximumPendingOperationCount)
                 {
                     guard state.claimWork() else { return }
                     let result: Result<T, any Error> = autoreleasepool {
@@ -84,6 +86,9 @@ import PeekabooFoundation
                         }
                     }
                     state.resume(with: result)
+                }
+                if !enqueued {
+                    state.resume(with: .failure(CaptureError.detectionTimedOut(seconds)))
                 }
             }
         } onCancel: {
@@ -130,22 +135,31 @@ private final class AXObservationWorkerPool: @unchecked Sendable {
     func enqueue(
         pid: Int32,
         processStartIdentity: UInt64?,
+        maximumPendingOperationCount: Int?,
         operation: @escaping @Sendable () -> Void)
+        -> Bool
     {
         let key = Key(pid: pid, processStartIdentity: processStartIdentity)
-        let lane = self.lock.withLock {
+        let lane: Lane? = self.lock.withLock {
             self.useCounter &+= 1
             let lane = self.lanes[key] ?? Lane(key: key)
+            if let maximumPendingOperationCount,
+               lane.pendingCount >= max(1, maximumPendingOperationCount)
+            {
+                return nil
+            }
             lane.pendingCount += 1
             lane.lastUsed = self.useCounter
             self.lanes[key] = lane
             self.evictIdleLanesIfNeeded(keeping: key)
             return lane
         }
+        guard let lane else { return false }
         lane.queue.async {
             defer { self.complete(key: key) }
             operation()
         }
+        return true
     }
 
     var retainedIdleLaneCount: Int {

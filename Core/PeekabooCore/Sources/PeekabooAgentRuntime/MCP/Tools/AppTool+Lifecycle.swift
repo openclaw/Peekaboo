@@ -189,7 +189,8 @@ extension AppToolActions {
             excluded.contains { exclusion in exclusion.caseInsensitiveCompare(app.name) == .orderedSame }
         }
         let targets = allApps.filter { app in
-            !remaining.contains(where: { $0.processIdentifier == app.processIdentifier })
+            app.isEligibleForBulkQuit &&
+                !remaining.contains(where: { $0.processIdentifier == app.processIdentifier })
         }
 
         var quitCount = 0

@@ -33,7 +33,17 @@ extension AppCommand {
             includeBackground: Bool
         ) -> [ServiceApplicationInfo] {
             applications.filter { app in
+                // A timed-out metadata read cannot be guessed visible. Keep it out of the default
+                // view, but let the explicit inclusive flags expose the row with unknown state.
+                if app.isHiddenKnown == false, !includeHidden {
+                    return false
+                }
                 if !includeHidden, app.isHidden {
+                    return false
+                }
+                if app.isHiddenKnown == false,
+                   app.activationPolicy == nil,
+                   !includeBackground {
                     return false
                 }
                 if !includeBackground,
@@ -63,12 +73,14 @@ extension AppCommand {
                     let bundle_id: String
                     let pid: Int32
                     let is_active: Bool
-                    let is_hidden: Bool
+                    let is_hidden: Bool?
+                    let metadata_warnings: [String]?
                 }
 
                 struct ListResult: Codable {
                     let count: Int
                     let apps: [AppInfo]
+                    let warnings: [String]
                 }
 
                 let data = ListResult(
@@ -79,9 +91,11 @@ extension AppCommand {
                             bundle_id: app.bundleIdentifier ?? "unknown",
                             pid: app.processIdentifier,
                             is_active: app.isActive,
-                            is_hidden: app.isHidden
+                            is_hidden: app.isHiddenKnown == false ? nil : app.isHidden,
+                            metadata_warnings: app.metadataWarnings
                         )
-                    }
+                    },
+                    warnings: appsOutput.metadata.warnings
                 )
                 AutomationEventLogger.log(
                     .app,
@@ -92,10 +106,21 @@ extension AppCommand {
                 output(data) {
                     print("Running Applications (\(filtered.count)):")
                     for app in filtered {
-                        let status = app.isActive ? " [active]" : app.isHidden ? " [hidden]" : ""
+                        let status = if app.isActive {
+                            " [active]"
+                        } else if app.isHiddenKnown == false {
+                            " [hidden state unknown]"
+                        } else if app.isHidden {
+                            " [hidden]"
+                        } else {
+                            ""
+                        }
                         print("  • \(app.name)\(status)")
                         print("    Bundle: \(app.bundleIdentifier ?? "unknown")")
                         print("    PID: \(app.processIdentifier)")
+                    }
+                    for warning in appsOutput.metadata.warnings {
+                        print("  ⚠ \(warning)")
                     }
                 }
 

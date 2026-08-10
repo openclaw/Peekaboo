@@ -231,7 +231,7 @@ struct AppCommandLaunchFlowTests {
     }
 
     @Test
-    func `Quit all keeps accessory apps out of termination set`() async throws {
+    func `Quit all targets only applications with known regular metadata`() async throws {
         let regularApplication = ServiceApplicationInfo(
             processIdentifier: 123,
             processStartIdentity: 1001,
@@ -246,8 +246,26 @@ struct AppCommandLaunchFlowTests {
             name: "Menu Extra",
             activationPolicy: .accessory
         )
+        let prohibitedApplication = ServiceApplicationInfo(
+            processIdentifier: 789,
+            processStartIdentity: 7001,
+            bundleIdentifier: "com.example.daemon",
+            name: "System Helper",
+            activationPolicy: .prohibited
+        )
+        let incompleteApplication = ServiceApplicationInfo(
+            processIdentifier: 900,
+            processStartIdentity: 8001,
+            bundleIdentifier: nil,
+            name: "Incomplete Helper",
+            isHiddenKnown: false,
+            activationPolicy: nil,
+            metadataWarnings: ["metadata unavailable"]
+        )
         let applicationService = RecordingApplicationService(applications: [
             accessoryApplication,
+            prohibitedApplication,
+            incompleteApplication,
             regularApplication,
         ])
 

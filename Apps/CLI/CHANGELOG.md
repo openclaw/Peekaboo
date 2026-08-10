@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Probe Bridge diagnostic sockets concurrently under a one-second per-host deadline with bounded cancellation while preserving runtime selection and candidate order, so `bridge status --verbose` neither accumulates nor inherits a wedged host's full handshake latency.
+- Keep `app list --include-hidden` responsive when processes stall metadata reads, preserving exact partial inventory with explicit warnings and unknown hidden state instead of timing out or growing duplicate work behind a wedged process; bulk quit now requires known regular-app metadata.
 - Require explicit `--foreground` consent before `menubar click` can inspect or open global status-item UI; keep `menubar list` read-only and report missing items as typed retry-safe pre-dispatch refusals.
 - Preserve semantic AX labels, scalar values, roles, descriptions, enabled/selected state, and bounded value-settable capability through background `see` output, persisted snapshots, and agent summaries instead of reducing controls to generic role names.
 - Keep background app launch/open ownership through verified focus reconciliation, restoring only the exact prior process generation without overriding a later user foreground choice.

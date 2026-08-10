@@ -56,9 +56,37 @@ struct AppListFilteringTests {
         #expect(filtered.map(\.name) == ["Hidden Regular"])
     }
 
+    @Test
+    func `unknown hidden metadata requires both inclusive flags`() {
+        let applications = [
+            Self.application(name: "Incomplete", isHiddenKnown: false, activationPolicy: nil),
+        ]
+
+        let defaultFiltered = AppCommand.ListSubcommand.filteredApplications(
+            applications,
+            includeHidden: false,
+            includeBackground: false
+        )
+        let hiddenOnly = AppCommand.ListSubcommand.filteredApplications(
+            applications,
+            includeHidden: true,
+            includeBackground: false
+        )
+        let fullyInclusive = AppCommand.ListSubcommand.filteredApplications(
+            applications,
+            includeHidden: true,
+            includeBackground: true
+        )
+
+        #expect(defaultFiltered.isEmpty)
+        #expect(hiddenOnly.isEmpty)
+        #expect(fullyInclusive.map(\.name) == ["Incomplete"])
+    }
+
     private static func application(
         name: String,
         isHidden: Bool = false,
+        isHiddenKnown: Bool? = nil,
         activationPolicy: ServiceApplicationActivationPolicy?
     ) -> ServiceApplicationInfo {
         ServiceApplicationInfo(
@@ -66,6 +94,7 @@ struct AppListFilteringTests {
             bundleIdentifier: "example.\(name)",
             name: name,
             isHidden: isHidden,
+            isHiddenKnown: isHiddenKnown,
             activationPolicy: activationPolicy
         )
     }

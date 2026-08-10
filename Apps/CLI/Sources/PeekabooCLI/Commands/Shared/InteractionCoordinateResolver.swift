@@ -159,7 +159,8 @@ enum InteractionCoordinateResolver {
             return nil
         }
 
-        for application in output.data.applications {
+        for application in output.data.applications
+            where application.isUsableForBroadAutomationDiscovery {
             let identifiers = [
                 application.name,
                 application.bundleIdentifier,

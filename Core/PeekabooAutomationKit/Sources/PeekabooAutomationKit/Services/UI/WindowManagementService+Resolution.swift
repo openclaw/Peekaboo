@@ -94,7 +94,9 @@ extension WindowManagementService {
         let appsOutput = try await self.applicationService.listApplications()
         var matches: [ServiceWindowInfo] = []
 
-        for app in appsOutput.data.applications {
+        for app in appsOutput.data.applications
+            where app.isUsableForBroadAutomationDiscovery
+        {
             let windows = try await self.windows(for: app.name)
             matches.append(contentsOf: windows.filter {
                 $0.title.localizedCaseInsensitiveContains(substring)
@@ -170,7 +172,8 @@ extension WindowManagementService {
             return try self.findFirstWindow(for: app)
         case let .title(titleSubstring):
             let appsOutput = try await self.applicationService.listApplications()
-            return try self.findWindowByTitle(titleSubstring, in: appsOutput.data.applications)
+            let applications = appsOutput.data.applications.filter(\.isUsableForBroadAutomationDiscovery)
+            return try self.findWindowByTitle(titleSubstring, in: applications)
         case let .applicationAndTitle(appIdentifier, titleSubstring):
             let app = try await self.applicationService.findApplication(identifier: appIdentifier)
 

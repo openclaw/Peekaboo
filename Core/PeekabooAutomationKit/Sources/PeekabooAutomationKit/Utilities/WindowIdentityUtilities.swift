@@ -230,6 +230,22 @@ public final class WindowIdentityService {
         }
     }
 
+    /// Capture the WindowServer catalog once for application inventory.
+    ///
+    /// `ApplicationService.listApplications()` used to copy the global catalog once per running
+    /// process. Besides scaling poorly, that placed every read serially on MainActor. The catalog
+    /// already carries owner PIDs, so one immutable snapshot can be grouped per application.
+    public func getWindowCatalog() -> [WindowIdentityInfo]? {
+        guard let windowDicts = CGWindowListCopyWindowInfo(
+            [.optionAll, .excludeDesktopElements],
+            kCGNullWindowID) as? [[String: Any]]
+        else {
+            return nil
+        }
+
+        return windowDicts.compactMap(Self.windowIdentityInfo(from:))
+    }
+
     // MARK: - Existence
 
     public func windowExists(windowID: CGWindowID) -> Bool {
@@ -303,6 +319,24 @@ public final class WindowIdentityService {
 
     private nonisolated static func ownerPID(from window: [String: Any]) -> pid_t? {
         self.intValue(window[kCGWindowOwnerPID as String]).map(pid_t.init)
+    }
+
+    private nonisolated static func windowIdentityInfo(from window: [String: Any]) -> WindowIdentityInfo? {
+        guard let windowID = self.windowID(from: window),
+              let ownerPID = self.ownerPID(from: window)
+        else {
+            return nil
+        }
+        return WindowIdentityInfo(
+            windowID: windowID,
+            title: window[kCGWindowName as String] as? String,
+            bounds: self.bounds(from: window),
+            ownerPID: ownerPID,
+            applicationName: window[kCGWindowOwnerName as String] as? String,
+            bundleIdentifier: nil,
+            layer: self.intValue(window[kCGWindowLayer as String]) ?? 0,
+            alpha: self.cgFloatValue(window[kCGWindowAlpha as String]) ?? 1,
+            axIdentifier: nil)
     }
 
     private nonisolated static func bounds(from window: [String: Any]) -> CGRect {

@@ -44,7 +44,8 @@ struct ListSubcommand: ErrorHandlingCommand, OutputFormattable, InjectedRuntimeB
             let appService = self.services.applications
             let appListResult = try await appService.listApplications()
 
-            for app in appListResult.data.applications where app.windowCount > 0 {
+            for app in appListResult.data.applications
+                where app.isUsableForBroadAutomationDiscovery && app.windowCount > 0 {
                 do {
                     let windowsResult = try await appService.listWindows(for: app.name, timeout: nil)
                     for window in windowsResult.data.windows {
