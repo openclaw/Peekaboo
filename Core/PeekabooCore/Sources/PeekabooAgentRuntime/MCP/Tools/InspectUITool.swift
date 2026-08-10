@@ -150,12 +150,12 @@ public struct InspectUITool: MCPTool {
             let hostHasSnapshot = try await self.context.snapshots.listSnapshots().contains { $0.id == snapshotId }
             guard hostHasSnapshot else {
                 throw PeekabooError.snapshotNotFound(
-                    "Snapshot '\(snapshotId)' was not found. Omit --snapshot and run inspect-ui again.")
+                    "Snapshot '\(snapshotId)' was not found. Omit the `snapshot` argument and run `inspect_ui` again.")
             }
             guard let existingSnapshot = await UISnapshotManager.shared.getSnapshot(id: snapshotId) else {
                 throw PeekabooError.snapshotNotFound(
                     "Snapshot '\(snapshotId)' is not available in this process. " +
-                        "Omit --snapshot and run inspect-ui again.")
+                        "Omit the `snapshot` argument and run `inspect_ui` again.")
             }
             return (existingSnapshot, false)
         }

@@ -249,6 +249,9 @@ struct InspectUIToolExecutionTests {
             return
         }
         #expect(output.contains("Snapshot 'missing-snapshot' was not found"))
+        #expect(output.contains("Omit the `snapshot` argument and run `inspect_ui` again"))
+        #expect(!output.contains("--snapshot"))
+        #expect(!output.contains("inspect-ui"))
         #expect(await MainActor.run { automation.lastInspectWindowContext } == nil)
         let hostSnapshotIDsAfter = try await Set(context.snapshots.listSnapshots().map(\.id))
         #expect(hostSnapshotIDsAfter == hostSnapshotIDsBefore)
@@ -278,6 +281,9 @@ struct InspectUIToolExecutionTests {
             return
         }
         #expect(output.contains("Snapshot '\(snapshotId)' is not available in this process"))
+        #expect(output.contains("Omit the `snapshot` argument and run `inspect_ui` again"))
+        #expect(!output.contains("--snapshot"))
+        #expect(!output.contains("inspect-ui"))
         #expect(await MainActor.run { automation.lastInspectWindowContext } == nil)
         let hostSnapshotIDsAfter = try await Set(context.snapshots.listSnapshots().map(\.id))
         #expect(hostSnapshotIDsAfter == hostSnapshotIDsBefore)
