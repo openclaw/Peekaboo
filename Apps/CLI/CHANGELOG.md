@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [4.0.1] - Unreleased
 
+### Fixed
+- Ensure action-command JSON validation failures before dispatch report `effect: refused`, including parser and binding errors.
+
 ## [4.0.0] - 2026-08-10
 
 ### Added
@@ -17,7 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Merge `hotkey` into xdotool-style `press` chords, `swipe` into dual-target `drag`, `image` and `inspect-ui` into `see`, and rename `perform-action` to `action`.
 - Restructure clipboard, menubar, config, agent, and permission operations into real subcommand trees.
 - Standardize durations on bare milliseconds or `ms`/`s`, coordinates on `--at`/`--global`, modifiers on comma-separated lists, and focus controls across interaction commands.
-- Standardize JSON on one result envelope with action-only `effect` values, including `effect: refused` for pre-dispatch action parse/bind failures, actionable error hints, and nonzero exits for failures.
+- Standardize JSON on one result envelope with action-only `effect` values after request parsing/classification, actionable error hints, and nonzero exits for failures; pre-dispatch parse/bind failures may omit `effect`.
 - Make launch, observation, capture, and targeted input background-first; require explicit foreground consent for focus stealing, global keys, and physical pointer gestures.
 - Keep all targeted background input overlay-free even when its target is visible or frontmost; only untargeted or explicitly foreground input may show cursor or input-HUD feedback.
 - Make `type` text-only; use `press` for Return, Tab, Escape, Delete, and chord sequences.
@@ -30,7 +33,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Normalize agent failures and `see` success JSON under the shared result envelope, with nonzero terminal failures, specific validation/credential/session/runtime codes, and no duplicate inner `success` field.
-- Ensure action-command JSON validation failures before dispatch report `effect: refused`, including parser and binding errors.
 - Add actionable migration hints for removed v4 commands and flags, reject ambiguous press input shapes, and align `see`/`type`/`press` help with the accepted grammar.
 - Stop cancelled on-demand daemon idle timers from rescheduling one another after repeated Bridge activity.
 - Reject conflicting app/PID and window selectors before focus, observation, or mutation.
