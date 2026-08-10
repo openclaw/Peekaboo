@@ -85,9 +85,14 @@ extension AgentCommand {
                 )
             } else {
                 if self.jsonOutput {
-                    let error = ["success": false, "error": "No sessions found to resume"] as [String: Any]
-                    let jsonData = try JSONSerialization.data(withJSONObject: error, options: .prettyPrinted)
-                    print(String(data: jsonData, encoding: .utf8) ?? "{}")
+                    let logger = Logger.shared
+                    logger.setJsonOutputMode(true)
+                    outputError(
+                        message: "No sessions found to resume",
+                        code: .SESSION_NOT_FOUND,
+                        hint: "Run 'peekaboo agent \"<task>\"' to start a session.",
+                        logger: logger
+                    )
                 } else {
                     print("\(TerminalColor.red)Error: No sessions found to resume\(TerminalColor.reset)")
                 }
@@ -100,13 +105,14 @@ extension AgentCommand {
 
     func printMissingTaskError(message: String, usage: String) {
         if self.jsonOutput {
-            let error = ["success": false, "error": message] as [String: Any]
-            if let jsonData = try? JSONSerialization.data(withJSONObject: error, options: .prettyPrinted),
-               let jsonString = String(data: jsonData, encoding: .utf8) {
-                print(jsonString)
-            } else {
-                print("{\"success\":false,\"error\":\"\(message)\"}")
-            }
+            let logger = Logger.shared
+            logger.setJsonOutputMode(true)
+            outputError(
+                message: message,
+                code: .VALIDATION_ERROR,
+                hint: usage.isEmpty ? nil : usage,
+                logger: logger
+            )
         } else {
             print("\(TerminalColor.red)Error: \(message)\(TerminalColor.reset)")
             if !usage.isEmpty {

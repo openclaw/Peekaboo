@@ -220,7 +220,8 @@ extension AgentCommand {
         do {
             maxSteps = try self.validatedMaxStepCount()
         } catch {
-            self.printAgentExecutionError(error.localizedDescription)
+            // Argument-range failures are validation errors, not agent failures.
+            self.printAgentValidationError(error.localizedDescription)
             throw ExitCode.failure
         }
 
@@ -230,7 +231,8 @@ extension AgentCommand {
         do {
             requestedModel = try self.validatedModelSelection(configuration: services.configuration)
         } catch {
-            self.printAgentExecutionError(error.localizedDescription)
+            // An unknown/unconfigured model name is a bad argument, not a run failure.
+            self.printAgentValidationError(error.localizedDescription)
             throw ExitCode.failure
         }
 
@@ -409,16 +411,9 @@ extension AgentCommand {
             let message = "Agent service not available. Please set OPENAI_API_KEY, ANTHROPIC_API_KEY, " +
                 "GEMINI_API_KEY, X_AI_API_KEY, MINIMAX_API_KEY, MINIMAX_CN_API_KEY, OPENROUTER_API_KEY, " +
                 "or configure ollama/<model>, lmstudio/<model>, or a custom provider."
-            let error = [
-                "success": false,
-                "error": message
-            ] as [String: Any]
-            if let jsonData = try? JSONSerialization.data(withJSONObject: error, options: .prettyPrinted),
-               let jsonString = String(data: jsonData, encoding: .utf8) {
-                print(jsonString)
-            } else {
-                print("{\"success\":false,\"error\":\"Agent service not available\"}")
-            }
+            let logger = Logger.shared
+            logger.setJsonOutputMode(true)
+            outputError(message: message, code: .MISSING_API_KEY, logger: logger)
         } else {
             let errorPrefix = [
                 "\(TerminalColor.red)Error: Agent service not available.",

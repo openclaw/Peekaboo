@@ -115,13 +115,9 @@ extension AgentCommand {
 
     func printAgentExecutionError(_ message: String) {
         if self.jsonOutput {
-            let error: [String: Any] = ["success": false, "error": message]
-            if let jsonData = try? JSONSerialization.data(withJSONObject: error, options: .prettyPrinted),
-               let jsonString = String(data: jsonData, encoding: .utf8) {
-                print(jsonString)
-            } else {
-                print("{\"success\":false,\"error\":\"\(message)\"}")
-            }
+            let logger = Logger.shared
+            logger.setJsonOutputMode(true)
+            outputError(message: message, code: .AGENT_ERROR, logger: logger)
         } else {
             print("\(TerminalColor.red)Error: \(message)\(TerminalColor.reset)")
         }

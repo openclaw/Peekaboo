@@ -34,9 +34,11 @@ struct AgentCommandValidationIntegrationTests {
 
         let data = try #require(result.stdout.trimmingCharacters(in: .whitespacesAndNewlines).data(using: .utf8))
         let payload = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
-        #expect(payload.count == 2)
         #expect(payload["success"] as? Bool == false)
-        let message = try #require(payload["error"] as? String)
+        // Agent failures use the same envelope as every other command.
+        let error = try #require(payload["error"] as? [String: Any])
+        #expect(error["code"] as? String == "VALIDATION_ERROR")
+        let message = try #require(error["message"] as? String)
         #expect(message.contains("between 1 and 100"))
         #expect(message.contains("received \(maxSteps)"))
     }

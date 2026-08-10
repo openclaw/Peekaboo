@@ -107,16 +107,9 @@ extension AgentCommand {
     private func logAudioError(_ error: any Error) {
         let message = AgentMessages.Audio.processingError(error)
         if self.jsonOutput {
-            let errorObj = [
-                "success": false,
-                "error": message
-            ] as [String: Any]
-            if let jsonData = try? JSONSerialization.data(withJSONObject: errorObj, options: .prettyPrinted),
-               let jsonString = String(data: jsonData, encoding: .utf8) {
-                print(jsonString)
-            } else {
-                print("{\"success\":false,\"error\":\"\(AgentMessages.Audio.genericProcessingError)\"}")
-            }
+            let logger = Logger.shared
+            logger.setJsonOutputMode(true)
+            outputError(message: message, code: .AGENT_ERROR, logger: logger)
         } else {
             let failurePrefix = [
                 "\(TerminalColor.red)\(AgentDisplayTokens.Status.failure)",
