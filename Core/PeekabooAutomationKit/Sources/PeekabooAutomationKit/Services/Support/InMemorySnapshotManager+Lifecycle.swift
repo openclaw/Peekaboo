@@ -46,7 +46,7 @@ extension InMemorySnapshotManager {
         self.applyDetectionResult(result, to: &entry.snapshotData)
         entry.detectionResult = ElementDetectionResult(
             snapshotId: result.snapshotId,
-            screenshotPath: result.screenshotPath,
+            screenshotPath: entry.snapshotData.screenshotPath ?? result.screenshotPath,
             elements: result.elements,
             metadata: result.metadata.withCaptureCoordinateContext(entry.snapshotData.captureCoordinateContext))
         self.entries[snapshotId] = entry

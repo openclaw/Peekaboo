@@ -8,13 +8,26 @@ import PeekabooFoundation
 public final class RemoteDesktopObservationService: DesktopObservationServiceProtocol {
     private let client: PeekabooBridgeClient
     private let supportsExactWindowROIObservation: Bool
+    private let artifactInstallationPreflight: @MainActor @Sendable () throws -> Void
 
-    public init(
+    public convenience init(
         client: PeekabooBridgeClient,
         supportsExactWindowROIObservation: Bool = false)
     {
+        self.init(
+            client: client,
+            supportsExactWindowROIObservation: supportsExactWindowROIObservation,
+            artifactInstallationPreflight: {})
+    }
+
+    package init(
+        client: PeekabooBridgeClient,
+        supportsExactWindowROIObservation: Bool,
+        artifactInstallationPreflight: @escaping @MainActor @Sendable () throws -> Void)
+    {
         self.client = client
         self.supportsExactWindowROIObservation = supportsExactWindowROIObservation
+        self.artifactInstallationPreflight = artifactInstallationPreflight
     }
 
     public func observe(_ request: DesktopObservationRequest) async throws -> DesktopObservationResult {
@@ -74,12 +87,27 @@ public final class RemoteDesktopObservationService: DesktopObservationServicePro
             timeout: overallTimeout)
         try Self.checkPostProcessingAllowance(deadline: deadline, timeout: overallTimeout)
         let commitTask = Task { @MainActor in
-            try Self.commitArtifacts(stagedArtifacts)
-            try await self.storeSnapshotIfNeeded(
-                prepared,
-                request: request,
-                deadline: deadline,
-                timeout: overallTimeout)
+            do {
+                try await self.storeSnapshotIfNeeded(
+                    prepared,
+                    request: request,
+                    deadline: deadline,
+                    timeout: overallTimeout)
+            } catch {
+                Self.discardStagedArtifacts(stagedArtifacts)
+                throw error
+            }
+            let installedArtifacts: [ArtifactPublication]
+            try self.artifactInstallationPreflight()
+            do {
+                installedArtifacts = try Self.installArtifacts(stagedArtifacts)
+            } catch is ArtifactPublicationError {
+                guard request.output.saveSnapshot else {
+                    throw CaptureROIError.invalidSourceImage
+                }
+                return Self.snapshotOnlyResult(prepared.result)
+            }
+            Self.finalizeArtifacts(installedArtifacts)
             return prepared.result
         }
         return try await commitTask.value
@@ -213,7 +241,7 @@ public final class RemoteDesktopObservationService: DesktopObservationServicePro
                 snapshotId: snapshotID,
                 result: ElementDetectionResult(
                     snapshotId: snapshotID,
-                    screenshotPath: prepared.quarantineRawPath,
+                    screenshotPath: "",
                     elements: elements.elements,
                     metadata: elements.metadata),
                 timeoutSec: Self.remainingPostProcessingTime(deadline: deadline, timeout: timeout))
@@ -301,6 +329,10 @@ public final class RemoteDesktopObservationService: DesktopObservationServicePro
         var installed = false
     }
 
+    private enum ArtifactPublicationError: Error {
+        case installFailedAfterRollback
+    }
+
     private static func stageArtifacts(
         _ artifacts: [(data: Data, path: String)],
         deadline: ContinuousClock.Instant?,
@@ -335,7 +367,7 @@ public final class RemoteDesktopObservationService: DesktopObservationServicePro
         }
     }
 
-    private static func commitArtifacts(_ stagedArtifacts: [ArtifactPublication]) throws {
+    private static func installArtifacts(_ stagedArtifacts: [ArtifactPublication]) throws -> [ArtifactPublication] {
         var publications = stagedArtifacts
         do {
             for index in publications.indices {
@@ -343,45 +375,96 @@ public final class RemoteDesktopObservationService: DesktopObservationServicePro
                     try FileManager.default.moveItem(
                         at: publications[index].destinationURL,
                         to: publications[index].backupURL)
+                    publications[index].backedUp = true
                     guard try self.regularFileExists(at: publications[index].backupURL) else {
-                        try? FileManager.default.moveItem(
-                            at: publications[index].backupURL,
-                            to: publications[index].destinationURL)
                         throw CaptureROIError.invalidSourceImage
                     }
-                    publications[index].backedUp = true
                 }
-                do {
-                    try FileManager.default.moveItem(
-                        at: publications[index].stagedURL,
-                        to: publications[index].destinationURL)
-                    publications[index].installed = true
-                } catch {
-                    if publications[index].backedUp {
-                        try? FileManager.default.moveItem(
-                            at: publications[index].backupURL,
-                            to: publications[index].destinationURL)
-                    }
-                    throw error
-                }
+                try FileManager.default.moveItem(
+                    at: publications[index].stagedURL,
+                    to: publications[index].destinationURL)
+                publications[index].installed = true
             }
 
-            for publication in publications where publication.backedUp {
-                try? FileManager.default.removeItem(at: publication.backupURL)
-            }
+            return publications
         } catch {
-            for publication in publications.reversed() where publication.installed {
-                try? FileManager.default.removeItem(at: publication.destinationURL)
+            do {
+                try self.rollbackArtifacts(publications)
+            } catch {
+                throw CaptureROIError.invalidSourceImage
+            }
+            throw ArtifactPublicationError.installFailedAfterRollback
+        }
+    }
+
+    private static func finalizeArtifacts(_ publications: [ArtifactPublication]) {
+        for publication in publications where publication.backedUp {
+            try? FileManager.default.removeItem(at: publication.backupURL)
+        }
+    }
+
+    private static func discardStagedArtifacts(_ publications: [ArtifactPublication]) {
+        for publication in publications {
+            try? FileManager.default.removeItem(at: publication.stagedURL)
+        }
+    }
+
+    private static func snapshotOnlyResult(_ result: DesktopObservationResult) -> DesktopObservationResult {
+        let warning = "Snapshot publication succeeded, but caller-visible ROI artifacts could not be published"
+        var warnings = result.diagnostics.warnings
+        if !warnings.contains(warning) {
+            warnings.append(warning)
+        }
+        let capture = CaptureResult(
+            imageData: result.capture.imageData,
+            savedPath: nil,
+            metadata: result.capture.metadata,
+            warning: result.capture.warning)
+        let elements = result.elements.map {
+            ElementDetectionResult(
+                snapshotId: $0.snapshotId,
+                screenshotPath: "",
+                elements: $0.elements,
+                metadata: $0.metadata)
+        }
+        return DesktopObservationResult(
+            target: result.target,
+            capture: capture,
+            elements: elements,
+            ocr: result.ocr,
+            files: DesktopObservationFiles(),
+            timings: result.timings,
+            diagnostics: DesktopObservationDiagnostics(
+                warnings: warnings,
+                stateSnapshot: result.diagnostics.stateSnapshot,
+                target: result.diagnostics.target,
+                desktopMutationCompletedAt: result.diagnostics.desktopMutationCompletedAt,
+                desktopMutationPreservationAllowed: result.diagnostics.desktopMutationPreservationAllowed))
+    }
+
+    private static func rollbackArtifacts(_ publications: [ArtifactPublication]) throws {
+        var rollbackError: (any Error)?
+        for publication in publications.reversed() {
+            do {
+                if publication.installed,
+                   FileManager.default.fileExists(atPath: publication.destinationURL.path)
+                {
+                    try FileManager.default.removeItem(at: publication.destinationURL)
+                }
                 if publication.backedUp {
-                    try? FileManager.default.moveItem(
+                    try FileManager.default.moveItem(
                         at: publication.backupURL,
                         to: publication.destinationURL)
                 }
+                if FileManager.default.fileExists(atPath: publication.stagedURL.path) {
+                    try FileManager.default.removeItem(at: publication.stagedURL)
+                }
+            } catch {
+                rollbackError = rollbackError ?? error
             }
-            for publication in publications {
-                try? FileManager.default.removeItem(at: publication.stagedURL)
-            }
-            throw CaptureROIError.invalidSourceImage
+        }
+        if let rollbackError {
+            throw rollbackError
         }
     }
 
