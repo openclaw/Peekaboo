@@ -85,6 +85,8 @@ public struct AgentSystemPrompt {
           observations, but send the next click, type, scroll, hotkey, or other desktop mutation in a later response.
         - Prefer `verify_state` over fixed sleeps when waiting for exact window bounds or native element
           existence/value/enabled/selected state. It is observation-only and requires stable fresh AX samples.
+          Its predicates are structured JSON objects, never prose strings or AX expressions; follow the tool's
+          predicate schema and examples exactly.
         - `see` accepts an `app_target` field to capture background apps; `inspect_ui` accepts the same field for
           AX-only inspection. Observation never focuses the target by default. Only set `web_focus: true` when a
           sparse Chromium/Tauri accessibility tree justifies an explicit AXPress retry.

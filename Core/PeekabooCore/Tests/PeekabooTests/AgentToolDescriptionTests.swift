@@ -215,6 +215,21 @@ struct AgentToolDescriptionTests {
 
     @Test
     @MainActor
+    func `Verify state agent schema exposes structured predicate objects and examples`() throws {
+        let service = try PeekabooAgentService(services: PeekabooServices())
+        let tool = service.createVerifyStateTool()
+        let predicates = try #require(tool.parameters.properties["predicates"])
+        let items = try #require(predicates.items)
+
+        #expect(predicates.type == .array)
+        #expect(items.type == "object")
+        #expect(items.description?.contains(#"{"kind":"window_exists","expected":true}"#) == true)
+        #expect(items.description?.contains(#"{"kind":"element_value""#) == true)
+        #expect(tool.description.contains("never prose strings or AX expressions"))
+    }
+
+    @Test
+    @MainActor
     func `Optional parameters have default values documented`() {
         let allTools = makeAgentTools()
 

@@ -110,6 +110,16 @@ struct AgentSystemPromptTests {
     }
 
     @Test
+    func `generated prompt requires structured verify state predicates`() {
+        guard #available(macOS 14.0, *) else { return }
+        let prompt = AgentSystemPrompt.generate()
+
+        #expect(prompt.contains("predicates are structured JSON objects"))
+        #expect(prompt.contains("never prose strings or AX expressions"))
+        #expect(prompt.contains("predicate schema and examples exactly"))
+    }
+
+    @Test
     func `generated prompt limits each response to one desktop mutation`() {
         guard #available(macOS 14.0, *) else { return }
         let prompt = AgentSystemPrompt.generate()

@@ -11,6 +11,61 @@ import Testing
 @MainActor
 struct VerifyStateToolTests {
     @Test
+    func `Public schema documents structured predicate object variants`() async {
+        let fixture = VerifyStateFixture()
+        let context = await fixture.context(results: [])
+
+        guard case let .object(schema) = fixture.tool(context: context).inputSchema,
+              case let .object(properties)? = schema["properties"],
+              case let .object(predicates)? = properties["predicates"],
+              case let .object(items)? = predicates["items"],
+              case let .array(variants)? = items["oneOf"],
+              case let .string(description)? = items["description"]
+        else {
+            Issue.record("verify_state predicate schema is missing")
+            return
+        }
+
+        #expect(variants.count == 6)
+        #expect(variants.allSatisfy { variant in
+            guard case let .object(variantSchema) = variant,
+                  case let .string(type)? = variantSchema["type"]
+            else { return false }
+            return type == "object"
+        })
+        #expect(description.contains(#"{"kind":"window_exists","expected":true}"#))
+        #expect(description.contains(#"{"kind":"element_value""#))
+    }
+
+    @Test
+    func `Prose predicate formats return the supported structured shape`() async throws {
+        let fixture = VerifyStateFixture()
+        let context = await fixture.context(results: [])
+        let malformedPredicates = [
+            ["window id is 2887", "element with identifier basic-text-field has value Ready"],
+            ["identifier=basic-text-field value=Ready"],
+            [#"AXIdentifier == "basic-text-field" AND AXValue == "Ready""#],
+        ]
+
+        for predicates in malformedPredicates {
+            let response = try await fixture.tool(context: context).execute(arguments: ToolArguments(raw: [
+                "pid": Int(fixture.application.processIdentifier),
+                "window_id": fixture.window.windowID,
+                "predicates": predicates,
+            ]))
+
+            #expect(response.isError)
+            guard case let .text(text, _, _)? = response.content.first else {
+                Issue.record("Expected verify_state error text")
+                continue
+            }
+            #expect(text.contains("array of structured JSON objects"))
+            #expect(text.contains(#"{"kind":"element_value""#))
+            #expect(!text.contains("isn’t in the correct format"))
+        }
+    }
+
+    @Test
     func `Verifier requires two fresh identical satisfied samples by default`() async throws {
         let fixture = await MainActor.run { VerifyStateFixture() }
         let context = await fixture.context(results: [fixture.satisfiedResult, fixture.satisfiedResult])

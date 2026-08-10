@@ -22,6 +22,8 @@ public struct VerifyStateTool: MCPTool {
         satisfied samples by default, and never focuses, clicks, types, or replays an action.
         The hard timeout is 10 seconds. Results are `satisfied`, `unsatisfied`, or `unknown`;
         truncated, stale, ambiguous, process-generation-changed, or owner-mismatched observations are `unknown`.
+        Predicates are structured JSON objects, never prose strings or AX expressions. For example:
+        {"kind":"element_value","selector":{"identifier":"basic-text-field"},"expected_value":"Ready"}
         """
     }
 
@@ -39,7 +41,7 @@ public struct VerifyStateTool: MCPTool {
                     maximum: Int(UInt32.max)),
                 "predicates": SchemaBuilder.array(
                     items: Self.predicateSchema,
-                    description: "One to eight predicates. Every predicate must be satisfied.",
+                    description: "One to eight structured predicate objects. Every predicate must be satisfied.",
                     minItems: 1,
                     maxItems: 8),
                 "timeout_ms": SchemaBuilder.integer(
@@ -153,6 +155,6 @@ public struct VerifyStateTool: MCPTool {
                     "expected": SchemaBuilder.boolean(),
                 ],
                 required: ["kind", "selector", "expected"]),
-        ])
+        ], description: VerifyStatePredicateContract.schemaDescription)
     }
 }

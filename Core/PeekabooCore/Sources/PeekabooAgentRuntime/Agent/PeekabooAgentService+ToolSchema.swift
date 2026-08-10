@@ -47,14 +47,7 @@ extension PeekabooAgentService {
 
         // MCP schemas can express unions with anyOf/oneOf and no top-level type.
         // Keep those properties visible so strict providers do not see orphan required entries.
-        let paramType: AgentToolParameterProperty.ParameterType = if case let .string(typeStr) = propDict["type"],
-                                                                     let resolved = AgentToolParameterProperty
-                                                                         .ParameterType(rawValue: typeStr)
-        {
-            resolved
-        } else {
-            .string
-        }
+        let paramType = self.parameterType(from: propDict)
 
         let description = self.descriptionValue(from: propDict["description"])
         let enumValues = self.enumValues(from: propDict["enum"])
@@ -95,17 +88,35 @@ extension PeekabooAgentService {
             return AgentToolParameterItems(type: AgentToolParameterProperty.ParameterType.string.rawValue)
         }
 
-        let itemType: AgentToolParameterProperty.ParameterType = if case let .string(typeString) = itemsDict["type"],
-                                                                    let resolved = AgentToolParameterProperty
-                                                                        .ParameterType(rawValue: typeString)
-        {
-            resolved
-        } else {
-            .string
-        }
+        let itemType = self.parameterType(from: itemsDict)
 
         return AgentToolParameterItems(
             type: itemType.rawValue,
             description: self.descriptionValue(from: itemsDict["description"]))
+    }
+
+    private func parameterType(
+        from schema: [String: Value],
+        fallback: AgentToolParameterProperty.ParameterType = .string)
+        -> AgentToolParameterProperty.ParameterType
+    {
+        if case let .string(typeString) = schema["type"],
+           let resolved = AgentToolParameterProperty.ParameterType(rawValue: typeString)
+        {
+            return resolved
+        }
+
+        for unionKey in ["oneOf", "anyOf"] {
+            guard case let .array(variants) = schema[unionKey] else { continue }
+            let types = Set(variants.compactMap { variant -> AgentToolParameterProperty.ParameterType? in
+                guard case let .object(variantSchema) = variant else { return nil }
+                return self.parameterType(from: variantSchema)
+            })
+            if types.count == 1, let type = types.first {
+                return type
+            }
+        }
+
+        return fallback
     }
 }

@@ -11,6 +11,26 @@ enum VerifyStateStatus: String, Sendable {
     case unknown
 }
 
+enum VerifyStatePredicateContract {
+    static let schemaDescription =
+        """
+        Each item must be a JSON object, never a prose string or AX expression. Supported shapes:
+        {"kind":"window_exists","expected":true}
+        {"kind":"window_bounds","bounds":{"x":0,"y":0,"width":800,"height":600},"tolerance":1}
+        {"kind":"element_exists","selector":{"identifier":"save-button"},"expected":true}
+        {"kind":"element_value","selector":{"identifier":"basic-text-field"},"expected_value":"Ready"}
+        {"kind":"element_enabled","selector":{"label":"Save"},"expected":true}
+        {"kind":"element_selected","selector":{"role":"AXCheckBox"},"expected":true}
+        Selectors accept one or more exact identifier, label, or role fields.
+        """
+
+    static let malformedInputMessage =
+        """
+        predicates must be an array of structured JSON objects, not prose strings or AX expressions. For example: \
+        {"kind":"element_value","selector":{"identifier":"basic-text-field"},"expected_value":"Ready"}
+        """
+}
+
 struct VerifyStateRequest: Sendable {
     static let defaultTimeoutMilliseconds = 5000
     static let maximumTimeoutMilliseconds = 10000
@@ -45,6 +65,20 @@ struct VerifyStateRequest: Sendable {
     }
 
     init(arguments: ToolArguments) throws {
+        if let predicatesValue = arguments.getValue(for: "predicates") {
+            guard case let .array(predicateValues) = predicatesValue,
+                  predicateValues.allSatisfy({ value in
+                      if case .object = value {
+                          true
+                      } else {
+                          false
+                      }
+                  })
+            else {
+                throw VerifyStateInputError(VerifyStatePredicateContract.malformedInputMessage)
+            }
+        }
+
         let input = try arguments.decode(VerifyStateInput.self)
         let normalizedApp = input.app?.trimmingCharacters(in: .whitespacesAndNewlines)
 
