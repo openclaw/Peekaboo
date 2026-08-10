@@ -119,6 +119,18 @@ struct SeeCommandTests {
     }
 
     @Test
+    func `See observation request preserves explicit timeout above twenty seconds`() throws {
+        let command = try SeeCommand.parse(["--app", "Safari", "--timeout", "60s"])
+
+        let request = try command.makeObservationRequest(
+            target: .app(identifier: "Safari", window: .automatic)
+        )
+
+        #expect(request.timeout.overall == 60)
+        #expect(request.timeout.detection == 60)
+    }
+
+    @Test
     func `See command parses screen-index parameter`() throws {
         let command = try SeeCommand.parse(["--mode", "screen", "--screen-index", "1"])
         #expect(command.mode == .screen)

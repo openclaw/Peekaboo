@@ -4,6 +4,23 @@ import Foundation
 import os.log
 import PeekabooFoundation
 
+struct CachedDetachedAXObservationContext: Sendable {
+    let windowID: Int?
+    let windowTitle: String?
+    let windowBounds: CGRect?
+    let isDialog: Bool
+}
+
+struct DetachedAXObservationOutcome: Sendable {
+    let elements: [DetectedElement]
+    let windowID: Int?
+    let windowTitle: String?
+    let windowBounds: CGRect?
+    let isDialog: Bool
+    let truncationInfo: DetectionTruncationInfo?
+    let usedCache: Bool
+}
+
 /**
  * AI-powered UI element detection service for screenshot analysis.
  *
@@ -35,23 +52,49 @@ import PeekabooFoundation
  */
 @MainActor
 public final class ElementDetectionService {
+    typealias DetachedAXObservationRunner = @MainActor @Sendable (
+        DetachedAXObservationRequest) async throws -> DetachedAXObservationResult
+
     private let logger = Logger(subsystem: "boo.peekaboo.core", category: "ElementDetectionService")
     private let snapshotManager: (any SnapshotManagerProtocol)?
     private let windowIdentityService = WindowIdentityService()
     private let windowResolver: ElementDetectionWindowResolver
-    private let axTreeCache = ElementDetectionCache()
+    private let axTreeCache: ElementDetectionCache
+    private let detachedAXObservationRunner: DetachedAXObservationRunner
     private let webFocusFallback = WebFocusFallback()
     private let menuBarElementCollector = MenuBarElementCollector()
     private let axTreeCollector = AXTreeCollector()
 
-    public init(
+    public convenience init(
         snapshotManager: (any SnapshotManagerProtocol)? = nil,
         applicationService: ApplicationService? = nil)
     {
+        self.init(
+            snapshotManager: snapshotManager,
+            applicationService: applicationService,
+            axTreeCache: ElementDetectionCache(),
+            detachedAXObservationRunner: { request in
+                try await ElementDetectionTimeoutRunner.runDetached(
+                    targetProcessIdentifier: request.processIdentifier,
+                    targetProcessStartIdentity: request.expectedProcessStartIdentity,
+                    seconds: request.timeoutSeconds)
+                {
+                    try DetachedAXObservationWorker.inspect(request)
+                }
+            })
+    }
+
+    init(
+        snapshotManager: (any SnapshotManagerProtocol)?,
+        applicationService: ApplicationService?,
+        axTreeCache: ElementDetectionCache,
+        detachedAXObservationRunner: @escaping DetachedAXObservationRunner)
+    {
         self.snapshotManager = snapshotManager
-        self
-            .windowResolver =
+        self.windowResolver =
             ElementDetectionWindowResolver(applicationService: applicationService ?? ApplicationService())
+        self.axTreeCache = axTreeCache
+        self.detachedAXObservationRunner = detachedAXObservationRunner
     }
 
     /// Detect UI elements in a screenshot
@@ -202,6 +245,44 @@ public final class ElementDetectionService {
         !requiresFreshAccessibilityTree && budget == AXTraversalBudget()
     }
 
+    func cachedOrRunDetachedAXObservation(
+        cacheKey: ElementDetectionCache.Key?,
+        invalidatedThrough: Date?,
+        cachedContext: CachedDetachedAXObservationContext,
+        makeRequest: () throws -> DetachedAXObservationRequest) async throws -> DetachedAXObservationOutcome
+    {
+        if let cacheKey,
+           let cached = self.axTreeCache.result(
+               for: cacheKey,
+               invalidatedThrough: invalidatedThrough)
+        {
+            return DetachedAXObservationOutcome(
+                elements: cached.elements,
+                windowID: cachedContext.windowID,
+                windowTitle: cachedContext.windowTitle,
+                windowBounds: cachedContext.windowBounds,
+                isDialog: cachedContext.isDialog,
+                truncationInfo: cached.truncationInfo,
+                usedCache: true)
+        }
+
+        let detachedResult = try await self.detachedAXObservationRunner(makeRequest())
+        if let cacheKey {
+            self.axTreeCache.store(
+                detachedResult.elements,
+                truncationInfo: detachedResult.truncationInfo,
+                for: cacheKey)
+        }
+        return DetachedAXObservationOutcome(
+            elements: detachedResult.elements,
+            windowID: detachedResult.windowID,
+            windowTitle: detachedResult.windowTitle,
+            windowBounds: detachedResult.windowBounds,
+            isDialog: detachedResult.isDialog,
+            truncationInfo: detachedResult.truncationInfo,
+            usedCache: false)
+    }
+
     private func inspectReadOnlyElements(
         targetApp: NSRunningApplication,
         snapshotId: String,
@@ -253,87 +334,60 @@ public final class ElementDetectionService {
                 includeMenuBarElements: includeMenuBarElements)
             : nil
         let invalidatedThrough = self.snapshotManager?.effectiveImplicitLatestInvalidationWatermark
-        if let cacheKey,
-           let cached = self.axTreeCache.result(
-               for: cacheKey,
-               invalidatedThrough: invalidatedThrough)
-        {
-            let cachedContext = WindowContext(
-                applicationName: context?.applicationName ?? targetApp.localizedName,
-                applicationBundleId: context?.applicationBundleId ?? targetApp.bundleIdentifier,
-                applicationProcessId: processIdentifier,
-                windowTitle: context?.windowTitle,
-                windowID: context?.windowID,
-                windowBounds: context?.windowBounds,
-                windowMutationIdentity: context?.windowMutationIdentity,
-                shouldFocusWebContent: false,
-                includeMenuBarElements: includeMenuBarElements,
-                traversalBudget: budget,
-                requiresFreshAccessibilityTree: false,
-                accessibilityTimeoutSeconds: context?.accessibilityTimeoutSeconds)
-            return ElementDetectionResultBuilder.makeResult(
-                snapshotId: snapshotId,
-                elements: cached.elements,
-                usedCache: true,
-                windowContext: cachedContext,
-                isDialog: false,
-                truncationInfo: cached.truncationInfo)
-        }
-
         let timeoutSeconds = Self.normalizedAccessibilityTimeout(context?.accessibilityTimeoutSeconds)
-        let expectedProcessStartIdentity = context?.windowMutationIdentity?.ownerProcessStartIdentity ??
-            SystemIdentityResolver.processStartIdentity(processIdentifier)
-        guard let expectedProcessStartIdentity else {
-            throw PeekabooError.snapshotStale(
-                "Could not capture the target process generation before detached AX observation")
-        }
-        let request = DetachedAXObservationRequest(
-            processIdentifier: processIdentifier,
-            expectedProcessStartIdentity: expectedProcessStartIdentity,
-            windowID: context?.windowID,
-            windowTitle: context?.windowTitle,
-            expectedWindowBounds: context?.windowBounds,
-            windowMutationIdentity: context?.windowMutationIdentity,
-            includeMenuBarElements: includeMenuBarElements,
-            appIsActive: targetApp.isActive,
-            traversalBudget: budget,
-            timeoutSeconds: timeoutSeconds)
-        let detachedResult = try await ElementDetectionTimeoutRunner.runDetached(
-            targetProcessIdentifier: processIdentifier,
-            targetProcessStartIdentity: expectedProcessStartIdentity,
-            seconds: timeoutSeconds)
+        let outcome = try await self.cachedOrRunDetachedAXObservation(
+            cacheKey: cacheKey,
+            invalidatedThrough: invalidatedThrough,
+            cachedContext: CachedDetachedAXObservationContext(
+                windowID: context?.windowID,
+                windowTitle: context?.windowTitle,
+                windowBounds: context?.windowBounds,
+                isDialog: false))
         {
-            try DetachedAXObservationWorker.inspect(request)
+            let expectedProcessStartIdentity = context?.windowMutationIdentity?.ownerProcessStartIdentity ??
+                SystemIdentityResolver.processStartIdentity(processIdentifier)
+            guard let expectedProcessStartIdentity else {
+                throw PeekabooError.snapshotStale(
+                    "Could not capture the target process generation before detached AX observation")
+            }
+            return DetachedAXObservationRequest(
+                processIdentifier: processIdentifier,
+                expectedProcessStartIdentity: expectedProcessStartIdentity,
+                windowID: context?.windowID,
+                windowTitle: context?.windowTitle,
+                expectedWindowBounds: context?.windowBounds,
+                windowMutationIdentity: context?.windowMutationIdentity,
+                includeMenuBarElements: includeMenuBarElements,
+                appIsActive: targetApp.isActive,
+                traversalBudget: budget,
+                timeoutSeconds: timeoutSeconds)
         }
 
         let resolvedContext = WindowContext(
             applicationName: context?.applicationName ?? targetApp.localizedName,
             applicationBundleId: context?.applicationBundleId ?? targetApp.bundleIdentifier,
             applicationProcessId: processIdentifier,
-            windowTitle: detachedResult.windowTitle,
-            windowID: detachedResult.windowID,
-            windowBounds: context?.windowBounds ?? detachedResult.windowBounds,
+            windowTitle: outcome.windowTitle,
+            windowID: outcome.windowID,
+            windowBounds: context?.windowBounds ?? outcome.windowBounds,
             windowMutationIdentity: context?.windowMutationIdentity,
             shouldFocusWebContent: false,
             includeMenuBarElements: includeMenuBarElements,
             traversalBudget: budget,
-            requiresFreshAccessibilityTree: context?.requiresFreshAccessibilityTree ?? false,
-            accessibilityTimeoutSeconds: timeoutSeconds)
+            requiresFreshAccessibilityTree: outcome.usedCache ? false :
+                context?.requiresFreshAccessibilityTree ?? false,
+            accessibilityTimeoutSeconds: outcome.usedCache ? context?.accessibilityTimeoutSeconds : timeoutSeconds)
 
-        if let cacheKey {
-            self.axTreeCache.store(
-                detachedResult.elements,
-                truncationInfo: detachedResult.truncationInfo,
-                for: cacheKey)
+        if !outcome.usedCache {
+            self.logger.info("Detected \(outcome.elements.count) elements on detached AX lane")
         }
-        self.logger.info("Detected \(detachedResult.elements.count) elements on detached AX lane")
         return ElementDetectionResultBuilder.makeResult(
             snapshotId: snapshotId,
-            elements: detachedResult.elements,
-            usedCache: false,
+            elements: outcome.elements,
+            usedCache: outcome.usedCache,
             windowContext: resolvedContext,
-            isDialog: detachedResult.isDialog,
-            truncationInfo: detachedResult.truncationInfo)
+            isDialog: outcome.isDialog,
+            truncationInfo: outcome.truncationInfo)
     }
 
     private static func readOnlyWindowContext(

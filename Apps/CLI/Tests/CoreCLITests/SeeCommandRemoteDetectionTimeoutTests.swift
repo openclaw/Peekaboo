@@ -8,18 +8,18 @@ import Testing
 @MainActor
 struct SeeCommandRemoteDetectionTimeoutTests {
     @Test
-    func `Timeout-aware automation receives a wall-clock cushion`() async throws {
-        let automation = MockTimeoutAwareAutomationService(minimumRequestTimeoutSec: 16)
+    func `Timeout-aware automation preserves explicit timeout above twenty seconds with a cushion`() async throws {
+        let automation = MockTimeoutAwareAutomationService(minimumRequestTimeoutSec: 64)
 
         let result = try await SeeCommand.detectElements(
             automation: automation,
             imageData: Data([0xFF]),
             windowContext: nil,
-            timeoutSeconds: 12
+            timeoutSeconds: 60
         )
 
         #expect(result.snapshotId == "remote")
-        #expect(automation.recordedRequestTimeoutSec == 17)
+        #expect(automation.recordedRequestTimeoutSec == 65)
         #expect(automation.baseDetectElementsCalls == 0)
         #expect(automation.timeoutAwareCalls == 1)
     }

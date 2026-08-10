@@ -176,20 +176,45 @@ enum DetachedAXObservationWorker {
     }
 
     static func inspect(_ request: DetachedAXObservationRequest) throws -> DetachedAXObservationResult {
-        try self.validateIdentity(request)
+        try self.inspect(
+            request,
+            resolveWindow: { application, request, deadline in
+                try self.resolveWindow(application: application, request: request, deadline: deadline)
+            },
+            exactWindowUnavailableResult: { request, deadlineReached in
+                self.exactWindowUnavailableResult(request, deadlineReached: deadlineReached)
+            },
+            validateIdentity: { request in
+                try self.validateIdentity(request)
+            })
+    }
+
+    static func inspect(
+        _ request: DetachedAXObservationRequest,
+        resolveWindow: (
+            _ application: AXUIElement,
+            _ request: DetachedAXObservationRequest,
+            _ deadline: ContinuousClock.Instant) throws -> AXUIElement,
+        exactWindowUnavailableResult: (
+            _ request: DetachedAXObservationRequest,
+            _ deadlineReached: Bool) -> DetachedAXObservationResult?,
+        validateIdentity: (_ request: DetachedAXObservationRequest) throws -> Void) throws
+        -> DetachedAXObservationResult
+    {
+        try validateIdentity(request)
         let deadline = ContinuousClock.now.advanced(by: .seconds(request.timeoutSeconds))
         let application = AXUIElementCreateApplication(request.processIdentifier)
         self.prepare(application, deadline: deadline)
 
         let window: AXUIElement
         do {
-            window = try self.resolveWindow(application: application, request: request, deadline: deadline)
+            window = try resolveWindow(application, request, deadline)
         } catch {
-            if let fallback = self.exactWindowUnavailableResult(
+            if let fallback = exactWindowUnavailableResult(
                 request,
-                deadlineReached: ContinuousClock.now >= deadline)
+                ContinuousClock.now >= deadline)
             {
-                try self.validateIdentity(request)
+                try validateIdentity(request)
                 return fallback
             }
             throw error
@@ -228,7 +253,7 @@ enum DetachedAXObservationWorker {
             windowBounds: bounds,
             isDialog: ["AXDialog", "AXSystemDialog", "AXSheet"].contains(subrole) || self.isFileDialogTitle(title),
             truncationInfo: state.truncationInfo)
-        try self.validateIdentity(request)
+        try validateIdentity(request)
         return result
     }
 

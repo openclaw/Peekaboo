@@ -297,7 +297,7 @@ extension DesktopObservationServiceTests {
                 allowWebFocusFallback: false,
                 includeMenuBarElements: false),
             output: DesktopObservationOutputOptions(snapshotID: "snapshot-1"),
-            timeout: DesktopObservationTimeouts(detection: 0.75)))
+            timeout: DesktopObservationTimeouts(detection: 60)))
 
         XCTAssertNotNil(result.elements)
         XCTAssertEqual(automation.detectCalls, 1)
@@ -308,7 +308,7 @@ extension DesktopObservationServiceTests {
         XCTAssertEqual(automation.lastWindowContext?.windowID, 77)
         XCTAssertEqual(automation.lastWindowContext?.shouldFocusWebContent, false)
         XCTAssertEqual(automation.lastWindowContext?.includeMenuBarElements, false)
-        XCTAssertEqual(automation.lastWindowContext?.accessibilityTimeoutSeconds, 0.75)
+        XCTAssertEqual(automation.lastWindowContext?.accessibilityTimeoutSeconds, 60)
         XCTAssertEqual(result.timings.spans.map(\.name), [
             "state.snapshot",
             "target.resolve",
