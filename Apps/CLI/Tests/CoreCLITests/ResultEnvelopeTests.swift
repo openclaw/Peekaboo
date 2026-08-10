@@ -65,10 +65,9 @@ struct ResultEnvelopeTests {
     }
 
     @Test @MainActor func `clipboard reads omit action effect`() {
-        var command = ClipboardActionCommand()
-        command.action = "get"
-        #expect(command.defaultEffect == nil)
-        command.action = "set"
-        #expect(command.defaultEffect == .unverifiable)
+        let get = ClipboardCommand.GetSubcommand()
+        let set = ClipboardCommand.SetSubcommand()
+        #expect((get as? any ActionOutputFormattable)?.defaultEffect == nil)
+        #expect(set.defaultEffect == .unverifiable)
     }
 }

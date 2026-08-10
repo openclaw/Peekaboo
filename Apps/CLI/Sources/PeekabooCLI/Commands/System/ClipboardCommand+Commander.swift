@@ -1,4 +1,7 @@
 import Commander
+import Foundation
+import PeekabooCore
+import UniformTypeIdentifiers
 
 @available(macOS 14.0, *)
 @MainActor
@@ -37,12 +40,57 @@ extension ClipboardCommand {
         var runtimeOptions = CommandRuntimeOptions()
 
         mutating func run(using runtime: CommandRuntime) async throws {
-            var command = ClipboardActionCommand()
-            command.action = "get"
-            command.prefer = self.prefer
-            command.output = self.output
-            command.runtimeOptions = self.runtimeOptions
-            try await command.run(using: runtime)
+            self.runtime = runtime
+            self.logger.setJsonOutputMode(self.jsonOutput)
+
+            do {
+                let preferType = self.prefer.flatMap { UTType($0) }
+                guard let result = try self.services.clipboard.get(prefer: preferType) else {
+                    throw ValidationError("Clipboard is empty")
+                }
+
+                let text = result.textPreview.flatMap { _ in String(data: result.data, encoding: .utf8) }
+                let dataBase64 = self.jsonOutput && self.output == "-" && text == nil
+                    ? result.data.base64EncodedString()
+                    : nil
+                let resolvedOutput = self.output.flatMap {
+                    $0 == "-" ? $0 : ClipboardPathResolver.filePath(from: $0)
+                }
+                if let output = resolvedOutput, output != "-" {
+                    try result.data.write(to: ClipboardPathResolver.fileURL(from: output))
+                } else if resolvedOutput == "-", !self.jsonOutput {
+                    FileHandle.standardOutput.write(result.data)
+                }
+
+                let payload = ClipboardCommandResult(
+                    action: "get",
+                    uti: result.utiIdentifier,
+                    size: result.data.count,
+                    filePath: resolvedOutput,
+                    slot: nil,
+                    text: text,
+                    textPreview: result.textPreview,
+                    dataBase64: dataBase64,
+                    verification: nil
+                )
+                self.output(payload) {
+                    if resolvedOutput == "-" {
+                        return
+                    }
+                    if let text = String(data: result.data, encoding: .utf8) {
+                        print(text)
+                    } else if let output = resolvedOutput {
+                        print("📋 Saved \(result.data.count) bytes (\(result.utiIdentifier)) to \(output)")
+                    } else {
+                        print(
+                            "📋 Clipboard contains \(result.data.count) bytes of \(result.utiIdentifier); use --output to save."
+                        )
+                    }
+                }
+            } catch {
+                self.handleError(error)
+                throw ExitCode.failure
+            }
         }
     }
 
@@ -75,17 +123,44 @@ extension ClipboardCommand {
         var runtimeOptions = CommandRuntimeOptions()
 
         mutating func run(using runtime: CommandRuntime) async throws {
-            var command = ClipboardActionCommand()
-            command.action = "set"
-            command.text = self.text
-            command.filePath = self.filePath
-            command.dataBase64 = self.dataBase64
-            command.uti = self.uti
-            command.alsoText = self.alsoText
-            command.allowLarge = self.allowLarge
-            command.verify = self.verify
-            command.runtimeOptions = self.runtimeOptions
-            try await command.run(using: runtime)
+            self.runtime = runtime
+            self.logger.setJsonOutputMode(self.jsonOutput)
+
+            do {
+                self.resolvedRuntime.beginInteractionMutation()
+                let request = try makeClipboardWriteRequest(
+                    text: self.text,
+                    filePath: self.filePath,
+                    dataBase64: self.dataBase64,
+                    uti: self.uti,
+                    alsoText: self.alsoText,
+                    allowLarge: self.allowLarge
+                )
+                let result = try self.services.clipboard.set(request)
+                let verification = try verifyClipboardWriteIfNeeded(
+                    request: request,
+                    verify: self.verify,
+                    clipboard: self.services.clipboard
+                )
+                let payload = ClipboardCommandResult(
+                    action: "set",
+                    uti: result.utiIdentifier,
+                    size: result.data.count,
+                    filePath: nil,
+                    slot: nil,
+                    text: nil,
+                    textPreview: result.textPreview,
+                    dataBase64: nil,
+                    verification: verification
+                )
+                self.output(payload, effect: verification == nil ? .unverifiable : .confirmed) {
+                    print("✅ Set clipboard (\(result.utiIdentifier), \(result.data.count) bytes)")
+                    printClipboardVerificationSummary(verification)
+                }
+            } catch {
+                self.handleError(error)
+                throw ExitCode.failure
+            }
         }
     }
 
@@ -96,10 +171,25 @@ extension ClipboardCommand {
         var runtimeOptions = CommandRuntimeOptions()
 
         mutating func run(using runtime: CommandRuntime) async throws {
-            var command = ClipboardActionCommand()
-            command.action = "clear"
-            command.runtimeOptions = self.runtimeOptions
-            try await command.run(using: runtime)
+            self.runtime = runtime
+            self.logger.setJsonOutputMode(self.jsonOutput)
+
+            self.resolvedRuntime.beginInteractionMutation()
+            self.services.clipboard.clear()
+            let payload = ClipboardCommandResult(
+                action: "clear",
+                uti: nil,
+                size: nil,
+                filePath: nil,
+                slot: nil,
+                text: nil,
+                textPreview: nil,
+                dataBase64: nil,
+                verification: nil
+            )
+            self.output(payload) {
+                print("🧹 Cleared clipboard")
+            }
         }
     }
 
@@ -117,11 +207,30 @@ extension ClipboardCommand {
         var runtimeOptions = CommandRuntimeOptions()
 
         mutating func run(using runtime: CommandRuntime) async throws {
-            var command = ClipboardActionCommand()
-            command.action = "save"
-            command.slot = self.slot
-            command.runtimeOptions = self.runtimeOptions
-            try await command.run(using: runtime)
+            self.runtime = runtime
+            self.logger.setJsonOutputMode(self.jsonOutput)
+
+            do {
+                let slotName = self.slot ?? "0"
+                try self.services.clipboard.save(slot: slotName)
+                let payload = ClipboardCommandResult(
+                    action: "save",
+                    uti: nil,
+                    size: nil,
+                    filePath: nil,
+                    slot: slotName,
+                    text: nil,
+                    textPreview: nil,
+                    dataBase64: nil,
+                    verification: nil
+                )
+                self.output(payload) {
+                    print("💾 Saved clipboard to slot \"\(slotName)\"")
+                }
+            } catch {
+                self.handleError(error)
+                throw ExitCode.failure
+            }
         }
     }
 
@@ -139,20 +248,43 @@ extension ClipboardCommand {
         var runtimeOptions = CommandRuntimeOptions()
 
         mutating func run(using runtime: CommandRuntime) async throws {
-            var command = ClipboardActionCommand()
-            command.action = "restore"
-            command.slot = self.slot
-            command.runtimeOptions = self.runtimeOptions
-            try await command.run(using: runtime)
+            self.runtime = runtime
+            self.logger.setJsonOutputMode(self.jsonOutput)
+
+            do {
+                self.resolvedRuntime.beginInteractionMutation()
+                let slotName = self.slot ?? "0"
+                let result = try self.services.clipboard.restore(slot: slotName)
+                let payload = ClipboardCommandResult(
+                    action: "restore",
+                    uti: result.utiIdentifier,
+                    size: result.data.count,
+                    filePath: nil,
+                    slot: slotName,
+                    text: nil,
+                    textPreview: result.textPreview,
+                    dataBase64: nil,
+                    verification: nil
+                )
+                self.output(payload) {
+                    print("♻️  Restored slot \"\(slotName)\" (\(result.utiIdentifier), \(result.data.count) bytes)")
+                }
+            } catch {
+                self.handleError(error)
+                throw ExitCode.failure
+            }
         }
     }
 }
 
-extension ClipboardCommand.GetSubcommand: AsyncRuntimeCommand {}
-extension ClipboardCommand.SetSubcommand: AsyncRuntimeCommand {}
-extension ClipboardCommand.ClearSubcommand: AsyncRuntimeCommand {}
-extension ClipboardCommand.SaveSubcommand: AsyncRuntimeCommand {}
-extension ClipboardCommand.RestoreSubcommand: AsyncRuntimeCommand {}
+extension ClipboardCommand.GetSubcommand: AsyncRuntimeCommand, ErrorHandlingCommand, OutputFormattable {}
+extension ClipboardCommand.SetSubcommand: ActionOutputFormattable, AsyncRuntimeCommand, ErrorHandlingCommand,
+OutputFormattable {}
+extension ClipboardCommand.ClearSubcommand: ActionOutputFormattable, AsyncRuntimeCommand, ErrorHandlingCommand,
+OutputFormattable {}
+extension ClipboardCommand.SaveSubcommand: AsyncRuntimeCommand, ErrorHandlingCommand, OutputFormattable {}
+extension ClipboardCommand.RestoreSubcommand: ActionOutputFormattable, AsyncRuntimeCommand, ErrorHandlingCommand,
+OutputFormattable {}
 
 @MainActor
 extension ClipboardCommand.GetSubcommand: CommanderBindableCommand {
@@ -194,4 +326,108 @@ extension ClipboardCommand.RestoreSubcommand: CommanderBindableCommand {
     mutating func applyCommanderValues(_ values: CommanderBindableValues) throws {
         self.slot = values.singleOption("slot")
     }
+}
+
+private func makeClipboardWriteRequest(
+    text: String?,
+    filePath: String?,
+    dataBase64: String?,
+    uti: String?,
+    alsoText: String?,
+    allowLarge: Bool
+) throws -> ClipboardWriteRequest {
+    if let text {
+        return try ClipboardPayloadBuilder.textRequest(text: text, alsoText: alsoText, allowLarge: allowLarge)
+    }
+
+    if let filePath {
+        let url = ClipboardPathResolver.fileURL(from: filePath)
+        let data = try Data(contentsOf: url)
+        return ClipboardPayloadBuilder.dataRequest(
+            data: data,
+            uti: UTType(filenameExtension: url.pathExtension) ?? .data,
+            alsoText: alsoText,
+            allowLarge: allowLarge
+        )
+    }
+
+    if let dataBase64, let uti {
+        guard let data = Data(base64Encoded: dataBase64) else {
+            throw ValidationError("data-base64 is not valid base64")
+        }
+        return ClipboardPayloadBuilder.dataRequest(
+            data: data,
+            utiIdentifier: uti,
+            alsoText: alsoText,
+            allowLarge: allowLarge
+        )
+    }
+
+    throw ValidationError("Provide --text, --file-path, or --data-base64 with --uti")
+}
+
+private func verifyClipboardWriteIfNeeded(
+    request: ClipboardWriteRequest,
+    verify: Bool,
+    clipboard: any ClipboardServiceProtocol
+) throws -> ClipboardVerifyResult? {
+    guard verify else { return nil }
+
+    var verifiedTypes: [String] = []
+    var skippedTypes: [String] = []
+    for representation in request.representations {
+        guard let preferredType = UTType(representation.utiIdentifier) else {
+            skippedTypes.append(representation.utiIdentifier)
+            continue
+        }
+        guard let readBack = try clipboard.get(prefer: preferredType) else {
+            throw ValidationError("Clipboard verify failed: missing \(representation.utiIdentifier)")
+        }
+        guard readBack.utiIdentifier == representation.utiIdentifier else {
+            throw ValidationError(
+                "Clipboard verify failed: expected \(representation.utiIdentifier), got \(readBack.utiIdentifier)"
+            )
+        }
+
+        if isTextClipboardUTI(representation.utiIdentifier) {
+            guard let expected = normalizedClipboardTextData(representation.data),
+                  let actual = normalizedClipboardTextData(readBack.data) else {
+                throw ValidationError(
+                    "Clipboard verify failed: unable to decode text for \(representation.utiIdentifier)"
+                )
+            }
+            guard expected == actual else {
+                throw ValidationError("Clipboard verify failed: text mismatch for \(representation.utiIdentifier)")
+            }
+        } else if readBack.data != representation.data {
+            throw ValidationError("Clipboard verify failed: data mismatch for \(representation.utiIdentifier)")
+        }
+        verifiedTypes.append(representation.utiIdentifier)
+    }
+
+    return ClipboardVerifyResult(
+        ok: true,
+        verifiedTypes: verifiedTypes,
+        skippedTypes: skippedTypes.isEmpty ? nil : skippedTypes
+    )
+}
+
+private func printClipboardVerificationSummary(_ verification: ClipboardVerifyResult?) {
+    guard let verification else { return }
+    print("✅ Verified clipboard readback (\(verification.verifiedTypes.joined(separator: ", ")))")
+    if let skipped = verification.skippedTypes, !skipped.isEmpty {
+        print("⚠️  Skipped verify for: \(skipped.joined(separator: ", "))")
+    }
+}
+
+private func isTextClipboardUTI(_ utiIdentifier: String) -> Bool {
+    utiIdentifier == UTType.plainText.identifier || utiIdentifier == UTType.utf8PlainText.identifier
+}
+
+private func normalizedClipboardTextData(_ data: Data) -> Data? {
+    guard let string = String(data: data, encoding: .utf8) else { return nil }
+    return string
+        .replacingOccurrences(of: "\r\n", with: "\n")
+        .replacingOccurrences(of: "\r", with: "\n")
+        .data(using: .utf8)
 }
