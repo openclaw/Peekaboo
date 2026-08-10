@@ -133,14 +133,14 @@ struct BridgeHandshakeReport: Codable {
     }
 }
 
-struct BridgeCandidateErrorReport: Codable {
+struct BridgeCandidateErrorReport: Codable, Sendable {
     let kind: String
     let code: String?
     let message: String
     let details: String?
     let hint: String?
 
-    static func bridgeEnvelope(_ envelope: PeekabooBridgeErrorEnvelope) -> BridgeCandidateErrorReport {
+    nonisolated static func bridgeEnvelope(_ envelope: PeekabooBridgeErrorEnvelope) -> BridgeCandidateErrorReport {
         let hint: String? = switch envelope.code {
         case .unauthorizedClient:
             "Client not signed by an allowed TeamID. For local dev, set " +
@@ -159,18 +159,16 @@ struct BridgeCandidateErrorReport: Codable {
             code: envelope.code.rawValue,
             message: envelope.message,
             details: envelope.details,
-            hint: hint
-        )
+            hint: hint)
     }
 
-    static func other(_ error: any Error) -> BridgeCandidateErrorReport {
+    nonisolated static func other(_ error: any Error) -> BridgeCandidateErrorReport {
         BridgeCandidateErrorReport(
             kind: "system",
             code: nil,
             message: error.localizedDescription,
             details: String(describing: error),
-            hint: nil
-        )
+            hint: nil)
     }
 
     var humanSummary: String {

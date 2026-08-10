@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Default new agent configurations to GPT-5.6 and Claude Opus 5 while keeping credential-only Anthropic discovery on Opus 4.8 for zero-retention compatibility and preserving explicit model selections.
 
 ### Fixed
+- Probe Bridge diagnostic sockets concurrently with bounded cancellation while preserving runtime selection and candidate order, so `bridge status --verbose` no longer accumulates per-host handshake latency.
 - Require explicit `--foreground` consent before `menubar click` can inspect or open global status-item UI; keep `menubar list` read-only and report missing items as typed retry-safe pre-dispatch refusals.
 - Keep background app launch/open ownership through verified focus reconciliation, restoring only the exact prior process generation without overriding a later user foreground choice.
 - Stop probing, requesting, advertising, or showing AppleScript Automation permission now that application, Dock, and UI operations use native macOS APIs; remove AppleScript code from shipped executables while retaining legacy wire/error decoding for older Bridge hosts.

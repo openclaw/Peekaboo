@@ -23,8 +23,7 @@ struct BridgeCommand: ParsableCommand {
             StatusSubcommand.self,
         ],
         defaultSubcommand: StatusSubcommand.self,
-        showHelpOnEmptyInvocation: true
-    )
+        showHelpOnEmptyInvocation: true)
 }
 
 extension BridgeCommand {
@@ -34,8 +33,7 @@ extension BridgeCommand {
             MainActorCommandDescription.describe {
                 CommandDescription(
                     commandName: "status",
-                    abstract: "Report which Bridge host would be used"
-                )
+                    abstract: "Report which Bridge host would be used")
             }
         }
 
@@ -58,7 +56,7 @@ extension BridgeCommand {
             self.runtime = runtime
             self.logger.setJsonOutputMode(self.jsonOutput)
 
-            let report = await BridgeDiagnostics(logger: self.logger).run(runtimeOptions: self.runtimeOptions)
+            let report = try await BridgeDiagnostics(logger: self.logger).run(runtimeOptions: self.runtimeOptions)
             if self.jsonOutput {
                 outputSuccessCodable(data: report, logger: self.outputLogger)
                 return
