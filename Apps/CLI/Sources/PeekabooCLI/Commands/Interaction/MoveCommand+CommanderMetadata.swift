@@ -71,7 +71,7 @@ extension MoveCommand: CommanderSignatureProviding {
                 ),
                 .commandOption(
                     "on",
-                    help: "Opaque element ID copied from current see or inspect-ui output",
+                    help: "Opaque element ID copied from current see output",
                     long: "on"
                 ),
                 .commandOption(

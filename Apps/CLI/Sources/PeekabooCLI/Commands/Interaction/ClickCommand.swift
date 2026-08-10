@@ -14,7 +14,7 @@ struct ClickCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedComma
     @Option(help: "Snapshot ID, or 'latest' (uses latest if not specified)")
     var snapshot: String?
 
-    @Option(help: "Opaque element ID copied from current see or inspect-ui output")
+    @Option(help: "Opaque element ID copied from current see output")
     var on: String?
 
     @OptionGroup var target: InteractionTargetOptions

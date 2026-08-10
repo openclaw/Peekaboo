@@ -56,7 +56,7 @@ extension ClickCommand {
 
         💡 Hints:
           • Run 'peekaboo see' first to capture UI elements
-          • Copy the opaque element ID exactly from current see or inspect-ui output
+          • Copy the opaque element ID exactly from current see output
           • Element may have disappeared or changed
         """
     }

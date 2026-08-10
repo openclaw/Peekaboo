@@ -13,7 +13,7 @@ struct ToolsCommand: ParsableCommand {
         discussion: """
         Display the Peekaboo MCP/agent tool catalog. These tools are exposed to agents
         and `peekaboo mcp` clients (e.g. Codex, Claude Code, Cursor). Some tools also
-        have dedicated CLI wrappers, such as `peekaboo browser` and `peekaboo inspect-ui`.
+        have dedicated CLI wrappers, such as `peekaboo browser`.
         Run `peekaboo --help` for the CLI command list.
 
         Examples:
