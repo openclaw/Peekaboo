@@ -120,6 +120,19 @@ struct CaptureLiveBehaviorTests {
     }
 
     @Test
+    func `Commander cadence metadata declares the complete validation contract`() {
+        let live = CaptureLiveCommand.commanderSignature()
+        let action = CaptureActionCommand.commanderSignature()
+
+        for signature in [live, action] {
+            let idleHelp = signature.options.first { $0.label == "idleFps" }?.help
+            let activeHelp = signature.options.first { $0.label == "activeFps" }?.help
+            #expect(idleHelp == "Idle FPS (default 2; finite range 0.1...5)")
+            #expect(activeHelp == "Active FPS (default 8; finite range 0.5...15; must be >= idle FPS)")
+        }
+    }
+
+    @Test
     func `human output preserves nonzero tiny frame deltas`() {
         #expect(CaptureLiveCommand.formatChangePercent(0) == "0.00")
         #expect(CaptureLiveCommand.formatChangePercent(0.004) == "0.004")

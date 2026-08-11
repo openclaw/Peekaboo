@@ -44,8 +44,16 @@ public struct CaptureTool: MCPTool {
 
                 // Live cadence
                 "duration_seconds": SchemaBuilder.number(description: "Duration seconds (default 60, max 180)"),
-                "idle_fps": SchemaBuilder.number(description: "Idle FPS (default 2, min 0.1, max 5)"),
-                "active_fps": SchemaBuilder.number(description: "Active FPS (default 8, max 15)"),
+                "idle_fps": SchemaBuilder.number(
+                    description: "Idle FPS; must be finite (default 2, range 0.1...5)",
+                    minimum: 0.1,
+                    maximum: 5,
+                    default: 2),
+                "active_fps": SchemaBuilder.number(
+                    description: "Active FPS; must be finite and >= idle_fps (default 8, range 0.5...15)",
+                    minimum: 0.5,
+                    maximum: 15,
+                    default: 8),
                 "threshold_percent": SchemaBuilder.number(
                     description: "Whole-frame change percent to keep motion frames (default 2.5; 0 keeps all)"),
                 "heartbeat_sec": SchemaBuilder
