@@ -39,7 +39,8 @@ Deployment may launch the GUI permission broker with the process argument
 `--background-bridge-host`. That unattended mode still initializes the menu-bar status item,
 permission state, and GUI Bridge listener, but startup never presents API-key or permission
 onboarding, opens the main/Settings/Inspector windows, promotes the app into the Dock, or handles
-an invisible-window reopen by activating UI. Explicit later user intent from the status item or a
+an invisible-window reopen by activating UI. It also leaves Sparkle stopped so an automatic update
+check cannot surface UI. Explicit later user intent from the status item or a
 configured shortcut still opens the requested interface. If its Bridge listener cannot take
 ownership after bounded legacy-host migration retries, the app exits nonzero instead of remaining
 alive without a usable Bridge.

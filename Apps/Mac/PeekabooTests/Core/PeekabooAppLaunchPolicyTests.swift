@@ -17,6 +17,7 @@ struct PeekabooAppLaunchPolicyTests {
         #expect(!policy.suppressesAutomaticScenePresentation)
         #expect(!policy.disablesSceneRestoration)
         #expect(policy.initialActivationPolicy == nil)
+        #expect(policy.allowsUpdaterStartup)
         #expect(policy.maximumBridgeOwnershipRetries == nil)
         #expect(!policy.terminatesOnPermanentBridgeFailure)
     }
@@ -37,6 +38,7 @@ struct PeekabooAppLaunchPolicyTests {
         #expect(policy.suppressesAutomaticScenePresentation)
         #expect(policy.disablesSceneRestoration)
         #expect(policy.initialActivationPolicy == .accessory)
+        #expect(!policy.allowsUpdaterStartup)
         #expect(policy.maximumBridgeOwnershipRetries == 6)
         #expect(policy.terminatesOnPermanentBridgeFailure)
     }
@@ -70,5 +72,19 @@ struct PeekabooAppLaunchPolicyTests {
         #expect(window.ignoresMouseEvents)
         #expect(window.collectionBehavior.contains(.transient))
         #expect(!window.isVisible)
+    }
+
+    @Test
+    @MainActor
+    func `background Bridge host never starts the updater`() {
+        let policy = PeekabooAppLaunchPolicy(arguments: [
+            "Peekaboo",
+            PeekabooAppLaunchPolicy.backgroundBridgeHostArgument,
+        ])
+
+        let updater = makeUpdaterController(launchPolicy: policy)
+
+        #expect(!updater.isAvailable)
+        #expect(!updater.automaticallyChecksForUpdates)
     }
 }

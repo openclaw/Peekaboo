@@ -53,7 +53,10 @@ private func isDeveloperIDSigned(bundleURL: URL) -> Bool {
     return false
 }
 
-func makeUpdaterController() -> any UpdaterProviding {
+func makeUpdaterController(
+    launchPolicy: PeekabooAppLaunchPolicy = .current) -> any UpdaterProviding
+{
+    guard launchPolicy.allowsUpdaterStartup else { return DisabledUpdaterController() }
     let bundleURL = Bundle.main.bundleURL
     let isBundledApp = bundleURL.pathExtension == "app"
     guard isBundledApp, isDeveloperIDSigned(bundleURL: bundleURL) else { return DisabledUpdaterController() }
@@ -73,7 +76,9 @@ func makeUpdaterController() -> any UpdaterProviding {
 }
 #else
 @MainActor
-func makeUpdaterController() -> any UpdaterProviding {
+func makeUpdaterController(
+    launchPolicy _: PeekabooAppLaunchPolicy = .current) -> any UpdaterProviding
+{
     DisabledUpdaterController()
 }
 #endif

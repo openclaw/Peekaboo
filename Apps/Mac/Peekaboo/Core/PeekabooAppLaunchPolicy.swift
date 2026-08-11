@@ -60,6 +60,10 @@ struct PeekabooAppLaunchPolicy: Equatable, Sendable {
         self.isBackgroundBridgeHost ? .accessory : nil
     }
 
+    var allowsUpdaterStartup: Bool {
+        !self.isBackgroundBridgeHost
+    }
+
     var maximumBridgeOwnershipRetries: Int? {
         self.isBackgroundBridgeHost ? 6 : nil
     }

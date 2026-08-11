@@ -225,10 +225,10 @@ private struct AppStateConnectionContext {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let logger = Logger(subsystem: "boo.peekaboo.app", category: "App")
-    private let launchPolicy = PeekabooAppLaunchPolicy.current
+    private let launchPolicy: PeekabooAppLaunchPolicy
     private var statusBarController: StatusBarController?
     private let automationTargetTracker = AutomationTargetTracker()
-    let updaterController: any UpdaterProviding = makeUpdaterController()
+    let updaterController: any UpdaterProviding
     var windowOpener: ((String) -> Void)?
     private var bridgeHost: PeekabooBridgeHost?
     private var bridgeStartTask: Task<Void, Never>?
@@ -248,6 +248,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var didSetupKeyboardShortcuts = false
     private var didSetupNotificationObservers = false
     private var didObserveAgentMode = false
+
+    override init() {
+        let launchPolicy = PeekabooAppLaunchPolicy.current
+        self.launchPolicy = launchPolicy
+        self.updaterController = makeUpdaterController(launchPolicy: launchPolicy)
+        super.init()
+    }
 
     func applicationWillFinishLaunching(_: Notification) {
         if let activationPolicy = self.launchPolicy.initialActivationPolicy {
