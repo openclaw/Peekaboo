@@ -49,13 +49,13 @@ public struct PasteTool: MCPTool {
             properties: [
                 // Targeting
                 "app": SchemaBuilder.string(description: "Target app name/bundle ID, or 'PID:<n>'."),
-                "pid": SchemaBuilder.number(description: "Target process ID (alternative to app)."),
-                "window_id": SchemaBuilder.number(
+                "pid": SchemaBuilder.integer(description: "Target process ID (alternative to app)."),
+                "window_id": SchemaBuilder.integer(
                     description: "Exact window ID for atomic background delivery, or foreground focus when requested."),
                 "window_title": SchemaBuilder
                     .string(description: "Window title substring for atomic exact-window background delivery."),
                 "window_index": SchemaBuilder
-                    .number(description: "Window index (0-based); requires app/pid and pins that exact window."),
+                    .integer(description: "Window index (0-based); requires app/pid and pins that exact window."),
 
                 // Payload
                 "text": SchemaBuilder.string(
@@ -70,7 +70,7 @@ public struct PasteTool: MCPTool {
                 "allowLarge": SchemaBuilder.boolean(description: "Allow payloads larger than 10 MB.", default: false),
 
                 // Restore timing
-                "restore_delay_ms": SchemaBuilder.number(
+                "restore_delay_ms": SchemaBuilder.integer(
                     description: "Delay before restoring the previous clipboard (ms). Default: 150.",
                     minimum: 0,
                     default: 150),
@@ -110,15 +110,15 @@ public struct PasteTool: MCPTool {
         do {
             let target = try MCPInteractionTarget(
                 app: arguments.getString("app"),
-                pid: arguments.getInt("pid"),
+                pid: arguments.validatedInt("pid"),
                 windowTitle: arguments.getString("window_title"),
-                windowIndex: arguments.getInt("window_index"),
-                windowId: arguments.getInt("window_id"))
+                windowIndex: arguments.validatedInt("window_index"),
+                windowId: arguments.validatedInt("window_id"))
 
             let foreground = arguments.getBool("foreground") ?? false
             let expectedPIDIdentity = try Self.explicitPIDIdentity(target: target)
             let payload = try self.makePayload(arguments: arguments)
-            let restoreDelayMs = max(0, arguments.getInt("restore_delay_ms") ?? 150)
+            let restoreDelayMs = try max(0, arguments.validatedInt("restore_delay_ms") ?? 150)
 
             if case let .explicit(request, text?) = payload, !foreground {
                 let destination = try await self.resolveDeliveryDestination(

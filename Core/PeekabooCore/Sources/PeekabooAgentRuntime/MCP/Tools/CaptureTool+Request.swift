@@ -93,7 +93,7 @@ private struct CaptureInput: Codable {
     let activeFps: Double?
     let thresholdPercent: Double?
     let heartbeatSec: Double?
-    let quietMs: Double?
+    let quietMs: Int?
 
     let input: String?
     let sampleFps: Double?
@@ -198,7 +198,7 @@ extension CaptureRequest {
         }
         let threshold = min(max(input.thresholdPercent ?? 2.5, 0), 100)
         let heartbeat = max(input.heartbeatSec ?? 5, 0)
-        let quiet = max(Int(input.quietMs ?? 1000), 0)
+        let quiet = max(input.quietMs ?? 1000, 0)
         let maxFrames = max(constraints.maxFrames, 1)
         let maxMbAdjusted = constraints.maxMb.flatMap { $0 > 0 ? $0 : nil }
         let focus = try CaptureToolArgumentResolver.captureFocus(from: input.captureFocus)

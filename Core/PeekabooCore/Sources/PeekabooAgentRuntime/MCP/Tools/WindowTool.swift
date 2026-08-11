@@ -62,9 +62,9 @@ public struct WindowTool: MCPTool {
                     description: "Target application name, bundle ID, or process ID"),
                 "title": SchemaBuilder.string(
                     description: "Window title to target (partial matching supported)"),
-                "index": SchemaBuilder.number(
+                "index": SchemaBuilder.integer(
                     description: "Window index (0-based) for multi-window applications"),
-                "window_id": SchemaBuilder.number(
+                "window_id": SchemaBuilder.integer(
                     description: "Window ID (from window list); preferred stable selector"),
                 "x": SchemaBuilder.number(
                     description: "X coordinate for move or set-bounds action"),
@@ -101,8 +101,14 @@ public struct WindowTool: MCPTool {
 
         let app = arguments.getString("app")
         let title = arguments.getString("title")
-        let index = arguments.getInt("index")
-        let windowId = arguments.getInt("window_id")
+        let index: Int?
+        let windowId: Int?
+        do {
+            index = try arguments.validatedInt("index")
+            windowId = try arguments.validatedInt("window_id")
+        } catch {
+            return ToolResponse.error(error.localizedDescription)
+        }
         let x = arguments.getNumber("x")
         let y = arguments.getNumber("y")
         let width = arguments.getNumber("width")

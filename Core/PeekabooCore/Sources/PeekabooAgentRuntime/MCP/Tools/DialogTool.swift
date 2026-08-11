@@ -46,10 +46,10 @@ public struct DialogTool: MCPTool {
 
                 // Targeting
                 "app": SchemaBuilder.string(description: "Target app name/bundle ID, or 'PID:<n>'."),
-                "pid": SchemaBuilder.number(description: "Target process ID (alternative to app)."),
-                "window_id": SchemaBuilder.number(description: "Window ID (preferred stable selector)."),
+                "pid": SchemaBuilder.integer(description: "Target process ID (alternative to app)."),
+                "window_id": SchemaBuilder.integer(description: "Window ID (preferred stable selector)."),
                 "window_title": SchemaBuilder.string(description: "Window title (substring match)."),
-                "window_index": SchemaBuilder.number(description: "Window index (0-based); requires app/pid."),
+                "window_index": SchemaBuilder.integer(description: "Window index (0-based); requires app/pid."),
                 "foreground": SchemaBuilder.boolean(
                     description: "Allow focus/global input. Required for input, file, and forced dismiss.",
                     default: false),
@@ -60,7 +60,8 @@ public struct DialogTool: MCPTool {
                 // input
                 "text": SchemaBuilder.string(description: "Text to input (for input action)."),
                 "field": SchemaBuilder.string(description: "Field label/placeholder to target (for input action)."),
-                "field_index": SchemaBuilder.number(description: "Field index (0-based) to target (for input action)."),
+                "field_index": SchemaBuilder.integer(
+                    description: "Field index (0-based) to target (for input action)."),
                 "clear": SchemaBuilder.boolean(description: "Clear existing text first.", default: false),
 
                 // file
@@ -90,7 +91,7 @@ public struct DialogTool: MCPTool {
 
         do {
             let action = try DialogToolAction(arguments: arguments)
-            let inputs = DialogToolInputs(arguments: arguments)
+            let inputs = try DialogToolInputs(arguments: arguments)
 
             if action == .list, inputs.foreground {
                 throw DialogToolInputError.invalid("foreground", "dialog list is always read-only/background")

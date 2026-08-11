@@ -7,14 +7,14 @@ struct ObservationPolicyRequestTests {
     @Test
     func `MCP observations default web focus off`() throws {
         #expect(try !(SeeRequest(arguments: ToolArguments(raw: [:])).webFocus))
-        #expect(!InspectUIRequest(arguments: ToolArguments(raw: [:])).webFocus)
+        #expect(try !InspectUIRequest(arguments: ToolArguments(raw: [:])).webFocus)
     }
 
     @Test
     func `MCP observations accept explicit web focus`() throws {
         let arguments = ToolArguments(raw: ["web_focus": true])
         #expect(try SeeRequest(arguments: arguments).webFocus)
-        #expect(InspectUIRequest(arguments: arguments).webFocus)
+        #expect(try InspectUIRequest(arguments: arguments).webFocus)
     }
 
     @Test

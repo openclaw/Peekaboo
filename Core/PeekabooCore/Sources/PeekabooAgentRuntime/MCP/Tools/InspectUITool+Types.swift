@@ -1,5 +1,6 @@
 import MCP
 import PeekabooAutomationKit
+import PeekabooFoundation
 import TachikomaMCP
 
 struct InspectUIRequest {
@@ -9,20 +10,21 @@ struct InspectUIRequest {
     let webFocus: Bool
     let traversalBudget: AXTraversalBudget
 
-    init(arguments: ToolArguments) {
+    init(arguments: ToolArguments) throws {
         self.appTarget = arguments.getString("app_target")
         self.windowIDValue = arguments.getValue(for: "window_id")
         self.snapshotId = arguments.getString("snapshot")
         self.webFocus = arguments.getBool("web_focus") ?? false
-        self.traversalBudget = AXTraversalBudget.resolved(
+        self.traversalBudget = try AXTraversalBudget.resolved(
             maxDepth: Self.positiveInt("max_depth", in: arguments),
             maxElementCount: Self.positiveInt("max_elements", in: arguments),
             maxChildrenPerNode: Self.positiveInt("max_children", in: arguments))
     }
 
-    private static func positiveInt(_ key: String, in arguments: ToolArguments) -> Int? {
-        guard let value = arguments.getInt(key), value > 0 else {
-            return nil
+    private static func positiveInt(_ key: String, in arguments: ToolArguments) throws -> Int? {
+        guard let value = try arguments.validatedInt(key) else { return nil }
+        guard value > 0 else {
+            throw PeekabooError.invalidInput("\(key) must be a positive integer")
         }
         return value
     }

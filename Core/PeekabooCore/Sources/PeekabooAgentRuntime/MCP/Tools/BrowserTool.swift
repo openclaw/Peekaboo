@@ -55,9 +55,9 @@ public struct BrowserTool: MCPTool {
                 "double": SchemaBuilder.boolean(description: "Double-click for click.", default: false),
                 "bring_to_front": SchemaBuilder.boolean(description: "Bring selected page to front.", default: false),
                 "background": SchemaBuilder.boolean(description: "Open new page in the background.", default: true),
-                "timeout": SchemaBuilder.number(description: "Timeout in milliseconds for navigation/waits."),
-                "page_size": SchemaBuilder.number(description: "Pagination size for console/network listings."),
-                "page_index": SchemaBuilder.number(description: "Zero-based page index for console/network listings."),
+                "timeout": SchemaBuilder.integer(description: "Timeout in milliseconds for navigation/waits."),
+                "page_size": SchemaBuilder.integer(description: "Pagination size for console/network listings."),
+                "page_index": SchemaBuilder.integer(description: "Zero-based page index for console/network listings."),
                 "types": SchemaBuilder.array(
                     items: SchemaBuilder.string(),
                     description: "Console message types to include."),
@@ -67,15 +67,15 @@ public struct BrowserTool: MCPTool {
                 "include_preserved": SchemaBuilder.boolean(
                     description: "Include preserved console/network data from recent navigations.",
                     default: false),
-                "message_id": SchemaBuilder.number(description: "Console message ID for get_console_message."),
-                "request_id": SchemaBuilder.number(description: "Network request ID for get_network_request."),
+                "message_id": SchemaBuilder.integer(description: "Console message ID for get_console_message."),
+                "request_id": SchemaBuilder.integer(description: "Network request ID for get_network_request."),
                 "request_file_path": SchemaBuilder.string(description: "Path for saving a network request body."),
                 "response_file_path": SchemaBuilder.string(description: "Path for saving a network response body."),
                 "path": SchemaBuilder.string(description: "File path for snapshots, screenshots, or trace output."),
                 "format": SchemaBuilder.string(
                     description: "Screenshot format.",
                     enum: ["png", "jpeg", "webp"]),
-                "quality": SchemaBuilder.number(description: "Screenshot quality for jpeg/webp."),
+                "quality": SchemaBuilder.integer(description: "Screenshot quality for jpeg/webp."),
                 "full_page": SchemaBuilder.boolean(description: "Capture a full-page screenshot.", default: false),
                 "trace_action": SchemaBuilder.string(
                     description: "Performance trace operation.",
@@ -138,6 +138,8 @@ public struct BrowserTool: MCPTool {
                     channel: channel)
             }
         } catch let error as BrowserToolError {
+            return ToolResponse.error(error.localizedDescription)
+        } catch let error as MCPToolArgumentValueError {
             return ToolResponse.error(error.localizedDescription)
         } catch {
             return ToolResponse.error(Self.permissionHelp(error: error))
@@ -346,19 +348,21 @@ public enum BrowserMCPCallMapper {
             return try BrowserMCPMappedCall(toolName: "new_page", arguments: self.compact([
                 "url": self.requiredURL(arguments),
                 "background": arguments.getBool("background") ?? true,
-                "timeout": arguments.getInt("timeout"),
+                "timeout": arguments.validatedInt("timeout"),
             ]))
         case .navigate:
-            return BrowserMCPMappedCall(toolName: "navigate_page", arguments: self.navigateArguments(arguments))
+            return try BrowserMCPMappedCall(
+                toolName: "navigate_page",
+                arguments: self.navigateArguments(arguments))
         case .waitFor:
             let text: [String] = if let values = arguments.getStringArray("text") {
                 values
             } else {
                 try [self.requiredString("text", arguments)]
             }
-            return BrowserMCPMappedCall(toolName: "wait_for", arguments: self.compact([
+            return try BrowserMCPMappedCall(toolName: "wait_for", arguments: self.compact([
                 "text": text,
-                "timeout": arguments.getInt("timeout"),
+                "timeout": arguments.validatedInt("timeout"),
             ]))
         default:
             throw BrowserToolError.invalidAction(action.rawValue)
@@ -424,9 +428,9 @@ public enum BrowserMCPCallMapper {
                 "promptText": arguments.getString("text"),
             ]))
         case .screenshot:
-            return BrowserMCPMappedCall(toolName: "take_screenshot", arguments: self.compact([
+            return try BrowserMCPMappedCall(toolName: "take_screenshot", arguments: self.compact([
                 "format": arguments.getString("format") ?? "png",
-                "quality": arguments.getInt("quality"),
+                "quality": arguments.validatedInt("quality"),
                 "uid": arguments.getString("uid"),
                 "fullPage": arguments.getBool("full_page"),
                 "filePath": arguments.getString("path"),
@@ -442,9 +446,9 @@ public enum BrowserMCPCallMapper {
     {
         switch action {
         case .console:
-            return self.consoleCall(arguments)
+            return try self.consoleCall(arguments)
         case .network:
-            return self.networkCall(arguments)
+            return try self.networkCall(arguments)
         case .performanceTrace:
             return try self.performanceCall(arguments)
         default:
@@ -452,39 +456,39 @@ public enum BrowserMCPCallMapper {
         }
     }
 
-    private static func navigateArguments(_ arguments: ToolArguments) -> [String: Any] {
+    private static func navigateArguments(_ arguments: ToolArguments) throws -> [String: Any] {
         let url = self.url(arguments)
         let type = arguments.getString("navigation_type") ?? (url == nil ? "reload" : "url")
-        return self.compact([
+        return try self.compact([
             "type": type,
             "url": url,
-            "timeout": arguments.getInt("timeout"),
+            "timeout": arguments.validatedInt("timeout"),
         ])
     }
 
-    private static func consoleCall(_ arguments: ToolArguments) -> BrowserMCPMappedCall {
-        if let messageId = arguments.getInt("message_id") {
+    private static func consoleCall(_ arguments: ToolArguments) throws -> BrowserMCPMappedCall {
+        if let messageId = try arguments.validatedInt("message_id") {
             return BrowserMCPMappedCall(toolName: "get_console_message", arguments: ["msgid": messageId])
         }
-        return BrowserMCPMappedCall(toolName: "list_console_messages", arguments: self.compact([
-            "pageSize": arguments.getInt("page_size"),
-            "pageIdx": arguments.getInt("page_index"),
+        return try BrowserMCPMappedCall(toolName: "list_console_messages", arguments: self.compact([
+            "pageSize": arguments.validatedInt("page_size"),
+            "pageIdx": arguments.validatedInt("page_index"),
             "types": arguments.getStringArray("types"),
             "includePreservedMessages": arguments.getBool("include_preserved") ?? false,
         ]))
     }
 
-    private static func networkCall(_ arguments: ToolArguments) -> BrowserMCPMappedCall {
-        if let requestId = arguments.getInt("request_id") {
+    private static func networkCall(_ arguments: ToolArguments) throws -> BrowserMCPMappedCall {
+        if let requestId = try arguments.validatedInt("request_id") {
             return BrowserMCPMappedCall(toolName: "get_network_request", arguments: self.compact([
                 "reqid": requestId,
                 "requestFilePath": arguments.getString("request_file_path"),
                 "responseFilePath": arguments.getString("response_file_path"),
             ]))
         }
-        return BrowserMCPMappedCall(toolName: "list_network_requests", arguments: self.compact([
-            "pageSize": arguments.getInt("page_size"),
-            "pageIdx": arguments.getInt("page_index"),
+        return try BrowserMCPMappedCall(toolName: "list_network_requests", arguments: self.compact([
+            "pageSize": arguments.validatedInt("page_size"),
+            "pageIdx": arguments.validatedInt("page_index"),
             "resourceTypes": arguments.getStringArray("resource_types"),
             "includePreservedRequests": arguments.getBool("include_preserved") ?? false,
         ]))

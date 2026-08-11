@@ -21,6 +21,15 @@ struct MCPToolArgumentValidationTests {
             (SpaceTool(context: context), "to", .string("1e20")),
             (PressTool(context: context), "count", .double(.infinity)),
             (AppTool(context: context), "wait", .double(.infinity)),
+            (DialogTool(context: context), "field_index", .double(1.5)),
+            (PasteTool(context: context), "pid", .double(1234.9)),
+            (PasteTool(context: context), "restore_delay_ms", .double(1e20)),
+            (WindowTool(context: context), "window_id", .string("1234.9")),
+            (BrowserTool(context: context), "timeout", .double(1.5)),
+            (SeeTool(context: context), "max_depth", .double(1.5)),
+            (InspectUITool(context: context), "max_children", .string("1e20")),
+            (CaptureTool(context: context), "pid", .double(1234.9)),
+            (CaptureTool(context: context), "quiet_ms", .double(0.5)),
         ]
 
         for (index, testCase) in cases.enumerated() {
@@ -100,6 +109,10 @@ struct MCPToolArgumentValidationTests {
                 "direction": .string("down"),
                 "foreground": .bool(true),
                 "amount": .double(.nan),
+            ]),
+            (PasteTool(context: context), [
+                "text": .string("must-not-type"),
+                "pid": .double(1234.9),
             ]),
         ]
 

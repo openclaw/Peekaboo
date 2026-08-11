@@ -50,15 +50,18 @@ public struct InspectUITool: MCPTool {
                 "web_focus": SchemaBuilder.boolean(
                     description: "Optional. Allow an AXPress retry on sparse Chromium/Tauri web content.",
                     default: false),
-                "max_depth": SchemaBuilder.number(
-                    description: "Optional. Maximum AX traversal depth. Env fallback: PEEKABOO_AX_MAX_DEPTH."),
-                "max_elements": SchemaBuilder.number(
-                    description: "Optional. Maximum AX elements to collect. Env fallback: PEEKABOO_AX_MAX_ELEMENTS."),
-                "max_children": SchemaBuilder.number(
+                "max_depth": SchemaBuilder.integer(
+                    description: "Optional. Maximum AX traversal depth. Env fallback: PEEKABOO_AX_MAX_DEPTH.",
+                    minimum: 1),
+                "max_elements": SchemaBuilder.integer(
+                    description: "Optional. Maximum AX elements to collect. Env fallback: PEEKABOO_AX_MAX_ELEMENTS.",
+                    minimum: 1),
+                "max_children": SchemaBuilder.integer(
                     description: """
                     Optional. Maximum AX children per node. Env fallback: PEEKABOO_AX_MAX_CHILDREN.
                     Increase this for flat Qt/Electron panels with many sibling controls.
-                    """),
+                    """,
+                    minimum: 1),
             ],
             required: [])
     }
@@ -69,7 +72,12 @@ public struct InspectUITool: MCPTool {
 
     @MainActor
     public func execute(arguments: ToolArguments) async throws -> ToolResponse {
-        let request = InspectUIRequest(arguments: arguments)
+        let request: InspectUIRequest
+        do {
+            request = try InspectUIRequest(arguments: arguments)
+        } catch {
+            return Self.failureResponse(error)
+        }
         var newlyCreatedSnapshotID: String?
         var newlyCreatedSnapshotWasPending = false
 

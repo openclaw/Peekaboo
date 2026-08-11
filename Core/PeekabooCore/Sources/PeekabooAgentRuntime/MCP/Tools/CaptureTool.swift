@@ -32,10 +32,10 @@ public struct CaptureTool: MCPTool {
                     description: "screen|window|frontmost|area (region alias)",
                     enum: ["screen", "window", "frontmost", "area", "region"]),
                 "app": SchemaBuilder.string(description: "Optional app/bundle/PID target for window mode"),
-                "pid": SchemaBuilder.number(description: "Optional process ID target for window mode"),
+                "pid": SchemaBuilder.integer(description: "Optional process ID target for window mode"),
                 "window_title": SchemaBuilder.string(description: "Optional window title filter"),
-                "window_index": SchemaBuilder.number(description: "Optional window index; requires app or pid"),
-                "screen_index": SchemaBuilder.number(description: "Optional screen index"),
+                "window_index": SchemaBuilder.integer(description: "Optional window index; requires app or pid"),
+                "screen_index": SchemaBuilder.integer(description: "Optional screen index"),
                 "region": SchemaBuilder.string(description: "x,y,width,height for area mode"),
                 "capture_focus": SchemaBuilder.string(
                     description: "background (default)|foreground (activate target)|auto (legacy)",
@@ -58,29 +58,29 @@ public struct CaptureTool: MCPTool {
                     description: "Whole-frame change percent to keep motion frames (default 2.5; 0 keeps all)"),
                 "heartbeat_sec": SchemaBuilder
                     .number(description: "Heartbeat interval seconds (default 5, 0 disables)"),
-                "quiet_ms": SchemaBuilder.number(description: "Calm period before returning to idle (default 1000)"),
+                "quiet_ms": SchemaBuilder.integer(description: "Calm period before returning to idle (default 1000)"),
 
                 // Video sampling
                 "input": SchemaBuilder.string(description: "Video file path (required for source=video)"),
                 "sample_fps": SchemaBuilder.number(description: "Sample FPS (default 2). Exclusive with every_ms."),
-                "every_ms": SchemaBuilder.number(description: "Sample every N ms. Exclusive with sample_fps."),
-                "start_ms": SchemaBuilder.number(description: "Trim start in ms"),
-                "end_ms": SchemaBuilder.number(description: "Trim end in ms"),
+                "every_ms": SchemaBuilder.integer(description: "Sample every N ms. Exclusive with sample_fps."),
+                "start_ms": SchemaBuilder.integer(description: "Trim start in ms"),
+                "end_ms": SchemaBuilder.integer(description: "Trim end in ms"),
                 "no_diff": SchemaBuilder.boolean(description: "Keep all sampled frames (disable diff filtering)"),
 
                 // Shared caps/output
                 "highlight_changes": SchemaBuilder.boolean(description: "Overlay motion boxes on frames"),
-                "max_frames": SchemaBuilder.number(description: "Soft frame cap (default 800)"),
-                "max_mb": SchemaBuilder.number(description: "Soft size cap MB (optional)"),
+                "max_frames": SchemaBuilder.integer(description: "Soft frame cap (default 800)"),
+                "max_mb": SchemaBuilder.integer(description: "Soft size cap MB (optional)"),
                 "resolution_cap": SchemaBuilder.number(description: "Cap longest side px (default 1440)"),
                 "diff_strategy": SchemaBuilder.string(
                     description: "fast|quality (default fast)",
                     enum: ["fast", "quality"],
                     default: "fast"),
                 "diff_budget_ms": SchemaBuilder
-                    .number(description: "Diff time budget ms before falling back to fast (default 30 for quality)"),
+                    .integer(description: "Diff time budget ms before falling back to fast (default 30 for quality)"),
                 "output_dir": SchemaBuilder.string(description: "Optional absolute directory for outputs"),
-                "autoclean_minutes": SchemaBuilder.number(description: "Minutes to keep temp outputs (default 120)"),
+                "autoclean_minutes": SchemaBuilder.integer(description: "Minutes to keep temp outputs (default 120)"),
                 "video_out": SchemaBuilder.string(description: "Optional MP4 output path"),
             ],
             required: [])

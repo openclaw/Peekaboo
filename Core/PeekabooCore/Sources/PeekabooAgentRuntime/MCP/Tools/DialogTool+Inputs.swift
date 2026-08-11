@@ -60,18 +60,18 @@ struct DialogToolInputs {
 
     let force: Bool?
 
-    init(arguments: ToolArguments) {
+    init(arguments: ToolArguments) throws {
         self.app = arguments.getString("app")
-        self.pid = arguments.getInt("pid")
-        self.windowId = arguments.getInt("window_id")
+        self.pid = try arguments.validatedInt("pid")
+        self.windowId = try arguments.validatedInt("window_id")
         self.windowTitle = arguments.getString("window_title")
-        self.windowIndex = arguments.getInt("window_index")
+        self.windowIndex = try arguments.validatedInt("window_index")
         self.foreground = arguments.getBool("foreground") ?? false
 
         self.button = arguments.getString("button")
         self.text = arguments.getString("text")
         self.field = arguments.getString("field")
-        self.fieldIndex = arguments.getInt("field_index")
+        self.fieldIndex = try arguments.validatedInt("field_index")
         self.clear = arguments.getBool("clear") ?? false
 
         self.path = arguments.getString("path")
