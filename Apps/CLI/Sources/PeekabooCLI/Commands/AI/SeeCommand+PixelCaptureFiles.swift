@@ -18,8 +18,7 @@ extension SeeCommand {
             observation: ImageObservationDiagnostics(
                 timings: observation.timings,
                 diagnostics: observation.diagnostics,
-                capture: observation.capture,
-                rawImagePath: observation.files.rawScreenshotPath
+                capture: observation.capture
             )
         )
     }

@@ -25,14 +25,10 @@ struct ImageObservationDiagnostics: Codable {
     init(
         timings: ObservationTimings,
         diagnostics: DesktopObservationDiagnostics,
-        capture: CaptureResult? = nil,
-        rawImagePath: String? = nil
+        capture: CaptureResult? = nil
     ) {
         self.spans = timings.spans.map(SeeObservationSpan.init)
-        self.warnings = diagnostics.warnings + ImageBlankCaptureDiagnostics.warnings(
-            rawImagePath: rawImagePath,
-            capture: capture
-        )
+        self.warnings = diagnostics.warnings + ImageBlankCaptureDiagnostics.warnings(capture: capture)
         self.state_snapshot = diagnostics.stateSnapshot.map(SeeDesktopStateSnapshotSummary.init)
         self.target = diagnostics.target.map(SeeObservationTargetDiagnostics.init)
         self.coordinates = capture.map(ImageCoordinateDiagnostics.init)
@@ -78,12 +74,10 @@ struct ImageSizeDiagnostics: Codable {
 }
 
 enum ImageBlankCaptureDiagnostics {
-    static func warnings(rawImagePath: String?, capture: CaptureResult?) -> [String] {
-        guard let rawImagePath,
-              let capture,
+    static func warnings(capture: CaptureResult?) -> [String] {
+        guard let capture,
               capture.metadata.mode == .window,
-              let data = try? Data(contentsOf: URL(fileURLWithPath: rawImagePath)),
-              let bitmap = NSBitmapImageRep(data: data)
+              let bitmap = NSBitmapImageRep(data: capture.imageData)
         else {
             return []
         }
