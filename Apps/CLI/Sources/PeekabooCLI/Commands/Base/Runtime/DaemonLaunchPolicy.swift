@@ -545,9 +545,17 @@ enum DaemonLaunchPolicy {
 
                 let replacement: LaunchResult
                 do {
-                    replacement = try await self.performMigrationLaunch {
-                        try await launch(socketPath, launchArguments, launchEnvironment)
-                    }
+                    replacement = try await self.performMigrationLaunch(
+                        launch: {
+                            try await launch(socketPath, launchArguments, launchEnvironment)
+                        },
+                        rollback: { replacement in
+                            _ = await self.stopReplacementAfterCancellation(
+                                client: client,
+                                replacement: replacement
+                            )
+                        }
+                    )
                 } catch let error as CancellationError {
                     throw error
                 } catch {
@@ -631,17 +639,6 @@ enum DaemonLaunchPolicy {
             }
             return nil
         }
-    }
-
-    @MainActor
-    static func performMigrationLaunch<T: Sendable>(
-        _ launch: @escaping @MainActor @Sendable () async throws -> T
-    ) async throws -> T {
-        let result = try await launch()
-        // A replacement launcher can finish after ignoring cancellation. Recheck before the
-        // migration crosses its next mutation boundary and stops the legacy daemon.
-        try Task.checkCancellation()
-        return result
     }
 
     static func compatibleLegacyFallbackSocketPath(for status: PeekabooDaemonStatus) -> String? {

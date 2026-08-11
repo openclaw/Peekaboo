@@ -825,13 +825,19 @@ extension CommandRuntimeInjectionTests {
     @MainActor
     func `migration launch rejects uncooperative success before legacy stop`() async throws {
         var resumeLaunch: CheckedContinuation<Void, Never>?
+        var rolledBackResult: Bool?
         let task = Task { @MainActor in
-            try await DaemonLaunchPolicy.performMigrationLaunch {
-                await withCheckedContinuation { continuation in
-                    resumeLaunch = continuation
+            try await DaemonLaunchPolicy.performMigrationLaunch(
+                launch: {
+                    await withCheckedContinuation { continuation in
+                        resumeLaunch = continuation
+                    }
+                    return true
+                },
+                rollback: { result in
+                    rolledBackResult = result
                 }
-                return true
-            }
+            )
         }
         while resumeLaunch == nil {
             await Task.yield()
@@ -842,6 +848,7 @@ extension CommandRuntimeInjectionTests {
         await #expect(throws: CancellationError.self) {
             _ = try await task.value
         }
+        #expect(rolledBackResult == true)
     }
 
     @Test
