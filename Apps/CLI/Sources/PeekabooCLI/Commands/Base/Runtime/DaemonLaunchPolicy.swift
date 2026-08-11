@@ -76,6 +76,12 @@ enum DaemonLaunchPolicy {
         }
     }
 
+    typealias OnDemandDaemonLauncher = @MainActor @Sendable (
+        _ socketPath: String,
+        _ arguments: [String],
+        _ environment: [String: String]
+    ) async throws -> LaunchResult
+
     enum DaemonLaunchError: LocalizedError {
         case executableNotFound(argument: String?)
         case launchFailed(executableURL: URL, underlyingError: any Error)
@@ -465,13 +471,24 @@ enum DaemonLaunchPolicy {
     }
 
     @MainActor
-    static func startOnDemandDaemon(socketPath: String, environment: [String: String]) async -> String? {
-        try? await DaemonStartupGate.withExclusiveStartup(
+    static func startOnDemandDaemon(
+        socketPath: String,
+        environment: [String: String],
+        launch: @escaping OnDemandDaemonLauncher = { socketPath, arguments, environment in
+            try await DaemonLaunchPolicy.launchDaemon(
+                socketPath: socketPath,
+                arguments: arguments,
+                environment: environment
+            )
+        }
+    ) async throws -> String? {
+        try await DaemonStartupGate.withExclusiveStartup(
             lockURL: DaemonPaths.daemonStartupLockURL(socketPath: socketPath)
         ) { _ in
-            await self.startOnDemandDaemonWithStartupLockHeld(
+            try await self.startOnDemandDaemonWithStartupLockHeld(
                 socketPath: socketPath,
-                environment: environment
+                environment: environment,
+                launch: launch
             )
         }
     }
@@ -479,19 +496,25 @@ enum DaemonLaunchPolicy {
     @MainActor
     private static func startOnDemandDaemonWithStartupLockHeld(
         socketPath: String,
-        environment: [String: String]
-    ) async -> String? {
+        environment: [String: String],
+        launch: @escaping OnDemandDaemonLauncher
+    ) async throws -> String? {
+        try Task.checkCancellation()
         let client = DaemonControlClient(socketPath: socketPath)
 
         if await client.fetchReusableDaemonStatus() != nil {
+            try Task.checkCancellation()
             return socketPath
         }
+        try Task.checkCancellation()
 
-        switch await self.waitForDaemonSocketAvailability(
+        let socketAvailability = try await self.waitForDaemonSocketAvailability(
             socketPath: socketPath,
             client: client,
             timeout: TimeInterval(DaemonControlClient.defaultShutdownWaitSeconds)
-        ) {
+        )
+        try Task.checkCancellation()
+        switch socketAvailability {
         case .available:
             break
         case .reusableDaemon:
@@ -515,19 +538,27 @@ enum DaemonLaunchPolicy {
                status: legacyStatus,
                fallbackIdleTimeoutSeconds: fallbackIdleTimeoutSeconds
            ) {
+            try Task.checkCancellation()
             if DaemonControlClient.supportsSafeMigration(legacyStatus),
                DaemonControlClient.isIdleForMigration(legacyStatus) {
                 launchArguments = migrationArguments
 
-                guard let replacement = try? await launchDaemon(
-                    socketPath: socketPath,
-                    arguments: launchArguments,
-                    environment: launchEnvironment
-                )
-                else {
-                    return await self.compatibleLegacyFallbackSocketPath {
+                let replacement: LaunchResult
+                do {
+                    replacement = try await self.performMigrationLaunch {
+                        try await launch(socketPath, launchArguments, launchEnvironment)
+                    }
+                } catch let error as CancellationError {
+                    throw error
+                } catch {
+                    if Task.isCancelled {
+                        throw CancellationError()
+                    }
+                    let fallback = await self.compatibleLegacyFallbackSocketPath {
                         await legacyClient.fetchReusableDaemonStatus()
                     }
+                    try Task.checkCancellation()
+                    return fallback
                 }
 
                 do {
@@ -538,28 +569,46 @@ enum DaemonLaunchPolicy {
                     )
                     if !stopped {
                         if let currentLegacyStatus = await legacyClient.fetchReusableDaemonStatus() {
-                            return await self.resolveLegacyStopRace(
+                            try Task.checkCancellation()
+                            let resolution = await self.resolveLegacyStopRace(
                                 legacyStatus: currentLegacyStatus,
                                 client: client,
                                 replacement: replacement,
                                 replacementSocketPath: socketPath
                             )
+                            try Task.checkCancellation()
+                            return resolution
                         }
                     }
+                } catch is CancellationError {
+                    _ = await self.stopReplacementAfterCancellation(
+                        client: client,
+                        replacement: replacement
+                    )
+                    throw CancellationError()
                 } catch {
+                    if Task.isCancelled {
+                        throw CancellationError()
+                    }
                     if let currentLegacyStatus = await legacyClient.fetchReusableDaemonStatus() {
-                        return await self.resolveLegacyStopRace(
+                        try Task.checkCancellation()
+                        let resolution = await self.resolveLegacyStopRace(
                             legacyStatus: currentLegacyStatus,
                             client: client,
                             replacement: replacement,
                             replacementSocketPath: socketPath
                         )
+                        try Task.checkCancellation()
+                        return resolution
                     }
                 }
-                return await client.fetchReusableDaemonStatus() != nil ? socketPath : nil
+                let replacementIsReusable = await client.fetchReusableDaemonStatus() != nil
+                try Task.checkCancellation()
+                return replacementIsReusable ? socketPath : nil
             }
 
             if let fallback = self.compatibleLegacyFallbackSocketPath(for: legacyStatus) {
+                try Task.checkCancellation()
                 return fallback
             }
             // An incompatible legacy host cannot satisfy this caller. Leave it running and
@@ -572,15 +621,27 @@ enum DaemonLaunchPolicy {
         }
 
         do {
-            _ = try await self.launchDaemon(
-                socketPath: socketPath,
-                arguments: launchArguments,
-                environment: launchEnvironment
-            )
+            _ = try await launch(socketPath, launchArguments, launchEnvironment)
             return socketPath
+        } catch let error as CancellationError {
+            throw error
         } catch {
+            if Task.isCancelled {
+                throw CancellationError()
+            }
             return nil
         }
+    }
+
+    @MainActor
+    static func performMigrationLaunch<T: Sendable>(
+        _ launch: @escaping @MainActor @Sendable () async throws -> T
+    ) async throws -> T {
+        let result = try await launch()
+        // A replacement launcher can finish after ignoring cancellation. Recheck before the
+        // migration crosses its next mutation boundary and stops the legacy daemon.
+        try Task.checkCancellation()
+        return result
     }
 
     static func compatibleLegacyFallbackSocketPath(for status: PeekabooDaemonStatus) -> String? {
@@ -644,7 +705,8 @@ enum DaemonLaunchPolicy {
         socketPath: String,
         client: DaemonControlClient,
         timeout: TimeInterval
-    ) async -> SocketAvailability {
+    ) async throws -> SocketAvailability {
+        try Task.checkCancellation()
         guard self.bridgeLeaseIsHeld(socketPath: socketPath) else {
             return .available
         }
@@ -652,17 +714,16 @@ enum DaemonLaunchPolicy {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
             if await client.fetchReusableDaemonStatus() != nil {
+                try Task.checkCancellation()
                 return .reusableDaemon
             }
+            try Task.checkCancellation()
             if !self.bridgeLeaseIsHeld(socketPath: socketPath) {
                 return .available
             }
-            do {
-                try await Task.sleep(nanoseconds: 100_000_000)
-            } catch {
-                break
-            }
+            try await Task.sleep(nanoseconds: 100_000_000)
         }
+        try Task.checkCancellation()
         return self.bridgeLeaseIsHeld(socketPath: socketPath) ? .timedOut : .available
     }
 
@@ -803,6 +864,15 @@ enum DaemonLaunchPolicy {
         }
 
         return await client.fetchControllableDaemonStatus()?.pid != expectedPID
+    }
+
+    static func stopReplacementAfterCancellation(
+        client: DaemonControlClient,
+        replacement: LaunchResult
+    ) async -> Bool {
+        await Task.detached {
+            await self.stopReplacement(client: client, replacement: replacement)
+        }.value
     }
 
     private static func standardizedSocketPath(_ path: String) -> String {

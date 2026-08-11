@@ -79,7 +79,7 @@ enum TestChildProcess {
         )
     }
 
-    private static func peekabooBinaryURL() throws -> URL {
+    static func peekabooBinaryURL() throws -> URL {
         if let override = ProcessInfo.processInfo.environment["PEEKABOO_CLI_BINARY"], !override.isEmpty {
             return URL(fileURLWithPath: override)
         }

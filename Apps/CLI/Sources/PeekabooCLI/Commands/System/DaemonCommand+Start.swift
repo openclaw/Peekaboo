@@ -88,7 +88,7 @@ extension DaemonCommand {
                 }
             }
 
-            switch await DaemonLaunchPolicy.waitForDaemonSocketAvailability(
+            switch try await DaemonLaunchPolicy.waitForDaemonSocketAvailability(
                 socketPath: socketPath,
                 client: client,
                 timeout: TimeInterval(max(self.waitSeconds, DaemonControlClient.defaultShutdownWaitSeconds))
@@ -142,6 +142,12 @@ extension DaemonCommand {
                        await legacyTarget.client.fetchReusableDaemonStatus() != nil {
                         throw PeekabooError.operationError(message: "Legacy daemon refused migration stop request")
                     }
+                } catch is CancellationError {
+                    _ = await DaemonLaunchPolicy.stopReplacementAfterCancellation(
+                        client: client,
+                        replacement: replacement
+                    )
+                    throw CancellationError()
                 } catch {
                     if await legacyTarget.client.fetchReusableDaemonStatus() != nil {
                         let cleanedUp = await DaemonLaunchPolicy.stopReplacement(

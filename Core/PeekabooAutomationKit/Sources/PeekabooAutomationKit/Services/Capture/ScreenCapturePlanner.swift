@@ -2,11 +2,6 @@ import CoreGraphics
 import Foundation
 
 @_spi(Testing) public enum ScreenCapturePlanner {
-    public enum FrameSourcePolicy: Sendable {
-        case fastStream
-        case singleShot
-    }
-
     /// Convert a global desktop-space rectangle to a display-local `sourceRect`.
     ///
     /// ScreenCaptureKit expects `SCStreamConfiguration.sourceRect` in display-local logical coordinates.
@@ -157,23 +152,5 @@ import Foundation
 
         let fallback = displayFrames.firstIndex(where: { $0.origin == .zero }) ?? 0
         return .unmapped(fallbackDisplayIndex: fallback)
-    }
-
-    public static func frameSourcePolicy(
-        for mode: CaptureMode,
-        windowID: CGWindowID?) -> FrameSourcePolicy
-    {
-        if windowID != nil {
-            return .singleShot
-        }
-
-        switch mode {
-        case .screen, .multi:
-            return .fastStream
-        case .area:
-            return .singleShot
-        case .window, .frontmost:
-            return .singleShot
-        }
     }
 }

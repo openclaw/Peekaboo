@@ -411,6 +411,10 @@ public final class PeekabooServices {
 
 extension PeekabooServices: PeekabooServiceProviding {}
 extension PeekabooServices: PeekabooBridgeServiceProviding {
+    public var supportsScreenCaptureKitProcessOwnership: Bool {
+        self.screenCapture is ScreenCaptureService
+    }
+
     public func ownsDesktopOperationLane(for operation: PeekabooBridgeOperation) -> Bool {
         self.nativeDesktopOperationLaneOperations.contains(operation)
     }

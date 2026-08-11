@@ -13,7 +13,10 @@ struct DesktopObservationOCRRuntimeCapabilityTests {
 
     @Test
     func `desktop observation OCR requires the operation and additive host capability`() {
-        let capable = Self.handshake(capabilities: [PeekabooBridgeHostCapability.desktopObservationOCR])
+        let capable = Self.handshake(capabilities: [
+            PeekabooBridgeHostCapability.desktopObservationOCR,
+            PeekabooBridgeHostCapability.screenCaptureKitProcessOwnership,
+        ])
         let legacy = Self.handshake(capabilities: nil)
         let empty = Self.handshake(capabilities: [])
         let missingOperation = Self.handshake(
@@ -46,7 +49,13 @@ struct DesktopObservationOCRRuntimeCapabilityTests {
             from: ParsedValues(positional: [], options: [:], flags: ["menubar"]),
             commandType: SeeCommand.self
         )
-        let capable = Self.handshake(capabilities: [PeekabooBridgeHostCapability.desktopObservationOCR])
+        let capable = Self.handshake(capabilities: [
+            PeekabooBridgeHostCapability.desktopObservationOCR,
+            PeekabooBridgeHostCapability.screenCaptureKitProcessOwnership,
+        ])
+        let ownerAware = Self.handshake(capabilities: [
+            PeekabooBridgeHostCapability.screenCaptureKitProcessOwnership,
+        ])
         let legacy = Self.handshake(capabilities: nil)
 
         #expect(ocr.requiresDesktopObservationOCR)
@@ -54,8 +63,9 @@ struct DesktopObservationOCRRuntimeCapabilityTests {
         #expect(!ordinary.requiresDesktopObservationOCR)
         #expect(CommandRuntime.supportsRemoteRequirements(for: capable, options: ocr))
         #expect(!CommandRuntime.supportsRemoteRequirements(for: legacy, options: ocr))
-        #expect(CommandRuntime.supportsRemoteRequirements(for: legacy, options: menubar))
-        #expect(CommandRuntime.supportsRemoteRequirements(for: legacy, options: ordinary))
+        #expect(CommandRuntime.supportsRemoteRequirements(for: ownerAware, options: menubar))
+        #expect(CommandRuntime.supportsRemoteRequirements(for: ownerAware, options: ordinary))
+        #expect(!CommandRuntime.supportsRemoteRequirements(for: legacy, options: ordinary))
     }
 
     @Test

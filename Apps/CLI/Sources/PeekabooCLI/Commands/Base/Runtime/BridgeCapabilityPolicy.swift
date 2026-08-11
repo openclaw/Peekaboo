@@ -4,12 +4,23 @@ import PeekabooBridge
 import PeekabooFoundation
 
 enum BridgeCapabilityPolicy {
+    struct ObservationCapabilities: Equatable {
+        let desktopObservation: Bool
+        let desktopObservationOCR: Bool
+        let desktopObservationCaptureEngine: Bool
+        let exactWindowROIObservation: Bool
+    }
+
     static func supportsRemoteRequirements(
         for handshake: PeekabooBridgeHandshakeResponse,
         options: CommandRuntimeOptions
     ) -> Bool {
+        let defersScreenRecording = self.defersRemoteScreenRecordingPermission(options: options)
+        let supportsCapture = defersScreenRecording
+            ? handshake.supportedOperations.contains(.captureScreen)
+            : self.supportsOperation(.captureScreen, for: handshake)
         if options.requiresScreenCapturePermission || options.requiresSilentCapture,
-           !self.supportsOperation(.captureScreen, for: handshake) {
+           !supportsCapture {
             return false
         }
 
@@ -105,21 +116,56 @@ enum BridgeCapabilityPolicy {
         for handshake: PeekabooBridgeHandshakeResponse,
         options: CommandRuntimeOptions
     ) -> Bool {
-        if options.requiresDesktopObservation, !self.supportsDesktopObservation(for: handshake) {
+        let capabilities = self.observationCapabilities(for: handshake, options: options)
+        if options.requiresDesktopObservation, !capabilities.desktopObservation {
             return false
         }
-        if options.requiresDesktopObservationOCR, !self.supportsDesktopObservationOCR(for: handshake) {
+        if options.requiresDesktopObservationOCR, !capabilities.desktopObservationOCR {
             return false
         }
         if options.requiresCaptureEnginePreferenceCapability,
-           !self.supportsDesktopObservationCaptureEngine(for: handshake) {
+           !capabilities.desktopObservationCaptureEngine {
             return false
         }
-        if options.requiresExactWindowROIObservation,
-           !self.supportsExactWindowROIObservation(for: handshake) {
+        if options.requiresScreenCaptureKitOwnerCapability,
+           !self.supportsScreenCaptureKitProcessOwnership(for: handshake) {
+            return false
+        }
+        if options.requiresExactWindowROIObservation, !capabilities.exactWindowROIObservation {
             return false
         }
         return true
+    }
+
+    static func observationCapabilities(
+        for handshake: PeekabooBridgeHandshakeResponse,
+        options: CommandRuntimeOptions
+    ) -> ObservationCapabilities {
+        let usesRequestScopedEngine = options.usesPerToolSnapshotInvalidation
+        guard self.defersClassicScreenRecordingPermission(options: options) || usesRequestScopedEngine else {
+            return ObservationCapabilities(
+                desktopObservation: self.supportsDesktopObservation(for: handshake),
+                desktopObservationOCR: self.supportsDesktopObservationOCR(for: handshake),
+                desktopObservationCaptureEngine: self.supportsDesktopObservationCaptureEngine(for: handshake),
+                exactWindowROIObservation: self.supportsExactWindowROIObservation(for: handshake)
+            )
+        }
+
+        let supportsObservation = handshake.negotiatedVersion >=
+            PeekabooBridgeProtocolVersion(major: 1, minor: 5) &&
+            handshake.supportedOperations.contains(.desktopObservation)
+        return ObservationCapabilities(
+            desktopObservation: supportsObservation,
+            desktopObservationOCR: supportsObservation &&
+                handshake.hostCapabilities?.contains(PeekabooBridgeHostCapability.desktopObservationOCR) == true,
+            desktopObservationCaptureEngine: supportsObservation &&
+                handshake.hostCapabilities?.contains(
+                    PeekabooBridgeHostCapability.desktopObservationCaptureEngine
+                ) == true,
+            exactWindowROIObservation: supportsObservation &&
+                handshake.negotiatedVersion >= PeekabooBridgeConstants.exactWindowROIObservationVersion &&
+                self.supportsOperation(.storeObservationSnapshot, for: handshake)
+        )
     }
 
     private static func supportsInteractionRequirements(
@@ -188,8 +234,12 @@ enum BridgeCapabilityPolicy {
         options: CommandRuntimeOptions
     ) -> Set<PeekabooBridgePermissionKind> {
         guard handshake.permissions != nil else { return [] }
-        return self.requiredRemotePermissions(for: handshake, options: options)
+        var missing = self.requiredRemotePermissions(for: handshake, options: options)
             .subtracting(self.grantedPermissions(from: handshake.permissions))
+        if self.defersRemoteScreenRecordingPermission(options: options) {
+            missing.remove(.screenRecording)
+        }
+        return missing
     }
 
     /// Operations whose required TCC permissions the current command must find granted on a remote
@@ -332,6 +382,27 @@ enum BridgeCapabilityPolicy {
             handshake.hostCapabilities?.contains(
                 PeekabooBridgeHostCapability.desktopObservationCaptureEngine
             ) == true
+    }
+
+    static func supportsScreenCaptureKitProcessOwnership(
+        for handshake: PeekabooBridgeHandshakeResponse
+    ) -> Bool {
+        handshake.supportedOperations.contains(.desktopObservation) &&
+            handshake.hostCapabilities?.contains(
+                PeekabooBridgeHostCapability.screenCaptureKitProcessOwnership
+            ) == true
+    }
+
+    private static func defersClassicScreenRecordingPermission(options: CommandRuntimeOptions) -> Bool {
+        options.requiresScreenCaptureKitOwnerCapability &&
+            ObservationCommandSupport.captureEnginePreference(
+                cliValue: options.captureEnginePreference,
+                configuredValue: nil
+            ) == .legacy
+    }
+
+    private static func defersRemoteScreenRecordingPermission(options: CommandRuntimeOptions) -> Bool {
+        self.defersClassicScreenRecordingPermission(options: options) || options.usesPerToolSnapshotInvalidation
     }
 
     static func supportsExactWindowROIObservation(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {

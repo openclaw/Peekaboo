@@ -250,6 +250,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var didObserveAgentMode = false
 
     override init() {
+        try? ScreenCaptureKitOwnerLease.registerCurrentProcessCapability()
         let launchPolicy = PeekabooAppLaunchPolicy.current
         self.launchPolicy = launchPolicy
         self.updaterController = makeUpdaterController(launchPolicy: launchPolicy)

@@ -512,11 +512,12 @@ struct CommanderBinderTests {
 
     @Test
     func `Capture commands require invalidation only when their focus policy may mutate the desktop`() throws {
-        let oldBridge = PeekabooBridgeHandshakeResponse(
-            negotiatedVersion: .init(major: 1, minor: 12),
+        let ownerAwareBridge = PeekabooBridgeHandshakeResponse(
+            negotiatedVersion: PeekabooBridgeConstants.protocolVersion,
             hostKind: .onDemand,
             build: nil,
-            supportedOperations: [.captureScreen, .desktopObservation]
+            supportedOperations: [.captureScreen, .desktopObservation],
+            hostCapabilities: [PeekabooBridgeHostCapability.screenCaptureKitProcessOwnership]
         )
 
         let readOnlyCaptures: [(any ParsableCommand.Type, ParsedValues)] = [
@@ -551,7 +552,7 @@ struct CommanderBinderTests {
         for (commandType, parsed) in readOnlyCaptures {
             let options = try CommanderCLIBinder.makeRuntimeOptions(from: parsed, commandType: commandType)
             #expect(!options.requiresImplicitSnapshotInvalidation, "Unexpected invalidation: \(commandType)")
-            #expect(CommandRuntime.supportsRemoteRequirements(for: oldBridge, options: options))
+            #expect(CommandRuntime.supportsRemoteRequirements(for: ownerAwareBridge, options: options))
         }
 
         let focusingCaptures: [(any ParsableCommand.Type, ParsedValues)] = [
@@ -565,7 +566,6 @@ struct CommanderBinderTests {
         for (commandType, parsed) in focusingCaptures {
             let options = try CommanderCLIBinder.makeRuntimeOptions(from: parsed, commandType: commandType)
             #expect(options.requiresImplicitSnapshotInvalidation, "Missing invalidation: \(commandType)")
-            #expect(!CommandRuntime.supportsRemoteRequirements(for: oldBridge, options: options))
         }
     }
 

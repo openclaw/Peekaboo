@@ -256,7 +256,7 @@ struct ScreenCaptureServiceFlowTests {
 
         _ = try await service.captureScreen(displayIndex: nil)
 
-        let recordedCalls = await permission.callCount
+        let recordedCalls = permission.callCount
         #expect(recordedCalls == 1)
     }
 
@@ -278,8 +278,30 @@ struct ScreenCaptureServiceFlowTests {
 
         _ = try await service.captureScreen(displayIndex: nil)
 
-        let recordedCalls = await permission.callCount
+        let recordedCalls = permission.callCount
         #expect(recordedCalls == 1)
+    }
+
+    @Test
+    func `explicit classic capture never enters the ScreenCaptureKit permission probe`() async throws {
+        let fixtures = self.makeFixtures()
+        let permission = CountingPermissionEvaluator()
+        let dependencies = ScreenCaptureService.Dependencies(
+            feedbackClient: StubAutomationFeedbackClient(),
+            permissionEvaluator: permission,
+            fallbackRunner: ScreenCaptureFallbackRunner(apis: [.legacy, .modern]),
+            applicationResolver: FixtureResolver(fixtures: fixtures),
+            makeFrameSource: { _ in NoOpCaptureFrameSource() },
+            makeModernOperator: { _, _ in FixtureCaptureOperator(fixtures: fixtures) },
+            makeLegacyOperator: { _ in FixtureCaptureOperator(fixtures: fixtures) })
+        let service = ScreenCaptureService(loggingService: MockLoggingService(), dependencies: dependencies)
+
+        _ = try await service.withCaptureEngine(.legacy) {
+            try await service.captureScreen(displayIndex: nil)
+        }
+
+        #expect(permission.callCount == 1)
+        #expect(permission.policies == [.coreGraphicsOnly])
     }
 
     @Test
@@ -325,9 +347,14 @@ private final class StubAutomationFeedbackClient: AutomationFeedbackClient, @unc
 @MainActor
 private final class CountingPermissionEvaluator: ScreenRecordingPermissionEvaluating {
     private(set) var callCount = 0
+    private(set) var policies: [ScreenRecordingPermissionProbePolicy] = []
 
-    func hasPermission(logger: CategoryLogger) async -> Bool {
+    func hasPermission(
+        logger _: CategoryLogger,
+        policy: ScreenRecordingPermissionProbePolicy) async -> Bool
+    {
         self.callCount += 1
+        self.policies.append(policy)
         return true
     }
 }

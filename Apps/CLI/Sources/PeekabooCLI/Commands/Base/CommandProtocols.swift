@@ -23,7 +23,7 @@ extension AsyncRuntimeCommand {
 
         Task { @MainActor in
             do {
-                let runtime = await CommandRuntime.makeDefaultAsync()
+                let runtime = try await CommandRuntime.makeDefaultAsync()
                 try await commandCopy.run(using: runtime)
             } catch {
                 thrownError = error

@@ -77,7 +77,7 @@ public final class ScreenCaptureService: ScreenCaptureServiceProtocol, EngineAwa
         {
             let resolver = applicationResolver ?? PeekabooApplicationResolver()
             let frameSourceFactory: @MainActor @Sendable (CategoryLogger) -> any CaptureFrameSource = { logger in
-                ScreenCaptureKitFrameSource(logger: logger)
+                SingleShotFrameSource(logger: logger)
             }
             return Dependencies(
                 feedbackClient: feedbackClient ?? NoopAutomationFeedbackClient(),

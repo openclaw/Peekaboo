@@ -118,6 +118,13 @@ struct FocusErrorMappingTests {
     @Test
     func `captureFailed maps to CAPTURE_FAILED`() {
         #expect(peekabooAutomationErrorCode(for: .captureFailed("cam")) == .CAPTURE_FAILED)
+        let remote = PeekabooBridgeErrorEnvelope(
+            code: .internalError,
+            message: "remote capture failed",
+            context: PeekabooBridgeErrorEnvelope.standardizedErrorContextPrefix +
+                StandardErrorCode.captureFailed.rawValue
+        )
+        #expect(errorCode(for: remote) == .CAPTURE_FAILED)
     }
 
     @Test

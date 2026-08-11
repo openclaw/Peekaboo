@@ -8,8 +8,8 @@ read_when:
 # Capture Engine Selection
 
 Peekaboo supports two capture backends:
-- **modern**: ScreenCaptureKit (SCStream/SCScreenshotManager)
-- **classic**: CGWindowListCreateImage (legacy)
+- **modern**: bounded ScreenCaptureKit `SCScreenshotManager` calls
+- **classic**: CoreGraphics or an isolated system screenshot helper (no in-process SCK)
 
 ## How selection works
 - Default: **auto** (classic/CoreGraphics first, then modern ScreenCaptureKit if allowed).
@@ -33,14 +33,64 @@ running `auto`. The `auto` value retains backward-compatible observation semanti
 inside the individual request and never become a reusable daemon's inherited process environment, so one explicit
 `modern` request cannot make later `auto` requests modern-only.
 
+## ScreenCaptureKit process ownership
+
+macOS can strand a second process's ScreenCaptureKit screenshot request after another live process has used SCK, even
+when no capture is in flight. Peekaboo therefore gives the first process that explicitly preclaims caller-local modern
+capture or enters a real SCK API a per-user, process-lifetime owner lease. Later remote `modern` requests prefer the
+compatible Bridge host whose PID, process generation, and signed build match that lease.
+
+Every transported engine requires the additive `screenCaptureKitProcessOwnership` host capability. For `auto` and
+`modern`, it proves the host enforces the owner lease; for `classic`, it proves a false CoreGraphics permission preflight
+will not fall into an in-process SCK probe. During an upgrade, Peekaboo refuses live older capture hosts before starting
+another owner; update/relaunch or stop those exact hosts first.
+
+`--no-remote --capture-engine modern` explicitly requests caller-local ownership. If another Peekaboo process owns
+SCK, the command refuses before constructing local capture services or calling the framework. Retry without
+`--no-remote` to use the owner host, verify and stop that exact PID/process generation, or explicitly request
+`--capture-engine classic`. Peekaboo never silently changes an explicit `modern` request to classic. Explicit classic
+does not probe or claim in-process ScreenCaptureKit. Because the CoreGraphics permission preflight is not authoritative
+for rebuilt CLI binaries, a false preflight must be corroborated by readable protected metadata from a foreign visible
+WindowServer window before classic dispatches; otherwise it refuses before a wallpaper-only capture can be accepted.
+`auto` does not claim in the caller during routing; it follows an existing owner when present and otherwise claims only
+if its selected host actually reaches an SCK permission, lookup, or screenshot operation. Modern captures intentionally
+avoid persistent `SCStream` sessions: an owner-unaware process can start after a stream begins, so a service-lifetime
+stream cannot preserve strict cross-process ownership. Each bounded framework dispatch rechecks ownership immediately
+before entry. This is a cooperative rolling-upgrade guard, not process exclusion: an old binary can still launch during
+an in-flight 3–5 second framework callback. Bounded calls cap that exposure and the next dispatch refuses it instead of
+leaving a stream active for the service lifetime.
+
+An explicit `--bridge-socket` is authoritative and never reroutes. For `modern`, that socket must be served by the exact
+owner PID/process generation and signed build; otherwise Peekaboo refuses before dispatch and tells the caller to change
+or remove the explicit socket. Classic remains a process-isolated, in-process-SCK-free recovery path.
+
+New CLI and app processes publish a private PID/process-generation/build receipt and retain its file lock for their
+lifetime. Before every SCK leaf, Peekaboo scans exact same-user Peekaboo and companion host entry points plus the known
+Peekaboo, Claude, and Clawdbot Bridge sockets. Ordinary Claude Code, renderer, crash-reporting, audio, and model helpers
+are not hosts. A matching live host without a valid current receipt is treated as a pre-lease process that may already
+own SCK, including a renamed official binary or long-running `agent`/`capture live` process. The first upgrade to this
+policy therefore has an explicit restart boundary: stop or relaunch every reported old process. Unlocked stale receipts
+are safely removed from a dedicated private marker directory; repeated scans reuse PID, process-generation, executable,
+and signature inspection results while revalidating the executable path.
+
+Long-running Agent and MCP modes remain available for non-capture tools when they discover a pre-lease Bridge. Peekaboo
+keeps that runtime local and records a process-lifetime SCK blocker instead of failing startup or routing capture to the
+old host. A later SCK leaf refuses before framework dispatch. The blocker is intentionally irreversible for that Agent
+or MCP process: after every old host is updated or stopped, restart the long-running process before retrying SCK. This
+closes transient PID lookup, multiple-old-host, and same-socket restart races.
+
+Removing the warm stream makes full-display Watch and `capture live` cadence capture-latency-bound. Restore that
+performance only through an owner-affine cache or a disposable helper-process stream with a bounded lifetime and exact
+cleanup receipt; do not reintroduce persistent pixels or an in-process service-lifetime stream.
+
 Aliases:
 - modern: `modern`, `sckit`, `sc`, `sck`
 - classic: `classic`, `cg`, `legacy`
 - auto: `auto`
 
-## Current policy (May 2026)
+## Current policy (August 2026)
 - Default: `auto` = try CGWindowList/CoreGraphics first, fallback to ScreenCaptureKit if CG fails.
-- Window `auto` capture treats an abandoned, quarantined, or contended in-process ScreenCaptureKit call as a fallback signal and tries the bounded `/usr/sbin/screencapture` path in an isolated child process. The child is terminated and reaped on timeout, so fallback cannot hang indefinitely. `modern` remains strict and reports the ScreenCaptureKit failure instead of silently changing engines.
+- Window `auto` capture may use the bounded `/usr/sbin/screencapture` helper only after a terminal, fallback-safe private lookup failure. Cancellation, timeout, or a quarantined ScreenCaptureKit call is never crossed with another capture backend; Peekaboo refuses until that exact framework call completes. The helper is terminated and reaped on its own timeout. `modern` remains strict and never silently changes engines.
 - You can force SC-only via env `PEEKABOO_DISABLE_CGWINDOWLIST=1`.
 - You can force classic/CG via `--capture-engine classic|cg` or `PEEKABOO_CAPTURE_ENGINE=classic`.
 

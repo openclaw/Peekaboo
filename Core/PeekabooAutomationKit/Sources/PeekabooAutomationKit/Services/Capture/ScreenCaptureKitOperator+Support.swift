@@ -8,26 +8,8 @@ extension ScreenCaptureKitOperator {
     func captureDisplayFrame(
         request: CaptureFrameRequest) async throws -> (image: CGImage, metadata: CaptureMetadata)
     {
-        let policy = ScreenCapturePlanner.frameSourcePolicy(for: request.mode, windowID: nil)
-        if self.useFastStream, policy == .fastStream {
-            do {
-                try await self.frameSource.start(request: request)
-                if let output = try await self.frameSource.nextFrame(maxAge: nil),
-                   let image = output.cgImage
-                {
-                    return (image: image, metadata: output.metadata)
-                }
-                throw OperationError.captureFailed(reason: "Fast stream produced no image")
-            } catch {
-                self.logger.warning(
-                    "Fast frame source failed, falling back to single-shot",
-                    metadata: ["error": String(describing: error)],
-                    correlationId: request.correlationId)
-            }
-        }
-
-        try await self.fallbackFrameSource.start(request: request)
-        guard let output = try await self.fallbackFrameSource.nextFrame(maxAge: nil),
+        try await self.frameSource.start(request: request)
+        guard let output = try await self.frameSource.nextFrame(maxAge: nil),
               let image = output.cgImage
         else {
             throw OperationError.captureFailed(reason: "Single-shot produced no image")

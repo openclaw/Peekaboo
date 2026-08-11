@@ -2,6 +2,7 @@ import Commander
 import CoreGraphics
 import Darwin
 import Foundation
+import PeekabooAutomationKit
 import PeekabooCore
 
 /// Shared entry point used by the executable target.
@@ -14,6 +15,10 @@ public func runPeekabooCLI() async {
 /// Internal helper that runs the CLI and returns an exit code (used by tests).
 @MainActor
 func executePeekabooCLI(arguments: [String]) async -> Int32 {
+    // Publish owner-lease awareness before any long-lived CLI mode can reach ScreenCaptureKit.
+    // Capture still fails closed later if registration itself was not possible.
+    try? ScreenCaptureKitOwnerLease.registerCurrentProcessCapability()
+
     #if DEBUG
     checkBuildStaleness()
     #endif

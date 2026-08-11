@@ -64,7 +64,7 @@ extension SeeCommand: CommanderSignatureProviding {
                 .commandOption(
                     "captureEngine",
                     help: "Capture engine on the selected host: auto|classic|cg|modern|sckit; " +
-                        "use --no-remote for caller-local capture",
+                        "--no-remote --capture-engine modern requests caller-local ownership and refuses on contention",
                     long: "capture-engine"
                 ),
                 .commandOption(

@@ -6,9 +6,59 @@ import PeekabooFoundation
 
 enum ScreenCaptureKitCaptureGate {
     @TaskLocal private static var isInsideCaptureOperation = false
+    @TaskLocal static var processOwnerClaimOverride:
+        (@MainActor @Sendable () throws -> ScreenCaptureKitOwnerLease.OwnerReceipt)?
+    private static let processOwnerLease = Result { try ScreenCaptureKitOwnerLease() }
     @MainActor private static let captureCoordinator = ScreenCaptureKitOperationCoordinator(
         lockFilePath: (NSTemporaryDirectory() as NSString)
             .appendingPathComponent("boo.peekaboo.sckit-capture.lock"))
+
+    @discardableResult
+    @MainActor
+    static func requireProcessOwner(
+        operationName: String) throws -> ScreenCaptureKitOwnerLease.OwnerReceipt
+    {
+        do {
+            if let processOwnerClaimOverride {
+                return try processOwnerClaimOverride()
+            }
+            return try self.processOwnerLease.get().claim().receipt
+        } catch let error as ScreenCaptureKitOwnerLease.LeaseError {
+            throw self.captureError(for: error, operationName: operationName)
+        } catch {
+            throw OperationError.captureFailed(
+                reason: "ScreenCaptureKit owner setup failed before \(operationName): " +
+                    "\(error.localizedDescription). No ScreenCaptureKit operation was dispatched.")
+        }
+    }
+
+    @MainActor
+    static func withProcessOwner<T: Sendable>(
+        operationName: String,
+        operation: () async throws -> T) async throws -> T
+    {
+        try self.requireProcessOwner(operationName: operationName)
+        return try await operation()
+    }
+
+    @MainActor
+    static func runOwnedOperation<T: Sendable>(
+        seconds: TimeInterval,
+        operationName: String,
+        operation: @escaping @MainActor @Sendable () async throws -> T) async throws -> T
+    {
+        try await self.withProcessOwner(operationName: operationName) {
+            try await self.captureCoordinator.run(seconds: seconds, operationName: operationName) {
+                try self.requireProcessOwner(operationName: operationName)
+                return try await operation()
+            }
+        }
+    }
+
+    @MainActor
+    static var isQuarantined: Bool {
+        self.captureCoordinator.isQuarantined
+    }
 
     @MainActor
     static func withExclusiveCaptureOperation<T: Sendable>(
@@ -58,10 +108,7 @@ enum ScreenCaptureKitCaptureGate {
         contentFilter: SCContentFilter,
         configuration: SCStreamConfiguration) async throws -> CGImage
     {
-        try await self.captureCoordinator.run(
-            seconds: 3.0,
-            operationName: "SCScreenshotManager.captureImage")
-        {
+        try await self.runOwnedOperation(seconds: 3.0, operationName: "SCScreenshotManager.captureImage") {
             try await ScreenCaptureKitCallbackBridge<CGImage>.wait { completion in
                 SCScreenshotManager.captureImage(
                     contentFilter: contentFilter,
@@ -80,10 +127,7 @@ enum ScreenCaptureKitCaptureGate {
 
     @MainActor
     static func currentShareableContent() async throws -> SCShareableContent {
-        try await self.captureCoordinator.run(
-            seconds: 5.0,
-            operationName: "SCShareableContent.current")
-        {
+        try await self.runOwnedOperation(seconds: 5.0, operationName: "SCShareableContent.current") {
             try await SCShareableContent.current
         }
     }
@@ -93,7 +137,7 @@ enum ScreenCaptureKitCaptureGate {
         excludingDesktopWindows: Bool,
         onScreenWindowsOnly: Bool) async throws -> SCShareableContent
     {
-        try await self.captureCoordinator.run(
+        try await self.runOwnedOperation(
             seconds: 5.0,
             operationName: "SCShareableContent.excludingDesktopWindows")
         {
@@ -101,6 +145,22 @@ enum ScreenCaptureKitCaptureGate {
                 excludingDesktopWindows,
                 onScreenWindowsOnly: onScreenWindowsOnly)
         }
+    }
+
+    private static func captureError(
+        for error: ScreenCaptureKitOwnerLease.LeaseError,
+        operationName: String) -> PeekabooError
+    {
+        if case let .ownedByAnotherProcess(_, receipt) = error {
+            return OperationError.captureFailed(
+                reason: "ScreenCaptureKit is already owned by another Peekaboo process " +
+                    "(PID \(receipt.processIdentifier), generation \(receipt.processStartIdentity)). " +
+                    "Use the active Bridge host, verify and stop that exact owner before retrying, " +
+                    "or explicitly choose the classic capture engine. No ScreenCaptureKit operation was dispatched.")
+        }
+        return OperationError.captureFailed(
+            reason: "ScreenCaptureKit owner validation failed before \(operationName): " +
+                "\(error.localizedDescription). No ScreenCaptureKit operation was dispatched.")
     }
 }
 

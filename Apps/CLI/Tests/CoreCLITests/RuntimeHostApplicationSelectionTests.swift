@@ -18,7 +18,10 @@ struct RuntimeHostApplicationSelectionTests {
             build: nil,
             supportedOperations: supportedOperations,
             enabledOperations: supportedOperations,
-            hostCapabilities: [PeekabooBridgeHostCapability.desktopObservationCaptureEngine]
+            hostCapabilities: [
+                PeekabooBridgeHostCapability.desktopObservationCaptureEngine,
+                PeekabooBridgeHostCapability.screenCaptureKitProcessOwnership,
+            ]
         )
         let captureOnly = PeekabooBridgeHandshakeResponse(
             negotiatedVersion: PeekabooBridgeConstants.protocolVersion,

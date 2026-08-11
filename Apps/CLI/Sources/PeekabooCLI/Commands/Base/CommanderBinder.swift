@@ -68,6 +68,7 @@ enum CommanderCLIBinder {
         options.requiresDesktopObservation = commandType == SeeCommand.self && !seeSkipsPixels
         options.requiresDesktopObservationOCR = commandType == SeeCommand.self && commandValues.flag("ocr")
         options.transportsCaptureEnginePreference = options.requiresDesktopObservation
+        options.requiresScreenCaptureKitOwnerCapability = options.transportsCaptureEnginePreference
         options.ignoresCaptureEnginePreference = seeSkipsPixels
         options.requiresImplicitSnapshotInvalidation = Self.requiresImplicitSnapshotInvalidation(
             commandType,
@@ -86,6 +87,7 @@ enum CommanderCLIBinder {
             !options.requiresExactWindowTargetedClicks
         let servesDynamicTools = Self.isAgentExecutionCommand(commandType) || commandType == MCPCommand.Serve.self
         if servesDynamicTools {
+            options.requiresScreenCaptureKitOwnerCapability = true
             options.requiresProcessGenerationPinnedHotkeys = true
             options.requiresProcessGenerationPinnedTypeActions = true
             options.requiresProcessGenerationPinnedClicks = true
@@ -210,11 +212,13 @@ enum CommanderCLIBinder {
         }
         options.captureEnginePreference = captureEngine
         if options.transportsCaptureEnginePreference {
-            options.requiresCaptureEnginePreferenceHost = true
-            options.requiresCaptureEnginePreferenceCapability = ObservationCommandSupport.captureEnginePreference(
+            let preference = ObservationCommandSupport.captureEnginePreference(
                 cliValue: captureEngine,
                 configuredValue: nil
-            ) != .auto
+            )
+            options.requiresCaptureEnginePreferenceHost = true
+            options.requiresCaptureEnginePreferenceCapability = preference != .auto
+            options.requiresScreenCaptureKitOwnerCapability = true
         } else if !options.requiresApplicationLaunchOptions, !options.requiresHostApplicationInventory {
             options.preferRemote = false
         }

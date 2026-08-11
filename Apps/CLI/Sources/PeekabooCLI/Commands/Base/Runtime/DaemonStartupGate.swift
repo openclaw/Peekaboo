@@ -104,7 +104,9 @@ enum DaemonStartupGate {
         defer { flock(fd, LOCK_UN) }
 
         try Task.checkCancellation()
-        return try await operation(fd)
+        let result = try await operation(fd)
+        try Task.checkCancellation()
+        return result
     }
 
     private static func waitToRetry(

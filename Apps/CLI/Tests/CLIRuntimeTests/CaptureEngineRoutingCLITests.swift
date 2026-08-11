@@ -95,7 +95,6 @@ struct CaptureEngineRoutingCLITests {
             ],
             isolateFromRemoteHosts: false
         )
-
         #expect(result.status == .exited(1))
         #expect(result.standardError.isEmpty)
         #expect(!FileManager.default.fileExists(atPath: output.path))

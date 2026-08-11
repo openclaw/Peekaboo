@@ -24,6 +24,14 @@ import ObjectiveC
         #endif
     }
 
+    public nonisolated static func allowsSystemFallback(
+        after error: any Error,
+        laneIsQuarantined: Bool) -> Bool
+    {
+        guard !laneIsQuarantined, !(error is CancellationError) else { return false }
+        return (error as? PeekabooError)?.code != .timeout
+    }
+
     private nonisolated static func envFlagIsEnabled(_ value: String?) -> Bool {
         guard let value else { return false }
         switch value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
@@ -49,6 +57,12 @@ extension LegacyScreenCaptureOperator {
         throw OperationError.captureFailed(
             reason: "Private ScreenCaptureKit window lookup disabled at compile time")
         #else
+        // The caller already excludes explicit classic requests. Keep the same guard at this
+        // SCK leaf so a future direct caller cannot make classic claim process ownership.
+        guard ScreenCaptureService.captureEnginePreference != .legacy else {
+            throw OperationError.captureFailed(
+                reason: "Private ScreenCaptureKit window lookup is disabled for explicit classic capture")
+        }
         let scWindow = try await self.fetchWindowWithPrivateScreenCaptureKit(windowID: windowID)
         let filter = SCContentFilter(desktopIndependentWindow: scWindow)
         let config = self.makeScreenshotConfiguration()
@@ -107,58 +121,27 @@ extension LegacyScreenCaptureOperator {
         typealias Completion = @convention(block) (AnyObject?) -> Void
         typealias FetchWindow = @convention(c) (AnyClass, Selector, UInt32, Completion) -> Void
         let fetchWindow = unsafeBitCast(implementation, to: FetchWindow.self)
-        let result = PrivateScreenCaptureKitWindowFetchResult()
 
         // Private API, intentionally isolated: Hopper shows `/usr/sbin/screencapture -l` resolving a
         // WindowServer ID through `SCShareableContent` before building a desktop-independent window filter.
         // Public `SCShareableContent.windows` enumeration can miss windows that this lookup still captures.
         // If Apple removes this selector, callers fall back to `/usr/sbin/screencapture -l` and then public SCK.
-        let completion: Completion = { object in
-            guard let window = object as? SCWindow else {
-                result.finish(.failure(OperationError.captureFailed(
-                    reason: "Private SCShareableContent lookup did not return window \(windowID)")))
-                return
+        return try await ScreenCaptureKitCaptureGate.runOwnedOperation(
+            seconds: 1.0,
+            operationName: "SCShareableContent.fetchWindowForWindowID")
+        {
+            try await ScreenCaptureKitCallbackBridge<SCWindow>.wait { finish in
+                let completion: Completion = { object in
+                    guard let window = object as? SCWindow else {
+                        finish(.failure(OperationError.captureFailed(
+                            reason: "Private SCShareableContent lookup did not return window \(windowID)")))
+                        return
+                    }
+                    finish(.success(window))
+                }
+                fetchWindow(SCShareableContent.self, selector, privateWindowID, completion)
             }
-            result.finish(.success(window))
         }
-        fetchWindow(SCShareableContent.self, selector, privateWindowID, completion)
-
-        return try await Task.detached(priority: .userInitiated) {
-            try result.wait(timeout: .now() + 1.0)
-        }.value
     }
     #endif
 }
-
-#if !PEEKABOO_DISABLE_PRIVATE_SCK_WINDOW_LOOKUP
-private final class PrivateScreenCaptureKitWindowFetchResult: @unchecked Sendable {
-    private let lock = NSLock()
-    private let semaphore = DispatchSemaphore(value: 0)
-    private var result: Result<SCWindow, any Error>?
-
-    func finish(_ result: Result<SCWindow, any Error>) {
-        self.lock.lock()
-        guard self.result == nil else {
-            self.lock.unlock()
-            return
-        }
-        self.result = result
-        self.lock.unlock()
-        self.semaphore.signal()
-    }
-
-    func wait(timeout: DispatchTime) throws -> SCWindow {
-        guard self.semaphore.wait(timeout: timeout) == .success else {
-            throw OperationError.timeout(operation: "SCShareableContent.fetchWindowForWindowID", duration: 1.0)
-        }
-
-        self.lock.lock()
-        let result = self.result
-        self.lock.unlock()
-        guard let result else {
-            throw OperationError.captureFailed(reason: "Private SCShareableContent lookup returned no result")
-        }
-        return try result.get()
-    }
-}
-#endif

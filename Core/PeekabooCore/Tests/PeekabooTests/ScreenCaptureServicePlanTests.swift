@@ -52,6 +52,22 @@ struct ScreenCaptureServicePlanTests {
     }
 
     @Test
+    func `Private SCK fallback never crosses an abandoned operation`() {
+        #expect(!PrivateScreenCaptureKitWindowLookupPolicy.allowsSystemFallback(
+            after: CancellationError(),
+            laneIsQuarantined: false))
+        #expect(!PrivateScreenCaptureKitWindowLookupPolicy.allowsSystemFallback(
+            after: OperationError.timeout(operation: "private SCK fixture", duration: 1),
+            laneIsQuarantined: false))
+        #expect(!PrivateScreenCaptureKitWindowLookupPolicy.allowsSystemFallback(
+            after: OperationError.captureFailed(reason: "fixture"),
+            laneIsQuarantined: true))
+        #expect(PrivateScreenCaptureKitWindowLookupPolicy.allowsSystemFallback(
+            after: OperationError.captureFailed(reason: "selector unavailable"),
+            laneIsQuarantined: false))
+    }
+
+    @Test
     func `Fallback runner retries on timeout errors`() async throws {
         let runner = ScreenCaptureFallbackRunner(apis: [.modern, .legacy])
         let logger = MockLoggingService().logger(category: "screenCapture")
@@ -119,14 +135,5 @@ struct ScreenCaptureServicePlanTests {
         } catch {
             Issue.record("Unexpected error: \(error)")
         }
-    }
-
-    @Test
-    func `Frame source policy uses stream for full displays and single-shot for bounded captures`() {
-        #expect(ScreenCapturePlanner.frameSourcePolicy(for: .screen, windowID: nil) == .fastStream)
-        #expect(ScreenCapturePlanner.frameSourcePolicy(for: .area, windowID: nil) == .singleShot)
-        #expect(ScreenCapturePlanner.frameSourcePolicy(for: .multi, windowID: nil) == .fastStream)
-        #expect(ScreenCapturePlanner.frameSourcePolicy(for: .window, windowID: CGWindowID(42)) == .singleShot)
-        #expect(ScreenCapturePlanner.frameSourcePolicy(for: .frontmost, windowID: nil) == .singleShot)
     }
 }

@@ -705,7 +705,9 @@ struct CommandRuntimeInjectionTests {
             environment: ["PEEKABOO_DAEMON_SOCKET": "/tmp/ignored.sock"]
         ) == ["/tmp/explicit.sock"])
     }
+}
 
+extension CommandRuntimeInjectionTests {
     @Test
     func `on demand daemon arguments use auto mode and idle timeout`() {
         let args = CommandRuntime.onDemandDaemonArguments(socketPath: "/tmp/daemon.sock", idleTimeoutSeconds: 12.5)
@@ -783,7 +785,7 @@ struct CommandRuntimeInjectionTests {
         #expect(flock(leaseFD, LOCK_EX | LOCK_NB) == 0)
 
         let waitTask = Task {
-            await DaemonLaunchPolicy.waitForDaemonSocketAvailability(
+            try await DaemonLaunchPolicy.waitForDaemonSocketAvailability(
                 socketPath: socketPath,
                 client: DaemonControlClient(socketPath: socketPath),
                 timeout: 1
@@ -792,7 +794,54 @@ struct CommandRuntimeInjectionTests {
         try await Task.sleep(nanoseconds: 200_000_000)
         #expect(flock(leaseFD, LOCK_UN) == 0)
 
-        #expect(await waitTask.value == .available)
+        #expect(try await waitTask.value == .available)
+    }
+
+    @Test
+    @MainActor
+    func `on-demand daemon startup propagates launcher cancellation`() async {
+        let socketPath = "/tmp/peekaboo-daemon-cancel-wrapper-\(UUID().uuidString).sock"
+        defer {
+            unlink(socketPath)
+            unlink("\(socketPath).lock")
+        }
+        var launchCalls = 0
+
+        await #expect(throws: CancellationError.self) {
+            _ = try await DaemonLaunchPolicy.startOnDemandDaemon(
+                socketPath: socketPath,
+                environment: [:],
+                launch: { _, _, _ in
+                    launchCalls += 1
+                    throw CancellationError()
+                }
+            )
+        }
+
+        #expect(launchCalls == 1)
+    }
+
+    @Test
+    @MainActor
+    func `migration launch rejects uncooperative success before legacy stop`() async throws {
+        var resumeLaunch: CheckedContinuation<Void, Never>?
+        let task = Task { @MainActor in
+            try await DaemonLaunchPolicy.performMigrationLaunch {
+                await withCheckedContinuation { continuation in
+                    resumeLaunch = continuation
+                }
+                return true
+            }
+        }
+        while resumeLaunch == nil {
+            await Task.yield()
+        }
+        task.cancel()
+        resumeLaunch?.resume()
+
+        await #expect(throws: CancellationError.self) {
+            _ = try await task.value
+        }
     }
 
     @Test
@@ -816,6 +865,41 @@ struct CommandRuntimeInjectionTests {
         let status = await daemon.daemonStatus()
         let rollbackTask = Task {
             await DaemonLaunchPolicy.stopReplacement(
+                client: DaemonControlClient(socketPath: socketPath),
+                replacement: .init(status: status, processID: getpid())
+            )
+        }
+        try await Task.sleep(nanoseconds: 300_000_000)
+        await daemon.recordActivityEnd(operation: .captureScreen)
+
+        #expect(await rollbackTask.value)
+        await daemon.waitUntilStopped()
+    }
+
+    @Test
+    @MainActor
+    func `canceled migration rolls back its replacement in an uncanceled task`() async throws {
+        let socketPath = "/tmp/peekaboo-daemon-canceled-rollback-\(UUID().uuidString).sock"
+        defer {
+            unlink(socketPath)
+            unlink("\(socketPath).lock")
+        }
+        let daemon = PeekabooDaemon(configuration: .init(
+            mode: .manual,
+            bridgeSocketPath: socketPath,
+            allowlistedTeams: [],
+            windowTrackingEnabled: false,
+            hostKind: .onDemand
+        ))
+        try await daemon.startChecked()
+        #expect(await daemon.admitActivity(operation: .captureScreen))
+
+        let status = await daemon.daemonStatus()
+        let rollbackTask = Task { @MainActor in
+            withUnsafeCurrentTask { task in
+                task?.cancel()
+            }
+            return await DaemonLaunchPolicy.stopReplacementAfterCancellation(
                 client: DaemonControlClient(socketPath: socketPath),
                 replacement: .init(status: status, processID: getpid())
             )

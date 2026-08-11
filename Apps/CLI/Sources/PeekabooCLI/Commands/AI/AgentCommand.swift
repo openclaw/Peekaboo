@@ -160,7 +160,7 @@ struct AgentCommand: RuntimeBackedCommand {
 extension AgentCommand {
     @MainActor
     mutating func run() async throws {
-        let runtime = await CommandRuntime.makeDefaultAsync(options: self.runtimeOptions)
+        let runtime = try await CommandRuntime.makeDefaultAsync(options: self.runtimeOptions)
         try await self.run(using: runtime)
     }
 

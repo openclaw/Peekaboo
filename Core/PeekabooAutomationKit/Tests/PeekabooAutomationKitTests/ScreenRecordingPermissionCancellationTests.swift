@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import PeekabooAutomationKit
+@_spi(Testing) @testable import PeekabooAutomationKit
 
 @MainActor
 struct ScreenRecordingPermissionCancellationTests {
@@ -41,6 +41,36 @@ struct ScreenRecordingPermissionCancellationTests {
 
         #expect(await checker.hasPermission(logger: logger) == false)
         #expect(probeCount == 2)
+    }
+
+    @Test
+    func `classic permission policy accepts protected metadata without probing ScreenCaptureKit`() async {
+        let logger = MockLoggingService().logger(category: "test")
+        var probeCount = 0
+        let checker = ScreenRecordingPermissionChecker(
+            preflight: { false },
+            coreGraphicsEvidence: { true },
+            shareableContentProbe: { probeCount += 1 })
+
+        let granted = await checker.hasPermission(logger: logger, policy: .coreGraphicsOnly)
+
+        #expect(granted)
+        #expect(probeCount == 0)
+    }
+
+    @Test
+    func `classic permission policy refuses redaction risk without protected metadata`() async {
+        let logger = MockLoggingService().logger(category: "test")
+        var probeCount = 0
+        let checker = ScreenRecordingPermissionChecker(
+            preflight: { false },
+            coreGraphicsEvidence: { false },
+            shareableContentProbe: { probeCount += 1 })
+
+        let granted = await checker.hasPermission(logger: logger, policy: .coreGraphicsOnly)
+
+        #expect(!granted)
+        #expect(probeCount == 0)
     }
 
     private static let transientDenial = NSError(

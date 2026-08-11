@@ -352,6 +352,9 @@ func errorCode(for bridgeError: PeekabooBridgeErrorEnvelope) -> ErrorCode {
     if bridgeError.standardizedErrorCode == .accessibilityIncomplete {
         return .ACCESSIBILITY_INCOMPLETE
     }
+    if bridgeError.standardizedErrorCode == .captureFailed {
+        return .CAPTURE_FAILED
+    }
     if let context = bridgeError.context,
        context.hasPrefix("capture_roi:"),
        let roiError = CaptureROIError(code: String(context.dropFirst("capture_roi:".count))) {

@@ -87,6 +87,45 @@ struct PeekabooBridgeCapabilityTests {
     }
 
     @Test
+    @MainActor
+    func `production bridge classifier preserves standardized capture failure`() {
+        let envelope = PeekabooBridgeServer.bridgeErrorEnvelope(
+            for: PeekabooError.captureFailed("ScreenCaptureKit owner refused before dispatch"),
+            operation: .desktopObservation)
+
+        #expect(envelope.code == .internalError)
+        #expect(envelope.standardizedErrorCode == .captureFailed)
+        #expect(!envelope.operationMayHaveCompleted)
+    }
+
+    @Test
+    func `only owner aware classic observation defers handshake screen permission`() {
+        let classic = PeekabooBridgeRequest.desktopObservation(DesktopObservationRequest(
+            target: .screen(index: 0),
+            capture: DesktopCaptureOptions(engine: .legacy),
+            detection: DesktopDetectionOptions(mode: .none)))
+        let modern = PeekabooBridgeRequest.desktopObservation(DesktopObservationRequest(
+            target: .screen(index: 0),
+            capture: DesktopCaptureOptions(engine: .modern),
+            detection: DesktopDetectionOptions(mode: .none)))
+        let operations: Set<PeekabooBridgeOperation> = [.desktopObservation]
+        let ownerCapability: Set<String> = [PeekabooBridgeHostCapability.screenCaptureKitProcessOwnership]
+
+        #expect(PeekabooBridgeServer.defersClassicScreenRecordingPermission(
+            for: classic,
+            hostCapabilities: ownerCapability,
+            allowedOperations: operations))
+        #expect(!PeekabooBridgeServer.defersClassicScreenRecordingPermission(
+            for: classic,
+            hostCapabilities: [],
+            allowedOperations: operations))
+        #expect(!PeekabooBridgeServer.defersClassicScreenRecordingPermission(
+            for: modern,
+            hostCapabilities: ownerCapability,
+            allowedOperations: operations))
+    }
+
+    @Test
     func `unknown bridge error kinds decode as untyped errors`() throws {
         let data = Data(
             #"{"code":"invalidRequest","message":"Future error","kind":"futureErrorKind","context":"S1"}"#.utf8)

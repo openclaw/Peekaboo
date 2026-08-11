@@ -167,7 +167,8 @@ struct ExactWindowROIRuntimeCapabilityTests {
             hostKind: hostKind,
             build: nil,
             supportedOperations: operations,
-            enabledOperations: enabledOperations
+            enabledOperations: enabledOperations,
+            hostCapabilities: [PeekabooBridgeHostCapability.screenCaptureKitProcessOwnership]
         )
     }
 }

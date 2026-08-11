@@ -188,6 +188,32 @@ struct DaemonStartupGateTests {
     }
 
     @Test
+    func `startup gate rejects uncooperative success after cancellation`() async throws {
+        let (root, lockURL) = try self.temporaryLockURL()
+        defer { try? FileManager.default.removeItem(at: root) }
+        var resumeOperation: CheckedContinuation<Void, Never>?
+
+        let task = Task { @MainActor in
+            try await DaemonStartupGate.withExclusiveStartup(lockURL: lockURL) { _ in
+                await withCheckedContinuation { continuation in
+                    resumeOperation = continuation
+                }
+                try? await Task.sleep(for: .milliseconds(20))
+                return true
+            }
+        }
+        while resumeOperation == nil {
+            await Task.yield()
+        }
+        task.cancel()
+        resumeOperation?.resume()
+
+        await #expect(throws: CancellationError.self) {
+            _ = try await task.value
+        }
+    }
+
+    @Test
     func `throwing startup operation releases the lock`() async throws {
         let (root, lockURL) = try self.temporaryLockURL()
         defer { try? FileManager.default.removeItem(at: root) }

@@ -305,14 +305,8 @@ struct SeeCommand: ApplicationResolvable, ErrorHandlingCommand, RuntimeBackedCom
     }
 
     private func validateCaptureEngineOption() throws {
-        guard let value = (self.captureEngine ?? self.configuredCaptureEnginePreference)?
-            .trimmingCharacters(in: .whitespacesAndNewlines),
-            !value.isEmpty,
-            !ObservationCommandSupport.isSupportedCaptureEngineValue(value)
-        else { return }
-
-        throw ValidationError(
-            "Invalid capture engine '\(value)'; expected auto, modern/sckit, or classic/cg"
+        try ObservationCommandSupport.validateCaptureEngineValue(
+            self.captureEngine ?? self.configuredCaptureEnginePreference
         )
     }
 

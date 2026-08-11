@@ -19,6 +19,12 @@ extension LegacyScreenCaptureOperator {
                     correlationId: correlationId,
                     scale: scale)
             } catch {
+                guard PrivateScreenCaptureKitWindowLookupPolicy.allowsSystemFallback(
+                    after: error,
+                    laneIsQuarantined: ScreenCaptureKitCaptureGate.isQuarantined)
+                else {
+                    throw error
+                }
                 self.logger.warning(
                     "Private ScreenCaptureKit window capture failed, falling back to system screencapture",
                     metadata: [

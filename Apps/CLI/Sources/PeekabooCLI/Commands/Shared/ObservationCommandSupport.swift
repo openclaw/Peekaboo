@@ -1,3 +1,4 @@
+import Commander
 import Foundation
 import PeekabooCore
 
@@ -11,6 +12,17 @@ enum ObservationCommandSupport {
     static func isSupportedCaptureEngineValue(_ value: String) -> Bool {
         self.supportedCaptureEngineValues.contains(
             value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        )
+    }
+
+    static func validateCaptureEngineValue(_ value: String?) throws {
+        guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !value.isEmpty,
+              !self.isSupportedCaptureEngineValue(value)
+        else { return }
+
+        throw ValidationError(
+            "Invalid capture engine '\(value)'; expected auto, modern/sckit, or classic/cg"
         )
     }
 

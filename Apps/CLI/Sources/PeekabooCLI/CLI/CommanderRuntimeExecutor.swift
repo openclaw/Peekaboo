@@ -57,7 +57,7 @@ enum CommanderRuntimeExecutor {
                 // Respect explicit engine choice; also allow disabling CG globally.
                 setenv("PEEKABOO_CAPTURE_ENGINE", capturePreference, 1)
             }
-            let runtime = await CommandRuntime.makeDefaultAsync(options: runtimeOptions)
+            let runtime = try await CommandRuntime.makeDefaultAsync(options: runtimeOptions)
             try await self.catchUpSelectedHostIfNeeded(
                 using: runtime,
                 required: runtimeOptions.requiresImplicitSnapshotInvalidation ||

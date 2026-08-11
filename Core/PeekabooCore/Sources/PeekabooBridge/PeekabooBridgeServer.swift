@@ -82,6 +82,8 @@ public final class PeekabooBridgeServer {
         self.allowedOperations = allowedOperations.subtracting([._appleScriptProbe])
         self.hostIdentity = hostIdentity
         var resolvedHostCapabilities = hostCapabilities
+        let registeredScreenCaptureKitOwnership = services.supportsScreenCaptureKitProcessOwnership &&
+            (try? ScreenCaptureKitOwnerLease.registerCurrentProcessCapability()) != nil
         if hostIdentity?.processStartIdentity != nil {
             resolvedHostCapabilities.insert(PeekabooBridgeHostCapability.hostGenerationIdentity)
         }
@@ -92,6 +94,9 @@ public final class PeekabooBridgeServer {
             resolvedHostCapabilities.insert(PeekabooBridgeHostCapability.desktopObservationOCR)
             if services.supportsDesktopObservationCaptureEngine {
                 resolvedHostCapabilities.insert(PeekabooBridgeHostCapability.desktopObservationCaptureEngine)
+            }
+            if registeredScreenCaptureKitOwnership {
+                resolvedHostCapabilities.insert(PeekabooBridgeHostCapability.screenCaptureKitProcessOwnership)
             }
         }
         self.hostCapabilities = resolvedHostCapabilities
@@ -371,6 +376,12 @@ public final class PeekabooBridgeServer {
         case .notFound:
             .init(code: .notFound, message: error.localizedDescription, details: details)
         case .accessibilityIncomplete:
+            .init(
+                code: .internalError,
+                message: error.localizedDescription,
+                details: details,
+                context: PeekabooBridgeErrorEnvelope.standardizedErrorContextPrefix + error.code.rawValue)
+        case .captureFailed:
             .init(
                 code: .internalError,
                 message: error.localizedDescription,
@@ -694,7 +705,11 @@ public final class PeekabooBridgeServer {
             break
         }
 
-        guard effectiveOps.contains(op) else {
+        let defersClassicScreenRecordingPermission = Self.defersClassicScreenRecordingPermission(
+            for: request,
+            hostCapabilities: self.hostCapabilities,
+            allowedOperations: self.allowedOperations)
+        guard effectiveOps.contains(op) || defersClassicScreenRecordingPermission else {
             let missingPermission = op.requiredPermissions
                 .subtracting(Self.grantedPermissions(from: permissions))
                 .min { $0.rawValue < $1.rawValue }
@@ -703,6 +718,17 @@ public final class PeekabooBridgeServer {
                 message: "Operation \(op.rawValue) is not allowed with current permissions",
                 permission: missingPermission)
         }
+    }
+
+    nonisolated static func defersClassicScreenRecordingPermission(
+        for request: PeekabooBridgeRequest,
+        hostCapabilities: Set<String>,
+        allowedOperations: Set<PeekabooBridgeOperation>) -> Bool
+    {
+        guard case let .desktopObservation(payload) = request else { return false }
+        return payload.capture.engine == .legacy &&
+            hostCapabilities.contains(PeekabooBridgeHostCapability.screenCaptureKitProcessOwnership) &&
+            allowedOperations.contains(.desktopObservation)
     }
 
     private static func validateTargetedClickAccess(

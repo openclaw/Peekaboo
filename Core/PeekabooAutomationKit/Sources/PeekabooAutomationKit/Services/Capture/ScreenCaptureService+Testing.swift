@@ -157,7 +157,10 @@ extension ScreenCaptureService {
 
 private struct StubPermissionEvaluator: ScreenRecordingPermissionEvaluating {
     let granted: Bool
-    func hasPermission(logger: CategoryLogger) async -> Bool {
+    func hasPermission(
+        logger: CategoryLogger,
+        policy _: ScreenRecordingPermissionProbePolicy) async -> Bool
+    {
         if !self.granted {
             logger.warning("Test harness denying permission for screen capture")
         }

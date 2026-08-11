@@ -7,6 +7,16 @@ import Testing
 @MainActor
 struct CaptureEngineRoutingTests {
     @Test
+    func `Capture engine validation is reusable before runtime host resolution`() {
+        #expect(throws: Never.self) {
+            try ObservationCommandSupport.validateCaptureEngineValue(" modern ")
+        }
+        #expect(throws: ValidationError.self) {
+            try ObservationCommandSupport.validateCaptureEngineValue("warp-drive")
+        }
+    }
+
+    @Test
     func `See capture engine selection preserves Bridge routing`() throws {
         let cliOptions = try CommanderCLIBinder.makeRuntimeOptions(
             from: ParsedValues(
@@ -56,7 +66,9 @@ struct CaptureEngineRoutingTests {
             environment: [:],
             configurationInput: nil,
             knownSnapshotInvalidationRemoteSocketPaths: ["/tmp/gui.sock"]
-        ) == .local(snapshotInvalidationRemoteSocketPaths: []))
+        ) == .local(
+            snapshotInvalidationRemoteSocketPaths: []
+        ))
         #expect(!RuntimeHostResolver.shouldResolveKnownRemoteEndpoints(
             options: options,
             environment: [:],

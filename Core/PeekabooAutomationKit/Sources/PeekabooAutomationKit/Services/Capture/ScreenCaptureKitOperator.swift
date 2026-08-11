@@ -6,9 +6,7 @@ import PeekabooFoundation
 final class ScreenCaptureKitOperator: ModernScreenCaptureOperating {
     let logger: CategoryLogger
     let feedbackClient: any AutomationFeedbackClient
-    let useFastStream: Bool
     let frameSource: any CaptureFrameSource
-    let fallbackFrameSource: any CaptureFrameSource
 
     init(
         logger: CategoryLogger,
@@ -17,9 +15,7 @@ final class ScreenCaptureKitOperator: ModernScreenCaptureOperating {
     {
         self.logger = logger
         self.feedbackClient = feedbackClient
-        self.useFastStream = true
         self.frameSource = frameSource
-        self.fallbackFrameSource = SingleShotFrameSource(logger: logger)
     }
 
     func captureScreen(
