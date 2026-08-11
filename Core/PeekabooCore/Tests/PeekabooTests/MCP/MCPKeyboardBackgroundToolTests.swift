@@ -216,6 +216,50 @@ struct MCPKeyboardBackgroundToolTests {
     }
 
     @Test
+    func `Explicit app cannot authorize receiptless element snapshot`() async throws {
+        await UISnapshotManager.shared.removeAllSnapshots()
+        let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
+        let applications = await MainActor.run {
+            MockApplicationService(applications: [ServiceApplicationInfo(
+                processIdentifier: 446,
+                processStartIdentity: 46,
+                bundleIdentifier: "com.example.editor",
+                name: "Editor")])
+        }
+        let context = await MCPToolTestHelpers.makeContext(
+            automation: automation,
+            applications: applications)
+        let snapshot = await UISnapshotManager.shared.createSnapshot()
+        let snapshotId = await snapshot.id
+        await snapshot.setUIElements([
+            UIElement(
+                id: "T1",
+                elementId: "T1",
+                role: "textField",
+                title: nil,
+                label: "Name",
+                value: nil,
+                description: nil,
+                help: nil,
+                roleDescription: "text field",
+                identifier: nil,
+                frame: CGRect(x: 10, y: 20, width: 160, height: 30),
+                isActionable: true),
+        ])
+
+        let response = try await TypeTool(context: context).execute(arguments: ToolArguments(raw: [
+            "on": "T1",
+            "snapshot": snapshotId,
+            "app": "Editor",
+            "text": "hello",
+        ]))
+
+        #expect(response.isError)
+        #expect(await MainActor.run { automation.targetedClickCalls.isEmpty })
+        #expect(await MainActor.run { automation.targetedTypeActionsCalls.isEmpty })
+    }
+
+    @Test
     func `Background keyboard tools reject window selectors instead of collapsing to pid`() async throws {
         let app = ServiceApplicationInfo(
             processIdentifier: 333,

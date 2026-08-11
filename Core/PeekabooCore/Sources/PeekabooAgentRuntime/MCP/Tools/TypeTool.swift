@@ -286,9 +286,16 @@ public struct TypeTool: MCPTool {
             let identity = try await request.target.requireBackgroundProcessIdentity(
                 applications: self.context.applications,
                 windows: self.context.windows)
-            if let snapshotIdentity = try await self.snapshotProcessIdentity(snapshot), snapshotIdentity != identity {
-                throw TypeToolValidationError(
-                    "The selected snapshot belongs to a different process generation. Capture fresh UI state.")
+            if let snapshot {
+                guard let snapshotIdentity = try await self.snapshotProcessIdentity(snapshot) else {
+                    throw TypeToolValidationError(
+                        "The selected snapshot has no capture-time process-generation receipt. " +
+                            "Capture fresh UI state.")
+                }
+                guard snapshotIdentity == identity else {
+                    throw TypeToolValidationError(
+                        "The selected snapshot belongs to a different process generation. Capture fresh UI state.")
+                }
             }
             return identity
         }

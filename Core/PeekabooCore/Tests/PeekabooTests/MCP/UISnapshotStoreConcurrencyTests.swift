@@ -256,6 +256,82 @@ struct UISnapshotStoreConcurrencyTests {
     }
 
     @Test
+    func `detection metadata cannot rebind a window-only capture receipt`() async {
+        let conflictingContexts = [
+            WindowContext(
+                applicationName: "Other Process",
+                applicationProcessId: 913,
+                windowTitle: "Other",
+                windowID: 43,
+                windowMutationIdentity: WindowMutationIdentity(
+                    windowID: 43,
+                    ownerProcessIdentifier: 913,
+                    ownerProcessStartIdentity: 103)),
+            WindowContext(
+                applicationName: "Other Window",
+                applicationProcessId: 912,
+                windowTitle: "Other",
+                windowID: 43,
+                windowMutationIdentity: WindowMutationIdentity(
+                    windowID: 43,
+                    ownerProcessIdentifier: 912,
+                    ownerProcessStartIdentity: 102)),
+        ]
+
+        for context in conflictingContexts {
+            let snapshot = UISnapshot()
+            await snapshot.setScreenshot(
+                path: "/tmp/capture.png",
+                metadata: CaptureMetadata(
+                    size: CGSize(width: 200, height: 100),
+                    mode: .window,
+                    windowInfo: ServiceWindowInfo(
+                        windowID: 42,
+                        title: "Captured",
+                        bounds: CGRect(x: 10, y: 20, width: 200, height: 100),
+                        mutationIdentity: WindowMutationIdentity(
+                            windowID: 42,
+                            ownerProcessIdentifier: 912,
+                            ownerProcessStartIdentity: 102))))
+
+            await snapshot.setTargetMetadata(from: context)
+
+            #expect(snapshot.applicationProcessIdentity == nil)
+            #expect(snapshot.windowMutationIdentity == nil)
+        }
+    }
+
+    @Test
+    func `receiptless matching detection preserves window-only capture receipt`() async {
+        let snapshot = UISnapshot()
+        let identity = WindowMutationIdentity(
+            windowID: 42,
+            ownerProcessIdentifier: 914,
+            ownerProcessStartIdentity: 104)
+        await snapshot.setScreenshot(
+            path: "/tmp/capture.png",
+            metadata: CaptureMetadata(
+                size: CGSize(width: 200, height: 100),
+                mode: .window,
+                windowInfo: ServiceWindowInfo(
+                    windowID: 42,
+                    title: "Captured",
+                    bounds: CGRect(x: 10, y: 20, width: 200, height: 100),
+                    mutationIdentity: identity)))
+
+        await snapshot.setTargetMetadata(from: WindowContext(
+            applicationName: "Editor",
+            applicationProcessId: 914,
+            windowTitle: "Captured",
+            windowID: 42))
+
+        #expect(snapshot.applicationProcessIdentity == ApplicationProcessIdentity(
+            processIdentifier: 914,
+            processStartIdentity: 104))
+        #expect(snapshot.windowMutationIdentity == identity)
+    }
+
+    @Test
     func `target cache supports concurrent production reads and writes`() async {
         let contexts = [
             WindowContext(

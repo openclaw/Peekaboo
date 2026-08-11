@@ -117,51 +117,81 @@ actor UISnapshot {
 
     func setTargetMetadata(from context: WindowContext?) {
         self.targetCache.withLock {
-            let priorProcessIdentifier = $0.applicationProcessId
-            let priorProcessStartIdentity = if let priorWindowIdentity = $0.windowMutationIdentity,
-                                               priorWindowIdentity.ownerProcessIdentifier == priorProcessIdentifier
+            let priorWindowIdentity = $0.windowMutationIdentity
+            let priorWindowBounds = $0.windowBounds
+            let priorReceipt: ApplicationProcessIdentity? = if let priorProcessIdentifier = $0.applicationProcessId,
+                                                               let priorProcessStartIdentity =
+                                                               $0.applicationProcessStartIdentity
             {
-                priorWindowIdentity.ownerProcessStartIdentity
+                ApplicationProcessIdentity(
+                    processIdentifier: priorProcessIdentifier,
+                    processStartIdentity: priorProcessStartIdentity)
+            } else if let priorWindowIdentity {
+                ApplicationProcessIdentity(
+                    processIdentifier: priorWindowIdentity.ownerProcessIdentifier,
+                    processStartIdentity: priorWindowIdentity.ownerProcessStartIdentity)
             } else {
-                $0.applicationProcessStartIdentity
+                nil
             }
             let incomingProcessIdentifier = context?.applicationProcessId
             let incomingWindowIdentity = context?.windowMutationIdentity
-            let incomingIdentityMatchesProcess = incomingWindowIdentity?.ownerProcessIdentifier ==
-                incomingProcessIdentifier
-            let incomingProcessStartIdentity = incomingIdentityMatchesProcess
-                ? incomingWindowIdentity?.ownerProcessStartIdentity
-                : nil
-            let hasMalformedIncomingIdentity = incomingWindowIdentity != nil && !incomingIdentityMatchesProcess
-            let hasProcessConflict = priorProcessStartIdentity != nil &&
-                priorProcessIdentifier != incomingProcessIdentifier
-            let hasGenerationConflict = priorProcessIdentifier != nil &&
-                priorProcessIdentifier == incomingProcessIdentifier &&
-                priorProcessStartIdentity != nil &&
-                incomingProcessStartIdentity != nil &&
-                priorProcessStartIdentity != incomingProcessStartIdentity
-            if hasMalformedIncomingIdentity || hasProcessConflict || hasGenerationConflict {
+            let incomingReceipt = incomingWindowIdentity.map {
+                ApplicationProcessIdentity(
+                    processIdentifier: $0.ownerProcessIdentifier,
+                    processStartIdentity: $0.ownerProcessStartIdentity)
+            }
+            let effectiveIncomingProcessIdentifier = incomingProcessIdentifier ??
+                incomingWindowIdentity?.ownerProcessIdentifier
+            let hasMalformedIncomingProcess = if let incomingProcessIdentifier, let incomingWindowIdentity {
+                incomingProcessIdentifier != incomingWindowIdentity.ownerProcessIdentifier
+            } else {
+                false
+            }
+            let hasMalformedIncomingWindow = if let incomingWindowID = context?.windowID, let incomingWindowIdentity {
+                incomingWindowID != incomingWindowIdentity.windowID
+            } else {
+                false
+            }
+            let hasPriorProcessConflict = if let priorReceipt, let effectiveIncomingProcessIdentifier {
+                priorReceipt.processIdentifier != effectiveIncomingProcessIdentifier
+            } else {
+                false
+            }
+            let hasPriorGenerationConflict = if let priorReceipt, let incomingReceipt {
+                priorReceipt != incomingReceipt
+            } else {
+                false
+            }
+            let hasPriorWindowConflict = if let priorWindowIdentity, let incomingWindowIdentity {
+                priorWindowIdentity != incomingWindowIdentity
+            } else if let priorWindowIdentity, let incomingWindowID = context?.windowID {
+                priorWindowIdentity.windowID != incomingWindowID
+            } else {
+                false
+            }
+            if hasMalformedIncomingProcess || hasMalformedIncomingWindow ||
+                hasPriorProcessConflict || hasPriorGenerationConflict || hasPriorWindowConflict
+            {
                 $0.targetReceiptInvalidated = true
             }
 
             $0.applicationName = context?.applicationName
             $0.windowTitle = context?.windowTitle
-            $0.applicationProcessId = incomingProcessIdentifier
             if $0.targetReceiptInvalidated {
+                $0.applicationProcessId = effectiveIncomingProcessIdentifier
                 $0.applicationProcessStartIdentity = nil
                 $0.windowMutationIdentity = nil
-            } else if let incomingProcessStartIdentity {
-                $0.applicationProcessStartIdentity = incomingProcessStartIdentity
-                $0.windowMutationIdentity = incomingWindowIdentity
-            } else if priorProcessIdentifier == incomingProcessIdentifier {
-                $0.applicationProcessStartIdentity = priorProcessStartIdentity
-                $0.windowMutationIdentity = nil
+                $0.windowID = context?.windowID
+                $0.windowBounds = context?.windowBounds
             } else {
-                $0.applicationProcessStartIdentity = nil
-                $0.windowMutationIdentity = nil
+                let resolvedReceipt = priorReceipt ?? incomingReceipt
+                let resolvedWindowIdentity = priorWindowIdentity ?? incomingWindowIdentity
+                $0.applicationProcessId = resolvedReceipt?.processIdentifier ?? effectiveIncomingProcessIdentifier
+                $0.applicationProcessStartIdentity = resolvedReceipt?.processStartIdentity
+                $0.windowMutationIdentity = resolvedWindowIdentity
+                $0.windowID = resolvedWindowIdentity?.windowID ?? context?.windowID
+                $0.windowBounds = priorWindowIdentity == nil ? context?.windowBounds : priorWindowBounds
             }
-            $0.windowID = context?.windowID
-            $0.windowBounds = context?.windowBounds
         }
         self.lastAccessedAt = Date()
     }
