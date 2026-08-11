@@ -7,8 +7,8 @@ import Testing
 struct ScreenCaptureKitProcessCapabilityRuntimeTests {
     @Test
     func `live current CLI subprocess publishes a valid held capability marker`() async throws {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("peekaboo-process-capability-\(UUID().uuidString)", isDirectory: true)
+        let identifier = String(UUID().uuidString.prefix(8)).lowercased()
+        let directory = URL(fileURLWithPath: "/tmp/pb-cap-\(identifier)", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
         defer { try? FileManager.default.removeItem(at: directory) }
 
@@ -20,11 +20,12 @@ struct ScreenCaptureKitProcessCapabilityRuntimeTests {
             "--bridge-socket", directory.appendingPathComponent("bridge.sock").path,
         ]
         process.standardOutput = FileHandle.nullDevice
-        process.standardError = FileHandle.nullDevice
+        let standardError = Pipe()
+        process.standardError = standardError
         try process.run()
         defer { Self.stop(process) }
 
-        let processStartIdentity = try await self.waitForProcessCapability(process)
+        let processStartIdentity = try await self.waitForProcessCapability(process, standardError: standardError)
         let conflicts = try ScreenCaptureKitOwnerLease.liveUncoordinatedProcesses(
             excluding: .current()
         )
@@ -38,10 +39,15 @@ struct ScreenCaptureKitProcessCapabilityRuntimeTests {
         try ScreenCaptureKitOwnerLease.removeStaleProcessCapabilityMarkers()
     }
 
-    private func waitForProcessCapability(_ process: Process) async throws -> UInt64 {
+    private func waitForProcessCapability(_ process: Process, standardError: Pipe) async throws -> UInt64 {
         for _ in 0..<100 {
             guard process.isRunning else {
-                throw RuntimeError("Peekaboo marker fixture exited before registration")
+                let details = String(
+                    decoding: standardError.fileHandleForReading.readDataToEndOfFile(),
+                    as: UTF8.self
+                ).trimmingCharacters(in: .whitespacesAndNewlines)
+                let suffix = details.isEmpty ? "" : ": \(details)"
+                throw RuntimeError("Peekaboo marker fixture exited before registration\(suffix)")
             }
             if let identity = SystemIdentityResolver.processStartIdentity(process.processIdentifier) {
                 let marker = ScreenCaptureKitOwnerLease.processCapabilityMarkerURL(
