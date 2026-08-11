@@ -176,8 +176,7 @@ enum KeyboardDeliverySupport {
 
         if let snapshot = try await services.snapshots.getUIAutomationSnapshot(snapshotId: snapshotId),
            let processIdentifier = snapshot.applicationProcessId,
-           processIdentifier > 0
-        {
+           processIdentifier > 0 {
             capturedProcessIdentifier = processIdentifier
             if let identity = snapshot.windowMutationIdentity {
                 guard identity.ownerProcessIdentifier == processIdentifier else {
@@ -190,8 +189,7 @@ enum KeyboardDeliverySupport {
         if let detectionResult = try await services.snapshots.getDetectionResult(snapshotId: snapshotId),
            let context = detectionResult.metadata.windowContext,
            let processIdentifier = context.applicationProcessId,
-           processIdentifier > 0
-        {
+           processIdentifier > 0 {
             if let capturedProcessIdentifier, capturedProcessIdentifier != processIdentifier {
                 throw ValidationError("Snapshot '\(snapshotId)' has inconsistent process metadata.")
             }

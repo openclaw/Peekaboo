@@ -28,7 +28,7 @@ struct UIAutomationServiceVisualizerTests {
 
     @Test
     @MainActor
-    func `targeted background interactions suppress visualizer feedback`() async throws {
+    func `targeted background interactions suppress visualizer feedback`() async {
         let feedback = RecordingAutomationFeedbackClient()
         let service = UIAutomationService(feedbackClient: feedback)
 
@@ -61,7 +61,7 @@ struct UIAutomationServiceVisualizerTests {
 
     @Test
     @MainActor
-    func `targeted background interactions stay silent with a resolved target window`() async throws {
+    func `targeted background interactions stay silent with a resolved target window`() async {
         let feedback = RecordingAutomationFeedbackClient()
         let target = VisualizerTargetWindow(
             processIdentifier: 42,
@@ -106,7 +106,7 @@ struct UIAutomationServiceVisualizerTests {
 
     @Test
     @MainActor
-    func `explicit foreground untargeted interactions preserve visualizer feedback`() async throws {
+    func `explicit foreground untargeted interactions preserve visualizer feedback`() async {
         let feedback = RecordingAutomationFeedbackClient()
         let service = UIAutomationService(feedbackClient: feedback)
 

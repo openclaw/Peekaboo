@@ -146,14 +146,17 @@ struct TargetedInteractionDefaultDeliveryTests {
             processIdentifier: 2468,
             processStartIdentity: 7,
             bundleIdentifier: "com.apple.TextEdit",
-            name: "TextEdit")
+            name: "TextEdit"
+        )
         let context = TestServicesFactory.makeAutomationTestContext(
-            applications: StubApplicationService(applications: [app]))
+            applications: StubApplicationService(applications: [app])
+        )
         let snapshotId = try await context.snapshots.createSnapshot()
         let identity = WindowMutationIdentity(
             windowID: 42,
             ownerProcessIdentifier: 2468,
-            ownerProcessStartIdentity: 7)
+            ownerProcessStartIdentity: 7
+        )
         try await context.snapshots.storeDetectionResult(
             snapshotId: snapshotId,
             result: ElementDetectionResult(
@@ -199,9 +202,11 @@ struct TargetedInteractionDefaultDeliveryTests {
             processIdentifier: 2468,
             processStartIdentity: 8,
             bundleIdentifier: "com.apple.TextEdit",
-            name: "TextEdit")
+            name: "TextEdit"
+        )
         let context = TestServicesFactory.makeAutomationTestContext(
-            applications: StubApplicationService(applications: [app]))
+            applications: StubApplicationService(applications: [app])
+        )
         let snapshotId = try await context.snapshots.createSnapshot()
         try await context.snapshots.storeDetectionResult(
             snapshotId: snapshotId,
@@ -221,14 +226,20 @@ struct TargetedInteractionDefaultDeliveryTests {
                         windowMutationIdentity: WindowMutationIdentity(
                             windowID: 42,
                             ownerProcessIdentifier: 2468,
-                            ownerProcessStartIdentity: 7)))))
+                            ownerProcessStartIdentity: 7
+                        )
+                    )
+                )
+            )
+        )
 
         let result = try await InProcessCommandRunner.run(
             [
                 "type", "hello", "--app", "TextEdit", "--snapshot", snapshotId,
                 "--no-auto-focus", "--no-remote",
             ],
-            services: context.services)
+            services: context.services
+        )
 
         #expect(result.exitStatus != 0)
         #expect(result.combinedOutput.contains("changed process generation"))
