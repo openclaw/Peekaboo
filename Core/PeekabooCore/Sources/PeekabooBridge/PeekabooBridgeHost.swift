@@ -94,6 +94,203 @@ private func waitForPeekabooBridgeRequestsToDrain(
     return true
 }
 
+/// Converts listener readability into a coalesced async sequence.
+///
+/// A UNIX listener is level-triggered: one notification can represent several queued clients, so the accept loop
+/// drains until `EAGAIN` before waiting for the next event. Keeping the source alive for the listener lifetime avoids
+/// a polling sleep and lets shutdown explicitly finish the sequence before the descriptor is closed.
+final class PeekabooBridgeListenerReadiness: @unchecked Sendable {
+    let events: AsyncStream<Void>
+
+    private let continuation: AsyncStream<Void>.Continuation
+    private let cancellationEvents: AsyncStream<Void>
+    private let source: any DispatchSourceRead
+    private let lock = NSLock()
+    private var isCancelled = false
+    private var isFinishing = false
+    private var isSuspended = false
+    private var notificationCount = 0
+
+    init(fileDescriptor: Int32) {
+        let pair = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
+        let cancellationPair = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
+        self.events = pair.stream
+        self.continuation = pair.continuation
+        self.cancellationEvents = cancellationPair.stream
+        self.source = DispatchSource.makeReadSource(
+            fileDescriptor: fileDescriptor,
+            queue: DispatchQueue.global(qos: .userInitiated))
+        self.source.setEventHandler { [weak self] in
+            self?.notifyReadable()
+        }
+        self.source.setCancelHandler {
+            close(fileDescriptor)
+            cancellationPair.continuation.yield(())
+            cancellationPair.continuation.finish()
+        }
+        self.source.activate()
+    }
+
+    deinit {
+        self.cancel()
+    }
+
+    func cancel() {
+        self.lock.lock()
+        guard !self.isCancelled else {
+            self.lock.unlock()
+            return
+        }
+        self.isCancelled = true
+        let mustResume = self.isSuspended
+        self.isSuspended = false
+        self.lock.unlock()
+
+        // A cancelled Dispatch source does not deliver its cancellation while suspended.
+        if mustResume {
+            self.source.resume()
+        }
+        self.continuation.finish()
+        self.source.cancel()
+    }
+
+    /// Stops the async consumer before source cancellation closes the descriptor.
+    func finishEvents() {
+        self.lock.lock()
+        guard !self.isFinishing else {
+            self.lock.unlock()
+            return
+        }
+        self.isFinishing = true
+        self.lock.unlock()
+        self.continuation.finish()
+    }
+
+    /// Waits until all queued source handlers have drained, making it safe for the owner to close the descriptor.
+    func waitUntilCancelled() async {
+        for await _ in self.cancellationEvents {
+            return
+        }
+    }
+
+    /// Re-enables listener notifications after the accept queue has been drained to `EAGAIN`.
+    func rearm() {
+        self.lock.lock()
+        guard !self.isCancelled, !self.isFinishing, self.isSuspended else {
+            self.lock.unlock()
+            return
+        }
+        self.isSuspended = false
+        self.lock.unlock()
+        self.source.resume()
+    }
+
+    #if DEBUG
+    var notificationCountForTesting: Int {
+        self.lock.lock()
+        defer { self.lock.unlock() }
+        return self.notificationCount
+    }
+    #endif
+
+    private func notifyReadable() {
+        self.lock.lock()
+        guard !self.isCancelled, !self.isFinishing, !self.isSuspended else {
+            self.lock.unlock()
+            return
+        }
+        // Dispatch read sources are level-triggered. Suspend until the async consumer drains accept(), otherwise a
+        // queued client can repeatedly invoke this lightweight handler faster than the consumer gets scheduled.
+        self.isSuspended = true
+        self.notificationCount += 1
+        self.source.suspend()
+        self.lock.unlock()
+        self.continuation.yield(())
+    }
+}
+
+private enum PeekabooBridgeAcceptLoop {
+    typealias ClientHandler = @Sendable (Int32, PeekabooBridgeConnectionLiveness) async -> Void
+    typealias PreparedConnection = (fd: Int32, connection: PeekabooBridgeConnectionLiveness)
+
+    private static let logger = Logger(subsystem: "boo.peekaboo.bridge", category: "host")
+
+    static func run(
+        listenFD: Int32,
+        readiness: PeekabooBridgeListenerReadiness,
+        context: PeekabooBridgeClientContext,
+        clientHandler: @escaping ClientHandler) async
+    {
+        defer { readiness.cancel() }
+        for await _ in readiness.events {
+            guard !Task.isCancelled else { return }
+            guard let connections = await self.drainConnections(listenFD: listenFD) else { return }
+            for (index, prepared) in connections.enumerated() {
+                guard !Task.isCancelled else {
+                    connections[index...].forEach { $0.connection.close() }
+                    return
+                }
+                await context.connectionTracker.begin(connection: prepared.connection)
+                Task.detached(priority: .userInitiated) {
+                    await clientHandler(prepared.fd, prepared.connection)
+                    prepared.connection.close()
+                    await context.connectionTracker.end(connection: prepared.connection)
+                }
+            }
+            readiness.rearm()
+        }
+    }
+
+    private static func drainConnections(listenFD: Int32) async -> [PreparedConnection]? {
+        var connections: [PreparedConnection] = []
+        while !Task.isCancelled {
+            var addr = sockaddr()
+            var len = socklen_t(MemoryLayout<sockaddr>.size)
+            let client = accept(listenFD, &addr, &len)
+            if client >= 0 {
+                if let prepared = self.prepareConnection(client) {
+                    connections.append(prepared)
+                }
+                continue
+            }
+            if errno == EINTR {
+                continue
+            }
+            if errno == EAGAIN || errno == EWOULDBLOCK {
+                return connections
+            }
+            if errno == EBADF || errno == EINVAL {
+                connections.forEach { $0.connection.close() }
+                return nil
+            }
+            self.logger.error("accept failed: \(errno, privacy: .public)")
+            try? await Task.sleep(nanoseconds: 50_000_000)
+            return connections
+        }
+        connections.forEach { $0.connection.close() }
+        return nil
+    }
+
+    private static func prepareConnection(_ client: Int32) -> PreparedConnection? {
+        var one: Int32 = 1
+        _ = setsockopt(client, SOL_SOCKET, SO_NOSIGPIPE, &one, socklen_t(MemoryLayout.size(ofValue: one)))
+        do {
+            try PeekabooBridgeSocketIO.configureConnectedSocket(client)
+        } catch {
+            self.logger.error("failed to configure bridge client socket: \(error.localizedDescription)")
+            close(client)
+            return nil
+        }
+        do {
+            return try (client, PeekabooBridgeConnectionLiveness(fd: client))
+        } catch {
+            self.logger.error("failed to create bridge liveness probe: \(error.localizedDescription)")
+            close(client)
+            return nil
+        }
+    }
+}
+
 /// Lightweight UNIX-domain socket host for Peekaboo automation.
 ///
 /// This is a single-request-per-connection protocol: clients write one JSON request then half-close,
@@ -148,6 +345,8 @@ public final actor PeekabooBridgeHost {
     private var leaseFD: Int32 = -1
     private var socketIdentity: SocketIdentity?
     private var acceptTask: Task<Void, Never>?
+    private var listenerReadiness: PeekabooBridgeListenerReadiness?
+    private var stopTask: Task<PeekabooBridgeHostStopOutcome, Never>?
     private var ownershipCleanupTask: Task<Void, Never>?
     private let connectionTracker = PeekabooBridgeConnectionTracker()
     private let requestTracker = PeekabooBridgeRequestTracker()
@@ -185,6 +384,11 @@ public final actor PeekabooBridgeHost {
     }
 
     public func startChecked() throws {
+        guard self.stopTask == nil else {
+            throw PeekabooBridgeHostError.requestsStillDraining(
+                path: self.socketPath,
+                pendingCount: self.requestTracker.activeCount)
+        }
         guard self.listenFD == -1 else { return }
         guard self.ownershipCleanupTask == nil,
               self.leaseFD == -1,
@@ -219,6 +423,8 @@ public final actor PeekabooBridgeHost {
         }
 
         let fd = self.listenFD
+        let listenerReadiness = PeekabooBridgeListenerReadiness(fileDescriptor: fd)
+        self.listenerReadiness = listenerReadiness
         self.requestTracker.startAccepting()
 
         let context = PeekabooBridgeClientContext(
@@ -230,14 +436,35 @@ public final actor PeekabooBridgeHost {
             requestTracker: self.requestTracker)
 
         self.acceptTask = Task.detached(priority: .userInitiated) {
-            await Self.acceptLoop(
+            await PeekabooBridgeAcceptLoop.run(
                 listenFD: fd,
+                readiness: listenerReadiness,
                 context: context)
+            { fd, connection in
+                await Self.handleClient(
+                    fd: fd,
+                    connection: connection,
+                    context: context)
+            }
         }
     }
 
     @discardableResult
     public func stop() async -> PeekabooBridgeHostStopOutcome {
+        if let stopTask = self.stopTask {
+            return await stopTask.value
+        }
+
+        let stopTask = Task { [self] in
+            await self.stopOnce()
+        }
+        self.stopTask = stopTask
+        let outcome = await stopTask.value
+        self.stopTask = nil
+        return outcome
+    }
+
+    private func stopOnce() async -> PeekabooBridgeHostStopOutcome {
         if self.ownershipCleanupTask != nil {
             let snapshot = self.requestTracker.drainSnapshot
             return .ownershipRetained(
@@ -248,12 +475,16 @@ public final actor PeekabooBridgeHost {
         let acceptTask = self.acceptTask
         acceptTask?.cancel()
         self.acceptTask = nil
+        let listenerReadiness = self.listenerReadiness
+        listenerReadiness?.finishEvents()
+        self.listenerReadiness = nil
+        await acceptTask?.value
+        listenerReadiness?.cancel()
+        await listenerReadiness?.waitUntilCancelled()
         if self.listenFD != -1 {
-            close(self.listenFD)
             self.listenFD = -1
         }
         await self.connectionTracker.disconnectAll()
-        await acceptTask?.value
         // Catch a connection accepted between the first snapshot and listener shutdown.
         await self.connectionTracker.disconnectAll()
         self.requestTracker.stopAcceptingAndCancelAll()
@@ -325,6 +556,10 @@ public final actor PeekabooBridgeHost {
 
     func activeRequestCountForTesting() -> Int {
         self.requestTracker.activeCount
+    }
+
+    func listenerReadinessNotificationCountForTesting() -> Int? {
+        self.listenerReadiness?.notificationCountForTesting
     }
 
     var isRetainingOwnershipForRequestsForTesting: Bool {
@@ -1189,58 +1424,6 @@ public final actor PeekabooBridgeHost {
         }
     }
 
-    private nonisolated static func acceptLoop(
-        listenFD: Int32,
-        context: PeekabooBridgeClientContext) async
-    {
-        while !Task.isCancelled {
-            var addr = sockaddr()
-            var len = socklen_t(MemoryLayout<sockaddr>.size)
-            let client = accept(listenFD, &addr, &len)
-            if client < 0 {
-                if errno == EINTR {
-                    continue
-                }
-                if errno == EAGAIN || errno == EWOULDBLOCK {
-                    try? await Task.sleep(for: .milliseconds(25))
-                    continue
-                }
-                if errno == EBADF || errno == EINVAL {
-                    return
-                }
-                self.logger.error("accept failed: \(errno, privacy: .public)")
-                try? await Task.sleep(nanoseconds: 50_000_000)
-                continue
-            }
-
-            Self.disableSigPipe(fd: client)
-            do {
-                try PeekabooBridgeSocketIO.configureConnectedSocket(client)
-            } catch {
-                self.logger.error("failed to configure bridge client socket: \(error.localizedDescription)")
-                close(client)
-                continue
-            }
-            let connection: PeekabooBridgeConnectionLiveness
-            do {
-                connection = try PeekabooBridgeConnectionLiveness(fd: client)
-            } catch {
-                self.logger.error("failed to create bridge liveness probe: \(error.localizedDescription)")
-                close(client)
-                continue
-            }
-            await context.connectionTracker.begin(connection: connection)
-            Task.detached(priority: .userInitiated) {
-                await Self.handleClient(
-                    fd: client,
-                    connection: connection,
-                    context: context)
-                connection.close()
-                await context.connectionTracker.end(connection: connection)
-            }
-        }
-    }
-
     private nonisolated static func handleClient(
         fd: Int32,
         connection: PeekabooBridgeConnectionLiveness,
@@ -1290,11 +1473,6 @@ public final actor PeekabooBridgeHost {
         } catch {
             self.logger.error("bridge socket request failed: \(error.localizedDescription, privacy: .public)")
         }
-    }
-
-    private nonisolated static func disableSigPipe(fd: Int32) {
-        var one: Int32 = 1
-        _ = setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, socklen_t(MemoryLayout.size(ofValue: one)))
     }
 
     private nonisolated static func peerInfoIfAllowed(fd: Int32, allowedTeamIDs: Set<String>) -> PeekabooBridgePeer? {

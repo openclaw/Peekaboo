@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Default new agent configurations to GPT-5.6 and Claude Opus 5 while keeping credential-only Anthropic discovery on Opus 4.8 for zero-retention compatibility and preserving explicit model selections.
 - Encode annotated observations directly from their rendered bitmap, removing redundant PNG/TIFF round trips while preserving exact pixels, metadata, and output paths.
 - Reuse two-second, owner-host-local ScreenCaptureKit exact-window screenshot plans without caching pixels, revalidating process generation, window receipt, display topology, and scale around every capture while exposing miss/hit generation diagnostics.
+- Wake Bridge hosts on kernel listener readiness instead of polling `accept` every 25 ms, draining queued clients per notification while preserving bounded, descriptor-safe shutdown.
 
 ### Fixed
 - Preserve integer-valued Agent tool data across Codable and Foundation JSON conversion instead of mistaking numeric `0` and `1` for booleans.

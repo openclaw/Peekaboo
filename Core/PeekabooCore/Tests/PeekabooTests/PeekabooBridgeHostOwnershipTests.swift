@@ -406,6 +406,118 @@ struct PeekabooBridgeHostOwnershipTests {
         #expect(await host.activeConnectionCountForTesting() == 0)
     }
 
+    @Test
+    func `listener stays dormant while idle and wakes once per sequential request`() async throws {
+        let socketPath = Self.socketPath()
+        defer { Self.removeSocketArtifacts(socketPath) }
+
+        let host = await Self.makeHost(socketPath: socketPath)
+        try await host.startChecked()
+        defer { Task { await host.stop() } }
+
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(await host.listenerReadinessNotificationCountForTesting() == 0)
+
+        let client = Self.client(socketPath: socketPath)
+        let identity = Self.clientIdentity()
+        var durationsMS: [Double] = []
+        durationsMS.reserveCapacity(100)
+        for _ in 0..<100 {
+            let startedAt = ContinuousClock.now
+            _ = try await client.handshake(client: identity)
+            durationsMS.append(Self.milliseconds(startedAt.duration(to: .now)))
+        }
+
+        let notificationsAfterRequests = await host.listenerReadinessNotificationCountForTesting()
+        #expect(notificationsAfterRequests == 100)
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(await host.listenerReadinessNotificationCountForTesting() == notificationsAfterRequests)
+
+        let sorted = durationsMS.sorted()
+        print(
+            "bridge listener 100-request benchmark: " +
+                "p50=\(String(format: "%.3f", sorted[49]))ms " +
+                "p95=\(String(format: "%.3f", sorted[94]))ms " +
+                "max=\(String(format: "%.3f", sorted[99]))ms " +
+                "notifications=\(notificationsAfterRequests ?? -1)")
+    }
+
+    @Test
+    func `listener coalesces clients queued before activation and closes its descriptor once`() async throws {
+        let socketPath = Self.socketPath()
+        defer { Self.removeSocketArtifacts(socketPath) }
+
+        let listener = try Self.bindSocket(path: socketPath, listen: true)
+        try PeekabooBridgeSocketIO.configureConnectedSocket(listener)
+        var clients: [Int32] = []
+        defer { clients.forEach { close($0) } }
+        for _ in 0..<64 {
+            let client = socket(AF_UNIX, SOCK_STREAM, 0)
+            #expect(client >= 0)
+            #expect(Self.connect(fd: client, path: socketPath) == 0)
+            clients.append(client)
+        }
+
+        let readiness = PeekabooBridgeListenerReadiness(fileDescriptor: listener)
+        #expect(await Self.receivesReadinessEvent(from: readiness))
+        #expect(readiness.notificationCountForTesting == 1)
+
+        var acceptedClients: [Int32] = []
+        defer { acceptedClients.forEach { close($0) } }
+        while true {
+            let accepted = accept(listener, nil, nil)
+            if accepted >= 0 {
+                acceptedClients.append(accepted)
+                continue
+            }
+            if errno == EINTR {
+                continue
+            }
+            #expect(errno == EAGAIN || errno == EWOULDBLOCK)
+            break
+        }
+        #expect(acceptedClients.count == clients.count)
+        readiness.rearm()
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(readiness.notificationCountForTesting == 1)
+
+        readiness.finishEvents()
+        readiness.cancel()
+        await readiness.waitUntilCancelled()
+        errno = 0
+        let closedResult = fcntl(listener, F_GETFD)
+        let closedError = errno
+        #expect(closedResult == -1)
+        #expect(closedError == EBADF)
+
+        let replacement = socket(AF_UNIX, SOCK_STREAM, 0)
+        #expect(replacement >= 0)
+        defer { close(replacement) }
+        readiness.cancel()
+        #expect(fcntl(replacement, F_GETFD) >= 0)
+    }
+
+    @Test
+    func `concurrent stop is idempotent and host can restart on the same path`() async throws {
+        let socketPath = Self.socketPath()
+        defer { Self.removeSocketArtifacts(socketPath) }
+
+        let host = await Self.makeHost(socketPath: socketPath)
+        try await host.startChecked()
+
+        async let first = host.stop()
+        async let second = host.stop()
+        let firstOutcome = await first
+        let secondOutcome = await second
+        #expect(firstOutcome == .stopped)
+        #expect(secondOutcome == .stopped)
+
+        try await host.startChecked()
+        let handshake = try await Self.client(socketPath: socketPath).handshake(client: Self.clientIdentity())
+        #expect(handshake.hostKind == .gui)
+        #expect(await host.stop() == .stopped)
+    }
+
     private static func makeHost(
         socketPath: String,
         requestTimeoutSec: TimeInterval = 2) async -> PeekabooBridgeHost
@@ -445,6 +557,29 @@ struct PeekabooBridgeHostOwnershipTests {
 
     private static func socketPath() -> String {
         "/tmp/peekaboo-bridge-ownership-\(UUID().uuidString).sock"
+    }
+
+    private static func milliseconds(_ duration: Duration) -> Double {
+        Double(duration.components.seconds * 1000) +
+            Double(duration.components.attoseconds) / 1_000_000_000_000_000
+    }
+
+    private static func receivesReadinessEvent(from readiness: PeekabooBridgeListenerReadiness) async -> Bool {
+        await withTaskGroup(of: Bool.self) { group in
+            group.addTask {
+                for await _ in readiness.events {
+                    return true
+                }
+                return false
+            }
+            group.addTask {
+                try? await Task.sleep(for: .seconds(1))
+                return false
+            }
+            let result = await group.next() ?? false
+            group.cancelAll()
+            return result
+        }
     }
 
     private static func removeSocketArtifacts(_ socketPath: String) {

@@ -89,6 +89,8 @@ the window tracker and other process-local support.
 - Shutdown removes the socket only when its filesystem identity still matches the listener that created it.
 - Connect, request read, and response write paths are nonblocking and deadline-bound so abandoned clients release their
   connection tasks instead of exhausting the host.
+- Listener acceptance is kernel-readiness-driven: one coalesced notification drains the queued connection backlog to
+  `EAGAIN`, while source cancellation owns descriptor closure and bounded shutdown waits for queued handlers to drain.
 
 Protocol `1.3` adds element action operations:
 
