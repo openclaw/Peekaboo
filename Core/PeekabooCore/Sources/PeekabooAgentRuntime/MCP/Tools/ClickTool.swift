@@ -30,18 +30,21 @@ public struct ClickTool: MCPTool {
                 "query": SchemaBuilder.string(
                     description: """
                     Element text or query to click. Exclusive with on and coords; may use the latest UI snapshot.
-                    """),
+                    """,
+                    minLength: 1),
                 "on": SchemaBuilder.string(
                     description: """
                     Opaque element ID copied exactly from current `see` or `inspect_ui` output. Exclusive with query
                     and coords; may use the latest UI snapshot.
-                    """),
+                    """,
+                    minLength: 1),
                 "coords": SchemaBuilder.string(
                     description: """
                     Coordinates in 'x,y' format, exclusive with on and query. Background delivery requires a nonempty
                     snapshot or coordinate_reference from a fresh exact-window see. Without a reference, set
                     foreground=true for intentional shared-pointer global logical points.
-                    """),
+                    """,
+                    minLength: 1),
                 "coordinate_space": SchemaBuilder.string(
                     description: """
                     Optional. Coordinate basis for coords. image_pixels and normalized require coordinate_reference.
@@ -95,10 +98,9 @@ public struct ClickTool: MCPTool {
 
     private static var targetRouteSchemas: [Value] {
         [
-            .object(["required": .array([.string("on")])]),
-            .object(["required": .array([.string("query")])]),
-            .object([
-                "required": .array([.string("coords")]),
+            self.exclusiveTargetRoute("on"),
+            self.exclusiveTargetRoute("query"),
+            self.exclusiveTargetRoute("coords", additionalFields: [
                 "anyOf": .array([
                     self.requiredConstant("foreground", value: true),
                     self.requiredConstant("background", value: false),
@@ -107,6 +109,21 @@ public struct ClickTool: MCPTool {
                 ]),
             ]),
         ]
+    }
+
+    private static func exclusiveTargetRoute(
+        _ name: String,
+        additionalFields: [String: Value] = [:]) -> Value
+    {
+        let otherTargets = ["on", "query", "coords"].filter { $0 != name }
+        var fields = additionalFields
+        fields["required"] = .array([.string(name)])
+        fields["not"] = .object([
+            "anyOf": .array(otherTargets.map { target in
+                .object(["required": .array([.string(target)])])
+            }),
+        ])
+        return .object(fields)
     }
 
     private static func requiredConstant(_ name: String, value: Bool) -> Value {
