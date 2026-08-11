@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Default new agent configurations to GPT-5.6 and Claude Opus 5 while keeping credential-only Anthropic discovery on Opus 4.8 for zero-retention compatibility and preserving explicit model selections.
 
 ### Fixed
+- Resolve standalone exact-window AX-only `see` targets from their live owner and bind results to a process-generation/window receipt before publishing actionable element IDs or a snapshot.
+- Retry one passive background observation when its exact capture receipt changes before element detection or output, while leaving mutation-capable observations fail-closed.
 - Probe Bridge diagnostic sockets concurrently under a one-second per-host deadline with bounded cancellation while preserving runtime selection and candidate order, so `bridge status --verbose` neither accumulates nor inherits a wedged host's full handshake latency.
 - Require explicit `--foreground` consent before `menubar click` can inspect or open global status-item UI; keep `menubar list` read-only and report missing items as typed retry-safe pre-dispatch refusals.
 - Preserve semantic AX labels, scalar values, roles, descriptions, enabled/selected state, and bounded value-settable capability through background `see` output, persisted snapshots, and agent summaries instead of reducing controls to generic role names.

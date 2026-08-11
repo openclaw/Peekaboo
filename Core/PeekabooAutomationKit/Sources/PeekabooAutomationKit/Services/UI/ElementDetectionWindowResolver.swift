@@ -12,9 +12,19 @@ struct ElementDetectionWindowResolver {
     private let applicationService: ApplicationService
     private let windowIdentityService = WindowIdentityService()
     private let windowManagementService = WindowManagementService()
+    private let exactWindowIdentityProvider: (CGWindowID) -> SystemWindowIdentity?
+    private let processStartIdentityProvider: (pid_t) -> UInt64?
 
-    init(applicationService: ApplicationService) {
+    init(
+        applicationService: ApplicationService,
+        exactWindowIdentityProvider: @escaping (CGWindowID) -> SystemWindowIdentity? =
+            SystemIdentityResolver.windowIdentity,
+        processStartIdentityProvider: @escaping (pid_t) -> UInt64? =
+            SystemIdentityResolver.processStartIdentity)
+    {
         self.applicationService = applicationService
+        self.exactWindowIdentityProvider = exactWindowIdentityProvider
+        self.processStartIdentityProvider = processStartIdentityProvider
     }
 
     func resolveApplication(windowContext: WindowContext?) async throws -> NSRunningApplication {
@@ -55,11 +65,57 @@ struct ElementDetectionWindowResolver {
             return runningApp
         }
 
+        if let windowID = windowContext?.windowID {
+            guard let processIdentifier = Self.stableExactWindowOwner(
+                windowID: windowID,
+                receipt: windowContext?.windowMutationIdentity,
+                windowIdentityProvider: self.exactWindowIdentityProvider,
+                processStartIdentityProvider: self.processStartIdentityProvider),
+                let runningApp = NSRunningApplication(processIdentifier: processIdentifier)
+            else {
+                throw PeekabooError.windowNotFound(criteria: "live owner for exact window id \(windowID)")
+            }
+            self.logger.debug("Resolved application via exact window \(windowID), PID: \(processIdentifier)")
+            return runningApp
+        }
+
         guard let frontmost = NSWorkspace.shared.frontmostApplication else {
             self.logger.error("No frontmost application")
             throw PeekabooError.operationError(message: "No frontmost application")
         }
         return frontmost
+    }
+
+    nonisolated static func stableExactWindowOwner(
+        windowID: Int,
+        receipt: WindowMutationIdentity?,
+        windowIdentityProvider: (CGWindowID) -> SystemWindowIdentity?,
+        processStartIdentityProvider: (pid_t) -> UInt64?) -> pid_t?
+    {
+        guard windowID > 0,
+              let cgWindowID = CGWindowID(exactly: windowID),
+              let before = windowIdentityProvider(cgWindowID),
+              let beforeGeneration = processStartIdentityProvider(before.ownerProcessIdentifier),
+              let after = windowIdentityProvider(cgWindowID),
+              let afterGeneration = processStartIdentityProvider(after.ownerProcessIdentifier),
+              before.windowID == cgWindowID,
+              after.windowID == cgWindowID,
+              before.ownerProcessIdentifier == after.ownerProcessIdentifier,
+              before.bounds == after.bounds,
+              beforeGeneration == afterGeneration
+        else {
+            return nil
+        }
+        if let receipt {
+            guard receipt.windowID == windowID,
+                  receipt.ownerProcessIdentifier == before.ownerProcessIdentifier,
+                  receipt.ownerProcessStartIdentity == beforeGeneration,
+                  receipt.capturedBounds == nil || receipt.capturedBounds == before.bounds
+            else {
+                return nil
+            }
+        }
+        return before.ownerProcessIdentifier
     }
 
     func resolveWindow(

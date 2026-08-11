@@ -123,9 +123,13 @@ public final class DesktopObservationService: DesktopObservationServiceProtocol 
                     return (stateSnapshot, captureBoundTarget, capture, detection)
                 }
             }
-        let (stateSnapshot, target, capture, serializedDetection) = try await self.withDesktopOperationLane(
-            for: request,
-            operation: coordinatedCapture)
+        let (stateSnapshot, target, capture, serializedDetection) = try await self.withPassiveCaptureReceiptRecovery(
+            for: request)
+        {
+            try await self.withDesktopOperationLane(
+                for: request,
+                operation: coordinatedCapture)
+        }
         // Web-focus fallback can AXPress hidden web content, so keep that mutating detection atomic with capture.
         // Read-only AX traversal and OCR can be slow without touching ScreenCaptureKit; let unrelated captures run.
         let detection = if serializesDetection {
@@ -199,5 +203,34 @@ public final class DesktopObservationService: DesktopObservationServiceProtocol 
             // make the host wait forever on a lock owned by the client request that is waiting for that host.
             try await operation()
         }
+    }
+
+    private func withPassiveCaptureReceiptRecovery<T: Sendable>(
+        for request: DesktopObservationRequest,
+        operation: @escaping @MainActor @Sendable () async throws -> T) async throws -> T
+    {
+        do {
+            return try await operation()
+        } catch let error as DesktopObservationError {
+            guard Self.allowsPassiveCaptureReceiptRecovery(request), case .targetChanged = error else {
+                throw error
+            }
+            try Task.checkCancellation()
+            return try await operation()
+        }
+    }
+
+    private nonisolated static func allowsPassiveCaptureReceiptRecovery(
+        _ request: DesktopObservationRequest) -> Bool
+    {
+        guard request.capture.focus == .background,
+              !request.detection.allowWebFocusFallback
+        else {
+            return false
+        }
+        if case let .menubarPopover(_, openIfNeeded) = request.target, openIfNeeded != nil {
+            return false
+        }
+        return true
     }
 }

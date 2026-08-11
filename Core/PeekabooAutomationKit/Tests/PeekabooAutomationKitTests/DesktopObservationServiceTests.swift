@@ -239,7 +239,10 @@ extension DesktopObservationServiceTests {
             }
         }
 
-        XCTAssertEqual(capture.operations, [.windowID(42, .logical1x, .auto)])
+        XCTAssertEqual(capture.operations, [
+            .windowID(42, .logical1x, .auto),
+            .windowID(42, .logical1x, .auto),
+        ])
         XCTAssertNil(automation.lastWindowContext?.windowMutationIdentity)
     }
 

@@ -40,7 +40,7 @@ peekaboo see --window-id 12345 --roi 100,80,500,300 --json --path /tmp/window-ro
 | `--format png|jpg` / `--retina` | Select the image encoding and native display scale. |
 | `--no-elements` | Skip element detection for the cheapest screenshot-only CLI path. |
 | `--tree` | Print the accessibility text tree. |
-| `--no-screenshot` | Skip pixel capture; requires `--tree`. This is the AX-only inspection form. |
+| `--no-screenshot` | Skip pixel capture; requires `--tree`. This AX-only form publishes element IDs and a snapshot only after pinning the exact process generation, window, and bounds; target drift or a missing receipt fails before publication. |
 | `--annotate` | Overlay element bounds/IDs on the output image. |
 | `--path <file>` / `--save` / `--output` / `-o` | Save the screenshot/annotation to disk. |
 | `--json` | Emit structured metadata (recommended for scripting). |
@@ -55,6 +55,8 @@ peekaboo see --window-id 12345 --roi 100,80,500,300 --json --path /tmp/window-ro
 Note: `--app menubar` captures only the menu bar strip; `--menubar` attempts to find the active popover and OCR its text.
 
 For agent and automation runs, pass `--path` to a known temporary file when using `see` so capture artifacts land where expected. Use `peekaboo see --tree --no-screenshot --json` when you need AX metadata without a screenshot artifact.
+
+Passive background observations retry one resolve-and-capture transaction when the target's exact receipt changes during capture, then fail closed if it changes again. Foreground capture, explicit web-focus fallback, and menu-opening observations never retry because they can mutate visible desktop state.
 
 When `--json` is used without `--path`, Peekaboo retains the raw image only in managed snapshot storage and returns empty `screenshot_raw` and `screenshot_annotated` fields. Pass `--path` when the caller needs a directly accessible image file.
 

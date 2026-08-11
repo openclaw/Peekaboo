@@ -115,6 +115,7 @@ extension SeeCommand {
             )
         )
         try self.requireUsableTreeOnlyEvidence(result)
+        try self.requireActionCapableTreeOnlyEvidence(result)
         let bound = ElementDetectionResult(
             snapshotId: snapshotID,
             screenshotPath: "",
@@ -147,6 +148,28 @@ extension SeeCommand {
                 budget: result.metadata.windowContext?.traversalBudget
             )
         )
+    }
+
+    private func requireActionCapableTreeOnlyEvidence(_ result: ElementDetectionResult) throws {
+        guard let context = result.metadata.windowContext,
+              let processIdentifier = context.applicationProcessId,
+              processIdentifier > 0,
+              let windowID = context.windowID,
+              windowID > 0,
+              let bounds = context.windowBounds,
+              bounds.width > 0,
+              bounds.height > 0,
+              let identity = context.windowMutationIdentity,
+              identity.windowID == windowID,
+              identity.ownerProcessIdentifier == processIdentifier,
+              identity.ownerProcessStartIdentity > 0,
+              identity.capturedBounds == bounds
+        else {
+            throw PeekabooError.snapshotStale(
+                "AX-only see could not bind its elements to an exact process-generation, window, and bounds " +
+                    "receipt. Run see again before background input."
+            )
+        }
     }
 
     func resolvedTreeWindowID() async throws -> Int? {

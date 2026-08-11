@@ -395,28 +395,27 @@ public final class ElementDetectionService {
         requested: WindowContext?) throws -> WindowContext?
     {
         if let requestedWindowID = requested?.windowID {
+            let actionableReceipt = try Self.resolveActionableWindowReceipt(
+                windowID: requestedWindowID,
+                processIdentifier: targetApp.processIdentifier,
+                capturedBounds: requested?.windowBounds,
+                receipt: requested?.windowMutationIdentity)
             guard let windowID = CGWindowID(exactly: requestedWindowID),
                   let liveWindow = SystemIdentityResolver.windowIdentity(windowID),
-                  liveWindow.ownerProcessIdentifier == targetApp.processIdentifier
+                  liveWindow.ownerProcessIdentifier == targetApp.processIdentifier,
+                  liveWindow.bounds == actionableReceipt.bounds
             else {
                 throw PeekabooError.snapshotStale(
                     "Exact observation window changed before its process-generation receipt was captured")
             }
-            let bounds = requested?.windowBounds ?? liveWindow.bounds
-            let mutationIdentity = try Self.validatedExactWindowReceipt(
-                windowID: requestedWindowID,
-                processIdentifier: targetApp.processIdentifier,
-                capturedBounds: requested?.windowBounds,
-                receipt: requested?.windowMutationIdentity,
-                requiresActionCapability: false)
             return WindowContext(
                 applicationName: requested?.applicationName ?? targetApp.localizedName,
                 applicationBundleId: requested?.applicationBundleId ?? targetApp.bundleIdentifier,
                 applicationProcessId: targetApp.processIdentifier,
                 windowTitle: requested?.windowTitle ?? liveWindow.title,
                 windowID: requestedWindowID,
-                windowBounds: bounds,
-                windowMutationIdentity: mutationIdentity,
+                windowBounds: actionableReceipt.bounds,
+                windowMutationIdentity: actionableReceipt.identity,
                 shouldFocusWebContent: requested?.shouldFocusWebContent,
                 includeMenuBarElements: requested?.includeMenuBarElements,
                 traversalBudget: requested?.traversalBudget,
@@ -436,19 +435,62 @@ public final class ElementDetectionService {
         else {
             return requested
         }
+        let actionableReceipt = try Self.resolveActionableWindowReceipt(
+            windowID: window.windowID,
+            processIdentifier: targetApp.processIdentifier,
+            capturedBounds: window.bounds,
+            receipt: window.mutationIdentity)
         return WindowContext(
             applicationName: requested?.applicationName ?? targetApp.localizedName,
             applicationBundleId: requested?.applicationBundleId ?? targetApp.bundleIdentifier,
             applicationProcessId: targetApp.processIdentifier,
             windowTitle: window.title,
             windowID: window.windowID,
-            windowBounds: window.bounds,
-            windowMutationIdentity: nil,
+            windowBounds: actionableReceipt.bounds,
+            windowMutationIdentity: actionableReceipt.identity,
             shouldFocusWebContent: requested?.shouldFocusWebContent,
             includeMenuBarElements: requested?.includeMenuBarElements,
             traversalBudget: requested?.traversalBudget,
             requiresFreshAccessibilityTree: requested?.requiresFreshAccessibilityTree ?? false,
             accessibilityTimeoutSeconds: requested?.accessibilityTimeoutSeconds)
+    }
+
+    nonisolated struct ActionableWindowReceipt: Equatable {
+        let identity: WindowMutationIdentity
+        let bounds: CGRect
+    }
+
+    nonisolated static func resolveActionableWindowReceipt(
+        windowID: Int,
+        processIdentifier: pid_t,
+        capturedBounds: CGRect?,
+        receipt: WindowMutationIdentity?,
+        receiptProvider: (CGWindowID) -> WindowMutationIdentity? = {
+            SystemIdentityResolver.windowMutationIdentity(windowID: $0)
+        },
+        validator: (WindowMutationIdentity, CGRect) -> Bool = {
+            SystemIdentityResolver.validateWindowMutationIdentity($0, expectedBounds: $1)
+        }) throws -> ActionableWindowReceipt
+    {
+        guard windowID > 0, let cgWindowID = CGWindowID(exactly: windowID) else {
+            throw PeekabooError.snapshotStale("Exact AX observation window identifier is invalid")
+        }
+        guard let candidate = receipt ?? receiptProvider(cgWindowID),
+              let bounds = capturedBounds ?? candidate.capturedBounds,
+              candidate.ownerProcessStartIdentity > 0,
+              candidate.capturedBounds == bounds,
+              let identity = try Self.validatedExactWindowReceipt(
+                  windowID: windowID,
+                  processIdentifier: processIdentifier,
+                  capturedBounds: bounds,
+                  receipt: candidate,
+                  requiresActionCapability: true,
+                  validator: validator)
+        else {
+            throw PeekabooError.snapshotStale(
+                "AX-only observation could not capture an exact process-generation, window, and bounds receipt")
+        }
+        return ActionableWindowReceipt(identity: identity, bounds: bounds)
     }
 
     nonisolated static func validatedExactWindowReceipt(

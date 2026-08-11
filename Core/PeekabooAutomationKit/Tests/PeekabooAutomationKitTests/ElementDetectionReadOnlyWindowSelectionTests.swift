@@ -143,6 +143,126 @@ final class ElementDetectionReadOnlyWindowSelectionTests: XCTestCase {
         }
     }
 
+    func testExactReadOnlyObservationCapturesActionableReceiptWhenCallerHasNone() throws {
+        let bounds = CGRect(x: 1, y: 2, width: 300, height: 200)
+        let receipt = Self.receipt(windowID: 42, processIdentifier: 123, bounds: bounds)
+        var captureCount = 0
+        var validationCount = 0
+
+        let resolved = try ElementDetectionService.resolveActionableWindowReceipt(
+            windowID: 42,
+            processIdentifier: 123,
+            capturedBounds: nil,
+            receipt: nil,
+            receiptProvider: { windowID in
+                captureCount += 1
+                XCTAssertEqual(windowID, 42)
+                return receipt
+            },
+            validator: { candidate, candidateBounds in
+                validationCount += 1
+                return candidate == receipt && candidateBounds == bounds
+            })
+
+        XCTAssertEqual(resolved.identity, receipt)
+        XCTAssertEqual(resolved.bounds, bounds)
+        XCTAssertEqual(captureCount, 1)
+        XCTAssertEqual(validationCount, 1)
+    }
+
+    func testExistingReadOnlyObservationReceiptIsPreservedAndRevalidated() throws {
+        let bounds = CGRect(x: 1, y: 2, width: 300, height: 200)
+        let receipt = Self.receipt(windowID: 42, processIdentifier: 123, bounds: bounds)
+
+        let resolved = try ElementDetectionService.resolveActionableWindowReceipt(
+            windowID: 42,
+            processIdentifier: 123,
+            capturedBounds: bounds,
+            receipt: receipt,
+            receiptProvider: { _ in
+                XCTFail("An existing capture receipt must not be replaced")
+                return nil
+            },
+            validator: { candidate, candidateBounds in
+                candidate == receipt && candidateBounds == bounds
+            })
+
+        XCTAssertEqual(resolved.identity, receipt)
+        XCTAssertEqual(resolved.bounds, bounds)
+    }
+
+    func testReadOnlyObservationReceiptDriftFailsClosed() {
+        let bounds = CGRect(x: 1, y: 2, width: 300, height: 200)
+        let receipt = Self.receipt(windowID: 42, processIdentifier: 123, bounds: bounds)
+
+        XCTAssertThrowsError(try ElementDetectionService.resolveActionableWindowReceipt(
+            windowID: 42,
+            processIdentifier: 123,
+            capturedBounds: bounds,
+            receipt: receipt,
+            receiptProvider: { _ in receipt },
+            validator: { _, _ in false }))
+        { error in
+            XCTAssertTrue(error.localizedDescription.contains("changed before AX traversal"))
+        }
+    }
+
+    func testReadOnlyObservationRejectsReceiptForAnotherProcess() {
+        let bounds = CGRect(x: 1, y: 2, width: 300, height: 200)
+        let receipt = Self.receipt(windowID: 42, processIdentifier: 999, bounds: bounds)
+
+        XCTAssertThrowsError(try ElementDetectionService.resolveActionableWindowReceipt(
+            windowID: 42,
+            processIdentifier: 123,
+            capturedBounds: bounds,
+            receipt: nil,
+            receiptProvider: { _ in receipt },
+            validator: { _, _ in true }))
+        { error in
+            XCTAssertTrue(error.localizedDescription.contains("changed before AX traversal"))
+        }
+    }
+
+    func testReadOnlyObservationRejectsLegacyReceiptWithoutEmbeddedBounds() {
+        let bounds = CGRect(x: 1, y: 2, width: 300, height: 200)
+        let receipt = WindowMutationIdentity(
+            windowID: 42,
+            ownerProcessIdentifier: 123,
+            ownerProcessStartIdentity: 7,
+            capturedBounds: nil)
+
+        XCTAssertThrowsError(try ElementDetectionService.resolveActionableWindowReceipt(
+            windowID: 42,
+            processIdentifier: 123,
+            capturedBounds: bounds,
+            receipt: receipt,
+            receiptProvider: { _ in receipt },
+            validator: { _, _ in true }))
+        { error in
+            XCTAssertTrue(error.localizedDescription.contains("could not capture"))
+        }
+    }
+
+    func testReadOnlyObservationRejectsZeroProcessGeneration() {
+        let bounds = CGRect(x: 1, y: 2, width: 300, height: 200)
+        let receipt = WindowMutationIdentity(
+            windowID: 42,
+            ownerProcessIdentifier: 123,
+            ownerProcessStartIdentity: 0,
+            capturedBounds: bounds)
+
+        XCTAssertThrowsError(try ElementDetectionService.resolveActionableWindowReceipt(
+            windowID: 42,
+            processIdentifier: 123,
+            capturedBounds: bounds,
+            receipt: receipt,
+            receiptProvider: { _ in receipt },
+            validator: { _, _ in true }))
+        { error in
+            XCTAssertTrue(error.localizedDescription.contains("could not capture"))
+        }
+    }
+
     private static func window(
         id: Int,
         title: String,
@@ -163,5 +283,17 @@ final class ElementDetectionReadOnlyWindowSelectionTests: XCTestCase {
             isOnScreen: true,
             sharingState: .readOnly,
             isExcludedFromWindowsMenu: false)
+    }
+
+    private static func receipt(
+        windowID: Int,
+        processIdentifier: pid_t,
+        bounds: CGRect) -> WindowMutationIdentity
+    {
+        WindowMutationIdentity(
+            windowID: windowID,
+            ownerProcessIdentifier: processIdentifier,
+            ownerProcessStartIdentity: 7,
+            capturedBounds: bounds)
     }
 }
