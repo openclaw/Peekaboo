@@ -113,6 +113,32 @@ struct PasteToolExactWindowTests {
 
     @Test
     @MainActor
+    func `Exact window paste refuses an incomplete owner before dispatch`() async throws {
+        let application = ServiceApplicationInfo(
+            processIdentifier: 333,
+            bundleIdentifier: nil,
+            name: "Incomplete Editor",
+            isHiddenKnown: false,
+            activationPolicy: nil,
+            metadataWarnings: ["metadata timed out"])
+        let fixture = await self.makeFixture(
+            exactKeyboardSupported: true,
+            application: application)
+
+        let response = try await fixture.tool.execute(arguments: ToolArguments(raw: [
+            "window_id": self.secondWindow.windowID,
+            "text": "must not dispatch",
+        ]))
+
+        #expect(response.isError)
+        #expect(self.responseText(response).contains("cannot receive background input"))
+        #expect(await MainActor.run { fixture.exactAutomation?.exactTypeCalls.isEmpty } == true)
+        #expect(await MainActor.run { fixture.automation.targetedTypeActionsCalls.isEmpty })
+        self.expectClipboardUntouched(fixture.clipboard)
+    }
+
+    @Test
+    @MainActor
     func `Process text prefix failure is indeterminate retry unsafe and leaves clipboard untouched`() async throws {
         let application = ServiceApplicationInfo(
             processIdentifier: 333,
@@ -263,9 +289,10 @@ struct PasteToolExactWindowTests {
     @MainActor
     private func makeFixture(
         exactKeyboardSupported: Bool,
-        exactTypeErrorAfterPrefix: String? = nil) async -> PasteExactWindowFixture
+        exactTypeErrorAfterPrefix: String? = nil,
+        application: ServiceApplicationInfo? = nil) async -> PasteExactWindowFixture
     {
-        let application = ServiceApplicationInfo(
+        let application = application ?? ServiceApplicationInfo(
             processIdentifier: 333,
             bundleIdentifier: "com.example.editor",
             name: "Editor")

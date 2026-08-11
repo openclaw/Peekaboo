@@ -576,8 +576,14 @@ struct PasteCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
             services: self.services
         )
         let applications = try await self.services.applications.listApplications().data.applications
-        guard applications.contains(where: { $0.processIdentifier == processIdentifier }) else {
+        guard let application = applications.first(where: { $0.processIdentifier == processIdentifier }) else {
             throw ValidationError("Target process PID \(processIdentifier) is no longer running.")
+        }
+        guard application.isEligibleForBackgroundInput else {
+            throw ValidationError(
+                "Target process PID \(processIdentifier) cannot receive background input because it is a " +
+                    "prohibited helper or its application metadata is incomplete."
+            )
         }
         if self.target.pid != nil {
             guard let expectedPIDIdentity,

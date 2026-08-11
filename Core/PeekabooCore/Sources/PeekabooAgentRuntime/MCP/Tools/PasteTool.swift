@@ -681,9 +681,10 @@ public struct PasteTool: MCPTool {
             applications: self.context.applications,
             windows: self.context.windows)
         let applications = try await self.context.applications.listApplications().data.applications
-        guard applications.contains(where: { $0.processIdentifier == processIdentifier }) else {
+        guard let application = applications.first(where: { $0.processIdentifier == processIdentifier }) else {
             throw PasteToolError("Target process PID \(processIdentifier) is no longer running.")
         }
+        try application.requireBackgroundInputEligibility()
         if target.pid != nil {
             guard let expectedPIDIdentity,
                   ClipboardPasteTransactionGate.processStartIdentity(processIdentifier) == expectedPIDIdentity
@@ -726,9 +727,12 @@ public struct PasteTool: MCPTool {
         }
 
         let applications = try await self.context.applications.listApplications().data.applications
-        guard applications.contains(where: { $0.processIdentifier == identity.ownerProcessIdentifier }) else {
+        guard let application = applications.first(where: {
+            $0.processIdentifier == identity.ownerProcessIdentifier
+        }) else {
             throw PasteToolError("Target process PID \(identity.ownerProcessIdentifier) is no longer running.")
         }
+        try application.requireBackgroundInputEligibility()
         if target.pid != nil {
             guard let expectedPIDIdentity,
                   ClipboardPasteTransactionGate.processStartIdentity(identity.ownerProcessIdentifier) ==
@@ -869,6 +873,16 @@ private struct PasteExactWindowDestination: Sendable {
     let windowID: Int
     let bounds: CGRect
     let windowIdentity: WindowMutationIdentity
+}
+
+extension ServiceApplicationInfo {
+    fileprivate func requireBackgroundInputEligibility() throws {
+        guard self.isEligibleForBackgroundInput else {
+            throw PasteToolError(
+                "Target process PID \(self.processIdentifier) cannot receive background input because it is a " +
+                    "prohibited helper or its application metadata is incomplete.")
+        }
+    }
 }
 
 private struct PasteDeliveryDestination: Sendable {

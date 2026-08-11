@@ -108,6 +108,48 @@ struct PasteToolTransactionGateTests {
     }
 
     @Test
+    func `MCP background paste refuses prohibited and incomplete inventory rows before dispatch`() async throws {
+        let ineligibleApplications = [
+            ServiceApplicationInfo(
+                processIdentifier: 333,
+                bundleIdentifier: "com.example.helper",
+                name: "Prohibited Helper",
+                isHiddenKnown: true,
+                activationPolicy: .prohibited),
+            ServiceApplicationInfo(
+                processIdentifier: 444,
+                bundleIdentifier: nil,
+                name: "Incomplete Helper",
+                isHiddenKnown: false,
+                activationPolicy: nil,
+                metadataWarnings: ["metadata timed out"]),
+        ]
+
+        for application in ineligibleApplications {
+            let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
+            let applications = await MainActor.run { MockApplicationService(applications: [application]) }
+            let clipboard = await MainActor.run { TransactionGateClipboardService() }
+            let context = await MCPToolTestHelpers.makeContext(
+                automation: automation,
+                applications: applications,
+                clipboard: clipboard)
+
+            let response = try await PasteTool(context: context).execute(arguments: ToolArguments(raw: [
+                "app": application.name,
+                "text": "must not dispatch",
+            ]))
+
+            #expect(response.isError)
+            #expect(self.responseText(response).contains("cannot receive background input"))
+            #expect(await MainActor.run { automation.targetedTypeActionsCalls.isEmpty })
+            #expect(await MainActor.run { automation.targetedHotkeyCalls.isEmpty })
+            #expect(await MainActor.run { clipboard.getCallCount } == 0)
+            #expect(await MainActor.run { clipboard.setCallCount } == 0)
+            #expect(await MainActor.run { clipboard.restoreCallCount } == 0)
+        }
+    }
+
+    @Test
     func `MCP clipboard read failure is not treated as empty`() async throws {
         let app = ServiceApplicationInfo(
             processIdentifier: 333,

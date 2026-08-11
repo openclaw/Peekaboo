@@ -186,6 +186,41 @@ struct ApplicationInventoryTimeoutTests {
     }
 
     @Test
+    @MainActor
+    func `metadata reads launched near the overall deadline receive only its remaining budget`() async throws {
+        let processIdentifiers: [pid_t] = [47001, 47002]
+        let clockStart = ContinuousClock.now
+        var clockReadCount = 0
+        let timeoutRecorder = ApplicationMetadataTimeoutRecorder()
+        let service = ApplicationService(
+            applicationOpenHandler: { _, _, _ in throw ApplicationInventoryFixtureError.unused },
+            processStartIdentityProvider: { pid in UInt64(pid) + 10 },
+            runningApplicationProcessIdentifiersProvider: { processIdentifiers },
+            applicationWindowCatalogProvider: { [] },
+            applicationInventoryNowProvider: {
+                defer { clockReadCount += 1 }
+                return clockReadCount < 2
+                    ? clockStart
+                    : clockStart.advanced(by: .milliseconds(90))
+            },
+            applicationMetadataProvider: { pid, _, timeout in
+                await timeoutRecorder.record(processIdentifier: pid, timeout: timeout)
+                return Self.metadata(name: "App \(pid)")
+            },
+            applicationMetadataTimeout: 0.5,
+            applicationInventoryOverallTimeout: 0.1,
+            maximumConcurrentApplicationMetadataReads: 1)
+
+        let output = try await service.listApplications()
+        let recordedTimeouts = await timeoutRecorder.timeouts
+
+        #expect(output.data.applications.count == processIdentifiers.count)
+        #expect(recordedTimeouts.count == processIdentifiers.count)
+        #expect(abs(recordedTimeouts[0] - 0.1) < 0.001)
+        #expect(abs(recordedTimeouts[1] - 0.01) < 0.001)
+    }
+
+    @Test
     func `noncooperative per-process metadata times out without holding caller`() async throws {
         let gate = ApplicationInventoryBlockingGate()
         let startedAt = ContinuousClock.now
@@ -397,6 +432,14 @@ private actor ApplicationMetadataConcurrencyProbe {
         for waiter in waiters {
             waiter.resume()
         }
+    }
+}
+
+private actor ApplicationMetadataTimeoutRecorder {
+    private(set) var timeouts: [TimeInterval] = []
+
+    func record(processIdentifier _: pid_t, timeout: TimeInterval) {
+        self.timeouts.append(timeout)
     }
 }
 

@@ -356,6 +356,11 @@ extension ServiceApplicationInfo {
         self.activationPolicy != .prohibited && self.isHiddenKnown != false
     }
 
+    /// Background input must not target system-only helpers or rows whose bounded metadata is incomplete.
+    public var isEligibleForBackgroundInput: Bool {
+        self.activationPolicy != .prohibited && self.isHiddenKnown != false
+    }
+
     /// Bulk termination is fail-closed: only an explicitly regular app with known metadata is eligible.
     public var isEligibleForBulkQuit: Bool {
         self.activationPolicy == .regular && self.isHiddenKnown != false

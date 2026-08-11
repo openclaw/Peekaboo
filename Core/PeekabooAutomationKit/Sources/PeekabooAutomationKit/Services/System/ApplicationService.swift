@@ -76,6 +76,7 @@ public final class ApplicationService: ApplicationServiceProtocol {
     typealias ApplicationQuitHandler = @MainActor (_ application: NSRunningApplication, _ force: Bool) -> Bool
     typealias RunningApplicationProcessIdentifiersProvider = @MainActor () -> [pid_t]
     typealias ApplicationWindowCatalogProvider = @MainActor () -> [WindowIdentityInfo]?
+    typealias ApplicationInventoryNowProvider = @MainActor () -> ContinuousClock.Instant
     typealias ApplicationMetadataProvider = @Sendable (
         _ processIdentifier: pid_t,
         _ processStartIdentity: UInt64?,
@@ -104,6 +105,7 @@ public final class ApplicationService: ApplicationServiceProtocol {
     let applicationQuitHandler: ApplicationQuitHandler
     let runningApplicationProcessIdentifiersProvider: RunningApplicationProcessIdentifiersProvider
     let applicationWindowCatalogProvider: ApplicationWindowCatalogProvider
+    let applicationInventoryNowProvider: ApplicationInventoryNowProvider
     let applicationMetadataProvider: ApplicationMetadataProvider
     let applicationMetadataTimeout: TimeInterval
     let applicationInventoryOverallTimeout: TimeInterval
@@ -187,6 +189,7 @@ public final class ApplicationService: ApplicationServiceProtocol {
         applicationWindowCatalogProvider: @escaping ApplicationWindowCatalogProvider = {
             WindowIdentityService().getWindowCatalog()
         },
+        applicationInventoryNowProvider: @escaping ApplicationInventoryNowProvider = { ContinuousClock.now },
         applicationMetadataProvider: @escaping ApplicationMetadataProvider = { pid, generation, timeout in
             try await DetachedApplicationMetadataCoordinator.run(
                 processIdentifier: pid,
@@ -227,6 +230,7 @@ public final class ApplicationService: ApplicationServiceProtocol {
         self.applicationQuitHandler = applicationQuitHandler
         self.runningApplicationProcessIdentifiersProvider = runningApplicationProcessIdentifiersProvider
         self.applicationWindowCatalogProvider = applicationWindowCatalogProvider
+        self.applicationInventoryNowProvider = applicationInventoryNowProvider
         self.applicationMetadataProvider = applicationMetadataProvider
         self.applicationMetadataTimeout = applicationMetadataTimeout
         self.applicationInventoryOverallTimeout = max(0.001, applicationInventoryOverallTimeout)

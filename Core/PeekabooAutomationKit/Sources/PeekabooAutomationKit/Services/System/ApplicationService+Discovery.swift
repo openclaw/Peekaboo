@@ -51,32 +51,51 @@ extension ApplicationService {
         let metadataProvider = self.applicationMetadataProvider
         let metadataTimeout = self.applicationMetadataTimeout
         let overallTimeout = self.applicationInventoryOverallTimeout
-        let overallDeadline = ContinuousClock.now.advanced(by: .seconds(overallTimeout))
+        let overallDeadline = self.applicationInventoryNowProvider().advanced(by: .seconds(overallTimeout))
         let concurrencyLimit = min(self.maximumConcurrentApplicationMetadataReads, candidates.count)
         let reads = try await withThrowingTaskGroup(of: ApplicationInventoryRead.self) { group in
-            for candidate in candidates.prefix(concurrencyLimit) {
+            var results: [ApplicationInventoryRead] = []
+            results.reserveCapacity(candidates.count)
+            var nextCandidateIndex = 0
+            while nextCandidateIndex < concurrencyLimit {
+                guard let timeout = Self.remainingApplicationMetadataTimeout(
+                    now: self.applicationInventoryNowProvider(),
+                    overallDeadline: overallDeadline,
+                    perApplicationTimeout: metadataTimeout)
+                else {
+                    results.append(contentsOf: candidates[nextCandidateIndex...].map { candidate in
+                        ApplicationInventoryRead(
+                            candidate: candidate,
+                            outcome: .skippedAfterOverallDeadline(seconds: overallTimeout))
+                    })
+                    nextCandidateIndex = candidates.count
+                    break
+                }
+                let candidate = candidates[nextCandidateIndex]
+                nextCandidateIndex += 1
                 group.addTask {
                     try await Self.readApplicationMetadata(
                         candidate: candidate,
                         provider: metadataProvider,
-                        timeout: metadataTimeout)
+                        timeout: timeout)
                 }
             }
 
-            var results: [ApplicationInventoryRead] = []
-            results.reserveCapacity(candidates.count)
-            var nextCandidateIndex = concurrencyLimit
             while let read = try await group.next() {
                 results.append(read)
                 if nextCandidateIndex < candidates.count {
-                    if ContinuousClock.now < overallDeadline {
+                    if let timeout = Self.remainingApplicationMetadataTimeout(
+                        now: self.applicationInventoryNowProvider(),
+                        overallDeadline: overallDeadline,
+                        perApplicationTimeout: metadataTimeout)
+                    {
                         let candidate = candidates[nextCandidateIndex]
                         nextCandidateIndex += 1
                         group.addTask {
                             try await Self.readApplicationMetadata(
                                 candidate: candidate,
                                 provider: metadataProvider,
-                                timeout: metadataTimeout)
+                                timeout: timeout)
                         }
                     } else {
                         results.append(contentsOf: candidates[nextCandidateIndex...].map { candidate in
@@ -235,6 +254,19 @@ extension ApplicationService {
 
     private static func formatInventoryTimeout(_ seconds: TimeInterval) -> String {
         String(format: "%.2f", seconds)
+    }
+
+    private static func remainingApplicationMetadataTimeout(
+        now: ContinuousClock.Instant,
+        overallDeadline: ContinuousClock.Instant,
+        perApplicationTimeout: TimeInterval) -> TimeInterval?
+    {
+        let remaining = now.duration(to: overallDeadline)
+        guard remaining > .zero else { return nil }
+        let components = remaining.components
+        let remainingSeconds = TimeInterval(components.seconds) +
+            TimeInterval(components.attoseconds) / 1e18
+        return min(perApplicationTimeout, remainingSeconds)
     }
 
     /**
