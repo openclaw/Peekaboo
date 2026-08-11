@@ -35,6 +35,19 @@ diagnostic-only unless selected with `--bridge-socket` or `PEEKABOO_BRIDGE_SOCKE
 
 There is **no auto-launch** of Peekaboo.app.
 
+`pnpm app:restart` remains the contributor workflow: it builds Debug with the repository's ordinary
+local Xcode signing configuration. It does not require or inject an OpenClaw Foundation identity.
+Managed replacement of the stable TCC app is deliberately
+separate:
+
+```bash
+pnpm app:install-companion -- --source-app /absolute/path/Peekaboo.app --healthcheck-cli /absolute/path/peekaboo
+```
+
+You can also pass `--deployment` directly to `scripts/restart-peekaboo.sh`. Deployment mode requires the trusted signed artifact and current
+signed CLI, then retains the transactional signer/native-only/readiness/rollback gates described
+below.
+
 Deployment may launch the GUI permission broker with the process argument
 `--background-bridge-host`. That unattended mode still initializes the menu-bar status item,
 permission state, and GUI Bridge listener, but startup never presents API-key or permission

@@ -172,7 +172,49 @@ run_restart() {
     PEEKABOO_APP_SIGN_REQUIREMENT='anchor apple generic and certificate leaf[subject.OU] = "TESTTEAM"' \
     PEEKABOO_APP_ENTITLEMENTS="${ROOT_DIR}/Apps/Mac/Peekaboo/Peekaboo.entitlements" \
     "${env_args[@]}" \
-    "${ROOT_DIR}/scripts/restart-peekaboo.sh" "${cli_args[@]}" >"${case_dir}/stdout"
+    "${ROOT_DIR}/scripts/restart-peekaboo.sh" --deployment "${cli_args[@]}" >"${case_dir}/stdout"
+}
+
+run_dev_restart() {
+  local case_dir="$1"
+
+  env \
+    -u CONFIGURATION \
+    -u DEBUG_CODE_SIGN_IDENTITY \
+    -u DEBUG_DEVELOPMENT_TEAM \
+    -u MAC_RELEASE_CODESIGN_IDENTITY \
+    -u PEEKABOO_APP_EXPECTED_TEAM_ID \
+    -u PEEKABOO_APP_SIGN_IDENTITY \
+    -u SIGN_IDENTITY \
+    HOME="${case_dir}/home" \
+    PEEKABOO_DEV_RESTART_SCRIPT="${case_dir}/bin/dev-restart" \
+    "${ROOT_DIR}/scripts/restart-peekaboo.sh" >"${case_dir}/stdout"
+}
+
+run_dev_workflow() {
+  local case_dir="$1"
+  local dist_dir="${2:-${case_dir}/dist}"
+
+  mkdir -p "${case_dir}/home"
+  env \
+    -u CONFIGURATION \
+    -u DEBUG_CODE_SIGN_IDENTITY \
+    -u DEBUG_DEVELOPMENT_TEAM \
+    -u MAC_RELEASE_CODESIGN_IDENTITY \
+    -u PEEKABOO_APP_EXPECTED_TEAM_ID \
+    -u PEEKABOO_APP_SIGN_IDENTITY \
+    -u SIGN_IDENTITY \
+    HOME="${case_dir}/home" \
+    DERIVED_DATA_PATH="${case_dir}/DerivedData" \
+    DIST_DIR="${dist_dir}" \
+    PEEKABOO_DEV_BUILD_SCRIPT="${case_dir}/bin/dev-build-app" \
+    PEEKABOO_DEV_DITTO_BIN="${case_dir}/bin/ditto" \
+    PEEKABOO_DEV_OPEN_BIN="${case_dir}/bin/dev-open" \
+    PEEKABOO_DEV_PGREP_BIN="${case_dir}/bin/pgrep" \
+    PEEKABOO_DEV_PKILL_BIN="${case_dir}/bin/dev-pkill" \
+    PEEKABOO_DEV_RM_BIN="/bin/rm" \
+    PEEKABOO_DEV_SLEEP_BIN="${case_dir}/bin/sleep" \
+    "${ROOT_DIR}/scripts/restart-peekaboo.sh" >"${case_dir}/stdout"
 }
 
 mkdir -p "${TEMPLATE_BIN}" "${TEMPLATE_SOURCE}/Apps"
@@ -637,6 +679,54 @@ cat >"${TEMPLATE_BIN}/sync" <<'EOF'
 exit 0
 EOF
 
+cat >"${TEMPLATE_BIN}/dev-restart" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+state_dir="$(cd "$(dirname "$0")/.." && pwd)"
+[[ "$#" -eq 0 ]] || exit 72
+[[ "${CONFIGURATION:-Debug}" == "Debug" ]] || exit 73
+[[ -z "${DEBUG_CODE_SIGN_IDENTITY+x}" ]] || exit 74
+[[ -z "${DEBUG_DEVELOPMENT_TEAM+x}" ]] || exit 75
+[[ -z "${MAC_RELEASE_CODESIGN_IDENTITY+x}" ]] || exit 76
+[[ -z "${PEEKABOO_APP_EXPECTED_TEAM_ID+x}" ]] || exit 77
+[[ -z "${PEEKABOO_APP_SIGN_IDENTITY+x}" ]] || exit 78
+[[ -z "${SIGN_IDENTITY+x}" ]] || exit 79
+printf '%s\n' 'dev-restart' >"${state_dir}/events"
+EOF
+
+cat >"${TEMPLATE_BIN}/dev-build-app" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+state_dir="$(cd "$(dirname "$0")/.." && pwd)"
+[[ "${CONFIGURATION}" == "Debug" ]] || exit 72
+[[ -z "${DEBUG_CODE_SIGN_IDENTITY+x}" ]] || exit 73
+[[ -z "${DEBUG_DEVELOPMENT_TEAM+x}" ]] || exit 74
+[[ -z "${MAC_RELEASE_CODESIGN_IDENTITY+x}" ]] || exit 75
+[[ -z "${PEEKABOO_APP_EXPECTED_TEAM_ID+x}" ]] || exit 76
+[[ -z "${PEEKABOO_APP_SIGN_IDENTITY+x}" ]] || exit 77
+[[ -z "${SIGN_IDENTITY+x}" ]] || exit 78
+bundle="${DERIVED_DATA_PATH}/Build/Products/${CONFIGURATION}/${APP_NAME}.app"
+mkdir -p "${bundle}/Contents/MacOS"
+printf '%s\n' new >"${bundle}/build-id"
+printf '#!/usr/bin/env bash\n' >"${bundle}/Contents/MacOS/Peekaboo"
+chmod +x "${bundle}/Contents/MacOS/Peekaboo"
+printf '%s\n' 'dev-build:Debug' >"${state_dir}/events"
+EOF
+
+cat >"${TEMPLATE_BIN}/dev-open" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+state_dir="$(cd "$(dirname "$0")/.." && pwd)"
+[[ "$#" -eq 1 && -d "$1" ]] || exit 72
+printf '%s\n' "$1" >"${state_dir}/running-path"
+printf '%s\n' 'dev-open' >>"${state_dir}/events"
+EOF
+
+cat >"${TEMPLATE_BIN}/dev-pkill" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+
 chmod +x "${TEMPLATE_BIN}"/*
 
 # Derived dependency/build sources are not shipped production source and must not poison policy checks.
@@ -648,9 +738,44 @@ printf 'import AppKit\nlet script: NSAppleScript?\n' \
 
 help_output="$("${ROOT_DIR}/scripts/restart-peekaboo.sh" --help)"
 [[ "${help_output}" == *'Usage: scripts/restart-peekaboo.sh'* ]] || fail '--help did not print usage'
+[[ "${help_output}" == *'established Debug'* && "${help_output}" == *'--deployment'* ]] || \
+  fail '--help did not distinguish contributor and deployment modes'
+deployment_help_output="$("${ROOT_DIR}/scripts/restart-peekaboo.sh" --deployment --help)"
+[[ "${deployment_help_output}" == *'Usage: scripts/restart-peekaboo.sh --deployment'* ]] || \
+  fail 'deployment help did not print strict installer usage'
 if "${ROOT_DIR}/scripts/restart-peekaboo.sh" --dry-run >/dev/null 2>&1; then
   fail 'unknown arguments must fail instead of starting a build'
 fi
+
+# The public package default delegates to the contributor Debug path without injecting any
+# Foundation or organization-owned signing identity.
+dev_restart_dir="$(new_case dev-restart-default)"
+run_dev_restart "${dev_restart_dir}"
+assert_text "${dev_restart_dir}/events" dev-restart
+if grep -Eq \
+  'PEEKABOO_APP_SIGN_IDENTITY|PEEKABOO_APP_EXPECTED_TEAM_ID|MAC_RELEASE_CODESIGN_IDENTITY|Developer ID Application:' \
+  "${ROOT_DIR}/scripts/restart-peekaboo-dev.sh"; then
+  fail 'contributor restart script injects or requires an organization signing identity'
+fi
+
+# The real contributor path builds Debug, copies that new result to its dedicated dist target, and
+# relaunches the copied build even when the strict deployment installer is not available.
+dev_workflow_dir="$(new_case dev-workflow-default)"
+run_dev_workflow "${dev_workflow_dir}"
+assert_text "${dev_workflow_dir}/dist/Peekaboo.app/build-id" new
+assert_text "${dev_workflow_dir}/running-path" "${dev_workflow_dir}/dist/Peekaboo.app"
+grep -Fxq 'dev-build:Debug' "${dev_workflow_dir}/events" || fail 'contributor path did not build Debug'
+grep -Fxq 'dev-open' "${dev_workflow_dir}/events" || fail 'contributor path did not relaunch the copied build'
+
+# Broad or unrelated destinations fail before build/kill/delete; the sentinel must survive.
+dev_unsafe_dir="$(new_case dev-unsafe-target-refusal)"
+mkdir -p "${dev_unsafe_dir}/home"
+printf '%s\n' keep >"${dev_unsafe_dir}/home/sentinel"
+if run_dev_workflow "${dev_unsafe_dir}" "${dev_unsafe_dir}/home"; then
+  fail 'expected broad contributor target refusal'
+fi
+assert_text "${dev_unsafe_dir}/home/sentinel" keep
+[[ ! -f "${dev_unsafe_dir}/events" ]] || fail 'unsafe contributor target started build or kill work'
 invalid_target_dir="$(new_case invalid-target)"
 mkdir -p "${invalid_target_dir}/Explicit"
 if run_restart "${invalid_target_dir}" PEEKABOO_APP_BUNDLE="${invalid_target_dir}/Explicit/Other.app"; then
@@ -790,7 +915,7 @@ make_bundle "${success_target}" old
 printf '%s\n' "${success_target}" >"${success_dir}/running-path"
 run_restart "${success_dir}"
 assert_text "${success_target}/build-id" new
-grep -Fq 'configuration:Release' "${success_dir}/events" || fail 'normal restart did not default to Release'
+grep -Fq 'configuration:Release' "${success_dir}/events" || fail 'deployment mode did not default to Release'
 assert_text "${success_dir}/open-log" "${success_target}|new"
 assert_text "${success_dir}/open-flags" -gj
 if grep -Fq '|old' "${success_dir}/open-log"; then

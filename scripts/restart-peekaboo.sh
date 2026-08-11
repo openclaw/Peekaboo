@@ -9,7 +9,39 @@
 
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+case "${1:-}" in
+  --deployment)
+    shift
+    ;;
+  -h|--help)
+    cat <<'EOF'
+Usage: scripts/restart-peekaboo.sh [--deployment [options]]
+
+Modes:
+  scripts/restart-peekaboo.sh
+  scripts/restart-peekaboo.sh --deployment [options]
+
+With no arguments, rebuild and restart the contributor app using the established Debug/local
+signing workflow. This path never injects the OpenClaw Foundation release identity.
+
+Use --deployment for the strict transactional stable-path installer. That mode requires an
+explicitly trusted signed app and current signed healthcheck CLI; run
+`scripts/restart-peekaboo.sh --deployment --help` for its options.
+EOF
+    exit 0
+    ;;
+  '')
+    exec "${PEEKABOO_DEV_RESTART_SCRIPT:-${SCRIPT_DIR}/restart-peekaboo-dev.sh}"
+    ;;
+  *)
+    printf 'ERROR: Deployment installer options require an explicit --deployment mode.\n' >&2
+    exit 64
+    ;;
+esac
+
+ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 WORKSPACE="${WORKSPACE:-$ROOT_DIR/Apps/Peekaboo.xcworkspace}"
 SCHEME="${SCHEME:-Peekaboo}"
 CONFIGURATION="${CONFIGURATION:-Release}"
@@ -89,7 +121,7 @@ log() { printf '%s\n' "$*"; }
 
 usage() {
   cat <<EOF
-Usage: scripts/restart-peekaboo.sh [options]
+Usage: scripts/restart-peekaboo.sh --deployment [options]
 
 Build or reuse, verify, transactionally install, and restart Peekaboo.app without activating it.
 
