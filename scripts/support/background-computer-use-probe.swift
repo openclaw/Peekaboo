@@ -34,6 +34,11 @@ private struct Violation: Codable, Hashable {
     let actual: String
 }
 
+private struct WatchHeartbeat: Codable {
+    let sequence: UInt64
+    let timestamp: Double
+}
+
 private struct AppIdentity: Codable {
     let bundleIdentifier: String
     let pid: Int32
@@ -261,9 +266,10 @@ private func argument(_ name: String, in arguments: [String]) -> String? {
 private func runWatch(arguments: [String]) throws -> Never {
     guard let baselinePath = argument("--baseline", in: arguments),
           let outputPath = argument("--output", in: arguments),
-          let readyPath = argument("--ready", in: arguments)
+          let readyPath = argument("--ready", in: arguments),
+          let heartbeatPath = argument("--heartbeat", in: arguments)
     else {
-        throw ProbeError.invalidArguments("watch requires --baseline, --output, and --ready")
+        throw ProbeError.invalidArguments("watch requires --baseline, --output, --ready, and --heartbeat")
     }
 
     let intervalMilliseconds = Int(argument("--interval-ms", in: arguments) ?? "20") ?? 20
@@ -274,6 +280,7 @@ private func runWatch(arguments: [String]) throws -> Never {
 
     var recorded = Set<Violation>()
     var firstSample = true
+    var sequence: UInt64 = 0
     while true {
         let current = try sample(includeClipboardDigest: false)
         for violation in violations(
@@ -284,6 +291,10 @@ private func runWatch(arguments: [String]) throws -> Never {
             try appendJSONLine(violation, to: outputPath)
             recorded.insert(violation)
         }
+        sequence += 1
+        try writeJSON(
+            WatchHeartbeat(sequence: sequence, timestamp: current.timestamp),
+            to: heartbeatPath)
         if firstSample {
             try Data("ready\n".utf8).write(to: URL(fileURLWithPath: readyPath), options: .atomic)
             firstSample = false

@@ -247,6 +247,41 @@ certification_command_identity() {
     esac
 }
 
+certification_phase_identity() {
+    local argument
+    for argument in "$@"; do
+        case "$argument" in
+            --foreground|--foreground=*)
+                printf '%s\n' "foreground"
+                return 0
+                ;;
+        esac
+    done
+    printf '%s\n' "background"
+}
+
+monitor_sequence() {
+    jq -er '
+        .sequence |
+        select(type == "number" and . >= 1 and (. | floor) == .)
+    ' "$1"
+}
+
+wait_for_monitor_advance() {
+    local heartbeat_path="$1"
+    local previous_sequence="$2"
+    local attempts="${3:-100}"
+    local current_sequence=""
+    for _ in $(seq 1 "$attempts"); do
+        current_sequence="$(monitor_sequence "$heartbeat_path" 2>/dev/null || true)"
+        if [[ "$current_sequence" =~ ^[0-9]+$ ]] && ((current_sequence > previous_sequence)); then
+            return 0
+        fi
+        sleep 0.01
+    done
+    return 1
+}
+
 if $SELF_TEST_ONLY; then
     "$PROBE_BIN" process-identity --pid "$$" \
         --output "$ARTIFACT_ROOT/probe-process-identity.json"
@@ -277,6 +312,32 @@ if $SELF_TEST_ONLY; then
        certification_command_identity see --tree --no-elements >/dev/null || \
        certification_command_identity unknown >/dev/null; then
         echo "Certification command identity self-test failed." >&2
+        exit 1
+    fi
+    if [[ "$(certification_phase_identity click --on B1)" != "background" ]] || \
+       [[ "$(certification_phase_identity click --on B1 --foreground)" != "foreground" ]] || \
+       [[ "$(certification_phase_identity click --foreground=true --on B1)" != "foreground" ]]; then
+        echo "Certification phase identity self-test failed." >&2
+        exit 1
+    fi
+    HEARTBEAT_SELF_TEST="$ARTIFACT_ROOT/heartbeat-self-test.json"
+    HEARTBEAT_SELF_TEST_NEXT="$ARTIFACT_ROOT/heartbeat-self-test-next.json"
+    printf '%s\n' '{"sequence":1,"timestamp":1}' > "$HEARTBEAT_SELF_TEST"
+    (
+        sleep 0.03
+        printf '%s\n' '{"sequence":2,"timestamp":2}' > "$HEARTBEAT_SELF_TEST_NEXT"
+        mv "$HEARTBEAT_SELF_TEST_NEXT" "$HEARTBEAT_SELF_TEST"
+    ) &
+    HEARTBEAT_WRITER_PID=$!
+    if ! wait_for_monitor_advance "$HEARTBEAT_SELF_TEST" 1 20; then
+        kill "$HEARTBEAT_WRITER_PID" >/dev/null 2>&1 || true
+        wait "$HEARTBEAT_WRITER_PID" 2>/dev/null || true
+        echo "Monitor heartbeat advance self-test failed." >&2
+        exit 1
+    fi
+    wait "$HEARTBEAT_WRITER_PID"
+    if wait_for_monitor_advance "$HEARTBEAT_SELF_TEST" 2 3; then
+        echo "Stalled monitor heartbeat self-test failed." >&2
         exit 1
     fi
     VALID_LAUNCH_RECEIPT="$ARTIFACT_ROOT/valid-launch-receipt.json"
@@ -609,12 +670,15 @@ run_case() {
     local after="$case_dir/after.json"
     local monitor="$case_dir/monitor.jsonl"
     local ready="$case_dir/monitor.ready"
+    local heartbeat="$case_dir/monitor-heartbeat.json"
     local result="$case_dir/result.json"
     local stderr_file="$case_dir/stderr.txt"
     local exit_file="$case_dir/exit-code.txt"
     local summary="$case_dir/summary.json"
     local failed=false
     local observed_command=""
+    local observed_phase=""
+    local monitor_progress=true
     local nonmaximized_precondition=null
     local snapshot_window_drift=null
     local target_window_restored=null
@@ -627,6 +691,7 @@ run_case() {
         record_failure "$name does not map to one canonical certification command"
         failed=true
     fi
+    observed_phase="$(certification_phase_identity "$@")"
 
     "$PROBE_BIN" sample --output "$before"
     if [[ "$(jq -r '.frontmostPID // empty' "$before")" != "$SENTINEL_PID" || \
@@ -640,7 +705,13 @@ run_case() {
         record_failure "$name could not establish the foreground sentinel"
         return 1
     fi
-    local monitor_args=(watch --baseline "$before" --output "$monitor" --ready "$ready" --interval-ms 10)
+    local monitor_args=(
+        watch
+        --baseline "$before"
+        --output "$monitor"
+        --ready "$ready"
+        --heartbeat "$heartbeat"
+        --interval-ms 10)
     if [[ "$clipboard_policy" == "allow-temporary" ]]; then
         monitor_args+=(--allow-clipboard-mutation)
     fi
@@ -655,6 +726,13 @@ run_case() {
         wait "$MONITOR_PID" 2>/dev/null || true
         MONITOR_PID=""
         record_failure "$name invariant monitor did not start"
+        return 1
+    fi
+    if ! monitor_sequence "$heartbeat" >/dev/null; then
+        kill "$MONITOR_PID" >/dev/null 2>&1 || true
+        wait "$MONITOR_PID" 2>/dev/null || true
+        MONITOR_PID=""
+        record_failure "$name invariant monitor became ready without a heartbeat"
         return 1
     fi
 
@@ -798,8 +876,16 @@ run_case() {
     fi
 
     sleep 0.15
+    local monitor_sequence_before_final=""
+    monitor_sequence_before_final="$(monitor_sequence "$heartbeat" 2>/dev/null || true)"
+    if [[ ! "$monitor_sequence_before_final" =~ ^[0-9]+$ ]] || \
+       ! wait_for_monitor_advance "$heartbeat" "$monitor_sequence_before_final"; then
+        monitor_progress=false
+        record_failure "$name invariant monitor did not sample after command completion"
+        failed=true
+    fi
     "$PROBE_BIN" sample --output "$after"
-    local monitor_liveness=true
+    local monitor_liveness="$monitor_progress"
     local monitor_kill_exit=1
     local monitor_wait_exit=0
     if kill -0 "$MONITOR_PID" >/dev/null 2>&1; then
@@ -888,7 +974,7 @@ run_case() {
         --arg id "$name" \
         --arg surface "cli" \
         --arg command "$observed_command" \
-        --arg phase "background" \
+        --arg phase "$observed_phase" \
         --arg expectedExit "$expected_exit" \
         --argjson exitCode "$command_exit" \
         --argjson resultSuccess "$result_success" \
