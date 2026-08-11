@@ -195,16 +195,27 @@ struct WindowRoutedPointerDriver {
             await self.sleep(.milliseconds(80))
         }
 
-        try Self.checkCancellation(afterPosting: postedEventCount)
-        try self.requireCurrentRoute(receipt, afterPosting: postedEventCount)
         guard let unitCount = DesktopActionOutcome.DispatchUnitCount(postedEventCount) else {
             throw PeekabooError.operationError(
                 message: "Window-routed pointer delivery completed without posting an event")
         }
-        return .dispatchedUnverified(
+        let outcome = DesktopActionOutcome.dispatchedUnverified(
             delivery: .init(mechanism: .windowTargetedEvents, mode: .background),
             evidence: .deliveryAccepted,
             unitCount: unitCount)
+        do {
+            try Self.checkCancellation(afterPosting: postedEventCount)
+            try self.requireCurrentRoute(receipt, afterPosting: postedEventCount)
+        } catch {
+            throw DesktopActionFailure.dispatchedUnverified(
+                delivery: .init(mechanism: .windowTargetedEvents, mode: .background),
+                evidence: .deliveryAccepted,
+                unitCount: unitCount,
+                message: "Window-routed pointer events were posted, but final delivery validation failed",
+                hint: "Observe the target before retrying this click.",
+                causeDescription: error.localizedDescription)
+        }
+        return outcome
     }
 
     private func post(

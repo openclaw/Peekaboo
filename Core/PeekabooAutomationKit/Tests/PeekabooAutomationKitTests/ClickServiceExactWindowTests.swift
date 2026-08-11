@@ -1,5 +1,6 @@
 import CoreGraphics
 import Foundation
+import struct PeekabooFoundation.DesktopActionFailure
 import enum PeekabooFoundation.PeekabooError
 import Testing
 @testable import PeekabooAutomationKit
@@ -64,9 +65,10 @@ struct ClickServiceExactWindowTests {
                 expectedWindowIdentity: identity,
                 expectedWindowBounds: CGRect(x: 0, y: 0, width: 100, height: 100))
             Issue.record("Expected indeterminate click completion")
-        } catch let error as InputDeliveryIndeterminateError {
-            #expect(error.operation == .click)
-            #expect(!error.retrySafe)
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .dispatchedUnverified)
+            #expect(failure.outcome.retrySafety == .unsafe)
+            #expect(failure.outcome.escalation == .observeBeforeRetry)
         } catch {
             Issue.record("Unexpected error: \(error)")
         }

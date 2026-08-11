@@ -702,22 +702,6 @@ struct ActionInputDriverTests {
 
     @MainActor
     @Test
-    func `mock element can exercise direct value setter without live AX`() throws {
-        let element = MockAutomationElement(
-            role: AXRoleNames.kAXTextFieldRole,
-            isValueSettable: true)
-
-        let result = try ActionInputDriver().trySetValueForTesting(element: element, value: .string("hello"))
-
-        #expect(element.setValues == [.string("hello")])
-        #expect(result.outcome.state == .confirmedChange)
-        #expect(result.outcome.evidence == .verifiedChange)
-        #expect(result.outcome.delivery == .init(mechanism: .accessibilityValue, mode: .background))
-        #expect(result.actionName == AXActionNames.kAXSetValueAction)
-    }
-
-    @MainActor
-    @Test
     func `numeric slider coerces CLI text to a floating point AX value`() throws {
         let element = MockAutomationElement(
             role: AXRoleNames.kAXSliderRole,
@@ -728,6 +712,8 @@ struct ActionInputDriverTests {
 
         #expect(element.setValues == [.double(0.75)])
         #expect((element.value as? Double) == 0.75)
+        #expect(result.outcome.state == .confirmedChange)
+        #expect(result.outcome.evidence == .verifiedChange)
         #expect(result.actionName == AXActionNames.kAXSetValueAction)
     }
 
@@ -743,6 +729,7 @@ struct ActionInputDriverTests {
 
         #expect(element.setSelectedValues == [true])
         #expect(element.selectedValue == true)
+        #expect(result.outcome.state == .confirmedChange)
         #expect(result.actionName == kAXSelectedAttribute as String)
     }
 
@@ -919,6 +906,39 @@ struct ActionInputDriverTests {
             ownerProcessIdentifier: process.processIdentifier,
             ownerProcessStartIdentity: process.processStartIdentity,
             capturedBounds: CGRect(x: 1, y: 2, width: 300, height: 200))
+    }
+}
+
+struct ActionInputDriverOutcomeTests {
+    @MainActor
+    @Test
+    func `unknown pre-action value remains dispatched but unverified`() throws {
+        let element = MockAutomationElement(
+            role: AXRoleNames.kAXTextFieldRole,
+            isValueSettable: true)
+        let result = try ActionInputDriver().trySetValueForTesting(element: element, value: .string("hello"))
+
+        #expect(element.setValues == [.string("hello")])
+        #expect(result.outcome.state == .dispatchedUnverified)
+        #expect(result.outcome.evidence == .deliveryAccepted)
+        #expect(result.outcome.retrySafety == .unsafe)
+        #expect(result.outcome.delivery == .init(mechanism: .accessibilityValue, mode: .background))
+        #expect(result.actionName == AXActionNames.kAXSetValueAction)
+    }
+
+    @MainActor
+    @Test
+    func `unknown pre-action selected state remains dispatched but unverified`() throws {
+        let element = MockAutomationElement(
+            role: AXRoleNames.kAXRowRole,
+            isSelectedSettable: true)
+        let result = try ActionInputDriver().trySetValueForTesting(element: element, value: .string("true"))
+
+        #expect(element.setSelectedValues == [true])
+        #expect(element.selectedValue == true)
+        #expect(result.outcome.state == .dispatchedUnverified)
+        #expect(result.outcome.evidence == .deliveryAccepted)
+        #expect(result.outcome.retrySafety == .unsafe)
     }
 }
 

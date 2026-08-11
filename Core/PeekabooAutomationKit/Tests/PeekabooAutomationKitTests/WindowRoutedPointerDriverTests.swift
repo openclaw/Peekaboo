@@ -86,6 +86,54 @@ struct WindowRoutedPointerDriverTests {
 
     @Test
     @MainActor
+    func `final route drift retains exact dispatched event evidence`() async {
+        var validations = 0
+        var posted = 0
+        let receipt = Self.receipt()
+        let driver = WindowRoutedPointerDriver(
+            hasPostEventAccess: { true },
+            resolveRoute: { _, _, _ in receipt },
+            routeIsCurrent: { _ in
+                validations += 1
+                return validations < 4
+            },
+            makeEvent: { specification, point in
+                CGEvent(
+                    mouseEventSource: nil,
+                    mouseType: specification.type,
+                    mouseCursorPosition: point,
+                    mouseButton: specification.button)
+            },
+            stampWindowLocation: { _, _ in true },
+            postSkyLight: { _, _ in true },
+            postPublic: { _, _ in posted += 1 },
+            resolveTransport: { _ in .publicCGEvent },
+            sleep: { _ in })
+
+        do {
+            _ = try await driver.click(
+                at: receipt.screenPoint,
+                button: .right,
+                count: 1,
+                targetProcessIdentifier: receipt.identity.ownerProcessIdentifier,
+                targetWindowID: CGWindowID(receipt.identity.windowID))
+            Issue.record("Expected final route drift after all pointer events were posted")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .dispatchedUnverified)
+            #expect(failure.outcome.delivery == .init(mechanism: .windowTargetedEvents, mode: .background))
+            #expect(failure.outcome.dispatchState.unitCount?.rawValue == 3)
+            #expect(failure.outcome.retrySafety == .unsafe)
+            #expect(failure.causeDescription?.contains("changed") == true)
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+
+        #expect(posted == 3)
+        #expect(validations == 4)
+    }
+
+    @Test
+    @MainActor
     func `SkyLight target posts each logical event once without public duplication`() async throws {
         var skyLightPosts = 0
         var publicPosts = 0
@@ -550,10 +598,11 @@ struct WindowRoutedPointerDriverTests {
         do {
             _ = try await task.value
             Issue.record("Expected indeterminate cancellation after paired cleanup")
-        } catch let error as InputDeliveryIndeterminateError {
-            #expect(error.operation == .click)
-            #expect(error.emittedUnitCount == 3)
-            #expect(!error.retrySafe)
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .dispatchedUnverified)
+            #expect(failure.outcome.dispatchState.unitCount?.rawValue == 3)
+            #expect(failure.outcome.retrySafety == .unsafe)
+            #expect(failure.causeDescription?.contains("cancel") == true)
         } catch {
             Issue.record("Unexpected error: \(error)")
         }
@@ -661,10 +710,11 @@ struct WindowRoutedPointerDriverTests {
         do {
             _ = try await task.value
             Issue.record("Expected final-pair cancellation to be indeterminate")
-        } catch let error as InputDeliveryIndeterminateError {
-            #expect(error.operation == .click)
-            #expect(error.emittedUnitCount == 3)
-            #expect(!error.retrySafe)
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .dispatchedUnverified)
+            #expect(failure.outcome.dispatchState.unitCount?.rawValue == 3)
+            #expect(failure.outcome.retrySafety == .unsafe)
+            #expect(failure.causeDescription?.contains("cancel") == true)
         } catch {
             Issue.record("Unexpected error: \(error)")
         }

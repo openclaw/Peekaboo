@@ -4,6 +4,7 @@ import ApplicationServices
 import CoreGraphics
 import Foundation
 import PeekabooAutomationKitTestSupport
+import struct PeekabooFoundation.DesktopActionFailure
 import struct PeekabooFoundation.DesktopActionOutcome
 import enum PeekabooFoundation.PeekabooError
 import enum PeekabooFoundation.ScrollDirection
@@ -122,12 +123,52 @@ struct ClickServiceTargetResolutionTests {
                 snapshotId: "snapshot",
                 expectedProcessIdentity: identity)
             Issue.record("Expected post-dispatch process drift")
-        } catch let error as InputDeliveryIndeterminateError {
-            #expect(error.operation == .click)
-            #expect(error.emittedUnitCount == 1)
-            #expect(!error.retrySafe)
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .dispatchedUnverified)
+            #expect(failure.outcome.retrySafety == .unsafe)
+            #expect(failure.causeDescription?.contains("generation") == true)
         }
         #expect(action.performedActionNames == [AXActionNames.kAXPressAction])
+    }
+
+    @Test
+    @MainActor
+    func `post-click focus failure preserves dispatched outcome for id and query targets`() async throws {
+        let element = DetectedElement(
+            id: "B1",
+            type: .button,
+            label: "Post Validation Target",
+            bounds: CGRect(x: 20, y: 30, width: 100, height: 40),
+            attributes: ["identifier": "peekaboo-post-validation-never-focused"])
+        let detection = ElementDetectionResult(
+            snapshotId: "snapshot",
+            screenshotPath: "/tmp/shot.png",
+            elements: DetectedElements(buttons: [element]),
+            metadata: DetectionMetadata(detectionTime: 0, elementCount: 1, method: "test"))
+
+        for target in [ClickTarget.elementId("B1"), .query("Post Validation Target")] {
+            let synthetic = ClickRecordingSyntheticInputDriver(failGlobalClickAt: 2)
+            let service = ClickService(
+                snapshotManager: InMemorySnapshotManager(detectionResult: detection),
+                inputPolicy: UIInputPolicy(defaultStrategy: .synthOnly),
+                syntheticInputDriver: synthetic)
+
+            do {
+                _ = try await service.click(target: target, clickType: .single, snapshotId: "snapshot")
+                Issue.record("Expected post-click focus validation failure")
+            } catch let failure as DesktopActionFailure {
+                #expect(failure.outcome.state == .dispatchedUnverified)
+                #expect(failure.outcome.delivery == .init(mechanism: .globalEvents, mode: .foreground))
+                #expect(failure.outcome.retrySafety == .unsafe)
+                #expect(failure.causeDescription?.contains("synthetic click failure") == true)
+            } catch {
+                Issue.record("Unexpected error: \(error)")
+            }
+
+            #expect(synthetic.events == [
+                .click(point: CGPoint(x: 70, y: 50), button: .left, count: 1),
+            ])
+        }
     }
 
     @Test
@@ -1250,18 +1291,26 @@ final class ClickRecordingSyntheticInputDriver: SyntheticInputDriving {
 
     private(set) var events: [Event] = []
     private(set) var targetedClickAttempts = 0
+    private var globalClickAttempts = 0
     private let targetedClickError: (any Error)?
     private let targetedClickOutcome: DesktopActionOutcome
+    private let failGlobalClickAt: Int?
 
     init(
         targetedClickError: (any Error)? = nil,
-        targetedClickOutcome: DesktopActionOutcome = AutomationTestFixtures.uiActionReceipt().outcome)
+        targetedClickOutcome: DesktopActionOutcome = AutomationTestFixtures.uiActionReceipt().outcome,
+        failGlobalClickAt: Int? = nil)
     {
         self.targetedClickError = targetedClickError
         self.targetedClickOutcome = targetedClickOutcome
+        self.failGlobalClickAt = failGlobalClickAt
     }
 
     func click(at point: CGPoint, button: MouseButton, count: Int) throws -> DesktopActionOutcome {
+        self.globalClickAttempts += 1
+        if let failGlobalClickAt, self.globalClickAttempts == failGlobalClickAt {
+            throw ActionInputError.failed("synthetic click failure")
+        }
         self.events.append(.click(point: point, button: button, count: count))
         return .dispatchedUnverified(
             delivery: .init(mechanism: .globalEvents, mode: .foreground),

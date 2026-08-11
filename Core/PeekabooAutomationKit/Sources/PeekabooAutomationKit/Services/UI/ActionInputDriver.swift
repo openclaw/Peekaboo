@@ -308,7 +308,8 @@ struct ActionInputDriver: ActionInputDriving {
         do {
             if !element.isValueSettable, element.isSelectedSettable {
                 let requested = try Self.booleanValue(value, role: element.role)
-                let alreadyMatched = element.selectedValue == requested
+                let selectedBefore = element.selectedValue
+                let alreadyMatched = selectedBefore == requested
                 if !alreadyMatched {
                     try element.setAutomationSelected(requested)
                 }
@@ -318,9 +319,9 @@ struct ActionInputDriver: ActionInputDriving {
                             "This control may require input events; click or focus it, then use targeted typing, " +
                             "or retry with explicit foreground delivery.")
                 }
-                let outcome: DesktopActionOutcome = alreadyMatched
-                    ? .confirmedNoChange()
-                    : .confirmedChange(delivery: Self.accessibilityValueDelivery)
+                let outcome = Self.valueMutationOutcome(
+                    alreadyMatched: alreadyMatched,
+                    preStateKnown: selectedBefore != nil)
                 return UIInputExecutionResult.Action(
                     outcome: outcome,
                     actionName: kAXSelectedAttribute as String,
@@ -328,8 +329,9 @@ struct ActionInputDriver: ActionInputDriving {
                     elementRole: element.role)
             }
 
-            let requested = try Self.coerceValue(value, currentValue: element.value, role: element.role)
-            let alreadyMatched = Self.value(element.value, matches: requested)
+            let valueBefore = element.value
+            let requested = try Self.coerceValue(value, currentValue: valueBefore, role: element.role)
+            let alreadyMatched = Self.value(valueBefore, matches: requested)
             if !alreadyMatched {
                 try element.setAutomationValue(requested)
             }
@@ -339,9 +341,9 @@ struct ActionInputDriver: ActionInputDriving {
                         "This control may require input events; click or focus it, then use targeted typing, " +
                         "or retry with explicit foreground delivery.")
             }
-            let outcome: DesktopActionOutcome = alreadyMatched
-                ? .confirmedNoChange()
-                : .confirmedChange(delivery: Self.accessibilityValueDelivery)
+            let outcome = Self.valueMutationOutcome(
+                alreadyMatched: alreadyMatched,
+                preStateKnown: valueBefore != nil)
             return UIInputExecutionResult.Action(
                 outcome: outcome,
                 actionName: AXActionNames.kAXSetValueAction,
@@ -350,6 +352,21 @@ struct ActionInputDriver: ActionInputDriving {
         } catch {
             throw Self.classify(error)
         }
+    }
+
+    private static func valueMutationOutcome(
+        alreadyMatched: Bool,
+        preStateKnown: Bool) -> DesktopActionOutcome
+    {
+        if alreadyMatched {
+            return .confirmedNoChange()
+        }
+        if preStateKnown {
+            return .confirmedChange(delivery: self.accessibilityValueDelivery)
+        }
+        return .dispatchedUnverified(
+            delivery: self.accessibilityValueDelivery,
+            evidence: .deliveryAccepted)
     }
 
     private nonisolated static func coerceValue(
