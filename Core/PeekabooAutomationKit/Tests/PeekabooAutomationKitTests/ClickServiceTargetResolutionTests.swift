@@ -33,6 +33,51 @@ struct ClickServiceTargetResolutionTests {
 
     @Test
     @MainActor
+    func `generation-pinned click revalidates after element resolution before dispatch`() async throws {
+        let generation = ClickLockedGeneration(71)
+        let identity = ApplicationProcessIdentity(processIdentifier: getpid(), processStartIdentity: 71)
+        let action = ClickSuccessfulActionInputDriver()
+        let detection = ElementDetectionResult(
+            snapshotId: "snapshot",
+            screenshotPath: "/tmp/shot.png",
+            elements: DetectedElements(buttons: [DetectedElement(
+                id: "B1",
+                type: .button,
+                label: "Button",
+                bounds: CGRect(x: 20, y: 30, width: 100, height: 40))]),
+            metadata: DetectionMetadata(
+                detectionTime: 0,
+                elementCount: 1,
+                method: "test",
+                windowContext: WindowContext(
+                    applicationProcessId: identity.processIdentifier,
+                    windowID: 42,
+                    windowBounds: .zero,
+                    windowMutationIdentity: WindowMutationIdentity(
+                        windowID: 42,
+                        ownerProcessIdentifier: identity.processIdentifier,
+                        ownerProcessStartIdentity: identity.processStartIdentity))))
+        let service = UIAutomationService(
+            snapshotManager: InMemorySnapshotManager(detectionResult: detection),
+            inputPolicy: UIInputPolicy(defaultStrategy: .actionOnly),
+            actionInputDriver: action,
+            automationElementResolver: ClickFixedAutomationElementResolver(
+                afterResolve: { generation.value = 72 }),
+            exactWindowIdentityValidator: { _, _ in true },
+            processStartIdentityProvider: { _ in generation.value })
+
+        await #expect(throws: PeekabooError.self) {
+            try await service.click(
+                target: .elementId("B1"),
+                clickType: .single,
+                snapshotId: "snapshot",
+                expectedProcessIdentity: identity)
+        }
+        #expect(action.performedActionNames.isEmpty)
+    }
+
+    @Test
+    @MainActor
     func `generation-pinned click reports post-dispatch drift as retry unsafe`() async throws {
         let generation = ClickLockedGeneration(73)
         let identity = ApplicationProcessIdentity(processIdentifier: getpid(), processStartIdentity: 73)
@@ -1180,13 +1225,15 @@ final class ClickRecordingSyntheticInputDriver: SyntheticInputDriving {
 private final class ClickFixedAutomationElementResolver: AutomationElementResolving {
     private let element = AutomationElement(Element(AXUIElementCreateApplication(getpid())))
     private let resolveQueries: Bool
+    private let afterResolve: (() -> Void)?
     private(set) var targetProcessIdentifiers: [pid_t?] = []
     private(set) var detectedElements: [DetectedElement] = []
     private(set) var queryWindowIDs: [Int?] = []
     private(set) var queryTargetProcessIdentifiers: [pid_t?] = []
 
-    init(resolveQueries: Bool = true) {
+    init(resolveQueries: Bool = true, afterResolve: (() -> Void)? = nil) {
         self.resolveQueries = resolveQueries
+        self.afterResolve = afterResolve
     }
 
     func resolve(detectedElement _: DetectedElement, windowContext _: WindowContext?) -> AutomationElement? {
@@ -1200,6 +1247,7 @@ private final class ClickFixedAutomationElementResolver: AutomationElementResolv
     {
         self.detectedElements.append(detectedElement)
         self.targetProcessIdentifiers.append(targetProcessIdentifier)
+        self.afterResolve?()
         return self.element
     }
 
@@ -1215,6 +1263,7 @@ private final class ClickFixedAutomationElementResolver: AutomationElementResolv
     {
         self.queryWindowIDs.append(windowContext?.windowID)
         self.queryTargetProcessIdentifiers.append(targetProcessIdentifier)
+        self.afterResolve?()
         return self.resolveQueries ? self.element : nil
     }
 }

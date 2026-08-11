@@ -227,7 +227,8 @@ extension UIAutomationService {
                     target: target,
                     clickType: clickType,
                     snapshotId: snapshotId,
-                    targetProcessIdentifier: expectedProcessIdentity.processIdentifier)
+                    targetProcessIdentifier: expectedProcessIdentity.processIdentifier,
+                    expectedProcessIdentity: expectedProcessIdentity)
             }
             guard targetIsCurrent() else {
                 throw InputDeliveryIndeterminateError(
@@ -269,6 +270,7 @@ extension UIAutomationService {
                     clickType: clickType,
                     snapshotId: snapshotId,
                     targetProcessIdentifier: expectedWindowIdentity.ownerProcessIdentifier,
+                    expectedProcessIdentity: processIdentity,
                     targetWindowID: expectedWindowIdentity.windowID,
                     expectedWindowIdentity: expectedWindowIdentity,
                     expectedWindowBounds: expectedWindowBounds)

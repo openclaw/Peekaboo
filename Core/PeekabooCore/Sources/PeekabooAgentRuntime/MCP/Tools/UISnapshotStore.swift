@@ -36,14 +36,76 @@ actor UISnapshot {
         self.screenshotMetadata = metadata
         self.screenshotCoordinateContext = CaptureCoordinateContext(metadata: metadata, referenceID: self.id)
         self.targetCache.withLock {
+            let priorWindowIdentity = $0.windowMutationIdentity
+            let priorReceipt: ApplicationProcessIdentity? = if let priorProcessIdentifier = $0.applicationProcessId,
+                                                               let priorProcessStartIdentity =
+                                                               $0.applicationProcessStartIdentity
+            {
+                ApplicationProcessIdentity(
+                    processIdentifier: priorProcessIdentifier,
+                    processStartIdentity: priorProcessStartIdentity)
+            } else if let priorWindowIdentity = $0.windowMutationIdentity {
+                ApplicationProcessIdentity(
+                    processIdentifier: priorWindowIdentity.ownerProcessIdentifier,
+                    processStartIdentity: priorWindowIdentity.ownerProcessStartIdentity)
+            } else {
+                nil
+            }
+            let applicationProcessIdentifier = metadata.applicationInfo.map { Int32($0.processIdentifier) }
+            let applicationProcessStartIdentity = metadata.applicationInfo?.processStartIdentity
+            let windowIdentity = metadata.windowInfo?.mutationIdentity
+            let hasWindowIdentifierConflict = if let windowIdentity, let windowID = metadata.windowInfo?.windowID {
+                windowIdentity.windowID != windowID
+            } else {
+                false
+            }
+            let hasProcessConflict = if let applicationProcessIdentifier, let windowIdentity {
+                windowIdentity.ownerProcessIdentifier != applicationProcessIdentifier
+            } else {
+                false
+            }
+            let hasGenerationConflict = if let applicationProcessStartIdentity, let windowIdentity {
+                windowIdentity.ownerProcessStartIdentity != applicationProcessStartIdentity
+            } else {
+                false
+            }
+            let incomingReceipt: ApplicationProcessIdentity? = if let applicationProcessIdentifier,
+                                                                  let applicationProcessStartIdentity
+            {
+                ApplicationProcessIdentity(
+                    processIdentifier: applicationProcessIdentifier,
+                    processStartIdentity: applicationProcessStartIdentity)
+            } else if let windowIdentity {
+                ApplicationProcessIdentity(
+                    processIdentifier: windowIdentity.ownerProcessIdentifier,
+                    processStartIdentity: windowIdentity.ownerProcessStartIdentity)
+            } else {
+                nil
+            }
+            let hasPriorReceiptConflict = if let priorReceipt, let incomingReceipt {
+                priorReceipt != incomingReceipt
+            } else {
+                false
+            }
+            let hasPriorReceiptRemoval = priorReceipt != nil && incomingReceipt == nil
+            let hasPriorWindowConflict = if let priorWindowIdentity, let windowIdentity {
+                priorWindowIdentity != windowIdentity
+            } else {
+                false
+            }
+            let hasPriorWindowRemoval = priorWindowIdentity != nil && windowIdentity == nil
+            let targetReceiptInvalidated = $0.targetReceiptInvalidated ||
+                hasWindowIdentifierConflict || hasProcessConflict || hasGenerationConflict ||
+                hasPriorReceiptConflict || hasPriorReceiptRemoval || hasPriorWindowConflict || hasPriorWindowRemoval
+
             $0.applicationName = metadata.applicationInfo?.name
             $0.windowTitle = metadata.windowInfo?.title
-            $0.applicationProcessId = metadata.applicationInfo.map { Int32($0.processIdentifier) }
-            $0.applicationProcessStartIdentity = metadata.applicationInfo?.processStartIdentity
+            $0.applicationProcessId = applicationProcessIdentifier
+            $0.applicationProcessStartIdentity = targetReceiptInvalidated ? nil : applicationProcessStartIdentity
             $0.windowID = metadata.windowInfo?.windowID
             $0.windowBounds = metadata.windowInfo?.bounds
-            $0.windowMutationIdentity = metadata.windowInfo?.mutationIdentity
-            $0.targetReceiptInvalidated = false
+            $0.windowMutationIdentity = targetReceiptInvalidated ? nil : windowIdentity
+            $0.targetReceiptInvalidated = targetReceiptInvalidated
         }
         self.lastAccessedAt = Date()
     }

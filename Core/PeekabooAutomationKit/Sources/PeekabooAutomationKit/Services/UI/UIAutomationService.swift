@@ -174,7 +174,8 @@ public final class UIAutomationService: TargetedHotkeyServiceProtocol, TargetedT
             actionInputDriver: actionInputDriver,
             syntheticInputDriver: syntheticInputDriver,
             automationElementResolver: automationElementResolver,
-            exactWindowIdentityValidator: exactWindowIdentityValidator)
+            exactWindowIdentityValidator: exactWindowIdentityValidator,
+            processStartIdentityProvider: processStartIdentityProvider)
         self.typeService = TypeService(
             snapshotManager: manager,
             clickService: nil,
