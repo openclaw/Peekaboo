@@ -13,6 +13,7 @@ import Tachikoma
 struct PeekabooApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @Environment(\.openWindow) private var openWindow
+    private let launchPolicy = PeekabooAppLaunchPolicy.current
 
     @State private var services = PeekabooServices(
         snapshotManager: InMemorySnapshotManager(
@@ -168,11 +169,10 @@ struct PeekabooApp: App {
         }
         .windowResizability(.automatic)
         .defaultSize(width: 900, height: 700)
-        // The sessions window must only appear on explicit user intent (menu,
-        // shortcut, dock). Without these, SwiftUI presents/restores it on
-        // every app launch — very noticeable with dev rebuild-relaunch loops.
-        .defaultLaunchBehavior(.suppressed)
-        .restorationBehavior(.disabled)
+        // Deployment-owned Bridge hosts suppress every automatic scene; ordinary launches keep
+        // SwiftUI's interactive presentation and restoration behavior.
+        .defaultLaunchBehavior(self.launchPolicy.suppressesAutomaticScenePresentation ? .suppressed : .automatic)
+        .restorationBehavior(self.launchPolicy.disablesSceneRestoration ? .disabled : .automatic)
 
         // Inspector window
         WindowGroup("Inspector", id: "inspector") {
@@ -193,8 +193,8 @@ struct PeekabooApp: App {
         .defaultSize(width: 450, height: 700)
         .windowStyle(.automatic)
         .windowToolbarStyle(.unified(showsTitle: true))
-        .defaultLaunchBehavior(.suppressed)
-        .restorationBehavior(.disabled)
+        .defaultLaunchBehavior(self.launchPolicy.suppressesAutomaticScenePresentation ? .suppressed : .automatic)
+        .restorationBehavior(self.launchPolicy.disablesSceneRestoration ? .disabled : .automatic)
 
         // Settings scene
         Settings {

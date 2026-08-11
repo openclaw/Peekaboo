@@ -47,6 +47,14 @@ struct PeekabooAppLaunchPolicy: Equatable, Sendable {
         !self.isBackgroundBridgeHost
     }
 
+    var suppressesAutomaticScenePresentation: Bool {
+        self.isBackgroundBridgeHost
+    }
+
+    var disablesSceneRestoration: Bool {
+        self.isBackgroundBridgeHost
+    }
+
     var maximumBridgeOwnershipRetries: Int? {
         self.isBackgroundBridgeHost ? 6 : nil
     }

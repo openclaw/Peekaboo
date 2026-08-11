@@ -13,6 +13,8 @@ struct PeekabooAppLaunchPolicyTests {
         #expect(policy.allowsPresentation(.explicitUser))
         #expect(policy.allowsAPIKeyNudge)
         #expect(policy.allowsPermissionsOnboarding)
+        #expect(!policy.suppressesAutomaticScenePresentation)
+        #expect(!policy.disablesSceneRestoration)
         #expect(policy.maximumBridgeOwnershipRetries == nil)
         #expect(!policy.terminatesOnPermanentBridgeFailure)
     }
@@ -30,6 +32,8 @@ struct PeekabooAppLaunchPolicyTests {
         #expect(policy.allowsPresentation(.explicitUser))
         #expect(!policy.allowsAPIKeyNudge)
         #expect(!policy.allowsPermissionsOnboarding)
+        #expect(policy.suppressesAutomaticScenePresentation)
+        #expect(policy.disablesSceneRestoration)
         #expect(policy.maximumBridgeOwnershipRetries == 6)
         #expect(policy.terminatesOnPermanentBridgeFailure)
     }

@@ -24,7 +24,6 @@ DESTINATION="${DESTINATION:-platform=macOS,arch=arm64}"
 
 BUILD_SCRIPT="${PEEKABOO_BUILD_SCRIPT:-$ROOT_DIR/scripts/build-mac-debug.sh}"
 CODESIGN_BIN="${PEEKABOO_CODESIGN_BIN:-/usr/bin/codesign}"
-SECURITY_BIN="${PEEKABOO_SECURITY_BIN:-/usr/bin/security}"
 DITTO_BIN="${PEEKABOO_DITTO_BIN:-/usr/bin/ditto}"
 FILE_BIN="${PEEKABOO_FILE_BIN:-/usr/bin/file}"
 FIND_BIN="${PEEKABOO_FIND_BIN:-/usr/bin/find}"
@@ -59,7 +58,6 @@ fi
 EXPECTED_BUNDLE_ID="${PEEKABOO_APP_EXPECTED_BUNDLE_ID:-${DEFAULT_BUNDLE_ID}}"
 EXPECTED_ANCHOR_REQUIREMENT="${PEEKABOO_APP_ANCHOR_REQUIREMENT:-anchor apple generic and certificate leaf[subject.OU] = \"${EXPECTED_TEAM_ID}\"}"
 EXPECTED_SIGN_REQUIREMENT="${PEEKABOO_APP_SIGN_REQUIREMENT:-anchor apple generic and identifier \"${EXPECTED_BUNDLE_ID}\" and certificate leaf[subject.OU] = \"${EXPECTED_TEAM_ID}\"}"
-ENTITLEMENTS_PATH="${PEEKABOO_APP_ENTITLEMENTS:-$ROOT_DIR/Apps/Mac/Peekaboo/Peekaboo.entitlements}"
 NATIVE_ONLY_VERIFY_SCRIPT="${PEEKABOO_NATIVE_ONLY_VERIFY_SCRIPT:-$ROOT_DIR/scripts/verify-native-only-app.sh}"
 NATIVE_SOURCE_ROOT="${PEEKABOO_NATIVE_SOURCE_ROOT:-$ROOT_DIR}"
 
@@ -90,7 +88,7 @@ usage() {
   cat <<EOF
 Usage: scripts/restart-peekaboo.sh [options]
 
-Build, sign, transactionally install, and restart Peekaboo.app without activating it.
+Build or reuse, verify, transactionally install, and restart Peekaboo.app without activating it.
 
 Options:
   --source-app <bundle>              Install this exact already-signed app; implies --no-build.
@@ -505,6 +503,8 @@ build_app() {
     APP_NAME="${APP_NAME}" \
     DERIVED_DATA_PATH="${DERIVED_DATA_PATH}" \
     DESTINATION="${DESTINATION}" \
+    DEBUG_CODE_SIGN_IDENTITY="${SIGN_IDENTITY}" \
+    DEBUG_DEVELOPMENT_TEAM="${EXPECTED_TEAM_ID}" \
     "${BUILD_SCRIPT}"
 }
 
@@ -667,40 +667,6 @@ verify_nested_signers() {
       verify_expected_code_authority "${candidate}" || return 1
     fi
   done < <("${FIND_BIN}" "${bundle}/Contents" -type f -print0)
-}
-
-sign_build_if_needed() {
-  local identities identity_available=0
-
-  if verify_expected_signer "${BUILT_APP_BUNDLE}" >/dev/null 2>&1; then
-    return 0
-  fi
-  if ((NO_BUILD == 1)); then
-    printf 'Exact source artifact does not satisfy the required signer policy: %s\n' \
-      "${BUILT_APP_BUNDLE}" >&2
-    return 1
-  fi
-
-  if identities="$("${SECURITY_BIN}" find-identity -v -p codesigning 2>/dev/null)" && \
-     [[ "${identities}" == *"${SIGN_IDENTITY}"* ]]; then
-    identity_available=1
-  fi
-  if ((identity_available == 0)); then
-    printf 'Signing identity not available: %s\n' "${SIGN_IDENTITY}" >&2
-    return 1
-  fi
-  if [[ ! -f "${ENTITLEMENTS_PATH}" ]]; then
-    printf 'Entitlements file not found: %s\n' "${ENTITLEMENTS_PATH}" >&2
-    return 1
-  fi
-  log "==> Sign build with ${SIGN_IDENTITY}"
-  if ! "${CODESIGN_BIN}" --force --deep --options runtime --timestamp --sign "${SIGN_IDENTITY}" \
-    "${BUILT_APP_BUNDLE}"; then
-    return 1
-  fi
-  "${CODESIGN_BIN}" --force --options runtime --timestamp --entitlements "${ENTITLEMENTS_PATH}" \
-    --sign "${SIGN_IDENTITY}" "${BUILT_APP_BUNDLE}" || return 1
-  verify_expected_signer "${BUILT_APP_BUNDLE}"
 }
 
 verify_existing_identity() {
@@ -1179,7 +1145,6 @@ else
 fi
 
 log '==> Verify signed build output'
-sign_build_if_needed || fail "Could not sign the built app; the running app was not stopped"
 verify_build_output || fail "Built app verification failed; the running app was not stopped"
 "${NATIVE_ONLY_VERIFY_SCRIPT}" --app "${BUILT_APP_BUNDLE}" || \
   fail "Built app violates the native-only policy; the running app was not stopped"

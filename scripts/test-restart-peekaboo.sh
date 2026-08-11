@@ -184,6 +184,8 @@ cat >"${TEMPLATE_BIN}/build-app" <<'EOF'
 set -euo pipefail
 state_dir="$(cd "$(dirname "$0")/.." && pwd)"
 bundle="${DERIVED_DATA_PATH}/Build/Products/${CONFIGURATION}/${APP_NAME}.app"
+[[ "${DEBUG_CODE_SIGN_IDENTITY:-}" == "${PEEKABOO_APP_SIGN_IDENTITY:-}" ]] || exit 81
+[[ "${DEBUG_DEVELOPMENT_TEAM:-}" == "${PEEKABOO_APP_EXPECTED_TEAM_ID:-}" ]] || exit 82
 printf '%s\n' 'build' >>"${state_dir}/events"
 mkdir -p "${bundle}/Contents/MacOS"
 printf '%s\n' 'new' >"${bundle}/build-id"
@@ -866,18 +868,19 @@ fi
 assert_text "${team_target}/build-id" old
 assert_text "${team_dir}/open-log" "${team_target}|old"
 
-# A build produced unsigned by Xcode can be Developer ID signed before the current app is stopped.
-sign_dir="$(new_case post-sign-success)"
+# An ad-hoc build is refused; the installer never recursively re-signs nested code.
+sign_dir="$(new_case adhoc-build-presign-refusal)"
 sign_target="${sign_dir}/Applications/Peekaboo.app"
 make_bundle "${sign_target}" old
 printf '%s\n' "${sign_target}" >"${sign_dir}/running-path"
 touch "${sign_dir}/adhoc-build" "${sign_dir}/identity-available"
-run_restart "${sign_dir}" PEEKABOO_APP_SIGN_IDENTITY='Developer ID Application: Test (TESTTEAM)'
-assert_text "${sign_target}/build-id" new
-[[ "$(grep -c '^sign$' "${sign_dir}/events")" == "2" ]] || fail 'expected nested and top-level signing passes'
-first_sign_line="$(grep -n '^sign$' "${sign_dir}/events" | head -n 1 | cut -d: -f1)"
-sign_stop_line="$(grep -n '^stop$' "${sign_dir}/events" | cut -d: -f1)"
-((first_sign_line < sign_stop_line)) || fail 'app was stopped before signing completed'
+if run_restart "${sign_dir}" PEEKABOO_APP_SIGN_IDENTITY='Developer ID Application: Test (TESTTEAM)'; then
+  fail 'expected ad-hoc build to require a correctly signed rebuild'
+fi
+assert_text "${sign_target}/build-id" old
+if grep -Eq '^(sign|stop)$' "${sign_dir}/events"; then
+  fail 'ad-hoc build refusal re-signed or stopped the previous app'
+fi
 
 # Exact-artifact mode does not build or re-sign and reports one content digest through installation.
 artifact_dir="$(new_case exact-source-artifact)"
@@ -940,15 +943,19 @@ fi
 run_restart "${unstable_dir}" -- --allow-unstable-existing-identity
 assert_text "${unstable_target}/build-id" new
 
-# A same-team Apple Development build is re-signed when the configured Developer ID is available.
-resign_dir="$(new_case requirement-resign-success)"
+# A same-team development build is also refused instead of losing nested entitlements during re-signing.
+resign_dir="$(new_case requirement-resign-refusal)"
 resign_target="${resign_dir}/Applications/Peekaboo.app"
 make_bundle "${resign_target}" old
 printf '%s\n' "${resign_target}" >"${resign_dir}/running-path"
 touch "${resign_dir}/apple-development-build" "${resign_dir}/identity-available"
-run_restart "${resign_dir}" PEEKABOO_APP_SIGN_IDENTITY='Developer ID Application: Test (TESTTEAM)'
-assert_text "${resign_target}/build-id" new
-[[ "$(grep -c '^sign$' "${resign_dir}/events")" == "2" ]] || fail 'expected Developer ID re-signing passes'
+if run_restart "${resign_dir}" PEEKABOO_APP_SIGN_IDENTITY='Developer ID Application: Test (TESTTEAM)'; then
+  fail 'expected development-signed build refusal'
+fi
+assert_text "${resign_target}/build-id" old
+if grep -Eq '^(sign|stop)$' "${resign_dir}/events"; then
+  fail 'development-signed build refusal re-signed or stopped the previous app'
+fi
 
 # A stable signature from another Developer ID is not accepted when the required signer is unavailable.
 wrong_signer_dir="$(new_case wrong-signer-refusal)"
