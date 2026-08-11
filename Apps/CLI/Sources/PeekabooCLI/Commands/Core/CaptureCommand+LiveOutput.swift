@@ -10,7 +10,9 @@ extension CaptureLiveCommand {
             return
         }
         print("""
-        🎥 capture kept \(result.stats.framesKept) frames (dropped \(result.stats.framesDropped)),
+        🎥 capture sampled \(result.stats.framesSampled) frames at \
+        \(String(format: "%.2f", result.stats.sampledFps)) FPS, kept \(result.stats.framesKept) at \
+        \(String(format: "%.2f", result.stats.keptFps)) FPS,
         contact sheet: \(meta.contactPath), diff: \(meta.diffAlgorithm) @ \(meta.diffScale),
         grid \(meta.contactColumns)x\(meta
             .contactRows) thumb \(Int(meta.contactThumbSize.width))x\(Int(meta.contactThumbSize.height))

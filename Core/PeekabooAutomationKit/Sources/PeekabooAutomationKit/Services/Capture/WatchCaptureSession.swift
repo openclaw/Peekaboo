@@ -6,15 +6,18 @@ public struct WatchCaptureDependencies {
     public let screenCapture: any ScreenCaptureServiceProtocol
     public let screenService: (any ScreenServiceProtocol)?
     public let frameSource: (any CaptureFrameSource)?
+    public let clock: any WatchCaptureMonotonicClock
 
     public init(
         screenCapture: any ScreenCaptureServiceProtocol,
         screenService: (any ScreenServiceProtocol)? = nil,
-        frameSource: (any CaptureFrameSource)? = nil)
+        frameSource: (any CaptureFrameSource)? = nil,
+        clock: any WatchCaptureMonotonicClock = SystemWatchCaptureMonotonicClock())
     {
         self.screenCapture = screenCapture
         self.screenService = screenService
         self.frameSource = frameSource
+        self.clock = clock
     }
 }
 
@@ -145,6 +148,7 @@ public final class WatchCaptureSession {
     let videoOut: String?
     let keepAllFrames: Bool
     let videoOptions: CaptureVideoOptionsSnapshot?
+    let clock: any WatchCaptureMonotonicClock
     let videoWriterFPS: Double?
     let sessionId = UUID().uuidString
     var videoWriter: VideoWriter?
@@ -173,6 +177,7 @@ public final class WatchCaptureSession {
         self.videoOut = configuration.videoOut
         self.keepAllFrames = configuration.keepAllFrames
         self.videoOptions = configuration.videoOptions
+        self.clock = dependencies.clock
         if let videoSource = dependencies.frameSource as? VideoFrameSource {
             self.videoWriterFPS = videoSource.effectiveFPS
         } else {
@@ -188,14 +193,15 @@ public final class WatchCaptureSession {
 
     public func run() async throws -> CaptureSessionResult {
         do {
+            // Validate public API options before creating or cleaning any artifacts.
+            let timing = try self.makeTiming()
             try self.store.prepareOutputRoot()
             if let autocleanWarning = self.store.performAutoclean() {
                 self.warnings.append(autocleanWarning)
             }
             // videoWriter is created lazily on first saved frame to match actual dimensions.
 
-            let timing = self.makeTiming(start: Date())
-            try await self.captureFrames(timing: timing)
+            let sampling = try await self.captureFrames(timing: timing)
             try Task.checkCancellation()
 
             let sourceDiagnostics = self.captureSourceDiagnostics
@@ -218,7 +224,9 @@ public final class WatchCaptureSession {
                 outputRoot: self.outputRoot,
                 columns: Constants.contactMaxColumns,
                 thumbSize: CGSize(width: Constants.contactThumb, height: Constants.contactThumb))
-            let durationMs = self.elapsedMilliseconds(since: timing.start)
+            let totalDurationMs = Int(Self.elapsedNanoseconds(
+                since: timing.monotonicStartNs,
+                now: self.clock.nowNanoseconds()) / 1_000_000)
             let metadataURL = self.outputRoot.appendingPathComponent("metadata.json")
             let metadata = WatchCaptureResultBuilder(
                 sourceKind: self.sourceKind,
@@ -232,9 +240,9 @@ public final class WatchCaptureSession {
                     frames: self.frames,
                     contactSheet: contact,
                     metadataURL: metadataURL,
-                    durationMs: durationMs,
-                    framesDropped: self.framesDropped,
-                    frameAttempts: self.frameAttempts,
+                    totalDurationMs: totalDurationMs,
+                    sampling: sampling,
+                    returnedFrameAttempts: self.frameAttempts,
                     totalBytes: self.totalBytes,
                     warnings: self.warnings,
                     sourceDiagnostics: sourceDiagnostics))

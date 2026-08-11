@@ -34,8 +34,9 @@ InjectedRuntimeBackedCommand {
     // Behavior
     @Option(name: .long, help: "Duration (bare values are milliseconds; default 60s, max 180s)")
     var duration: CLIDuration?
-    @Option(name: .long, help: "Idle FPS during quiet periods (default 2)") var idleFps: Double?
-    @Option(name: .long, help: "Active FPS during motion (default 8, max 15)") var activeFps: Double?
+    @Option(name: .long, help: "Idle FPS during quiet periods (default 2, range 0.1...5)") var idleFps: Double?
+    @Option(name: .long, help: "Active FPS during motion (default 8, range 0.5...15; must be >= idle)")
+    var activeFps: Double?
     @Option(name: .long, help: "Whole-frame change percent to keep motion frames (default 2.5; 0 keeps all)")
     var threshold: Double?
     @Option(

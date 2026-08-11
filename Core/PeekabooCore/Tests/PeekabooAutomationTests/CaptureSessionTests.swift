@@ -49,6 +49,10 @@ struct CaptureSessionTests {
 
         #expect(result.frames.count == framesToEmit)
         #expect(result.stats.framesKept == framesToEmit)
+        #expect(result.stats.captureAttempts == framesToEmit + 1)
+        #expect(result.stats.framesSampled == framesToEmit)
+        #expect(result.stats.captureFailures == 0)
+        #expect(result.stats.framesDiffFiltered == 0)
         #expect(FileManager.default.fileExists(atPath: result.contactSheet.path))
         #expect(FileManager.default.fileExists(atPath: result.metadataFile))
     }
@@ -391,8 +395,8 @@ struct CaptureSessionTests {
     private static func options(duration: TimeInterval, maxFrames: Int = 50) -> CaptureOptions {
         CaptureOptions(
             duration: duration,
-            idleFps: 60,
-            activeFps: 60,
+            idleFps: 5,
+            activeFps: 5,
             changeThresholdPercent: 0,
             heartbeatSeconds: 0,
             quietMsToIdle: 0,

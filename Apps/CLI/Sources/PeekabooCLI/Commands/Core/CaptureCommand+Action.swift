@@ -189,8 +189,10 @@ RuntimeOptionsConfigurable, InjectedRuntimeBackedCommand {
         }
 
         print(
-            "capture(action) kept \(result.capture.stats.framesKept) frames " +
-                "(dropped \(result.capture.stats.framesDropped))"
+            "capture(action) sampled \(result.capture.stats.framesSampled) frames at " +
+                "\(String(format: "%.2f", result.capture.stats.sampledFps)) FPS; " +
+                "kept \(result.capture.stats.framesKept) at " +
+                "\(String(format: "%.2f", result.capture.stats.keptFps)) FPS"
         )
         print("contact sheet: \(result.capture.contactSheet.path)")
         print("metadata: \(result.capture.metadataFile)")
@@ -211,8 +213,7 @@ RuntimeOptionsConfigurable, InjectedRuntimeBackedCommand {
 
     private func buildOptions() throws -> CaptureOptions {
         let duration = max(1, min(durationLimit?.seconds ?? 60, 180))
-        let idle = min(max(idleFps ?? 2, 0.1), 5)
-        let active = min(max(activeFps ?? 8, 0.5), 15)
+        let cadence = try CaptureCadence.validated(idleFps: self.idleFps, activeFps: self.activeFps)
         let threshold = min(max(threshold ?? 2.5, 0), 100)
         let heartbeat = max(heartbeat?.seconds ?? 5, 0)
         let quiet = max(quiet?.roundedMilliseconds ?? 1000, 0)
@@ -224,8 +225,8 @@ RuntimeOptionsConfigurable, InjectedRuntimeBackedCommand {
 
         return CaptureOptions(
             duration: duration,
-            idleFps: idle,
-            activeFps: active,
+            idleFps: cadence.idleFps,
+            activeFps: cadence.activeFps,
             changeThresholdPercent: threshold,
             heartbeatSeconds: heartbeat,
             quietMsToIdle: quiet,

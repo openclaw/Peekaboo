@@ -88,6 +88,38 @@ struct CaptureLiveBehaviorTests {
     }
 
     @Test
+    func `live cadence rejects nonfinite out of range and inverted rates`() {
+        for idle in [Double.nan, 0, 0.099, 5.001] {
+            var command = CaptureLiveCommand()
+            command.idleFps = idle
+            #expect(throws: CaptureCadenceValidationError.self) {
+                _ = try command.buildOptions()
+            }
+        }
+
+        for active in [Double.infinity, 0, 0.499, 15.001] {
+            var command = CaptureLiveCommand()
+            command.activeFps = active
+            #expect(throws: CaptureCadenceValidationError.self) {
+                _ = try command.buildOptions()
+            }
+        }
+
+        var inverted = CaptureLiveCommand()
+        inverted.idleFps = 5
+        inverted.activeFps = 4
+        #expect(throws: CaptureCadenceValidationError.self) {
+            _ = try inverted.buildOptions()
+        }
+    }
+
+    @Test
+    func `cadence validation maps to a pre-dispatch validation error`() {
+        let error = CaptureCadenceValidationError.activeBelowIdle(active: 4, idle: 5)
+        #expect(CaptureLiveCommand().mapErrorToCode(error) == .VALIDATION_ERROR)
+    }
+
+    @Test
     func `human output preserves nonzero tiny frame deltas`() {
         #expect(CaptureLiveCommand.formatChangePercent(0) == "0.00")
         #expect(CaptureLiveCommand.formatChangePercent(0.004) == "0.004")

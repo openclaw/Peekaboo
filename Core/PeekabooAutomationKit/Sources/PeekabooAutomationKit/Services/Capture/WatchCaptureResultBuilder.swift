@@ -13,23 +13,24 @@ struct WatchCaptureResultBuilder {
         let frames: [CaptureFrameInfo]
         let contactSheet: CaptureContactSheet
         let metadataURL: URL
-        let durationMs: Int
-        let framesDropped: Int
-        let frameAttempts: Int
+        let totalDurationMs: Int
+        let sampling: WatchCaptureSession.SamplingMetrics
+        let returnedFrameAttempts: Int
         let totalBytes: Int
         let warnings: [CaptureWarning]
         let sourceDiagnostics: CaptureFrameSourceDiagnostics
     }
 
     func build(_ input: Input) -> CaptureSessionResult {
-        CaptureSessionResult(
+        let stats = self.makeStats(input)
+        return CaptureSessionResult(
             source: self.sourceKind,
             videoIn: self.videoIn,
             videoOut: self.videoOut,
             frames: input.frames,
             contactSheet: input.contactSheet,
             metadataFile: input.metadataURL.path,
-            stats: self.makeStats(input),
+            stats: stats,
             scope: self.scope,
             diffAlgorithm: self.options.diffStrategy.rawValue,
             diffScale: self.diffScale,
@@ -37,13 +38,15 @@ struct WatchCaptureResultBuilder {
             warnings: self.captureWarnings(
                 frames: input.frames,
                 warnings: input.warnings,
-                sourceDiagnostics: input.sourceDiagnostics))
+                sourceDiagnostics: input.sourceDiagnostics,
+                stats: stats))
     }
 
     private func captureWarnings(
         frames: [CaptureFrameInfo],
         warnings: [CaptureWarning],
-        sourceDiagnostics: CaptureFrameSourceDiagnostics) -> [CaptureWarning]
+        sourceDiagnostics: CaptureFrameSourceDiagnostics,
+        stats: CaptureStats) -> [CaptureWarning]
     {
         var output = warnings
         if self.sourceKind == .video,
@@ -62,10 +65,20 @@ struct WatchCaptureResultBuilder {
                 message: "Skipped \(sourceDiagnostics.decodeFailures) undecodable video sample(s)",
                 details: details))
         }
-        let hadCaptureLoss = sourceDiagnostics.decodeFailures > 0 ||
+        let hadCaptureLoss = sourceDiagnostics.decodeFailures > 0 || stats.captureFailures > 0 ||
             warnings.contains(where: { $0.code == .transientCaptureFailure })
         if frames.count < 2, !hadCaptureLoss {
             output.append(WatchWarning(code: .noMotion, message: "No motion detected; only key frames captured"))
+        }
+        if stats.lowFps {
+            output.append(WatchWarning(
+                code: .lowFps,
+                message: "Live capture sampling fell below 80% of the requested adaptive cadence",
+                details: [
+                    "sampled_fps": String(format: "%.2f", stats.sampledFps),
+                    "idle_fps": String(format: "%.2f", stats.requestedIdleFps),
+                    "active_fps": String(format: "%.2f", stats.requestedActiveFps),
+                ]))
         }
         return output
     }
@@ -92,24 +105,42 @@ struct WatchCaptureResultBuilder {
         let maxMbHit = self.options.maxMegabytes != nil
             && input.totalBytes / (1024 * 1024) >= (self.options.maxMegabytes ?? 0)
         let maxFramesHit = if self.sourceKind == .video {
-            input.frameAttempts >= self.options.maxFrames
+            input.returnedFrameAttempts >= self.options.maxFrames
         } else {
             input.frames.count >= self.options.maxFrames
         }
+        let sampledFps = Self.computeFps(
+            frameCount: input.sampling.framesSampled,
+            durationNs: input.sampling.durationNs)
+        let keptFps = Self.computeFps(
+            frameCount: input.frames.count,
+            durationNs: input.sampling.durationNs)
+        let requestedAdaptiveFps = Self.computeFps(
+            frameCount: input.sampling.requestedCadenceIntervals,
+            durationNs: input.sampling.requestedCadenceDurationNs)
+        let lowFps = self.sourceKind == .live &&
+            input.sampling.requestedCadenceIntervals > 0 &&
+            sampledFps < requestedAdaptiveFps * 0.8
         return WatchStats(
-            durationMs: input.durationMs,
-            fpsIdle: self.options.idleFps,
-            fpsActive: self.options.activeFps,
-            fpsEffective: Self.computeEffectiveFps(frameCount: input.frames.count, durationMs: input.durationMs),
+            totalDurationMs: input.totalDurationMs,
+            samplingDurationMs: Int(input.sampling.durationNs / 1_000_000),
+            requestedIdleFps: self.options.idleFps,
+            requestedActiveFps: self.options.activeFps,
+            captureAttempts: input.sampling.captureAttempts,
+            framesSampled: input.sampling.framesSampled,
+            captureFailures: input.sampling.captureFailures,
+            framesDiffFiltered: input.sampling.framesDiffFiltered,
+            sampledFps: sampledFps,
+            keptFps: keptFps,
+            lowFps: lowFps,
             framesKept: input.frames.count,
-            framesDropped: input.framesDropped,
             decodeFailures: input.sourceDiagnostics.decodeFailures,
             maxFramesHit: maxFramesHit,
             maxMbHit: maxMbHit)
     }
 
-    private static func computeEffectiveFps(frameCount: Int, durationMs: Int) -> Double {
-        guard durationMs > 0 else { return 0 }
-        return Double(frameCount) / (Double(durationMs) / 1000.0)
+    private static func computeFps(frameCount: Int, durationNs: UInt64) -> Double {
+        guard durationNs > 0 else { return 0 }
+        return Double(frameCount) / (Double(durationNs) / 1_000_000_000)
     }
 }

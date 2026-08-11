@@ -32,6 +32,17 @@ not comparable; that frame enters active sampling and its saved motion box cover
 
 For `capture video`, `metadata.json` and JSON stdout include `options.video` with the requested sampling/trim options plus the effective FPS used by the frame reader. `stats.decodeFailures` identifies the decode-failure subset of `stats.framesDropped`; ordinary diff drops remain in `framesDropped` without increasing `decodeFailures`. A bounded `videoDecodeFailure` warning retains the first and last decode errors when later samples still succeed.
 
+Capture stats separate acquisition from retention and postprocessing. `samplingDurationMs` ends when the sampling loop
+ends; `totalDurationMs` also includes video finalization and contact-sheet creation. `captureAttempts`, `framesSampled`,
+`captureFailures`, and `framesDiffFiltered` explain where frames went. `sampledFps` measures valid samples over sampling
+time, while `keptFps` measures retained frames over that same interval. `lowFps` compares live sampled cadence—not kept
+frames—with the adaptive requested cadence, so aggressive diff filtering does not create a false warning. MCP projects
+the same fields in snake_case.
+
+For compatibility, old fields remain explicit aliases: `durationMs` means `totalDurationMs`, `fpsIdle` and `fpsActive`
+mean the requested rates, `fpsEffective` means `keptFps`, and `framesDropped` is the aggregate of capture failures,
+decode failures, and diff-filtered frames. New consumers should use the specific fields above.
+
 ## `capture live` flags
 - Targeting: `--mode screen|window|frontmost|area`, `--screen-index`, `--app`, `--pid`, `--window-title`, `--window-index`, `--region x,y,width,height` (global coords)
 - Focus: `--capture-focus background|foreground|auto`; background is the default, foreground explicitly activates the target, and auto is the legacy focus-if-needed mode.
@@ -44,6 +55,12 @@ For `capture video`, `metadata.json` and JSON stdout include `options.video` wit
 controls immediate motion-frame retention and the switch to active FPS. A small localized text edit can stay below the
 default and arrive in the next heartbeat keyframe; lower the threshold for that workload, or use `0` to keep every
 valid sample.
+
+Idle FPS must be finite and within `0.1...5`; active FPS must be finite and within `0.5...15`, and active must be
+greater than or equal to idle. CLI live/action and MCP enforce the same policy and reject zero, negative, nonfinite,
+out-of-range, or inverted rates before capture starts. When a frame enters or exits active mode, the next interval uses
+the new mode immediately. Processing cost is deducted from that interval using a monotonic clock, and overruns do not
+add another sleep or extend the session beyond its deadline.
 
 ## `capture action` flags
 - Targeting/focus/cadence/caps/output: same as `capture live`, except `--duration` is replaced by `--duration-limit` (default `60s`, max `180s`; bare values are milliseconds).

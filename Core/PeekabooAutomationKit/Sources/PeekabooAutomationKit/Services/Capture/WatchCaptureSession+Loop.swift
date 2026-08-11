@@ -1,25 +1,43 @@
 import CoreGraphics
 import Foundation
+import PeekabooFoundation
 
 @MainActor
 extension WatchCaptureSession {
     struct SessionTiming {
-        let start: Date
+        let monotonicStartNs: UInt64
+        let deadlineNs: UInt64
         let durationNs: UInt64
         let heartbeatNs: UInt64
         let cadenceIdleNs: UInt64
         let cadenceActiveNs: UInt64
     }
 
+    struct SamplingMetrics {
+        let durationNs: UInt64
+        let captureAttempts: Int
+        let framesSampled: Int
+        let captureFailures: Int
+        let framesDiffFiltered: Int
+        let requestedCadenceDurationNs: UInt64
+        let requestedCadenceIntervals: Int
+    }
+
     struct SessionState {
-        var lastKeptTime: Date
-        var lastActivityTime: Date
+        var lastKeptNs: UInt64
+        var lastActivityNs: UInt64
         var activeMode: Bool
         var lastDiffBuffer: WatchFrameDiffer.LumaBuffer?
         var lastKeptDiffBuffer: WatchFrameDiffer.LumaBuffer?
         var lastKeptFrameIndex: Int?
         var frameIndex: Int
         var frameAttempts: Int
+        var captureAttempts: Int
+        var framesSampled: Int
+        var captureFailures: Int
+        var framesDiffFiltered: Int
+        var requestedCadenceDurationNs: UInt64
+        var requestedCadenceIntervals: Int
         var consecutiveDecodeFailures: Int
         var consecutiveTransientCaptureFailures: Int
         var transientCaptureWarningEmitted: Bool
@@ -37,40 +55,69 @@ extension WatchCaptureSession {
         case stopRequested
     }
 
-    func makeTiming(start: Date) -> SessionTiming {
-        let durationNs = UInt64(self.options.duration * 1_000_000_000)
+    func makeTiming() throws -> SessionTiming {
+        let idleFps: Double
+        let activeFps: Double
+        if self.sourceKind == .live {
+            let cadence = try CaptureCadence.validated(
+                idleFps: self.options.idleFps,
+                activeFps: self.options.activeFps)
+            idleFps = cadence.idleFps
+            activeFps = cadence.activeFps
+        } else {
+            // Video sources carry their own sampling cadence and never wall-clock throttle.
+            idleFps = self.options.idleFps
+            activeFps = self.options.activeFps
+        }
+        let durationNs = try Self.nanoseconds(
+            seconds: self.options.duration,
+            name: "Capture duration",
+            allowZero: false)
         let heartbeatNs = self.options.heartbeatSeconds > 0
-            ? UInt64(self.options.heartbeatSeconds * 1_000_000_000)
+            ? try Self.nanoseconds(
+                seconds: self.options.heartbeatSeconds,
+                name: "Heartbeat interval",
+                allowZero: false)
             : UInt64.max
 
-        let cadenceIdleNs = UInt64(1_000_000_000 / max(self.options.idleFps, 0.1))
-        let cadenceActiveNs = UInt64(1_000_000_000 / max(self.options.activeFps, 0.1))
+        let cadenceIdleNs = try Self.cadenceNanoseconds(fps: idleFps)
+        let cadenceActiveNs = try Self.cadenceNanoseconds(fps: activeFps)
 
+        let monotonicStartNs = self.clock.nowNanoseconds()
+        let (deadlineNs, deadlineOverflow) = monotonicStartNs.addingReportingOverflow(durationNs)
         return SessionTiming(
-            start: start,
+            monotonicStartNs: monotonicStartNs,
+            deadlineNs: deadlineOverflow ? UInt64.max : deadlineNs,
             durationNs: durationNs,
             heartbeatNs: heartbeatNs,
             cadenceIdleNs: cadenceIdleNs,
             cadenceActiveNs: cadenceActiveNs)
     }
 
-    func captureFrames(timing: SessionTiming) async throws {
+    func captureFrames(timing: SessionTiming) async throws -> SamplingMetrics {
         var state = SessionState(
-            lastKeptTime: timing.start,
-            lastActivityTime: timing.start,
+            lastKeptNs: timing.monotonicStartNs,
+            lastActivityNs: timing.monotonicStartNs,
             activeMode: false,
             lastDiffBuffer: nil,
             lastKeptDiffBuffer: nil,
             lastKeptFrameIndex: nil,
             frameIndex: 0,
             frameAttempts: 0,
+            captureAttempts: 0,
+            framesSampled: 0,
+            captureFailures: 0,
+            framesDiffFiltered: 0,
+            requestedCadenceDurationNs: 0,
+            requestedCadenceIntervals: 0,
             consecutiveDecodeFailures: 0,
             consecutiveTransientCaptureFailures: 0,
             transientCaptureWarningEmitted: false)
 
         captureLoop: while true {
-            let now = Date()
-            let elapsedNs = Self.elapsedNanoseconds(since: timing.start, now: now)
+            let elapsedNs = Self.elapsedNanoseconds(
+                since: timing.monotonicStartNs,
+                now: self.clock.nowNanoseconds())
             if self.shouldEndSession(elapsedNs: elapsedNs, durationNs: timing.durationNs) {
                 break
             }
@@ -78,13 +125,14 @@ extension WatchCaptureSession {
                 break
             }
 
-            let frameStart = Date()
-            let cadence = state.activeMode ? timing.cadenceActiveNs : timing.cadenceIdleNs
+            let frameStartNs = self.clock.nowNanoseconds()
             let attemptResult: CaptureAttemptResult
+            state.captureAttempts += 1
             do {
                 attemptResult = try await self.captureFrameOrStop()
             } catch {
                 if let delay = ScreenCaptureKitTransientError.retryDelayNanoseconds(after: error) {
+                    state.captureFailures += 1
                     state.consecutiveTransientCaptureFailures += 1
                     guard state.consecutiveTransientCaptureFailures <= 3 else {
                         throw error
@@ -103,8 +151,11 @@ extension WatchCaptureSession {
                     }
                     // SCK can report a temporary TCC denial while another CLI capture is settling.
                     // Treat that as a dropped live frame; the next sample or fallback frame can recover.
-                    let retryStart = Date()
-                    try await self.sleep(ns: delay, since: retryStart)
+                    self.recordRequestedCadence(
+                        self.cadenceNanoseconds(for: state, timing: timing),
+                        state: &state)
+                    let retryStartNs = self.clock.nowNanoseconds()
+                    try await self.sleep(ns: delay, since: retryStartNs, deadlineNs: timing.deadlineNs)
                     continue
                 }
                 throw error
@@ -132,6 +183,9 @@ extension WatchCaptureSession {
 
             guard let cgImage = capture.cgImage else {
                 self.framesDropped += 1
+                if self.sourceKind != .video {
+                    state.captureFailures += 1
+                }
                 state.consecutiveDecodeFailures += 1
                 if self.sourceKind == .video, state.consecutiveDecodeFailures >= 32 {
                     let diagnostics = self.captureSourceDiagnostics
@@ -148,10 +202,16 @@ extension WatchCaptureSession {
                         details: details))
                     break
                 }
-                try await self.sleep(ns: cadence, since: frameStart)
+                if self.hitFrameCap(videoFrameAttempts: state.frameAttempts) || self.hitSizeCap() {
+                    break
+                }
+                let cadence = self.cadenceNanoseconds(for: state, timing: timing)
+                self.recordRequestedCadence(cadence, state: &state)
+                try await self.sleep(ns: cadence, since: frameStartNs, deadlineNs: timing.deadlineNs)
                 continue
             }
             state.consecutiveDecodeFailures = 0
+            state.framesSampled += 1
 
             if self.keepAllFrames {
                 try await self.keepAllFrame(
@@ -159,19 +219,26 @@ extension WatchCaptureSession {
                     capture: capture,
                     timestampMs: timestampMs,
                     state: &state)
-                try await self.sleep(ns: cadence, since: frameStart)
+                if self.hitFrameCap(videoFrameAttempts: state.frameAttempts) || self.hitSizeCap() {
+                    break
+                }
+                let cadence = self.cadenceNanoseconds(for: state, timing: timing)
+                self.recordRequestedCadence(cadence, state: &state)
+                try await self.sleep(ns: cadence, since: frameStartNs, deadlineNs: timing.deadlineNs)
                 continue
             }
 
             let diff = self.computeDiff(cgImage: cgImage, previous: state.lastDiffBuffer)
             state.lastDiffBuffer = diff.buffer
-            self.updateActiveMode(
+            let frameCompletedNs = self.clock.nowNanoseconds()
+            let cadence = self.postFrameCadenceNanoseconds(
                 changePercent: diff.changePercent,
-                now: now,
-                state: &state)
+                nowNs: frameCompletedNs,
+                state: &state,
+                timing: timing)
 
             let decision = self.keepDecision(
-                now: now,
+                nowNs: frameCompletedNs,
                 state: state,
                 heartbeatNs: timing.heartbeatNs,
                 enterActive: diff.enterActive)
@@ -192,16 +259,32 @@ extension WatchCaptureSession {
                     motionBoxes: outputDiff.motionBoxes)
                 let saved = try await self.saveFrame(cgImage: cgImage, context: saveContext)
                 self.frames.append(saved)
-                state.lastKeptTime = now
+                state.lastKeptNs = frameCompletedNs
                 state.lastKeptDiffBuffer = diff.buffer
                 state.lastKeptFrameIndex = state.frameIndex
             } else {
                 self.framesDropped += 1
+                state.framesDiffFiltered += 1
             }
 
             state.frameIndex += 1
-            try await self.sleep(ns: cadence, since: frameStart)
+            if self.hitFrameCap(videoFrameAttempts: state.frameAttempts) || self.hitSizeCap() {
+                break
+            }
+            self.recordRequestedCadence(cadence, state: &state)
+            try await self.sleep(ns: cadence, since: frameStartNs, deadlineNs: timing.deadlineNs)
         }
+
+        return SamplingMetrics(
+            durationNs: Self.elapsedNanoseconds(
+                since: timing.monotonicStartNs,
+                now: self.clock.nowNanoseconds()),
+            captureAttempts: state.captureAttempts,
+            framesSampled: state.framesSampled,
+            captureFailures: state.captureFailures,
+            framesDiffFiltered: state.framesDiffFiltered,
+            requestedCadenceDurationNs: state.requestedCadenceDurationNs,
+            requestedCadenceIntervals: state.requestedCadenceIntervals)
     }
 
     func keepAllFrame(
@@ -258,8 +341,34 @@ extension WatchCaptureSession {
         }
     }
 
-    static func elapsedNanoseconds(since start: Date, now: Date) -> UInt64 {
-        UInt64(now.timeIntervalSince(start) * 1_000_000_000)
+    static func elapsedNanoseconds(since start: UInt64, now: UInt64) -> UInt64 {
+        now >= start ? now - start : 0
+    }
+
+    static func nanoseconds(
+        seconds: Double,
+        name: String,
+        allowZero: Bool) throws -> UInt64
+    {
+        guard seconds.isFinite else {
+            throw PeekabooError.invalidInput("\(name) must be finite")
+        }
+        guard seconds > 0 || (allowZero && seconds == 0) else {
+            throw PeekabooError.invalidInput("\(name) must be greater than zero")
+        }
+        let scaled = seconds * 1_000_000_000
+        guard scaled.isFinite, scaled >= 0, scaled < Double(UInt64.max) else {
+            throw PeekabooError.invalidInput("\(name) is too large")
+        }
+        return UInt64(scaled)
+    }
+
+    static func cadenceNanoseconds(fps: Double) throws -> UInt64 {
+        let cadence = 1_000_000_000 / fps
+        guard cadence.isFinite, cadence > 0, cadence < Double(UInt64.max) else {
+            throw PeekabooError.invalidInput("Capture FPS cannot be represented as a sampling interval")
+        }
+        return UInt64(cadence)
     }
 
     func shouldEndSession(elapsedNs: UInt64, durationNs: UInt64) -> Bool {
@@ -347,7 +456,7 @@ extension WatchCaptureSession {
 
     func updateActiveMode(
         changePercent: Double,
-        now: Date,
+        nowNs: UInt64,
         state: inout SessionState)
     {
         let threshold = self.options.changeThresholdPercent
@@ -355,12 +464,12 @@ extension WatchCaptureSession {
         let exitActive = state.activeMode && WatchCaptureActivityPolicy.shouldExitActive(
             changePercent: changePercent,
             threshold: threshold,
-            lastActivityTime: state.lastActivityTime,
+            lastActivityNs: state.lastActivityNs,
             quietMs: self.options.quietMsToIdle,
-            now: now)
+            nowNs: nowNs)
 
         if enterActive {
-            state.lastActivityTime = now
+            state.lastActivityNs = nowNs
         }
 
         if enterActive, !state.activeMode {
@@ -373,8 +482,28 @@ extension WatchCaptureSession {
         }
     }
 
+    func postFrameCadenceNanoseconds(
+        changePercent: Double,
+        nowNs: UInt64,
+        state: inout SessionState,
+        timing: SessionTiming) -> UInt64
+    {
+        self.updateActiveMode(changePercent: changePercent, nowNs: nowNs, state: &state)
+        return self.cadenceNanoseconds(for: state, timing: timing)
+    }
+
+    func cadenceNanoseconds(for state: SessionState, timing: SessionTiming) -> UInt64 {
+        state.activeMode ? timing.cadenceActiveNs : timing.cadenceIdleNs
+    }
+
+    func recordRequestedCadence(_ cadence: UInt64, state: inout SessionState) {
+        let (duration, overflow) = state.requestedCadenceDurationNs.addingReportingOverflow(cadence)
+        state.requestedCadenceDurationNs = overflow ? UInt64.max : duration
+        state.requestedCadenceIntervals += 1
+    }
+
     func keepDecision(
-        now: Date,
+        nowNs: UInt64,
         state: SessionState,
         heartbeatNs: UInt64,
         enterActive: Bool) -> (keep: Bool, reason: CaptureFrameInfo.Reason)
@@ -387,7 +516,8 @@ extension WatchCaptureSession {
             return (true, .motion)
         }
 
-        let isHeartbeat = UInt64(now.timeIntervalSince(state.lastKeptTime) * 1_000_000_000) >= heartbeatNs
+        let elapsedSinceKeep = nowNs >= state.lastKeptNs ? nowNs - state.lastKeptNs : 0
+        let isHeartbeat = elapsedSinceKeep >= heartbeatNs
         if isHeartbeat {
             return (true, .heartbeat)
         }
@@ -395,7 +525,7 @@ extension WatchCaptureSession {
         return (false, .cap)
     }
 
-    func sleep(ns: UInt64, since start: Date) async throws {
+    func sleep(ns: UInt64, since start: UInt64, deadlineNs: UInt64? = nil) async throws {
         // Video input already has intrinsic cadence; do not add wall-clock throttling.
         if self.frameSource != nil {
             return
@@ -403,13 +533,17 @@ extension WatchCaptureSession {
         if self.hasStopRequest() {
             return
         }
-        let elapsed = UInt64(Date().timeIntervalSince(start) * 1_000_000_000)
-        guard ns > elapsed else { return }
+        let (unboundedTarget, targetOverflow) = start.addingReportingOverflow(ns)
+        let cadenceTarget = targetOverflow ? UInt64.max : unboundedTarget
+        let target = min(cadenceTarget, deadlineNs ?? UInt64.max)
+        let now = self.clock.nowNanoseconds()
+        guard target > now else { return }
 
         try Task.checkCancellation()
+        let clock = self.clock
         try await withThrowingTaskGroup(of: Void.self) { group in
             group.addTask {
-                try await Task.sleep(nanoseconds: ns - elapsed)
+                try await clock.sleep(nanoseconds: target - now)
             }
             group.addTask { [weak self] in
                 await self?.waitForStopRequest()

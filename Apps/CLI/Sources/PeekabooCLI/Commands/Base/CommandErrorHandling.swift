@@ -80,6 +80,8 @@ extension ErrorHandlingCommand {
             errorCode(for: posixError)
         case is ActionRefusalError:
             .VALIDATION_ERROR
+        case is CaptureCadenceValidationError:
+            .VALIDATION_ERROR
         case is Commander.ValidationError:
             .VALIDATION_ERROR
         default:

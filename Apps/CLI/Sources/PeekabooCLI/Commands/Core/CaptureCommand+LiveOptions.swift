@@ -5,8 +5,7 @@ import PeekabooCore
 extension CaptureLiveCommand {
     func buildOptions() throws -> CaptureOptions {
         let duration = max(1, min(self.duration?.seconds ?? 60, 180))
-        let idle = min(max(self.idleFps ?? 2, 0.1), 5)
-        let active = min(max(self.activeFps ?? 8, 0.5), 15)
+        let cadence = try CaptureCadence.validated(idleFps: self.idleFps, activeFps: self.activeFps)
         let threshold = min(max(self.threshold ?? 2.5, 0), 100)
         let heartbeat = max(self.heartbeat?.seconds ?? 5, 0)
         let quiet = max(self.quiet?.roundedMilliseconds ?? 1000, 0)
@@ -18,8 +17,8 @@ extension CaptureLiveCommand {
 
         return CaptureOptions(
             duration: duration,
-            idleFps: idle,
-            activeFps: active,
+            idleFps: cadence.idleFps,
+            activeFps: cadence.activeFps,
             changeThresholdPercent: threshold,
             heartbeatSeconds: heartbeat,
             quietMsToIdle: quiet,

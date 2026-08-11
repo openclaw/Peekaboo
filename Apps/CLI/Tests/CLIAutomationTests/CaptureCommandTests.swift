@@ -5,11 +5,11 @@ import Testing
 
 struct CaptureCommandTests {
     @Test
-    func `buildOptions clamps values`() throws {
+    func `buildOptions clamps non-cadence values`() throws {
         var cmd = CaptureLiveCommand()
         cmd.duration = .seconds(999)
-        cmd.idleFps = 9
-        cmd.activeFps = 99
+        cmd.idleFps = 5
+        cmd.activeFps = 15
         cmd.threshold = 200
         cmd.heartbeat = .seconds(-1)
         cmd.quiet = .milliseconds(-10)
@@ -19,8 +19,8 @@ struct CaptureCommandTests {
 
         let opts = try cmd.buildOptions()
         #expect(opts.duration <= 180)
-        #expect(opts.idleFps <= 5)
-        #expect(opts.activeFps <= 15)
+        #expect(opts.idleFps == 5)
+        #expect(opts.activeFps == 15)
         #expect(opts.changeThresholdPercent <= 100)
         #expect(opts.heartbeatSeconds >= 0)
         #expect(opts.quietMsToIdle >= 0)

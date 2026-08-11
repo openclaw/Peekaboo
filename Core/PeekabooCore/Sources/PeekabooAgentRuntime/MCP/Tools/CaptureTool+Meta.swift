@@ -59,6 +59,18 @@ enum CaptureMetaBuilder {
             meta["video_out"] = .string(videoOut)
         }
         meta["stats"] = .object([
+            "total_duration_ms": .int(result.stats.totalDurationMs),
+            "sampling_duration_ms": .int(result.stats.samplingDurationMs),
+            "requested_idle_fps": .double(result.stats.requestedIdleFps),
+            "requested_active_fps": .double(result.stats.requestedActiveFps),
+            "capture_attempts": .int(result.stats.captureAttempts),
+            "frames_sampled": .int(result.stats.framesSampled),
+            "capture_failures": .int(result.stats.captureFailures),
+            "frames_diff_filtered": .int(result.stats.framesDiffFiltered),
+            "sampled_fps": .double(result.stats.sampledFps),
+            "kept_fps": .double(result.stats.keptFps),
+            "low_fps": .bool(result.stats.lowFps),
+            // Compatibility aliases for older MCP clients.
             "duration_ms": .int(result.stats.durationMs),
             "fps_idle": .double(result.stats.fpsIdle),
             "fps_active": .double(result.stats.fpsActive),

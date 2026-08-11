@@ -38,16 +38,91 @@ public struct CaptureFrameInfo: Codable, Sendable, Equatable {
 }
 
 public struct CaptureStats: Codable, Sendable, Equatable {
-    public let durationMs: Int
-    public let fpsIdle: Double
-    public let fpsActive: Double
-    public let fpsEffective: Double
+    /// End-to-end session time through artifact postprocessing, before metadata persistence.
+    public let totalDurationMs: Int
+    /// Time spent in the sampling loop. Contact-sheet, video-finalization, and metadata work are excluded.
+    public let samplingDurationMs: Int
+    public let requestedIdleFps: Double
+    public let requestedActiveFps: Double
+    /// Source acquisitions started, including recoverable failed attempts.
+    public let captureAttempts: Int
+    /// Valid images delivered to retention/diff processing.
+    public let framesSampled: Int
+    /// Acquisition failures. Video decode failures remain separately reported by `decodeFailures`.
+    public let captureFailures: Int
+    /// Valid sampled frames rejected only by diff/heartbeat retention policy.
+    public let framesDiffFiltered: Int
+    /// Valid sampled images per second during `samplingDurationMs`.
+    public let sampledFps: Double
+    /// Retained frames per second during `samplingDurationMs`.
+    public let keptFps: Double
+    /// True when live sampling achieved less than 80% of its adaptive requested cadence.
+    public let lowFps: Bool
     public let framesKept: Int
-    public let framesDropped: Int
     public let decodeFailures: Int
     public let maxFramesHit: Bool
     public let maxMbHit: Bool
 
+    /// Compatibility alias for `totalDurationMs`.
+    public var durationMs: Int {
+        self.totalDurationMs
+    }
+
+    /// Compatibility alias for `requestedIdleFps`.
+    public var fpsIdle: Double {
+        self.requestedIdleFps
+    }
+
+    /// Compatibility alias for `requestedActiveFps`.
+    public var fpsActive: Double {
+        self.requestedActiveFps
+    }
+
+    /// Compatibility alias for retained-frame throughput (`keptFps`).
+    public var fpsEffective: Double {
+        self.keptFps
+    }
+
+    /// Compatibility aggregate of capture, decode, and diff-filtered losses.
+    public var framesDropped: Int {
+        self.captureFailures + self.decodeFailures + self.framesDiffFiltered
+    }
+
+    public init(
+        totalDurationMs: Int,
+        samplingDurationMs: Int,
+        requestedIdleFps: Double,
+        requestedActiveFps: Double,
+        captureAttempts: Int,
+        framesSampled: Int,
+        captureFailures: Int,
+        framesDiffFiltered: Int,
+        sampledFps: Double,
+        keptFps: Double,
+        lowFps: Bool,
+        framesKept: Int,
+        decodeFailures: Int = 0,
+        maxFramesHit: Bool,
+        maxMbHit: Bool)
+    {
+        self.totalDurationMs = totalDurationMs
+        self.samplingDurationMs = samplingDurationMs
+        self.requestedIdleFps = requestedIdleFps
+        self.requestedActiveFps = requestedActiveFps
+        self.captureAttempts = captureAttempts
+        self.framesSampled = framesSampled
+        self.captureFailures = captureFailures
+        self.framesDiffFiltered = framesDiffFiltered
+        self.sampledFps = sampledFps
+        self.keptFps = keptFps
+        self.lowFps = lowFps
+        self.framesKept = framesKept
+        self.decodeFailures = decodeFailures
+        self.maxFramesHit = maxFramesHit
+        self.maxMbHit = maxMbHit
+    }
+
+    /// Source-compatible initializer for callers that still construct the legacy aggregate.
     public init(
         durationMs: Int,
         fpsIdle: Double,
@@ -59,18 +134,37 @@ public struct CaptureStats: Codable, Sendable, Equatable {
         maxFramesHit: Bool,
         maxMbHit: Bool)
     {
-        self.durationMs = durationMs
-        self.fpsIdle = fpsIdle
-        self.fpsActive = fpsActive
-        self.fpsEffective = fpsEffective
+        let diffFiltered = max(0, framesDropped - decodeFailures)
+        self.totalDurationMs = durationMs
+        self.samplingDurationMs = durationMs
+        self.requestedIdleFps = fpsIdle
+        self.requestedActiveFps = fpsActive
+        self.captureAttempts = framesKept + framesDropped
+        self.framesSampled = framesKept + diffFiltered
+        self.captureFailures = 0
+        self.framesDiffFiltered = diffFiltered
+        self.sampledFps = fpsEffective
+        self.keptFps = fpsEffective
+        self.lowFps = false
         self.framesKept = framesKept
-        self.framesDropped = framesDropped
         self.decodeFailures = decodeFailures
         self.maxFramesHit = maxFramesHit
         self.maxMbHit = maxMbHit
     }
 
     private enum CodingKeys: String, CodingKey {
+        case totalDurationMs
+        case samplingDurationMs
+        case requestedIdleFps
+        case requestedActiveFps
+        case captureAttempts
+        case framesSampled
+        case captureFailures
+        case framesDiffFiltered
+        case sampledFps
+        case keptFps
+        case lowFps
+        // Compatibility keys retained in encoded metadata.
         case durationMs
         case fpsIdle
         case fpsActive
@@ -84,19 +178,48 @@ public struct CaptureStats: Codable, Sendable, Equatable {
 
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.durationMs = try container.decode(Int.self, forKey: .durationMs)
-        self.fpsIdle = try container.decode(Double.self, forKey: .fpsIdle)
-        self.fpsActive = try container.decode(Double.self, forKey: .fpsActive)
-        self.fpsEffective = try container.decode(Double.self, forKey: .fpsEffective)
+        let legacyDuration = try container.decodeIfPresent(Int.self, forKey: .durationMs) ?? 0
+        let legacyIdle = try container.decodeIfPresent(Double.self, forKey: .fpsIdle) ?? 0
+        let legacyActive = try container.decodeIfPresent(Double.self, forKey: .fpsActive) ?? 0
+        let legacyEffective = try container.decodeIfPresent(Double.self, forKey: .fpsEffective) ?? 0
+        let legacyDropped = try container.decodeIfPresent(Int.self, forKey: .framesDropped) ?? 0
+
+        self.totalDurationMs = try container.decodeIfPresent(Int.self, forKey: .totalDurationMs) ?? legacyDuration
+        self.samplingDurationMs = try container.decodeIfPresent(Int.self, forKey: .samplingDurationMs) ??
+            legacyDuration
+        self.requestedIdleFps = try container.decodeIfPresent(Double.self, forKey: .requestedIdleFps) ??
+            legacyIdle
+        self.requestedActiveFps = try container.decodeIfPresent(Double.self, forKey: .requestedActiveFps) ??
+            legacyActive
         self.framesKept = try container.decode(Int.self, forKey: .framesKept)
-        self.framesDropped = try container.decode(Int.self, forKey: .framesDropped)
         self.decodeFailures = try container.decodeIfPresent(Int.self, forKey: .decodeFailures) ?? 0
+        self.captureFailures = try container.decodeIfPresent(Int.self, forKey: .captureFailures) ?? 0
+        self.framesDiffFiltered = try container.decodeIfPresent(Int.self, forKey: .framesDiffFiltered) ??
+            max(0, legacyDropped - self.captureFailures - self.decodeFailures)
+        self.framesSampled = try container.decodeIfPresent(Int.self, forKey: .framesSampled) ??
+            self.framesKept + self.framesDiffFiltered
+        self.captureAttempts = try container.decodeIfPresent(Int.self, forKey: .captureAttempts) ??
+            self.framesSampled + self.captureFailures + self.decodeFailures
+        self.sampledFps = try container.decodeIfPresent(Double.self, forKey: .sampledFps) ?? legacyEffective
+        self.keptFps = try container.decodeIfPresent(Double.self, forKey: .keptFps) ?? legacyEffective
+        self.lowFps = try container.decodeIfPresent(Bool.self, forKey: .lowFps) ?? false
         self.maxFramesHit = try container.decode(Bool.self, forKey: .maxFramesHit)
         self.maxMbHit = try container.decode(Bool.self, forKey: .maxMbHit)
     }
 
     public func encode(to encoder: any Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(self.totalDurationMs, forKey: .totalDurationMs)
+        try container.encode(self.samplingDurationMs, forKey: .samplingDurationMs)
+        try container.encode(self.requestedIdleFps, forKey: .requestedIdleFps)
+        try container.encode(self.requestedActiveFps, forKey: .requestedActiveFps)
+        try container.encode(self.captureAttempts, forKey: .captureAttempts)
+        try container.encode(self.framesSampled, forKey: .framesSampled)
+        try container.encode(self.captureFailures, forKey: .captureFailures)
+        try container.encode(self.framesDiffFiltered, forKey: .framesDiffFiltered)
+        try container.encode(self.sampledFps, forKey: .sampledFps)
+        try container.encode(self.keptFps, forKey: .keptFps)
+        try container.encode(self.lowFps, forKey: .lowFps)
         try container.encode(self.durationMs, forKey: .durationMs)
         try container.encode(self.fpsIdle, forKey: .fpsIdle)
         try container.encode(self.fpsActive, forKey: .fpsActive)

@@ -122,6 +122,22 @@ struct CaptureToolPathResolverTests {
     }
 
     @Test
+    func `MCP live cadence rejects out of range and inverted rates`() async {
+        let windows = CaptureWindowResolverWindowService(windows: [])
+        for arguments: [String: Value] in [
+            ["source": .string("live"), "idle_fps": .double(0)],
+            ["source": .string("live"), "idle_fps": .double(5.1)],
+            ["source": .string("live"), "active_fps": .double(0.4)],
+            ["source": .string("live"), "active_fps": .double(15.1)],
+            ["source": .string("live"), "idle_fps": .double(5), "active_fps": .double(4)],
+        ] {
+            await #expect(throws: PeekabooError.self) {
+                _ = try await CaptureRequest(arguments: ToolArguments(value: .object(arguments)), windows: windows)
+            }
+        }
+    }
+
+    @Test
     func `window resolver maps app title selection to stable window id`() async throws {
         let windows = CaptureWindowResolverWindowService(windows: [
             Self.window(id: 7, title: "", index: 0, bounds: CGRect(x: 0, y: 0, width: 500, height: 30)),

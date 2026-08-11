@@ -23,64 +23,63 @@ struct WatchHysteresisTests {
 
     @Test
     func `Exit requires calm for quietMs window`() {
-        let now = Date()
-        let lastActivity = now.addingTimeInterval(-1.2)
+        let nowNs: UInt64 = 1_200_000_000
+        let lastActivityNs: UInt64 = 0
         let shouldExit = WatchCaptureActivityPolicy.shouldExitActive(
             changePercent: 0.5,
             threshold: 2.0,
-            lastActivityTime: lastActivity,
+            lastActivityNs: lastActivityNs,
             quietMs: 1000,
-            now: now)
+            nowNs: nowNs)
         #expect(shouldExit)
     }
 
     @Test
     func `Stays active when change stays above half-threshold`() {
-        let now = Date()
-        let lastActivity = now.addingTimeInterval(-2)
+        let nowNs: UInt64 = 2_000_000_000
+        let lastActivityNs: UInt64 = 0
         let shouldExit = WatchCaptureActivityPolicy.shouldExitActive(
             changePercent: 1.2, // >= threshold/2 when threshold is 2.0
             threshold: 2.0,
-            lastActivityTime: lastActivity,
+            lastActivityNs: lastActivityNs,
             quietMs: 500,
-            now: now)
+            nowNs: nowNs)
         #expect(!shouldExit)
     }
 
     @Test
     func `Stays active until quietMs elapses`() {
-        let now = Date()
-        let lastActivity = now.addingTimeInterval(-0.3)
+        let nowNs: UInt64 = 300_000_000
+        let lastActivityNs: UInt64 = 0
         let shouldExit = WatchCaptureActivityPolicy.shouldExitActive(
             changePercent: 0.1,
             threshold: 1.0,
-            lastActivityTime: lastActivity,
+            lastActivityNs: lastActivityNs,
             quietMs: 1000,
-            now: now)
+            nowNs: nowNs)
         #expect(!shouldExit)
     }
 
     @Test
     func `Idle → active → idle timeline honors quiet window`() {
-        let start = Date()
-        var lastActivity = start
+        var lastActivityNs: UInt64 = 0
         var active = false
         let threshold = 2.0
         let quietMs = 800
 
         func step(change: Double, deltaMs: Int) {
-            let now = start.addingTimeInterval(Double(deltaMs) / 1000)
+            let nowNs = UInt64(deltaMs) * 1_000_000
             let enter = change >= threshold
             if enter {
                 active = true
-                lastActivity = now
+                lastActivityNs = nowNs
             }
             let shouldExit = active && WatchCaptureActivityPolicy.shouldExitActive(
                 changePercent: change,
                 threshold: threshold,
-                lastActivityTime: lastActivity,
+                lastActivityNs: lastActivityNs,
                 quietMs: quietMs,
-                now: now)
+                nowNs: nowNs)
             if shouldExit {
                 active = false
             }

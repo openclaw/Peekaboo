@@ -15,6 +15,7 @@
 
 ### Fixed
 - Preserve negative numeric option values through Commander parsing so command-owned range validation reports them accurately instead of misclassifying them as short flags.
+- Reject invalid live/action capture cadence instead of silently clamping or trapping, apply post-motion timing with a monotonic deadline, and report sampled throughput, capture failures, diff-filtered frames, and retained throughput separately from artifact postprocessing.
 - Keep remote `window close` background-only by default, matching local execution, and require explicit foreground consent before routing a close through focus or global-input fallbacks.
 - Serialize ScreenCaptureKit ownership across Peekaboo processes for the lifetime of the first explicit local-modern claimant or real SCK caller, with build-bound process-awareness receipts, owner-affine auto/modern routing, current-policy capability checks for every transported engine, and fail-closed rolling-upgrade detection for old Bridge and long-running local processes; explicit classic remains a process-isolated, in-process-SCK-free escape hatch and refuses false-preflight captures unless protected WindowServer metadata independently proves access.
 - Keep modern capture inside bounded, coordinator-owned `SCScreenshotManager` calls instead of service-lifetime `SCStream` sessions, eliminating persistent stream overlap and rechecking ownership before every new framework dispatch.

@@ -76,5 +76,10 @@ struct WatchCLISmokeTests {
         let stats = try JSONDecoder().decode(CaptureStats.self, from: data)
 
         #expect(stats.decodeFailures == 0)
+        #expect(stats.totalDurationMs == 1000)
+        #expect(stats.samplingDurationMs == 1000)
+        #expect(stats.keptFps == 1)
+        #expect(stats.framesDiffFiltered == 2)
+        #expect(stats.framesDropped == 2)
     }
 }

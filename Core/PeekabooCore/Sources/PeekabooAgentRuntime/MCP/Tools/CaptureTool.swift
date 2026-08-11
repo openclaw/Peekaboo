@@ -110,7 +110,9 @@ public struct CaptureTool: MCPTool {
             let result = try await session.run()
 
             var summaryLines = [
-                "capture kept \(result.stats.framesKept) frames (dropped \(result.stats.framesDropped))",
+                "capture sampled \(result.stats.framesSampled) frames at " +
+                    "\(String(format: "%.2f", result.stats.sampledFps)) FPS; " +
+                    "kept \(result.stats.framesKept) at \(String(format: "%.2f", result.stats.keptFps)) FPS",
                 "contact: \(result.contactSheet.path)",
                 "metadata: \(result.metadataFile)",
                 "frames: \(result.frames.count) files",

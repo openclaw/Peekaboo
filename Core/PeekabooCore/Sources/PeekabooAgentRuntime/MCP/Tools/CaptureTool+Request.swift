@@ -190,8 +190,12 @@ extension CaptureRequest {
         constraints: CaptureConstraints) throws -> CaptureOptions
     {
         let duration = max(1, min(input.durationSeconds ?? 60, 180))
-        let idle = min(max(input.idleFps ?? 2, 0.1), 5)
-        let active = min(max(input.activeFps ?? 8, 0.5), 15)
+        let cadence: CaptureCadence
+        do {
+            cadence = try CaptureCadence.validated(idleFps: input.idleFps, activeFps: input.activeFps)
+        } catch let error as CaptureCadenceValidationError {
+            throw PeekabooError.invalidInput(error.localizedDescription)
+        }
         let threshold = min(max(input.thresholdPercent ?? 2.5, 0), 100)
         let heartbeat = max(input.heartbeatSec ?? 5, 0)
         let quiet = max(Int(input.quietMs ?? 1000), 0)
@@ -201,8 +205,8 @@ extension CaptureRequest {
 
         return CaptureOptions(
             duration: duration,
-            idleFps: idle,
-            activeFps: active,
+            idleFps: cadence.idleFps,
+            activeFps: cadence.activeFps,
             changeThresholdPercent: threshold,
             heartbeatSeconds: heartbeat,
             quietMsToIdle: quiet,
