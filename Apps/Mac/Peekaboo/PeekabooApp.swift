@@ -248,7 +248,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var didSetupKeyboardShortcuts = false
     private var didSetupNotificationObservers = false
     private var didObserveAgentMode = false
-    private var didReconcileManagedLaunchAtLogin = false
 
     override init() {
         let launchPolicy = PeekabooAppLaunchPolicy.current
@@ -258,6 +257,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillFinishLaunching(_: Notification) {
+        do {
+            try self.launchPolicy.persistManagedBackgroundHostReceipt()
+        } catch {
+            self.handlePermanentBridgeStartFailure(
+                "Could not persist managed background-host identity: \(error.localizedDescription)")
+            return
+        }
         if let activationPolicy = self.launchPolicy.initialActivationPolicy {
             NSApp.setActivationPolicy(activationPolicy)
         }
@@ -281,17 +287,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     fileprivate func connectToState(_ context: AppStateConnectionContext) {
-        if self.launchPolicy.isBackgroundBridgeHost, !self.didReconcileManagedLaunchAtLogin {
-            do {
-                try context.settings.disableLoginLaunchForManagedBackgroundHost()
-                self.didReconcileManagedLaunchAtLogin = true
-            } catch {
-                self.handlePermanentBridgeStartFailure(
-                    "Could not disable incompatible Launch at Login state: \(error.localizedDescription)")
-                return
-            }
-        }
-
         self.settings = context.settings
         self.sessionStore = context.sessionStore
         self.permissions = context.permissions

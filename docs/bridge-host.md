@@ -41,13 +41,16 @@ permission state, and GUI Bridge listener, but startup never presents API-key or
 onboarding, opens the main/Settings/Inspector windows, promotes the app into the Dock, or handles
 an invisible-window reopen by activating UI. It also leaves Sparkle stopped so an automatic update
 check or installer relaunch cannot drop the required host mode. Update actions stay hidden in this
-managed process; quit it and launch Peekaboo interactively before updating. Explicit later user
+managed process; quit it and launch Peekaboo with `--interactive` before updating. Explicit later user
 intent from the status item or a configured shortcut still opens the requested interface. If its
 Bridge listener cannot take
 ownership after bounded legacy-host migration retries, the app exits nonzero instead of remaining
-alive without a usable Bridge. The managed host also unregisters the main-app Launch at Login
-service because that service cannot retain the required launch argument; deployment or the caller
-must launch the permission broker explicitly after a new login session.
+alive without a usable Bridge. The managed host binds the main-app Launch at Login mode to the
+exact installed bundle version and code-signature hash. A registered main-app login
+service can therefore restart that same build unattended, while a rolled-back or independently
+updated build ignores the stale receipt. Quit the managed host and run
+`open -a Peekaboo --args --interactive` for an explicit update session; the next ordinary login
+launch remains background-only.
 
 `peekaboo mcp` never hosts a Bridge listener. When it must run services locally, its in-process daemon is limited to
 the window tracker and other process-local support.
