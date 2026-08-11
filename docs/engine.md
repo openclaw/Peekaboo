@@ -96,7 +96,7 @@ Aliases:
 
 ## Logging & telemetry
 - ScreenCaptureService logs which engine was attempted and when fallback occurs.
-- Exact-window ScreenCaptureKit observations include `window_plan_cache=miss|hit` and a process-local
+- Exact-window ScreenCaptureKit observations include `window_plan_cache=miss|hit|rebuilt` and a process-local
   `window_plan_cache_generation` in the `capture.window` observation span. The Bridge host identity identifies the owning
   process; the plan generation is meaningful only inside that exact owner process.
 - Consider adding env `PEEKABOO_DISABLE_CGWINDOWLIST` if you want to dogfood pure SC.

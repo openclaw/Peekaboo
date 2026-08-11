@@ -258,28 +258,36 @@ enum ScreenCaptureWindowPlanExecutor {
     static func execute<Plan: AnyObject, Output>(
         cachedPlan: () -> Plan?,
         buildPlan: () async throws -> Plan,
-        capture: (Plan) async throws -> Output,
+        capture: (Plan, CaptureWindowPlanCacheStatus) async throws -> Output,
         validation: (Plan) -> ScreenCaptureWindowPlanValidation.Result,
-        evict: (Plan) -> Void) async throws -> (output: Output, plan: Plan)
+        evict: (Plan) -> Void) async throws
+        -> (output: Output, plan: Plan, cacheStatus: CaptureWindowPlanCacheStatus)
     {
         var candidate = cachedPlan()
+        var candidateIsCached = candidate != nil
+        var recoveredCachedPlan = false
         var recoveryConsumed = false
 
         while true {
             let selectedPlan: Plan
+            let selectedPlanIsCached: Bool
             do {
                 if let candidate {
                     selectedPlan = candidate
+                    selectedPlanIsCached = candidateIsCached
                 } else {
                     selectedPlan = try await buildPlan()
+                    selectedPlanIsCached = false
                 }
             } catch let error as RetrySafeStaleWindowPlanError {
                 guard !recoveryConsumed else { throw error.terminalError }
                 recoveryConsumed = true
                 candidate = nil
+                candidateIsCached = false
                 continue
             }
             candidate = nil
+            candidateIsCached = false
 
             switch validation(selectedPlan) {
             case .matched:
@@ -290,17 +298,26 @@ enum ScreenCaptureWindowPlanExecutor {
             case .changed:
                 evict(selectedPlan)
                 guard !recoveryConsumed else { throw self.repeatedDriftError }
+                recoveredCachedPlan = selectedPlanIsCached
                 recoveryConsumed = true
                 continue
             }
 
+            let cacheStatus: CaptureWindowPlanCacheStatus = if selectedPlanIsCached {
+                .hit
+            } else if recoveredCachedPlan {
+                .rebuilt
+            } else {
+                .miss
+            }
             let output: Output
             do {
-                output = try await capture(selectedPlan)
+                output = try await capture(selectedPlan, cacheStatus)
                 try Task.checkCancellation()
             } catch let error as RetrySafeStaleWindowPlanError {
                 evict(selectedPlan)
                 guard !recoveryConsumed else { throw error.terminalError }
+                recoveredCachedPlan = selectedPlanIsCached
                 recoveryConsumed = true
                 continue
             } catch {
@@ -310,13 +327,14 @@ enum ScreenCaptureWindowPlanExecutor {
 
             switch validation(selectedPlan) {
             case .matched:
-                return (output, selectedPlan)
+                return (output, selectedPlan, cacheStatus)
             case .unavailable:
                 evict(selectedPlan)
                 throw ScreenCaptureWindowPlanCacheUnavailableError()
             case .changed:
                 evict(selectedPlan)
                 guard !recoveryConsumed else { throw self.repeatedDriftError }
+                recoveredCachedPlan = selectedPlanIsCached
                 recoveryConsumed = true
             }
         }

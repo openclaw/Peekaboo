@@ -325,11 +325,9 @@ extension ScreenCaptureKitOperator {
         let key = ScreenCaptureKitWindowPlanCache<ExactWindowCapturePlan>.Key(
             windowID: windowID,
             usesNativeScale: scale == .native)
-        var reusedPlan: ExactWindowCapturePlan?
         let result = try await ScreenCaptureWindowPlanExecutor.execute(
             cachedPlan: {
                 let cached = self.exactWindowPlanCache.value(for: key)
-                reusedPlan = cached
                 if cached != nil {
                     self.logger.debug(
                         "Reusing warm ScreenCaptureKit exact-window plan",
@@ -344,17 +342,16 @@ extension ScreenCaptureKitOperator {
                     scale: scale,
                     correlationId: correlationId)
             },
-            capture: { plan in
+            capture: { plan, cacheStatus in
                 let image = try await self.captureImage(
                     filter: plan.filter,
                     configuration: plan.configuration,
                     expectedPixelSize: plan.expectedPixelSize,
                     retrySafeStalePlanOnPixelMismatch: true)
-                let status: CaptureWindowPlanCacheStatus = reusedPlan === plan ? .hit : .miss
                 return try self.exactWindowCaptureOutput(
                     image: image,
                     plan: plan,
-                    cacheStatus: status)
+                    cacheStatus: cacheStatus)
             },
             validation: { self.validation(of: $0) },
             evict: { self.exactWindowPlanCache.removeValue(for: $0.key, ifSameAs: $0) })

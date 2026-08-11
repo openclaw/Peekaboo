@@ -258,6 +258,7 @@ public struct CaptureViewport: Sendable, Codable, Equatable {
 public enum CaptureWindowPlanCacheStatus: String, Sendable, Codable, Equatable {
     case hit
     case miss
+    case rebuilt
 }
 
 public struct CaptureDiagnostics: Sendable, Codable, Equatable {

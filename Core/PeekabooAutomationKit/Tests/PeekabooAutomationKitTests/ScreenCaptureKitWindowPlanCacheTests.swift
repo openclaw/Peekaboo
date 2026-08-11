@@ -118,7 +118,7 @@ struct ScreenCaptureKitWindowPlanCacheTests {
     }
 
     @Test
-    func `capture diagnostics preserve cache hit and generation receipts`() throws {
+    func `capture diagnostics preserve rebuilt cache and generation receipts`() throws {
         let plan = ScreenCaptureScaleResolver.Plan(
             preference: .logical1x,
             nativeScale: 2,
@@ -127,13 +127,13 @@ struct ScreenCaptureKitWindowPlanCacheTests {
         let diagnostics = ScreenCaptureScaleResolver.diagnostics(
             plan: plan,
             finalPixelSize: CGSize(width: 800, height: 600),
-            windowPlanCacheStatus: .hit,
+            windowPlanCacheStatus: .rebuilt,
             windowPlanCacheGeneration: 17)
 
         let encoded = try JSONEncoder().encode(diagnostics)
         let decoded = try JSONDecoder().decode(CaptureDiagnostics.self, from: encoded)
 
-        #expect(decoded.windowPlanCacheStatus == .hit)
+        #expect(decoded.windowPlanCacheStatus == .rebuilt)
         #expect(decoded.windowPlanCacheGeneration == 17)
     }
 
@@ -353,12 +353,13 @@ struct ScreenCaptureKitWindowPlanCacheTests {
                 buildCalls += 1
                 return Plan()
             },
-            capture: { _ in "pixels" },
+            capture: { _, _ in "pixels" },
             validation: { _ in .matched },
             evict: { _ in evictions += 1 })
 
         #expect(result.plan === cached)
         #expect(result.output == "pixels")
+        #expect(result.cacheStatus == .hit)
         #expect(buildCalls == 0)
         #expect(evictions == 0)
     }
@@ -375,9 +376,9 @@ struct ScreenCaptureKitWindowPlanCacheTests {
         let result = try await ScreenCaptureWindowPlanExecutor.execute(
             cachedPlan: { nil },
             buildPlan: { plans.removeFirst() },
-            capture: {
-                captured.append(ObjectIdentifier($0))
-                return $0 === first ? "stale" : "fresh"
+            capture: { plan, _ in
+                captured.append(ObjectIdentifier(plan))
+                return plan === first ? "stale" : "fresh"
             },
             validation: { plan in
                 let identifier = ObjectIdentifier(plan)
@@ -388,6 +389,7 @@ struct ScreenCaptureKitWindowPlanCacheTests {
 
         #expect(result.output == "fresh")
         #expect(result.plan === second)
+        #expect(result.cacheStatus == .miss)
         #expect(plans.isEmpty)
         #expect(captured == [ObjectIdentifier(first), ObjectIdentifier(second)])
         #expect(evicted == [ObjectIdentifier(first)])
@@ -408,7 +410,7 @@ struct ScreenCaptureKitWindowPlanCacheTests {
                     buildCalls += 1
                     return rebuilt
                 },
-                capture: { _ in "replacement pixels" },
+                capture: { _, _ in "replacement pixels" },
                 validation: { plan in
                     guard plan === rebuilt else { return .changed }
                     rebuiltValidations += 1
@@ -434,7 +436,7 @@ struct ScreenCaptureKitWindowPlanCacheTests {
                     buildCalls += 1
                     return Plan()
                 },
-                capture: { _ in
+                capture: { _, _ in
                     captureCalls += 1
                     return "pixels"
                 },
@@ -456,7 +458,7 @@ struct ScreenCaptureKitWindowPlanCacheTests {
             _ = try await ScreenCaptureWindowPlanExecutor.execute(
                 cachedPlan: { cached },
                 buildPlan: { Plan() },
-                capture: { _ in "unproven pixels" },
+                capture: { _, _ in "unproven pixels" },
                 validation: { _ in
                     validationCalls += 1
                     return validationCalls == 1 ? .matched : .unavailable
@@ -480,7 +482,7 @@ struct ScreenCaptureKitWindowPlanCacheTests {
                 buildCalls += 1
                 return rebuilt
             },
-            capture: { _ in
+            capture: { _, _ in
                 captureCalls += 1
                 if captureCalls == 1 {
                     throw RetrySafeStaleWindowPlanError(terminalError: .captureFailed("stale geometry"))
@@ -492,6 +494,7 @@ struct ScreenCaptureKitWindowPlanCacheTests {
 
         #expect(result.plan === rebuilt)
         #expect(result.output == "fresh pixels")
+        #expect(result.cacheStatus == .rebuilt)
         #expect(buildCalls == 1)
         #expect(captureCalls == 2)
     }
@@ -509,7 +512,7 @@ struct ScreenCaptureKitWindowPlanCacheTests {
                     buildCalls += 1
                     return Plan()
                 },
-                capture: { _ -> String in
+                capture: { _, _ -> String in
                     captureCalls += 1
                     throw RetrySafeStaleWindowPlanError(terminalError: terminal)
                 },
@@ -531,7 +534,7 @@ struct ScreenCaptureKitWindowPlanCacheTests {
                     buildCalls += 1
                     throw PeekabooError.timeout("plan construction")
                 },
-                capture: { _ in "pixels" },
+                capture: { _, _ in "pixels" },
                 validation: { _ in .matched },
                 evict: { _ in })
         }
@@ -545,7 +548,7 @@ struct ScreenCaptureKitWindowPlanCacheTests {
             try await ScreenCaptureWindowPlanExecutor.execute(
                 cachedPlan: { Plan() },
                 buildPlan: { Issue.record("Cancellation must not rebuild"); return Plan() },
-                capture: { _ in
+                capture: { _, _ in
                     withUnsafeCurrentTask { $0?.cancel() }
                     return "discarded pixels"
                 },
@@ -569,7 +572,7 @@ struct ScreenCaptureKitWindowPlanCacheTests {
                     buildCalls += 1
                     return Plan()
                 },
-                capture: { _ -> String in throw expected },
+                capture: { _, _ -> String in throw expected },
                 validation: { _ in .matched },
                 evict: { _ in })
         }
@@ -590,7 +593,7 @@ struct ScreenCaptureKitWindowPlanCacheTests {
             _ = try await ScreenCaptureWindowPlanExecutor.execute(
                 cachedPlan: { Plan() },
                 buildPlan: { Plan() },
-                capture: { _ -> String in
+                capture: { _, _ -> String in
                     captureCalls += 1
                     throw expected
                 },
