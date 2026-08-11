@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import PeekabooAutomationKitTestSupport
 import PeekabooCore
 import PeekabooFoundation
 import Testing
@@ -318,27 +319,5 @@ private actor ConcurrentRegionProbe {
 
     func markCancelledRegionRan() {
         self.cancelledRegionRan = true
-    }
-}
-
-private actor AsyncTestLatch {
-    private var isOpen = false
-    private var waiters: [CheckedContinuation<Void, Never>] = []
-
-    func wait() async {
-        guard !self.isOpen else { return }
-        await withCheckedContinuation { continuation in
-            self.waiters.append(continuation)
-        }
-    }
-
-    func open() {
-        guard !self.isOpen else { return }
-        self.isOpen = true
-        let waiters = self.waiters
-        self.waiters.removeAll()
-        for waiter in waiters {
-            waiter.resume()
-        }
     }
 }

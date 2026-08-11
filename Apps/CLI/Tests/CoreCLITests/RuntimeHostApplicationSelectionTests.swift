@@ -1,6 +1,7 @@
 import Commander
 import PeekabooAutomation
 import PeekabooBridge
+import PeekabooBridgeTestSupport
 import Testing
 @testable import PeekabooCLI
 
@@ -12,7 +13,7 @@ struct RuntimeHostApplicationSelectionTests {
             commandType: SeeCommand.self
         )
         let supportedOperations: [PeekabooBridgeOperation] = [.captureScreen, .desktopObservation]
-        let supported = PeekabooBridgeHandshakeResponse(
+        let supported = BridgeTestFixtures.handshake(
             negotiatedVersion: PeekabooBridgeConstants.protocolVersion,
             hostKind: .onDemand,
             build: nil,
@@ -23,7 +24,7 @@ struct RuntimeHostApplicationSelectionTests {
                 PeekabooBridgeHostCapability.screenCaptureKitProcessOwnership,
             ]
         )
-        let captureOnly = PeekabooBridgeHandshakeResponse(
+        let captureOnly = BridgeTestFixtures.handshake(
             negotiatedVersion: PeekabooBridgeConstants.protocolVersion,
             hostKind: .onDemand,
             build: nil,
@@ -43,7 +44,7 @@ struct RuntimeHostApplicationSelectionTests {
             requiredHostKind: nil,
             requiresValidatedHistoricalDaemon: false
         )
-        let applicationOnly = PeekabooBridgeHandshakeResponse(
+        let applicationOnly = BridgeTestFixtures.handshake(
             negotiatedVersion: PeekabooBridgeConstants.protocolVersion,
             hostKind: .onDemand,
             build: nil,
@@ -83,13 +84,13 @@ struct RuntimeHostApplicationSelectionTests {
 
     @Test
     func `Remote requirements skip stale bridge hosts for launch commands`() {
-        let current = PeekabooBridgeHandshakeResponse(
+        let current = BridgeTestFixtures.handshake(
             negotiatedVersion: .init(major: 1, minor: 9),
             hostKind: .gui,
             build: nil,
             supportedOperations: [.captureScreen, .launchApplicationWithOptions]
         )
-        let stale = PeekabooBridgeHandshakeResponse(
+        let stale = BridgeTestFixtures.handshake(
             negotiatedVersion: .init(major: 1, minor: 8),
             hostKind: .gui,
             build: nil,
@@ -162,21 +163,21 @@ struct RuntimeHostApplicationSelectionTests {
             .invalidateImplicitLatestSnapshot,
             .quitApplication,
         ]
-        let daemonHost = PeekabooBridgeHandshakeResponse(
+        let daemonHost = BridgeTestFixtures.handshake(
             negotiatedVersion: .init(major: 1, minor: 16),
             hostKind: .onDemand,
             build: nil,
             supportedOperations: operations,
             enabledOperations: operations
         )
-        let guiHost = PeekabooBridgeHandshakeResponse(
+        let guiHost = BridgeTestFixtures.handshake(
             negotiatedVersion: .init(major: 1, minor: 16),
             hostKind: .gui,
             build: nil,
             supportedOperations: operations,
             enabledOperations: operations
         )
-        let legacyDaemonHost = PeekabooBridgeHandshakeResponse(
+        let legacyDaemonHost = BridgeTestFixtures.handshake(
             negotiatedVersion: .init(major: 1, minor: 15),
             hostKind: .onDemand,
             build: nil,
@@ -215,7 +216,7 @@ struct RuntimeHostApplicationSelectionTests {
             .quitApplication,
             .invalidateImplicitLatestSnapshot,
         ]
-        let guiHost = PeekabooBridgeHandshakeResponse(
+        let guiHost = BridgeTestFixtures.handshake(
             negotiatedVersion: .init(major: 1, minor: 18),
             hostKind: .gui,
             build: nil,

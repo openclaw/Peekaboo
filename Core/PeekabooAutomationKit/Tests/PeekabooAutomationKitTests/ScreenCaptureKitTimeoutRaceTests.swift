@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import PeekabooAutomationKitTestSupport
 import PeekabooFoundation
 import Testing
 @testable import PeekabooAutomationKit
@@ -288,33 +289,5 @@ struct ScreenCaptureKitOperationCoordinatorTests {
             try? await Task.sleep(for: .milliseconds(10))
         }
         return predicate()
-    }
-}
-
-private actor AsyncTestLatch {
-    private var openState = false
-    private var waiters: [CheckedContinuation<Void, Never>] = []
-
-    var isOpen: Bool {
-        self.openState
-    }
-
-    func wait() async {
-        if self.openState {
-            return
-        }
-        await withCheckedContinuation { continuation in
-            self.waiters.append(continuation)
-        }
-    }
-
-    func open() {
-        guard !self.openState else { return }
-        self.openState = true
-        let waiters = self.waiters
-        self.waiters.removeAll()
-        for waiter in waiters {
-            waiter.resume()
-        }
     }
 }

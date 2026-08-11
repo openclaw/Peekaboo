@@ -1,5 +1,6 @@
 import Foundation
 import PeekabooBridge
+import PeekabooBridgeTestSupport
 import PeekabooCore
 import Testing
 @testable import PeekabooCLI
@@ -10,7 +11,7 @@ struct BridgeStatusReportHintTests {
         hostKind: PeekabooBridgeHostKind,
         permissions: PermissionsStatus
     ) -> BridgeCandidateReport {
-        let handshake = PeekabooBridgeHandshakeResponse(
+        let handshake = BridgeTestFixtures.handshake(
             negotiatedVersion: PeekabooBridgeProtocolVersion(major: 1, minor: 1),
             hostKind: hostKind,
             build: nil,
@@ -109,7 +110,7 @@ struct BridgeStatusReportHintTests {
             bundleVersion: "400",
             codeSignatureHash: "abcdef"
         )
-        let handshake = PeekabooBridgeHandshakeResponse(
+        let handshake = BridgeTestFixtures.handshake(
             negotiatedVersion: PeekabooBridgeProtocolVersion(major: 1, minor: 21),
             hostKind: .gui,
             build: "4.0.0 (400)",

@@ -1,5 +1,6 @@
 import CoreGraphics
 import Foundation
+import PeekabooAutomationKitTestSupport
 import Testing
 @testable import PeekabooAutomationKit
 
@@ -445,42 +446,5 @@ struct DesktopOperationLaneCoordinatorTests {
     private static func temporaryDirectory(named name: String) -> URL {
         FileManager.default.temporaryDirectory
             .appendingPathComponent("peekaboo-operation-lanes-\(name)-\(UUID().uuidString)", isDirectory: true)
-    }
-}
-
-private actor AsyncTestLatch {
-    private var opened = false
-    private var continuations: [CheckedContinuation<Void, Never>] = []
-
-    var isOpen: Bool {
-        self.opened
-    }
-
-    func open() {
-        guard !self.opened else { return }
-        self.opened = true
-        let pending = self.continuations
-        self.continuations.removeAll()
-        for continuation in pending {
-            continuation.resume()
-        }
-    }
-
-    func wait() async {
-        guard !self.opened else { return }
-        await withCheckedContinuation { continuation in
-            self.continuations.append(continuation)
-        }
-    }
-
-    func opensWithin(_ duration: Duration) async -> Bool {
-        if self.opened {
-            return true
-        }
-        let deadline = ContinuousClock.now.advanced(by: duration)
-        while !self.opened, ContinuousClock.now < deadline {
-            try? await Task.sleep(for: .milliseconds(5))
-        }
-        return self.opened
     }
 }

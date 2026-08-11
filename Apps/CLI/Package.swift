@@ -61,6 +61,8 @@ var targets: [Target] = [
         name: "CoreCLITests",
         dependencies: [
             "PeekabooCLI",
+            .product(name: "PeekabooBridgeTestSupport", package: "PeekabooCore"),
+            .product(name: "PeekabooAutomationKitTestSupport", package: "PeekabooAutomationKit"),
             .product(name: "PeekabooFoundation", package: "PeekabooFoundation"),
             .product(name: "PeekabooAutomation", package: "PeekabooCore"),
             .product(name: "PeekabooAgentRuntime", package: "PeekabooCore"),
@@ -72,6 +74,7 @@ var targets: [Target] = [
         name: "CLIRuntimeTests",
         dependencies: [
             "PeekabooCLI",
+            .product(name: "PeekabooBridgeTestSupport", package: "PeekabooCore"),
             .product(name: "PeekabooFoundation", package: "PeekabooFoundation"),
             .product(name: "Subprocess", package: "swift-subprocess"),
         ],
@@ -85,6 +88,7 @@ if includeAutomationTests {
             name: "CLIAutomationTests",
             dependencies: [
                 "PeekabooCLI",
+                .product(name: "PeekabooAutomationKitTestSupport", package: "PeekabooAutomationKit"),
                 .product(name: "PeekabooFoundation", package: "PeekabooFoundation"),
                 .product(name: "PeekabooCore", package: "PeekabooCore"),
                 .product(name: "PeekabooAgentRuntime", package: "PeekabooCore"),
@@ -118,6 +122,7 @@ let package = Package(
         .package(url: "https://github.com/swiftlang/swift-subprocess.git", from: "1.0.0"),
         .package(path: "../../TauTUI"),
         .package(path: "../../Core/PeekabooFoundation"),
+        .package(path: "../../Core/PeekabooAutomationKit"),
         .package(path: "../../Core/PeekabooVisualizer"),
         .package(path: "../../Core/PeekabooCore"),
         .package(path: "../../Tachikoma"),

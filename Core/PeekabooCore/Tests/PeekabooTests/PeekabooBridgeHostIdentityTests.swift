@@ -1,6 +1,7 @@
 import Darwin
 import Foundation
 import PeekabooAutomationKit
+import PeekabooBridgeTestSupport
 import PeekabooCore
 import Testing
 @testable import PeekabooBridge
@@ -125,6 +126,7 @@ struct PeekabooBridgeHostIdentityTests {
             PeekabooBridgeHostCapability.desktopObservationCaptureEngine,
             PeekabooBridgeHostCapability.desktopObservationOCR,
             PeekabooBridgeHostCapability.hostGenerationIdentity,
+            PeekabooBridgeHostCapability.screenCaptureKitProcessOwnership,
         ])
     }
 
@@ -182,7 +184,7 @@ struct PeekabooBridgeHostIdentityTests {
 
     @Test
     func `legacy clients ignore additive host handshake fields`() throws {
-        let response = PeekabooBridgeHandshakeResponse(
+        let response = BridgeTestFixtures.handshake(
             negotiatedVersion: PeekabooBridgeConstants.protocolVersion,
             hostKind: .gui,
             build: "4.0.0 (400)",

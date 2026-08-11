@@ -1,6 +1,7 @@
 import Commander
 import PeekabooAutomationKit
 import PeekabooBridge
+import PeekabooBridgeTestSupport
 import Testing
 @testable import PeekabooCLI
 
@@ -203,7 +204,7 @@ struct DesktopObservationCaptureEngineRuntimeCapabilityTests {
         capabilities: [String]?,
         permissions: PermissionsStatus? = nil
     ) -> PeekabooBridgeHandshakeResponse {
-        PeekabooBridgeHandshakeResponse(
+        BridgeTestFixtures.handshake(
             negotiatedVersion: PeekabooBridgeProtocolVersion(major: 1, minor: 22),
             hostKind: .onDemand,
             build: nil,

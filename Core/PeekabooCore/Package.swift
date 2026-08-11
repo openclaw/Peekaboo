@@ -37,6 +37,10 @@ let package = Package(
         .library(
             name: "PeekabooBridge",
             targets: ["PeekabooBridge"]),
+        // Test-only support product. Production targets do not depend on or link this module.
+        .library(
+            name: "PeekabooBridgeTestSupport",
+            targets: ["PeekabooBridgeTestSupport"]),
         .library(
             name: "PeekabooCore",
             targets: ["PeekabooCore"]),
@@ -87,6 +91,14 @@ let package = Package(
             ],
             path: "Sources/PeekabooBridge",
             swiftSettings: coreTargetSettings),
+        .target(
+            name: "PeekabooBridgeTestSupport",
+            dependencies: [
+                .target(name: "PeekabooBridge"),
+                .product(name: "PeekabooAutomationKit", package: "PeekabooAutomationKit"),
+            ],
+            path: "Sources/PeekabooBridgeTestSupport",
+            swiftSettings: approachableConcurrencySettings),
         .target(
             name: "PeekabooAgentRuntime",
             dependencies: [
@@ -143,6 +155,8 @@ let package = Package(
                 .product(name: "PeekabooVisualizer", package: "PeekabooVisualizer"),
                 "PeekabooFoundation",
                 "PeekabooProtocols",
+                "PeekabooBridgeTestSupport",
+                .product(name: "PeekabooAutomationKitTestSupport", package: "PeekabooAutomationKit"),
             ],
             resources: [
                 .process("Resources"),

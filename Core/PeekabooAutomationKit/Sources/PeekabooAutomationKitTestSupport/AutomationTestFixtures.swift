@@ -1,0 +1,206 @@
+import CoreGraphics
+import Foundation
+import PeekabooAutomationKit
+import PeekabooFoundation
+
+/// Canonical deterministic builders for automation tests.
+public enum AutomationTestFixtures {
+    public static func processIdentity(
+        processIdentifier: Int32 = 101,
+        processStartIdentity: UInt64 = 1001) -> ApplicationProcessIdentity
+    {
+        ApplicationProcessIdentity(
+            processIdentifier: processIdentifier,
+            processStartIdentity: processStartIdentity)
+    }
+
+    public static func windowIdentity(
+        windowID: Int = 201,
+        processIdentity: ApplicationProcessIdentity = Self.processIdentity(),
+        bounds: CGRect = CGRect(x: 10, y: 20, width: 640, height: 480),
+        isMinimized: Bool = false) -> WindowMutationIdentity
+    {
+        WindowMutationIdentity(
+            windowID: windowID,
+            ownerProcessIdentifier: processIdentity.processIdentifier,
+            ownerProcessStartIdentity: processIdentity.processStartIdentity,
+            capturedBounds: bounds,
+            isMinimized: isMinimized)
+    }
+
+    public static func application(
+        processIdentifier: Int32 = 101,
+        processStartIdentity: UInt64? = 1001,
+        bundleIdentifier: String? = "com.example.TestApp",
+        name: String = "Test App",
+        isActive: Bool = false,
+        isHidden: Bool = false,
+        isHiddenKnown: Bool? = nil,
+        windowCount: Int = 0,
+        windowIDs: [Int]? = nil,
+        activationPolicy: ServiceApplicationActivationPolicy? = nil) -> ServiceApplicationInfo
+    {
+        ServiceApplicationInfo(
+            processIdentifier: processIdentifier,
+            processStartIdentity: processStartIdentity,
+            bundleIdentifier: bundleIdentifier,
+            name: name,
+            isActive: isActive,
+            isHidden: isHidden,
+            isHiddenKnown: isHiddenKnown,
+            windowCount: windowCount,
+            windowIDs: windowIDs,
+            activationPolicy: activationPolicy)
+    }
+
+    public static func window(
+        windowID: Int = 201,
+        title: String = "Test Window",
+        bounds: CGRect = CGRect(x: 10, y: 20, width: 640, height: 480),
+        processIdentity: ApplicationProcessIdentity = Self.processIdentity(),
+        includesMutationIdentity: Bool = true,
+        isMinimized: Bool = false,
+        isMainWindow: Bool = true,
+        isKeyWindow: Bool? = true,
+        isFrontmost: Bool? = false,
+        index: Int = 0) -> ServiceWindowInfo
+    {
+        ServiceWindowInfo(
+            windowID: windowID,
+            title: title,
+            bounds: bounds,
+            isMinimized: isMinimized,
+            isMainWindow: isMainWindow,
+            isKeyWindow: isKeyWindow,
+            isFrontmost: isFrontmost,
+            index: index,
+            mutationIdentity: includesMutationIdentity
+                ? self.windowIdentity(
+                    windowID: windowID,
+                    processIdentity: processIdentity,
+                    bounds: bounds,
+                    isMinimized: isMinimized)
+                : nil)
+    }
+
+    public static func detectedElement(
+        id: String = "element-1",
+        type: ElementType = .textField,
+        label: String? = "Test Element",
+        value: String? = nil,
+        bounds: CGRect = CGRect(x: 30, y: 40, width: 200, height: 32),
+        isEnabled: Bool = true,
+        isSelected: Bool? = nil,
+        attributes: [String: String] = [:]) -> DetectedElement
+    {
+        DetectedElement(
+            id: id,
+            type: type,
+            label: label,
+            value: value,
+            bounds: bounds,
+            isEnabled: isEnabled,
+            isSelected: isSelected,
+            attributes: attributes)
+    }
+
+    public static func storedElement(
+        id: String = "element-1",
+        role: String = "AXTextField",
+        title: String? = "Test Element",
+        label: String? = nil,
+        value: String? = nil,
+        description: String? = nil,
+        help: String? = nil,
+        roleDescription: String? = nil,
+        identifier: String? = nil,
+        frame: CGRect = CGRect(x: 30, y: 40, width: 200, height: 32),
+        isActionable: Bool = true,
+        isEnabled: Bool? = true,
+        isSelected: Bool? = nil,
+        isValueSettable: Bool? = true) -> UIElement
+    {
+        UIElement(
+            id: id,
+            elementId: id,
+            role: role,
+            title: title,
+            label: label,
+            value: value,
+            description: description,
+            help: help,
+            roleDescription: roleDescription,
+            identifier: identifier,
+            frame: frame,
+            isActionable: isActionable,
+            isEnabled: isEnabled,
+            isSelected: isSelected,
+            isValueSettable: isValueSettable)
+    }
+
+    public static func windowContext(
+        application: ServiceApplicationInfo = Self.application(),
+        window: ServiceWindowInfo = Self.window(),
+        requiresFreshAccessibilityTree: Bool = true) -> WindowContext
+    {
+        if let receipt = window.mutationIdentity {
+            precondition(
+                receipt.ownerProcessIdentifier == application.processIdentifier &&
+                    receipt.ownerProcessStartIdentity == application.processStartIdentity,
+                "Window and application fixtures must describe the same process generation")
+        }
+        return WindowContext(
+            applicationName: application.name,
+            applicationBundleId: application.bundleIdentifier,
+            applicationProcessId: application.processIdentifier,
+            windowTitle: window.title,
+            windowID: window.windowID,
+            windowBounds: window.bounds,
+            windowMutationIdentity: window.mutationIdentity,
+            requiresFreshAccessibilityTree: requiresFreshAccessibilityTree)
+    }
+
+    public static func detectionResult(
+        snapshotID: String = "snapshot-1",
+        screenshotPath: String = "/tmp/peekaboo-test.png",
+        elements: DetectedElements = DetectedElements(),
+        windowContext: WindowContext? = nil,
+        warnings: [String] = []) -> ElementDetectionResult
+    {
+        ElementDetectionResult(
+            snapshotId: snapshotID,
+            screenshotPath: screenshotPath,
+            elements: elements,
+            metadata: DetectionMetadata(
+                detectionTime: 0,
+                elementCount: elements.all.count,
+                method: "test-fixture",
+                warnings: warnings,
+                windowContext: windowContext))
+    }
+
+    public static func snapshot(
+        creatorProcessID: Int32 = 999,
+        elements: [String: UIElement] = [:],
+        application: ServiceApplicationInfo = Self.application(),
+        window: ServiceWindowInfo = Self.window()) -> UIAutomationSnapshot
+    {
+        if let receipt = window.mutationIdentity {
+            precondition(
+                receipt.ownerProcessIdentifier == application.processIdentifier &&
+                    receipt.ownerProcessStartIdentity == application.processStartIdentity,
+                "Window and application fixtures must describe the same process generation")
+        }
+        return UIAutomationSnapshot(
+            creatorProcessId: creatorProcessID,
+            uiMap: elements,
+            lastUpdateTime: Date(timeIntervalSinceReferenceDate: 1),
+            applicationName: application.name,
+            applicationBundleId: application.bundleIdentifier,
+            applicationProcessId: application.processIdentifier,
+            windowTitle: window.title,
+            windowBounds: window.bounds,
+            windowMutationIdentity: window.mutationIdentity,
+            windowID: CGWindowID(window.windowID))
+    }
+}

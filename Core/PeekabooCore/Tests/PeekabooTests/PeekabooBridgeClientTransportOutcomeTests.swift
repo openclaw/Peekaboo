@@ -2,6 +2,7 @@ import CoreGraphics
 import Darwin
 import Foundation
 import PeekabooAutomationKit
+import PeekabooBridgeTestSupport
 import Testing
 @testable import PeekabooBridge
 @testable import PeekabooCore
@@ -316,9 +317,9 @@ private final class VersionMismatchBridgePeer: @unchecked Sendable {
                 Self.drainRequest(client)
                 if attempt == 0 {
                     try? await Task.sleep(for: .seconds(firstResponseDelay))
-                    let response = PeekabooBridgeResponse.error(.init(
+                    let response = BridgeTestFixtures.errorResponse(
                         code: .versionMismatch,
-                        message: "scripted version mismatch"))
+                        message: "scripted version mismatch")
                     if let data = try? JSONEncoder.peekabooBridgeEncoder().encode(response) {
                         _ = data.withUnsafeBytes { bytes in
                             Darwin.write(client, bytes.baseAddress, bytes.count)

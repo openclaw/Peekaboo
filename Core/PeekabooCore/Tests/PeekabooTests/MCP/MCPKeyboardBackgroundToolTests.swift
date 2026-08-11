@@ -1,5 +1,6 @@
 import CoreGraphics
 import PeekabooAutomationKit
+import PeekabooAutomationKitTestSupport
 import PeekabooFoundation
 import TachikomaMCP
 import Testing
@@ -128,7 +129,7 @@ struct MCPKeyboardBackgroundToolTests {
         await UISnapshotManager.shared.removeAllSnapshots()
         let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
         let applications = await MainActor.run {
-            MockApplicationService(applications: [ServiceApplicationInfo(
+            MockApplicationService(applications: [AutomationTestFixtures.application(
                 processIdentifier: 444,
                 processStartIdentity: 44,
                 bundleIdentifier: "com.example.snapshot",
@@ -144,7 +145,7 @@ struct MCPKeyboardBackgroundToolTests {
             metadata: CaptureMetadata(
                 size: CGSize(width: 200, height: 100),
                 mode: .window,
-                applicationInfo: ServiceApplicationInfo(
+                applicationInfo: AutomationTestFixtures.application(
                     processIdentifier: 444,
                     processStartIdentity: 44,
                     bundleIdentifier: "com.example.snapshot",
@@ -160,7 +161,7 @@ struct MCPKeyboardBackgroundToolTests {
         #expect(calls.count == 1)
         #expect(calls.first?.snapshotId == snapshotId)
         #expect(calls.first?.targetProcessIdentifier == 444)
-        #expect(calls.first?.expectedProcessIdentity == ApplicationProcessIdentity(
+        #expect(calls.first?.expectedProcessIdentity == AutomationTestFixtures.processIdentity(
             processIdentifier: 444,
             processStartIdentity: 44))
         #expect(await MainActor.run { automation.clickCalls.isEmpty })
@@ -189,7 +190,7 @@ struct MCPKeyboardBackgroundToolTests {
         await UISnapshotManager.shared.removeAllSnapshots()
         let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
         let applications = await MainActor.run {
-            MockApplicationService(applications: [ServiceApplicationInfo(
+            MockApplicationService(applications: [AutomationTestFixtures.application(
                 processIdentifier: 445,
                 processStartIdentity: 45,
                 bundleIdentifier: "com.example.snapshot",
@@ -220,7 +221,7 @@ struct MCPKeyboardBackgroundToolTests {
         await UISnapshotManager.shared.removeAllSnapshots()
         let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
         let applications = await MainActor.run {
-            MockApplicationService(applications: [ServiceApplicationInfo(
+            MockApplicationService(applications: [AutomationTestFixtures.application(
                 processIdentifier: 446,
                 processStartIdentity: 46,
                 bundleIdentifier: "com.example.editor",
@@ -232,17 +233,12 @@ struct MCPKeyboardBackgroundToolTests {
         let snapshot = await UISnapshotManager.shared.createSnapshot()
         let snapshotId = await snapshot.id
         await snapshot.setUIElements([
-            UIElement(
+            AutomationTestFixtures.storedElement(
                 id: "T1",
-                elementId: "T1",
                 role: "textField",
                 title: nil,
                 label: "Name",
-                value: nil,
-                description: nil,
-                help: nil,
                 roleDescription: "text field",
-                identifier: nil,
                 frame: CGRect(x: 10, y: 20, width: 160, height: 30),
                 isActionable: true),
         ])
@@ -261,7 +257,7 @@ struct MCPKeyboardBackgroundToolTests {
 
     @Test
     func `Background keyboard tools reject window selectors instead of collapsing to pid`() async throws {
-        let app = ServiceApplicationInfo(
+        let app = AutomationTestFixtures.application(
             processIdentifier: 333,
             processStartIdentity: 33,
             bundleIdentifier: "com.example.editor",
@@ -303,7 +299,7 @@ struct MCPKeyboardBackgroundToolTests {
     func `Type tool uses background click and typing when snapshot process is known`() async throws {
         let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
         let applications = await MainActor.run {
-            MockApplicationService(applications: [ServiceApplicationInfo(
+            MockApplicationService(applications: [AutomationTestFixtures.application(
                 processIdentifier: 111,
                 processStartIdentity: 11,
                 bundleIdentifier: "com.example.snapshot",
@@ -319,7 +315,7 @@ struct MCPKeyboardBackgroundToolTests {
             metadata: CaptureMetadata(
                 size: CGSize(width: 200, height: 100),
                 mode: .window,
-                applicationInfo: ServiceApplicationInfo(
+                applicationInfo: AutomationTestFixtures.application(
                     processIdentifier: 111,
                     processStartIdentity: 11,
                     bundleIdentifier: "com.example.snapshot",
@@ -351,14 +347,14 @@ struct MCPKeyboardBackgroundToolTests {
         let targetedClicks = await MainActor.run { automation.targetedClickCalls }
         #expect(targetedClicks.count == 1)
         #expect(targetedClicks.first?.targetProcessIdentifier == 111)
-        #expect(targetedClicks.first?.expectedProcessIdentity == ApplicationProcessIdentity(
+        #expect(targetedClicks.first?.expectedProcessIdentity == AutomationTestFixtures.processIdentity(
             processIdentifier: 111,
             processStartIdentity: 11))
         let targetedTypes = await MainActor.run { automation.targetedTypeActionsCalls }
         #expect(targetedTypes.count == 1)
         #expect(targetedTypes.first?.snapshotId == snapshotId)
         #expect(targetedTypes.first?.targetProcessIdentifier == 111)
-        #expect(targetedTypes.first?.expectedProcessIdentity == ApplicationProcessIdentity(
+        #expect(targetedTypes.first?.expectedProcessIdentity == AutomationTestFixtures.processIdentity(
             processIdentifier: 111,
             processStartIdentity: 11))
         guard case let .object(meta) = response.meta else {
@@ -387,7 +383,7 @@ struct MCPKeyboardBackgroundToolTests {
             metadata: CaptureMetadata(
                 size: CGSize(width: 200, height: 100),
                 mode: .window,
-                applicationInfo: ServiceApplicationInfo(
+                applicationInfo: AutomationTestFixtures.application(
                     processIdentifier: 113,
                     processStartIdentity: 13,
                     bundleIdentifier: "com.example.snapshot",
@@ -470,7 +466,7 @@ struct MCPKeyboardBackgroundToolTests {
     func `Press tool uses targeted delivery when pid is supplied`() async throws {
         let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
         let applications = await MainActor.run {
-            MockApplicationService(applications: [ServiceApplicationInfo(
+            MockApplicationService(applications: [AutomationTestFixtures.application(
                 processIdentifier: 222,
                 processStartIdentity: 22,
                 bundleIdentifier: "com.example.target",
@@ -491,7 +487,7 @@ struct MCPKeyboardBackgroundToolTests {
         #expect(calls.count == 1)
         #expect(calls.first?.keys == "cmd,l")
         #expect(calls.first?.targetProcessIdentifier == 222)
-        #expect(calls.first?.expectedProcessIdentity == ApplicationProcessIdentity(
+        #expect(calls.first?.expectedProcessIdentity == AutomationTestFixtures.processIdentity(
             processIdentifier: 222,
             processStartIdentity: 22))
         #expect(await MainActor.run { automation.lastHotkeyKeys } == nil)
@@ -505,8 +501,8 @@ struct MCPKeyboardBackgroundToolTests {
 
     @Test
     func `Press sequence reports process reuse after partial delivery as retry unsafe`() async throws {
-        let original = ApplicationProcessIdentity(processIdentifier: 223, processStartIdentity: 22)
-        let replacement = ApplicationProcessIdentity(processIdentifier: 223, processStartIdentity: 23)
+        let original = AutomationTestFixtures.processIdentity(processIdentifier: 223, processStartIdentity: 22)
+        let replacement = AutomationTestFixtures.processIdentity(processIdentifier: 223, processStartIdentity: 23)
         var current = original
         let automation = await MainActor.run {
             let automation = MockAutomationService(accessibilityGranted: true)
@@ -515,7 +511,7 @@ struct MCPKeyboardBackgroundToolTests {
             return automation
         }
         let applications = await MainActor.run {
-            MockApplicationService(applications: [ServiceApplicationInfo(
+            MockApplicationService(applications: [AutomationTestFixtures.application(
                 processIdentifier: original.processIdentifier,
                 processStartIdentity: original.processStartIdentity,
                 bundleIdentifier: "com.example.target",
@@ -544,7 +540,7 @@ struct MCPKeyboardBackgroundToolTests {
 
     @Test
     func `Press sequence includes prior chords in indeterminate emitted count`() async throws {
-        let identity = ApplicationProcessIdentity(processIdentifier: 224, processStartIdentity: 24)
+        let identity = AutomationTestFixtures.processIdentity(processIdentifier: 224, processStartIdentity: 24)
         let automation = await MainActor.run {
             let automation = MockAutomationService(accessibilityGranted: true)
             automation.pinnedHotkeyError = { keys in
@@ -557,7 +553,7 @@ struct MCPKeyboardBackgroundToolTests {
             return automation
         }
         let applications = await MainActor.run {
-            MockApplicationService(applications: [ServiceApplicationInfo(
+            MockApplicationService(applications: [AutomationTestFixtures.application(
                 processIdentifier: identity.processIdentifier,
                 processStartIdentity: identity.processStartIdentity,
                 bundleIdentifier: "com.example.target",
@@ -586,7 +582,7 @@ struct MCPKeyboardBackgroundToolTests {
 
     @Test
     func `Press sequence preserves unknown count for indeterminate current chord`() async throws {
-        let identity = ApplicationProcessIdentity(processIdentifier: 225, processStartIdentity: 25)
+        let identity = AutomationTestFixtures.processIdentity(processIdentifier: 225, processStartIdentity: 25)
         let automation = await MainActor.run {
             let automation = MockAutomationService(accessibilityGranted: true)
             automation.pinnedHotkeyError = { keys in
@@ -598,7 +594,7 @@ struct MCPKeyboardBackgroundToolTests {
             return automation
         }
         let applications = await MainActor.run {
-            MockApplicationService(applications: [ServiceApplicationInfo(
+            MockApplicationService(applications: [AutomationTestFixtures.application(
                 processIdentifier: identity.processIdentifier,
                 processStartIdentity: identity.processStartIdentity,
                 bundleIdentifier: "com.example.target",
@@ -627,7 +623,7 @@ struct MCPKeyboardBackgroundToolTests {
 
     @Test
     func `Type and press tools use targeted delivery when app process is known`() async throws {
-        let app = ServiceApplicationInfo(
+        let app = AutomationTestFixtures.application(
             processIdentifier: 333,
             processStartIdentity: 33,
             bundleIdentifier: "com.example.editor",
@@ -654,13 +650,13 @@ struct MCPKeyboardBackgroundToolTests {
         let typeCalls = await MainActor.run { automation.targetedTypeActionsCalls }
         #expect(typeCalls.count == 1)
         #expect(typeCalls.first?.targetProcessIdentifier == 333)
-        #expect(typeCalls.first?.expectedProcessIdentity == ApplicationProcessIdentity(
+        #expect(typeCalls.first?.expectedProcessIdentity == AutomationTestFixtures.processIdentity(
             processIdentifier: 333,
             processStartIdentity: 33))
         let hotkeyCalls = await MainActor.run { automation.targetedHotkeyCalls }
         #expect(hotkeyCalls.count == 1)
         #expect(hotkeyCalls.first?.targetProcessIdentifier == 333)
-        #expect(hotkeyCalls.first?.expectedProcessIdentity == ApplicationProcessIdentity(
+        #expect(hotkeyCalls.first?.expectedProcessIdentity == AutomationTestFixtures.processIdentity(
             processIdentifier: 333,
             processStartIdentity: 33))
         #expect(await MainActor.run { automation.lastHotkeyKeys } == nil)
@@ -668,7 +664,7 @@ struct MCPKeyboardBackgroundToolTests {
 
     @Test
     func `Paste tool uses targeted delivery when app process is known`() async throws {
-        let app = ServiceApplicationInfo(
+        let app = AutomationTestFixtures.application(
             processIdentifier: 333,
             processStartIdentity: 33,
             bundleIdentifier: "com.example.editor",
@@ -700,7 +696,7 @@ struct MCPKeyboardBackgroundToolTests {
         let calls = await MainActor.run { automation.targetedTypeActionsCalls }
         #expect(calls.count == 1)
         #expect(calls.first?.targetProcessIdentifier == 333)
-        #expect(calls.first?.expectedProcessIdentity == ApplicationProcessIdentity(
+        #expect(calls.first?.expectedProcessIdentity == AutomationTestFixtures.processIdentity(
             processIdentifier: 333,
             processStartIdentity: 33))
         #expect(await MainActor.run { automation.lastHotkeyKeys } == nil)
@@ -716,7 +712,7 @@ struct MCPKeyboardBackgroundToolTests {
 
     @Test
     func `Paste tool routes UTF8 data through targeted text delivery`() async throws {
-        let app = ServiceApplicationInfo(
+        let app = AutomationTestFixtures.application(
             processIdentifier: 333,
             processStartIdentity: 33,
             bundleIdentifier: "com.example.editor",
@@ -747,7 +743,7 @@ struct MCPKeyboardBackgroundToolTests {
 
     @Test
     func `Paste tool warns without inviting retry when clipboard restoration fails`() async throws {
-        let app = ServiceApplicationInfo(
+        let app = AutomationTestFixtures.application(
             processIdentifier: 333,
             processStartIdentity: 33,
             bundleIdentifier: "com.example.editor",
@@ -806,7 +802,7 @@ struct MCPKeyboardBackgroundToolTests {
             metadata: CaptureMetadata(
                 size: CGSize(width: 200, height: 100),
                 mode: .window,
-                applicationInfo: ServiceApplicationInfo(
+                applicationInfo: AutomationTestFixtures.application(
                     processIdentifier: processIdentifier,
                     processStartIdentity: processStartIdentity,
                     bundleIdentifier: "com.example.snapshot",

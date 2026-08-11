@@ -1,5 +1,6 @@
 import Foundation
 import PeekabooBridge
+import PeekabooBridgeTestSupport
 import Testing
 @testable import PeekabooCLI
 
@@ -111,7 +112,7 @@ struct BridgeDiagnosticsConcurrencyTests {
     }
 
     private nonisolated static func handshake(build: String) -> PeekabooBridgeHandshakeResponse {
-        PeekabooBridgeHandshakeResponse(
+        BridgeTestFixtures.handshake(
             negotiatedVersion: PeekabooBridgeConstants.protocolVersion,
             hostKind: .onDemand,
             build: build,
@@ -131,7 +132,7 @@ private actor BridgeProbeGate {
             self.startedPaths.append(socketPath)
             self.resumeSatisfiedStartWaiters()
         }
-        return PeekabooBridgeHandshakeResponse(
+        return BridgeTestFixtures.handshake(
             negotiatedVersion: PeekabooBridgeConstants.protocolVersion,
             hostKind: .onDemand,
             build: socketPath,

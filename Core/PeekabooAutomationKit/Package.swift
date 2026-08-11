@@ -22,6 +22,10 @@ let package = Package(
         .library(
             name: "PeekabooAutomationKit",
             targets: ["PeekabooAutomationKit"]),
+        // Test-only support product. Production targets do not depend on or link this module.
+        .library(
+            name: "PeekabooAutomationKitTestSupport",
+            targets: ["PeekabooAutomationKitTestSupport"]),
     ],
     dependencies: [
         .package(path: "../PeekabooFoundation"),
@@ -40,9 +44,16 @@ let package = Package(
             ],
             exclude: ["Core/README.md"],
             swiftSettings: kitTargetSettings),
+        .target(
+            name: "PeekabooAutomationKitTestSupport",
+            dependencies: [
+                "PeekabooAutomationKit",
+                .product(name: "PeekabooFoundation", package: "PeekabooFoundation"),
+            ],
+            swiftSettings: approachableConcurrencySettings),
         .testTarget(
             name: "PeekabooAutomationKitTests",
-            dependencies: ["PeekabooAutomationKit"],
+            dependencies: ["PeekabooAutomationKit", "PeekabooAutomationKitTestSupport"],
             path: "Tests/PeekabooAutomationKitTests",
             swiftSettings: approachableConcurrencySettings),
     ],

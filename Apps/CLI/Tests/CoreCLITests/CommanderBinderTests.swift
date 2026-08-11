@@ -2,6 +2,7 @@ import Commander
 import Foundation
 import PeekabooAutomation
 import PeekabooBridge
+import PeekabooBridgeTestSupport
 import Testing
 @testable import PeekabooCLI
 
@@ -179,19 +180,19 @@ struct CommanderBinderTests {
 
     @Test
     func `Element actions require bridge protocol and operation support`() {
-        let current = PeekabooBridgeHandshakeResponse(
+        let current = BridgeTestFixtures.handshake(
             negotiatedVersion: .init(major: 1, minor: 3),
             hostKind: .gui,
             build: nil,
             supportedOperations: [.setValue, .performAction]
         )
-        let oldProtocol = PeekabooBridgeHandshakeResponse(
+        let oldProtocol = BridgeTestFixtures.handshake(
             negotiatedVersion: .init(major: 1, minor: 2),
             hostKind: .gui,
             build: nil,
             supportedOperations: [.setValue, .performAction]
         )
-        let missingOperation = PeekabooBridgeHandshakeResponse(
+        let missingOperation = BridgeTestFixtures.handshake(
             negotiatedVersion: .init(major: 1, minor: 3),
             hostKind: .gui,
             build: nil,
@@ -205,19 +206,19 @@ struct CommanderBinderTests {
 
     @Test
     func `Application launch options require bridge protocol and operation support`() {
-        let current = PeekabooBridgeHandshakeResponse(
+        let current = BridgeTestFixtures.handshake(
             negotiatedVersion: PeekabooBridgeConstants.processGenerationPinnedInteractionVersion,
             hostKind: .gui,
             build: nil,
             supportedOperations: [.launchApplicationWithOptions]
         )
-        let oldProtocol = PeekabooBridgeHandshakeResponse(
+        let oldProtocol = BridgeTestFixtures.handshake(
             negotiatedVersion: .init(major: 1, minor: 8),
             hostKind: .gui,
             build: nil,
             supportedOperations: [.launchApplicationWithOptions]
         )
-        let missingOperation = PeekabooBridgeHandshakeResponse(
+        let missingOperation = BridgeTestFixtures.handshake(
             negotiatedVersion: PeekabooBridgeConstants.processGenerationPinnedInteractionVersion,
             hostKind: .gui,
             build: nil,
@@ -232,13 +233,13 @@ struct CommanderBinderTests {
     @Test
     func `New application instance launch requires bridge protocol 1_13`() {
         let supportedOperations: [PeekabooBridgeOperation] = [.captureScreen, .launchApplicationWithOptions]
-        let current = PeekabooBridgeHandshakeResponse(
+        let current = BridgeTestFixtures.handshake(
             negotiatedVersion: .init(major: 1, minor: 13),
             hostKind: .gui,
             build: nil,
             supportedOperations: supportedOperations
         )
-        let old = PeekabooBridgeHandshakeResponse(
+        let old = BridgeTestFixtures.handshake(
             negotiatedVersion: .init(major: 1, minor: 12),
             hostKind: .gui,
             build: nil,
@@ -256,13 +257,13 @@ struct CommanderBinderTests {
     @Test
     func `window-instance-pinned mutations require bridge protocol 1_18`() {
         let operations: [PeekabooBridgeOperation] = [.moveWindow, .closeWindow, .maximizeWindow]
-        let legacy = PeekabooBridgeHandshakeResponse(
+        let legacy = BridgeTestFixtures.handshake(
             negotiatedVersion: .init(major: 1, minor: 17),
             hostKind: .onDemand,
             build: nil,
             supportedOperations: operations
         )
-        let current = PeekabooBridgeHandshakeResponse(
+        let current = BridgeTestFixtures.handshake(
             negotiatedVersion: .init(major: 1, minor: 18),
             hostKind: .onDemand,
             build: nil,
@@ -512,7 +513,7 @@ struct CommanderBinderTests {
 
     @Test
     func `Capture commands require invalidation only when their focus policy may mutate the desktop`() throws {
-        let ownerAwareBridge = PeekabooBridgeHandshakeResponse(
+        let ownerAwareBridge = BridgeTestFixtures.handshake(
             negotiatedVersion: PeekabooBridgeConstants.protocolVersion,
             hostKind: .onDemand,
             build: nil,
@@ -575,25 +576,25 @@ struct CommanderBinderTests {
             .captureScreen,
             .invalidateImplicitLatestSnapshot,
         ]
-        let current = PeekabooBridgeHandshakeResponse(
+        let current = BridgeTestFixtures.handshake(
             negotiatedVersion: .init(major: 1, minor: 9),
             hostKind: .onDemand,
             build: nil,
             supportedOperations: operations
         )
-        let stale = PeekabooBridgeHandshakeResponse(
+        let stale = BridgeTestFixtures.handshake(
             negotiatedVersion: .init(major: 1, minor: 8),
             hostKind: .onDemand,
             build: nil,
             supportedOperations: operations
         )
-        let missing = PeekabooBridgeHandshakeResponse(
+        let missing = BridgeTestFixtures.handshake(
             negotiatedVersion: .init(major: 1, minor: 9),
             hostKind: .onDemand,
             build: nil,
             supportedOperations: [.captureScreen]
         )
-        let disabled = PeekabooBridgeHandshakeResponse(
+        let disabled = BridgeTestFixtures.handshake(
             negotiatedVersion: .init(major: 1, minor: 9),
             hostKind: .onDemand,
             build: nil,
@@ -632,14 +633,14 @@ struct CommanderBinderTests {
             .targetedHotkey,
             .invalidateImplicitLatestSnapshot,
         ]
-        let legacy = PeekabooBridgeHandshakeResponse(
+        let legacy = BridgeTestFixtures.handshake(
             negotiatedVersion: .init(major: 1, minor: 18),
             hostKind: .onDemand,
             build: nil,
             supportedOperations: operations,
             enabledOperations: operations
         )
-        let current = PeekabooBridgeHandshakeResponse(
+        let current = BridgeTestFixtures.handshake(
             negotiatedVersion: PeekabooBridgeConstants.processGenerationPinnedHotkeyVersion,
             hostKind: .onDemand,
             build: nil,
@@ -687,7 +688,7 @@ struct CommanderBinderTests {
             .exactWindowTargetedClick,
             .invalidateImplicitLatestSnapshot,
         ]
-        let legacy = PeekabooBridgeHandshakeResponse(
+        let legacy = BridgeTestFixtures.handshake(
             negotiatedVersion: .init(major: 1, minor: 21),
             hostKind: .onDemand,
             build: nil,
@@ -695,7 +696,7 @@ struct CommanderBinderTests {
             permissions: PermissionsStatus(screenRecording: true, accessibility: true, postEvent: true),
             enabledOperations: operations
         )
-        let current = PeekabooBridgeHandshakeResponse(
+        let current = BridgeTestFixtures.handshake(
             negotiatedVersion: PeekabooBridgeConstants.processGenerationPinnedInteractionVersion,
             hostKind: .onDemand,
             build: nil,
@@ -835,7 +836,7 @@ struct CommanderBinderTests {
             .invalidateImplicitLatestSnapshot,
             .targetedClick,
         ]
-        let accessibilityOnly = PeekabooBridgeHandshakeResponse(
+        let accessibilityOnly = BridgeTestFixtures.handshake(
             negotiatedVersion: PeekabooBridgeConstants.processGenerationPinnedInteractionVersion,
             hostKind: .onDemand,
             build: nil,
@@ -848,7 +849,7 @@ struct CommanderBinderTests {
             enabledOperations: operations,
             permissionTags: [PeekabooBridgeOperation.targetedClick.rawValue: []]
         )
-        let fullyPermitted = PeekabooBridgeHandshakeResponse(
+        let fullyPermitted = BridgeTestFixtures.handshake(
             negotiatedVersion: PeekabooBridgeConstants.processGenerationPinnedInteractionVersion,
             hostKind: .onDemand,
             build: nil,
@@ -899,7 +900,7 @@ extension CommanderBinderTests {
         #expect(!foreground.requiresAccessibilityPermission)
         #expect(foreground.requiresPostEventPermission)
 
-        let legacy = PeekabooBridgeHandshakeResponse(
+        let legacy = BridgeTestFixtures.handshake(
             negotiatedVersion: .init(major: 1, minor: 10),
             hostKind: .onDemand,
             build: nil,
@@ -911,7 +912,7 @@ extension CommanderBinderTests {
             ),
             enabledOperations: [.captureScreen, .scroll, .invalidateImplicitLatestSnapshot]
         )
-        let current = PeekabooBridgeHandshakeResponse(
+        let current = BridgeTestFixtures.handshake(
             negotiatedVersion: .init(major: 1, minor: 12),
             hostKind: .onDemand,
             build: nil,
@@ -982,25 +983,25 @@ extension CommanderBinderTests {
             .captureScreen,
             .exactWindowTargetedClick,
         ]
-        let capable = PeekabooBridgeHandshakeResponse(
+        let capable = BridgeTestFixtures.handshake(
             negotiatedVersion: .init(major: 1, minor: 17),
             hostKind: .onDemand,
             build: nil,
             supportedOperations: operations
         )
-        let preCompletionValidation = PeekabooBridgeHandshakeResponse(
+        let preCompletionValidation = BridgeTestFixtures.handshake(
             negotiatedVersion: .init(major: 1, minor: 16),
             hostKind: .onDemand,
             build: nil,
             supportedOperations: operations
         )
-        let missing = PeekabooBridgeHandshakeResponse(
+        let missing = BridgeTestFixtures.handshake(
             negotiatedVersion: .init(major: 1, minor: 17),
             hostKind: .onDemand,
             build: nil,
             supportedOperations: [.captureScreen]
         )
-        let disabled = PeekabooBridgeHandshakeResponse(
+        let disabled = BridgeTestFixtures.handshake(
             negotiatedVersion: .init(major: 1, minor: 17),
             hostKind: .onDemand,
             build: nil,
@@ -1023,20 +1024,20 @@ extension CommanderBinderTests {
             .launchApplicationWithOptions,
             .relaunchApplicationWithOptions,
         ]
-        let capable = PeekabooBridgeHandshakeResponse(
+        let capable = BridgeTestFixtures.handshake(
             negotiatedVersion: .init(major: 1, minor: 18),
             hostKind: .onDemand,
             build: nil,
             supportedOperations: operations
         )
-        let relaunchDisabled = PeekabooBridgeHandshakeResponse(
+        let relaunchDisabled = BridgeTestFixtures.handshake(
             negotiatedVersion: .init(major: 1, minor: 18),
             hostKind: .onDemand,
             build: nil,
             supportedOperations: operations,
             enabledOperations: operations.filter { $0 != .relaunchApplicationWithOptions }
         )
-        let guiHost = PeekabooBridgeHandshakeResponse(
+        let guiHost = BridgeTestFixtures.handshake(
             negotiatedVersion: .init(major: 1, minor: 18),
             hostKind: .gui,
             build: nil,
@@ -1055,7 +1056,7 @@ extension CommanderBinderTests {
             PeekabooBridgeOperation.launchApplicationWithOptions,
             .relaunchApplicationWithOptions,
         ] {
-            let incomplete = PeekabooBridgeHandshakeResponse(
+            let incomplete = BridgeTestFixtures.handshake(
                 negotiatedVersion: .init(major: 1, minor: 9),
                 hostKind: .onDemand,
                 build: nil,
@@ -1065,7 +1066,7 @@ extension CommanderBinderTests {
         }
 
         options.requiresApplicationRelaunch = false
-        let launchOnly = PeekabooBridgeHandshakeResponse(
+        let launchOnly = BridgeTestFixtures.handshake(
             negotiatedVersion: .init(major: 1, minor: 9),
             hostKind: .gui,
             build: nil,
@@ -1190,13 +1191,13 @@ extension CommanderBinderTests {
 
     @Test
     func `Remote requirements skip bridges missing required element action support`() {
-        let current = PeekabooBridgeHandshakeResponse(
+        let current = BridgeTestFixtures.handshake(
             negotiatedVersion: .init(major: 1, minor: 3),
             hostKind: .gui,
             build: nil,
             supportedOperations: [.captureScreen, .setValue, .performAction]
         )
-        let oldProtocol = PeekabooBridgeHandshakeResponse(
+        let oldProtocol = BridgeTestFixtures.handshake(
             negotiatedVersion: .init(major: 1, minor: 2),
             hostKind: .gui,
             build: nil,
@@ -1367,26 +1368,26 @@ extension CommanderBinderTests {
     func `Application inventory requires an enabled bridge operation`() {
         var options = CommandRuntimeOptions()
         options.requiresHostApplicationInventory = true
-        let legacyCapable = PeekabooBridgeHandshakeResponse(
+        let legacyCapable = BridgeTestFixtures.handshake(
             negotiatedVersion: .init(major: 1, minor: 8),
             hostKind: .onDemand,
             build: nil,
             supportedOperations: [.captureScreen, .listApplications]
         )
-        let unsupported = PeekabooBridgeHandshakeResponse(
+        let unsupported = BridgeTestFixtures.handshake(
             negotiatedVersion: .init(major: 1, minor: 9),
             hostKind: .gui,
             build: nil,
             supportedOperations: [.captureScreen]
         )
-        let disabled = PeekabooBridgeHandshakeResponse(
+        let disabled = BridgeTestFixtures.handshake(
             negotiatedVersion: .init(major: 1, minor: 9),
             hostKind: .gui,
             build: nil,
             supportedOperations: [.captureScreen, .listApplications],
             enabledOperations: [.captureScreen]
         )
-        let preProtocol = PeekabooBridgeHandshakeResponse(
+        let preProtocol = BridgeTestFixtures.handshake(
             negotiatedVersion: .init(major: 0, minor: 9),
             hostKind: .onDemand,
             build: nil,
@@ -1577,13 +1578,13 @@ extension CommanderBinderTests {
                 flags: ["foreground"]
             )),
         ]
-        let legacy = PeekabooBridgeHandshakeResponse(
+        let legacy = BridgeTestFixtures.handshake(
             negotiatedVersion: .init(major: 1, minor: 11),
             hostKind: .onDemand,
             build: nil,
             supportedOperations: [.captureScreen]
         )
-        let current = PeekabooBridgeHandshakeResponse(
+        let current = BridgeTestFixtures.handshake(
             negotiatedVersion: .init(major: 1, minor: 12),
             hostKind: .onDemand,
             build: nil,

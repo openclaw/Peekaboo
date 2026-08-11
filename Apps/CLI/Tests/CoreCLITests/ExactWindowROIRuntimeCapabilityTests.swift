@@ -1,5 +1,6 @@
 import Commander
 import PeekabooBridge
+import PeekabooBridgeTestSupport
 import Testing
 @testable import PeekabooCLI
 
@@ -162,7 +163,7 @@ struct ExactWindowROIRuntimeCapabilityTests {
         operations: [PeekabooBridgeOperation],
         enabledOperations: [PeekabooBridgeOperation]? = nil
     ) -> PeekabooBridgeHandshakeResponse {
-        PeekabooBridgeHandshakeResponse(
+        BridgeTestFixtures.handshake(
             negotiatedVersion: PeekabooBridgeProtocolVersion(major: 1, minor: minor),
             hostKind: hostKind,
             build: nil,

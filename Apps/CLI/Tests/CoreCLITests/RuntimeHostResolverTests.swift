@@ -1,6 +1,7 @@
 import Commander
 import PeekabooAutomation
 import PeekabooBridge
+import PeekabooBridgeTestSupport
 import Testing
 @testable import PeekabooCLI
 
@@ -163,7 +164,7 @@ struct RuntimeHostResolverTests {
             requiredHostKind: .onDemand,
             requiresValidatedHistoricalDaemon: true
         )
-        let handshake = PeekabooBridgeHandshakeResponse(
+        let handshake = BridgeTestFixtures.handshake(
             negotiatedVersion: PeekabooBridgeConstants.protocolVersion,
             hostKind: .onDemand,
             build: nil,
@@ -227,7 +228,7 @@ struct RuntimeHostResolverTests {
         )
         var options = CommandRuntimeOptions()
         options.requiresPostEventPermission = true
-        let accessibilityOnly = PeekabooBridgeHandshakeResponse(
+        let accessibilityOnly = BridgeTestFixtures.handshake(
             negotiatedVersion: PeekabooBridgeConstants.protocolVersion,
             hostKind: .gui,
             build: nil,
@@ -239,7 +240,7 @@ struct RuntimeHostResolverTests {
             ),
             enabledOperations: [.captureScreen, .targetedClick]
         )
-        let postEventCapable = PeekabooBridgeHandshakeResponse(
+        let postEventCapable = BridgeTestFixtures.handshake(
             negotiatedVersion: PeekabooBridgeConstants.protocolVersion,
             hostKind: .gui,
             build: nil,
@@ -280,7 +281,7 @@ struct RuntimeHostResolverTests {
             let operations: [PeekabooBridgeOperation] = supportsClick
                 ? [.captureScreen, .click, .targetedClick]
                 : [.captureScreen, .targetedClick]
-            return PeekabooBridgeHandshakeResponse(
+            return BridgeTestFixtures.handshake(
                 negotiatedVersion: PeekabooBridgeProtocolVersion(major: 1, minor: minor),
                 hostKind: .gui,
                 build: nil,
@@ -326,7 +327,7 @@ struct RuntimeHostResolverTests {
             .invalidateImplicitLatestSnapshot,
         ]
         func handshake(minor: Int) -> PeekabooBridgeHandshakeResponse {
-            PeekabooBridgeHandshakeResponse(
+            BridgeTestFixtures.handshake(
                 negotiatedVersion: PeekabooBridgeProtocolVersion(major: 1, minor: minor),
                 hostKind: .gui,
                 build: nil,
@@ -384,7 +385,7 @@ struct RuntimeHostResolverTests {
             supported: [PeekabooBridgeOperation],
             enabled: [PeekabooBridgeOperation]
         ) -> PeekabooBridgeHandshakeResponse {
-            PeekabooBridgeHandshakeResponse(
+            BridgeTestFixtures.handshake(
                 negotiatedVersion: .init(major: 1, minor: 18),
                 hostKind: .gui,
                 build: nil,
@@ -431,7 +432,7 @@ struct RuntimeHostResolverTests {
         ]
         func handshake(minor: Int, enabledOperations: [PeekabooBridgeOperation]? = nil)
         -> PeekabooBridgeHandshakeResponse {
-            PeekabooBridgeHandshakeResponse(
+            BridgeTestFixtures.handshake(
                 negotiatedVersion: PeekabooBridgeProtocolVersion(major: 1, minor: minor),
                 hostKind: .onDemand,
                 build: nil,
@@ -501,7 +502,7 @@ struct RuntimeHostResolverTests {
             requiredHostKind: .gui,
             requiresValidatedHistoricalDaemon: false
         )
-        let unpermissioned = PeekabooBridgeHandshakeResponse(
+        let unpermissioned = BridgeTestFixtures.handshake(
             negotiatedVersion: PeekabooBridgeConstants.protocolVersion,
             hostKind: .gui,
             build: "stale-debug",
@@ -538,7 +539,7 @@ struct RuntimeHostResolverTests {
             requiredHostKind: nil,
             requiresValidatedHistoricalDaemon: false
         )
-        let noScreenRecording = PeekabooBridgeHandshakeResponse(
+        let noScreenRecording = BridgeTestFixtures.handshake(
             negotiatedVersion: PeekabooBridgeConstants.protocolVersion,
             hostKind: .onDemand,
             build: nil,
@@ -586,7 +587,7 @@ struct RuntimeHostResolverTests {
             requiredHostKind: nil,
             requiresValidatedHistoricalDaemon: false
         )
-        let untagged = PeekabooBridgeHandshakeResponse(
+        let untagged = BridgeTestFixtures.handshake(
             negotiatedVersion: PeekabooBridgeConstants.protocolVersion,
             hostKind: .gui,
             build: nil,
@@ -616,7 +617,7 @@ struct RuntimeHostResolverTests {
             requiredHostKind: .gui,
             requiresValidatedHistoricalDaemon: false
         )
-        let unknownPermissions = PeekabooBridgeHandshakeResponse(
+        let unknownPermissions = BridgeTestFixtures.handshake(
             negotiatedVersion: PeekabooBridgeConstants.protocolVersion,
             hostKind: .gui,
             build: nil,
@@ -642,7 +643,7 @@ struct RuntimeHostResolverTests {
             major: PeekabooBridgeConstants.protocolVersion.major,
             minor: PeekabooBridgeConstants.protocolVersion.minor - 1
         )
-        let handshake = PeekabooBridgeHandshakeResponse(
+        let handshake = BridgeTestFixtures.handshake(
             negotiatedVersion: olderProtocol,
             hostKind: .onDemand,
             build: "legacy",
@@ -745,7 +746,7 @@ struct RuntimeHostResolverTests {
             requiredHostKind: .gui,
             requiresValidatedHistoricalDaemon: false
         )
-        let permissioned = PeekabooBridgeHandshakeResponse(
+        let permissioned = BridgeTestFixtures.handshake(
             negotiatedVersion: PeekabooBridgeConstants.protocolVersion,
             hostKind: .gui,
             build: nil,
@@ -776,7 +777,7 @@ struct RuntimeHostResolverTests {
             requiresValidatedHistoricalDaemon: false
         )
         // Holds Screen Recording but not Accessibility.
-        let captureOnlyPermissions = PeekabooBridgeHandshakeResponse(
+        let captureOnlyPermissions = BridgeTestFixtures.handshake(
             negotiatedVersion: PeekabooBridgeConstants.protocolVersion,
             hostKind: .onDemand,
             build: nil,
@@ -823,7 +824,7 @@ struct RuntimeHostResolverTests {
             requiredHostKind: .gui,
             requiresValidatedHistoricalDaemon: false
         )
-        let unpermissioned = PeekabooBridgeHandshakeResponse(
+        let unpermissioned = BridgeTestFixtures.handshake(
             negotiatedVersion: PeekabooBridgeConstants.protocolVersion,
             hostKind: .gui,
             build: nil,

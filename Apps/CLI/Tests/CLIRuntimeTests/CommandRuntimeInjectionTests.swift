@@ -3,6 +3,7 @@ import Foundation
 import PeekabooAgentRuntime
 import PeekabooAutomationKit
 import PeekabooBridge
+import PeekabooBridgeTestSupport
 import PeekabooCore
 import Tachikoma
 import Testing
@@ -56,7 +57,7 @@ struct CommandRuntimeInjectionTests {
 
     @Test
     func `targeted hotkey support requires enabled bridge operation`() {
-        let supported = PeekabooBridgeHandshakeResponse(
+        let supported = BridgeTestFixtures.handshake(
             negotiatedVersion: PeekabooBridgeProtocolVersion(major: 1, minor: 1),
             hostKind: .gui,
             build: nil,
@@ -72,7 +73,7 @@ struct CommandRuntimeInjectionTests {
             ]
         )
 
-        let enabled = PeekabooBridgeHandshakeResponse(
+        let enabled = BridgeTestFixtures.handshake(
             negotiatedVersion: PeekabooBridgeProtocolVersion(major: 1, minor: 1),
             hostKind: .gui,
             build: nil,
@@ -90,7 +91,7 @@ struct CommandRuntimeInjectionTests {
 
     @Test
     func `targeted hotkey availability does not require accessibility`() {
-        let handshake = PeekabooBridgeHandshakeResponse(
+        let handshake = BridgeTestFixtures.handshake(
             negotiatedVersion: PeekabooBridgeProtocolVersion(major: 1, minor: 1),
             hostKind: .gui,
             build: nil,
@@ -115,7 +116,7 @@ struct CommandRuntimeInjectionTests {
 
     @Test
     func `targeted type support requires protocol 1_8 and enabled bridge operation`() {
-        let supported = PeekabooBridgeHandshakeResponse(
+        let supported = BridgeTestFixtures.handshake(
             negotiatedVersion: PeekabooBridgeProtocolVersion(major: 1, minor: 8),
             hostKind: .gui,
             build: nil,
@@ -131,7 +132,7 @@ struct CommandRuntimeInjectionTests {
             ]
         )
 
-        let enabled = PeekabooBridgeHandshakeResponse(
+        let enabled = BridgeTestFixtures.handshake(
             negotiatedVersion: PeekabooBridgeProtocolVersion(major: 1, minor: 8),
             hostKind: .gui,
             build: nil,
@@ -139,7 +140,7 @@ struct CommandRuntimeInjectionTests {
             enabledOperations: [.captureScreen, .targetedTypeActions]
         )
 
-        let oldProtocol = PeekabooBridgeHandshakeResponse(
+        let oldProtocol = BridgeTestFixtures.handshake(
             negotiatedVersion: PeekabooBridgeProtocolVersion(major: 1, minor: 7),
             hostKind: .gui,
             build: nil,
@@ -158,7 +159,7 @@ struct CommandRuntimeInjectionTests {
 
     @Test
     func `targeted click support requires enabled bridge operation`() {
-        let supported = PeekabooBridgeHandshakeResponse(
+        let supported = BridgeTestFixtures.handshake(
             negotiatedVersion: PeekabooBridgeProtocolVersion(major: 1, minor: 6),
             hostKind: .gui,
             build: nil,
@@ -174,7 +175,7 @@ struct CommandRuntimeInjectionTests {
             ]
         )
 
-        let enabled = PeekabooBridgeHandshakeResponse(
+        let enabled = BridgeTestFixtures.handshake(
             negotiatedVersion: PeekabooBridgeProtocolVersion(major: 1, minor: 6),
             hostKind: .gui,
             build: nil,
@@ -192,14 +193,14 @@ struct CommandRuntimeInjectionTests {
 
     @Test
     func `exact window click support requires protocol 1_17 capability`() {
-        let oldHost = PeekabooBridgeHandshakeResponse(
+        let oldHost = BridgeTestFixtures.handshake(
             negotiatedVersion: PeekabooBridgeProtocolVersion(major: 1, minor: 16),
             hostKind: .gui,
             build: nil,
             supportedOperations: [.targetedClick],
             enabledOperations: [.targetedClick]
         )
-        let currentHost = PeekabooBridgeHandshakeResponse(
+        let currentHost = BridgeTestFixtures.handshake(
             negotiatedVersion: PeekabooBridgeProtocolVersion(major: 1, minor: 17),
             hostKind: .gui,
             build: nil,
@@ -213,7 +214,7 @@ struct CommandRuntimeInjectionTests {
 
     @Test
     func `request-aware targeted click capability reports its Accessibility requirement`() {
-        let accessibilityOnly = PeekabooBridgeHandshakeResponse(
+        let accessibilityOnly = BridgeTestFixtures.handshake(
             negotiatedVersion: PeekabooBridgeProtocolVersion(major: 1, minor: 9),
             hostKind: .gui,
             build: nil,
@@ -226,7 +227,7 @@ struct CommandRuntimeInjectionTests {
             enabledOperations: [.captureScreen, .targetedClick],
             permissionTags: [PeekabooBridgeOperation.targetedClick.rawValue: []]
         )
-        let unavailable = PeekabooBridgeHandshakeResponse(
+        let unavailable = BridgeTestFixtures.handshake(
             negotiatedVersion: PeekabooBridgeProtocolVersion(major: 1, minor: 9),
             hostKind: .gui,
             build: nil,
@@ -252,19 +253,19 @@ struct CommandRuntimeInjectionTests {
 
     @Test
     func `post event permission request support requires advertised protocol operation`() {
-        let supported = PeekabooBridgeHandshakeResponse(
+        let supported = BridgeTestFixtures.handshake(
             negotiatedVersion: PeekabooBridgeProtocolVersion(major: 1, minor: 2),
             hostKind: .gui,
             build: nil,
             supportedOperations: [.captureScreen, .requestPostEventPermission]
         )
-        let older = PeekabooBridgeHandshakeResponse(
+        let older = BridgeTestFixtures.handshake(
             negotiatedVersion: PeekabooBridgeProtocolVersion(major: 1, minor: 1),
             hostKind: .gui,
             build: nil,
             supportedOperations: [.captureScreen, .requestPostEventPermission]
         )
-        let hidden = PeekabooBridgeHandshakeResponse(
+        let hidden = BridgeTestFixtures.handshake(
             negotiatedVersion: PeekabooBridgeProtocolVersion(major: 1, minor: 2),
             hostKind: .gui,
             build: nil,
@@ -278,25 +279,25 @@ struct CommandRuntimeInjectionTests {
 
     @Test
     func `desktop observation support requires advertised protocol operation`() {
-        let supported = PeekabooBridgeHandshakeResponse(
+        let supported = BridgeTestFixtures.handshake(
             negotiatedVersion: PeekabooBridgeProtocolVersion(major: 1, minor: 5),
             hostKind: .gui,
             build: nil,
             supportedOperations: [.captureScreen, .desktopObservation]
         )
-        let older = PeekabooBridgeHandshakeResponse(
+        let older = BridgeTestFixtures.handshake(
             negotiatedVersion: PeekabooBridgeProtocolVersion(major: 1, minor: 4),
             hostKind: .gui,
             build: nil,
             supportedOperations: [.captureScreen, .desktopObservation]
         )
-        let hidden = PeekabooBridgeHandshakeResponse(
+        let hidden = BridgeTestFixtures.handshake(
             negotiatedVersion: PeekabooBridgeProtocolVersion(major: 1, minor: 5),
             hostKind: .gui,
             build: nil,
             supportedOperations: [.captureScreen]
         )
-        let disabled = PeekabooBridgeHandshakeResponse(
+        let disabled = BridgeTestFixtures.handshake(
             negotiatedVersion: PeekabooBridgeProtocolVersion(major: 1, minor: 5),
             hostKind: .gui,
             build: nil,
@@ -312,19 +313,19 @@ struct CommandRuntimeInjectionTests {
 
     @Test
     func `inspect UI support requires advertised protocol operation`() {
-        let supported = PeekabooBridgeHandshakeResponse(
+        let supported = BridgeTestFixtures.handshake(
             negotiatedVersion: PeekabooBridgeProtocolVersion(major: 1, minor: 7),
             hostKind: .gui,
             build: nil,
             supportedOperations: [.captureScreen, .inspectAccessibilityTree]
         )
-        let older = PeekabooBridgeHandshakeResponse(
+        let older = BridgeTestFixtures.handshake(
             negotiatedVersion: PeekabooBridgeProtocolVersion(major: 1, minor: 6),
             hostKind: .gui,
             build: nil,
             supportedOperations: [.captureScreen, .inspectAccessibilityTree]
         )
-        let hidden = PeekabooBridgeHandshakeResponse(
+        let hidden = BridgeTestFixtures.handshake(
             negotiatedVersion: PeekabooBridgeProtocolVersion(major: 1, minor: 7),
             hostKind: .gui,
             build: nil,
@@ -340,13 +341,13 @@ struct CommandRuntimeInjectionTests {
     func `remote requirements reject inspect UI when required capability is unavailable`() {
         var options = CommandRuntimeOptions()
         options.requiresInspectAccessibilityTree = true
-        let supported = PeekabooBridgeHandshakeResponse(
+        let supported = BridgeTestFixtures.handshake(
             negotiatedVersion: PeekabooBridgeProtocolVersion(major: 1, minor: 7),
             hostKind: .gui,
             build: nil,
             supportedOperations: [.captureScreen, .inspectAccessibilityTree]
         )
-        let unsupported = PeekabooBridgeHandshakeResponse(
+        let unsupported = BridgeTestFixtures.handshake(
             negotiatedVersion: PeekabooBridgeProtocolVersion(major: 1, minor: 6),
             hostKind: .gui,
             build: nil,
@@ -361,19 +362,19 @@ struct CommandRuntimeInjectionTests {
     func `remote requirements reject browser MCP when required capability is unavailable`() {
         var options = CommandRuntimeOptions()
         options.requiresBrowserMCP = true
-        let supported = PeekabooBridgeHandshakeResponse(
+        let supported = BridgeTestFixtures.handshake(
             negotiatedVersion: PeekabooBridgeProtocolVersion(major: 1, minor: 4),
             hostKind: .gui,
             build: nil,
             supportedOperations: [.captureScreen, .browserStatus, .browserConnect, .browserDisconnect, .browserExecute]
         )
-        let older = PeekabooBridgeHandshakeResponse(
+        let older = BridgeTestFixtures.handshake(
             negotiatedVersion: PeekabooBridgeProtocolVersion(major: 1, minor: 3),
             hostKind: .gui,
             build: nil,
             supportedOperations: [.captureScreen, .browserStatus, .browserConnect, .browserDisconnect, .browserExecute]
         )
-        let missingExecute = PeekabooBridgeHandshakeResponse(
+        let missingExecute = BridgeTestFixtures.handshake(
             negotiatedVersion: PeekabooBridgeProtocolVersion(major: 1, minor: 4),
             hostKind: .gui,
             build: nil,
@@ -561,19 +562,19 @@ struct CommandRuntimeInjectionTests {
 
     @Test
     func `default app fallback accepts GUI hosts and legacy daemons`() {
-        let guiHandshake = PeekabooBridgeHandshakeResponse(
+        let guiHandshake = BridgeTestFixtures.handshake(
             negotiatedVersion: PeekabooBridgeConstants.protocolVersion,
             hostKind: .gui,
             build: nil,
             supportedOperations: [.captureScreen]
         )
-        let daemonHandshake = PeekabooBridgeHandshakeResponse(
+        let daemonHandshake = BridgeTestFixtures.handshake(
             negotiatedVersion: PeekabooBridgeConstants.protocolVersion,
             hostKind: .onDemand,
             build: nil,
             supportedOperations: [.captureScreen]
         )
-        let embeddedHandshake = PeekabooBridgeHandshakeResponse(
+        let embeddedHandshake = BridgeTestFixtures.handshake(
             negotiatedVersion: PeekabooBridgeConstants.protocolVersion,
             hostKind: .inProcess,
             build: nil,

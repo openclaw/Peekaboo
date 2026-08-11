@@ -3,6 +3,7 @@ import Foundation
 import PeekabooAutomation
 import PeekabooAutomationKit
 import PeekabooBridge
+import PeekabooBridgeTestSupport
 import PeekabooCore
 import PeekabooFoundation
 import Testing
@@ -921,7 +922,7 @@ extension ScreenCaptureKitOwnerRuntimeTests {
         ],
         codeSignatureHash: String = "owner-build"
     ) -> PeekabooBridgeHandshakeResponse {
-        PeekabooBridgeHandshakeResponse(
+        BridgeTestFixtures.handshake(
             negotiatedVersion: PeekabooBridgeConstants.protocolVersion,
             hostKind: .onDemand,
             build: nil,
