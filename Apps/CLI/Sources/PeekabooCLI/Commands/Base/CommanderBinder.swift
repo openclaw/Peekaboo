@@ -124,30 +124,7 @@ enum CommanderCLIBinder {
         if let level: LogLevel = try values.decodeOption("logLevel", as: LogLevel.self) {
             options.logLevel = level
         }
-        if let captureEngine = values.singleOption("captureEngine")?
-            .trimmingCharacters(in: .whitespacesAndNewlines),
-            !captureEngine.isEmpty {
-            guard ObservationCommandSupport.isSupportedCaptureEngineValue(captureEngine) else {
-                throw CommanderBindingError.invalidArgument(
-                    label: "capture-engine",
-                    value: captureEngine,
-                    reason: "expected auto, modern/sckit, or classic/cg"
-                )
-            }
-            if seeSkipsPixels {
-                throw CommanderBindingError.invalidArgument(
-                    label: "capture-engine",
-                    value: captureEngine,
-                    reason: "cannot be used with --no-screenshot because no capture backend runs"
-                )
-            }
-            options.captureEnginePreference = captureEngine
-            if options.transportsCaptureEnginePreference {
-                options.requiresCaptureEnginePreferenceHost = true
-            } else if !options.requiresApplicationLaunchOptions, !options.requiresHostApplicationInventory {
-                options.preferRemote = false
-            }
-        }
+        try Self.applyCaptureEnginePreference(to: &options, values: values, seeSkipsPixels: seeSkipsPixels)
         if let rawInputStrategy = values.singleOption("inputStrategy")?
             .trimmingCharacters(in: .whitespacesAndNewlines),
             !rawInputStrategy.isEmpty {
@@ -204,6 +181,38 @@ enum CommanderCLIBinder {
             options.requiresBrowserMCP = true
         }
         return options
+    }
+
+    private static func applyCaptureEnginePreference(
+        to options: inout CommandRuntimeOptions,
+        values: CommanderBindableValues,
+        seeSkipsPixels: Bool
+    ) throws {
+        guard let captureEngine = values.singleOption("captureEngine")?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+            !captureEngine.isEmpty
+        else { return }
+
+        guard ObservationCommandSupport.isSupportedCaptureEngineValue(captureEngine) else {
+            throw CommanderBindingError.invalidArgument(
+                label: "capture-engine",
+                value: captureEngine,
+                reason: "expected auto, modern/sckit, or classic/cg"
+            )
+        }
+        if seeSkipsPixels {
+            throw CommanderBindingError.invalidArgument(
+                label: "capture-engine",
+                value: captureEngine,
+                reason: "cannot be used with --no-screenshot because no capture backend runs"
+            )
+        }
+        options.captureEnginePreference = captureEngine
+        if options.transportsCaptureEnginePreference {
+            options.requiresCaptureEnginePreferenceHost = true
+        } else if !options.requiresApplicationLaunchOptions, !options.requiresHostApplicationInventory {
+            options.preferRemote = false
+        }
     }
 
     private static func requiresApplicationLaunchOptions(_ commandType: (any ParsableCommand.Type)?) -> Bool {
