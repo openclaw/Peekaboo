@@ -69,6 +69,7 @@ NEW_APP_INSTALLED=0
 INSTALL_VERIFIED=0
 TARGET_WAS_RUNNING=0
 TARGET_STOPPED=0
+TARGET_STOP_ATTEMPTED=0
 INSTALL_STARTED=0
 LOCK_FILE=""
 LOCK_DIR=""
@@ -1006,6 +1007,20 @@ rollback_install() {
 
   if [[ -n "${INSTALL_ROOT}" ]]; then
     if ((INSTALL_STARTED == 0)); then
+      if ((TARGET_WAS_RUNNING == 1)) && [[ -d "${APP_BUNDLE}" ]]; then
+        if ((TARGET_STOP_ATTEMPTED == 1)); then
+          if stop_peekaboo >/dev/null 2>&1; then
+            TARGET_STOPPED=1
+          else
+            printf 'ERROR: Could not stabilize the interrupted previous process; recovery remains at %s\n' \
+              "${INSTALL_ROOT}" >&2
+            release_install_lock || true
+            exit "${exit_code}"
+          fi
+        elif ! is_bundle_running "${APP_BUNDLE}"; then
+          TARGET_STOPPED=1
+        fi
+      fi
       if ((TARGET_STOPPED == 1 && TARGET_WAS_RUNNING == 1)) && [[ -d "${APP_BUNDLE}" ]]; then
         if ! write_journal_state restored "${INSTALL_ROOT}" "${HAD_PREVIOUS_APP}" \
           "${TARGET_WAS_RUNNING}" "${ARTIFACT_DIGEST}"; then
@@ -1206,6 +1221,7 @@ write_journal_state staged "${INSTALL_ROOT}" "${HAD_PREVIOUS_APP}" \
   "${TARGET_WAS_RUNNING}" "${ARTIFACT_DIGEST}"
 
 log "==> Stop ${APP_NAME}"
+TARGET_STOP_ATTEMPTED=1
 stop_peekaboo || fail "Could not stop ${APP_NAME}; install was not changed"
 TARGET_STOPPED=1
 

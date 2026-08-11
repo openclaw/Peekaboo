@@ -591,6 +591,9 @@ if [[ -f "${state_dir}/refuse-new-stop" && -f "${state_dir}/running-path" ]]; th
 fi
 printf '%s\n' 'stop' >>"${state_dir}/events"
 rm -f "${state_dir}/running-path"
+if [[ -f "${state_dir}/interrupt-during-stop" ]]; then
+  /bin/kill -TERM "${PPID}"
+fi
 EOF
 
 cat >"${TEMPLATE_BIN}/sleep" <<'EOF'
@@ -776,6 +779,22 @@ expected_launch_log="${launch_target}|new
 ${launch_target}|old"
 assert_text "${launch_dir}/open-log" "${expected_launch_log}"
 assert_text "${launch_dir}/running-path" "${launch_target}"
+
+# Interruption after TERM but before the stop result is recorded must relaunch the unchanged app.
+stop_interrupt_dir="$(new_case interrupted-during-stop)"
+stop_interrupt_target="${stop_interrupt_dir}/Applications/Peekaboo.app"
+mkdir -p "$(dirname "${stop_interrupt_target}")"
+make_bundle "${stop_interrupt_target}" old
+printf '%s\n' "${stop_interrupt_target}" >"${stop_interrupt_dir}/running-path"
+touch "${stop_interrupt_dir}/interrupt-during-stop"
+if run_restart "${stop_interrupt_dir}"; then
+  fail 'expected interrupted stop to retain the nonzero signal result'
+fi
+assert_text "${stop_interrupt_target}/build-id" old
+assert_text "${stop_interrupt_dir}/running-path" "${stop_interrupt_target}"
+assert_text "${stop_interrupt_dir}/open-log" "${stop_interrupt_target}|old"
+[[ ! -e "$(dirname "${stop_interrupt_target}")/.Peekaboo.install.journal" ]] || \
+  fail 'interrupted pre-install stop left a completed journal after relaunch'
 
 # A process is not committed until the explicit GUI Bridge identifies that PID, build, and launch mode.
 for health_case in \
