@@ -379,9 +379,12 @@ struct ImageCaptureLogicTests {
             Issue.record("Should parse successfully")
         }
 
-        // Invalid screen index (Commander may reject negative values)
-        #expect(throws: (any Error).self) {
-            _ = try SeeCommand.parse(["--screen-index", "-1"])
+        // Commander now preserves negative numeric option values for owner validation at execution time.
+        do {
+            let command = try SeeCommand.parse(["--screen-index", "-1"])
+            #expect(command.screenIndex == -1)
+        } catch {
+            Issue.record("Negative numeric option values should reach command validation")
         }
     }
 }
