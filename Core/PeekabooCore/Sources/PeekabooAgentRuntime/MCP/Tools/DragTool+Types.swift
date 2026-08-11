@@ -40,10 +40,8 @@ struct DragRequest {
             throw DragToolError("Invalid button '\(buttonName)'. Use 'left' or 'right'.")
         }
 
-        let durationProvided = arguments.getValue(for: "duration") != nil
-        let stepsProvided = arguments.getValue(for: "steps") != nil
-        let durationOverride = durationProvided ? arguments.getNumber("duration").map(Int.init) : nil
-        let stepsOverride = stepsProvided ? arguments.getNumber("steps").map(Int.init) : nil
+        let durationOverride = try arguments.validatedInt("duration")
+        let stepsOverride = try arguments.validatedInt("steps")
 
         if let override = durationOverride {
             guard override > 0 else {

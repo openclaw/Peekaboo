@@ -15,7 +15,7 @@ public struct SleepTool: MCPTool {
     public var inputSchema: Value {
         SchemaBuilder.object(
             properties: [
-                "duration": SchemaBuilder.number(
+                "duration": SchemaBuilder.integer(
                     description: "Sleep duration in milliseconds."),
             ],
             required: ["duration"])
@@ -24,18 +24,19 @@ public struct SleepTool: MCPTool {
     public init() {}
 
     public func execute(arguments: ToolArguments) async throws -> ToolResponse {
-        // Extract duration using the helper method
-        guard let duration = arguments.getNumber("duration") else {
-            return ToolResponse.error("Missing required parameter: duration")
+        let milliseconds: Int
+        do {
+            guard let value = try arguments.validatedInt("duration") else {
+                return ToolResponse.error("Missing required parameter: duration")
+            }
+            milliseconds = value
+        } catch {
+            return ToolResponse.error(error.localizedDescription)
         }
 
-        // Validate duration
-        guard duration > 0 else {
+        guard milliseconds > 0 else {
             return ToolResponse.error("Duration must be positive")
         }
-
-        // Convert to reasonable integer value
-        let milliseconds = Int(duration)
         guard milliseconds <= 600_000 else { // Max 10 minutes
             return ToolResponse.error("Duration cannot exceed 600000ms (10 minutes)")
         }

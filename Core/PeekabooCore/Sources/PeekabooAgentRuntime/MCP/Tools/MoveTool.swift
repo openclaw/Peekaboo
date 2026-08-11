@@ -39,10 +39,10 @@ public struct MoveTool: MCPTool {
                 "smooth": SchemaBuilder.boolean(
                     description: "Optional. Use smooth animated movement.",
                     default: false),
-                "duration": SchemaBuilder.number(
+                "duration": SchemaBuilder.integer(
                     description: "Optional. Duration in milliseconds for smooth movement. Default: 500.",
                     default: 500),
-                "steps": SchemaBuilder.number(
+                "steps": SchemaBuilder.integer(
                     description: "Optional. Number of steps for smooth movement. Default: 10.",
                     default: 10),
                 "profile": SchemaBuilder.string(

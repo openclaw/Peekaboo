@@ -36,10 +36,10 @@ public struct DragTool: MCPTool {
                 "snapshot": SchemaBuilder.string(
                     description: "Optional. Snapshot ID from `see` or `inspect_ui`. " +
                         "Uses latest snapshot if not specified"),
-                "duration": SchemaBuilder.number(
+                "duration": SchemaBuilder.integer(
                     description: "Optional. Duration in milliseconds (default: 500)",
                     default: 500),
-                "steps": SchemaBuilder.number(
+                "steps": SchemaBuilder.integer(
                     description: "Optional. Number of intermediate steps (default: 10)",
                     default: 10),
                 "profile": SchemaBuilder.string(
@@ -69,6 +69,8 @@ public struct DragTool: MCPTool {
             request = try DragRequest(arguments: arguments)
         } catch let error as DragToolError {
             return ToolResponse.error(error.message)
+        } catch {
+            return ToolResponse.error(error.localizedDescription)
         }
 
         do {

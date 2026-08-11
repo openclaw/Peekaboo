@@ -39,6 +39,11 @@ Supported transports:
 - **stdio**: supported and default.
 - **http / sse**: recognized flags, but server transports are not implemented yet.
 
+Peekaboo validates numeric arguments before a tool or mutation lane runs. Fields published as `integer` accept exact
+whole values (including whole-number JSON doubles and integer strings) but reject fractional, non-finite, and
+out-of-range values. Fields published as `number` must be finite. Rejections report `mutation_dispatched: false` and
+`retry_safe: true`; an invalid optional value is never treated as omitted or replaced by a default.
+
 ## Install in MCP clients
 
 Most MCP clients can launch Peekaboo through either the npm package or a local binary.

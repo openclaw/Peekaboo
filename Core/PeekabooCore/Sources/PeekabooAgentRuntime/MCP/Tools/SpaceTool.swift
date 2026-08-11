@@ -59,13 +59,13 @@ public struct SpaceTool: MCPTool {
                 "action": SchemaBuilder.string(
                     description: "The action to perform",
                     enum: ["list", "switch", "move-window"]),
-                "to": SchemaBuilder.number(
+                "to": SchemaBuilder.integer(
                     description: "Space number to switch to (for switch action)"),
                 "app": SchemaBuilder.string(
                     description: "Application name for move-window action"),
                 "window_title": SchemaBuilder.string(
                     description: "Window title to move"),
-                "window_index": SchemaBuilder.number(
+                "window_index": SchemaBuilder.integer(
                     description: "Window index for multi-window apps"),
                 "to_current": SchemaBuilder.boolean(
                     description: "Move window to current space (for move-window action)",
@@ -99,6 +99,8 @@ public struct SpaceTool: MCPTool {
             parsedAction = try self.parseAction(arguments: arguments)
         } catch let validationError as SpaceActionValidationError {
             return ToolResponse.error(validationError.message)
+        } catch {
+            return ToolResponse.error(error.localizedDescription)
         }
 
         do {
@@ -119,7 +121,7 @@ public struct SpaceTool: MCPTool {
             let detailed = arguments.getBool("detailed") ?? false
             return .list(detailed: detailed)
         case "switch":
-            guard let spaceNumber = arguments.getNumber("to").map(Int.init) else {
+            guard let spaceNumber = try arguments.validatedInt("to") else {
                 throw SpaceActionValidationError("Switch action requires 'to' parameter (space number)")
             }
             return .switchSpace(spaceNumber: spaceNumber)
@@ -137,7 +139,7 @@ public struct SpaceTool: MCPTool {
         }
 
         let toCurrent = arguments.getBool("to_current") ?? false
-        let targetSpace = arguments.getNumber("to").map(Int.init)
+        let targetSpace = try arguments.validatedInt("to")
 
         if toCurrent, targetSpace != nil {
             throw SpaceActionValidationError("Cannot specify both 'to_current' and 'to' parameters")
@@ -148,10 +150,10 @@ public struct SpaceTool: MCPTool {
                 "Move-window action requires either 'to' (space number) or 'to_current' parameter")
         }
 
-        let request = MoveWindowRequest(
+        let request = try MoveWindowRequest(
             appName: appName,
             windowTitle: arguments.getString("window_title"),
-            windowIndex: arguments.getInt("window_index"),
+            windowIndex: arguments.validatedInt("window_index"),
             targetSpaceNumber: targetSpace,
             toCurrent: toCurrent,
             follow: arguments.getBool("follow") ?? false)

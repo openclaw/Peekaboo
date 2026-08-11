@@ -190,6 +190,9 @@ public struct MCPToolContext: @unchecked Sendable {
         tool: any MCPTool,
         arguments: ToolArguments) async throws -> ToolResponse
     {
+        if let rejection = MCPToolArgumentValidator.rejection(tool: tool, arguments: arguments) {
+            return rejection
+        }
         await UISnapshotManager.shared.synchronizeImplicitLatestInvalidationWatermark(
             self.snapshots.effectiveImplicitLatestInvalidationWatermark)
         let effect = MCPToolSnapshotMutationPolicy.effect(toolName: tool.name, arguments: arguments)

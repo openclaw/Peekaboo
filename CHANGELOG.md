@@ -15,6 +15,7 @@
 - Reuse two-second, owner-host-local ScreenCaptureKit exact-window screenshot plans without caching pixels, revalidating process generation, window receipt, display topology, and scale around every capture while exposing miss/hit generation diagnostics.
 
 ### Fixed
+- Reject non-finite, fractional, and overflowing MCP numeric arguments before dispatch, and expose integer-shaped delays, durations, counts, process IDs, window selectors, and Space targets as integers in tool schemas.
 - Preserve negative numeric option values through Commander parsing so command-owned range validation reports them accurately instead of misclassifying them as short flags.
 - Reject invalid live/action capture cadence instead of silently clamping or trapping, apply post-motion timing with a monotonic deadline, and report sampled throughput, capture failures, diff-filtered frames, and retained throughput separately from artifact postprocessing.
 - Keep remote `window close` background-only by default, matching local execution, and require explicit foreground consent before routing a close through focus or global-input fallbacks.

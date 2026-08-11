@@ -39,12 +39,8 @@ extension MoveTool {
         }
         let smooth = profile == .human ? true : (arguments.getBool("smooth") ?? false)
 
-        let durationValue = arguments.getNumber("duration")
-        let stepsValue = arguments.getNumber("steps")
-        let durationProvided = arguments.getValue(for: "duration") != nil
-        let stepsProvided = arguments.getValue(for: "steps") != nil
-        let durationOverride = durationProvided ? durationValue.map(Int.init) : nil
-        let stepsOverride = stepsProvided ? stepsValue.map(Int.init) : nil
+        let durationOverride = try arguments.validatedInt("duration")
+        let stepsOverride = try arguments.validatedInt("steps")
 
         if smooth, profile == .linear {
             let durationToValidate = durationOverride ?? 500

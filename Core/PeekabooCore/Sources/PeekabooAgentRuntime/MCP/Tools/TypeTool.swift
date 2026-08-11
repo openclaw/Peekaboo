@@ -34,12 +34,12 @@ public struct TypeTool: MCPTool {
                 "snapshot": SchemaBuilder.string(
                     description: "Optional. Snapshot ID from `see` or `inspect_ui`. " +
                         "When `on` is omitted, the snapshot process is the background typing target."),
-                "delay": SchemaBuilder.number(
+                "delay": SchemaBuilder.integer(
                     description: "Optional. Delay between keystrokes in milliseconds (linear profile). Default: 0.",
                     default: 0),
                 "profile": SchemaBuilder.string(
                     description: "Optional. Typing profile: linear (default) or human."),
-                "wpm": SchemaBuilder.number(
+                "wpm": SchemaBuilder.integer(
                     description: "Optional. Human typing speed (80-220 WPM). Overrides delay when set."),
                 "clear": SchemaBuilder.boolean(
                     description: "Optional. Clear the field before typing (Cmd+A, Delete).",
@@ -49,13 +49,13 @@ public struct TypeTool: MCPTool {
                     default: false),
                 "app": SchemaBuilder.string(
                     description: "Optional. Target app name/bundle ID, or 'PID:<n>' for background typing."),
-                "pid": SchemaBuilder.number(
+                "pid": SchemaBuilder.integer(
                     description: "Optional. Target process ID for background typing when no element snapshot is used."),
-                "window_id": SchemaBuilder.number(description: "Optional. Window ID; requires foreground=true."),
+                "window_id": SchemaBuilder.integer(description: "Optional. Window ID; requires foreground=true."),
                 "window_title": SchemaBuilder
                     .string(description: "Optional. Window title (substring match); requires foreground=true."),
                 "window_index": SchemaBuilder
-                    .number(description: "Optional. Window index (0-based); requires app/pid and foreground=true."),
+                    .integer(description: "Optional. Window index (0-based); requires app/pid and foreground=true."),
             ],
             required: [])
     }
@@ -102,20 +102,20 @@ public struct TypeTool: MCPTool {
     }
 
     private func parseRequest(arguments: ToolArguments) throws -> TypeRequest {
-        let wordsPerMinute = arguments.getNumber("wpm").map { Int($0) }
+        let wordsPerMinute = try arguments.validatedInt("wpm")
         let profile = try self.parseProfile(arguments.getString("profile"), wordsPerMinute: wordsPerMinute)
         let target = try MCPInteractionTarget(
             app: arguments.getString("app"),
-            pid: arguments.getInt("pid"),
+            pid: arguments.validatedInt("pid"),
             windowTitle: arguments.getString("window_title"),
-            windowIndex: arguments.getInt("window_index"),
-            windowId: arguments.getInt("window_id"))
+            windowIndex: arguments.validatedInt("window_index"),
+            windowId: arguments.validatedInt("window_id"))
 
-        let request = TypeRequest(
+        let request = try TypeRequest(
             text: arguments.getString("text"),
             elementId: arguments.getString("on"),
             snapshotId: arguments.getString("snapshot"),
-            delay: Int(arguments.getNumber("delay") ?? 0),
+            delay: arguments.validatedInt("delay") ?? 0,
             profile: profile,
             wordsPerMinute: wordsPerMinute,
             clearField: arguments.getBool("clear") ?? false,

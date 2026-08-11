@@ -35,10 +35,10 @@ public struct ScrollTool: MCPTool {
                 "snapshot": SchemaBuilder.string(
                     description: "Optional. Snapshot ID from `see` or `inspect_ui`. " +
                         "Uses latest snapshot if not specified."),
-                "amount": SchemaBuilder.number(
+                "amount": SchemaBuilder.integer(
                     description: "Optional. Number of scroll ticks/lines. Default: 3.",
                     default: 3),
-                "delay": SchemaBuilder.number(
+                "delay": SchemaBuilder.integer(
                     description: "Optional. Foreground-only delay between scroll ticks in milliseconds. Default: 0.",
                     default: 0),
                 "smooth": SchemaBuilder.boolean(
@@ -98,7 +98,7 @@ public struct ScrollTool: MCPTool {
             throw ScrollToolValidationError("Invalid direction. Must be one of: up, down, left, right")
         }
 
-        let amount = Int(arguments.getNumber("amount") ?? 3)
+        let amount = try arguments.validatedInt("amount") ?? 3
         guard amount > 0 else {
             throw ScrollToolValidationError("Amount must be greater than 0")
         }
@@ -108,7 +108,7 @@ public struct ScrollTool: MCPTool {
 
         let foreground = arguments.getBool("foreground") ?? false
         let elementId = arguments.getString("on")
-        let delay = Int(arguments.getNumber("delay") ?? 0)
+        let delay = try arguments.validatedInt("delay") ?? 0
         let smooth = arguments.getBool("smooth") ?? false
         guard delay >= 0 else {
             throw ScrollToolValidationError("Delay must be zero or greater")

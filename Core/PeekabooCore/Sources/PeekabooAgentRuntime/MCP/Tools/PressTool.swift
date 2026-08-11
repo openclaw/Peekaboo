@@ -83,9 +83,9 @@ public struct PressTool: MCPTool {
     public func execute(arguments: ToolArguments) async throws -> ToolResponse {
         do {
             let chords = try Self.parseChords(arguments: arguments)
-            let count = arguments.getInt("count") ?? 1
-            let delay = arguments.getInt("delay") ?? 100
-            let hold = arguments.getInt("hold") ?? 50
+            let count = try arguments.validatedInt("count") ?? 1
+            let delay = try arguments.validatedInt("delay") ?? 100
+            let hold = try arguments.validatedInt("hold") ?? 50
             guard (1...100).contains(count) else {
                 return ToolResponse.error("count must be between 1 and 100")
             }
@@ -99,10 +99,10 @@ public struct PressTool: MCPTool {
             let foreground = arguments.getBool("foreground") == true
             let target = try MCPInteractionTarget(
                 app: arguments.getString("app"),
-                pid: arguments.getInt("pid"),
+                pid: arguments.validatedInt("pid"),
                 windowTitle: arguments.getString("window_title"),
-                windowIndex: arguments.getInt("window_index"),
-                windowId: arguments.getInt("window_id"))
+                windowIndex: arguments.validatedInt("window_index"),
+                windowId: arguments.validatedInt("window_id"))
             let resolvedWindowTitle = try await target.resolveWindowTitleIfNeeded(windows: self.context.windows)
             let targetIdentity = foreground ? nil : try await target.requireBackgroundProcessIdentity(
                 applications: self.context.applications,

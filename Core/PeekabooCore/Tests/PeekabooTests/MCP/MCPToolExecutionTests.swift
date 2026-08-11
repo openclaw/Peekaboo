@@ -21,7 +21,7 @@ struct MCPToolExecutionTests {
         try await MCPToolTestHelpers.withContext {
             let tool = SleepTool()
             // Use a shorter duration for testing
-            let args = ToolArguments(raw: ["duration": 0.01])
+            let args = ToolArguments(raw: ["duration": 1])
 
             let start = Date()
             let response = try await tool.execute(arguments: args)
@@ -1694,7 +1694,7 @@ struct MCPToolIntegrationTests {
             let permissionsTool = PermissionsTool()
             let appTool = AppTool()
 
-            async let sleep = sleepTool.execute(arguments: ToolArguments(raw: ["duration": 0.1]))
+            async let sleep = sleepTool.execute(arguments: ToolArguments(raw: ["duration": 1]))
             async let permissions = permissionsTool.execute(arguments: ToolArguments(raw: [:]))
             async let list = appTool.execute(arguments: ToolArguments(raw: ["action": "list"]))
 
