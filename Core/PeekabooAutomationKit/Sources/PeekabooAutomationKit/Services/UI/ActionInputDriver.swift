@@ -58,40 +58,31 @@ extension ActionInputError: LocalizedError {
     }
 }
 
-struct ActionInputResult: Equatable {
-    var actionName: String?
-    var anchorPoint: CGPoint?
-    var elementRole: String?
-
-    init(
-        actionName: String? = nil,
-        anchorPoint: CGPoint? = nil,
-        elementRole: String? = nil)
-    {
-        self.actionName = actionName
-        self.anchorPoint = anchorPoint
-        self.elementRole = elementRole
-    }
-}
-
 @MainActor
 protocol ActionInputDriving: Sendable {
-    func tryClick(element: AutomationElement) throws -> ActionInputResult
-    func tryRightClick(element: any AutomationElementRepresenting) async throws -> ActionInputResult
+    func tryClick(element: AutomationElement) throws -> UIInputExecutionReceipt.Action
+    func tryRightClick(element: any AutomationElementRepresenting) async throws -> UIInputExecutionReceipt.Action
     func tryScroll(
         element: AutomationElement,
         direction: PeekabooFoundation.ScrollDirection,
-        pages: Int) throws -> ActionInputResult
-    func trySetText(element: AutomationElement, text: String, replace: Bool) throws -> ActionInputResult
-    func tryHotkey(application: NSRunningApplication, keys: [String]) throws -> ActionInputResult
-    func trySetValue(element: AutomationElement, value: UIElementValue) throws -> ActionInputResult
-    func tryPerformAction(element: AutomationElement, actionName: String) throws -> ActionInputResult
+        pages: Int) throws -> UIInputExecutionReceipt.Action
+    func trySetText(element: AutomationElement, text: String, replace: Bool) throws -> UIInputExecutionReceipt.Action
+    func tryHotkey(application: NSRunningApplication, keys: [String]) throws -> UIInputExecutionReceipt.Action
+    func trySetValue(element: AutomationElement, value: UIElementValue) throws -> UIInputExecutionReceipt.Action
+    func tryPerformAction(element: AutomationElement, actionName: String) throws -> UIInputExecutionReceipt.Action
 }
 
 /// Accessibility action implementation for action-first UI input.
 @MainActor
 struct ActionInputDriver: ActionInputDriving {
-    func tryClick(element: AutomationElement) throws -> ActionInputResult {
+    private static let accessibilityActionDelivery = DesktopActionOutcome.Delivery(
+        mechanism: .accessibilityAction,
+        mode: .background)
+    private static let accessibilityValueDelivery = DesktopActionOutcome.Delivery(
+        mechanism: .accessibilityValue,
+        mode: .background)
+
+    func tryClick(element: AutomationElement) throws -> UIInputExecutionReceipt.Action {
         do {
             return try self.performAction(AXActionNames.kAXPressAction, on: element)
         } catch let error as ActionInputError
@@ -106,7 +97,7 @@ struct ActionInputDriver: ActionInputDriving {
         }
     }
 
-    func tryRightClick(element: any AutomationElementRepresenting) async throws -> ActionInputResult {
+    func tryRightClick(element: any AutomationElementRepresenting) async throws -> UIInputExecutionReceipt.Action {
         do {
             return try await self.performShowMenuAction(on: element)
         } catch ActionInputError.targetUnavailable {
@@ -121,50 +112,51 @@ struct ActionInputDriver: ActionInputDriving {
     /// dismissed. Awaiting it deadlocks the caller (and blocks a bridge host's main actor) until
     /// the client times out even though the menu is visibly open. The action is therefore issued
     /// from a detached thread; if it is still running after a short grace period, the menu is
-    /// considered open and the right-click reports success.
+    /// considered accepted but unverified and the right-click returns without blocking.
     private func performShowMenuAction(on element: any AutomationElementRepresenting) async throws
-        -> ActionInputResult
+        -> UIInputExecutionReceipt.Action
     {
         // Attribute reads happen before the action while the target app is still responsive.
-        let result = ActionInputResult(
-            actionName: AXActionNames.kAXShowMenuAction,
-            anchorPoint: element.anchorPoint,
-            elementRole: element.role)
+        let anchorPoint = element.anchorPoint
+        let elementRole = element.role
 
         guard let axElement = element.underlyingAXElement else {
             // In-memory test elements have no AX identity and cannot block; act synchronously.
-            _ = try self.performAction(AXActionNames.kAXShowMenuAction, on: element)
-            return result
+            return try self.performAction(AXActionNames.kAXShowMenuAction, on: element)
         }
 
-        let outcome = await DetachedAXActionRunner.perform(
-            action: AXActionNames.kAXShowMenuAction,
-            on: axElement,
-            gracePeriod: DetachedAXActionRunner.showMenuGracePeriod)
-        switch outcome {
-        case .completed(.success), .stillRunning:
-            return result
-        case let .completed(axError):
-            throw Self.classify(axError)
+        do {
+            let outcome = try await DetachedAXActionRunner.perform(
+                action: AXActionNames.kAXShowMenuAction,
+                on: axElement,
+                gracePeriod: DetachedAXActionRunner.showMenuGracePeriod)
+            return UIInputExecutionReceipt.Action(
+                outcome: outcome,
+                actionName: AXActionNames.kAXShowMenuAction,
+                anchorPoint: anchorPoint,
+                elementRole: elementRole)
+        } catch {
+            throw Self.classify(error)
         }
     }
 
     func tryScroll(
         element: AutomationElement,
         direction: PeekabooFoundation.ScrollDirection,
-        pages: Int) throws -> ActionInputResult
+        pages: Int) throws -> UIInputExecutionReceipt.Action
     {
         try self.performScrollActions(element: element, direction: direction, pages: pages)
     }
 
-    func trySetText(element: AutomationElement, text: String, replace: Bool) throws -> ActionInputResult {
+    func trySetText(element: AutomationElement, text: String, replace: Bool) throws
+    -> UIInputExecutionReceipt.Action {
         guard replace else {
             throw ActionInputError.unsupported(.attributeUnsupported)
         }
         return try self.trySetValue(element: element, value: .string(text))
     }
 
-    func tryHotkey(application: NSRunningApplication, keys: [String]) throws -> ActionInputResult {
+    func tryHotkey(application: NSRunningApplication, keys: [String]) throws -> UIInputExecutionReceipt.Action {
         let chord = try MenuHotkeyChord(keys: keys)
         let appElement = AXApp(application).element
         guard let menuBar = appElement.menuBarWithTimeout(timeout: 1.0).map(AutomationElement.init) else {
@@ -178,11 +170,11 @@ struct ActionInputDriver: ActionInputDriving {
         return try self.performAction(AXActionNames.kAXPressAction, on: menuItem)
     }
 
-    func trySetValue(element: AutomationElement, value: UIElementValue) throws -> ActionInputResult {
+    func trySetValue(element: AutomationElement, value: UIElementValue) throws -> UIInputExecutionReceipt.Action {
         try self.setValue(value, on: element)
     }
 
-    func tryPerformAction(element: AutomationElement, actionName: String) throws -> ActionInputResult {
+    func tryPerformAction(element: AutomationElement, actionName: String) throws -> UIInputExecutionReceipt.Action {
         try self.performAction(actionName, on: element)
     }
 
@@ -265,7 +257,7 @@ struct ActionInputDriver: ActionInputDriving {
     }
 
     private func performAction(_ actionName: String, on element: any AutomationElementRepresenting)
-        throws -> ActionInputResult
+        throws -> UIInputExecutionReceipt.Action
     {
         guard element.supportsAction(actionName) else {
             throw ActionInputError.unsupported(.actionUnsupported)
@@ -273,7 +265,10 @@ struct ActionInputDriver: ActionInputDriving {
 
         do {
             try element.performAutomationAction(actionName)
-            return ActionInputResult(
+            return UIInputExecutionReceipt.Action(
+                outcome: .dispatchedUnverified(
+                    delivery: Self.accessibilityActionDelivery,
+                    evidence: .deliveryAccepted),
                 actionName: actionName,
                 anchorPoint: element.anchorPoint,
                 elementRole: element.role)
@@ -282,10 +277,14 @@ struct ActionInputDriver: ActionInputDriving {
         }
     }
 
-    private func focusForClick(_ element: any AutomationElementRepresenting) throws -> ActionInputResult {
+    private func focusForClick(_ element: any AutomationElementRepresenting) throws
+    -> UIInputExecutionReceipt.Action {
         do {
             try element.setAutomationFocused(true)
-            return ActionInputResult(
+            return UIInputExecutionReceipt.Action(
+                outcome: .dispatchedUnverified(
+                    delivery: Self.accessibilityValueDelivery,
+                    evidence: .deliveryAccepted),
                 actionName: AXAttributeNames.kAXFocusedAttribute,
                 anchorPoint: element.anchorPoint,
                 elementRole: element.role)
@@ -295,7 +294,7 @@ struct ActionInputDriver: ActionInputDriving {
     }
 
     private func setValue(_ value: UIElementValue, on element: any AutomationElementRepresenting)
-        throws -> ActionInputResult
+        throws -> UIInputExecutionReceipt.Action
     {
         if let rejectionReason = Self.setValueRejectionReason(
             role: element.role,
@@ -309,7 +308,8 @@ struct ActionInputDriver: ActionInputDriving {
         do {
             if !element.isValueSettable, element.isSelectedSettable {
                 let requested = try Self.booleanValue(value, role: element.role)
-                if element.selectedValue != requested {
+                let alreadyMatched = element.selectedValue == requested
+                if !alreadyMatched {
                     try element.setAutomationSelected(requested)
                 }
                 guard element.selectedValue == requested else {
@@ -318,14 +318,19 @@ struct ActionInputDriver: ActionInputDriving {
                             "This control may require input events; click or focus it, then use targeted typing, " +
                             "or retry with explicit foreground delivery.")
                 }
-                return ActionInputResult(
+                let outcome: DesktopActionOutcome = alreadyMatched
+                    ? .confirmedNoChange()
+                    : .confirmedChange(delivery: Self.accessibilityValueDelivery)
+                return UIInputExecutionReceipt.Action(
+                    outcome: outcome,
                     actionName: kAXSelectedAttribute as String,
                     anchorPoint: element.anchorPoint,
                     elementRole: element.role)
             }
 
             let requested = try Self.coerceValue(value, currentValue: element.value, role: element.role)
-            if !Self.value(element.value, matches: requested) {
+            let alreadyMatched = Self.value(element.value, matches: requested)
+            if !alreadyMatched {
                 try element.setAutomationValue(requested)
             }
             guard Self.value(element.value, matches: requested) else {
@@ -334,7 +339,11 @@ struct ActionInputDriver: ActionInputDriving {
                         "This control may require input events; click or focus it, then use targeted typing, " +
                         "or retry with explicit foreground delivery.")
             }
-            return ActionInputResult(
+            let outcome: DesktopActionOutcome = alreadyMatched
+                ? .confirmedNoChange()
+                : .confirmedChange(delivery: Self.accessibilityValueDelivery)
+            return UIInputExecutionReceipt.Action(
+                outcome: outcome,
                 actionName: AXActionNames.kAXSetValueAction,
                 anchorPoint: element.anchorPoint,
                 elementRole: element.role)
@@ -527,7 +536,7 @@ struct ActionInputDriver: ActionInputDriving {
     private func performScrollActions(
         element: any AutomationElementRepresenting,
         direction: PeekabooFoundation.ScrollDirection,
-        pages: Int) throws -> ActionInputResult
+        pages: Int) throws -> UIInputExecutionReceipt.Action
     {
         do {
             return try self.performPageScrollActions(
@@ -546,7 +555,7 @@ struct ActionInputDriver: ActionInputDriving {
     private func performPageScrollActions(
         element: any AutomationElementRepresenting,
         direction: PeekabooFoundation.ScrollDirection,
-        pages: Int) throws -> ActionInputResult
+        pages: Int) throws -> UIInputExecutionReceipt.Action
     {
         let actions = self.scrollActionNames(for: direction)
         var lastError: ActionInputError?
@@ -573,7 +582,10 @@ struct ActionInputDriver: ActionInputDriving {
             }
         }
 
-        return ActionInputResult(
+        return UIInputExecutionReceipt.Action(
+            outcome: .dispatchedUnverified(
+                delivery: Self.accessibilityActionDelivery,
+                evidence: .deliveryAccepted),
             actionName: performedActionName,
             anchorPoint: element.anchorPoint,
             elementRole: element.role)
@@ -586,7 +598,7 @@ struct ActionInputDriver: ActionInputDriving {
         element: any AutomationElementRepresenting,
         direction: PeekabooFoundation.ScrollDirection,
         pages: Int,
-        pageActionError: ActionInputError) throws -> ActionInputResult
+        pageActionError: ActionInputError) throws -> UIInputExecutionReceipt.Action
     {
         guard let scrollBar = self.findScrollBar(in: element, direction: direction) else {
             throw Self.scrollFallbackError(from: pageActionError)
@@ -600,11 +612,16 @@ struct ActionInputDriver: ActionInputDriving {
         }
         if scrollBar.supportsAction(actionName) {
             do {
-                var result = ActionInputResult()
                 for _ in 0..<max(1, pages) {
-                    result = try self.performAction(actionName, on: scrollBar)
+                    _ = try self.performAction(actionName, on: scrollBar)
                 }
-                return result
+                return UIInputExecutionReceipt.Action(
+                    outcome: .dispatchedUnverified(
+                        delivery: Self.accessibilityActionDelivery,
+                        evidence: .deliveryAccepted),
+                    actionName: actionName,
+                    anchorPoint: scrollBar.anchorPoint,
+                    elementRole: scrollBar.role)
             } catch let error as ActionInputError where Self.shouldContinueTryingScrollAction(after: error) {
                 // Some controls advertise increment/decrement but reject invocation. A settable AXValue
                 // remains a native background path and is verified below.
@@ -636,10 +653,13 @@ struct ActionInputDriver: ActionInputDriving {
             maximumValue,
             max(minimumValue, currentValue + signedStep * Double(max(1, pages))))
 
-        do {
-            try scrollBar.setAutomationValue(.double(requestedValue))
-        } catch {
-            throw Self.classify(error)
+        let alreadyMatched = abs(requestedValue - currentValue) < 1e-9
+        if !alreadyMatched {
+            do {
+                try scrollBar.setAutomationValue(.double(requestedValue))
+            } catch {
+                throw Self.classify(error)
+            }
         }
 
         if requestedValue != currentValue,
@@ -649,7 +669,11 @@ struct ActionInputDriver: ActionInputDriving {
             throw ActionInputError.failed("Accessibility scroll bar value did not change")
         }
 
-        return ActionInputResult(
+        let outcome: DesktopActionOutcome = alreadyMatched
+            ? .confirmedNoChange()
+            : .confirmedChange(delivery: Self.accessibilityValueDelivery)
+        return UIInputExecutionReceipt.Action(
+            outcome: outcome,
             actionName: "AXSetValue",
             anchorPoint: scrollBar.anchorPoint,
             elementRole: scrollBar.role)
@@ -901,7 +925,7 @@ private struct MenuHotkeyChord: Equatable {
 
 #if DEBUG
 extension ActionInputDriver {
-    func tryClickForTesting(element: any AutomationElementRepresenting) throws -> ActionInputResult {
+    func tryClickForTesting(element: any AutomationElementRepresenting) throws -> UIInputExecutionReceipt.Action {
         do {
             return try self.performAction(AXActionNames.kAXPressAction, on: element)
         } catch let error as ActionInputError
@@ -918,7 +942,7 @@ extension ActionInputDriver {
 
     func trySetValueForTesting(
         element: any AutomationElementRepresenting,
-        value: UIElementValue) throws -> ActionInputResult
+        value: UIElementValue) throws -> UIInputExecutionReceipt.Action
     {
         try self.setValue(value, on: element)
     }
@@ -926,21 +950,21 @@ extension ActionInputDriver {
     func tryScrollForTesting(
         element: any AutomationElementRepresenting,
         direction: PeekabooFoundation.ScrollDirection,
-        pages: Int) throws -> ActionInputResult
+        pages: Int) throws -> UIInputExecutionReceipt.Action
     {
         try self.performScrollActions(element: element, direction: direction, pages: pages)
     }
 
     func tryPerformActionForTesting(
         element: any AutomationElementRepresenting,
-        actionName: String) throws -> ActionInputResult
+        actionName: String) throws -> UIInputExecutionReceipt.Action
     {
         try self.performAction(actionName, on: element)
     }
 
     func tryHotkeyForTesting(
         keys: [String],
-        menuBar: any AutomationElementRepresenting) throws -> ActionInputResult
+        menuBar: any AutomationElementRepresenting) throws -> UIInputExecutionReceipt.Action
     {
         let chord = try MenuHotkeyChord(keys: keys)
         guard let menuItem = self.findMenuItem(matching: chord, in: menuBar) else {

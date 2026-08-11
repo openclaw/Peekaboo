@@ -55,7 +55,7 @@ public final class ScrollService {
     /// Perform scroll operation
     @discardableResult
     @MainActor
-    public func scroll(_ request: ScrollRequest) async throws -> UIInputExecutionResult {
+    public func scroll(_ request: ScrollRequest) async throws -> UIInputExecutionReceipt {
         let description =
             "Scroll requested - direction: \(request.direction), amount: \(request.amount), " +
             "smooth: \(request.smooth)"
@@ -73,6 +73,11 @@ public final class ScrollService {
                 },
                 synth: {
                     try await self.performSyntheticScroll(request)
+                    return .dispatchedUnverified(
+                        delivery: DesktopActionOutcome.Delivery(
+                            mechanism: .globalEvents,
+                            mode: .foreground),
+                        evidence: .deliveryAccepted)
                 })
             self.logger.debug("Scroll completed via \(result.path.rawValue, privacy: .public)")
             return result
@@ -97,7 +102,7 @@ public final class ScrollService {
 
     private func performActionScroll(
         _ request: ScrollRequest,
-        strategy: UIInputStrategy) async throws -> ActionInputResult
+        strategy: UIInputStrategy) async throws -> UIInputExecutionReceipt.Action
     {
         let detectionResult: ElementDetectionResult?
         if let snapshotId = request.snapshotId {

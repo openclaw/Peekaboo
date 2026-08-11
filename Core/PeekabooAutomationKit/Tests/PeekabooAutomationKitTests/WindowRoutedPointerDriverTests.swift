@@ -63,7 +63,11 @@ struct WindowRoutedPointerDriverTests {
             targetProcessIdentifier: receipt.identity.ownerProcessIdentifier,
             targetWindowID: CGWindowID(receipt.identity.windowID))
 
-        #expect(outcome == .dispatchedUnverifiable(eventCount: 3))
+        #expect(outcome.state == .dispatchedUnverified)
+        #expect(outcome.evidence == .deliveryAccepted)
+        #expect(outcome.delivery == .init(mechanism: .windowTargetedEvents, mode: .background))
+        #expect(outcome.dispatchState.unitCount?.rawValue == 3)
+        #expect(!outcome.isConfirmed)
         #expect(specifications.map(\.type) == [.mouseMoved, .rightMouseDown, .rightMouseUp])
         #expect(specifications.map(\.clickState) == [0, 1, 1])
         #expect(specifications.map(\.buttonNumber) == [0, 1, 1])
@@ -110,7 +114,10 @@ struct WindowRoutedPointerDriverTests {
             targetProcessIdentifier: receipt.identity.ownerProcessIdentifier,
             targetWindowID: CGWindowID(receipt.identity.windowID))
 
-        #expect(outcome == .dispatchedUnverifiable(eventCount: 5))
+        #expect(outcome.state == .dispatchedUnverified)
+        #expect(outcome.evidence == .deliveryAccepted)
+        #expect(outcome.dispatchState.unitCount?.rawValue == 5)
+        #expect(!outcome.isConfirmed)
         #expect(skyLightPosts == 5)
         #expect(publicPosts == 0)
     }

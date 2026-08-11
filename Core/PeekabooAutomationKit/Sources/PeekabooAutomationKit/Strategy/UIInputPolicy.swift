@@ -1,4 +1,3 @@
-import CoreGraphics
 import Foundation
 
 /// Per-app overrides for action/synthesis strategy selection.
@@ -107,40 +106,5 @@ public struct UIInputPolicy: Codable, Equatable, Sendable {
         case .performAction:
             return self.performAction ?? self.defaultStrategy
         }
-    }
-}
-
-/// Metadata emitted by verb services after choosing an input path.
-public struct UIInputExecutionResult: Codable, Equatable, Sendable {
-    public var verb: UIInputVerb
-    public var strategy: UIInputStrategy
-    public var path: UIInputExecutionPath
-    public var fallbackReason: UIInputFallbackReason?
-    public var bundleIdentifier: String?
-    public var elementRole: String?
-    public var actionName: String?
-    public var anchorPoint: CGPoint?
-    public var duration: TimeInterval
-
-    public init(
-        verb: UIInputVerb,
-        strategy: UIInputStrategy,
-        path: UIInputExecutionPath,
-        fallbackReason: UIInputFallbackReason? = nil,
-        bundleIdentifier: String? = nil,
-        elementRole: String? = nil,
-        actionName: String? = nil,
-        anchorPoint: CGPoint? = nil,
-        duration: TimeInterval = 0)
-    {
-        self.verb = verb
-        self.strategy = strategy
-        self.path = path
-        self.fallbackReason = fallbackReason
-        self.bundleIdentifier = bundleIdentifier
-        self.elementRole = elementRole
-        self.actionName = actionName
-        self.anchorPoint = anchorPoint
-        self.duration = duration
     }
 }

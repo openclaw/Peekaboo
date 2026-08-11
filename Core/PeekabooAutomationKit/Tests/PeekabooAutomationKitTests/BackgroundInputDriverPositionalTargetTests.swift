@@ -213,8 +213,11 @@ struct BackgroundInputDriverPositionalTargetTests {
 
         #expect(resolved?.action == .select)
         #expect((resolved?.element as? PositionalMockElement) === row)
-        try await BackgroundInputDriver.performPositionalClickAction(.select, on: row)
+        let outcome = try await BackgroundInputDriver.performPositionalClickAction(.select, on: row)
         #expect(row.setSelectedValues == [true])
+        #expect(outcome.state == .dispatchedUnverified)
+        #expect(outcome.delivery == .init(mechanism: .accessibilityValue, mode: .background))
+        #expect(!outcome.isConfirmed)
     }
 
     @Test
@@ -316,19 +319,37 @@ struct BackgroundInputDriverPositionalTargetTests {
 
     @Test
     func `timed out press is a failure because delivery is unverified`() {
-        #expect(throws: (any Error).self) {
-            try BackgroundInputDriver.validateDetachedActionOutcome(
-                .stillRunning,
+        let outcome = DesktopActionOutcome.dispatchedUnverified(
+            delivery: .init(mechanism: .accessibilityAction, mode: .background),
+            evidence: .operationStillRunning)
+
+        do {
+            _ = try BackgroundInputDriver.validateDetachedActionOutcome(
+                outcome,
                 actionName: "AXPress")
+            Issue.record("Expected an unverified press failure")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome == outcome)
+            #expect(failure.outcome.evidence == .operationStillRunning)
+            #expect(!failure.outcome.isConfirmed)
+        } catch {
+            Issue.record("Unexpected error: \(error)")
         }
         #expect(BackgroundInputDriver.unverifiedPressMessage.contains("synthOnly"))
     }
 
     @Test
     func `timed out show menu remains delivered`() throws {
-        try BackgroundInputDriver.validateDetachedActionOutcome(
-            .stillRunning,
+        let outcome = DesktopActionOutcome.dispatchedUnverified(
+            delivery: .init(mechanism: .accessibilityAction, mode: .background),
+            evidence: .operationStillRunning)
+
+        let validated = try BackgroundInputDriver.validateDetachedActionOutcome(
+            outcome,
             actionName: "AXShowMenu")
+
+        #expect(validated == outcome)
+        #expect(!validated.isConfirmed)
     }
 
     @Test

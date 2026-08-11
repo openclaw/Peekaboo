@@ -144,6 +144,9 @@ struct ActionInputDriverTests {
         let result = try ActionInputDriver().tryScrollForTesting(element: element, direction: .down, pages: 1)
 
         #expect(result.actionName == "AXScrollDownByPage")
+        #expect(result.outcome.state == .dispatchedUnverified)
+        #expect(result.outcome.evidence == .deliveryAccepted)
+        #expect(result.outcome.delivery == .init(mechanism: .accessibilityAction, mode: .background))
         #expect(element.performedActions == ["AXScrollDownByPage"])
     }
 
@@ -624,6 +627,8 @@ struct ActionInputDriverTests {
         let result = try ActionInputDriver().tryClickForTesting(element: element)
 
         #expect(element.performedActions == [AXActionNames.kAXPressAction])
+        #expect(result.outcome.state == .dispatchedUnverified)
+        #expect(result.outcome.evidence == .deliveryAccepted)
         #expect(result.anchorPoint == CGPoint(x: 25, y: 40))
         #expect(result.elementRole == AXRoleNames.kAXButtonRole)
     }
@@ -705,6 +710,9 @@ struct ActionInputDriverTests {
         let result = try ActionInputDriver().trySetValueForTesting(element: element, value: .string("hello"))
 
         #expect(element.setValues == [.string("hello")])
+        #expect(result.outcome.state == .confirmedChange)
+        #expect(result.outcome.evidence == .verifiedChange)
+        #expect(result.outcome.delivery == .init(mechanism: .accessibilityValue, mode: .background))
         #expect(result.actionName == AXActionNames.kAXSetValueAction)
     }
 
@@ -763,6 +771,8 @@ struct ActionInputDriverTests {
         let result = try ActionInputDriver().trySetValueForTesting(element: element, value: .string("0.75"))
 
         #expect(element.setValues.isEmpty)
+        #expect(result.outcome.state == .confirmedNoChange)
+        #expect(result.outcome.dispatchState == .none)
         #expect(result.actionName == AXActionNames.kAXSetValueAction)
     }
 
@@ -962,49 +972,53 @@ private final class RecordingActionInputDriver: ActionInputDriving {
         self.elementActionError = elementActionError
     }
 
-    func tryClick(element _: AutomationElement) throws -> ActionInputResult {
+    func tryClick(element _: AutomationElement) throws -> UIInputExecutionReceipt.Action {
         Issue.record("Action driver should not be called")
-        return ActionInputResult()
+        return UIInputExecutionReceipt.Action(outcome: .confirmedNoChange())
     }
 
-    func tryRightClick(element _: any AutomationElementRepresenting) async throws -> ActionInputResult {
+    func tryRightClick(element _: any AutomationElementRepresenting) async throws -> UIInputExecutionReceipt.Action {
         Issue.record("Action driver should not be called")
-        return ActionInputResult()
+        return UIInputExecutionReceipt.Action(outcome: .confirmedNoChange())
     }
 
     func tryScroll(
         element _: AutomationElement,
         direction _: PeekabooFoundation.ScrollDirection,
-        pages _: Int) throws -> ActionInputResult
+        pages _: Int) throws -> UIInputExecutionReceipt.Action
     {
         Issue.record("Action driver should not be called")
-        return ActionInputResult()
+        return UIInputExecutionReceipt.Action(outcome: .confirmedNoChange())
     }
 
-    func trySetText(element _: AutomationElement, text _: String, replace _: Bool) throws -> ActionInputResult {
+    func trySetText(element _: AutomationElement, text _: String, replace _: Bool) throws
+    -> UIInputExecutionReceipt.Action {
         Issue.record("Action driver should not be called")
-        return ActionInputResult()
+        return UIInputExecutionReceipt.Action(outcome: .confirmedNoChange())
     }
 
-    func tryHotkey(application _: NSRunningApplication, keys _: [String]) throws -> ActionInputResult {
+    func tryHotkey(application _: NSRunningApplication, keys _: [String]) throws
+    -> UIInputExecutionReceipt.Action {
         Issue.record("Action driver should not be called")
-        return ActionInputResult()
+        return UIInputExecutionReceipt.Action(outcome: .confirmedNoChange())
     }
 
-    func trySetValue(element _: AutomationElement, value _: UIElementValue) throws -> ActionInputResult {
+    func trySetValue(element _: AutomationElement, value _: UIElementValue) throws
+    -> UIInputExecutionReceipt.Action {
         if let elementActionError {
             throw elementActionError
         }
         Issue.record("Action driver should not be called")
-        return ActionInputResult()
+        return UIInputExecutionReceipt.Action(outcome: .confirmedNoChange())
     }
 
-    func tryPerformAction(element _: AutomationElement, actionName _: String) throws -> ActionInputResult {
+    func tryPerformAction(element _: AutomationElement, actionName _: String) throws
+    -> UIInputExecutionReceipt.Action {
         if let elementActionError {
             throw elementActionError
         }
         Issue.record("Action driver should not be called")
-        return ActionInputResult()
+        return UIInputExecutionReceipt.Action(outcome: .confirmedNoChange())
     }
 }
 

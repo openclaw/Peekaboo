@@ -5,6 +5,23 @@ import PeekabooFoundation
 
 /// Canonical deterministic builders for automation tests.
 public enum AutomationTestFixtures {
+    public static func uiActionReceipt(
+        outcome: DesktopActionOutcome = .dispatchedUnverified(
+            delivery: DesktopActionOutcome.Delivery(
+                mechanism: .accessibilityAction,
+                mode: .background),
+            evidence: .deliveryAccepted),
+        actionName: String? = nil,
+        anchorPoint: CGPoint? = nil,
+        elementRole: String? = nil) -> UIInputExecutionReceipt.Action
+    {
+        UIInputExecutionReceipt.Action(
+            outcome: outcome,
+            actionName: actionName,
+            anchorPoint: anchorPoint,
+            elementRole: elementRole)
+    }
+
     public static func processIdentity(
         processIdentifier: Int32 = 101,
         processStartIdentity: UInt64 = 1001) -> ApplicationProcessIdentity

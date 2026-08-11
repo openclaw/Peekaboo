@@ -5,15 +5,6 @@ import Darwin
 import Foundation
 import PeekabooFoundation
 
-/// Evidence returned after a window-routed pointer sequence has been queued.
-///
-/// `CGEventPostToPid` and `SLEventPostToPid` do not acknowledge application-level handling. A
-/// completed dispatch is therefore useful, but it must not be represented as proof that the
-/// control changed state.
-enum WindowRoutedPointerDeliveryOutcome: Equatable {
-    case dispatchedUnverifiable(eventCount: Int)
-}
-
 enum WindowRoutedPointerTransport: Equatable {
     case publicCGEvent
     case skyLight
@@ -120,7 +111,7 @@ struct WindowRoutedPointerDriver {
         targetProcessIdentifier: pid_t,
         targetWindowID: CGWindowID,
         expectedWindowIdentity: WindowMutationIdentity? = nil,
-        expectedWindowBounds: CGRect? = nil) async throws -> WindowRoutedPointerDeliveryOutcome
+        expectedWindowBounds: CGRect? = nil) async throws -> DesktopActionOutcome
     {
         guard button == .left || button == .right else {
             throw PeekabooError.serviceUnavailable(
@@ -206,7 +197,14 @@ struct WindowRoutedPointerDriver {
 
         try Self.checkCancellation(afterPosting: postedEventCount)
         try self.requireCurrentRoute(receipt, afterPosting: postedEventCount)
-        return .dispatchedUnverifiable(eventCount: postedEventCount)
+        guard let unitCount = DesktopActionOutcome.DispatchUnitCount(postedEventCount) else {
+            throw PeekabooError.operationError(
+                message: "Window-routed pointer delivery completed without posting an event")
+        }
+        return .dispatchedUnverified(
+            delivery: .init(mechanism: .windowTargetedEvents, mode: .background),
+            evidence: .deliveryAccepted,
+            unitCount: unitCount)
     }
 
     private func post(

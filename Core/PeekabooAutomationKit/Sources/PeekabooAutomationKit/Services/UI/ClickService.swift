@@ -40,25 +40,25 @@ import PeekabooFoundation
  * - Note: Part of UIAutomationService's specialized service architecture
  * - Since: PeekabooCore 1.0.0
  */
+private struct ExactWindowClickReceipt {
+    let identity: WindowMutationIdentity
+    let bounds: CGRect
+}
+
+private struct ClickMutationReceipt {
+    let processIdentity: ApplicationProcessIdentity?
+    let exactWindow: ExactWindowClickReceipt?
+}
+
+private struct SyntheticClickDestination {
+    let processIdentifier: pid_t?
+    let windowID: CGWindowID?
+    let exactWindowReceipt: ExactWindowClickReceipt?
+    let expectedProcessIdentity: ApplicationProcessIdentity?
+}
+
 @MainActor
 public final class ClickService {
-    fileprivate struct ExactWindowClickReceipt {
-        let identity: WindowMutationIdentity
-        let bounds: CGRect
-    }
-
-    private struct ClickMutationReceipt {
-        let processIdentity: ApplicationProcessIdentity?
-        let exactWindow: ExactWindowClickReceipt?
-    }
-
-    private struct SyntheticClickDestination {
-        let processIdentifier: pid_t?
-        let windowID: CGWindowID?
-        let exactWindowReceipt: ExactWindowClickReceipt?
-        let expectedProcessIdentity: ApplicationProcessIdentity?
-    }
-
     private let logger = Logger(subsystem: "boo.peekaboo.core", category: "ClickService")
     private let snapshotManager: any SnapshotManagerProtocol
     let inputPolicy: UIInputPolicy
@@ -104,7 +104,7 @@ public final class ClickService {
     @discardableResult
     @MainActor
     public func click(target: ClickTarget, clickType: ClickType, snapshotId: String?) async throws
-        -> UIInputExecutionResult
+        -> UIInputExecutionReceipt
     {
         try await self.click(
             target: target,
@@ -125,7 +125,7 @@ public final class ClickService {
         expectedProcessIdentity: ApplicationProcessIdentity? = nil,
         targetWindowID: Int? = nil,
         expectedWindowIdentity: WindowMutationIdentity? = nil,
-        expectedWindowBounds: CGRect? = nil) async throws -> UIInputExecutionResult
+        expectedWindowBounds: CGRect? = nil) async throws -> UIInputExecutionReceipt
     {
         self.logger.debug("Click requested - target: \(String(describing: target)), type: \(clickType)")
         try Self.validateExpectedProcessIdentity(
@@ -221,7 +221,7 @@ public final class ClickService {
         clickType: ClickType,
         snapshotId: String?,
         targetProcessIdentifier: pid_t?,
-        mutationReceipt: ClickMutationReceipt) async throws -> ActionInputResult
+        mutationReceipt: ClickMutationReceipt) async throws -> UIInputExecutionReceipt.Action
     {
         guard let element = try await self.resolveAutomationElement(
             target: target,
@@ -236,7 +236,7 @@ public final class ClickService {
         switch clickType {
         case .single:
             let valueBefore = element.intAttribute(AXAttributeNames.kAXValueAttribute)
-            let result: ActionInputResult = if targetProcessIdentifier != nil {
+            let result: UIInputExecutionReceipt.Action = if targetProcessIdentifier != nil {
                 try self.actionInputDriver.tryPerformAction(
                     element: element,
                     actionName: AXActionNames.kAXPressAction)
@@ -270,7 +270,7 @@ public final class ClickService {
         target: ClickTarget,
         clickType: ClickType,
         snapshotId: String?,
-        destination: SyntheticClickDestination) async throws
+        destination: SyntheticClickDestination) async throws -> DesktopActionOutcome
     {
         switch target {
         case let .elementId(id):
@@ -293,6 +293,18 @@ public final class ClickService {
                 snapshotId: snapshotId,
                 destination: destination)
         }
+
+        let isBackground = destination.processIdentifier != nil
+        let mechanism: DesktopActionOutcome.Delivery.Mechanism = if !isBackground {
+            .globalEvents
+        } else if clickType == .right || clickType == .double {
+            .windowTargetedEvents
+        } else {
+            .accessibilityAction
+        }
+        return .dispatchedUnverified(
+            delivery: .init(mechanism: mechanism, mode: isBackground ? .background : .foreground),
+            evidence: .deliveryAccepted)
     }
 
     private func resolveAutomationElement(

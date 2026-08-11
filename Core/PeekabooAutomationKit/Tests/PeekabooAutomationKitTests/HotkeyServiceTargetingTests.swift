@@ -1,6 +1,7 @@
 import AppKit
 import CoreGraphics
 import Darwin
+import PeekabooAutomationKitTestSupport
 import PeekabooFoundation
 import Testing
 @testable import PeekabooAutomationKit
@@ -336,7 +337,8 @@ struct HotkeyServiceTargetingTests {
 
     @Test func `action first targeted hotkey uses action driver when menu shortcut resolves`() async throws {
         var postedEvents: [(type: CGEventType, keyCode: Int64)] = []
-        let driver = RecordingHotkeyActionDriver(result: ActionInputResult(actionName: "AXPress"))
+        let driver = RecordingHotkeyActionDriver(
+            result: AutomationTestFixtures.uiActionReceipt(actionName: "AXPress"))
         let service = HotkeyService(
             inputPolicy: UIInputPolicy(defaultStrategy: .actionFirst),
             actionInputDriver: driver,
@@ -432,48 +434,58 @@ private struct PostedKeyboardEvent {
 
 @MainActor
 private final class RecordingHotkeyActionDriver: ActionInputDriving {
-    private let result: ActionInputResult?
+    private let result: UIInputExecutionReceipt.Action?
     private let error: ActionInputError?
     private(set) var hotkeyCalls: [[String]] = []
 
-    init(result: ActionInputResult? = nil, error: ActionInputError? = nil) {
+    init(result: UIInputExecutionReceipt.Action? = nil, error: ActionInputError? = nil) {
         self.result = result
         self.error = error
     }
 
-    func tryClick(element _: AutomationElement) throws -> ActionInputResult {
+    func tryClick(element _: AutomationElement) throws -> UIInputExecutionReceipt.Action {
         throw ActionInputError.unsupported(.actionUnsupported)
     }
 
-    func tryRightClick(element _: any AutomationElementRepresenting) async throws -> ActionInputResult {
+    func tryRightClick(element _: any AutomationElementRepresenting) async throws
+        -> UIInputExecutionReceipt.Action
+    {
         throw ActionInputError.unsupported(.actionUnsupported)
     }
 
     func tryScroll(
         element _: AutomationElement,
         direction _: ScrollDirection,
-        pages _: Int) throws -> ActionInputResult
+        pages _: Int) throws -> UIInputExecutionReceipt.Action
     {
         throw ActionInputError.unsupported(.actionUnsupported)
     }
 
-    func trySetText(element _: AutomationElement, text _: String, replace _: Bool) throws -> ActionInputResult {
+    func trySetText(element _: AutomationElement, text _: String, replace _: Bool) throws
+        -> UIInputExecutionReceipt.Action
+    {
         throw ActionInputError.unsupported(.attributeUnsupported)
     }
 
-    func tryHotkey(application _: NSRunningApplication, keys: [String]) throws -> ActionInputResult {
+    func tryHotkey(application _: NSRunningApplication, keys: [String]) throws
+        -> UIInputExecutionReceipt.Action
+    {
         self.hotkeyCalls.append(keys)
         if let error {
             throw error
         }
-        return self.result ?? ActionInputResult(actionName: "AXPress")
+        return self.result ?? AutomationTestFixtures.uiActionReceipt(actionName: "AXPress")
     }
 
-    func trySetValue(element _: AutomationElement, value _: UIElementValue) throws -> ActionInputResult {
+    func trySetValue(element _: AutomationElement, value _: UIElementValue) throws
+        -> UIInputExecutionReceipt.Action
+    {
         throw ActionInputError.unsupported(.valueNotSettable)
     }
 
-    func tryPerformAction(element _: AutomationElement, actionName _: String) throws -> ActionInputResult {
+    func tryPerformAction(element _: AutomationElement, actionName _: String) throws
+        -> UIInputExecutionReceipt.Action
+    {
         throw ActionInputError.unsupported(.actionUnsupported)
     }
 }

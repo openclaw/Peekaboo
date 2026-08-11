@@ -182,34 +182,45 @@ enum BackgroundInputDriver {
     private static func performDetachedAction(
         _ actionName: String,
         on element: any AutomationElementRepresenting,
-        gracePeriod: TimeInterval) async throws
+        gracePeriod: TimeInterval) async throws -> DesktopActionOutcome
     {
         guard let axElement = element.underlyingAXElement else {
             try element.performAutomationAction(actionName)
-            return
+            return .dispatchedUnverified(
+                delivery: .init(mechanism: .accessibilityAction, mode: .background),
+                evidence: .deliveryAccepted)
         }
 
-        let outcome = await DetachedAXActionRunner.perform(
-            action: actionName,
-            on: axElement,
-            gracePeriod: gracePeriod)
-        try self.validateDetachedActionOutcome(outcome, actionName: actionName)
+        do {
+            let outcome = try await DetachedAXActionRunner.perform(
+                action: actionName,
+                on: axElement,
+                gracePeriod: gracePeriod)
+            return try self.validateDetachedActionOutcome(outcome, actionName: actionName)
+        } catch let error as DesktopActionFailure {
+            throw error
+        } catch {
+            throw ActionInputDriver.classify(error)
+        }
     }
 
+    @discardableResult
     static func validateDetachedActionOutcome(
-        _ outcome: DetachedAXActionOutcome,
-        actionName: String) throws
+        _ outcome: DesktopActionOutcome,
+        actionName: String) throws -> DesktopActionOutcome
     {
-        switch outcome {
-        case .completed(.success):
-            return
-        case .stillRunning where actionName == "AXPress":
-            throw PeekabooError.serviceUnavailable(self.unverifiedPressMessage)
-        case .stillRunning:
-            return
-        case let .completed(axError):
-            throw ActionInputDriver.classify(axError)
+        if outcome.evidence == .operationStillRunning, actionName == "AXPress" {
+            guard let failure = DesktopActionFailure(
+                outcome: outcome,
+                message: self.unverifiedPressMessage,
+                hint: "Retry with explicit foreground synthetic input after observing the target state.")
+            else {
+                throw PeekabooError.operationError(
+                    message: "A confirmed accessibility press was incorrectly classified as unverified")
+            }
+            throw failure
         }
+        return outcome
     }
 
     static func typeCharacter(_ character: Character, targetProcessIdentifier: pid_t) throws {
@@ -851,23 +862,29 @@ extension BackgroundInputDriver {
     @MainActor
     static func performPositionalClickAction(
         _ action: PositionalClickAction,
-        on element: any AutomationElementRepresenting) async throws
+        on element: any AutomationElementRepresenting) async throws -> DesktopActionOutcome
     {
         switch action {
         case .press:
-            try await self.performDetachedAction(
+            return try await self.performDetachedAction(
                 AXActionNames.kAXPressAction,
                 on: element,
                 gracePeriod: DetachedAXActionRunner.pressGracePeriod)
         case .showMenu:
-            try await self.performDetachedAction(
+            return try await self.performDetachedAction(
                 AXActionNames.kAXShowMenuAction,
                 on: element,
                 gracePeriod: DetachedAXActionRunner.showMenuGracePeriod)
         case .select:
             try element.setAutomationSelected(true)
+            return .dispatchedUnverified(
+                delivery: .init(mechanism: .accessibilityValue, mode: .background),
+                evidence: .deliveryAccepted)
         case .focus:
             try element.setAutomationFocused(true)
+            return .dispatchedUnverified(
+                delivery: .init(mechanism: .accessibilityValue, mode: .background),
+                evidence: .deliveryAccepted)
         }
     }
 
@@ -944,7 +961,7 @@ extension BackgroundInputDriver {
         targetProcessIdentifier: pid_t,
         targetWindowID: CGWindowID? = nil,
         expectedWindowIdentity: WindowMutationIdentity? = nil,
-        expectedWindowBounds: CGRect? = nil) async throws -> WindowRoutedPointerDeliveryOutcome?
+        expectedWindowBounds: CGRect? = nil) async throws -> DesktopActionOutcome
     {
         guard targetProcessIdentifier > 0, self.isProcessAlive(targetProcessIdentifier) else {
             throw PeekabooError.invalidInput("Target process identifier is not running: \(targetProcessIdentifier)")
@@ -1015,8 +1032,7 @@ extension BackgroundInputDriver {
             try self.assertBelongsToTargetWindow(resolved.element, targetWindowID: targetWindowID, at: point)
         }
 
-        try await self.performPositionalClickAction(resolved.action, on: resolved.element)
-        return nil
+        return try await self.performPositionalClickAction(resolved.action, on: resolved.element)
     }
 }
 

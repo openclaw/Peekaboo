@@ -3,6 +3,7 @@ import ApplicationServices
 @preconcurrency import AXorcist
 import CoreGraphics
 import Foundation
+import PeekabooAutomationKitTestSupport
 import enum PeekabooFoundation.PeekabooError
 import enum PeekabooFoundation.ScrollDirection
 import Testing
@@ -1400,44 +1401,49 @@ private final class ClickSuccessfulActionInputDriver: ActionInputDriving {
         self.afterAction = afterAction
     }
 
-    func tryClick(element _: AutomationElement) throws -> ActionInputResult {
+    func tryClick(element _: AutomationElement) throws -> UIInputExecutionReceipt.Action {
         self.clickCount += 1
-        return ActionInputResult(actionName: "AXPress", anchorPoint: CGPoint(x: 70, y: 50), elementRole: "AXButton")
+        return AutomationTestFixtures.uiActionReceipt(
+            actionName: "AXPress",
+            anchorPoint: CGPoint(x: 70, y: 50),
+            elementRole: "AXButton")
     }
 
-    func tryRightClick(element _: any AutomationElementRepresenting) async throws -> ActionInputResult {
+    func tryRightClick(element _: any AutomationElementRepresenting) async throws
+        -> UIInputExecutionReceipt.Action
+    {
         self.rightClickCount += 1
-        return ActionInputResult(
+        return AutomationTestFixtures.uiActionReceipt(
             actionName: AXActionNames.kAXShowMenuAction,
             anchorPoint: CGPoint(x: 70, y: 50),
             elementRole: "AXButton")
     }
 
     func tryScroll(element _: AutomationElement, direction _: ScrollDirection, pages _: Int) throws
-    -> ActionInputResult {
-        ActionInputResult()
+    -> UIInputExecutionReceipt.Action {
+        AutomationTestFixtures.uiActionReceipt()
     }
 
     func trySetText(element _: AutomationElement, text _: String, replace _: Bool) throws
-    -> ActionInputResult {
-        ActionInputResult()
+    -> UIInputExecutionReceipt.Action {
+        AutomationTestFixtures.uiActionReceipt()
     }
 
     func tryHotkey(application _: NSRunningApplication, keys _: [String]) throws
-    -> ActionInputResult {
-        ActionInputResult()
+    -> UIInputExecutionReceipt.Action {
+        AutomationTestFixtures.uiActionReceipt()
     }
 
     func trySetValue(element _: AutomationElement, value _: UIElementValue) throws
-    -> ActionInputResult {
-        ActionInputResult()
+    -> UIInputExecutionReceipt.Action {
+        AutomationTestFixtures.uiActionReceipt()
     }
 
     func tryPerformAction(element _: AutomationElement, actionName: String) throws
-    -> ActionInputResult {
+    -> UIInputExecutionReceipt.Action {
         self.performedActionNames.append(actionName)
         self.afterAction?()
-        return ActionInputResult(
+        return AutomationTestFixtures.uiActionReceipt(
             actionName: actionName,
             anchorPoint: CGPoint(x: 70, y: 50),
             elementRole: "AXButton")
@@ -1466,36 +1472,38 @@ private final class ClickFailingActionInputDriver: ActionInputDriving {
         self.error = error
     }
 
-    func tryClick(element _: AutomationElement) throws -> ActionInputResult {
+    func tryClick(element _: AutomationElement) throws -> UIInputExecutionReceipt.Action {
         throw self.error
     }
 
-    func tryRightClick(element _: any AutomationElementRepresenting) async throws -> ActionInputResult {
+    func tryRightClick(element _: any AutomationElementRepresenting) async throws
+        -> UIInputExecutionReceipt.Action
+    {
         throw self.error
     }
 
     func tryScroll(element _: AutomationElement, direction _: ScrollDirection, pages _: Int) throws
-    -> ActionInputResult {
+    -> UIInputExecutionReceipt.Action {
         throw self.error
     }
 
     func trySetText(element _: AutomationElement, text _: String, replace _: Bool) throws
-    -> ActionInputResult {
+    -> UIInputExecutionReceipt.Action {
         throw self.error
     }
 
     func tryHotkey(application _: NSRunningApplication, keys _: [String]) throws
-    -> ActionInputResult {
+    -> UIInputExecutionReceipt.Action {
         throw self.error
     }
 
     func trySetValue(element _: AutomationElement, value _: UIElementValue) throws
-    -> ActionInputResult {
+    -> UIInputExecutionReceipt.Action {
         throw self.error
     }
 
     func tryPerformAction(element _: AutomationElement, actionName _: String) throws
-    -> ActionInputResult {
+    -> UIInputExecutionReceipt.Action {
         throw self.error
     }
 }

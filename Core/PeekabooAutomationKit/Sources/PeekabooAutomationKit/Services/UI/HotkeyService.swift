@@ -57,7 +57,7 @@ public final class HotkeyService {
     /// Press a hotkey combination.
     /// Keys are comma-separated (e.g. "cmd,shift,4" or "ctrl,alt,backspace").
     @discardableResult
-    public func hotkey(keys: String, holdDuration: Int) async throws -> UIInputExecutionResult {
+    public func hotkey(keys: String, holdDuration: Int) async throws -> UIInputExecutionReceipt {
         self.logger.debug("Hotkey requested: '\(keys)', hold: \(holdDuration)ms")
         let parsedKeys = try self.parsedKeys(keys)
         let application = NSWorkspace.shared.frontmostApplication
@@ -74,6 +74,9 @@ public final class HotkeyService {
             },
             synth: {
                 try await self.performSyntheticHotkey(keys: parsedKeys, holdDuration: holdDuration)
+                return .dispatchedUnverified(
+                    delivery: DesktopActionOutcome.Delivery(mechanism: .globalEvents, mode: .foreground),
+                    evidence: .deliveryAccepted)
             })
 
         self.logger.debug("Hotkey completed via \(result.path.rawValue, privacy: .public)")
@@ -91,7 +94,7 @@ public final class HotkeyService {
         holdDuration: Int,
         targetProcessIdentifier: pid_t,
         deliveryValidator: (@MainActor @Sendable () async throws -> Void)? = nil) async throws
-        -> UIInputExecutionResult
+        -> UIInputExecutionReceipt
     {
         self.logger.debug(
             "Targeted hotkey requested: '\(keys)', hold: \(holdDuration)ms, pid: \(targetProcessIdentifier)")
@@ -132,7 +135,11 @@ public final class HotkeyService {
                     try await self.validateDelivery(
                         deliveryValidator,
                         emittedUnitCount: 1)
-                    return
+                    return .dispatchedUnverified(
+                        delivery: DesktopActionOutcome.Delivery(
+                            mechanism: .accessibilityAction,
+                            mode: .background),
+                        evidence: .deliveryAccepted)
                 }
 
                 let holdNanoseconds = try Self.holdNanoseconds(for: holdDuration)
@@ -157,6 +164,11 @@ public final class HotkeyService {
                         emittedUnitCount: emittedUnitCount,
                         causeDescription: error.localizedDescription)
                 }
+                return .dispatchedUnverified(
+                    delivery: DesktopActionOutcome.Delivery(
+                        mechanism: .processTargetedEvents,
+                        mode: .background),
+                    evidence: .deliveryAccepted)
             })
 
         self.logger.debug("Targeted hotkey completed via \(result.path.rawValue, privacy: .public)")

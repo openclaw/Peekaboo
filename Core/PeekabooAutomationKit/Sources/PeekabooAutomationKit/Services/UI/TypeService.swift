@@ -94,7 +94,7 @@ public final class TypeService {
         target: String?,
         clearExisting: Bool,
         typingDelay: Int,
-        snapshotId: String?) async throws -> UIInputExecutionResult
+        snapshotId: String?) async throws -> UIInputExecutionReceipt
     {
         self.logger
             .debug("Type requested - text: '\(text)', target: \(target ?? "current focus"), clear: \(clearExisting)")
@@ -128,7 +128,7 @@ public final class TypeService {
         text: String,
         target: String?,
         clearExisting: Bool,
-        snapshotId: String?) async throws -> ActionInputResult
+        snapshotId: String?) async throws -> UIInputExecutionReceipt.Action
     {
         guard let target,
               let element = try await self.resolveAutomationElement(target: target, snapshotId: snapshotId)
@@ -147,7 +147,7 @@ public final class TypeService {
         target: String?,
         clearExisting: Bool,
         typingDelay: Int,
-        snapshotId: String?) async throws
+        snapshotId: String?) async throws -> DesktopActionOutcome
     {
         // If target specified, click on it first
         if let target {
@@ -206,6 +206,9 @@ public final class TypeService {
         try await self.typeTextWithDelay(text, delay: TimeInterval(typingDelay) / 1000.0)
 
         self.logger.debug("Successfully typed \(text.count) characters")
+        return .dispatchedUnverified(
+            delivery: DesktopActionOutcome.Delivery(mechanism: .globalEvents, mode: .foreground),
+            evidence: .deliveryAccepted)
     }
 
     /// Type actions (advanced typing with special keys)
@@ -254,6 +257,11 @@ public final class TypeService {
                     snapshotId: snapshotId,
                     targetProcessIdentifier: targetProcessIdentifier,
                     deliveryValidator: deliveryValidator)
+                return .dispatchedUnverified(
+                    delivery: DesktopActionOutcome.Delivery(
+                        mechanism: targetProcessIdentifier == nil ? .globalEvents : .processTargetedEvents,
+                        mode: targetProcessIdentifier == nil ? .foreground : .background),
+                    evidence: .deliveryAccepted)
             })
 
         guard let summary else {
