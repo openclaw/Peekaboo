@@ -1,3 +1,4 @@
+import PeekabooAutomationKitTestSupport
 import Testing
 @testable import PeekabooCLI
 @testable import PeekabooCore
@@ -8,8 +9,9 @@ struct PasteCommandInventoryEligibilityTests {
     @MainActor
     func `Background paste refuses prohibited and incomplete inventory rows before dispatch`() async throws {
         let ineligibleApplications = [
-            ServiceApplicationInfo(
+            AutomationTestFixtures.application(
                 processIdentifier: 2468,
+                processStartIdentity: 24,
                 bundleIdentifier: "com.example.helper",
                 name: "Prohibited Helper",
                 isHiddenKnown: true,
@@ -17,6 +19,7 @@ struct PasteCommandInventoryEligibilityTests {
             ),
             ServiceApplicationInfo(
                 processIdentifier: 9753,
+                processStartIdentity: 97,
                 bundleIdentifier: nil,
                 name: "Incomplete Helper",
                 isHiddenKnown: false,

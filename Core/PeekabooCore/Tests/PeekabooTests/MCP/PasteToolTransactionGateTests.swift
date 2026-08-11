@@ -1,6 +1,7 @@
 import Darwin
 import Foundation
 import PeekabooAutomationKit
+import PeekabooAutomationKitTestSupport
 import PeekabooFoundation
 import TachikomaMCP
 import Testing
@@ -21,10 +22,7 @@ struct PasteToolTransactionGateTests {
             close(heldFD)
         }
 
-        let app = ServiceApplicationInfo(
-            processIdentifier: 333,
-            bundleIdentifier: "com.example.editor",
-            name: "Editor")
+        let app = Self.editorApplication()
         let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
         let applications = await MainActor.run { MockApplicationService(applications: [app]) }
         let clipboard = await MainActor.run { TransactionGateClipboardService() }
@@ -47,10 +45,7 @@ struct PasteToolTransactionGateTests {
         #expect(await MainActor.run { clipboard.current.textPreview } == "prior")
         await MainActor.run {
             applications.replaceApplicationsForTesting([
-                ServiceApplicationInfo(
-                    processIdentifier: 444,
-                    bundleIdentifier: "com.example.editor",
-                    name: "Editor"),
+                Self.editorApplication(processIdentifier: 444, processStartIdentity: 44),
             ])
         }
 
@@ -61,6 +56,9 @@ struct PasteToolTransactionGateTests {
         #expect(response.isError)
         #expect(await MainActor.run { automation.targetedHotkeyCalls.map(\.keys) } == ["cmd,v"])
         #expect(await MainActor.run { automation.targetedHotkeyCalls.first?.targetProcessIdentifier } == 444)
+        #expect(await MainActor.run { automation.targetedHotkeyCalls.first?.expectedProcessIdentity } ==
+            AutomationTestFixtures.processIdentity(processIdentifier: 444, processStartIdentity: 44))
+        #expect(await MainActor.run { automation.lastHotkeyKeys } == nil)
         #expect(await MainActor.run { clipboard.current.textPreview } == "prior")
         #expect(await MainActor.run { clipboard.restoreCallCount } == 1)
         guard case let .object(meta) = response.meta else {
@@ -75,10 +73,7 @@ struct PasteToolTransactionGateTests {
 
     @Test
     func `MCP capability refusal never reads or mutates the clipboard`() async throws {
-        let app = ServiceApplicationInfo(
-            processIdentifier: 333,
-            bundleIdentifier: "com.example.editor",
-            name: "Editor")
+        let app = Self.editorApplication()
         let automation = await MainActor.run {
             let service = MockAutomationService(accessibilityGranted: true)
             service.supportsTargetedHotkeys = false
@@ -110,14 +105,16 @@ struct PasteToolTransactionGateTests {
     @Test
     func `MCP background paste refuses prohibited and incomplete inventory rows before dispatch`() async throws {
         let ineligibleApplications = [
-            ServiceApplicationInfo(
+            AutomationTestFixtures.application(
                 processIdentifier: 333,
+                processStartIdentity: 33,
                 bundleIdentifier: "com.example.helper",
                 name: "Prohibited Helper",
                 isHiddenKnown: true,
                 activationPolicy: .prohibited),
             ServiceApplicationInfo(
                 processIdentifier: 444,
+                processStartIdentity: 44,
                 bundleIdentifier: nil,
                 name: "Incomplete Helper",
                 isHiddenKnown: false,
@@ -151,10 +148,7 @@ struct PasteToolTransactionGateTests {
 
     @Test
     func `MCP clipboard read failure is not treated as empty`() async throws {
-        let app = ServiceApplicationInfo(
-            processIdentifier: 333,
-            bundleIdentifier: "com.example.editor",
-            name: "Editor")
+        let app = Self.editorApplication()
         let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
         let applications = await MainActor.run { MockApplicationService(applications: [app]) }
         let clipboard = await MainActor.run {
@@ -210,10 +204,7 @@ struct PasteToolTransactionGateTests {
 
     @Test
     func `MCP cancellation after snapshot but before write never restores or clears`() async throws {
-        let app = ServiceApplicationInfo(
-            processIdentifier: 333,
-            bundleIdentifier: "com.example.editor",
-            name: "Editor")
+        let app = Self.editorApplication()
         let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
         let applications = await MainActor.run { MockApplicationService(applications: [app]) }
         let clipboard = await MainActor.run {
@@ -250,10 +241,7 @@ struct PasteToolTransactionGateTests {
 
     @Test
     func `MCP cancellation during clipboard write restores before dispatch`() async throws {
-        let app = ServiceApplicationInfo(
-            processIdentifier: 333,
-            bundleIdentifier: "com.example.editor",
-            name: "Editor")
+        let app = Self.editorApplication()
         let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
         let applications = await MainActor.run { MockApplicationService(applications: [app]) }
         let clipboard = await MainActor.run {
@@ -288,10 +276,7 @@ struct PasteToolTransactionGateTests {
 
     @Test(arguments: [false, true])
     func `MCP set failure restores prior clipboard before dispatch`(mutatesBeforeThrow: Bool) async throws {
-        let app = ServiceApplicationInfo(
-            processIdentifier: 333,
-            bundleIdentifier: "com.example.editor",
-            name: "Editor")
+        let app = Self.editorApplication()
         let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
         let applications = await MainActor.run { MockApplicationService(applications: [app]) }
         let clipboard = await MainActor.run {
@@ -323,10 +308,7 @@ struct PasteToolTransactionGateTests {
 
     @Test
     func `MCP set and restoration failure reports integrity risk without dispatch`() async throws {
-        let app = ServiceApplicationInfo(
-            processIdentifier: 333,
-            bundleIdentifier: "com.example.editor",
-            name: "Editor")
+        let app = Self.editorApplication()
         let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
         let applications = await MainActor.run { MockApplicationService(applications: [app]) }
         let clipboard = await MainActor.run {
@@ -357,10 +339,7 @@ struct PasteToolTransactionGateTests {
 
     @Test
     func `Cancellation during restore delay waits for consumption before restoring`() async throws {
-        let app = ServiceApplicationInfo(
-            processIdentifier: 333,
-            bundleIdentifier: "com.example.editor",
-            name: "Editor")
+        let app = Self.editorApplication()
         let delivered = PasteDeliveryLatch()
         let automation = await MainActor.run {
             SignalingAutomationService(accessibilityGranted: true, delivered: delivered)
@@ -394,6 +373,9 @@ struct PasteToolTransactionGateTests {
         #expect(response.isError)
         #expect(self.responseText(response).contains("may have pasted; do not retry"))
         #expect(self.responseText(response).contains("indeterminate"))
+        #expect(await MainActor.run { automation.targetedHotkeyCalls.first?.expectedProcessIdentity } ==
+            AutomationTestFixtures.processIdentity(processIdentifier: 333, processStartIdentity: 33))
+        #expect(await MainActor.run { automation.lastHotkeyKeys } == nil)
         #expect(clock.now - canceledAt >= .milliseconds(150))
         #expect(clock.now - canceledAt < .seconds(1))
         #expect(await MainActor.run { clipboard.current.textPreview } == "prior")
@@ -511,10 +493,7 @@ struct PasteToolTransactionGateTests {
 
     @Test
     func `Throwing dispatch settles before MCP restore and unlock`() async throws {
-        let app = ServiceApplicationInfo(
-            processIdentifier: 333,
-            bundleIdentifier: "com.example.editor",
-            name: "Editor")
+        let app = Self.editorApplication()
         let delivered = PasteDeliveryLatch()
         let automation = await MainActor.run {
             SignalingAutomationService(
@@ -552,6 +531,9 @@ struct PasteToolTransactionGateTests {
         #expect(response.isError)
         #expect(self.responseText(response).contains("may have pasted; do not retry"))
         #expect(self.responseText(response).contains("indeterminate"))
+        #expect(await MainActor.run { automation.targetedHotkeyCalls.first?.expectedProcessIdentity } ==
+            AutomationTestFixtures.processIdentity(processIdentifier: 333, processStartIdentity: 33))
+        #expect(await MainActor.run { automation.lastHotkeyKeys } == nil)
         #expect(clock.now - dispatchedAt >= .milliseconds(150))
         #expect(await MainActor.run { clipboard.current.textPreview } == "prior")
         #expect(await MainActor.run { clipboard.restoreCallCount } == 1)
@@ -561,10 +543,7 @@ struct PasteToolTransactionGateTests {
 
     @Test
     func `Current clipboard background paste is explicitly unverified`() async throws {
-        let app = ServiceApplicationInfo(
-            processIdentifier: 333,
-            bundleIdentifier: "com.example.editor",
-            name: "Editor")
+        let app = Self.editorApplication()
         let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
         let applications = await MainActor.run { MockApplicationService(applications: [app]) }
         let clipboard = await MainActor.run { TransactionGateClipboardService() }
@@ -582,6 +561,9 @@ struct PasteToolTransactionGateTests {
         #expect(self.responseText(response).contains("Background paste delivery could not be verified"))
         #expect(self.responseText(response).contains("may have pasted; do not retry"))
         #expect(await MainActor.run { automation.targetedHotkeyCalls.map(\.keys) } == ["cmd,v"])
+        #expect(await MainActor.run { automation.targetedHotkeyCalls.first?.expectedProcessIdentity } ==
+            AutomationTestFixtures.processIdentity(processIdentifier: 333, processStartIdentity: 33))
+        #expect(await MainActor.run { automation.lastHotkeyKeys } == nil)
         #expect(await MainActor.run { clipboard.current.textPreview } == "prior")
         #expect(await MainActor.run { clipboard.restoreCallCount } == 0)
         guard case let .object(meta) = response.meta else {
@@ -645,10 +627,7 @@ struct PasteToolTransactionGateTests {
     func `MCP mutation wrapper invalidates snapshots for unverified paste outcomes`() async throws {
         await UISnapshotManager.shared.removeAllSnapshots()
         _ = await UISnapshotManager.shared.createSnapshot()
-        let app = ServiceApplicationInfo(
-            processIdentifier: 333,
-            bundleIdentifier: "com.example.editor",
-            name: "Editor")
+        let app = Self.editorApplication()
         let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
         let applications = await MainActor.run { MockApplicationService(applications: [app]) }
         let clipboard = await MainActor.run { TransactionGateClipboardService() }
@@ -698,6 +677,17 @@ struct PasteToolTransactionGateTests {
     private func responseText(_ response: ToolResponse) -> String {
         guard case let .text(text, _, _)? = response.content.first else { return "" }
         return text
+    }
+
+    private static func editorApplication(
+        processIdentifier: Int32 = 333,
+        processStartIdentity: UInt64 = 33) -> ServiceApplicationInfo
+    {
+        AutomationTestFixtures.application(
+            processIdentifier: processIdentifier,
+            processStartIdentity: processStartIdentity,
+            bundleIdentifier: "com.example.editor",
+            name: "Editor")
     }
 
     private func holdPasteTransactionLock() throws -> Int32 {
@@ -809,17 +799,10 @@ private final class SignalingAutomationService: MockAutomationService {
         self.delivered = delivered
         self.errorAfterDelivery = errorAfterDelivery
         super.init(accessibilityGranted: accessibilityGranted)
-    }
-
-    override func hotkey(keys: String, holdDuration: Int, targetProcessIdentifier: pid_t) async throws {
-        try await super.hotkey(
-            keys: keys,
-            holdDuration: holdDuration,
-            targetProcessIdentifier: targetProcessIdentifier)
-        await self.delivered.open()
-        if let errorAfterDelivery {
-            throw errorAfterDelivery
+        self.afterPinnedHotkey = {
+            Task { await delivered.open() }
         }
+        self.pinnedHotkeyError = { _ in errorAfterDelivery }
     }
 
     override func hotkey(keys: String, holdDuration: Int) async throws {

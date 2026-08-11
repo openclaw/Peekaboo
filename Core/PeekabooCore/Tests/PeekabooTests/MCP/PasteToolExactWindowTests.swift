@@ -2,6 +2,7 @@ import CoreGraphics
 import Foundation
 import MCP
 import PeekabooAutomationKit
+import PeekabooAutomationKitTestSupport
 import PeekabooFoundation
 import TachikomaMCP
 import Testing
@@ -140,8 +141,9 @@ struct PasteToolExactWindowTests {
     @Test
     @MainActor
     func `Process text prefix failure is indeterminate retry unsafe and leaves clipboard untouched`() async throws {
-        let application = ServiceApplicationInfo(
+        let application = AutomationTestFixtures.application(
             processIdentifier: 333,
+            processStartIdentity: 33,
             bundleIdentifier: "com.example.editor",
             name: "Editor")
         let automation = PartialProcessPasteAutomationService(
@@ -166,6 +168,10 @@ struct PasteToolExactWindowTests {
         #expect(self.responseText(response).contains("Paste outcome is indeterminate"))
         #expect(self.responseText(response).contains("do not retry"))
         #expect(await MainActor.run { automation.deliveredText } == "partial")
+        #expect(automation.targetedTypeActionsCalls.count == 1)
+        #expect(automation.targetedTypeActionsCalls.first?.expectedProcessIdentity ==
+            AutomationTestFixtures.processIdentity(processIdentifier: 333, processStartIdentity: 33))
+        #expect(automation.lastTypeActions == nil)
         self.expectIndeterminateTextMetadata(
             response,
             requestedCharacters: "partial delivery".count,
@@ -177,8 +183,9 @@ struct PasteToolExactWindowTests {
     @Test
     @MainActor
     func `Known pre-dispatch text failure remains an ordinary retryable failure`() async throws {
-        let application = ServiceApplicationInfo(
+        let application = AutomationTestFixtures.application(
             processIdentifier: 333,
+            processStartIdentity: 33,
             bundleIdentifier: "com.example.editor",
             name: "Editor")
         let automation = PredispatchProcessPasteAutomationService(accessibilityGranted: true)
@@ -201,6 +208,10 @@ struct PasteToolExactWindowTests {
         #expect(self.responseText(response).contains("Paste failed"))
         #expect(!self.responseText(response).contains("indeterminate"))
         #expect(response.meta == nil)
+        #expect(automation.targetedTypeActionsCalls.count == 1)
+        #expect(automation.targetedTypeActionsCalls.first?.expectedProcessIdentity ==
+            AutomationTestFixtures.processIdentity(processIdentifier: 333, processStartIdentity: 33))
+        #expect(automation.lastTypeActions == nil)
         self.expectClipboardUntouched(clipboard)
     }
 
@@ -459,31 +470,26 @@ private final class PartialProcessPasteAutomationService: MockAutomationService 
     init(accessibilityGranted: Bool, deliveredPrefix: String) {
         self.deliveredPrefix = deliveredPrefix
         super.init(accessibilityGranted: accessibilityGranted)
-    }
-
-    override func typeActions(
-        _: [TypeAction],
-        cadence _: TypingCadence,
-        snapshotId _: String?,
-        targetProcessIdentifier _: pid_t) async throws -> TypeResult
-    {
-        self.deliveredText = self.deliveredPrefix
-        throw InputDeliveryIndeterminateError(
-            operation: .type,
-            emittedUnitCount: self.deliveredPrefix.count,
-            causeDescription: "simulated failure after a text prefix was delivered")
+        self.pinnedTypeError = { [weak self] _ in
+            guard let self else {
+                return PeekabooError.invalidInput("partial paste fixture was released")
+            }
+            self.deliveredText = self.deliveredPrefix
+            return InputDeliveryIndeterminateError(
+                operation: .type,
+                emittedUnitCount: self.deliveredPrefix.count,
+                causeDescription: "simulated failure after a text prefix was delivered")
+        }
     }
 }
 
 @MainActor
 private final class PredispatchProcessPasteAutomationService: MockAutomationService {
-    override func typeActions(
-        _: [TypeAction],
-        cadence _: TypingCadence,
-        snapshotId _: String?,
-        targetProcessIdentifier _: pid_t) async throws -> TypeResult
-    {
-        throw PeekabooError.invalidInput("simulated pre-dispatch validation failure")
+    init(accessibilityGranted: Bool) {
+        super.init(accessibilityGranted: accessibilityGranted)
+        self.pinnedTypeError = { _ in
+            PeekabooError.invalidInput("simulated pre-dispatch validation failure")
+        }
     }
 }
 
