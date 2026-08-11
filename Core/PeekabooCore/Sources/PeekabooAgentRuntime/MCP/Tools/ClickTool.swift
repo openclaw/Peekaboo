@@ -17,25 +17,30 @@ public struct ClickTool: MCPTool {
         """
         Clicks on UI elements or coordinates.
         Supports element queries, specific IDs from `see` or `inspect_ui`, or raw coordinates.
-        Background delivery is the default. Set `foreground` to true when the next step needs keyboard focus.
+        Background delivery is the default. Background coordinates require a nonempty snapshot or coordinate_reference
+        from a fresh exact-window `see`; pid alone is never a safe coordinate target. Set `foreground` to true only for
+        intentional shared-pointer input, which may omit the capture reference.
         \(PeekabooMCPVersion.banner) using openai/gpt-5.6, anthropic/claude-opus-5
         """
     }
 
     public var inputSchema: Value {
-        SchemaBuilder.object(
+        let baseSchema = SchemaBuilder.object(
             properties: [
                 "query": SchemaBuilder.string(
                     description: """
-                    Optional. Element text or query to click. Will search for matching elements.
+                    Element text or query to click. Exclusive with on and coords; may use the latest UI snapshot.
                     """),
                 "on": SchemaBuilder.string(
                     description: """
-                    Optional. Opaque element ID copied exactly from current `see` or `inspect_ui` output.
+                    Opaque element ID copied exactly from current `see` or `inspect_ui` output. Exclusive with query
+                    and coords; may use the latest UI snapshot.
                     """),
                 "coords": SchemaBuilder.string(
                     description: """
-                    Optional. Click at coordinates in format 'x,y'. Bare coordinates remain global logical points.
+                    Coordinates in 'x,y' format, exclusive with on and query. Background delivery requires a nonempty
+                    snapshot or coordinate_reference from a fresh exact-window see. Without a reference, set
+                    foreground=true for intentional shared-pointer global logical points.
                     """),
                 "coordinate_space": SchemaBuilder.string(
                     description: """
@@ -44,12 +49,16 @@ public struct ClickTool: MCPTool {
                     enum: CaptureCoordinateSpace.allCases.map(\.rawValue)),
                 "coordinate_reference": SchemaBuilder.string(
                     description: """
-                    Optional. Snapshot reference_id returned by see. Required for image_pixels and normalized coords.
-                    """),
+                    Nonempty snapshot reference_id returned by a fresh exact-window see. Provide this or snapshot for
+                    every background coordinate click; required for image_pixels and normalized coords.
+                    """,
+                    minLength: 1),
                 "snapshot": SchemaBuilder.string(
                     description: """
-                    Optional. Snapshot ID from `see` or `inspect_ui`. Uses latest snapshot if not specified.
-                    """),
+                    Snapshot ID from `see` or `inspect_ui`. Element/query clicks may omit it to use the latest snapshot.
+                    Background coordinate clicks must provide a nonempty ID from a fresh exact-window see.
+                    """,
+                    minLength: 1),
                 "wait_for": SchemaBuilder.number(
                     description: """
                     Optional. Maximum milliseconds to wait for element to become actionable. Default: 5000.
@@ -62,15 +71,49 @@ public struct ClickTool: MCPTool {
                     description: "Optional. Right-click (secondary click) instead of left-click.",
                     default: false),
                 "foreground": SchemaBuilder.boolean(
-                    description: "Optional. Use foreground/global click delivery. Background delivery is the default.",
+                    description: "Use foreground/shared-pointer delivery. Background delivery is the default.",
                     default: false),
                 "background": SchemaBuilder.boolean(
-                    description: "Optional legacy alias. Defaults to true; set foreground=true for foreground clicks.",
+                    description: """
+                    Deprecated inverse alias. false explicitly selects foreground shared-pointer delivery.
+                    """,
                     default: true),
-                "pid": SchemaBuilder.number(
-                    description: "Optional. Target process ID for background coordinate clicks."),
+                "pid": SchemaBuilder.integer(
+                    description: """
+                    Optional process consistency check. It never replaces the exact-window capture receipt.
+                    """,
+                    minimum: 1,
+                    maximum: Int(Int32.max)),
             ],
             required: [])
+
+        guard case let .object(fields) = baseSchema else { return baseSchema }
+        var schema = fields
+        schema["oneOf"] = .array(Self.targetRouteSchemas)
+        return .object(schema)
+    }
+
+    private static var targetRouteSchemas: [Value] {
+        [
+            .object(["required": .array([.string("on")])]),
+            .object(["required": .array([.string("query")])]),
+            .object([
+                "required": .array([.string("coords")]),
+                "anyOf": .array([
+                    self.requiredConstant("foreground", value: true),
+                    self.requiredConstant("background", value: false),
+                    .object(["required": .array([.string("snapshot")])]),
+                    .object(["required": .array([.string("coordinate_reference")])]),
+                ]),
+            ]),
+        ]
+    }
+
+    private static func requiredConstant(_ name: String, value: Bool) -> Value {
+        .object([
+            "properties": .object([name: .object(["const": .bool(value)])]),
+            "required": .array([.string(name)]),
+        ])
     }
 
     public init(context: MCPToolContext = .shared) {

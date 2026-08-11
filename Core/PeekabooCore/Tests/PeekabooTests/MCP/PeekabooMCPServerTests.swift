@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 import MCP
 import PeekabooFoundation
@@ -58,6 +59,185 @@ struct PeekabooMCPServerTests {
     }
 
     @Test
+    @MainActor
+    func `click wire schema requires an exclusive target and a background coordinate receipt`() async throws {
+        let context = await MCPToolTestHelpers.makeContext()
+        let session = try await ClickMCPWireSession.connect(context: context)
+
+        do {
+            let (tools, _) = try await session.client.listTools()
+            let click = try #require(tools.first { $0.name == "click" })
+            guard case let .object(schema) = click.inputSchema,
+                  case let .object(properties)? = schema["properties"],
+                  case let .array(routes)? = schema["oneOf"]
+            else {
+                Issue.record("click wire schema is missing its target routes")
+                await session.stop()
+                return
+            }
+
+            #expect(Set(routes.compactMap(Self.requiredFields)) == Set([["on"], ["query"], ["coords"]]))
+
+            let coordinateRoute = try #require(routes.first { Self.requiredFields($0) == ["coords"] })
+            guard case let .object(coordinateFields) = coordinateRoute,
+                  case let .array(coordinateAlternatives)? = coordinateFields["anyOf"]
+            else {
+                Issue.record("coordinate route is missing receipt and foreground alternatives")
+                await session.stop()
+                return
+            }
+
+            #expect(coordinateAlternatives.count == 4)
+            #expect(coordinateAlternatives.contains { Self.requiredFields($0) == ["snapshot"] })
+            #expect(coordinateAlternatives.contains { Self.requiredFields($0) == ["coordinate_reference"] })
+            #expect(Self.hasRequiredBooleanConstant(
+                name: "foreground",
+                value: true,
+                in: coordinateAlternatives))
+            #expect(Self.hasRequiredBooleanConstant(
+                name: "background",
+                value: false,
+                in: coordinateAlternatives))
+
+            guard case let .object(snapshotSchema)? = properties["snapshot"],
+                  case let .object(referenceSchema)? = properties["coordinate_reference"],
+                  case let .object(pidSchema)? = properties["pid"]
+            else {
+                Issue.record("click receipt properties are missing")
+                await session.stop()
+                return
+            }
+            #expect(snapshotSchema["minLength"] == .int(1))
+            #expect(referenceSchema["minLength"] == .int(1))
+            #expect(pidSchema["type"] == .string("integer"))
+            #expect(pidSchema["minimum"] == .int(1))
+            #expect(click.description?.contains("pid alone is never a safe coordinate target") == true)
+        } catch {
+            await session.stop()
+            throw error
+        }
+
+        await session.stop()
+    }
+
+    @Test
+    @MainActor
+    func `click wire refuses loose background coordinates without dispatch or invalidation`() async throws {
+        await UISnapshotManager.shared.removeAllSnapshots()
+        let automation = MockAutomationService(accessibilityGranted: true)
+        let context = await MCPToolTestHelpers.makeContext(automation: automation)
+        let retainedSnapshot = await UISnapshotManager.shared.createSnapshot()
+        let retainedSnapshotID = await retainedSnapshot.id
+        let session = try await ClickMCPWireSession.connect(context: context)
+        let invalidArguments: [[String: Value]] = [
+            ["coords": .string("100,200")],
+            ["coords": .string("100,200"), "pid": .int(111)],
+            ["coords": .string("100,200"), "pid": .int(111), "snapshot": .string("")],
+        ]
+
+        do {
+            for arguments in invalidArguments {
+                let request: RequestContext<CallTool.Result> = try await session.client.callTool(
+                    name: "click",
+                    arguments: arguments)
+                let result = try await request.value
+                #expect(result.isError == true)
+                #expect(result._meta?["mutation_dispatched"] == .bool(false))
+                #expect(result._meta?["retry_safe"] == .bool(true))
+                guard case let .text(text, _, _)? = result.content.first else {
+                    Issue.record("expected a click refusal over the MCP wire")
+                    continue
+                }
+                #expect(text.contains("exact target window"))
+                #expect(text.contains("PID-only"))
+            }
+
+            #expect(automation.clickCalls.isEmpty)
+            #expect(automation.targetedClickCalls.isEmpty)
+            #expect(await UISnapshotManager.shared.getSnapshot(id: nil)?.id == retainedSnapshotID)
+        } catch {
+            await session.stop()
+            throw error
+        }
+
+        await session.stop()
+    }
+
+    @Test
+    @MainActor
+    func `click wire sends an exact background receipt and preserves explicit foreground coordinates`() async throws {
+        await UISnapshotManager.shared.removeAllSnapshots()
+        let automation = MockAutomationService(accessibilityGranted: true)
+        let bounds = CGRect(x: 100, y: 50, width: 1000, height: 500)
+        let identity = WindowMutationIdentity(
+            windowID: 42,
+            ownerProcessIdentifier: 111,
+            ownerProcessStartIdentity: 7,
+            capturedBounds: bounds)
+        let window = ServiceWindowInfo(
+            windowID: 42,
+            title: "Wire Coordinate Window",
+            bounds: bounds,
+            index: 0,
+            mutationIdentity: identity)
+        let context = await MCPToolTestHelpers.makeContext(
+            automation: automation,
+            windows: PointerPolicyWindowService(window: window))
+        let snapshot = await UISnapshotManager.shared.createSnapshot()
+        let snapshotID = await snapshot.id
+        await snapshot.setScreenshot(
+            path: "/tmp/wire-coordinate-snapshot.png",
+            metadata: CaptureMetadata(
+                size: bounds.size,
+                mode: .window,
+                applicationInfo: ServiceApplicationInfo(
+                    processIdentifier: 111,
+                    bundleIdentifier: "com.example.wire",
+                    name: "WireApp"),
+                windowInfo: window))
+        let session = try await ClickMCPWireSession.connect(context: context)
+
+        do {
+            let backgroundRequest: RequestContext<CallTool.Result> = try await session.client.callTool(
+                name: "click",
+                arguments: [
+                    "coords": .string("300,200"),
+                    "coordinate_reference": .string(snapshotID),
+                ])
+            let background = try await backgroundRequest.value
+            #expect(background.isError != true)
+            #expect(background._meta?["mutation_dispatched"] == .bool(true))
+            let targeted = try #require(automation.targetedClickCalls.first)
+            #expect(targeted.snapshotId == snapshotID)
+            #expect(targeted.targetProcessIdentifier == 111)
+            #expect(targeted.targetWindowID == 42)
+            guard case let .coordinates(point) = targeted.target else {
+                Issue.record("expected an exact coordinate request")
+                await session.stop()
+                return
+            }
+            #expect(point == CGPoint(x: 300, y: 200))
+
+            let foreground = try await session.client.callTool(name: "click", arguments: [
+                "coords": .string("25,30"),
+                "foreground": .bool(true),
+            ])
+            #expect(foreground.isError != true)
+            guard case let .coordinates(foregroundPoint) = try #require(automation.clickCalls.last).target else {
+                Issue.record("expected a foreground coordinate request")
+                await session.stop()
+                return
+            }
+            #expect(foregroundPoint == CGPoint(x: 25, y: 30))
+        } catch {
+            await session.stop()
+            throw error
+        }
+
+        await session.stop()
+    }
+
+    @Test
     func `server projects bounded capture failure metadata onto the MCP wire`() throws {
         let response = ToolResponse.error(
             "Video capture produced no decodable frames.",
@@ -99,6 +279,28 @@ struct PeekabooMCPServerTests {
 
         #expect(!names.contains("set_value"))
         #expect(!names.contains("action"))
+    }
+
+    private static func requiredFields(_ schema: Value) -> Set<String>? {
+        guard case let .object(fields) = schema,
+              case let .array(required)? = fields["required"]
+        else { return nil }
+        return Set(required.compactMap(\.stringValue))
+    }
+
+    private static func hasRequiredBooleanConstant(
+        name: String,
+        value: Bool,
+        in schemas: [Value]) -> Bool
+    {
+        schemas.contains { schema in
+            guard Self.requiredFields(schema) == [name],
+                  case let .object(fields) = schema,
+                  case let .object(properties)? = fields["properties"],
+                  case let .object(property)? = properties[name]
+            else { return false }
+            return property["const"] == .bool(value)
+        }
     }
 
     @Test
@@ -152,6 +354,31 @@ struct PeekabooMCPServerTests {
             }
             #expect(message == Self.missingFactoryMessage)
         }
+    }
+}
+
+private struct ClickMCPWireSession {
+    let client: Client
+    let server: PeekabooMCPServer
+
+    static func connect(context: MCPToolContext) async throws -> Self {
+        let (clientTransport, serverTransport) = await InMemoryTransport.createConnectedPair()
+        let server = try await PeekabooMCPServer(toolContext: context)
+        let client = Client(name: "PeekabooClickWireTests", version: "1.0")
+        try await server.startForTesting(transport: serverTransport)
+        do {
+            _ = try await client.connect(transport: clientTransport)
+        } catch {
+            await client.disconnect()
+            await server.stopForTesting()
+            throw error
+        }
+        return Self(client: client, server: server)
+    }
+
+    func stop() async {
+        await self.client.disconnect()
+        await self.server.stopForTesting()
     }
 }
 

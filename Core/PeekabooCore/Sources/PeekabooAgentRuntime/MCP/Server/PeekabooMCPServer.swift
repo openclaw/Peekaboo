@@ -183,6 +183,14 @@ public actor PeekabooMCPServer {
         self.toolContext.snapshotExecutionGate
     }
 
+    func startForTesting(transport: any Transport) async throws {
+        try await self.server.start(transport: transport)
+    }
+
+    func stopForTesting() async {
+        await self.server.stop()
+    }
+
     public func serve(transport: TransportType, port: Int = 8080) async throws {
         self.logger.info("Starting Peekaboo MCP server on \(transport) transport, version: \(self.serverVersion)")
 
