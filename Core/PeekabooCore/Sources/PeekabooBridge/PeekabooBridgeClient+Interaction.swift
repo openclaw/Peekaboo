@@ -47,6 +47,31 @@ extension PeekabooBridgeClient {
         _ actions: [TypeAction],
         cadence: TypingCadence,
         snapshotId: String?,
+        expectedProcessIdentity: ApplicationProcessIdentity) async throws -> TypeResult
+    {
+        let payload = PeekabooBridgeTargetedTypeActionsRequest(
+            actions: actions,
+            cadence: cadence,
+            snapshotId: snapshotId,
+            targetProcessIdentifier: expectedProcessIdentity.processIdentifier,
+            expectedProcessIdentity: expectedProcessIdentity)
+        let response = try await self.send(.targetedTypeActions(payload))
+        switch response {
+        case let .typeResult(result):
+            return result
+        case let .error(envelope):
+            throw envelope
+        default:
+            throw PeekabooBridgeErrorEnvelope(
+                code: .invalidRequest,
+                message: "Unexpected targetedTypeActions response")
+        }
+    }
+
+    public func typeActions(
+        _ actions: [TypeAction],
+        cadence: TypingCadence,
+        snapshotId: String?,
         expectedWindowIdentity: WindowMutationIdentity,
         expectedWindowBounds: CGRect) async throws -> TypeResult
     {
@@ -238,6 +263,21 @@ extension PeekabooBridgeClient {
                 clickType: clickType,
                 snapshotId: snapshotId,
                 targetProcessIdentifier: Int32(targetProcessIdentifier))))
+    }
+
+    public func click(
+        target: ClickTarget,
+        clickType: ClickType,
+        snapshotId: String?,
+        expectedProcessIdentity: ApplicationProcessIdentity) async throws
+    {
+        try await self.sendExpectOK(
+            .targetedClick(PeekabooBridgeTargetedClickRequest(
+                target: target,
+                clickType: clickType,
+                snapshotId: snapshotId,
+                targetProcessIdentifier: expectedProcessIdentity.processIdentifier,
+                expectedProcessIdentity: expectedProcessIdentity)))
     }
 
     public func click(

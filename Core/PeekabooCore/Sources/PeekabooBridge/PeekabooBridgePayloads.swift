@@ -97,17 +97,20 @@ public struct PeekabooBridgeTargetedTypeActionsRequest: Codable, Sendable {
     public let cadence: TypingCadence
     public let snapshotId: String?
     public let targetProcessIdentifier: Int32
+    public let expectedProcessIdentity: ApplicationProcessIdentity?
 
     public init(
         actions: [TypeAction],
         cadence: TypingCadence,
         snapshotId: String?,
-        targetProcessIdentifier: Int32)
+        targetProcessIdentifier: Int32,
+        expectedProcessIdentity: ApplicationProcessIdentity? = nil)
     {
         self.actions = actions
         self.cadence = cadence
         self.snapshotId = snapshotId
         self.targetProcessIdentifier = targetProcessIdentifier
+        self.expectedProcessIdentity = expectedProcessIdentity
     }
 }
 
@@ -224,6 +227,7 @@ public struct PeekabooBridgeTargetedClickRequest: Codable, Sendable {
     public let clickType: ClickType
     public let snapshotId: String?
     public let targetProcessIdentifier: Int32
+    public let expectedProcessIdentity: ApplicationProcessIdentity?
     public let targetWindowID: Int?
     public let expectedWindowIdentity: WindowMutationIdentity?
     public let expectedWindowBounds: CGRect?
@@ -233,6 +237,7 @@ public struct PeekabooBridgeTargetedClickRequest: Codable, Sendable {
         clickType: ClickType,
         snapshotId: String?,
         targetProcessIdentifier: Int32,
+        expectedProcessIdentity: ApplicationProcessIdentity? = nil,
         targetWindowID: Int? = nil,
         expectedWindowIdentity: WindowMutationIdentity? = nil,
         expectedWindowBounds: CGRect? = nil)
@@ -241,6 +246,7 @@ public struct PeekabooBridgeTargetedClickRequest: Codable, Sendable {
         self.clickType = clickType
         self.snapshotId = snapshotId
         self.targetProcessIdentifier = targetProcessIdentifier
+        self.expectedProcessIdentity = expectedProcessIdentity
         self.targetWindowID = targetWindowID
         self.expectedWindowIdentity = expectedWindowIdentity
         self.expectedWindowBounds = expectedWindowBounds

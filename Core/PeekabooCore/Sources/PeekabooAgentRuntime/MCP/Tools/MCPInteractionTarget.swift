@@ -13,6 +13,7 @@ enum MCPInteractionTargetError: LocalizedError, Equatable {
     case backgroundTargetRequired
     case backgroundWindowTargetUnsupported
     case targetProcessNotFound
+    case targetProcessIdentityUnavailable
 
     var errorDescription: String? {
         switch self {
@@ -37,6 +38,9 @@ enum MCPInteractionTargetError: LocalizedError, Equatable {
         case .targetProcessNotFound:
             "Could not resolve a running target process. Check the app/pid, or set foreground=true for intentional " +
                 "global input."
+        case .targetProcessIdentityUnavailable:
+            "The runtime host could not pin the target to a process generation. " +
+                "Update the host before background input."
         }
     }
 }
@@ -237,6 +241,35 @@ struct MCPInteractionTarget {
             throw MCPInteractionTargetError.targetProcessNotFound
         }
         return processIdentifier
+    }
+
+    func requireBackgroundProcessIdentity(
+        applications: any ApplicationServiceProtocol,
+        windows: any WindowManagementServiceProtocol) async throws -> ApplicationProcessIdentity
+    {
+        try self.validate()
+        guard self.hasTarget else {
+            throw MCPInteractionTargetError.backgroundTargetRequired
+        }
+        guard !self.hasWindowSelector else {
+            throw MCPInteractionTargetError.backgroundWindowTargetUnsupported
+        }
+
+        let application: ServiceApplicationInfo
+        if let pid {
+            application = try await applications.findApplication(identifier: "PID:\(pid)")
+            guard application.processIdentifier == pid else {
+                throw MCPInteractionTargetError.targetProcessNotFound
+            }
+        } else if let app = self.app?.trimmingCharacters(in: .whitespacesAndNewlines), !app.isEmpty {
+            application = try await applications.findApplication(identifier: app)
+        } else {
+            throw MCPInteractionTargetError.targetProcessNotFound
+        }
+        guard let identity = application.processIdentity else {
+            throw MCPInteractionTargetError.targetProcessIdentityUnavailable
+        }
+        return identity
     }
 
     func focusIfRequested(windows: any WindowManagementServiceProtocol, onlyWhenTargeted: Bool) async throws

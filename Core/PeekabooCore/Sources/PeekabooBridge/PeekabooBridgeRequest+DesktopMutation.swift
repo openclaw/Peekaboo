@@ -86,6 +86,8 @@ extension PeekabooBridgeRequest {
                 processStartIdentity: payload.expectedWindowIdentity.ownerProcessStartIdentity))
         case let .targetedHotkey(payload):
             payload.expectedProcessIdentity.map(DesktopOperationScope.process) ?? .global
+        case let .targetedTypeActions(payload):
+            payload.expectedProcessIdentity.map(DesktopOperationScope.process) ?? .global
         case let .targetedClick(payload):
             if let targetWindowID = payload.targetWindowID,
                let identity = payload.expectedWindowIdentity,
@@ -96,7 +98,7 @@ extension PeekabooBridgeRequest {
                     processIdentifier: identity.ownerProcessIdentifier,
                     processStartIdentity: identity.ownerProcessStartIdentity))
             } else {
-                .global
+                payload.expectedProcessIdentity.map(DesktopOperationScope.process) ?? .global
             }
         case let .backgroundCloseWindow(payload),
              let .minimizeWindow(payload),

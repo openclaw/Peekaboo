@@ -991,12 +991,14 @@ TargetedTypeServiceProtocol {
         let snapshotId: String?
         let targetProcessIdentifier: pid_t
         let targetWindowID: Int?
+        let expectedProcessIdentity: ApplicationProcessIdentity?
     }
 
     struct TargetedHotkeyCall {
         let keys: String
         let holdDuration: Int
         let targetProcessIdentifier: pid_t
+        let expectedProcessIdentity: ApplicationProcessIdentity?
     }
 
     struct TargetedTypeActionsCall {
@@ -1004,6 +1006,7 @@ TargetedTypeServiceProtocol {
         let cadence: TypingCadence
         let snapshotId: String?
         let targetProcessIdentifier: pid_t
+        let expectedProcessIdentity: ApplicationProcessIdentity?
     }
 
     private let accessibilityGranted: Bool
@@ -1011,9 +1014,9 @@ TargetedTypeServiceProtocol {
     private let detectionError: (any Error)?
     private let mockCurrentMouseLocation: CGPoint?
     private(set) var clickCalls: [ClickCall] = []
-    private(set) var targetedClickCalls: [TargetedClickCall] = []
-    private(set) var targetedHotkeyCalls: [TargetedHotkeyCall] = []
-    private(set) var targetedTypeActionsCalls: [TargetedTypeActionsCall] = []
+    var targetedClickCalls: [TargetedClickCall] = []
+    var targetedHotkeyCalls: [TargetedHotkeyCall] = []
+    var targetedTypeActionsCalls: [TargetedTypeActionsCall] = []
     private(set) var scrollRequests: [ScrollRequest] = []
     private(set) var lastTypeActions: [TypeAction]?
     private(set) var lastTypeSnapshotId: String?
@@ -1024,11 +1027,16 @@ TargetedTypeServiceProtocol {
     private(set) var lastMoveDuration: Int?
     private(set) var lastWindowContext: WindowContext?
     var supportsTargetedHotkeys = true
+    var supportsProcessGenerationPinnedHotkeys = true
+    var currentProcessIdentity: ((pid_t) -> ApplicationProcessIdentity?)?
+    var afterPinnedHotkey: (() -> Void)?
     var targetedHotkeyUnavailableReason: String?
     var targetedHotkeyRequiresEventSynthesizingPermission = false
     var supportsTargetedTypeActions = true
+    var supportsProcessGenerationPinnedTypeActions = true
     var targetedTypeUnavailableReason: String?
     var targetedTypeRequiresEventSynthesizingPermission = false
+    var supportsProcessGenerationPinnedClicks = true
 
     init(
         accessibilityGranted: Bool,
@@ -1078,7 +1086,8 @@ TargetedTypeServiceProtocol {
             clickType: clickType,
             snapshotId: snapshotId,
             targetProcessIdentifier: targetProcessIdentifier,
-            targetWindowID: nil))
+            targetWindowID: nil,
+            expectedProcessIdentity: nil))
     }
 
     func click(
@@ -1093,7 +1102,10 @@ TargetedTypeServiceProtocol {
             clickType: clickType,
             snapshotId: snapshotId,
             targetProcessIdentifier: expectedWindowIdentity.ownerProcessIdentifier,
-            targetWindowID: expectedWindowIdentity.windowID))
+            targetWindowID: expectedWindowIdentity.windowID,
+            expectedProcessIdentity: ApplicationProcessIdentity(
+                processIdentifier: expectedWindowIdentity.ownerProcessIdentifier,
+                processStartIdentity: expectedWindowIdentity.ownerProcessStartIdentity)))
     }
 
     func type(text _: String, target _: String?, clearExisting _: Bool, typingDelay _: Int, snapshotId _: String?) async
@@ -1120,7 +1132,8 @@ TargetedTypeServiceProtocol {
             actions: actions,
             cadence: cadence,
             snapshotId: snapshotId,
-            targetProcessIdentifier: targetProcessIdentifier))
+            targetProcessIdentifier: targetProcessIdentifier,
+            expectedProcessIdentity: nil))
         return try await self.typeActions(actions, cadence: cadence, snapshotId: snapshotId)
     }
 
@@ -1137,7 +1150,8 @@ TargetedTypeServiceProtocol {
         self.targetedHotkeyCalls.append(TargetedHotkeyCall(
             keys: keys,
             holdDuration: holdDuration,
-            targetProcessIdentifier: targetProcessIdentifier))
+            targetProcessIdentifier: targetProcessIdentifier,
+            expectedProcessIdentity: nil))
     }
 
     func swipe(
@@ -1391,7 +1405,10 @@ final class MockApplicationService: ApplicationServiceProtocol {
     }
 
     func findApplication(identifier: String) async throws -> ServiceApplicationInfo {
-        if let match = self.applications.first(where: { $0.name == identifier || $0.bundleIdentifier == identifier }) {
+        let pid = identifier.uppercased().hasPrefix("PID:") ? Int32(identifier.dropFirst(4)) : nil
+        if let match = self.applications.first(where: {
+            $0.name == identifier || $0.bundleIdentifier == identifier || $0.processIdentifier == pid
+        }) {
             return match
         }
         throw PeekabooError.appNotFound(identifier)

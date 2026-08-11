@@ -104,9 +104,10 @@ public struct PressTool: MCPTool {
                 windowIndex: arguments.getInt("window_index"),
                 windowId: arguments.getInt("window_id"))
             let resolvedWindowTitle = try await target.resolveWindowTitleIfNeeded(windows: self.context.windows)
-            let targetPID = foreground ? nil : try await target.requireBackgroundProcessIdentifier(
+            let targetIdentity = foreground ? nil : try await target.requireBackgroundProcessIdentity(
                 applications: self.context.applications,
                 windows: self.context.windows)
+            let targetPID = targetIdentity?.processIdentifier
 
             if targetPID == nil {
                 _ = try await target.focusIfRequested(windows: self.context.windows, onlyWhenTargeted: true)
@@ -114,28 +115,39 @@ public struct PressTool: MCPTool {
 
             let startTime = Date()
             var completed = 0
-            for repetition in 0..<count {
-                for (index, chord) in chords.enumerated() {
-                    if let targetPID {
-                        guard let targeted = self.context.automation as? any TargetedHotkeyServiceProtocol,
-                              targeted.supportsTargetedHotkeys
-                        else {
-                            return ToolResponse
-                                .error("This automation host does not support background keyboard input.")
+            do {
+                for repetition in 0..<count {
+                    for (index, chord) in chords.enumerated() {
+                        if let targetIdentity {
+                            guard let targeted = self.context.automation as? any TargetedHotkeyServiceProtocol,
+                                  targeted.supportsTargetedHotkeys,
+                                  targeted.supportsProcessGenerationPinnedHotkeys
+                            else {
+                                return ToolResponse
+                                    .error("This automation host does not support background keyboard input.")
+                            }
+                            try await targeted.hotkey(
+                                keys: chord.serviceKeys,
+                                holdDuration: hold,
+                                expectedProcessIdentity: targetIdentity)
+                        } else {
+                            try await self.context.automation.hotkey(keys: chord.serviceKeys, holdDuration: hold)
                         }
-                        try await targeted.hotkey(
-                            keys: chord.serviceKeys,
-                            holdDuration: hold,
-                            targetProcessIdentifier: pid_t(targetPID))
-                    } else {
-                        try await self.context.automation.hotkey(keys: chord.serviceKeys, holdDuration: hold)
-                    }
-                    completed += 1
-                    let isLast = repetition == count - 1 && index == chords.count - 1
-                    if delay > 0, !isLast {
-                        try await Task.sleep(nanoseconds: UInt64(delay) * 1_000_000)
+                        completed += 1
+                        let isLast = repetition == count - 1 && index == chords.count - 1
+                        if delay > 0, !isLast {
+                            try await Task.sleep(nanoseconds: UInt64(delay) * 1_000_000)
+                        }
                     }
                 }
+            } catch let error as InputDeliveryIndeterminateError {
+                throw error
+            } catch {
+                guard completed > 0 else { throw error }
+                throw InputDeliveryIndeterminateError(
+                    operation: .hotkey,
+                    emittedUnitCount: completed,
+                    causeDescription: error.localizedDescription)
             }
 
             let display = chords.map(\.displayValue)
@@ -161,6 +173,15 @@ public struct PressTool: MCPTool {
             return ToolResponse.text(message, meta: ToolEventSummary.merge(summary: summary, into: meta))
         } catch let error as MCPInteractionTargetError {
             return ToolResponse.error(error.localizedDescription)
+        } catch let error as InputDeliveryIndeterminateError {
+            return ToolResponse.error(
+                error.localizedDescription,
+                meta: .object([
+                    "mutation_dispatched": .bool(true),
+                    "retry_safe": .bool(false),
+                    "requires_fresh_observation": .bool(true),
+                    "emitted_units": error.emittedUnitCount.map(Value.int) ?? .null,
+                ]))
         } catch {
             self.logger.error("Press execution failed: \(error.localizedDescription)")
             return ToolResponse.error(error.localizedDescription)

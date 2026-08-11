@@ -147,7 +147,7 @@ struct CommanderBinderTests {
     @Test
     func `Application launch options require bridge protocol and operation support`() {
         let current = PeekabooBridgeHandshakeResponse(
-            negotiatedVersion: .init(major: 1, minor: 9),
+            negotiatedVersion: PeekabooBridgeConstants.processGenerationPinnedInteractionVersion,
             hostKind: .gui,
             build: nil,
             supportedOperations: [.launchApplicationWithOptions]
@@ -159,7 +159,7 @@ struct CommanderBinderTests {
             supportedOperations: [.launchApplicationWithOptions]
         )
         let missingOperation = PeekabooBridgeHandshakeResponse(
-            negotiatedVersion: .init(major: 1, minor: 9),
+            negotiatedVersion: PeekabooBridgeConstants.processGenerationPinnedInteractionVersion,
             hostKind: .gui,
             build: nil,
             supportedOperations: []
@@ -596,6 +596,72 @@ struct CommanderBinderTests {
     }
 
     @Test
+    func `Process-targeted input requires Bridge protocol 1_22 receipts`() throws {
+        let type = try CommanderCLIBinder.makeRuntimeOptions(
+            from: ParsedValues(positional: ["hello"], options: ["app": ["TextEdit"]], flags: []),
+            commandType: TypeCommand.self
+        )
+        let click = try CommanderCLIBinder.makeRuntimeOptions(
+            from: ParsedValues(positional: [], options: ["on": ["B1"]], flags: []),
+            commandType: ClickCommand.self
+        )
+        let exactClick = try CommanderCLIBinder.makeRuntimeOptions(
+            from: ParsedValues(
+                positional: [],
+                options: ["on": ["B1"], "windowId": ["42"], "app": ["TextEdit"]],
+                flags: []
+            ),
+            commandType: ClickCommand.self
+        )
+        let paste = try CommanderCLIBinder.makeRuntimeOptions(
+            from: ParsedValues(positional: ["hello"], options: ["app": ["TextEdit"]], flags: []),
+            commandType: PasteCommand.self
+        )
+        let foreground = try CommanderCLIBinder.makeRuntimeOptions(
+            from: ParsedValues(positional: ["hello"], options: [:], flags: ["foreground"]),
+            commandType: TypeCommand.self
+        )
+        let operations: [PeekabooBridgeOperation] = [
+            .targetedHotkey,
+            .targetedTypeActions,
+            .targetedClick,
+            .exactWindowTargetedClick,
+            .invalidateImplicitLatestSnapshot,
+        ]
+        let legacy = PeekabooBridgeHandshakeResponse(
+            negotiatedVersion: .init(major: 1, minor: 21),
+            hostKind: .onDemand,
+            build: nil,
+            supportedOperations: operations,
+            permissions: PermissionsStatus(screenRecording: true, accessibility: true, postEvent: true),
+            enabledOperations: operations
+        )
+        let current = PeekabooBridgeHandshakeResponse(
+            negotiatedVersion: PeekabooBridgeConstants.processGenerationPinnedInteractionVersion,
+            hostKind: .onDemand,
+            build: nil,
+            supportedOperations: operations,
+            permissions: PermissionsStatus(screenRecording: true, accessibility: true, postEvent: true),
+            enabledOperations: operations
+        )
+
+        #expect(type.requiresProcessGenerationPinnedTypeActions)
+        #expect(click.requiresProcessGenerationPinnedClicks)
+        #expect(!exactClick.requiresProcessGenerationPinnedClicks)
+        #expect(paste.requiresProcessGenerationPinnedTypeActions)
+        #expect(paste.requiresProcessGenerationPinnedHotkeys)
+        #expect(!foreground.requiresProcessGenerationPinnedTypeActions)
+        #expect(!CommandRuntime.supportsRemoteRequirements(for: legacy, options: type))
+        #expect(!CommandRuntime.supportsRemoteRequirements(for: legacy, options: click))
+        #expect(!CommandRuntime.supportsRemoteRequirements(for: legacy, options: paste))
+        #expect(CommandRuntime.supportsRemoteRequirements(for: current, options: type))
+        #expect(CommandRuntime.supportsRemoteRequirements(for: current, options: click))
+        #expect(CommandRuntime.supportsRemoteRequirements(for: current, options: paste))
+        #expect(CommandRuntime.supportsRemoteRequirements(for: legacy, options: exactClick))
+        #expect(CommandRuntime.supportsRemoteRequirements(for: legacy, options: foreground))
+    }
+
+    @Test
     func `Click delivery selects the permission required by its actual path`() throws {
         let coordinate = try CommanderCLIBinder.makeRuntimeOptions(
             from: ParsedValues(
@@ -711,7 +777,7 @@ struct CommanderBinderTests {
             .targetedClick,
         ]
         let accessibilityOnly = PeekabooBridgeHandshakeResponse(
-            negotiatedVersion: .init(major: 1, minor: 9),
+            negotiatedVersion: PeekabooBridgeConstants.processGenerationPinnedInteractionVersion,
             hostKind: .onDemand,
             build: nil,
             supportedOperations: operations,
@@ -724,7 +790,7 @@ struct CommanderBinderTests {
             permissionTags: [PeekabooBridgeOperation.targetedClick.rawValue: []]
         )
         let fullyPermitted = PeekabooBridgeHandshakeResponse(
-            negotiatedVersion: .init(major: 1, minor: 9),
+            negotiatedVersion: PeekabooBridgeConstants.processGenerationPinnedInteractionVersion,
             hostKind: .onDemand,
             build: nil,
             supportedOperations: operations,

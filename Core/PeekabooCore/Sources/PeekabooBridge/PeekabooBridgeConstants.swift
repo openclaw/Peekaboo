@@ -28,7 +28,11 @@ public enum PeekabooBridgeConstants {
     }
 
     /// Current protocol version supported by this build.
-    public static let protocolVersion = PeekabooBridgeProtocolVersion(major: 1, minor: 21)
+    public static let protocolVersion = PeekabooBridgeProtocolVersion(major: 1, minor: 22)
+
+    /// First protocol that carries process-generation receipts with process-targeted typing and clicks.
+    public static let processGenerationPinnedInteractionVersion =
+        PeekabooBridgeProtocolVersion(major: 1, minor: 22)
 
     /// First protocol whose desktop-observation payload and response preserve exact-window ROI
     /// requests, cropped viewport metadata, and snapshot coordinate context end to end.

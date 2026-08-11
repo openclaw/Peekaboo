@@ -221,6 +221,34 @@ extension UIAutomationService {
         }
     }
 
+    public func typeActions(
+        _ actions: [TypeAction],
+        cadence: TypingCadence,
+        snapshotId: String?,
+        expectedProcessIdentity: ApplicationProcessIdentity) async throws -> TypeResult
+    {
+        try await self.operationLaneCoordinator.run(scope: .process(expectedProcessIdentity), access: .write) {
+            let validator: @MainActor @Sendable () async throws -> Void = {
+                guard self.processStartIdentityProvider(expectedProcessIdentity.processIdentifier) ==
+                    expectedProcessIdentity.processStartIdentity
+                else {
+                    throw PeekabooError.invalidInput(
+                        "Background typing target process exited or changed process generation")
+                }
+            }
+            defer { self.elementDetectionService.invalidateCache() }
+            let summary = try await self.normalizingSnapshotErrors {
+                try await self.typeService.typeActionsTrackingSecureInput(
+                    actions,
+                    cadence: cadence,
+                    snapshotId: snapshotId,
+                    targetProcessIdentifier: expectedProcessIdentity.processIdentifier,
+                    deliveryValidator: validator)
+            }
+            return summary.result
+        }
+    }
+
     // MARK: - Typing Visualization Helpers
 
     func visualizeTypeActions(

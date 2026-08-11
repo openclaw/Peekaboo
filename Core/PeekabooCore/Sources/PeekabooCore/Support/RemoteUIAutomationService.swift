@@ -18,9 +18,11 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
     public let targetedHotkeyUnavailableReason: String?
     public let targetedHotkeyRequiresEventSynthesizingPermission: Bool
     public let supportsTargetedTypeActions: Bool
+    public let supportsProcessGenerationPinnedTypeActions: Bool
     public let targetedTypeUnavailableReason: String?
     public let targetedTypeRequiresEventSynthesizingPermission: Bool
     public let supportsTargetedClicks: Bool
+    public let supportsProcessGenerationPinnedClicks: Bool
     public let targetedClickUnavailableReason: String?
     public let targetedClickRequiresEventSynthesizingPermission: Bool
     public let supportsExactWindowTargetedClicks: Bool
@@ -37,9 +39,11 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
         targetedHotkeyUnavailableReason: String? = nil,
         targetedHotkeyRequiresEventSynthesizingPermission: Bool = false,
         supportsTargetedTypeActions: Bool = false,
+        supportsProcessGenerationPinnedTypeActions: Bool = false,
         targetedTypeUnavailableReason: String? = nil,
         targetedTypeRequiresEventSynthesizingPermission: Bool = false,
         supportsTargetedClicks: Bool = false,
+        supportsProcessGenerationPinnedClicks: Bool = false,
         targetedClickUnavailableReason: String? = nil,
         targetedClickRequiresEventSynthesizingPermission: Bool = false,
         supportsExactWindowTargetedClicks: Bool = false,
@@ -55,9 +59,11 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
         self.targetedHotkeyUnavailableReason = targetedHotkeyUnavailableReason
         self.targetedHotkeyRequiresEventSynthesizingPermission = targetedHotkeyRequiresEventSynthesizingPermission
         self.supportsTargetedTypeActions = supportsTargetedTypeActions
+        self.supportsProcessGenerationPinnedTypeActions = supportsProcessGenerationPinnedTypeActions
         self.targetedTypeUnavailableReason = targetedTypeUnavailableReason
         self.targetedTypeRequiresEventSynthesizingPermission = targetedTypeRequiresEventSynthesizingPermission
         self.supportsTargetedClicks = supportsTargetedClicks
+        self.supportsProcessGenerationPinnedClicks = supportsProcessGenerationPinnedClicks
         self.targetedClickUnavailableReason = targetedClickUnavailableReason
         self.targetedClickRequiresEventSynthesizingPermission = targetedClickRequiresEventSynthesizingPermission
         self.supportsExactWindowTargetedClicks = supportsExactWindowTargetedClicks
@@ -165,6 +171,29 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
         target: ClickTarget,
         clickType: ClickType,
         snapshotId: String?,
+        expectedProcessIdentity: ApplicationProcessIdentity) async throws
+    {
+        guard self.supportsProcessGenerationPinnedClicks else {
+            throw PeekabooError.serviceUnavailable(
+                "Remote bridge host does not support process-generation-pinned background clicks; update the host")
+        }
+        do {
+            try await self.client.click(
+                target: target,
+                clickType: clickType,
+                snapshotId: snapshotId,
+                expectedProcessIdentity: expectedProcessIdentity)
+        } catch let envelope as PeekabooBridgeErrorEnvelope where envelope.operationMayHaveCompleted {
+            throw Self.inputDeliveryIndeterminateError(for: envelope, operation: .click)
+        } catch let envelope as PeekabooBridgeErrorEnvelope {
+            throw Self.automationError(for: envelope, snapshotId: snapshotId)
+        }
+    }
+
+    public func click(
+        target: ClickTarget,
+        clickType: ClickType,
+        snapshotId: String?,
         expectedWindowIdentity: WindowMutationIdentity,
         expectedWindowBounds: CGRect) async throws
     {
@@ -220,6 +249,30 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
         do {
             return try await self.client.typeActions(actions, cadence: cadence, snapshotId: snapshotId)
         } catch let envelope as PeekabooBridgeErrorEnvelope {
+            throw Self.automationError(for: envelope, snapshotId: snapshotId)
+        }
+    }
+
+    public func typeActions(
+        _ actions: [TypeAction],
+        cadence: TypingCadence,
+        snapshotId: String?,
+        expectedProcessIdentity: ApplicationProcessIdentity) async throws -> TypeResult
+    {
+        guard self.supportsProcessGenerationPinnedTypeActions else {
+            throw PeekabooError.serviceUnavailable(
+                "Remote bridge host does not support process-generation-pinned background typing; update the host")
+        }
+        do {
+            return try await self.client.typeActions(
+                actions,
+                cadence: cadence,
+                snapshotId: snapshotId,
+                expectedProcessIdentity: expectedProcessIdentity)
+        } catch let envelope as PeekabooBridgeErrorEnvelope {
+            if envelope.operationMayHaveCompleted {
+                throw Self.inputDeliveryIndeterminateError(for: envelope, operation: .type)
+            }
             throw Self.automationError(for: envelope, snapshotId: snapshotId)
         }
     }

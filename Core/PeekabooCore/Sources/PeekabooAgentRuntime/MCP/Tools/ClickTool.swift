@@ -150,14 +150,15 @@ public struct ClickTool: MCPTool {
 
         do {
             let resolution = try await self.resolveClickTarget(for: request)
-            let effectiveTargetProcessIdentifier = try self.backgroundProcessIdentifier(
+            let effectiveTargetProcessIdentity = try await self.backgroundProcessIdentity(
                 request: request,
                 resolution: resolution)
+            let effectiveTargetProcessIdentifier = effectiveTargetProcessIdentity?.processIdentifier
             try await self.performClick(
                 resolution: resolution,
                 intent: request.intent,
                 deliveryMode: request.deliveryMode,
-                targetProcessIdentifier: effectiveTargetProcessIdentifier)
+                targetProcessIdentity: effectiveTargetProcessIdentity)
 
             let invalidatedSnapshotId = await UISnapshotManager.shared
                 .invalidateActiveSnapshot(id: resolution.snapshotIdToInvalidate)
@@ -170,6 +171,14 @@ public struct ClickTool: MCPTool {
                 invalidatedSnapshotId: invalidatedSnapshotId)
         } catch let error as ClickToolError {
             return Self.preDispatchErrorResponse(error)
+        } catch let error as InputDeliveryIndeterminateError {
+            return ToolResponse.error(
+                error.localizedDescription,
+                meta: .object([
+                    "mutation_dispatched": .bool(true),
+                    "retry_safe": .bool(false),
+                    "requires_fresh_observation": .bool(true),
+                ]))
         } catch {
             self.logger.error("Click execution failed: \(error.localizedDescription)")
             return ToolResponse.error("Failed to perform click: \(error.localizedDescription)")
@@ -226,15 +235,16 @@ public struct ClickTool: MCPTool {
         resolution: ClickResolution,
         intent: ClickIntent,
         deliveryMode: ClickToolDeliveryMode,
-        targetProcessIdentifier: pid_t?) async throws
+        targetProcessIdentity: ApplicationProcessIdentity?) async throws
     {
         let target = resolution.automationTarget
         let snapshotId = resolution.snapshotId
         if deliveryMode == .background {
-            guard let targetProcessIdentifier else {
+            guard let targetProcessIdentity else {
                 throw ClickToolError(
                     "Background click requires a capture-owned snapshot with an exact target process.")
             }
+            let targetProcessIdentifier = targetProcessIdentity.processIdentifier
             if case .coordinates = target {
                 try await self.validateCoordinateReceipt(
                     resolution,
@@ -264,11 +274,15 @@ public struct ClickTool: MCPTool {
                     expectedWindowIdentity: expectedWindowIdentity,
                     expectedWindowBounds: expectedWindowBounds)
             } else {
+                guard automation.supportsProcessGenerationPinnedClicks else {
+                    throw ClickToolError(
+                        "This automation host does not support process-generation-pinned background clicks.")
+                }
                 try await automation.click(
                     target: target,
                     clickType: intent.automationType,
                     snapshotId: snapshotId,
-                    targetProcessIdentifier: targetProcessIdentifier)
+                    expectedProcessIdentity: targetProcessIdentity)
             }
         } else {
             try await self.context.automation.click(
@@ -278,19 +292,51 @@ public struct ClickTool: MCPTool {
         }
     }
 
-    private func backgroundProcessIdentifier(
+    private func backgroundProcessIdentity(
         request: ClickRequest,
-        resolution: ClickResolution) throws -> pid_t?
+        resolution: ClickResolution) async throws -> ApplicationProcessIdentity?
     {
         guard request.deliveryMode == .background else { return nil }
+        let selectedProcessIdentifier: Int32?
         if let pid = request.pid {
             guard pid > 0 else {
                 throw ClickToolError("pid must be greater than 0.")
             }
-            return pid_t(pid)
+            selectedProcessIdentifier = pid
+        } else {
+            selectedProcessIdentifier = resolution.targetProcessIdentifier
         }
-        guard let targetProcessIdentifier = resolution.targetProcessIdentifier else { return nil }
-        return pid_t(targetProcessIdentifier)
+        guard let selectedProcessIdentifier else { return nil }
+        let capturedIdentity: ApplicationProcessIdentity? = if let capturedWindowIdentity =
+            resolution.expectedWindowIdentity
+        {
+            ApplicationProcessIdentity(
+                processIdentifier: capturedWindowIdentity.ownerProcessIdentifier,
+                processStartIdentity: capturedWindowIdentity.ownerProcessStartIdentity)
+        } else if let snapshotId = resolution.snapshotId,
+                  let snapshot = await self.getSnapshot(id: snapshotId)
+        {
+            snapshot.applicationProcessIdentity
+        } else {
+            nil
+        }
+        if let capturedIdentity {
+            guard capturedIdentity.processIdentifier == selectedProcessIdentifier else {
+                throw ClickToolError(
+                    "The click snapshot belongs to PID \(capturedIdentity.processIdentifier), not " +
+                        "PID \(selectedProcessIdentifier). Run see again before clicking.")
+            }
+            return capturedIdentity
+        }
+        let application = try await self.context.applications.findApplication(
+            identifier: "PID:\(selectedProcessIdentifier)")
+        guard application.processIdentifier == selectedProcessIdentifier,
+              let currentIdentity = application.processIdentity
+        else {
+            throw ClickToolError(
+                "The runtime host could not pin PID \(selectedProcessIdentifier) to a process generation.")
+        }
+        return currentIdentity
     }
 
     private func buildResponse(

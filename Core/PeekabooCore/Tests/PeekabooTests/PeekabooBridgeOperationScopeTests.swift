@@ -56,15 +56,29 @@ struct PeekabooBridgeOperationScopeTests {
     }
 
     @Test
-    func `Generation-pinned hotkeys publish their application process scope`() {
-        let targeted = PeekabooBridgeRequest.targetedHotkey(.init(
+    func `Generation-pinned process input publishes its application process scope`() {
+        let hotkey = PeekabooBridgeRequest.targetedHotkey(.init(
             keys: "cmd,a",
             holdDuration: 10,
             targetProcessIdentifier: self.process.processIdentifier,
             expectedProcessIdentity: self.process))
+        let type = PeekabooBridgeRequest.targetedTypeActions(.init(
+            actions: [.text("hello")],
+            cadence: .fixed(milliseconds: 0),
+            snapshotId: nil,
+            targetProcessIdentifier: self.process.processIdentifier,
+            expectedProcessIdentity: self.process))
+        let click = PeekabooBridgeRequest.targetedClick(.init(
+            target: .elementId("B1"),
+            clickType: .single,
+            snapshotId: "snapshot",
+            targetProcessIdentifier: self.process.processIdentifier,
+            expectedProcessIdentity: self.process))
 
-        #expect(targeted.desktopOperationScope == .process(self.process))
-        #expect(targeted.nativeLeafOwnsDesktopOperationLane)
+        for request in [hotkey, type, click] {
+            #expect(request.desktopOperationScope == .process(self.process))
+            #expect(request.nativeLeafOwnsDesktopOperationLane)
+        }
     }
 
     @Test

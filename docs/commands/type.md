@@ -34,6 +34,7 @@ read_when:
 - Default profile is `linear`, using no inter-key delay for fast deterministic input. Passing `--wpm` opts into human cadence; `--profile human` uses 140 WPM when `--wpm` is omitted.
 - Background delivery uses process-targeted CoreGraphics keyboard events and requires Event Synthesizing access. Apps that only accept typing in a focused key window may still need `--foreground`.
 - Printable background text is carried as Unicode instead of physical US key positions, so the requested characters remain stable across active keyboard layouts.
+- Background app/PID delivery is pinned to the process generation resolved before dispatch. Peekaboo revalidates the receipt before every character or special action, stops on target exit/relaunch, and reports partial delivery as retry-unsafe. Remote delivery requires Bridge protocol 1.22 or newer.
 - JSON output reports `totalCharacters`, `keyPresses`, delivery mode, optional target PID, and elapsed time; this matches what the agent logs when executing scripted steps.
 
 ## Examples

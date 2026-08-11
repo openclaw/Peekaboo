@@ -284,6 +284,7 @@ extension TargetedHotkeyServiceProtocol {
 @MainActor
 public protocol TargetedTypeServiceProtocol: UIAutomationServiceProtocol {
     var supportsTargetedTypeActions: Bool { get }
+    var supportsProcessGenerationPinnedTypeActions: Bool { get }
     var targetedTypeUnavailableReason: String? { get }
     var targetedTypeRequiresEventSynthesizingPermission: Bool { get }
 
@@ -292,11 +293,21 @@ public protocol TargetedTypeServiceProtocol: UIAutomationServiceProtocol {
         cadence: TypingCadence,
         snapshotId: String?,
         targetProcessIdentifier: pid_t) async throws -> TypeResult
+
+    func typeActions(
+        _ actions: [TypeAction],
+        cadence: TypingCadence,
+        snapshotId: String?,
+        expectedProcessIdentity: ApplicationProcessIdentity) async throws -> TypeResult
 }
 
 extension TargetedTypeServiceProtocol {
     public var supportsTargetedTypeActions: Bool {
         true
+    }
+
+    public var supportsProcessGenerationPinnedTypeActions: Bool {
+        false
     }
 
     public var targetedTypeUnavailableReason: String? {
@@ -306,12 +317,23 @@ extension TargetedTypeServiceProtocol {
     public var targetedTypeRequiresEventSynthesizingPermission: Bool {
         true
     }
+
+    public func typeActions(
+        _: [TypeAction],
+        cadence _: TypingCadence,
+        snapshotId _: String?,
+        expectedProcessIdentity _: ApplicationProcessIdentity) async throws -> TypeResult
+    {
+        throw PeekabooError.serviceUnavailable(
+            "This automation service does not support process-generation-pinned typing")
+    }
 }
 
 /// Optional capability for automation services that can send mouse clicks to a process without focusing it.
 @MainActor
 public protocol TargetedClickServiceProtocol: UIAutomationServiceProtocol {
     var supportsTargetedClicks: Bool { get }
+    var supportsProcessGenerationPinnedClicks: Bool { get }
     var targetedClickUnavailableReason: String? { get }
     var targetedClickRequiresEventSynthesizingPermission: Bool { get }
 
@@ -320,6 +342,12 @@ public protocol TargetedClickServiceProtocol: UIAutomationServiceProtocol {
         clickType: ClickType,
         snapshotId: String?,
         targetProcessIdentifier: pid_t) async throws
+
+    func click(
+        target: ClickTarget,
+        clickType: ClickType,
+        snapshotId: String?,
+        expectedProcessIdentity: ApplicationProcessIdentity) async throws
 }
 
 /// Optional capability for preserving an exact target window during a background click.
@@ -357,12 +385,26 @@ extension TargetedClickServiceProtocol {
         true
     }
 
+    public var supportsProcessGenerationPinnedClicks: Bool {
+        false
+    }
+
     public var targetedClickUnavailableReason: String? {
         nil
     }
 
     public var targetedClickRequiresEventSynthesizingPermission: Bool {
         true
+    }
+
+    public func click(
+        target _: ClickTarget,
+        clickType _: ClickType,
+        snapshotId _: String?,
+        expectedProcessIdentity _: ApplicationProcessIdentity) async throws
+    {
+        throw PeekabooError.serviceUnavailable(
+            "This automation service does not support process-generation-pinned clicks")
     }
 }
 

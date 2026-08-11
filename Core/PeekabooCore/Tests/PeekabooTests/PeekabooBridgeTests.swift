@@ -956,6 +956,81 @@ struct PeekabooBridgeTests {
     }
 
     @Test
+    func `automation targeted type forwards process-generation receipt`() async throws {
+        let stub = await MainActor.run { StubServices() }
+        let server = await MainActor.run {
+            PeekabooBridgeServer(
+                services: stub,
+                hostKind: .gui,
+                allowlistedTeams: [],
+                allowlistedBundles: [])
+        }
+        let identity = ApplicationProcessIdentity(processIdentifier: 9010, processStartIdentity: 1235)
+        let request = PeekabooBridgeRequest.targetedTypeActions(.init(
+            actions: [.text("hello")],
+            cadence: .fixed(milliseconds: 0),
+            snapshotId: nil,
+            targetProcessIdentifier: identity.processIdentifier,
+            expectedProcessIdentity: identity))
+
+        let response = try await self.decode(server.decodeAndHandle(
+            JSONEncoder.peekabooBridgeEncoder().encode(request),
+            peer: nil))
+
+        guard case .typeResult = response else {
+            Issue.record("Expected type result, got \(response)")
+            return
+        }
+        #expect(await stub.automationStub.lastProcessTargetedTypeIdentity == identity)
+    }
+
+    @Test
+    func `targeted type rejects mismatched process receipt before dispatch`() async throws {
+        let stub = await MainActor.run { StubServices() }
+        let server = await MainActor.run {
+            PeekabooBridgeServer(
+                services: stub,
+                hostKind: .gui,
+                allowlistedTeams: [],
+                allowlistedBundles: [])
+        }
+        let request = PeekabooBridgeRequest.targetedTypeActions(.init(
+            actions: [.text("hello")],
+            cadence: .fixed(milliseconds: 0),
+            snapshotId: nil,
+            targetProcessIdentifier: 9010,
+            expectedProcessIdentity: .init(processIdentifier: 9011, processStartIdentity: 1235)))
+
+        let response = try await self.decode(server.decodeAndHandle(
+            JSONEncoder.peekabooBridgeEncoder().encode(request),
+            peer: nil))
+
+        guard case let .error(error) = response else {
+            Issue.record("Expected error, got \(response)")
+            return
+        }
+        #expect(error.code == .invalidRequest)
+        #expect(await stub.automationStub.lastProcessTargetedTypeIdentity == nil)
+    }
+
+    @Test
+    func `legacy targeted type payload decodes without process receipt`() throws {
+        let data = try JSONEncoder.peekabooBridgeEncoder().encode(
+            PeekabooBridgeTargetedTypeActionsRequest(
+                actions: [],
+                cadence: .fixed(milliseconds: 0),
+                snapshotId: nil,
+                targetProcessIdentifier: 9010))
+
+        let payload = try JSONDecoder.peekabooBridgeDecoder().decode(
+            PeekabooBridgeTargetedTypeActionsRequest.self,
+            from: data)
+
+        #expect(payload.targetProcessIdentifier == 9010)
+        #expect(payload.expectedProcessIdentity == nil)
+    }
+
+    @Test
     func `automation targeted hotkey does not launch AppleScript probe`() async throws {
         let recorder = PermissionLaunchRecorder()
         let stub = await MainActor.run { StubServices() }
@@ -1955,6 +2030,8 @@ final class StubAutomationService: TargetedHotkeyServiceProtocol, TargetedTypeSe
     ExactWindowTargetedKeyboardServiceProtocol
 {
     let supportsProcessGenerationPinnedHotkeys = true
+    let supportsProcessGenerationPinnedTypeActions = true
+    let supportsProcessGenerationPinnedClicks = true
     let supportsExactWindowTargetedKeyboard = true
     let exactWindowTargetedKeyboardUnavailableReason: String? = nil
     struct Click { let target: ClickTarget; let type: ClickType }
@@ -1970,6 +2047,7 @@ final class StubAutomationService: TargetedHotkeyServiceProtocol, TargetedTypeSe
         let type: ClickType
         let targetProcessIdentifier: pid_t?
         let targetWindowID: Int?
+        let expectedProcessIdentity: ApplicationProcessIdentity?
     }
 
     struct SetValue {
@@ -1999,6 +2077,7 @@ final class StubAutomationService: TargetedHotkeyServiceProtocol, TargetedTypeSe
     private(set) var lastClick: Click?
     private(set) var lastProcessTargetedHotkey: TargetedHotkey?
     private(set) var lastProcessTargetedClick: TargetedClick?
+    private(set) var lastProcessTargetedTypeIdentity: ApplicationProcessIdentity?
     private(set) var lastSetValue: SetValue?
     private(set) var lastPerformAction: PerformAction?
     var clickError: (any Error)?
@@ -2048,7 +2127,25 @@ final class StubAutomationService: TargetedHotkeyServiceProtocol, TargetedTypeSe
             target: target,
             type: clickType,
             targetProcessIdentifier: targetProcessIdentifier,
-            targetWindowID: nil)
+            targetWindowID: nil,
+            expectedProcessIdentity: nil)
+    }
+
+    func click(
+        target: ClickTarget,
+        clickType: ClickType,
+        snapshotId _: String?,
+        expectedProcessIdentity: ApplicationProcessIdentity) async throws
+    {
+        if let targetedClickError {
+            throw targetedClickError
+        }
+        self.lastProcessTargetedClick = TargetedClick(
+            target: target,
+            type: clickType,
+            targetProcessIdentifier: expectedProcessIdentity.processIdentifier,
+            targetWindowID: nil,
+            expectedProcessIdentity: expectedProcessIdentity)
     }
 
     func click(
@@ -2065,7 +2162,10 @@ final class StubAutomationService: TargetedHotkeyServiceProtocol, TargetedTypeSe
             target: target,
             type: clickType,
             targetProcessIdentifier: expectedWindowIdentity.ownerProcessIdentifier,
-            targetWindowID: expectedWindowIdentity.windowID)
+            targetWindowID: expectedWindowIdentity.windowID,
+            expectedProcessIdentity: ApplicationProcessIdentity(
+                processIdentifier: expectedWindowIdentity.ownerProcessIdentifier,
+                processStartIdentity: expectedWindowIdentity.ownerProcessStartIdentity))
         if self.recordsExactKeyboardEvents {
             self.exactKeyboardEvents.append("retarget")
         }
@@ -2089,6 +2189,19 @@ final class StubAutomationService: TargetedHotkeyServiceProtocol, TargetedTypeSe
         if let targetedTypeError {
             throw targetedTypeError
         }
+        return TypeResult(totalCharacters: actions.count, keyPresses: actions.count)
+    }
+
+    func typeActions(
+        _ actions: [TypeAction],
+        cadence _: TypingCadence,
+        snapshotId _: String?,
+        expectedProcessIdentity: ApplicationProcessIdentity) async throws -> TypeResult
+    {
+        if let targetedTypeError {
+            throw targetedTypeError
+        }
+        self.lastProcessTargetedTypeIdentity = expectedProcessIdentity
         return TypeResult(totalCharacters: actions.count, keyPresses: actions.count)
     }
 

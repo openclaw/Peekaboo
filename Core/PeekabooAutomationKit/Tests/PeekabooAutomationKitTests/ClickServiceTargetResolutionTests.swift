@@ -12,6 +12,79 @@ import Testing
 struct ClickServiceTargetResolutionTests {
     @Test
     @MainActor
+    func `generation-pinned click rejects recycled PID before dispatch`() async throws {
+        let identity = ApplicationProcessIdentity(processIdentifier: getpid(), processStartIdentity: 71)
+        let action = ClickSuccessfulActionInputDriver()
+        let service = UIAutomationService(
+            inputPolicy: UIInputPolicy(defaultStrategy: .actionOnly),
+            actionInputDriver: action,
+            automationElementResolver: ClickFixedAutomationElementResolver(),
+            processStartIdentityProvider: { _ in 72 })
+
+        await #expect(throws: PeekabooError.self) {
+            try await service.click(
+                target: .query("Button"),
+                clickType: .single,
+                snapshotId: nil,
+                expectedProcessIdentity: identity)
+        }
+        #expect(action.performedActionNames.isEmpty)
+    }
+
+    @Test
+    @MainActor
+    func `generation-pinned click reports post-dispatch drift as retry unsafe`() async throws {
+        let generation = ClickLockedGeneration(73)
+        let identity = ApplicationProcessIdentity(processIdentifier: getpid(), processStartIdentity: 73)
+        let action = ClickSuccessfulActionInputDriver(afterAction: { generation.value = 74 })
+        let tracker = ClickWindowTracker(bounds: .zero)
+        WindowMovementTracking.provider = tracker
+        defer { WindowMovementTracking.provider = nil }
+        let detection = ElementDetectionResult(
+            snapshotId: "snapshot",
+            screenshotPath: "/tmp/shot.png",
+            elements: DetectedElements(buttons: [DetectedElement(
+                id: "B1",
+                type: .button,
+                label: "Button",
+                bounds: CGRect(x: 20, y: 30, width: 100, height: 40))]),
+            metadata: DetectionMetadata(
+                detectionTime: 0,
+                elementCount: 1,
+                method: "test",
+                windowContext: WindowContext(
+                    applicationProcessId: identity.processIdentifier,
+                    windowID: 42,
+                    windowBounds: .zero,
+                    windowMutationIdentity: WindowMutationIdentity(
+                        windowID: 42,
+                        ownerProcessIdentifier: identity.processIdentifier,
+                        ownerProcessStartIdentity: identity.processStartIdentity))))
+        let service = UIAutomationService(
+            snapshotManager: InMemorySnapshotManager(detectionResult: detection),
+            inputPolicy: UIInputPolicy(defaultStrategy: .actionOnly),
+            actionInputDriver: action,
+            automationElementResolver: ClickFixedAutomationElementResolver(),
+            exactWindowIdentityValidator: { _, _ in true },
+            processStartIdentityProvider: { _ in generation.value })
+
+        do {
+            try await service.click(
+                target: .elementId("B1"),
+                clickType: .single,
+                snapshotId: "snapshot",
+                expectedProcessIdentity: identity)
+            Issue.record("Expected post-dispatch process drift")
+        } catch let error as InputDeliveryIndeterminateError {
+            #expect(error.operation == .click)
+            #expect(error.emittedUnitCount == 1)
+            #expect(!error.retrySafe)
+        }
+        #expect(action.performedActionNames == [AXActionNames.kAXPressAction])
+    }
+
+    @Test
+    @MainActor
     func `action-first missing snapshot fails as stale instead of falling back`() async {
         let service = ClickService(
             snapshotManager: InMemorySnapshotManager(),
@@ -1189,9 +1262,14 @@ private final class ClickWindowRootResolver: AutomationWindowRootResolving {
 
 @MainActor
 private final class ClickSuccessfulActionInputDriver: ActionInputDriving {
+    private let afterAction: (() -> Void)?
     private(set) var clickCount = 0
     private(set) var rightClickCount = 0
     private(set) var performedActionNames: [String] = []
+
+    init(afterAction: (() -> Void)? = nil) {
+        self.afterAction = afterAction
+    }
 
     func tryClick(element _: AutomationElement) throws -> ActionInputResult {
         self.clickCount += 1
@@ -1229,10 +1307,25 @@ private final class ClickSuccessfulActionInputDriver: ActionInputDriving {
     func tryPerformAction(element _: AutomationElement, actionName: String) throws
     -> ActionInputResult {
         self.performedActionNames.append(actionName)
+        self.afterAction?()
         return ActionInputResult(
             actionName: actionName,
             anchorPoint: CGPoint(x: 70, y: 50),
             elementRole: "AXButton")
+    }
+}
+
+private final class ClickLockedGeneration: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storedValue: UInt64?
+
+    init(_ value: UInt64?) {
+        self.storedValue = value
+    }
+
+    var value: UInt64? {
+        get { self.lock.withLock { self.storedValue } }
+        set { self.lock.withLock { self.storedValue = newValue } }
     }
 }
 

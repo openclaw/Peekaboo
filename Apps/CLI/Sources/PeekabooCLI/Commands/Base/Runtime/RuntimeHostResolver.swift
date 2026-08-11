@@ -508,81 +508,12 @@ enum RuntimeHostResolver {
                     }
                     continue
                 }
-                let reusableDaemonStatus = validation.reusableDaemonStatus
-
-                let targetedHotkeyAvailability = BridgeCapabilityPolicy.targetedHotkeyAvailability(for: handshake)
-                let targetedTypeAvailability = BridgeCapabilityPolicy.targetedTypeAvailability(for: handshake)
-                let targetedClickAvailability = BridgeCapabilityPolicy.targetedClickAvailability(for: handshake)
-                let hostDescription = "remote \(handshake.hostKind.rawValue) via \(socketPath)" +
-                    (handshake.build.map { " (build \($0))" } ?? "")
+                let hostDescription = Self.remoteHostDescription(handshake: handshake, socketPath: socketPath)
                 return Resolution(
-                    services: RemotePeekabooServices(
-                        client: client,
-                        supportsTargetedHotkeys: targetedHotkeyAvailability.isEnabled,
-                        supportsProcessGenerationPinnedHotkeys:
-                        BridgeCapabilityPolicy.supportsProcessGenerationPinnedHotkeys(for: handshake),
-                        targetedHotkeyUnavailableReason: targetedHotkeyAvailability.unavailableReason,
-                        targetedHotkeyRequiresEventSynthesizingPermission:
-                        targetedHotkeyAvailability.missingPermissions.contains(.postEvent),
-                        supportsTargetedTypeActions: targetedTypeAvailability.isEnabled,
-                        targetedTypeUnavailableReason: targetedTypeAvailability.unavailableReason,
-                        targetedTypeRequiresEventSynthesizingPermission:
-                        targetedTypeAvailability.missingPermissions.contains(.postEvent),
-                        supportsTargetedClicks: targetedClickAvailability.isEnabled,
-                        targetedClickUnavailableReason: targetedClickAvailability.unavailableReason,
-                        targetedClickRequiresEventSynthesizingPermission:
-                        targetedClickAvailability.missingPermissions.contains(.postEvent),
-                        supportsExactWindowTargetedClicks:
-                        BridgeCapabilityPolicy.supportsExactWindowTargetedClicks(for: handshake),
-                        supportsBackgroundWindowClose: BridgeCapabilityPolicy.supportsOperation(
-                            .backgroundCloseWindow,
-                            for: handshake
-                        ),
-                        supportsPinnedWindowMutations:
-                        BridgeCapabilityPolicy.supportsPinnedWindowMutations(for: handshake),
-                        supportsWindowRestore: BridgeCapabilityPolicy.supportsOperation(
-                            .restoreWindow,
-                            for: handshake
-                        ),
-                        supportsBackgroundDialogClick: BridgeCapabilityPolicy.supportsOperation(
-                            .backgroundDialogClickButton,
-                            for: handshake
-                        ),
-                        supportsTargetedScroll: BridgeCapabilityPolicy.supportsTargetedScroll(for: handshake),
-                        supportsInspectAccessibilityTree: BridgeCapabilityPolicy.supportsInspectAccessibilityTree(
-                            for: handshake
-                        ),
-                        supportsExactWindowTargetedKeyboard:
-                        BridgeCapabilityPolicy.supportsExactWindowTargetedKeyboard(for: handshake),
-                        exactWindowTargetedKeyboardUnavailableReason:
-                        BridgeCapabilityPolicy.supportsExactWindowTargetedKeyboard(for: handshake)
-                            ? nil
-                            : "Bridge host lacks atomic exact-window keyboard delivery",
-                        supportsPostEventPermissionRequest: BridgeCapabilityPolicy.supportsPostEventPermissionRequest(
-                            for: handshake
-                        ),
-                        supportsElementActions: BridgeCapabilityPolicy.supportsElementActions(for: handshake),
-                        supportsDesktopObservation: BridgeCapabilityPolicy.supportsDesktopObservation(for: handshake),
-                        supportsExactWindowROIObservation:
-                        BridgeCapabilityPolicy.supportsExactWindowROIObservation(for: handshake),
-                        supportsImplicitLatestSnapshotInvalidation:
-                        BridgeCapabilityPolicy.supportsImplicitSnapshotInvalidation(for: handshake),
-                        supportsApplicationLaunchOptions:
-                        BridgeCapabilityPolicy.supportsApplicationLaunchOptions(for: handshake),
-                        supportsNewApplicationInstanceLaunch:
-                        BridgeCapabilityPolicy.supportsNewApplicationInstanceLaunch(for: handshake),
-                        supportsApplicationWindowReadiness:
-                        BridgeCapabilityPolicy.supportsApplicationWindowReadiness(for: handshake),
-                        supportsApplicationRelaunch:
-                        BridgeCapabilityPolicy.supportsApplicationRelaunch(for: handshake),
-                        supportsProcessGenerationPinnedApplicationQuit:
-                        BridgeCapabilityPolicy.supportsProcessGenerationPinnedApplicationQuit(for: handshake),
-                        allowLocalApplicationFallback: handshake.hostKind == .onDemand,
-                        desktopMutationWatermarkStore: DesktopMutationWatermarkStore()
-                    ),
+                    services: Self.remoteServices(client: client, handshake: handshake),
                     hostDescription: hostDescription,
                     selectedRemoteSocketPath: NSString(string: socketPath).standardizingPath,
-                    selectedRemoteHostProcessIdentifier: reusableDaemonStatus?.pid,
+                    selectedRemoteHostProcessIdentifier: validation.reusableDaemonStatus?.pid,
                     snapshotInvalidationRemoteSocketPaths: snapshotInvalidationRemoteSocketPaths,
                     applicationRelaunchAllowed: BridgeCapabilityPolicy.supportsApplicationRelaunch(for: handshake),
                     requiredHostFailure: nil
@@ -639,5 +570,77 @@ enum RuntimeHostResolver {
             return nil
         }
         return RemoteCandidateValidation(reusableDaemonStatus: reusableDaemonStatus)
+    }
+
+    private static func remoteServices(
+        client: PeekabooBridgeClient,
+        handshake: PeekabooBridgeHandshakeResponse
+    ) -> RemotePeekabooServices {
+        let targetedHotkey = BridgeCapabilityPolicy.targetedHotkeyAvailability(for: handshake)
+        let targetedType = BridgeCapabilityPolicy.targetedTypeAvailability(for: handshake)
+        let targetedClick = BridgeCapabilityPolicy.targetedClickAvailability(for: handshake)
+        let supportsExactKeyboard = BridgeCapabilityPolicy.supportsExactWindowTargetedKeyboard(for: handshake)
+        return RemotePeekabooServices(
+            client: client,
+            supportsTargetedHotkeys: targetedHotkey.isEnabled,
+            supportsProcessGenerationPinnedHotkeys:
+            BridgeCapabilityPolicy.supportsProcessGenerationPinnedHotkeys(for: handshake),
+            targetedHotkeyUnavailableReason: targetedHotkey.unavailableReason,
+            targetedHotkeyRequiresEventSynthesizingPermission: targetedHotkey.missingPermissions.contains(.postEvent),
+            supportsTargetedTypeActions: targetedType.isEnabled,
+            supportsProcessGenerationPinnedInteractions: handshake.negotiatedVersion >=
+                PeekabooBridgeConstants.processGenerationPinnedInteractionVersion,
+            targetedTypeUnavailableReason: targetedType.unavailableReason,
+            targetedTypeRequiresEventSynthesizingPermission: targetedType.missingPermissions.contains(.postEvent),
+            supportsTargetedClicks: targetedClick.isEnabled,
+            targetedClickUnavailableReason: targetedClick.unavailableReason,
+            targetedClickRequiresEventSynthesizingPermission: targetedClick.missingPermissions.contains(.postEvent),
+            supportsExactWindowTargetedClicks: BridgeCapabilityPolicy.supportsExactWindowTargetedClicks(for: handshake),
+            supportsBackgroundWindowClose: BridgeCapabilityPolicy.supportsOperation(
+                .backgroundCloseWindow,
+                for: handshake
+            ),
+            supportsPinnedWindowMutations: BridgeCapabilityPolicy.supportsPinnedWindowMutations(for: handshake),
+            supportsWindowRestore: BridgeCapabilityPolicy.supportsOperation(.restoreWindow, for: handshake),
+            supportsBackgroundDialogClick: BridgeCapabilityPolicy.supportsOperation(
+                .backgroundDialogClickButton,
+                for: handshake
+            ),
+            supportsTargetedScroll: BridgeCapabilityPolicy.supportsTargetedScroll(for: handshake),
+            supportsInspectAccessibilityTree: BridgeCapabilityPolicy.supportsInspectAccessibilityTree(for: handshake),
+            supportsExactWindowTargetedKeyboard: supportsExactKeyboard,
+            exactWindowTargetedKeyboardUnavailableReason: supportsExactKeyboard
+                ? nil
+                : "Bridge host lacks atomic exact-window keyboard delivery",
+            supportsPostEventPermissionRequest: BridgeCapabilityPolicy.supportsPostEventPermissionRequest(
+                for: handshake
+            ),
+            supportsElementActions: BridgeCapabilityPolicy.supportsElementActions(for: handshake),
+            supportsDesktopObservation: BridgeCapabilityPolicy.supportsDesktopObservation(for: handshake),
+            supportsExactWindowROIObservation: BridgeCapabilityPolicy.supportsExactWindowROIObservation(for: handshake),
+            supportsImplicitLatestSnapshotInvalidation: BridgeCapabilityPolicy.supportsImplicitSnapshotInvalidation(
+                for: handshake
+            ),
+            supportsApplicationLaunchOptions: BridgeCapabilityPolicy.supportsApplicationLaunchOptions(for: handshake),
+            supportsNewApplicationInstanceLaunch: BridgeCapabilityPolicy.supportsNewApplicationInstanceLaunch(
+                for: handshake
+            ),
+            supportsApplicationWindowReadiness: BridgeCapabilityPolicy.supportsApplicationWindowReadiness(
+                for: handshake
+            ),
+            supportsApplicationRelaunch: BridgeCapabilityPolicy.supportsApplicationRelaunch(for: handshake),
+            supportsProcessGenerationPinnedApplicationQuit:
+            BridgeCapabilityPolicy.supportsProcessGenerationPinnedApplicationQuit(for: handshake),
+            allowLocalApplicationFallback: handshake.hostKind == .onDemand,
+            desktopMutationWatermarkStore: DesktopMutationWatermarkStore()
+        )
+    }
+
+    private static func remoteHostDescription(
+        handshake: PeekabooBridgeHandshakeResponse,
+        socketPath: String
+    ) -> String {
+        "remote \(handshake.hostKind.rawValue) via \(socketPath)" +
+            (handshake.build.map { " (build \($0))" } ?? "")
     }
 }

@@ -198,6 +198,57 @@ extension UIAutomationService {
         target: ClickTarget,
         clickType: ClickType,
         snapshotId: String?,
+        expectedProcessIdentity: ApplicationProcessIdentity) async throws
+    {
+        try await self.operationLaneCoordinator.run(scope: .process(expectedProcessIdentity), access: .write) {
+            if let snapshotId,
+               let detection = try? await self.snapshotManager.getDetectionResult(snapshotId: snapshotId),
+               let capturedIdentity = detection.metadata.windowContext?.windowMutationIdentity
+            {
+                guard capturedIdentity.ownerProcessIdentifier == expectedProcessIdentity.processIdentifier,
+                      capturedIdentity.ownerProcessStartIdentity == expectedProcessIdentity.processStartIdentity
+                else {
+                    throw PeekabooError.snapshotStale(
+                        "Background click snapshot belongs to a different process generation")
+                }
+            }
+            let targetIsCurrent: @MainActor @Sendable () -> Bool = {
+                self.processStartIdentityProvider(expectedProcessIdentity.processIdentifier) ==
+                    expectedProcessIdentity.processStartIdentity
+            }
+            guard targetIsCurrent() else {
+                throw PeekabooError.invalidInput(
+                    "Background click target process exited or changed process generation")
+            }
+            self.logger.debug("Delegating generation-pinned background click to ClickService")
+            defer { self.elementDetectionService.invalidateCache() }
+            let result = try await self.normalizingSnapshotErrors {
+                try await self.clickService.click(
+                    target: target,
+                    clickType: clickType,
+                    snapshotId: snapshotId,
+                    targetProcessIdentifier: expectedProcessIdentity.processIdentifier)
+            }
+            guard targetIsCurrent() else {
+                throw InputDeliveryIndeterminateError(
+                    operation: .click,
+                    emittedUnitCount: 1,
+                    causeDescription: "The target process changed generation before completion validation")
+            }
+
+            try await self.visualizeClick(
+                target: target,
+                actionAnchor: result.anchorPoint,
+                clickType: clickType,
+                snapshotId: snapshotId,
+                targetProcessIdentifier: expectedProcessIdentity.processIdentifier)
+        }
+    }
+
+    public func click(
+        target: ClickTarget,
+        clickType: ClickType,
+        snapshotId: String?,
         expectedWindowIdentity: WindowMutationIdentity,
         expectedWindowBounds: CGRect) async throws
     {

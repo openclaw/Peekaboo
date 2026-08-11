@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Default new agent configurations to GPT-5.6 and Claude Opus 5 while keeping credential-only Anthropic discovery on Opus 4.8 for zero-retention compatibility and preserving explicit model selections.
 
 ### Fixed
+- Pin process-targeted background typing, paste, clicks, and MCP key sequences to one process generation, rejecting Bridge hosts older than protocol 1.22 instead of letting them ignore the receipt or redirect input to a recycled PID.
 - Resolve standalone exact-window AX-only `see` targets from their live owner and bind results to a process-generation/window receipt before publishing actionable element IDs or a snapshot.
 - Retry one passive background observation when its exact capture receipt changes before element detection or output, while leaving mutation-capable observations fail-closed.
 - Keep raw SwiftPM CLI `--version` output stable with explicit `unknown` build placeholders instead of reading the original working copy and wall clock at runtime; stamped debug and release builds retain rich link-time metadata.

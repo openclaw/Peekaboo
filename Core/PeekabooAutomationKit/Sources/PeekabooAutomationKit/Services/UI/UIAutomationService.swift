@@ -43,6 +43,8 @@ public final class UIAutomationService: TargetedHotkeyServiceProtocol, TargetedT
     ExactWindowTargetedKeyboardServiceProtocol
 {
     public let supportsProcessGenerationPinnedHotkeys = true
+    public let supportsProcessGenerationPinnedTypeActions = true
+    public let supportsProcessGenerationPinnedClicks = true
     public let supportsExactWindowTargetedKeyboard = true
     public let exactWindowTargetedKeyboardUnavailableReason: String? = nil
     let logger = Logger(subsystem: "boo.peekaboo.core", category: "UIAutomationService")

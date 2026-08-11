@@ -104,6 +104,7 @@ struct PasteCommandTests {
     func `Bare background paste reports unverified receiver consumption`() async throws {
         let app = ServiceApplicationInfo(
             processIdentifier: 2468,
+            processStartIdentity: 71,
             bundleIdentifier: "com.apple.TextEdit",
             name: "TextEdit"
         )
@@ -129,6 +130,10 @@ struct PasteCommandTests {
         #expect(automation.hotkeyCalls.isEmpty)
         #expect(automation.targetedHotkeyCalls.map(\.keys) == ["cmd,v"])
         #expect(automation.targetedHotkeyCalls.first?.targetProcessIdentifier == 2468)
+        #expect(automation.targetedHotkeyCalls.first?.expectedProcessIdentity == ApplicationProcessIdentity(
+            processIdentifier: 2468,
+            processStartIdentity: 71
+        ))
     }
 
     @Test
@@ -136,6 +141,7 @@ struct PasteCommandTests {
     func `Paste with app target defaults to background process delivery`() async throws {
         let app = ServiceApplicationInfo(
             processIdentifier: 2468,
+            processStartIdentity: 71,
             bundleIdentifier: "com.apple.TextEdit",
             name: "TextEdit"
         )
@@ -170,6 +176,10 @@ struct PasteCommandTests {
         #expect(automation.hotkeyCalls.isEmpty)
         let typeCall = try #require(automation.targetedTypeActionsCalls.first)
         #expect(typeCall.targetProcessIdentifier == 2468)
+        #expect(typeCall.expectedProcessIdentity == ApplicationProcessIdentity(
+            processIdentifier: 2468,
+            processStartIdentity: 71
+        ))
         #expect(typeCall.actions.count == 1)
         if case .text("smoke") = typeCall.actions[0] {} else {
             Issue.record("Expected background paste text to be delivered through targeted typing")
@@ -190,6 +200,7 @@ struct PasteCommandTests {
     func `Paste positional text uses background process delivery`() async throws {
         let app = ServiceApplicationInfo(
             processIdentifier: 2468,
+            processStartIdentity: 71,
             bundleIdentifier: "com.apple.TextEdit",
             name: "TextEdit"
         )
@@ -224,6 +235,7 @@ struct PasteCommandTests {
     func `Paste UTF8 data uses proven background text delivery`() async throws {
         let app = ServiceApplicationInfo(
             processIdentifier: 2468,
+            processStartIdentity: 71,
             bundleIdentifier: "com.apple.TextEdit",
             name: "TextEdit"
         )
@@ -267,6 +279,7 @@ struct PasteCommandTests {
     func `Paste binary payload preserves transaction but never claims background consumption`() async throws {
         let app = ServiceApplicationInfo(
             processIdentifier: 2468,
+            processStartIdentity: 71,
             bundleIdentifier: "com.apple.TextEdit",
             name: "TextEdit"
         )
@@ -317,6 +330,7 @@ struct PasteCommandTests {
     func `Paste warns without inviting retry when clipboard restoration fails`() async throws {
         let app = ServiceApplicationInfo(
             processIdentifier: 2468,
+            processStartIdentity: 71,
             bundleIdentifier: "com.apple.TextEdit",
             name: "TextEdit"
         )
@@ -394,6 +408,7 @@ struct PasteCommandTests {
     func `Paste foreground flag opts out of background process delivery`() async throws {
         let app = ServiceApplicationInfo(
             processIdentifier: 2468,
+            processStartIdentity: 71,
             bundleIdentifier: "com.apple.TextEdit",
             name: "TextEdit"
         )
@@ -493,6 +508,7 @@ struct PasteCommandTests {
         context.applications.applications = [
             ServiceApplicationInfo(
                 processIdentifier: 9753,
+                processStartIdentity: 72,
                 bundleIdentifier: "com.apple.TextEdit",
                 name: "TextEdit"
             ),

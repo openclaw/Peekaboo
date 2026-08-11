@@ -299,7 +299,8 @@ public struct PasteTool: MCPTool {
             targetedAutomation = nil
         } else if destination.targetPID != nil {
             guard let automation = self.context.automation as? any TargetedHotkeyServiceProtocol,
-                  automation.supportsTargetedHotkeys
+                  automation.supportsTargetedHotkeys,
+                  automation.supportsProcessGenerationPinnedHotkeys
             else {
                 throw PasteToolError("This automation host does not support background paste delivery.")
             }
@@ -374,11 +375,11 @@ public struct PasteTool: MCPTool {
                     holdDuration: 50,
                     expectedWindowIdentity: exactWindow.windowIdentity,
                     expectedWindowBounds: exactWindow.bounds)
-            } else if let targetPID = destination.targetPID, let targetedAutomation {
+            } else if let processIdentity = destination.processIdentity, let targetedAutomation {
                 try await targetedAutomation.hotkey(
                     keys: "cmd,v",
                     holdDuration: 50,
-                    targetProcessIdentifier: targetPID)
+                    expectedProcessIdentity: processIdentity)
             } else {
                 try await self.context.automation.hotkey(keys: "cmd,v", holdDuration: 50)
             }
@@ -443,7 +444,8 @@ public struct PasteTool: MCPTool {
             targetedAutomation = nil
         } else if destination.targetPID != nil {
             guard let automation = self.context.automation as? any TargetedHotkeyServiceProtocol,
-                  automation.supportsTargetedHotkeys
+                  automation.supportsTargetedHotkeys,
+                  automation.supportsProcessGenerationPinnedHotkeys
             else {
                 throw PasteToolError("This automation host does not support background paste delivery.")
             }
@@ -464,11 +466,11 @@ public struct PasteTool: MCPTool {
                     holdDuration: 50,
                     expectedWindowIdentity: exactWindow.windowIdentity,
                     expectedWindowBounds: exactWindow.bounds)
-            } else if let targetPID = destination.targetPID, let targetedAutomation {
+            } else if let processIdentity = destination.processIdentity, let targetedAutomation {
                 try await targetedAutomation.hotkey(
                     keys: "cmd,v",
                     holdDuration: 50,
-                    targetProcessIdentifier: targetPID)
+                    expectedProcessIdentity: processIdentity)
             } else {
                 try await self.context.automation.hotkey(keys: "cmd,v", holdDuration: 50)
             }
@@ -533,7 +535,9 @@ public struct PasteTool: MCPTool {
             }
         } else {
             guard let automation = self.context.automation as? any TargetedTypeServiceProtocol,
-                  automation.supportsTargetedTypeActions
+                  automation.supportsTargetedTypeActions,
+                  automation.supportsProcessGenerationPinnedTypeActions,
+                  let processIdentity = destination.processIdentity
             else {
                 throw PasteToolError("This automation host does not support background text delivery.")
             }
@@ -543,7 +547,7 @@ public struct PasteTool: MCPTool {
                     [.text(text)],
                     cadence: .fixed(milliseconds: 0),
                     snapshotId: nil,
-                    targetProcessIdentifier: targetPID)
+                    expectedProcessIdentity: processIdentity)
             } catch let error as InputDeliveryIndeterminateError {
                 return self.directTextOutcomeResponse(
                     Self.pasteDeliveryError(from: error),
@@ -677,9 +681,10 @@ public struct PasteTool: MCPTool {
                 target: target,
                 expectedPIDIdentity: expectedPIDIdentity)
         }
-        let processIdentifier = try await target.requireBackgroundProcessIdentifier(
+        let processIdentity = try await target.requireBackgroundProcessIdentity(
             applications: self.context.applications,
             windows: self.context.windows)
+        let processIdentifier = processIdentity.processIdentifier
         let applications = try await self.context.applications.listApplications().data.applications
         guard let application = applications.first(where: { $0.processIdentifier == processIdentifier }) else {
             throw PasteToolError("Target process PID \(processIdentifier) is no longer running.")
@@ -692,7 +697,7 @@ public struct PasteTool: MCPTool {
                 throw PasteToolError("Target process PID \(processIdentifier) changed identity while waiting.")
             }
         }
-        return .process(processIdentifier)
+        return .process(processIdentity)
     }
 
     @MainActor
@@ -851,8 +856,10 @@ public struct PasteTool: MCPTool {
         }
         return .current
     }
+}
 
-    private static func backgroundPlainText(from request: ClipboardWriteRequest) -> String? {
+extension PasteTool {
+    fileprivate static func backgroundPlainText(from request: ClipboardWriteRequest) -> String? {
         guard let primary = request.representations.first,
               primary.utiIdentifier == UTType.plainText.identifier ||
               primary.utiIdentifier == UTType.utf8PlainText.identifier
@@ -887,16 +894,25 @@ extension ServiceApplicationInfo {
 
 private struct PasteDeliveryDestination: Sendable {
     let targetPID: pid_t?
+    let processIdentity: ApplicationProcessIdentity?
     let exactWindow: PasteExactWindowDestination?
 
-    static let foreground = PasteDeliveryDestination(targetPID: nil, exactWindow: nil)
+    static let foreground = PasteDeliveryDestination(targetPID: nil, processIdentity: nil, exactWindow: nil)
 
-    static func process(_ processIdentifier: pid_t) -> PasteDeliveryDestination {
-        PasteDeliveryDestination(targetPID: processIdentifier, exactWindow: nil)
+    static func process(_ identity: ApplicationProcessIdentity) -> PasteDeliveryDestination {
+        PasteDeliveryDestination(
+            targetPID: identity.processIdentifier,
+            processIdentity: identity,
+            exactWindow: nil)
     }
 
     static func exactWindow(_ window: PasteExactWindowDestination) -> PasteDeliveryDestination {
-        PasteDeliveryDestination(targetPID: window.processIdentifier, exactWindow: window)
+        PasteDeliveryDestination(
+            targetPID: window.processIdentifier,
+            processIdentity: ApplicationProcessIdentity(
+                processIdentifier: window.processIdentifier,
+                processStartIdentity: window.windowIdentity.ownerProcessStartIdentity),
+            exactWindow: window)
     }
 }
 

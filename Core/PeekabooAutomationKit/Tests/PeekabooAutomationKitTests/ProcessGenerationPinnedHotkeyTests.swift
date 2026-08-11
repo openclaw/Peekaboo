@@ -8,6 +8,21 @@ import Testing
 @MainActor
 struct ProcessGenerationPinnedHotkeyTests {
     @Test
+    func `Changed process generation rejects targeted type before delivery`() async throws {
+        let service = self.makeService(
+            currentGeneration: { 90 },
+            eventPoster: { _, _ in Issue.record("Type validation must not post hotkey events") })
+
+        await #expect(throws: PeekabooError.self) {
+            _ = try await service.typeActions(
+                [],
+                cadence: .fixed(milliseconds: 0),
+                snapshotId: nil,
+                expectedProcessIdentity: self.identity(generation: 89))
+        }
+    }
+
+    @Test
     func `Unchanged process generation completes targeted hotkey`() async throws {
         var postedEvents: [CGEventType] = []
         let identity = self.identity(generation: 91)

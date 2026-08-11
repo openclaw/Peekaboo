@@ -132,6 +132,8 @@ can require the `backgroundBridgeHost`, `hostGenerationIdentity`, and
 `codeSignatureBuildIdentity` capabilities, then compare the reported PID/process-start identity
 and code-signature hash with the newly installed app generation before committing an update.
 
+Protocol `1.22` adds process-generation receipts to process-targeted typing and clicks. Current CLI, Agent, and MCP background input retain the application discovery receipt through Bridge admission and native dispatch. Typing revalidates it before every emitted unit; clicks validate before dispatch and report a retry-unsafe indeterminate outcome if the generation changes after dispatch. Process-targeted Cmd+V uses the generation-pinned hotkey contract introduced in 1.19. New clients refuse older hosts before sending these inputs because an older decoder could otherwise ignore the optional receipt and route input using only a reusable PID. Legacy raw-PID payloads remain decodable for old clients, but current user-facing paths never select them.
+
 ## Security
 
 Peekaboo BridgeHost validates callers before processing any request:

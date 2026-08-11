@@ -177,6 +177,7 @@ struct TypeCommandTests {
             StubApplicationService(applications: [
                 ServiceApplicationInfo(
                     processIdentifier: 2468,
+                    processStartIdentity: 71,
                     bundleIdentifier: "com.apple.TextEdit",
                     name: "TextEdit"
                 ),
@@ -199,6 +200,7 @@ struct TypeCommandTests {
     func `Type with app target defaults to background process delivery`() async throws {
         let app = ServiceApplicationInfo(
             processIdentifier: 2468,
+            processStartIdentity: 71,
             bundleIdentifier: "com.apple.TextEdit",
             name: "TextEdit"
         )
@@ -215,6 +217,10 @@ struct TypeCommandTests {
         #expect(result.exitStatus == 0)
         let targetedCall = try #require(await self.automationState(context) { $0.targetedTypeActionsCalls.first })
         #expect(targetedCall.targetProcessIdentifier == 2468)
+        #expect(targetedCall.expectedProcessIdentity == ApplicationProcessIdentity(
+            processIdentifier: 2468,
+            processStartIdentity: 71
+        ))
         let payload = try ExternalCommandRunner.decodeJSONResponse(
             from: result,
             as: CodableJSONResponse<TypeCommandResult>.self
@@ -226,9 +232,32 @@ struct TypeCommandTests {
     }
 
     @Test
+    func `Type refuses an unpinned background process before delivery`() async throws {
+        let app = ServiceApplicationInfo(
+            processIdentifier: 2468,
+            bundleIdentifier: "com.apple.TextEdit",
+            name: "TextEdit"
+        )
+        let applicationService = await MainActor.run {
+            StubApplicationService(applications: [app])
+        }
+        let context = await self.makeContext(applications: applicationService)
+
+        let result = try await self.runType(
+            arguments: ["Hello", "--app", "TextEdit", "--json"],
+            context: context
+        )
+
+        #expect(result.exitStatus != 0)
+        #expect(await self.automationState(context) { $0.targetedTypeActionsCalls.isEmpty })
+        #expect(result.combinedOutput.contains("could not pin"))
+    }
+
+    @Test
     func `Type foreground flag opts out of background process delivery`() async throws {
         let app = ServiceApplicationInfo(
             processIdentifier: 2468,
+            processStartIdentity: 71,
             bundleIdentifier: "com.apple.TextEdit",
             name: "TextEdit"
         )
@@ -259,6 +288,7 @@ struct TypeCommandTests {
     func `Type background delivery rejects process-wide collapse of window selectors`() async throws {
         let app = ServiceApplicationInfo(
             processIdentifier: 2468,
+            processStartIdentity: 71,
             bundleIdentifier: "com.apple.TextEdit",
             name: "TextEdit"
         )

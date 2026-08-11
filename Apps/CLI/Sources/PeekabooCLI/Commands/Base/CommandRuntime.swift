@@ -35,6 +35,10 @@ struct CommandRuntimeOptions {
     var requiresProcessGenerationPinnedApplicationQuit = false
     /// Protocol 1.19 carries a process-generation receipt with targeted hotkey requests.
     var requiresProcessGenerationPinnedHotkeys = false
+    /// Protocol 1.22 carries a process-generation receipt with targeted typing requests.
+    var requiresProcessGenerationPinnedTypeActions = false
+    /// Protocol 1.22 carries a process-generation receipt with targeted click requests.
+    var requiresProcessGenerationPinnedClicks = false
     var requiresHostApplicationInventory = false
     var requiresImplicitSnapshotInvalidation = false
     var requiresCallerDesktopMutationBarrier = false

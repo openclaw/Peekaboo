@@ -73,7 +73,8 @@ struct TypeCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormatt
             let actions = try self.buildActions()
             let observation = await self.resolveObservationContext()
             try await observation.validateIfExplicit(using: self.services.snapshots)
-            let targetPID = try await self.backgroundProcessIdentifier(snapshotId: observation.snapshotId)
+            let targetIdentity = try await self.backgroundProcessIdentity(snapshotId: observation.snapshotId)
+            let targetPID = targetIdentity?.processIdentifier
             self.resolvedRuntime.beginInteractionMutation()
             if targetPID == nil {
                 try await self.focusIfNeeded(snapshotId: observation.focusSnapshotId(for: self.target))
@@ -81,7 +82,7 @@ struct TypeCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormatt
             let typeResult = try await self.executeTypeActions(
                 actions: actions,
                 snapshotId: observation.snapshotId,
-                targetProcessIdentifier: targetPID
+                expectedProcessIdentity: targetIdentity
             )
             await InteractionObservationInvalidator.invalidateAfterMutation(
                 targets: self.resolvedRuntime.interactionMutationTargets,
@@ -164,25 +165,25 @@ struct TypeCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormatt
     private func executeTypeActions(
         actions: [TypeAction],
         snapshotId: String?,
-        targetProcessIdentifier: pid_t?
+        expectedProcessIdentity: ApplicationProcessIdentity?
     ) async throws -> TypeResult {
         let request = TypeActionsRequest(actions: actions, cadence: self.typingCadence, snapshotId: snapshotId)
-        if let targetProcessIdentifier {
+        if let expectedProcessIdentity {
             return try await AutomationServiceBridge.typeActions(
                 automation: self.services.automation,
                 request: request,
-                targetProcessIdentifier: targetProcessIdentifier
+                expectedProcessIdentity: expectedProcessIdentity
             )
         }
         return try await AutomationServiceBridge.typeActions(automation: self.services.automation, request: request)
     }
 
-    private func backgroundProcessIdentifier(snapshotId: String?) async throws -> pid_t? {
+    private func backgroundProcessIdentity(snapshotId: String?) async throws -> ApplicationProcessIdentity? {
         guard !self.focusOptions.foreground else {
             return nil
         }
 
-        return try await KeyboardDeliverySupport.requireBackgroundProcessIdentifier(
+        return try await KeyboardDeliverySupport.requireBackgroundProcessIdentity(
             target: self.target,
             snapshotId: snapshotId,
             services: self.services

@@ -646,7 +646,7 @@ struct ClickCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
         let resolvedElement: DetectedElement?
         let coordinateResolution: InteractionCoordinateResolution?
         let explicitWindowResolution: InteractionWindowResolution?
-        let backgroundProcessIdentifier: pid_t?
+        let backgroundProcessIdentity: ApplicationProcessIdentity?
     }
 
     private func resolveAndDispatchClick(
@@ -656,8 +656,8 @@ struct ClickCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
         coordinateResolution: InteractionCoordinateResolution?,
         explicitWindowResolution: InteractionWindowResolution?
     ) async throws {
-        let backgroundProcessIdentifier: pid_t? = if self.usesBackgroundDelivery {
-            try await self.resolveBackgroundClickProcessIdentifier(
+        let backgroundProcessIdentity: ApplicationProcessIdentity? = if self.usesBackgroundDelivery {
+            try await self.resolveBackgroundClickProcessIdentity(
                 snapshotId: snapshotId.isEmpty ? nil : snapshotId,
                 coordinateResolution: coordinateResolution,
                 explicitWindowResolution: explicitWindowResolution
@@ -690,7 +690,7 @@ struct ClickCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
                 resolvedElement: resolvedElement,
                 coordinateResolution: coordinateResolution,
                 explicitWindowResolution: explicitWindowResolution,
-                backgroundProcessIdentifier: backgroundProcessIdentifier
+                backgroundProcessIdentity: backgroundProcessIdentity
             )
         )
     }
@@ -707,8 +707,8 @@ struct ClickCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
         }
 
         if self.usesBackgroundDelivery {
-            guard let backgroundProcessIdentifier = context.backgroundProcessIdentifier else {
-                preconditionFailure("Background process identifier must be resolved before click delivery")
+            guard let backgroundProcessIdentity = context.backgroundProcessIdentity else {
+                preconditionFailure("Background process identity must be resolved before click delivery")
             }
             let exactWindowInfo = context.explicitWindowResolution?.windowInfo ??
                 context.coordinateResolution?.windowInfo
@@ -725,7 +725,7 @@ struct ClickCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
                 target: target,
                 clickType: clickType,
                 snapshotId: effectiveSnapshotId,
-                targetProcessIdentifier: backgroundProcessIdentifier,
+                expectedProcessIdentity: backgroundProcessIdentity,
                 targetWindowID: targetWindowID,
                 expectedWindowIdentity: expectedWindowIdentity,
                 expectedWindowBounds: exactWindowInfo?.bounds
@@ -916,52 +916,104 @@ extension ClickCommand {
         "Background coordinate clicks require --snapshot from a fresh see capture of the exact target window. " +
         "PID-only/app-only coordinates and empty snapshots are refused."
 
-    private func resolveBackgroundClickProcessIdentifier(
+    private func resolveBackgroundClickProcessIdentity(
         snapshotId: String?,
         coordinateResolution: InteractionCoordinateResolution?,
         explicitWindowResolution: InteractionWindowResolution?
-    ) async throws -> pid_t {
+    ) async throws -> ApplicationProcessIdentity {
         if self.target.pid != nil, self.target.app != nil {
             throw ValidationError("Background click accepts one process target: use --app or --pid")
         }
 
-        if let processId = explicitWindowResolution?.targetProcessIdentifier {
-            return pid_t(processId)
+        if let identity = explicitWindowResolution?.windowInfo.mutationIdentity {
+            return ApplicationProcessIdentity(
+                processIdentifier: identity.ownerProcessIdentifier,
+                processStartIdentity: identity.ownerProcessStartIdentity
+            )
         }
 
+        let snapshotIdentity = try await self.backgroundClickSnapshotProcessIdentity(snapshotId: snapshotId)
+        let selectedIdentity: ApplicationProcessIdentity?
         if let pid = target.pid {
             guard pid > 0 else {
                 throw ValidationError("--pid must be greater than 0")
             }
-            return pid_t(pid)
+            selectedIdentity = try await self.currentProcessIdentity(identifier: "PID:\(pid)")
+        } else if let appIdentifier = target.app?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !appIdentifier.isEmpty {
+            selectedIdentity = try await self.currentProcessIdentity(identifier: appIdentifier)
+        } else if let identity = coordinateResolution?.windowInfo?.mutationIdentity {
+            selectedIdentity = ApplicationProcessIdentity(
+                processIdentifier: identity.ownerProcessIdentifier,
+                processStartIdentity: identity.ownerProcessStartIdentity
+            )
+        } else if let processId = coordinateResolution?.targetProcessIdentifier {
+            selectedIdentity = try await self.currentProcessIdentity(identifier: "PID:\(processId)")
+        } else {
+            selectedIdentity = nil
         }
 
-        if let appIdentifier = target.app?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !appIdentifier.isEmpty {
-            let app = try await services.applications.findApplication(identifier: appIdentifier)
-            return pid_t(app.processIdentifier)
+        if let snapshotIdentity, let selectedIdentity, snapshotIdentity != selectedIdentity {
+            throw ValidationError(
+                "Background click snapshot belongs to a different process generation; run see again before clicking."
+            )
         }
-
-        if let processId = coordinateResolution?.targetProcessIdentifier {
-            return pid_t(processId)
-        }
-
-        if let snapshotId,
-           let snapshot = try? await services.snapshots.getUIAutomationSnapshot(snapshotId: snapshotId),
-           let processId = snapshot.applicationProcessId {
-            return pid_t(processId)
-        }
-
-        if let snapshotId,
-           let detectionResult = try? await services.snapshots.getDetectionResult(snapshotId: snapshotId),
-           let processId = detectionResult.metadata.windowContext?.applicationProcessId {
-            return pid_t(processId)
+        if let identity = snapshotIdentity ?? selectedIdentity {
+            return identity
         }
 
         throw ValidationError(
             "Background click requires --app, --pid, --window-id, or a snapshot with process metadata; " +
                 "use --foreground for foreground screen clicks"
         )
+    }
+
+    private func backgroundClickSnapshotProcessIdentity(snapshotId: String?) async throws
+    -> ApplicationProcessIdentity? {
+        guard let snapshotId else { return nil }
+        var snapshotProcessIdentifier: Int32?
+        if let snapshot = try? await self.services.snapshots.getUIAutomationSnapshot(snapshotId: snapshotId),
+           let processIdentifier = snapshot.applicationProcessId {
+            snapshotProcessIdentifier = processIdentifier
+            if let identity = snapshot.windowMutationIdentity {
+                guard identity.ownerProcessIdentifier == processIdentifier else {
+                    throw ValidationError("Snapshot '\(snapshotId)' has inconsistent process metadata.")
+                }
+                return ApplicationProcessIdentity(
+                    processIdentifier: identity.ownerProcessIdentifier,
+                    processStartIdentity: identity.ownerProcessStartIdentity
+                )
+            }
+        }
+        if let detection = try? await self.services.snapshots.getDetectionResult(snapshotId: snapshotId),
+           let context = detection.metadata.windowContext,
+           let processIdentifier = context.applicationProcessId {
+            if let snapshotProcessIdentifier, snapshotProcessIdentifier != processIdentifier {
+                throw ValidationError("Snapshot '\(snapshotId)' has inconsistent process metadata.")
+            }
+            snapshotProcessIdentifier = processIdentifier
+            if let identity = context.windowMutationIdentity {
+                guard identity.ownerProcessIdentifier == processIdentifier else {
+                    throw ValidationError("Snapshot '\(snapshotId)' has inconsistent process metadata.")
+                }
+                return ApplicationProcessIdentity(
+                    processIdentifier: identity.ownerProcessIdentifier,
+                    processStartIdentity: identity.ownerProcessStartIdentity
+                )
+            }
+        }
+        guard let snapshotProcessIdentifier else { return nil }
+        return try await self.currentProcessIdentity(identifier: "PID:\(snapshotProcessIdentifier)")
+    }
+
+    private func currentProcessIdentity(identifier: String) async throws -> ApplicationProcessIdentity {
+        let application = try await self.services.applications.findApplication(identifier: identifier)
+        guard let identity = application.processIdentity else {
+            throw ValidationError(
+                "The runtime host could not pin \(identifier) to a process generation; update the host."
+            )
+        }
+        return identity
     }
 
     private func resolveBackgroundCoordinateReference(

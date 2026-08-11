@@ -292,13 +292,7 @@ extension PeekabooBridgeServer {
                     message: "Background typing is not supported by this bridge host")
             }
 
-            self.automationActivityObserver?(pid_t(payload.targetProcessIdentifier))
-            let result = try await targetedTypeService.typeActions(
-                payload.actions,
-                cadence: payload.cadence,
-                snapshotId: payload.snapshotId,
-                targetProcessIdentifier: pid_t(payload.targetProcessIdentifier))
-            return .typeResult(result)
+            return try await .typeResult(self.handleTargetedTypeActions(payload, service: targetedTypeService))
         case let .exactWindowTargetedTypeActions(payload):
             guard let service = self.services.automation as? any ExactWindowTargetedKeyboardServiceProtocol,
                   service.supportsExactWindowTargetedKeyboard
@@ -371,6 +365,11 @@ extension PeekabooBridgeServer {
             }
 
             if let targetWindowID = payload.targetWindowID {
+                guard payload.expectedProcessIdentity == nil else {
+                    throw PeekabooBridgeErrorEnvelope(
+                        code: .invalidRequest,
+                        message: "Exact-window clicks cannot also supply a process-only identity")
+                }
                 guard let exactWindowService = targetedClickService as? any ExactWindowTargetedClickServiceProtocol
                 else {
                     throw PeekabooBridgeErrorEnvelope(
@@ -394,17 +393,71 @@ extension PeekabooBridgeServer {
                     expectedWindowIdentity: expectedIdentity,
                     expectedWindowBounds: expectedBounds)
             } else {
-                self.automationActivityObserver?(pid_t(payload.targetProcessIdentifier))
-                try await targetedClickService.click(
-                    target: payload.target,
-                    clickType: payload.clickType,
-                    snapshotId: payload.snapshotId,
-                    targetProcessIdentifier: pid_t(payload.targetProcessIdentifier))
+                try await self.handleProcessTargetedClick(payload, service: targetedClickService)
             }
             return .ok
         default:
             throw Self.invalidRequest(for: request)
         }
+    }
+
+    private func handleTargetedTypeActions(
+        _ payload: PeekabooBridgeTargetedTypeActionsRequest,
+        service: any TargetedTypeServiceProtocol) async throws -> TypeResult
+    {
+        self.automationActivityObserver?(pid_t(payload.targetProcessIdentifier))
+        guard let expectedIdentity = payload.expectedProcessIdentity else {
+            return try await service.typeActions(
+                payload.actions,
+                cadence: payload.cadence,
+                snapshotId: payload.snapshotId,
+                targetProcessIdentifier: pid_t(payload.targetProcessIdentifier))
+        }
+        guard expectedIdentity.processIdentifier == payload.targetProcessIdentifier else {
+            throw PeekabooBridgeErrorEnvelope(
+                code: .invalidRequest,
+                message: "Targeted typing PID does not match its process-generation receipt")
+        }
+        guard service.supportsProcessGenerationPinnedTypeActions else {
+            throw PeekabooBridgeErrorEnvelope(
+                code: .operationNotSupported,
+                message: "Process-generation-pinned background typing is not supported by this bridge host")
+        }
+        return try await service.typeActions(
+            payload.actions,
+            cadence: payload.cadence,
+            snapshotId: payload.snapshotId,
+            expectedProcessIdentity: expectedIdentity)
+    }
+
+    private func handleProcessTargetedClick(
+        _ payload: PeekabooBridgeTargetedClickRequest,
+        service: any TargetedClickServiceProtocol) async throws
+    {
+        self.automationActivityObserver?(pid_t(payload.targetProcessIdentifier))
+        guard let expectedIdentity = payload.expectedProcessIdentity else {
+            try await service.click(
+                target: payload.target,
+                clickType: payload.clickType,
+                snapshotId: payload.snapshotId,
+                targetProcessIdentifier: pid_t(payload.targetProcessIdentifier))
+            return
+        }
+        guard expectedIdentity.processIdentifier == payload.targetProcessIdentifier else {
+            throw PeekabooBridgeErrorEnvelope(
+                code: .invalidRequest,
+                message: "Targeted click PID does not match its process-generation receipt")
+        }
+        guard service.supportsProcessGenerationPinnedClicks else {
+            throw PeekabooBridgeErrorEnvelope(
+                code: .operationNotSupported,
+                message: "Process-generation-pinned background clicks are not supported by this bridge host")
+        }
+        try await service.click(
+            target: payload.target,
+            clickType: payload.clickType,
+            snapshotId: payload.snapshotId,
+            expectedProcessIdentity: expectedIdentity)
     }
 
     private func handleTargetedHotkey(

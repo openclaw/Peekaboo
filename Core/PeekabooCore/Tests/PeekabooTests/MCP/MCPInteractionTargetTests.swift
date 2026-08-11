@@ -5,6 +5,52 @@ import Testing
 @testable import PeekabooCore
 
 struct MCPInteractionTargetTests {
+    @MainActor
+    @Test
+    func `background app target retains its discovered process generation`() async throws {
+        let expected = ApplicationProcessIdentity(processIdentifier: 4242, processStartIdentity: 71)
+        let applications = MockApplicationService(applications: [ServiceApplicationInfo(
+            processIdentifier: expected.processIdentifier,
+            processStartIdentity: expected.processStartIdentity,
+            bundleIdentifier: "com.example.editor",
+            name: "Editor")])
+        let context = await MCPToolTestHelpers.makeContext(applications: applications)
+        let target = try Self.makeTarget(Selectors(
+            app: "Editor",
+            pid: nil,
+            windowTitle: nil,
+            windowIndex: nil,
+            windowID: nil))
+
+        let identity = try await target.requireBackgroundProcessIdentity(
+            applications: context.applications,
+            windows: context.windows)
+
+        #expect(identity == expected)
+    }
+
+    @MainActor
+    @Test
+    func `background app target refuses missing process generation`() async throws {
+        let applications = MockApplicationService(applications: [ServiceApplicationInfo(
+            processIdentifier: 4242,
+            bundleIdentifier: "com.example.editor",
+            name: "Editor")])
+        let context = await MCPToolTestHelpers.makeContext(applications: applications)
+        let target = try Self.makeTarget(Selectors(
+            app: "Editor",
+            pid: nil,
+            windowTitle: nil,
+            windowIndex: nil,
+            windowID: nil))
+
+        await #expect(throws: MCPInteractionTargetError.targetProcessIdentityUnavailable) {
+            _ = try await target.requireBackgroundProcessIdentity(
+                applications: context.applications,
+                windows: context.windows)
+        }
+    }
+
     enum InvalidConsumerFixture: CaseIterable, Sendable {
         case applicationAndPID
         case windowIDAndTitle

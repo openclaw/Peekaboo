@@ -86,10 +86,10 @@ struct PasteCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
                 request: request
             ) {
                 let expectedPIDIdentity = try self.explicitPIDIdentity()
-                if let targetPID = try await self.verifiedBackgroundProcessIdentifier(
+                if let targetIdentity = try await self.verifiedBackgroundProcessIdentity(
                     expectedPIDIdentity: expectedPIDIdentity
                 ) {
-                    try await self.pasteTextInBackground(text, request: request, targetPID: targetPID)
+                    try await self.pasteTextInBackground(text, request: request, targetIdentity: targetIdentity)
                     return
                 }
             }
@@ -97,10 +97,10 @@ struct PasteCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
             let expectedPIDIdentity = try self.explicitPIDIdentity()
             let outcome = try await self.withInteractionMutationInvalidation {
                 try await ClipboardPasteTransactionGate.withExclusiveTransaction {
-                    let targetPID = try await self.verifiedBackgroundProcessIdentifier(
+                    let targetIdentity = try await self.verifiedBackgroundProcessIdentity(
                         expectedPIDIdentity: expectedPIDIdentity
                     )
-                    if targetPID == nil {
+                    if targetIdentity == nil {
                         try await ensureFocused(
                             snapshotId: nil,
                             target: self.target,
@@ -108,7 +108,10 @@ struct PasteCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
                             services: self.services
                         )
                     }
-                    return try await self.performClipboardPasteTransaction(request: request, targetPID: targetPID)
+                    return try await self.performClipboardPasteTransaction(
+                        request: request,
+                        targetIdentity: targetIdentity
+                    )
                 }
             }
             if Task.isCancelled {
@@ -168,11 +171,12 @@ struct PasteCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
 
     private func performClipboardPasteTransaction(
         request: ClipboardWriteRequest,
-        targetPID: pid_t?
+        targetIdentity: ApplicationProcessIdentity?
     ) async throws -> ClipboardPasteTransactionOutcome {
-        if targetPID != nil {
+        if targetIdentity != nil {
             guard let automation = self.services.automation as? any TargetedHotkeyServiceProtocol,
-                  automation.supportsTargetedHotkeys
+                  automation.supportsTargetedHotkeys,
+                  automation.supportsProcessGenerationPinnedHotkeys
             else {
                 throw ValidationError("This automation host does not support background paste delivery.")
             }
@@ -231,12 +235,12 @@ struct PasteCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
 
         let dispatchErrorDescription: String?
         do {
-            if let targetPID {
+            if let targetIdentity {
                 try await AutomationServiceBridge.hotkey(
                     automation: self.services.automation,
                     keys: "cmd,v",
                     holdDuration: 50,
-                    targetProcessIdentifier: targetPID
+                    expectedProcessIdentity: targetIdentity
                 )
             } else {
                 try await AutomationServiceBridge.hotkey(
@@ -271,16 +275,16 @@ struct PasteCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
                 causeDescription: dispatchErrorDescription ?? "The caller cancelled after Cmd+V dispatch began.",
                 clipboardRestoreAttempted: true,
                 clipboardRestoreErrorDescription: restoreErrorDescription,
-                targetProcessIdentifier: targetPID
+                targetProcessIdentifier: targetIdentity?.processIdentifier
             )
         }
-        if targetPID != nil {
+        if targetIdentity != nil {
             throw ClipboardPasteOutcomeError(
                 kind: .unverified,
                 causeDescription: "The targeted event API does not acknowledge receiver consumption.",
                 clipboardRestoreAttempted: true,
                 clipboardRestoreErrorDescription: restoreErrorDescription,
-                targetProcessIdentifier: targetPID
+                targetProcessIdentifier: targetIdentity?.processIdentifier
             )
         }
 
@@ -289,14 +293,14 @@ struct PasteCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
             previousClipboardPresent: priorClipboard != nil,
             restoreResult: restoreResult,
             restoreErrorDescription: restoreErrorDescription,
-            targetPID: targetPID
+            targetPID: targetIdentity?.processIdentifier
         )
     }
 
     private func pasteTextInBackground(
         _ text: String,
         request: ClipboardWriteRequest,
-        targetPID: pid_t
+        targetIdentity: ApplicationProcessIdentity
     ) async throws {
         let setResult = try Self.readResult(for: request)
         _ = try await self.withInteractionMutationInvalidation {
@@ -307,7 +311,7 @@ struct PasteCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
                     cadence: .fixed(milliseconds: 0),
                     snapshotId: nil
                 ),
-                targetProcessIdentifier: targetPID
+                expectedProcessIdentity: targetIdentity
             )
         }
 
@@ -322,13 +326,13 @@ struct PasteCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
             restoreError: nil,
             restoreDelayMs: 0,
             deliveryMode: KeyboardDeliveryMode.background.rawValue,
-            targetPID: Int(targetPID)
+            targetPID: Int(targetIdentity.processIdentifier)
         )
 
         self.output(result) {
             print("✅ Pasted text")
             print("📋 Pasted: \(setResult.utiIdentifier) (\(setResult.data.count) bytes)")
-            print("🎯 Mode: background to PID \(targetPID)")
+            print("🎯 Mode: background to PID \(targetIdentity.processIdentifier)")
         }
     }
 
@@ -393,10 +397,10 @@ struct PasteCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
     private func pasteCurrentClipboard(expectedPIDIdentity: UInt64?) async throws {
         let outcome = try await self.withInteractionMutationInvalidation {
             try await ClipboardPasteTransactionGate.withExclusiveTransaction {
-                let targetPID = try await self.verifiedBackgroundProcessIdentifier(
+                let targetIdentity = try await self.verifiedBackgroundProcessIdentity(
                     expectedPIDIdentity: expectedPIDIdentity
                 )
-                if targetPID == nil {
+                if targetIdentity == nil {
                     try await ensureFocused(
                         snapshotId: nil,
                         target: self.target,
@@ -408,12 +412,12 @@ struct PasteCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
                 try Task.checkCancellation()
                 let dispatchErrorDescription: String?
                 do {
-                    if let targetPID {
+                    if let targetIdentity {
                         try await AutomationServiceBridge.hotkey(
                             automation: self.services.automation,
                             keys: "cmd,v",
                             holdDuration: 50,
-                            targetProcessIdentifier: targetPID
+                            expectedProcessIdentity: targetIdentity
                         )
                     } else {
                         try await AutomationServiceBridge.hotkey(
@@ -435,18 +439,21 @@ struct PasteCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
                         causeDescription: dispatchErrorDescription ??
                             "The caller cancelled after Cmd+V dispatch began.",
                         clipboardRestoreAttempted: false,
-                        targetProcessIdentifier: targetPID
+                        targetProcessIdentifier: targetIdentity?.processIdentifier
                     )
                 }
-                if targetPID != nil {
+                if targetIdentity != nil {
                     throw ClipboardPasteOutcomeError(
                         kind: .unverified,
                         causeDescription: "The targeted event API does not acknowledge receiver consumption.",
                         clipboardRestoreAttempted: false,
-                        targetProcessIdentifier: targetPID
+                        targetProcessIdentifier: targetIdentity?.processIdentifier
                     )
                 }
-                return CurrentClipboardPasteOutcome(clipboard: currentClipboard, targetPID: targetPID)
+                return CurrentClipboardPasteOutcome(
+                    clipboard: currentClipboard,
+                    targetPID: targetIdentity?.processIdentifier
+                )
             }
         }
         if Task.isCancelled {
@@ -562,19 +569,20 @@ struct PasteCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
         return identity
     }
 
-    private func verifiedBackgroundProcessIdentifier(
+    private func verifiedBackgroundProcessIdentity(
         expectedPIDIdentity: UInt64? = nil
-    ) async throws -> pid_t? {
+    ) async throws -> ApplicationProcessIdentity? {
         if self.focusOptions.foreground {
             try self.validateExplicitPIDIdentity(expectedPIDIdentity)
             return nil
         }
 
-        let processIdentifier = try await KeyboardDeliverySupport.requireBackgroundProcessIdentifier(
+        let processIdentity = try await KeyboardDeliverySupport.requireBackgroundProcessIdentity(
             target: self.target,
             snapshotId: nil,
             services: self.services
         )
+        let processIdentifier = processIdentity.processIdentifier
         let applications = try await self.services.applications.listApplications().data.applications
         guard let application = applications.first(where: { $0.processIdentifier == processIdentifier }) else {
             throw ValidationError("Target process PID \(processIdentifier) is no longer running.")
@@ -592,7 +600,7 @@ struct PasteCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
                 throw ValidationError("Target process PID \(processIdentifier) changed identity while waiting.")
             }
         }
-        return processIdentifier
+        return processIdentity
     }
 
     private func validateExplicitPIDIdentity(_ expectedPIDIdentity: UInt64?) throws {

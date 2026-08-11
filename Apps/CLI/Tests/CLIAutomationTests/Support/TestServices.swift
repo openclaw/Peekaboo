@@ -177,6 +177,7 @@ ExactWindowTargetedClickServiceProtocol, ElementActionAutomationServiceProtocol 
         let cadence: TypingCadence
         let snapshotId: String?
         let targetProcessIdentifier: pid_t
+        let expectedProcessIdentity: ApplicationProcessIdentity?
     }
 
     struct TargetedClickCall {
@@ -185,6 +186,7 @@ ExactWindowTargetedClickServiceProtocol, ElementActionAutomationServiceProtocol 
         let snapshotId: String?
         let targetProcessIdentifier: pid_t
         let targetWindowID: Int?
+        let expectedProcessIdentity: ApplicationProcessIdentity?
     }
 
     struct WaitForElementCall {
@@ -236,9 +238,11 @@ ExactWindowTargetedClickServiceProtocol, ElementActionAutomationServiceProtocol 
     var currentHotkeyProcessIdentity: ((pid_t) -> ApplicationProcessIdentity?)?
     var afterPinnedHotkey: (() -> Void)?
     var supportsTargetedTypeActions = true
+    var supportsProcessGenerationPinnedTypeActions = true
     var targetedTypeUnavailableReason: String?
     var targetedTypeRequiresEventSynthesizingPermission = false
     var supportsTargetedClicks = true
+    var supportsProcessGenerationPinnedClicks = true
     var targetedClickUnavailableReason: String?
     var targetedClickRequiresEventSynthesizingPermission = false
     var clickError: (any Error)?
@@ -300,7 +304,8 @@ ExactWindowTargetedClickServiceProtocol, ElementActionAutomationServiceProtocol 
             clickType: clickType,
             snapshotId: snapshotId,
             targetProcessIdentifier: targetProcessIdentifier,
-            targetWindowID: nil
+            targetWindowID: nil,
+            expectedProcessIdentity: nil
         ))
         if let clickError {
             throw clickError
@@ -319,7 +324,8 @@ ExactWindowTargetedClickServiceProtocol, ElementActionAutomationServiceProtocol 
             clickType: clickType,
             snapshotId: snapshotId,
             targetProcessIdentifier: targetProcessIdentifier,
-            targetWindowID: targetWindowID
+            targetWindowID: targetWindowID,
+            expectedProcessIdentity: nil
         ))
         if let clickError {
             throw clickError
@@ -338,7 +344,11 @@ ExactWindowTargetedClickServiceProtocol, ElementActionAutomationServiceProtocol 
             clickType: clickType,
             snapshotId: snapshotId,
             targetProcessIdentifier: expectedWindowIdentity.ownerProcessIdentifier,
-            targetWindowID: expectedWindowIdentity.windowID
+            targetWindowID: expectedWindowIdentity.windowID,
+            expectedProcessIdentity: ApplicationProcessIdentity(
+                processIdentifier: expectedWindowIdentity.ownerProcessIdentifier,
+                processStartIdentity: expectedWindowIdentity.ownerProcessStartIdentity
+            )
         ))
         if let clickError {
             throw clickError
@@ -406,7 +416,8 @@ ExactWindowTargetedClickServiceProtocol, ElementActionAutomationServiceProtocol 
                 actions: actions,
                 cadence: cadence,
                 snapshotId: snapshotId,
-                targetProcessIdentifier: targetProcessIdentifier
+                targetProcessIdentifier: targetProcessIdentifier,
+                expectedProcessIdentity: nil
             )
         )
         return try await self.typeActions(actions, cadence: cadence, snapshotId: snapshotId)

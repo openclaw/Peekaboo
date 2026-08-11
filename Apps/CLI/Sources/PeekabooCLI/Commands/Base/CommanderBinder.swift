@@ -55,6 +55,12 @@ enum CommanderCLIBinder {
         options.requiresProcessGenerationPinnedApplicationQuit = commandType == AppCommand.QuitSubcommand.self
         options.requiresProcessGenerationPinnedHotkeys = commandType == PressCommand.self &&
             !CommanderBindableValues(parsedValues: parsedValues).flag("foreground")
+        let usesBackgroundInput = !CommanderBindableValues(parsedValues: parsedValues).flag("foreground")
+        options.requiresProcessGenerationPinnedTypeActions =
+            (commandType == TypeCommand.self || commandType == PasteCommand.self) && usesBackgroundInput
+        if commandType == PasteCommand.self, usesBackgroundInput {
+            options.requiresProcessGenerationPinnedHotkeys = true
+        }
         options.requiresHostApplicationInventory = Self.requiresHostApplicationInventory(commandType)
         options.requiresImplicitSnapshotInvalidation = Self.requiresImplicitSnapshotInvalidation(
             commandType,
@@ -69,6 +75,14 @@ enum CommanderCLIBinder {
             commandType,
             parsedValues: parsedValues
         )
+        options.requiresProcessGenerationPinnedClicks = commandType == ClickCommand.self && usesBackgroundInput &&
+            !options.requiresExactWindowTargetedClicks
+        let servesDynamicTools = Self.isAgentExecutionCommand(commandType) || commandType == MCPCommand.Serve.self
+        if servesDynamicTools {
+            options.requiresProcessGenerationPinnedHotkeys = true
+            options.requiresProcessGenerationPinnedTypeActions = true
+            options.requiresProcessGenerationPinnedClicks = true
+        }
         options.requiresTargetedScroll = commandType == ScrollCommand.self &&
             !CommanderBindableValues(parsedValues: parsedValues).flag("foreground")
         options.requiresPostEventPermission = Self.requiresPostEventPermission(

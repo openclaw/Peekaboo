@@ -7,6 +7,8 @@ import Testing
 
 @MainActor
 struct ServiceBridgeTests {
+    private let processIdentity = ApplicationProcessIdentity(processIdentifier: 12345, processStartIdentity: 71)
+
     @Test func `automation click forwards calls`() async throws {
         let automation = MockAutomationService()
         try await AutomationServiceBridge.click(
@@ -91,7 +93,7 @@ struct ServiceBridgeTests {
         let result = try await AutomationServiceBridge.typeActions(
             automation: automation,
             request: request,
-            targetProcessIdentifier: 12345
+            expectedProcessIdentity: self.processIdentity
         )
 
         #expect(result.totalCharacters == 2)
@@ -116,7 +118,7 @@ struct ServiceBridgeTests {
                     cadence: .fixed(milliseconds: 1),
                     snapshotId: nil
                 ),
-                targetProcessIdentifier: 12345
+                expectedProcessIdentity: self.processIdentity
             )
             Issue.record("Expected Event Synthesizing permission error")
         } catch PeekabooError.permissionDeniedEventSynthesizing {
@@ -132,7 +134,7 @@ struct ServiceBridgeTests {
             target: .coordinates(CGPoint(x: 10, y: 20)),
             clickType: .single,
             snapshotId: "snapshot-123",
-            targetProcessIdentifier: 12345
+            expectedProcessIdentity: self.processIdentity
         )
 
         #expect(automation.targetedClickCalls.count == 1)
@@ -149,7 +151,10 @@ struct ServiceBridgeTests {
             target: .coordinates(CGPoint(x: 10, y: 20)),
             clickType: .single,
             snapshotId: nil,
-            targetProcessIdentifier: 12345,
+            expectedProcessIdentity: ApplicationProcessIdentity(
+                processIdentifier: 12345,
+                processStartIdentity: 1
+            ),
             targetWindowID: 42,
             expectedWindowIdentity: WindowMutationIdentity(
                 windowID: 42,
@@ -176,7 +181,7 @@ struct ServiceBridgeTests {
                 target: .coordinates(CGPoint(x: 10, y: 20)),
                 clickType: .single,
                 snapshotId: nil,
-                targetProcessIdentifier: 12345
+                expectedProcessIdentity: self.processIdentity
             )
             Issue.record("Expected Event Synthesizing permission error")
         } catch PeekabooError.permissionDeniedEventSynthesizing {
@@ -359,9 +364,11 @@ TargetedTypeServiceProtocol, ExactWindowTargetedClickServiceProtocol {
     var targetedHotkeyUnavailableReason: String?
     var targetedHotkeyRequiresEventSynthesizingPermission = false
     var supportsTargetedTypeActions = true
+    var supportsProcessGenerationPinnedTypeActions = true
     var targetedTypeUnavailableReason: String?
     var targetedTypeRequiresEventSynthesizingPermission = false
     var supportsTargetedClicks = true
+    var supportsProcessGenerationPinnedClicks = true
     var targetedClickUnavailableReason: String?
     var targetedClickRequiresEventSynthesizingPermission = false
 
@@ -388,6 +395,21 @@ TargetedTypeServiceProtocol, ExactWindowTargetedClickServiceProtocol {
         return try await self.typeActions(actions, cadence: cadence, snapshotId: snapshotId)
     }
 
+    func typeActions(
+        _ actions: [TypeAction],
+        cadence: TypingCadence,
+        snapshotId: String?,
+        expectedProcessIdentity: ApplicationProcessIdentity
+    ) async throws -> TypeResult {
+        self.targetedTypeActionsCalls.append(.init(
+            actions: actions,
+            cadence: cadence,
+            snapshotId: snapshotId,
+            targetProcessIdentifier: expectedProcessIdentity.processIdentifier
+        ))
+        return try await self.typeActions(actions, cadence: cadence, snapshotId: snapshotId)
+    }
+
     func click(
         target: ClickTarget,
         clickType: ClickType,
@@ -399,6 +421,21 @@ TargetedTypeServiceProtocol, ExactWindowTargetedClickServiceProtocol {
             clickType: clickType,
             snapshotId: snapshotId,
             targetProcessIdentifier: targetProcessIdentifier,
+            targetWindowID: nil
+        ))
+    }
+
+    func click(
+        target: ClickTarget,
+        clickType: ClickType,
+        snapshotId: String?,
+        expectedProcessIdentity: ApplicationProcessIdentity
+    ) async throws {
+        self.targetedClickCalls.append(.init(
+            target: target,
+            clickType: clickType,
+            snapshotId: snapshotId,
+            targetProcessIdentifier: expectedProcessIdentity.processIdentifier,
             targetWindowID: nil
         ))
     }

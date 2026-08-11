@@ -37,6 +37,7 @@ public final class RemotePeekabooServices: PeekabooServiceProviding {
         targetedHotkeyUnavailableReason: String? = nil,
         targetedHotkeyRequiresEventSynthesizingPermission: Bool = false,
         supportsTargetedTypeActions: Bool = false,
+        supportsProcessGenerationPinnedInteractions: Bool = false,
         targetedTypeUnavailableReason: String? = nil,
         targetedTypeRequiresEventSynthesizingPermission: Bool = false,
         supportsTargetedClicks: Bool = false,
@@ -86,9 +87,13 @@ public final class RemotePeekabooServices: PeekabooServiceProviding {
                 targetedHotkeyUnavailableReason: targetedHotkeyUnavailableReason,
                 targetedHotkeyRequiresEventSynthesizingPermission: targetedHotkeyRequiresEventSynthesizingPermission,
                 supportsTargetedTypeActions: supportsTargetedTypeActions,
+                supportsProcessGenerationPinnedTypeActions: supportsProcessGenerationPinnedInteractions &&
+                    supportsTargetedTypeActions,
                 targetedTypeUnavailableReason: targetedTypeUnavailableReason,
                 targetedTypeRequiresEventSynthesizingPermission: targetedTypeRequiresEventSynthesizingPermission,
                 supportsTargetedClicks: supportsTargetedClicks,
+                supportsProcessGenerationPinnedClicks: supportsProcessGenerationPinnedInteractions &&
+                    supportsTargetedClicks,
                 targetedClickUnavailableReason: targetedClickUnavailableReason,
                 targetedClickRequiresEventSynthesizingPermission: targetedClickRequiresEventSynthesizingPermission,
                 supportsExactWindowTargetedClicks: supportsExactWindowTargetedClicks,
@@ -105,9 +110,13 @@ public final class RemotePeekabooServices: PeekabooServiceProviding {
                 targetedHotkeyUnavailableReason: targetedHotkeyUnavailableReason,
                 targetedHotkeyRequiresEventSynthesizingPermission: targetedHotkeyRequiresEventSynthesizingPermission,
                 supportsTargetedTypeActions: supportsTargetedTypeActions,
+                supportsProcessGenerationPinnedTypeActions: supportsProcessGenerationPinnedInteractions &&
+                    supportsTargetedTypeActions,
                 targetedTypeUnavailableReason: targetedTypeUnavailableReason,
                 targetedTypeRequiresEventSynthesizingPermission: targetedTypeRequiresEventSynthesizingPermission,
                 supportsTargetedClicks: supportsTargetedClicks,
+                supportsProcessGenerationPinnedClicks: supportsProcessGenerationPinnedInteractions &&
+                    supportsTargetedClicks,
                 targetedClickUnavailableReason: targetedClickUnavailableReason,
                 targetedClickRequiresEventSynthesizingPermission: targetedClickRequiresEventSynthesizingPermission,
                 supportsExactWindowTargetedClicks: supportsExactWindowTargetedClicks,

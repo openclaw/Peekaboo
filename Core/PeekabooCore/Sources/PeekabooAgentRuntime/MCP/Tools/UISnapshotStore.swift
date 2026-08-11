@@ -8,6 +8,7 @@ actor UISnapshot {
         var applicationName: String?
         var windowTitle: String?
         var applicationProcessId: Int32?
+        var applicationProcessStartIdentity: UInt64?
         var windowID: Int?
         var windowBounds: CGRect?
         var windowMutationIdentity: WindowMutationIdentity?
@@ -37,6 +38,7 @@ actor UISnapshot {
             $0.applicationName = metadata.applicationInfo?.name
             $0.windowTitle = metadata.windowInfo?.title
             $0.applicationProcessId = metadata.applicationInfo.map { Int32($0.processIdentifier) }
+            $0.applicationProcessStartIdentity = metadata.applicationInfo?.processStartIdentity
             $0.windowID = metadata.windowInfo?.windowID
             $0.windowBounds = metadata.windowInfo?.bounds
             $0.windowMutationIdentity = metadata.windowInfo?.mutationIdentity
@@ -54,6 +56,14 @@ actor UISnapshot {
             $0.applicationName = context?.applicationName
             $0.windowTitle = context?.windowTitle
             $0.applicationProcessId = context?.applicationProcessId
+            if let processIdentifier = context?.applicationProcessId,
+               let identity = context?.windowMutationIdentity,
+               identity.ownerProcessIdentifier == processIdentifier
+            {
+                $0.applicationProcessStartIdentity = identity.ownerProcessStartIdentity
+            } else {
+                $0.applicationProcessStartIdentity = nil
+            }
             $0.windowID = context?.windowID
             $0.windowBounds = context?.windowBounds
             $0.windowMutationIdentity = context?.windowMutationIdentity
@@ -75,6 +85,24 @@ actor UISnapshot {
 
     nonisolated var applicationProcessId: Int32? {
         self.targetCache.withLock { $0.applicationProcessId }
+    }
+
+    nonisolated var applicationProcessIdentity: ApplicationProcessIdentity? {
+        self.targetCache.withLock { cache in
+            guard let processIdentifier = cache.applicationProcessId else { return nil }
+            if let windowIdentity = cache.windowMutationIdentity,
+               windowIdentity.ownerProcessIdentifier == processIdentifier
+            {
+                return ApplicationProcessIdentity(
+                    processIdentifier: processIdentifier,
+                    processStartIdentity: windowIdentity.ownerProcessStartIdentity)
+            }
+            return cache.applicationProcessStartIdentity.map {
+                ApplicationProcessIdentity(
+                    processIdentifier: processIdentifier,
+                    processStartIdentity: $0)
+            }
+        }
     }
 
     nonisolated var windowID: Int? {

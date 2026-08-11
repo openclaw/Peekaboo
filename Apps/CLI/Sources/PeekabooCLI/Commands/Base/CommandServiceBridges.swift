@@ -42,7 +42,7 @@ enum AutomationServiceBridge {
         target: ClickTarget,
         clickType: ClickType,
         snapshotId: String?,
-        targetProcessIdentifier: pid_t,
+        expectedProcessIdentity: ApplicationProcessIdentity,
         targetWindowID: Int? = nil,
         expectedWindowIdentity: WindowMutationIdentity? = nil,
         expectedWindowBounds: CGRect? = nil
@@ -68,7 +68,8 @@ enum AutomationServiceBridge {
                 guard let expectedWindowIdentity,
                       let expectedWindowBounds,
                       expectedWindowIdentity.windowID == targetWindowID,
-                      expectedWindowIdentity.ownerProcessIdentifier == targetProcessIdentifier
+                      expectedWindowIdentity.ownerProcessIdentifier == expectedProcessIdentity.processIdentifier,
+                      expectedWindowIdentity.ownerProcessStartIdentity == expectedProcessIdentity.processStartIdentity
                 else {
                     throw PeekabooError.invalidInput(
                         field: "target",
@@ -83,11 +84,16 @@ enum AutomationServiceBridge {
                     expectedWindowBounds: expectedWindowBounds
                 )
             } else {
+                guard targetedClickService.supportsProcessGenerationPinnedClicks else {
+                    throw PeekabooError.serviceUnavailable(
+                        "Background clicks require process-generation-pinned delivery; update the runtime host"
+                    )
+                }
                 try await targetedClickService.click(
                     target: target,
                     clickType: clickType,
                     snapshotId: snapshotId,
-                    targetProcessIdentifier: targetProcessIdentifier
+                    expectedProcessIdentity: expectedProcessIdentity
                 )
             }
         }.value
@@ -109,7 +115,7 @@ enum AutomationServiceBridge {
     static func typeActions(
         automation: any UIAutomationServiceProtocol,
         request: TypeActionsRequest,
-        targetProcessIdentifier: pid_t
+        expectedProcessIdentity: ApplicationProcessIdentity
     ) async throws -> TypeResult {
         try await Task { @MainActor in
             guard let targetedTypeService = automation as? any TargetedTypeServiceProtocol else {
@@ -118,7 +124,9 @@ enum AutomationServiceBridge {
                 )
             }
 
-            guard targetedTypeService.supportsTargetedTypeActions else {
+            guard targetedTypeService.supportsTargetedTypeActions,
+                  targetedTypeService.supportsProcessGenerationPinnedTypeActions
+            else {
                 throw self.targetedTypeUnavailableError(service: targetedTypeService)
             }
 
@@ -126,7 +134,7 @@ enum AutomationServiceBridge {
                 request.actions,
                 cadence: request.cadence,
                 snapshotId: request.snapshotId,
-                targetProcessIdentifier: targetProcessIdentifier
+                expectedProcessIdentity: expectedProcessIdentity
             )
         }.value
     }

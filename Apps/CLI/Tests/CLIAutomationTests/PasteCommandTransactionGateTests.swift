@@ -41,6 +41,7 @@ extension PasteCommandTests {
     ) {
         let app = ServiceApplicationInfo(
             processIdentifier: processIdentifier,
+            processStartIdentity: 71,
             bundleIdentifier: "com.apple.TextEdit",
             name: "TextEdit"
         )
