@@ -1,4 +1,5 @@
 import AppKit
+import ApplicationServices
 import CoreGraphics
 import CryptoKit
 import Darwin
@@ -37,6 +38,20 @@ private struct Violation: Codable, Hashable {
 private struct WatchHeartbeat: Codable {
     let sequence: UInt64
     let timestamp: Double
+    let lastCleanSequence: UInt64
+    let contaminationRetries: Int
+    let contaminationBlocked: Bool
+    let inputAttributionAvailable: Bool
+    let allowedProducerRevision: UInt64
+    let phase: String
+}
+
+private struct ContaminationRecord: Codable {
+    let state: String
+    let retry: Int
+    let sequence: UInt64
+    let sourcePIDs: [Int32]
+    let eventTypes: [UInt32]
 }
 
 private struct AppIdentity: Codable {
@@ -53,13 +68,384 @@ private struct ProcessIdentity: Codable {
 private enum ProbeError: Error, CustomStringConvertible {
     case invalidArguments(String)
     case noMouseEvent
+    case inputEventTapUnavailable
+    case focusedWindowObserverUnavailable
 
     var description: String {
         switch self {
         case let .invalidArguments(message): message
         case .noMouseEvent: "Unable to read the physical cursor location"
+        case .inputEventTapUnavailable: "Unable to start the input-attribution event tap"
+        case .focusedWindowObserverUnavailable: "Unable to observe foreground-window changes"
         }
     }
+}
+
+private enum InvariantSlot: Int, CaseIterable {
+    case frontmostPID
+    case frontmostWindow
+    case physicalCursor
+    case globalInputEvent
+    case clipboardChangeCount
+    case peekabooOverlayWindow
+}
+
+private struct InvariantProjection {
+    let names: [String]
+
+    init(json: String) throws {
+        let decoded = try JSONDecoder().decode([String].self, from: Data(json.utf8))
+        guard decoded.count == InvariantSlot.allCases.count,
+              decoded.allSatisfy({ !$0.isEmpty }),
+              Set(decoded).count == decoded.count
+        else {
+            throw ProbeError.invalidArguments(
+                "--invariant-names must contain exactly \(InvariantSlot.allCases.count) unique nonempty names")
+        }
+        self.names = decoded
+    }
+
+    init(names: [String]) {
+        precondition(names.count == InvariantSlot.allCases.count)
+        self.names = names
+    }
+
+    subscript(_ slot: InvariantSlot) -> String {
+        self.names[slot.rawValue]
+    }
+}
+
+private struct InteractiveBaseline {
+    var frontmostPID: Int32?
+    var frontmostWindowID: UInt32?
+    var cursor: Point
+}
+
+private struct InvariantEvaluationContext {
+    let baseline: SystemSample
+    let interactiveBaseline: InteractiveBaseline
+    let allowClipboardMutation: Bool
+    let evaluateInteractiveInvariants: Bool
+    let projection: InvariantProjection
+}
+
+private struct InputEventBatch {
+    let producerEventCount: Int
+    let producerSourcePIDs: [Int32]
+    let producerEventTypes: [UInt32]
+    let externalEventCount: Int
+    let externalSourcePIDs: [Int32]
+    let externalEventTypes: [UInt32]
+    let attributionFailed: Bool
+}
+
+private struct AllowedEventProducer: Codable, Hashable {
+    let pid: Int32
+    let startIdentity: String
+}
+
+private struct AllowedEventProducerSet: Codable {
+    let revision: UInt64
+    let producers: [AllowedEventProducer]
+}
+
+private struct AttemptContaminationState {
+    private(set) var blocked = false
+
+    mutating func observe(externalInput: Bool, attributionFailed: Bool) {
+        if externalInput || attributionFailed {
+            self.blocked = true
+        }
+    }
+
+    var permitsInteractiveEvaluation: Bool {
+        !self.blocked
+    }
+}
+
+private final class InputEventTracker {
+    private static let requiredEventTypes: [CGEventType] = [
+        .mouseMoved,
+        .leftMouseDown,
+        .keyDown,
+        .scrollWheel,
+        .tabletPointer,
+        .tabletProximity,
+    ]
+    private static let monitoredEventMask = CGEventMask.max &
+        ~(CGEventMask(1) << CGEventType.null.rawValue)
+
+    private let lock = NSLock()
+    private var allowedProducerPIDs = Set<Int32>()
+    private var producerEventCount = 0
+    private var producerSourcePIDs = Set<Int32>()
+    private var producerEventTypes = Set<UInt32>()
+    private var externalEventCount = 0
+    private var externalSourcePIDs = Set<Int32>()
+    private var externalEventTypes = Set<UInt32>()
+    private var attributionFailed = false
+    private var eventTap: CFMachPort?
+    private var runLoopSource: CFRunLoopSource?
+
+    func start() throws {
+        guard CGPreflightListenEventAccess() else {
+            throw ProbeError.inputEventTapUnavailable
+        }
+        let priorTapIDs = Set(Self.tapInformation().filter { $0.tappingProcess == getpid() }.map(\.eventTapID))
+        guard let eventTap = CGEvent.tapCreate(
+            tap: .cgSessionEventTap,
+            place: .headInsertEventTap,
+            options: .listenOnly,
+            eventsOfInterest: Self.monitoredEventMask,
+            callback: inputEventTapCallback,
+            userInfo: Unmanaged.passUnretained(self).toOpaque())
+        else {
+            throw ProbeError.inputEventTapUnavailable
+        }
+        guard let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, eventTap, 0) else {
+            CFMachPortInvalidate(eventTap)
+            throw ProbeError.inputEventTapUnavailable
+        }
+        self.eventTap = eventTap
+        self.runLoopSource = source
+        CFRunLoopAddSource(CFRunLoopGetCurrent(), source, .commonModes)
+        CGEvent.tapEnable(tap: eventTap, enable: true)
+        let currentPID = getpid()
+        let currentTaps = Self.tapInformation()
+        let installedTap = currentTaps.first { info in
+            guard info.tappingProcess == currentPID else { return false }
+            guard !priorTapIDs.contains(info.eventTapID) else { return false }
+            guard info.tapPoint == .cgSessionEventTap else { return false }
+            return info.options == .listenOnly
+        }
+        guard let installedTap,
+              installedTap.enabled,
+              installedTap.eventsOfInterest & Self.requiredEventMask == Self.requiredEventMask
+        else {
+            self.stop()
+            throw ProbeError.inputEventTapUnavailable
+        }
+    }
+
+    func stop() {
+        if let runLoopSource = self.runLoopSource {
+            CFRunLoopRemoveSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
+        }
+        if let eventTap = self.eventTap {
+            CFMachPortInvalidate(eventTap)
+        }
+        self.runLoopSource = nil
+        self.eventTap = nil
+    }
+
+    static func validateMonitoredEventMask() -> Bool {
+        let nullBit = CGEventMask(1) << CGEventType.null.rawValue
+        return Self.monitoredEventMask & nullBit == 0 && Self.requiredEventTypes.allSatisfy { type in
+            Self.monitoredEventMask & (CGEventMask(1) << type.rawValue) != 0
+        }
+    }
+
+    private static var requiredEventMask: CGEventMask {
+        requiredEventTypes.reduce(CGEventMask(0)) { mask, type in
+            mask | (CGEventMask(1) << type.rawValue)
+        }
+    }
+
+    private static func tapInformation() -> [CGEventTapInformation] {
+        var count: UInt32 = 0
+        guard CGGetEventTapList(0, nil, &count) == .success, count > 0 else { return [] }
+        var taps = [CGEventTapInformation](repeating: CGEventTapInformation(), count: Int(count))
+        var returnedCount = count
+        guard CGGetEventTapList(count, &taps, &returnedCount) == .success else { return [] }
+        return Array(taps.prefix(Int(returnedCount)))
+    }
+
+    func handle(type: CGEventType, event: CGEvent) {
+        if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+            self.lock.lock()
+            self.attributionFailed = true
+            self.lock.unlock()
+            if let eventTap = self.eventTap {
+                CGEvent.tapEnable(tap: eventTap, enable: true)
+            }
+            return
+        }
+
+        let sourcePIDValue = event.getIntegerValueField(.eventSourceUnixProcessID)
+        let sourcePID = sourcePIDValue > 0 && sourcePIDValue <= Int64(Int32.max)
+            ? Int32(sourcePIDValue)
+            : 0
+        self.lock.lock()
+        if self.allowedProducerPIDs.contains(sourcePID) {
+            self.producerEventCount += 1
+            self.producerSourcePIDs.insert(sourcePID)
+            self.producerEventTypes.insert(type.rawValue)
+            self.lock.unlock()
+            return
+        }
+        if self.externalSourcePIDs.count >= 128, !self.externalSourcePIDs.contains(sourcePID) {
+            self.attributionFailed = true
+            self.lock.unlock()
+            return
+        }
+        self.externalEventCount += 1
+        self.externalSourcePIDs.insert(sourcePID)
+        self.externalEventTypes.insert(type.rawValue)
+        self.lock.unlock()
+    }
+
+    func updateAllowedProducerPIDs(_ pids: Set<Int32>) {
+        self.lock.lock()
+        self.allowedProducerPIDs = pids
+        self.lock.unlock()
+    }
+
+    func drain() -> InputEventBatch {
+        self.lock.lock()
+        let producerEventCount = self.producerEventCount
+        let producerSourcePIDs = self.producerSourcePIDs.sorted()
+        let producerEventTypes = self.producerEventTypes.sorted()
+        let externalEventCount = self.externalEventCount
+        let externalSourcePIDs = self.externalSourcePIDs.sorted()
+        let externalEventTypes = self.externalEventTypes.sorted()
+        let attributionFailed = self.attributionFailed
+        self.producerEventCount = 0
+        self.producerSourcePIDs.removeAll(keepingCapacity: true)
+        self.producerEventTypes.removeAll(keepingCapacity: true)
+        self.externalEventCount = 0
+        self.externalSourcePIDs.removeAll(keepingCapacity: true)
+        self.externalEventTypes.removeAll(keepingCapacity: true)
+        self.attributionFailed = false
+        self.lock.unlock()
+        return InputEventBatch(
+            producerEventCount: producerEventCount,
+            producerSourcePIDs: producerSourcePIDs,
+            producerEventTypes: producerEventTypes,
+            externalEventCount: externalEventCount,
+            externalSourcePIDs: externalSourcePIDs,
+            externalEventTypes: externalEventTypes,
+            attributionFailed: attributionFailed)
+    }
+}
+
+private final class ActivationTracker {
+    private let baselinePID: Int32?
+    private let lock = NSLock()
+    private var activatedPIDs = Set<Int32>()
+    private var observer: (any NSObjectProtocol)?
+
+    init(baselinePID: Int32?) {
+        self.baselinePID = baselinePID
+    }
+
+    func start() {
+        self.observer = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification,
+            object: nil,
+            queue: nil)
+        { [weak self] notification in
+            guard let self,
+                  let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+                  app.processIdentifier != self.baselinePID
+            else {
+                return
+            }
+            self.lock.lock()
+            self.activatedPIDs.insert(app.processIdentifier)
+            self.lock.unlock()
+        }
+    }
+
+    func drain() -> [Int32] {
+        self.lock.lock()
+        defer { self.lock.unlock() }
+        let pids = self.activatedPIDs.sorted()
+        self.activatedPIDs.removeAll(keepingCapacity: true)
+        return pids
+    }
+
+    func stop() {
+        if let observer = self.observer {
+            NSWorkspace.shared.notificationCenter.removeObserver(observer)
+        }
+        self.observer = nil
+    }
+}
+
+private final class FocusedWindowTracker {
+    private let pid: Int32
+    private let lock = NSLock()
+    private var changed = false
+    private var observer: AXObserver?
+    private var applicationElement: AXUIElement?
+
+    init(pid: Int32) {
+        self.pid = pid
+    }
+
+    func start() throws {
+        var observer: AXObserver?
+        guard AXObserverCreate(self.pid, focusedWindowObserverCallback, &observer) == .success,
+              let observer
+        else {
+            throw ProbeError.focusedWindowObserverUnavailable
+        }
+        let applicationElement = AXUIElementCreateApplication(self.pid)
+        guard AXObserverAddNotification(
+            observer,
+            applicationElement,
+            kAXFocusedWindowChangedNotification as CFString,
+            Unmanaged.passUnretained(self).toOpaque()) == .success
+        else {
+            throw ProbeError.focusedWindowObserverUnavailable
+        }
+        self.observer = observer
+        self.applicationElement = applicationElement
+        CFRunLoopAddSource(
+            CFRunLoopGetCurrent(),
+            AXObserverGetRunLoopSource(observer),
+            .commonModes)
+    }
+
+    func recordChange() {
+        self.lock.lock()
+        self.changed = true
+        self.lock.unlock()
+    }
+
+    func drain() -> Bool {
+        self.lock.lock()
+        defer { self.lock.unlock() }
+        let changed = self.changed
+        self.changed = false
+        return changed
+    }
+
+    func stop() {
+        guard let observer = self.observer, let applicationElement = self.applicationElement else { return }
+        AXObserverRemoveNotification(
+            observer,
+            applicationElement,
+            kAXFocusedWindowChangedNotification as CFString)
+        CFRunLoopRemoveSource(
+            CFRunLoopGetCurrent(),
+            AXObserverGetRunLoopSource(observer),
+            .commonModes)
+        self.observer = nil
+        self.applicationElement = nil
+    }
+}
+
+private let focusedWindowObserverCallback: AXObserverCallback = { _, _, _, context in
+    guard let context else { return }
+    Unmanaged<FocusedWindowTracker>.fromOpaque(context).takeUnretainedValue().recordChange()
+}
+
+private let inputEventTapCallback: CGEventTapCallBack = { _, type, event, userInfo in
+    guard let userInfo else { return Unmanaged.passUnretained(event) }
+    let tracker = Unmanaged<InputEventTracker>.fromOpaque(userInfo).takeUnretainedValue()
+    tracker.handle(type: type, event: event)
+    return Unmanaged.passUnretained(event)
 }
 
 private func windowInfo() -> [[String: Any]] {
@@ -185,51 +571,260 @@ private func processStartIdentity(pid: Int32) -> UInt64? {
     return seconds.multipliedReportingOverflow(by: 1_000_000).partialValue &+ microseconds
 }
 
-private func violations(
-    baseline: SystemSample,
-    current: SystemSample,
-    allowClipboardMutation: Bool) -> Set<Violation>
-{
+private func violations(current: SystemSample, context: InvariantEvaluationContext) -> Set<Violation> {
     var result = Set<Violation>()
 
-    if current.frontmostPID != baseline.frontmostPID {
-        result.insert(Violation(
-            kind: "frontmost_pid",
-            expected: baseline.frontmostPID.map(String.init) ?? "null",
-            actual: current.frontmostPID.map(String.init) ?? "null"))
-    }
-    if current.frontmostWindowID != baseline.frontmostWindowID {
-        result.insert(Violation(
-            kind: "frontmost_window",
-            expected: baseline.frontmostWindowID.map(String.init) ?? "null",
-            actual: current.frontmostWindowID.map(String.init) ?? "null"))
+    if context.evaluateInteractiveInvariants {
+        if current.frontmostPID != context.interactiveBaseline.frontmostPID {
+            result.insert(Violation(
+                kind: context.projection[.frontmostPID],
+                expected: context.interactiveBaseline.frontmostPID.map(String.init) ?? "null",
+                actual: current.frontmostPID.map(String.init) ?? "null"))
+        }
+        if current.frontmostWindowID != context.interactiveBaseline.frontmostWindowID {
+            result.insert(Violation(
+                kind: context.projection[.frontmostWindow],
+                expected: context.interactiveBaseline.frontmostWindowID.map(String.init) ?? "null",
+                actual: current.frontmostWindowID.map(String.init) ?? "null"))
+        }
+
+        let cursorMoved = abs(current.cursor.x - context.interactiveBaseline.cursor.x) > 0.5 ||
+            abs(current.cursor.y - context.interactiveBaseline.cursor.y) > 0.5
+        if cursorMoved {
+            result.insert(Violation(
+                kind: context.projection[.physicalCursor],
+                expected: "\(context.interactiveBaseline.cursor.x),\(context.interactiveBaseline.cursor.y)",
+                actual: "\(current.cursor.x),\(current.cursor.y)"))
+        }
     }
 
-    let cursorMoved = abs(current.cursor.x - baseline.cursor.x) > 0.5 ||
-        abs(current.cursor.y - baseline.cursor.y) > 0.5
-    if cursorMoved {
+    if !context.allowClipboardMutation,
+       current.clipboardChangeCount != context.baseline.clipboardChangeCount
+    {
         result.insert(Violation(
-            kind: "physical_cursor",
-            expected: "\(baseline.cursor.x),\(baseline.cursor.y)",
-            actual: "\(current.cursor.x),\(current.cursor.y)"))
-    }
-
-    if !allowClipboardMutation, current.clipboardChangeCount != baseline.clipboardChangeCount {
-        result.insert(Violation(
-            kind: "clipboard_change_count",
-            expected: String(baseline.clipboardChangeCount),
+            kind: context.projection[.clipboardChangeCount],
+            expected: String(context.baseline.clipboardChangeCount),
             actual: String(current.clipboardChangeCount)))
     }
 
-    let addedWindows = Set(current.peekabooWindowIDs).subtracting(baseline.peekabooWindowIDs)
+    let addedWindows = Set(current.peekabooWindowIDs).subtracting(context.baseline.peekabooWindowIDs)
     if !addedWindows.isEmpty {
         result.insert(Violation(
-            kind: "peekaboo_overlay_window",
+            kind: context.projection[.peekabooOverlayWindow],
             expected: "none added",
             actual: addedWindows.sorted().map(String.init).joined(separator: ",")))
     }
 
     return result
+}
+
+private func producerInputViolation(
+    batch: InputEventBatch,
+    projection: InvariantProjection) -> Violation?
+{
+    guard batch.producerEventCount > 0 else { return nil }
+    let sources = batch.producerSourcePIDs.map(String.init).joined(separator: ",")
+    let types = batch.producerEventTypes.map(String.init).joined(separator: ",")
+    return Violation(
+        kind: projection[.globalInputEvent],
+        expected: "no session-global input events",
+        actual: "pids=\(sources); types=\(types)")
+}
+
+private func producerEventsMatchReceipts(
+    batch: InputEventBatch,
+    receipts: [Int32: String],
+    processIdentity: (Int32) -> UInt64?) -> Bool
+{
+    batch.producerSourcePIDs.allSatisfy { pid in
+        guard let expected = receipts[pid], let current = processIdentity(pid) else { return false }
+        return expected == String(current)
+    }
+}
+
+private func transientFocusViolations(
+    externalEventCount: Int,
+    unexpectedActivations: [Int32],
+    focusedWindowChanged: Bool,
+    baseline: InteractiveBaseline,
+    projection: InvariantProjection) -> Set<Violation>
+{
+    guard externalEventCount == 0 else { return [] }
+    var result = Set<Violation>()
+    if !unexpectedActivations.isEmpty {
+        result.insert(Violation(
+            kind: projection[.frontmostPID],
+            expected: baseline.frontmostPID.map(String.init) ?? "null",
+            actual: "transient activations: \(unexpectedActivations.map(String.init).joined(separator: ","))"))
+    }
+    if focusedWindowChanged {
+        result.insert(Violation(
+            kind: projection[.frontmostWindow],
+            expected: baseline.frontmostWindowID.map(String.init) ?? "null",
+            actual: "transient focused-window change"))
+    }
+    return result
+}
+
+private struct WatchState {
+    let baseline: SystemSample
+    let interactiveBaseline: InteractiveBaseline
+    let allowClipboardMutation: Bool
+    let projection: InvariantProjection
+    let outputPath: String
+    let contaminationOutputPath: String
+    private var recorded = Set<Violation>()
+    private var sequence: UInt64 = 0
+    private var lastCleanSequence: UInt64 = 0
+    private var contaminationRetries = 0
+    private var contaminationState = AttemptContaminationState()
+    private var inputAttributionAvailable = true
+    private var allowedProducerRevision: UInt64?
+    private var allowedProducerReceipts: [Int32: String] = [:]
+    private var pendingActivations: [Int32] = []
+    private var pendingFocusedWindowChange = false
+
+    mutating func applyProducerSet(
+        _ producerSet: AllowedEventProducerSet,
+        to tracker: InputEventTracker) throws
+    {
+        guard self.allowedProducerRevision != producerSet.revision else { return }
+        let producerPIDs = producerSet.producers.map(\.pid)
+        let validatedPIDs = Set(producerSet.producers.compactMap { producer -> Int32? in
+            guard let currentStartIdentity = processStartIdentity(pid: producer.pid),
+                  producer.startIdentity == String(currentStartIdentity)
+            else {
+                return nil
+            }
+            return producer.pid
+        })
+        guard validatedPIDs.count == producerSet.producers.count,
+              Set(producerPIDs).count == producerPIDs.count
+        else {
+            try self.block(
+                reason: "blocked_producer_identity",
+                sourcePIDs: producerSet.producers.map(\.pid).sorted(),
+                eventTypes: [],
+                attributionFailed: true,
+                countsRetry: false)
+            return
+        }
+        tracker.updateAllowedProducerPIDs(validatedPIDs)
+        self.allowedProducerReceipts = Dictionary(uniqueKeysWithValues: producerSet.producers.map {
+            ($0.pid, $0.startIdentity)
+        })
+        self.allowedProducerRevision = producerSet.revision
+    }
+
+    mutating func observe(
+        current: SystemSample,
+        phase: String,
+        inputBatch: InputEventBatch,
+        unexpectedActivations: [Int32],
+        focusedWindowChanged: Bool) throws -> WatchHeartbeat
+    {
+        let deferredActivations = self.pendingActivations
+        let deferredFocusedWindowChange = self.pendingFocusedWindowChange
+        self.pendingActivations = unexpectedActivations
+        self.pendingFocusedWindowChange = focusedWindowChanged
+
+        if inputBatch.attributionFailed {
+            try self.block(
+                reason: "blocked_attribution",
+                sourcePIDs: [],
+                eventTypes: [],
+                attributionFailed: true,
+                countsRetry: false)
+        }
+        let producerEventsValid = producerEventsMatchReceipts(
+            batch: inputBatch,
+            receipts: self.allowedProducerReceipts,
+            processIdentity: processStartIdentity(pid:))
+        if !producerEventsValid {
+            try self.block(
+                reason: "blocked_producer_generation_drift",
+                sourcePIDs: inputBatch.producerSourcePIDs,
+                eventTypes: inputBatch.producerEventTypes,
+                attributionFailed: true,
+                countsRetry: false)
+        }
+        if inputBatch.externalEventCount > 0 {
+            try self.block(
+                reason: phase == "setup" ? "blocked_setup_attempt" : "blocked_active_attempt",
+                sourcePIDs: inputBatch.externalSourcePIDs,
+                eventTypes: inputBatch.externalEventTypes,
+                attributionFailed: false,
+                countsRetry: true)
+        }
+        let evaluateInteractive = inputBatch.externalEventCount == 0 &&
+            unexpectedActivations.isEmpty && !focusedWindowChanged && self.inputAttributionAvailable &&
+            self.contaminationState.permitsInteractiveEvaluation
+        let context = InvariantEvaluationContext(
+            baseline: self.baseline,
+            interactiveBaseline: self.interactiveBaseline,
+            allowClipboardMutation: self.allowClipboardMutation,
+            evaluateInteractiveInvariants: evaluateInteractive,
+            projection: self.projection)
+        var currentViolations = violations(current: current, context: context)
+        if self.contaminationState.permitsInteractiveEvaluation {
+            currentViolations.formUnion(transientFocusViolations(
+                externalEventCount: inputBatch.externalEventCount,
+                unexpectedActivations: deferredActivations,
+                focusedWindowChanged: deferredFocusedWindowChange,
+                baseline: self.interactiveBaseline,
+                projection: self.projection))
+        }
+        if producerEventsValid,
+           let inputViolation = producerInputViolation(batch: inputBatch, projection: self.projection)
+        {
+            currentViolations.insert(inputViolation)
+        }
+        for violation in currentViolations.subtracting(self.recorded) {
+            try appendJSONLine(violation, to: self.outputPath)
+            self.recorded.insert(violation)
+        }
+
+        self.sequence += 1
+        if evaluateInteractive {
+            self.lastCleanSequence = self.sequence
+        }
+        return WatchHeartbeat(
+            sequence: self.sequence,
+            timestamp: current.timestamp,
+            lastCleanSequence: self.lastCleanSequence,
+            contaminationRetries: self.contaminationRetries,
+            contaminationBlocked: self.contaminationState.blocked,
+            inputAttributionAvailable: self.inputAttributionAvailable,
+            allowedProducerRevision: self.allowedProducerRevision ?? 0,
+            phase: phase)
+    }
+
+    private mutating func block(
+        reason: String,
+        sourcePIDs: [Int32],
+        eventTypes: [UInt32],
+        attributionFailed: Bool,
+        countsRetry: Bool) throws
+    {
+        if attributionFailed {
+            self.inputAttributionAvailable = false
+        }
+        guard !self.contaminationState.blocked else { return }
+        if countsRetry {
+            self.contaminationRetries += 1
+        }
+        try appendJSONLine(
+            ContaminationRecord(
+                state: reason,
+                retry: self.contaminationRetries,
+                sequence: self.sequence + 1,
+                sourcePIDs: sourcePIDs,
+                eventTypes: eventTypes),
+            to: self.contaminationOutputPath)
+        self.contaminationState.observe(
+            externalInput: !attributionFailed,
+            attributionFailed: attributionFailed)
+    }
 }
 
 private func writeJSON(_ value: some Encodable, to path: String?) throws {
@@ -266,44 +861,88 @@ private func argument(_ name: String, in arguments: [String]) -> String? {
 private func runWatch(arguments: [String]) throws -> Never {
     guard let baselinePath = argument("--baseline", in: arguments),
           let outputPath = argument("--output", in: arguments),
+          let contaminationOutputPath = argument("--contamination-output", in: arguments),
           let readyPath = argument("--ready", in: arguments),
-          let heartbeatPath = argument("--heartbeat", in: arguments)
+          let heartbeatPath = argument("--heartbeat", in: arguments),
+          let phasePath = argument("--phase", in: arguments),
+          let allowedProducersPath = argument("--allowed-producers", in: arguments),
+          let invariantNamesJSON = argument("--invariant-names", in: arguments)
     else {
-        throw ProbeError.invalidArguments("watch requires --baseline, --output, --ready, and --heartbeat")
+        throw ProbeError.invalidArguments(
+            "watch requires baseline/output paths, phase, allowed producers, heartbeat, and invariant names")
     }
 
     let intervalMilliseconds = Int(argument("--interval-ms", in: arguments) ?? "20") ?? 20
+    guard intervalMilliseconds > 0 else {
+        throw ProbeError.invalidArguments("watch interval must be valid")
+    }
     let allowClipboardMutation = arguments.contains("--allow-clipboard-mutation")
+    let invariantProjection = try InvariantProjection(json: invariantNamesJSON)
     let baselineData = try Data(contentsOf: URL(fileURLWithPath: baselinePath))
     let baseline = try JSONDecoder().decode(SystemSample.self, from: baselineData)
     FileManager.default.createFile(atPath: outputPath, contents: nil)
+    FileManager.default.createFile(atPath: contaminationOutputPath, contents: nil)
 
-    var recorded = Set<Violation>()
+    let inputTracker = InputEventTracker()
+    try inputTracker.start()
+    let activationTracker = ActivationTracker(baselinePID: baseline.frontmostPID)
+    activationTracker.start()
+    guard let baselinePID = baseline.frontmostPID else {
+        throw ProbeError.focusedWindowObserverUnavailable
+    }
+    let focusedWindowTracker = FocusedWindowTracker(pid: baselinePID)
+    try focusedWindowTracker.start()
+    defer {
+        focusedWindowTracker.stop()
+        activationTracker.stop()
+        inputTracker.stop()
+    }
+
+    var watchState = WatchState(
+        baseline: baseline,
+        interactiveBaseline: InteractiveBaseline(
+            frontmostPID: baseline.frontmostPID,
+            frontmostWindowID: baseline.frontmostWindowID,
+            cursor: baseline.cursor),
+        allowClipboardMutation: allowClipboardMutation,
+        projection: invariantProjection,
+        outputPath: outputPath,
+        contaminationOutputPath: contaminationOutputPath)
     var firstSample = true
-    var sequence: UInt64 = 0
     while true {
+        CFRunLoopRunInMode(
+            .defaultMode,
+            Double(intervalMilliseconds) / 1000,
+            true)
         let current = try sample(includeClipboardDigest: false)
-        for violation in violations(
-            baseline: baseline,
-            current: current,
-            allowClipboardMutation: allowClipboardMutation).subtracting(recorded)
-        {
-            try appendJSONLine(violation, to: outputPath)
-            recorded.insert(violation)
+        let producerData = try Data(contentsOf: URL(fileURLWithPath: allowedProducersPath))
+        let allowedProducerSet = try JSONDecoder().decode(AllowedEventProducerSet.self, from: producerData)
+        try watchState.applyProducerSet(allowedProducerSet, to: inputTracker)
+        let phase = try String(contentsOfFile: phasePath, encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard ["setup", "running", "complete"].contains(phase) else {
+            throw ProbeError.invalidArguments("watch phase must be setup, running, or complete")
         }
-        sequence += 1
+        let inputBatch = inputTracker.drain()
+        let unexpectedActivations = activationTracker.drain()
+        let heartbeat = try watchState.observe(
+            current: current,
+            phase: phase,
+            inputBatch: inputBatch,
+            unexpectedActivations: unexpectedActivations,
+            focusedWindowChanged: focusedWindowTracker.drain())
         try writeJSON(
-            WatchHeartbeat(sequence: sequence, timestamp: current.timestamp),
+            heartbeat,
             to: heartbeatPath)
         if firstSample {
             try Data("ready\n".utf8).write(to: URL(fileURLWithPath: readyPath), options: .atomic)
             firstSample = false
         }
-        usleep(useconds_t(max(1, intervalMilliseconds) * 1000))
     }
 }
 
 private func runSelfTest() throws {
+    let projection = InvariantProjection(names: InvariantSlot.allCases.map { "slot-\($0.rawValue)" })
     let baseline = SystemSample(
         timestamp: 1,
         frontmostPID: 101,
@@ -315,7 +954,18 @@ private func runSelfTest() throws {
         peekabooWindowIDs: [301],
         visibleScreenFramesTopLeft: [Rectangle(x: 0, y: 0, width: 800, height: 600)])
 
-    guard violations(baseline: baseline, current: baseline, allowClipboardMutation: false).isEmpty else {
+    let interactiveBaseline = InteractiveBaseline(
+        frontmostPID: baseline.frontmostPID,
+        frontmostWindowID: baseline.frontmostWindowID,
+        cursor: baseline.cursor)
+    let baselineContext = InvariantEvaluationContext(
+        baseline: baseline,
+        interactiveBaseline: interactiveBaseline,
+        allowClipboardMutation: false,
+        evaluateInteractiveInvariants: true,
+        projection: projection)
+    guard violations(current: baseline, context: baselineContext).isEmpty
+    else {
         throw ProbeError.invalidArguments("equal samples must not produce violations")
     }
 
@@ -330,32 +980,99 @@ private func runSelfTest() throws {
         peekabooWindowIDs: [301, 302],
         visibleScreenFramesTopLeft: baseline.visibleScreenFramesTopLeft)
     let kinds = Set(violations(
-        baseline: baseline,
         current: changed,
-        allowClipboardMutation: false).map(\.kind))
-    let expected: Set = [
-        "frontmost_pid",
-        "frontmost_window",
-        "physical_cursor",
-        "clipboard_change_count",
-        "peekaboo_overlay_window",
-    ]
+        context: InvariantEvaluationContext(
+            baseline: baseline,
+            interactiveBaseline: interactiveBaseline,
+            allowClipboardMutation: false,
+            evaluateInteractiveInvariants: true,
+            projection: projection)).map(\.kind))
+    let expected = Set(projection.names).subtracting([projection[.globalInputEvent]])
     guard kinds == expected else {
         throw ProbeError.invalidArguments("self-test violation mismatch: \(kinds)")
     }
     let allowedKinds = Set(violations(
-        baseline: baseline,
         current: changed,
-        allowClipboardMutation: true).map(\.kind))
-    guard !allowedKinds.contains("clipboard_change_count") else {
+        context: InvariantEvaluationContext(
+            baseline: baseline,
+            interactiveBaseline: interactiveBaseline,
+            allowClipboardMutation: true,
+            evaluateInteractiveInvariants: true,
+            projection: projection)).map(\.kind))
+    guard !allowedKinds.contains(projection[.clipboardChangeCount]) else {
         throw ProbeError.invalidArguments("clipboard mutation allowance was ignored")
     }
 
-    guard processStartIdentity(pid: getpid()) != nil else {
-        throw ProbeError.invalidArguments("process generation lookup failed for the probe")
+    let contaminatedKinds = Set(violations(
+        current: changed,
+        context: InvariantEvaluationContext(
+            baseline: baseline,
+            interactiveBaseline: interactiveBaseline,
+            allowClipboardMutation: false,
+            evaluateInteractiveInvariants: false,
+            projection: projection)).map(\.kind))
+    guard !contaminatedKinds.contains(projection[.frontmostPID]),
+          !contaminatedKinds.contains(projection[.frontmostWindow]),
+          !contaminatedKinds.contains(projection[.physicalCursor]),
+          contaminatedKinds.contains(projection[.clipboardChangeCount]),
+          contaminatedKinds.contains(projection[.peekabooOverlayWindow])
+    else {
+        throw ProbeError.invalidArguments("contaminated samples weakened fixed desktop invariants")
     }
 
-    try writeJSON(SelfTestResult(success: true, tests: 4), to: nil)
+    var contaminationState = AttemptContaminationState()
+    contaminationState.observe(externalInput: true, attributionFailed: false)
+    contaminationState.observe(externalInput: false, attributionFailed: false)
+    guard contaminationState.blocked, !contaminationState.permitsInteractiveEvaluation else {
+        throw ProbeError.invalidArguments("contamination did not remain sticky for the attempt")
+    }
+
+    let producerBatch = InputEventBatch(
+        producerEventCount: 1,
+        producerSourcePIDs: [getpid()],
+        producerEventTypes: [CGEventType.mouseMoved.rawValue],
+        externalEventCount: 0,
+        externalSourcePIDs: [],
+        externalEventTypes: [],
+        attributionFailed: false)
+    guard producerInputViolation(batch: producerBatch, projection: projection)?.kind ==
+        projection[.globalInputEvent]
+    else {
+        throw ProbeError.invalidArguments("global producer input was not retained as an invariant violation")
+    }
+    guard let selfIdentity = processStartIdentity(pid: getpid()),
+          producerEventsMatchReceipts(
+              batch: producerBatch,
+              receipts: [getpid(): String(selfIdentity)],
+              processIdentity: processStartIdentity(pid:)),
+          !producerEventsMatchReceipts(
+              batch: producerBatch,
+              receipts: [getpid(): String(selfIdentity &+ 1)],
+              processIdentity: processStartIdentity(pid:))
+    else {
+        throw ProbeError.invalidArguments("producer event generation receipts did not fail closed")
+    }
+    guard InputEventTracker.validateMonitoredEventMask() else {
+        throw ProbeError.invalidArguments("input event mask does not cover the complete public input family")
+    }
+    let transientKinds = Set(transientFocusViolations(
+        externalEventCount: 0,
+        unexpectedActivations: [102],
+        focusedWindowChanged: true,
+        baseline: interactiveBaseline,
+        projection: projection).map(\.kind))
+    guard transientKinds == Set([projection[.frontmostPID], projection[.frontmostWindow]]),
+          transientFocusViolations(
+              externalEventCount: 1,
+              unexpectedActivations: [102],
+              focusedWindowChanged: true,
+              baseline: interactiveBaseline,
+              projection: projection).isEmpty
+    else {
+        throw ProbeError.invalidArguments("transient focus attribution did not distinguish external input")
+    }
+
+    try writeJSON(SelfTestResult(success: true, tests: 11), to: nil)
 }
 
 private func findApp(arguments: [String]) throws {

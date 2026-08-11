@@ -7,7 +7,7 @@ CERTIFICATION_CATALOG="$ROOT_DIR/scripts/background-computer-use-catalog.json"
 CERTIFICATION_REPORTER="$ROOT_DIR/scripts/validate-background-computer-use-report.mjs"
 CERTIFICATION_TEST="$ROOT_DIR/tests/background-computer-use-report.test.mjs"
 PLAYGROUND_BUNDLE_ID="boo.peekaboo.playground.debug"
-SENTINEL_BUNDLE_ID="com.apple.calculator"
+SENTINEL_BUNDLE_ID=""
 PEEKABOO_BIN="${PEEKABOO_BIN:-}"
 ARTIFACT_ROOT=""
 PLAYGROUND_APP=""
@@ -31,7 +31,7 @@ Options:
   --skip-playground-build    Require --playground-app and skip xcodebuild
   --foreground-phase        Also run explicit physical-pointer tests
   --no-remote               Force the exact CLI process to use its local TCC grants
-  --sentinel-bundle-id ID   Controlled foreground sentinel (default: Calculator)
+  --sentinel-bundle-id ID   Require this app to already be frontmost (default: current app)
   --self-test               Compile and self-test the invariant probe only
   -h, --help                Show this help
 EOF
@@ -119,12 +119,17 @@ if [[ -d "$ARTIFACT_ROOT" ]] && \
     echo "Artifact directory must be new or empty: $ARTIFACT_ROOT" >&2
     exit 2
 fi
-mkdir -p "$ARTIFACT_ROOT" "$ARTIFACT_ROOT/cases" "$ARTIFACT_ROOT/bin"
+mkdir -p \
+    "$ARTIFACT_ROOT" \
+    "$ARTIFACT_ROOT/cases" \
+    "$ARTIFACT_ROOT/contaminated-attempts" \
+    "$ARTIFACT_ROOT/bin"
 
 PROBE_BIN="$ARTIFACT_ROOT/bin/background-computer-use-probe"
 swiftc "$ROOT_DIR/scripts/support/background-computer-use-probe.swift" \
     -o "$PROBE_BIN" \
     -framework AppKit \
+    -framework ApplicationServices \
     -framework CoreGraphics \
     -framework CryptoKit
 "$PROBE_BIN" self-test > "$ARTIFACT_ROOT/probe-self-test.json"
@@ -292,6 +297,72 @@ wait_for_monitor_advance() {
     return 1
 }
 
+monitor_clean_sequence() {
+    jq -er '
+        .lastCleanSequence |
+        select(type == "number" and . >= 1 and (. | floor) == .)
+    ' "$1"
+}
+
+wait_for_monitor_clean_advance() {
+    local heartbeat_path="$1"
+    local previous_sequence="$2"
+    local attempts="${3:-100}"
+    local current_clean_sequence=""
+    for _ in $(seq 1 "$attempts"); do
+        if jq -e '.contaminationBlocked == true or .inputAttributionAvailable == false' \
+            "$heartbeat_path" >/dev/null 2>&1; then
+            return 1
+        fi
+        current_clean_sequence="$(monitor_clean_sequence "$heartbeat_path" 2>/dev/null || true)"
+        if [[ "$current_clean_sequence" =~ ^[0-9]+$ ]] && \
+           ((current_clean_sequence > previous_sequence)); then
+            return 0
+        fi
+        sleep 0.01
+    done
+    return 1
+}
+
+wait_for_allowed_producer_revision() {
+    local heartbeat_path="$1"
+    local expected_revision="$2"
+    local attempts="${3:-100}"
+    for _ in $(seq 1 "$attempts"); do
+        if jq -e --argjson expected "$expected_revision" \
+            '.allowedProducerRevision == $expected and
+             .inputAttributionAvailable == true and
+             .contaminationBlocked == false' \
+            "$heartbeat_path" >/dev/null 2>&1; then
+            return 0
+        fi
+        sleep 0.01
+    done
+    return 1
+}
+
+wait_for_running_command_fence() {
+    local heartbeat_path="$1"
+    local expected_revision="$2"
+    local previous_sequence="$3"
+    local attempts="${4:-100}"
+    for _ in $(seq 1 "$attempts"); do
+        if jq -e \
+            --argjson revision "$expected_revision" \
+            --argjson previous "$previous_sequence" '
+            .phase == "running" and
+            .allowedProducerRevision == $revision and
+            .inputAttributionAvailable == true and
+            .contaminationBlocked == false and
+            .lastCleanSequence > $previous
+        ' "$heartbeat_path" >/dev/null 2>&1; then
+            return 0
+        fi
+        sleep 0.01
+    done
+    return 1
+}
+
 invariant_results() {
     local violations_path="$1"
     local observed_invariants
@@ -302,6 +373,19 @@ invariant_results() {
         reduce (($expected + $observed) | unique[]) as $name
             ({}; .[$name] = (($observed | index($name)) == null))
     '
+}
+
+contamination_retry_allowed() {
+    local case_name="$1"
+    local stage="$2"
+    local attempt="$3"
+    local maximum_attempts="$4"
+    ((attempt < maximum_attempts)) || return 1
+    [[ "$stage" == "precommand" ]] && return 0
+    [[ "$stage" == "active" ]] || return 1
+    jq -e --arg id "$case_name" '
+        any(.cases[]; .id == $id and .contamination_retry_safe == true)
+    ' "$CERTIFICATION_CATALOG" >/dev/null
 }
 
 if $SELF_TEST_ONLY; then
@@ -344,10 +428,14 @@ if $SELF_TEST_ONLY; then
     fi
     HEARTBEAT_SELF_TEST="$ARTIFACT_ROOT/heartbeat-self-test.json"
     HEARTBEAT_SELF_TEST_NEXT="$ARTIFACT_ROOT/heartbeat-self-test-next.json"
-    printf '%s\n' '{"sequence":1,"timestamp":1}' > "$HEARTBEAT_SELF_TEST"
+    printf '%s\n' \
+        '{"sequence":1,"timestamp":1,"lastCleanSequence":1,"contaminationBlocked":false,"inputAttributionAvailable":true,"allowedProducerRevision":0,"phase":"setup"}' \
+        > "$HEARTBEAT_SELF_TEST"
     (
         sleep 0.03
-        printf '%s\n' '{"sequence":2,"timestamp":2}' > "$HEARTBEAT_SELF_TEST_NEXT"
+        printf '%s\n' \
+            '{"sequence":2,"timestamp":2,"lastCleanSequence":2,"contaminationBlocked":false,"inputAttributionAvailable":true,"allowedProducerRevision":7,"phase":"running"}' \
+            > "$HEARTBEAT_SELF_TEST_NEXT"
         mv "$HEARTBEAT_SELF_TEST_NEXT" "$HEARTBEAT_SELF_TEST"
     ) &
     HEARTBEAT_WRITER_PID=$!
@@ -360,6 +448,48 @@ if $SELF_TEST_ONLY; then
     wait "$HEARTBEAT_WRITER_PID"
     if wait_for_monitor_advance "$HEARTBEAT_SELF_TEST" 2 3; then
         echo "Stalled monitor heartbeat self-test failed." >&2
+        exit 1
+    fi
+    if ! wait_for_monitor_clean_advance "$HEARTBEAT_SELF_TEST" 1 3; then
+        echo "Clean monitor sample advance self-test failed." >&2
+        exit 1
+    fi
+    if ! wait_for_allowed_producer_revision "$HEARTBEAT_SELF_TEST" 7 3 || \
+       wait_for_allowed_producer_revision "$HEARTBEAT_SELF_TEST" 8 3; then
+        echo "Allowed event-producer revision self-test failed." >&2
+        exit 1
+    fi
+    if ! wait_for_running_command_fence "$HEARTBEAT_SELF_TEST" 7 1 3 || \
+       wait_for_running_command_fence "$HEARTBEAT_SELF_TEST" 7 2 3; then
+        echo "Running command fence self-test failed." >&2
+        exit 1
+    fi
+    CONTAMINATED_HEARTBEAT_SELF_TEST="$ARTIFACT_ROOT/heartbeat-contaminated-self-test.json"
+    printf '%s\n' \
+        '{"sequence":3,"timestamp":3,"lastCleanSequence":2,"contaminationBlocked":true,"inputAttributionAvailable":true,"allowedProducerRevision":7,"phase":"running"}' \
+        > "$CONTAMINATED_HEARTBEAT_SELF_TEST"
+    if wait_for_monitor_clean_advance "$CONTAMINATED_HEARTBEAT_SELF_TEST" 2 3; then
+        echo "Blocked contamination heartbeat self-test failed." >&2
+        exit 1
+    fi
+    INVARIANT_SELF_TEST="$ARTIFACT_ROOT/invariant-self-test.jsonl"
+    printf '%s\n' '{"kind":"physical_cursor","expected":"1,1","actual":"2,2"}' \
+        > "$INVARIANT_SELF_TEST"
+    INVARIANT_RESULTS_SELF_TEST="$(invariant_results "$INVARIANT_SELF_TEST")"
+    if ! jq -e \
+        --argjson catalog "$CERTIFICATION_INVARIANTS_JSON" '
+        .physical_cursor == false and
+        ([keys[] as $key | select(($catalog | index($key)) == null)] | length) == 0 and
+        ([.[] | select(. == false)] | length) == 1
+    ' <<< "$INVARIANT_RESULTS_SELF_TEST" >/dev/null; then
+        echo "Catalog-projected invariant result self-test failed." >&2
+        exit 1
+    fi
+    if ! contamination_retry_allowed click-id precommand 1 3 || \
+       ! contamination_retry_allowed see-text active 1 3 || \
+       contamination_retry_allowed click-id active 1 3 || \
+       contamination_retry_allowed see-text active 3 3; then
+        echo "Contamination replay policy self-test failed." >&2
         exit 1
     fi
     VALID_LAUNCH_RECEIPT="$ARTIFACT_ROOT/valid-launch-receipt.json"
@@ -493,6 +623,33 @@ if ! jq -e '
     exit 2
 fi
 
+REMOTE_EVENT_PRODUCER_JSON=null
+if ! $NO_REMOTE; then
+    pb bridge status --verbose --json > "$ARTIFACT_ROOT/bridge-event-producer.json"
+    SELECTED_BRIDGE_SOURCE="$(jq -r '.data.selected.source // empty' \
+        "$ARTIFACT_ROOT/bridge-event-producer.json")"
+    if [[ "$SELECTED_BRIDGE_SOURCE" == "remote" ]]; then
+        REMOTE_EVENT_PRODUCER_JSON="$(jq -cer '
+            .data.selected.handshake.hostIdentity as $identity |
+            select($identity != null) |
+            {
+                pid: $identity.processIdentifier,
+                startIdentity: (
+                    $identity.processStartIdentityDecimal //
+                    ($identity.processStartIdentity | tostring)
+                )
+            } |
+            select(
+                (.pid | type) == "number" and .pid > 0 and
+                (.startIdentity | type) == "string" and test("^[0-9]+$")
+            )
+        ' "$ARTIFACT_ROOT/bridge-event-producer.json")" || {
+            echo "Selected Bridge host lacks an exact event-producer process receipt." >&2
+            exit 2
+        }
+    fi
+fi
+
 build_playground() {
     local derived_data="$ARTIFACT_ROOT/DerivedData"
     local build_log="$ARTIFACT_ROOT/playground-build.log"
@@ -541,8 +698,6 @@ if ! rg -q '^TeamIdentifier=' "$ARTIFACT_ROOT/playground-signature.txt" || \
     exit 2
 fi
 
-ORIGINAL_FRONTMOST_PID="$("$PROBE_BIN" sample | jq -r '.frontmostPID // empty')"
-CLIPBOARD_SLOT="background-computer-use-$$"
 MONITOR_PID=""
 PLAYGROUND_PID=""
 PLAYGROUND_PROCESS_START_IDENTITY=""
@@ -573,7 +728,6 @@ cleanup() {
         kill "$MONITOR_PID" >/dev/null 2>&1 || true
         wait "$MONITOR_PID" 2>/dev/null || true
     fi
-    pb clipboard restore --slot "$CLIPBOARD_SLOT" --json >/dev/null 2>&1 || true
     if [[ -n "$PLAYGROUND_PID" ]]; then
         quit_owned_process \
             "$PLAYGROUND_PID" "$PLAYGROUND_PROCESS_START_IDENTITY" playground false || true
@@ -589,13 +743,8 @@ cleanup() {
             "${LIFECYCLE_PROCESS_START_IDENTITIES[$lifecycle_index]}" \
             "lifecycle-$lifecycle_index" true || true
     done
-    if [[ -n "$ORIGINAL_FRONTMOST_PID" ]] && kill -0 "$ORIGINAL_FRONTMOST_PID" 2>/dev/null; then
-        pb app switch --to "PID:$ORIGINAL_FRONTMOST_PID" --json >/dev/null 2>&1 || true
-    fi
 }
 trap cleanup EXIT INT TERM
-
-pb clipboard save --slot "$CLIPBOARD_SLOT" --json > "$ARTIFACT_ROOT/clipboard-save.json"
 
 if "$PROBE_BIN" find-app --bundle-id "$PLAYGROUND_BUNDLE_ID" >/dev/null 2>&1; then
     pb app quit --app "$PLAYGROUND_BUNDLE_ID" --json \
@@ -615,15 +764,18 @@ if ! kill -0 "$PLAYGROUND_PID" 2>/dev/null; then
     exit 1
 fi
 
-pb app launch --bundle-id "$SENTINEL_BUNDLE_ID" --wait-ready --foreground --json \
-    > "$ARTIFACT_ROOT/sentinel-launch.json"
-sleep 0.2
 "$PROBE_BIN" sample --output "$ARTIFACT_ROOT/sentinel.json"
 SENTINEL_PID="$(jq -r '.frontmostPID // empty' "$ARTIFACT_ROOT/sentinel.json")"
 SENTINEL_WINDOW_ID="$(jq -r '.frontmostWindowID // empty' "$ARTIFACT_ROOT/sentinel.json")"
+SENTINEL_OBSERVED_BUNDLE_ID="$(jq -r '.frontmostBundleIdentifier // empty' \
+    "$ARTIFACT_ROOT/sentinel.json")"
 if [[ -z "$SENTINEL_PID" || -z "$SENTINEL_WINDOW_ID" ]] || \
-   [[ "$(jq -r '.frontmostBundleIdentifier' "$ARTIFACT_ROOT/sentinel.json")" != "$SENTINEL_BUNDLE_ID" ]]; then
-    echo "Calculator did not become a stable foreground sentinel." >&2
+   [[ "$SENTINEL_PID" == "$PLAYGROUND_PID" ]]; then
+    echo "A non-Playground foreground window is required for background certification." >&2
+    exit 1
+fi
+if [[ -n "$SENTINEL_BUNDLE_ID" && "$SENTINEL_OBSERVED_BUNDLE_ID" != "$SENTINEL_BUNDLE_ID" ]]; then
+    echo "Required sentinel $SENTINEL_BUNDLE_ID is not already frontmost; refusing to activate it." >&2
     exit 1
 fi
 
@@ -634,6 +786,48 @@ LAST_CASE=""
 record_failure() {
     echo "FAIL: $1" >&2
     FAILURES=$((FAILURES + 1))
+}
+
+abort_current_monitor() {
+    if [[ -n "$MONITOR_PID" ]]; then
+        kill "$MONITOR_PID" >/dev/null 2>&1 || true
+        wait "$MONITOR_PID" 2>/dev/null || true
+        MONITOR_PID=""
+    fi
+}
+
+restore_stale_window_bounds() {
+    local output_prefix="$1"
+    local window_id="$2"
+    local pid="$3"
+    local x="$4"
+    local y="$5"
+    local width="$6"
+    local height="$7"
+    [[ -n "$x" ]] || return 1
+
+    set +e
+    pb window set-bounds --pid "$pid" --window-id "$window_id" \
+        --x "$x" --y "$y" --width "$width" --height "$height" --json \
+        > "$output_prefix-result.json" 2> "$output_prefix-stderr.txt"
+    local restore_exit=$?
+    pb window list --pid "$pid" --json > "$output_prefix-readback.json"
+    local readback_exit=$?
+    set -e
+    [[ $restore_exit -eq 0 && $readback_exit -eq 0 ]] && \
+        jq -e \
+            --argjson windowID "$window_id" \
+            --argjson x "$x" \
+            --argjson y "$y" \
+            --argjson width "$width" \
+            --argjson height "$height" '
+            [.data.windows[] |
+                select(.window_id == $windowID) |
+                select(
+                    .bounds.x == $x and .bounds.y == $y and
+                    .bounds.width == $width and .bounds.height == $height)] |
+            length == 1
+        ' "$output_prefix-readback.json" >/dev/null
 }
 
 case_dir_path() {
@@ -691,6 +885,9 @@ run_case() {
     local before="$case_dir/before.json"
     local after="$case_dir/after.json"
     local monitor="$case_dir/monitor.jsonl"
+    local contamination="$case_dir/contamination.jsonl"
+    local phase="$case_dir/monitor-phase.txt"
+    local allowed_producers="$case_dir/allowed-event-producers.json"
     local ready="$case_dir/monitor.ready"
     local heartbeat="$case_dir/monitor-heartbeat.json"
     local result="$case_dir/result.json"
@@ -701,6 +898,7 @@ run_case() {
     local observed_command=""
     local observed_phase=""
     local monitor_progress=true
+    local contamination_clear=true
     local nonmaximized_precondition=null
     local snapshot_window_drift=null
     local target_window_restored=null
@@ -715,24 +913,27 @@ run_case() {
     fi
     observed_phase="$(certification_phase_identity "$@")"
 
+    printf '%s\n' setup > "$phase"
+    printf '%s\n' '{"revision":0,"producers":[]}' > "$allowed_producers"
     "$PROBE_BIN" sample --output "$before"
-    if [[ "$(jq -r '.frontmostPID // empty' "$before")" != "$SENTINEL_PID" || \
-          "$(jq -r '.frontmostWindowID // empty' "$before")" != "$SENTINEL_WINDOW_ID" ]]; then
-        pb app switch --to "PID:$SENTINEL_PID" --verify --json > "$case_dir/restore-sentinel.json"
-        sleep 0.1
-        "$PROBE_BIN" sample --output "$before"
-    fi
-    if [[ "$(jq -r '.frontmostPID // empty' "$before")" != "$SENTINEL_PID" || \
-          "$(jq -r '.frontmostWindowID // empty' "$before")" != "$SENTINEL_WINDOW_ID" ]]; then
-        record_failure "$name could not establish the foreground sentinel"
+    if [[ -z "$(jq -r '.frontmostPID // empty' "$before")" || \
+          -z "$(jq -r '.frontmostWindowID // empty' "$before")" || \
+          "$(jq -r '.frontmostPID // empty' "$before")" == "$PLAYGROUND_PID" ]]; then
+        printf '%s\n' \
+            '{"stage":"precommand","reason":"no non-target foreground baseline"}' \
+            > "$case_dir/contamination-blocked.json"
         return 1
     fi
     local monitor_args=(
         watch
         --baseline "$before"
         --output "$monitor"
+        --contamination-output "$contamination"
         --ready "$ready"
         --heartbeat "$heartbeat"
+        --phase "$phase"
+        --allowed-producers "$allowed_producers"
+        --invariant-names "$CERTIFICATION_INVARIANTS_JSON"
         --interval-ms 10)
     if [[ "$clipboard_policy" == "allow-temporary" ]]; then
         monitor_args+=(--allow-clipboard-mutation)
@@ -744,17 +945,20 @@ run_case() {
         sleep 0.01
     done
     if [[ ! -f "$ready" ]]; then
-        kill "$MONITOR_PID" >/dev/null 2>&1 || true
-        wait "$MONITOR_PID" 2>/dev/null || true
-        MONITOR_PID=""
+        abort_current_monitor
         record_failure "$name invariant monitor did not start"
         return 1
     fi
     if ! monitor_sequence "$heartbeat" >/dev/null; then
-        kill "$MONITOR_PID" >/dev/null 2>&1 || true
-        wait "$MONITOR_PID" 2>/dev/null || true
-        MONITOR_PID=""
+        abort_current_monitor
         record_failure "$name invariant monitor became ready without a heartbeat"
+        return 1
+    fi
+    if ! wait_for_monitor_clean_advance "$heartbeat" 0; then
+        abort_current_monitor
+        printf '%s\n' \
+            '{"stage":"precommand","reason":"input contaminated initial monitor fence"}' \
+            > "$case_dir/contamination-blocked.json"
         return 1
     fi
 
@@ -762,7 +966,7 @@ run_case() {
         local setup_result="$case_dir/nonmaximized-setup.json"
         local setup_readback="$case_dir/nonmaximized-readback.json"
         set +e
-        pb window set-bounds --window-id "$setup_window_id" \
+        pb window set-bounds --pid "$setup_pid" --window-id "$setup_window_id" \
             --x 80 --y 80 --width 640 --height 480 --json \
             > "$setup_result" 2> "$case_dir/nonmaximized-setup-stderr.txt"
         local setup_exit=$?
@@ -810,7 +1014,7 @@ run_case() {
             local stale_resized_width=$((stale_original_width + 17))
             local stale_resized_height=$((stale_original_height + 17))
             set +e
-            pb window set-bounds --window-id "$stale_window_id" \
+            pb window set-bounds --pid "$stale_pid" --window-id "$stale_window_id" \
                 --x "$stale_original_x" --y "$stale_original_y" \
                 --width "$stale_resized_width" --height "$stale_resized_height" --json \
                 > "$stale_resize_result" 2> "$case_dir/stale-resize-stderr.txt"
@@ -845,10 +1049,126 @@ run_case() {
         fi
     fi
 
+    local precommand_sequence=""
+    precommand_sequence="$(monitor_sequence "$heartbeat" 2>/dev/null || true)"
+    if [[ ! "$precommand_sequence" =~ ^[0-9]+$ ]] || \
+       ! wait_for_monitor_clean_advance "$heartbeat" "$precommand_sequence"; then
+        abort_current_monitor
+        if [[ -n "$stale_window_id" ]] && ! restore_stale_window_bounds \
+            "$case_dir/precommand-contamination-restore" \
+            "$stale_window_id" "$stale_pid" \
+            "$stale_original_x" "$stale_original_y" \
+            "$stale_original_width" "$stale_original_height"; then
+            record_failure "$name could not roll back stale-window setup after contamination"
+            return 1
+        fi
+        printf '%s\n' \
+            '{"stage":"precommand","reason":"input contaminated final monitor fence"}' \
+            > "$case_dir/contamination-blocked.json"
+        return 1
+    fi
+
+    local command_gate="$case_dir/command.ready"
+    (
+        while [[ ! -f "$command_gate" ]]; do
+            sleep 0.001
+        done
+        if $NO_REMOTE; then
+            exec "$PEEKABOO_BIN" "$@" --json --no-remote
+        else
+            exec "$PEEKABOO_BIN" "$@" --json
+        fi
+    ) > "$result" 2> "$stderr_file" &
+    local command_pid=$!
+    local command_identity="$case_dir/command-process-identity.json"
+    if ! "$PROBE_BIN" process-identity --pid "$command_pid" --output "$command_identity"; then
+        kill "$command_pid" >/dev/null 2>&1 || true
+        wait "$command_pid" 2>/dev/null || true
+        abort_current_monitor
+        if [[ -n "$stale_window_id" ]] && ! restore_stale_window_bounds \
+            "$case_dir/command-identity-restore" \
+            "$stale_window_id" "$stale_pid" \
+            "$stale_original_x" "$stale_original_y" \
+            "$stale_original_width" "$stale_original_height"; then
+            record_failure "$name could not roll back stale-window setup after command identity failure"
+        fi
+        record_failure "$name could not pin the monitored command process generation"
+        return 1
+    fi
+    local command_start_identity
+    command_start_identity="$(jq -er '.startIdentity | tostring' "$command_identity")"
+    jq -n \
+        --argjson revision "$command_pid" \
+        --argjson pid "$command_pid" \
+        --arg startIdentity "$command_start_identity" \
+        --argjson remote "$REMOTE_EVENT_PRODUCER_JSON" '
+        {
+            revision: $revision,
+            producers: (
+                [{pid: $pid, startIdentity: $startIdentity}] +
+                (if $remote == null then [] else [$remote] end)
+            )
+        }
+    ' > "$allowed_producers.tmp"
+    mv "$allowed_producers.tmp" "$allowed_producers"
+    if ! wait_for_allowed_producer_revision "$heartbeat" "$command_pid"; then
+        kill "$command_pid" >/dev/null 2>&1 || true
+        wait "$command_pid" 2>/dev/null || true
+        abort_current_monitor
+        if [[ -n "$stale_window_id" ]] && ! restore_stale_window_bounds \
+            "$case_dir/producer-ack-restore" \
+            "$stale_window_id" "$stale_pid" \
+            "$stale_original_x" "$stale_original_y" \
+            "$stale_original_width" "$stale_original_height"; then
+            record_failure "$name could not roll back stale-window setup after producer acknowledgement failure"
+        fi
+        record_failure "$name monitor did not acknowledge the exact event-producer receipt"
+        return 1
+    fi
+    local producer_ack_sequence
+    producer_ack_sequence="$(monitor_sequence "$heartbeat" 2>/dev/null || true)"
+    printf '%s\n' running > "$phase.tmp"
+    mv "$phase.tmp" "$phase"
+    if [[ ! "$producer_ack_sequence" =~ ^[0-9]+$ ]] || \
+       ! wait_for_running_command_fence \
+           "$heartbeat" "$command_pid" "$producer_ack_sequence"; then
+        kill "$command_pid" >/dev/null 2>&1 || true
+        wait "$command_pid" 2>/dev/null || true
+        abort_current_monitor
+        if [[ -n "$stale_window_id" ]] && ! restore_stale_window_bounds \
+            "$case_dir/armed-contamination-restore" \
+            "$stale_window_id" "$stale_pid" \
+            "$stale_original_x" "$stale_original_y" \
+            "$stale_original_width" "$stale_original_height"; then
+            record_failure "$name could not roll back stale-window setup after armed-fence contamination"
+            return 1
+        fi
+        printf '%s\n' \
+            '{"stage":"precommand","reason":"input contaminated armed command fence"}' \
+            > "$case_dir/contamination-blocked.json"
+        return 1
+    fi
+    if [[ -s "$monitor" ]]; then
+        kill "$command_pid" >/dev/null 2>&1 || true
+        wait "$command_pid" 2>/dev/null || true
+        abort_current_monitor
+        if [[ -n "$stale_window_id" ]] && ! restore_stale_window_bounds \
+            "$case_dir/predispatch-invariant-restore" \
+            "$stale_window_id" "$stale_pid" \
+            "$stale_original_x" "$stale_original_y" \
+            "$stale_original_width" "$stale_original_height"; then
+            record_failure "$name could not roll back stale-window setup after a pre-dispatch invariant violation"
+        fi
+        record_failure "$name recorded a background invariant violation before command dispatch"
+        return 1
+    fi
+    : > "$command_gate"
     set +e
-    pb "$@" --json > "$result" 2> "$stderr_file"
+    wait "$command_pid"
     local command_exit=$?
     set -e
+    printf '%s\n' complete > "$phase.tmp"
+    mv "$phase.tmp" "$phase"
     printf '%s\n' "$command_exit" > "$exit_file"
 
     if [[ -n "$setup_window_id" ]]; then
@@ -858,36 +1178,12 @@ run_case() {
     fi
 
     if [[ -n "$stale_window_id" ]]; then
-        if [[ -n "$stale_original_x" ]]; then
-            local stale_restore_result="$case_dir/stale-restore-result.json"
-            local stale_restored_readback="$case_dir/stale-restored-readback.json"
-            set +e
-            pb window set-bounds --window-id "$stale_window_id" \
-                --x "$stale_original_x" --y "$stale_original_y" \
-                --width "$stale_original_width" --height "$stale_original_height" --json \
-                > "$stale_restore_result" 2> "$case_dir/stale-restore-stderr.txt"
-            local stale_restore_exit=$?
-            pb window list --pid "$stale_pid" --json > "$stale_restored_readback"
-            local stale_restored_readback_exit=$?
-            set -e
-            if [[ $stale_restore_exit -eq 0 && $stale_restored_readback_exit -eq 0 ]] && \
-               jq -e \
-                   --argjson windowID "$stale_window_id" \
-                   --argjson x "$stale_original_x" \
-                   --argjson y "$stale_original_y" \
-                   --argjson width "$stale_original_width" \
-                   --argjson height "$stale_original_height" '
-                    [.data.windows[] |
-                        select(.window_id == $windowID) |
-                        select(
-                            .bounds.x == $x and .bounds.y == $y and
-                            .bounds.width == $width and .bounds.height == $height)] |
-                    length == 1
-               ' "$stale_restored_readback" >/dev/null; then
-                target_window_restored=true
-            else
-                target_window_restored=false
-            fi
+        if restore_stale_window_bounds \
+            "$case_dir/stale-restore" \
+            "$stale_window_id" "$stale_pid" \
+            "$stale_original_x" "$stale_original_y" \
+            "$stale_original_width" "$stale_original_height"; then
+            target_window_restored=true
         else
             target_window_restored=false
         fi
@@ -904,6 +1200,12 @@ run_case() {
        ! wait_for_monitor_advance "$heartbeat" "$monitor_sequence_before_final"; then
         monitor_progress=false
         record_failure "$name invariant monitor did not sample after command completion"
+        failed=true
+    elif ! wait_for_monitor_clean_advance "$heartbeat" "$monitor_sequence_before_final"; then
+        contamination_clear=false
+        printf '%s\n' \
+            '{"stage":"active","reason":"input contaminated command attempt"}' \
+            > "$case_dir/contamination-blocked.json"
         failed=true
     fi
     "$PROBE_BIN" sample --output "$after"
@@ -962,12 +1264,10 @@ run_case() {
         failed=true
     fi
 
-    local monitor_clean=true
     if [[ -s "$monitor" ]]; then
         local violated_invariants
         violated_invariants="$(jq -sr '[.[].kind] | unique | join(", ")' "$monitor")"
         record_failure "$name violated cataloged background invariant(s): $violated_invariants"
-        monitor_clean=false
         failed=true
     fi
 
@@ -976,10 +1276,6 @@ run_case() {
 
     local desktop_restored=true
     if ! jq -e --slurpfile after "$after" '
-        .frontmostPID == $after[0].frontmostPID and
-        .frontmostWindowID == $after[0].frontmostWindowID and
-        ((.cursor.x - $after[0].cursor.x) | fabs) <= 0.5 and
-        ((.cursor.y - $after[0].cursor.y) | fabs) <= 0.5 and
         .clipboardDigest == $after[0].clipboardDigest and
         ((.peekabooWindowIDs - $after[0].peekabooWindowIDs) | length) == 0 and
         (($after[0].peekabooWindowIDs - .peekabooWindowIDs) | length) == 0
@@ -1011,7 +1307,7 @@ run_case() {
         --argjson invariants "$invariant_results_json" \
         --argjson resultContract "$result_contract" \
         --argjson monitorLiveness "$monitor_liveness" \
-        --argjson monitorClean "$monitor_clean" \
+        --argjson contaminationClear "$contamination_clear" \
         --argjson desktopRestored "$desktop_restored" \
         --argjson clipboardPolicy "$clipboard_policy_passed" \
         --argjson nonmaximizedPrecondition "$nonmaximized_precondition" \
@@ -1032,7 +1328,7 @@ run_case() {
             evidence: {
                 result_contract: $resultContract,
                 monitor_liveness: $monitorLiveness,
-                monitor_clean: $monitorClean,
+                contamination_clear: $contaminationClear,
                 desktop_restored: $desktopRestored,
                 clipboard_policy: $clipboardPolicy
             },
@@ -1050,9 +1346,51 @@ run_case() {
 }
 
 run_checked_case() {
-    if ! run_case "$@"; then
-        return 1
-    fi
+    local case_name="$1"
+    local attempt=1
+    local failures_before_case="$FAILURES"
+    local maximum_attempts=3
+    while ((attempt <= maximum_attempts)); do
+        if run_case "$@"; then
+            return 0
+        fi
+
+        local case_dir
+        case_dir="$(case_dir_path "$case_name")"
+        local contamination_marker="$case_dir/contamination-blocked.json"
+        [[ -f "$contamination_marker" ]] || return 1
+
+        local contamination_stage
+        contamination_stage="$(jq -r '.stage // empty' "$contamination_marker")"
+        local contamination_only=true
+        if [[ -s "$case_dir/monitor.jsonl" ]]; then
+            contamination_only=false
+        elif [[ -f "$case_dir/summary.json" ]] && ! jq -e '
+            .evidence.result_contract == true and
+            .evidence.monitor_liveness == true and
+            .evidence.desktop_restored == true and
+            .evidence.clipboard_policy == true and
+            all(.invariants[]; . == true) and
+            all(.oracles[]; . == true)
+        ' "$case_dir/summary.json" >/dev/null; then
+            contamination_only=false
+        fi
+
+        if ! contamination_retry_allowed \
+            "$case_name" "$contamination_stage" "$attempt" "$maximum_attempts" || \
+           [[ "$contamination_only" != true ]]; then
+            record_failure \
+                "$case_name could not certify because unrelated input contaminated attempt $attempt"
+            return 1
+        fi
+
+        local archived_attempt="$ARTIFACT_ROOT/contaminated-attempts/$case_name-$attempt"
+        mv "$case_dir" "$archived_attempt"
+        FAILURES="$failures_before_case"
+        echo "RETRY: $case_name excluded contaminated attempt $attempt" >&2
+        attempt=$((attempt + 1))
+    done
+    return 1
 }
 
 window_id_from_result() {
