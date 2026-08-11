@@ -81,6 +81,9 @@ struct UISnapshotStoreConcurrencyTests {
                         windowID: 42,
                         ownerProcessIdentifier: 907,
                         ownerProcessStartIdentity: 97))))
+        #expect(snapshot.applicationProcessIdentity == ApplicationProcessIdentity(
+            processIdentifier: 907,
+            processStartIdentity: 97))
 
         await snapshot.setScreenshot(
             path: "/tmp/second.png",

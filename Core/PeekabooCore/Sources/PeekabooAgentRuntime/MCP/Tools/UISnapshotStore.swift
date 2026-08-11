@@ -100,8 +100,8 @@ actor UISnapshot {
 
             $0.applicationName = metadata.applicationInfo?.name
             $0.windowTitle = metadata.windowInfo?.title
-            $0.applicationProcessId = applicationProcessIdentifier
-            $0.applicationProcessStartIdentity = targetReceiptInvalidated ? nil : applicationProcessStartIdentity
+            $0.applicationProcessId = incomingReceipt?.processIdentifier ?? applicationProcessIdentifier
+            $0.applicationProcessStartIdentity = targetReceiptInvalidated ? nil : incomingReceipt?.processStartIdentity
             $0.windowID = metadata.windowInfo?.windowID
             $0.windowBounds = metadata.windowInfo?.bounds
             $0.windowMutationIdentity = targetReceiptInvalidated ? nil : windowIdentity
