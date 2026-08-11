@@ -27,6 +27,10 @@ enum BridgeCapabilityPolicy {
             return false
         }
 
+        if options.requiresDesktopObservation, !self.supportsDesktopObservation(for: handshake) {
+            return false
+        }
+
         if options.requiresExactWindowROIObservation,
            !self.supportsExactWindowROIObservation(for: handshake) {
             return false

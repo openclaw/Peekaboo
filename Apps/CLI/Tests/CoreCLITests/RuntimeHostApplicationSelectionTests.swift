@@ -6,6 +6,32 @@ import Testing
 
 struct RuntimeHostApplicationSelectionTests {
     @Test
+    func `See capture engine requires a desktop observation host`() throws {
+        let options = try CommanderCLIBinder.makeRuntimeOptions(
+            from: ParsedValues(positional: [], options: ["captureEngine": ["cg"]], flags: []),
+            commandType: SeeCommand.self
+        )
+        let supportedOperations: [PeekabooBridgeOperation] = [.captureScreen, .desktopObservation]
+        let supported = PeekabooBridgeHandshakeResponse(
+            negotiatedVersion: PeekabooBridgeConstants.protocolVersion,
+            hostKind: .onDemand,
+            build: nil,
+            supportedOperations: supportedOperations,
+            enabledOperations: supportedOperations
+        )
+        let captureOnly = PeekabooBridgeHandshakeResponse(
+            negotiatedVersion: PeekabooBridgeConstants.protocolVersion,
+            hostKind: .onDemand,
+            build: nil,
+            supportedOperations: [.captureScreen],
+            enabledOperations: [.captureScreen]
+        )
+
+        #expect(CommandRuntime.supportsRemoteRequirements(for: supported, options: options))
+        #expect(!CommandRuntime.supportsRemoteRequirements(for: captureOnly, options: options))
+    }
+
+    @Test
     func `Non-capture commands do not require the capture operation`() async {
         let candidate = RuntimeHostResolver.ImplicitRemoteCandidate(
             socketPath: "/tmp/bridge.sock",

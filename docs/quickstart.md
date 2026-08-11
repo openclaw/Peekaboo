@@ -37,8 +37,8 @@ peekaboo see --no-elements --app Safari --path safari.png
 The output is a regular PNG. Add `--format jpg` for JPEG output. See [commands/see.md](commands/see.md) for every flag.
 
 If you are running from SSH, a LaunchAgent, Codex, or another background launchd session, use a Peekaboo Bridge
-host with Screen Recording permission. Local capture-engine overrides are for debugging and can produce
-wallpaper-only screenshots in background sessions.
+host with Screen Recording permission. `--capture-engine` keeps that selected host; caller-local overrides require
+`--no-remote` and are for debugging because they can produce wallpaper-only screenshots in background sessions.
 
 Normal CLI automation uses a healthy reusable daemon, then a capable Peekaboo.app Bridge host, and otherwise starts
 the daemon on demand. `peekaboo bridge status --verbose` shows the selected runtime.

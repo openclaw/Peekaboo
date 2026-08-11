@@ -18,16 +18,20 @@ enum TestChildProcess {
         environment extraEnvironment: [String: String] = [:],
         executablePathOverride: String? = nil,
         workingDirectory: URL? = nil,
-        standardInput: String? = nil
+        standardInput: String? = nil,
+        isolateFromRemoteHosts: Bool = true
     ) async throws -> Result {
         let binaryURL = try Self.peekabooBinaryURL()
         var environmentOverrides: [Environment.Key: String?] = [:]
 
         // Keep CLI runtime smoke tests deterministic: avoid opportunistically switching to
         // a remote GUI runtime when a bridge socket happens to exist on the machine.
-        if extraEnvironment["PEEKABOO_NO_REMOTE"] == nil,
-           let envKey = Environment.Key(rawValue: "PEEKABOO_NO_REMOTE") {
-            environmentOverrides[envKey] = "1"
+        if let envKey = Environment.Key(rawValue: "PEEKABOO_NO_REMOTE") {
+            if isolateFromRemoteHosts, extraEnvironment["PEEKABOO_NO_REMOTE"] == nil {
+                environmentOverrides[envKey] = "1"
+            } else if !isolateFromRemoteHosts {
+                environmentOverrides[envKey] = nil
+            }
         }
 
         for (key, value) in extraEnvironment {

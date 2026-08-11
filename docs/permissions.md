@@ -70,8 +70,9 @@ peekaboo see --mode screen --screen-index 0 --no-remote --capture-engine cg --js
 This is useful for app-launched subprocess runners where the parent process has TCC grants but the selected host
 does not. For SSH, LaunchAgent, Codex, and other background launchd sessions, prefer the Bridge path even when
 TCC appears granted; CoreGraphics can otherwise report success while returning only the desktop wallpaper or a
-redacted image. Passing `--capture-engine` is a local-debug override and disables Bridge selection for that
-command.
+redacted image. `--capture-engine` alone keeps the selected Bridge host and applies the backend there. The
+caller-local debug override is the explicit combination with `--no-remote`; without that opt-in, an unavailable
+compatible host fails before local fallback.
 
 Use `peekaboo permissions status --all-sources` to compare the selected Bridge host and local CLI process side by side.
 

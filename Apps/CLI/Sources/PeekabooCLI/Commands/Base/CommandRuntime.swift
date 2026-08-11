@@ -18,6 +18,16 @@ struct CommandRuntimeOptions {
     var jsonOutput = false
     var logLevel: LogLevel?
     var captureEnginePreference: String?
+    /// This command carries the capture-engine choice in its remote request instead of
+    /// requiring the caller process to own capture/TCC.
+    var transportsCaptureEnginePreference = false
+    /// AX-only command forms do not run a capture backend; ambient engine configuration must
+    /// not alter their runtime host.
+    var ignoresCaptureEnginePreference = false
+    /// An explicit engine must run on a compatible host or fail; local fallback would silently
+    /// change capture/TCC ownership. Explicit `--no-remote` remains the local opt-in.
+    var requiresCaptureEnginePreferenceHost = false
+    var requiresDesktopObservation = false
     var inputStrategy: UIInputStrategy?
     var preferRemote = true
     var remoteIsolationRequested = false
@@ -83,10 +93,13 @@ struct CommandRuntimeOptions {
 
     func applyingEnvironmentOverrides(environment: [String: String]) -> CommandRuntimeOptions {
         var options = self
-        if options.captureEnginePreference == nil,
+        if !options.ignoresCaptureEnginePreference,
+           options.captureEnginePreference == nil,
            let captureEngine = Self.captureEnginePreference(environment: environment) {
             options.captureEnginePreference = captureEngine
-            if !options.requiresApplicationLaunchOptions, !options.requiresHostApplicationInventory {
+            if options.transportsCaptureEnginePreference {
+                options.requiresCaptureEnginePreferenceHost = true
+            } else if !options.requiresApplicationLaunchOptions, !options.requiresHostApplicationInventory {
                 options.preferRemote = false
             }
         }

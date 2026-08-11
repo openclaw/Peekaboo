@@ -85,7 +85,8 @@ struct SeeCommand: ApplicationResolvable, ErrorHandlingCommand, RuntimeBackedCom
         help: """
         Capture engine: auto|modern|sckit|classic|cg (default: auto).
         modern/sckit force ScreenCaptureKit; classic/cg force CGWindowList;
-        auto tries CGWindowList then falls back when allowed.
+        auto tries CGWindowList then falls back when allowed. The preference is sent to the
+        selected Bridge host; add --no-remote to explicitly capture in the caller process.
         """
     )
     var captureEngine: String?
@@ -142,13 +143,13 @@ struct SeeCommand: ApplicationResolvable, ErrorHandlingCommand, RuntimeBackedCom
         ])
 
         do {
+            try self.validateMergedOptions()
             if let requiredHostFailure = runtime.requiredHostFailure {
                 throw PeekabooBridgeErrorEnvelope(
                     code: .operationNotSupported,
                     message: requiredHostFailure
                 )
             }
-            try self.validateMergedOptions()
             if self.usesPixelOnlyCapture {
                 try await self.runPixelOnlyCapture()
                 logger.operationComplete("see_command", metadata: ["success": true, "pixelOnly": true])
@@ -280,6 +281,7 @@ struct SeeCommand: ApplicationResolvable, ErrorHandlingCommand, RuntimeBackedCom
     }
 
     func validateMergedOptions() throws {
+        try self.validateCaptureEngineOption()
         let resolvedMode = self.determineMode()
         let forcesPixelOnlyMode = resolvedMode == .area || resolvedMode == .multi
         try self.validateExactWindowIdentifier()
@@ -296,6 +298,18 @@ struct SeeCommand: ApplicationResolvable, ErrorHandlingCommand, RuntimeBackedCom
         try self.validateTarget(
             for: resolvedMode,
             windowSelectorCount: windowSelectorCount
+        )
+    }
+
+    private func validateCaptureEngineOption() throws {
+        guard let value = (self.captureEngine ?? self.configuredCaptureEnginePreference)?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+            !value.isEmpty,
+            !ObservationCommandSupport.isSupportedCaptureEngineValue(value)
+        else { return }
+
+        throw ValidationError(
+            "Invalid capture engine '\(value)'; expected auto, modern/sckit, or classic/cg"
         )
     }
 

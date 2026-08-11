@@ -38,9 +38,10 @@ peekaboo see --window-id 12345 --roi 100,80,500,300 --json --path /tmp/window-ro
 | `--mode screen|window|frontmost|multi|area` | Override the target picker. `multi` captures every screen; `area` uses `--region`. |
 | `--region x,y,width,height` | Capture a rectangular region (`area` mode is inferred). |
 | `--format png|jpg` / `--retina` | Select the image encoding and native display scale. |
+| `--capture-engine auto|modern|sckit|classic|cg` | Select the engine on the chosen Bridge host without changing runtime ownership. If no compatible host is available, Peekaboo fails instead of capturing locally; add `--no-remote` to explicitly opt into caller-local capture. |
 | `--no-elements` | Skip element detection for the cheapest screenshot-only CLI path. |
 | `--tree` | Print the accessibility text tree. |
-| `--no-screenshot` | Skip pixel capture; requires `--tree`. This AX-only form publishes element IDs and a snapshot only after pinning the exact process generation, window, and bounds; target drift or a missing receipt fails before publication. |
+| `--no-screenshot` | Skip pixel capture; requires `--tree` and rejects `--capture-engine` because no backend runs. Ambient engine configuration is ignored so it cannot reroute this AX-only form. Element IDs and a snapshot publish only after pinning the exact process generation, window, and bounds; target drift or a missing receipt fails before publication. |
 | `--annotate` | Overlay element bounds/IDs on the output image. |
 | `--path <file>` / `--save` / `--output` / `-o` | Save the screenshot/annotation to disk. |
 | `--json` | Emit structured metadata (recommended for scripting). |

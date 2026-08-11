@@ -580,6 +580,10 @@ struct CommanderBinderCommandBindingTests {
 
         let runtimeOptions = try CommanderCLIBinder.makeRuntimeOptions(from: parsed)
         #expect(runtimeOptions.captureEnginePreference == "classic")
+
+        let captureEngine = SeeCommand.commanderSignature().options.first { $0.label == "captureEngine" }
+        #expect(captureEngine?.help?.contains("selected host") == true)
+        #expect(captureEngine?.help?.contains("--no-remote") == true)
     }
 
     @Test

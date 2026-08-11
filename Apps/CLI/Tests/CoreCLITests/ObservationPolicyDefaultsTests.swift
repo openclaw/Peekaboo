@@ -32,6 +32,17 @@ struct ObservationPolicyDefaultsTests {
     }
 
     @Test
+    func `See carries its capture engine in the desktop observation request`() throws {
+        var classic = try SeeCommand.parse([])
+        classic.captureEngine = "cg"
+        var modern = try SeeCommand.parse([])
+        modern.captureEngine = "sckit"
+
+        #expect(try classic.makeObservationRequest(target: .frontmost).capture.engine == .legacy)
+        #expect(try modern.makeObservationRequest(target: .frontmost).capture.engine == .modern)
+    }
+
+    @Test
     func `See web focus fallback is a positive opt in`() throws {
         let enabled = try SeeCommand.parse(["--web-focus"])
         #expect(enabled.webFocus)

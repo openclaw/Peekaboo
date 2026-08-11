@@ -191,8 +191,22 @@ enum RuntimeHostResolver {
             }
         }
 
+        return self.localFallbackResolution(
+            options: options,
+            explicitSocket: explicitSocket,
+            snapshotInvalidationRemoteSocketPaths: snapshotInvalidationRemoteSocketPaths,
+            permissionRejections: permissionRejections
+        )
+    }
+
+    private static func localFallbackResolution(
+        options: CommandRuntimeOptions,
+        explicitSocket: String?,
+        snapshotInvalidationRemoteSocketPaths: [String],
+        permissionRejections: [String]
+    ) -> Resolution {
         // Name the hosts skipped for missing TCC permissions so a fallback is explainable
-        // instead of the previous silent selection of a permission-less bridge host.
+        // instead of silently selecting a permission-less bridge host.
         let rejectionSummary = permissionRejections.isEmpty
             ? ""
             : "; rejected " + permissionRejections.joined(separator: "; ")
@@ -211,9 +225,17 @@ enum RuntimeHostResolver {
     }
 
     static func requiredHostFailure(explicitSocket: String?, options: CommandRuntimeOptions) -> String? {
-        guard explicitSocket != nil, options.requiresExactWindowROIObservation else { return nil }
-        return "The explicitly selected Bridge host does not support exact-window ROI observation; " +
-            "protocol 1.21 with enabled observation and atomic snapshot publication is required."
+        if explicitSocket != nil, options.requiresExactWindowROIObservation {
+            return "The explicitly selected Bridge host does not support exact-window ROI observation; " +
+                "protocol 1.21 with enabled observation and atomic snapshot publication is required."
+        }
+        if options.requiresCaptureEnginePreferenceHost {
+            let engine = options.captureEnginePreference ?? "requested"
+            return "Capture engine '\(engine)' could not be delivered to a compatible Bridge host. " +
+                "Peekaboo will not switch capture or TCC ownership silently; start a current Bridge host, " +
+                "or pass --no-remote to explicitly run capture in the caller process."
+        }
+        return nil
     }
 
     static func remoteRoutingAllowed(

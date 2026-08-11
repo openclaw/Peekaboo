@@ -21,6 +21,12 @@ Peekaboo supports two capture backends:
   - `peekaboo see --no-elements --capture-engine ...`
   - `peekaboo see --capture-engine ...`
 
+`see --capture-engine` selects the backend on the same Bridge host that normal runtime routing chooses; it does not
+silently move capture or TCC ownership into the CLI process. If no compatible Bridge host is available, the command
+fails before caller-local capture. Add `--no-remote` only when caller-local execution is intentional and that process
+is known to own Screen Recording in the active Aqua session. Other capture commands remain caller-local until their
+remote protocols explicitly carry the engine preference.
+
 Aliases:
 - modern: `modern`, `sckit`, `sc`, `sck`
 - classic: `classic`, `cg`, `legacy`

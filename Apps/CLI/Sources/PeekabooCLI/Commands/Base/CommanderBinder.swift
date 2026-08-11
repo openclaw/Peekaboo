@@ -62,6 +62,11 @@ enum CommanderCLIBinder {
             options.requiresProcessGenerationPinnedHotkeys = true
         }
         options.requiresHostApplicationInventory = Self.requiresHostApplicationInventory(commandType)
+        let seeSkipsPixels = commandType == SeeCommand.self &&
+            CommanderBindableValues(parsedValues: parsedValues).flag("noScreenshot")
+        options.requiresDesktopObservation = commandType == SeeCommand.self && !seeSkipsPixels
+        options.transportsCaptureEnginePreference = options.requiresDesktopObservation
+        options.ignoresCaptureEnginePreference = seeSkipsPixels
         options.requiresImplicitSnapshotInvalidation = Self.requiresImplicitSnapshotInvalidation(
             commandType,
             parsedValues: parsedValues
@@ -122,8 +127,24 @@ enum CommanderCLIBinder {
         if let captureEngine = values.singleOption("captureEngine")?
             .trimmingCharacters(in: .whitespacesAndNewlines),
             !captureEngine.isEmpty {
+            guard ObservationCommandSupport.isSupportedCaptureEngineValue(captureEngine) else {
+                throw CommanderBindingError.invalidArgument(
+                    label: "capture-engine",
+                    value: captureEngine,
+                    reason: "expected auto, modern/sckit, or classic/cg"
+                )
+            }
+            if seeSkipsPixels {
+                throw CommanderBindingError.invalidArgument(
+                    label: "capture-engine",
+                    value: captureEngine,
+                    reason: "cannot be used with --no-screenshot because no capture backend runs"
+                )
+            }
             options.captureEnginePreference = captureEngine
-            if !options.requiresApplicationLaunchOptions, !options.requiresHostApplicationInventory {
+            if options.transportsCaptureEnginePreference {
+                options.requiresCaptureEnginePreferenceHost = true
+            } else if !options.requiresApplicationLaunchOptions, !options.requiresHostApplicationInventory {
                 options.preferRemote = false
             }
         }

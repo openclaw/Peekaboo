@@ -43,11 +43,70 @@ struct CommanderBinderTests {
     }
 
     @Test
-    func `Runtime options map capture engine option and force local mode`() throws {
+    func `See capture engine option remains remotely routable`() throws {
         let parsed = ParsedValues(positional: [], options: ["captureEngine": ["cg"]], flags: [])
         let options = try CommanderCLIBinder.makeRuntimeOptions(from: parsed, commandType: SeeCommand.self)
         #expect(options.captureEnginePreference == "cg")
-        #expect(options.preferRemote == false)
+        #expect(options.preferRemote)
+        #expect(options.transportsCaptureEnginePreference)
+        #expect(options.requiresCaptureEnginePreferenceHost)
+        #expect(options.requiresDesktopObservation)
+    }
+
+    @Test
+    func `See capture engine environment override remains remotely routable`() throws {
+        let base = try CommanderCLIBinder.makeRuntimeOptions(
+            from: ParsedValues(positional: [], options: [:], flags: []),
+            commandType: SeeCommand.self
+        )
+        let options = base.applyingEnvironmentOverrides(environment: [
+            "PEEKABOO_CAPTURE_ENGINE": " modern ",
+        ])
+
+        #expect(options.captureEnginePreference == "modern")
+        #expect(options.preferRemote)
+        #expect(options.transportsCaptureEnginePreference)
+        #expect(options.requiresCaptureEnginePreferenceHost)
+        #expect(options.requiresDesktopObservation)
+    }
+
+    @Test
+    func `Capture engine option stays local when a command cannot transport it`() throws {
+        let parsed = ParsedValues(positional: [], options: ["captureEngine": ["cg"]], flags: [])
+        let options = try CommanderCLIBinder.makeRuntimeOptions(from: parsed, commandType: CaptureLiveCommand.self)
+
+        #expect(options.captureEnginePreference == "cg")
+        #expect(!options.preferRemote)
+        #expect(!options.transportsCaptureEnginePreference)
+        #expect(!options.requiresCaptureEnginePreferenceHost)
+    }
+
+    @Test
+    func `Tree only see rejects an unused capture engine`() {
+        #expect(throws: CommanderBindingError.self) {
+            try CommanderCLIBinder.makeRuntimeOptions(
+                from: ParsedValues(
+                    positional: [],
+                    options: ["captureEngine": ["cg"]],
+                    flags: ["noScreenshot"]
+                ),
+                commandType: SeeCommand.self
+            )
+        }
+    }
+
+    @Test
+    func `See rejects an unknown capture engine before runtime resolution`() {
+        #expect(throws: CommanderBindingError.self) {
+            try CommanderCLIBinder.makeRuntimeOptions(
+                from: ParsedValues(
+                    positional: [],
+                    options: ["captureEngine": ["warp-drive"]],
+                    flags: []
+                ),
+                commandType: SeeCommand.self
+            )
+        }
     }
 
     @Test
@@ -457,7 +516,7 @@ struct CommanderBinderTests {
             negotiatedVersion: .init(major: 1, minor: 12),
             hostKind: .onDemand,
             build: nil,
-            supportedOperations: [.captureScreen]
+            supportedOperations: [.captureScreen, .desktopObservation]
         )
 
         let readOnlyCaptures: [(any ParsableCommand.Type, ParsedValues)] = [
