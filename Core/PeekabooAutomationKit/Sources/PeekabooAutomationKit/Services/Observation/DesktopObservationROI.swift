@@ -381,8 +381,12 @@ public enum DesktopObservationROIProcessor {
                 help: element.help,
                 roleDescription: element.roleDescription,
                 identifier: element.identifier,
+                confidence: element.confidence,
                 frame: frame,
                 isActionable: element.isActionable,
+                isEnabled: element.isEnabled,
+                isSelected: element.isSelected,
+                isValueSettable: element.isValueSettable,
                 parentId: element.parentId,
                 children: element.children,
                 keyboardShortcut: element.keyboardShortcut)

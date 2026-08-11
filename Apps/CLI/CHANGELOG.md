@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [4.0.1] - Unreleased
 
 ### Added
+- Add `see --ocr` for additive local Vision text with preserved AX warnings, exact snapshot receipts, logical bounds, confidence, and background-only observation.
 - Add `see --roi x,y,width,height` for stateless exact-window crops with fresh snapshot receipts, ROI-local element output, and safe coordinate metadata.
 
 ### Changed
@@ -16,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Pin process-targeted background typing, paste, clicks, and MCP key sequences to one process generation, rejecting Bridge hosts older than protocol 1.22 instead of letting them ignore the receipt or redirect input to a recycled PID.
 - Keep `see --capture-engine` on the selected Bridge host instead of silently moving capture and TCC ownership into the caller; fail before local fallback when no compatible host is available, with `--no-remote` as the explicit caller-local opt-in.
+- Keep OCR bounds correct for Retina captures, retain AX mutation/coordinate receipts through OCR merges and snapshot/ROI round-trips, use one bounded fast local recognition attempt for automation, and refuse only provenance-bound semantic OCR IDs as element action targets.
 - Resolve standalone exact-window AX-only `see` targets from their live owner and bind results to a process-generation/window receipt before publishing actionable element IDs or a snapshot.
 - Retry one passive background observation when its exact capture receipt changes before element detection or output, while leaving mutation-capable observations fail-closed.
 - Keep raw SwiftPM CLI `--version` output stable with explicit `unknown` build placeholders instead of reading the original working copy and wall clock at runtime; stamped debug and release builds retain rich link-time metadata.

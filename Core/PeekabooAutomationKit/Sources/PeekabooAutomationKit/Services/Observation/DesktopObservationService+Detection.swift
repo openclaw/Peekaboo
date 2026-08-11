@@ -67,7 +67,10 @@ extension DesktopObservationService {
                             timeoutSeconds: timeout,
                             regions: semanticRegions)
                     }
-                    return try await recognizer.recognizeText(in: imageData, timeoutSeconds: timeout)
+                    return try await recognizer.recognizeText(
+                        in: imageData,
+                        timeoutSeconds: timeout,
+                        quality: .fast)
                 }
             } catch let CaptureError.detectionTimedOut(seconds) {
                 return OCRTextResult.incomplete(

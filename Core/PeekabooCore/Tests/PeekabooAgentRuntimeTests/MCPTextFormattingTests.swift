@@ -82,4 +82,29 @@ struct MCPTextFormattingTests {
 
         #expect(line == #"  T1 - "value: search query" - at (20, 40) size 180×24"#)
     }
+
+    @Test
+    func `snapshot query selection never falls back to OCR semantic evidence`() throws {
+        let ocr = UIElement(
+            id: "ocr_1",
+            elementId: "ocr_1",
+            role: "AXStaticText",
+            label: "August",
+            description: "ocr",
+            confidence: 0.93,
+            frame: CGRect(x: 20, y: 40, width: 100, height: 20),
+            isActionable: false)
+        let ordinary = UIElement(
+            id: "S1",
+            elementId: "S1",
+            role: "AXStaticText",
+            label: "August",
+            frame: CGRect(x: 20, y: 70, width: 100, height: 20),
+            isActionable: false)
+
+        let selected = try #require(SnapshotElementQuerySelector.preferred(in: [ocr, ordinary]))
+
+        #expect(selected.id == "S1")
+        #expect(SnapshotElementQuerySelector.preferred(in: [ocr]) == nil)
+    }
 }

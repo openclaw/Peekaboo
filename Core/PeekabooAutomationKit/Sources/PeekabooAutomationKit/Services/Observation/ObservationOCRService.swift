@@ -80,8 +80,17 @@ extension OCRServiceError: LocalizedError {
     }
 }
 
+public enum OCRRecognitionQuality: String, Sendable, Equatable {
+    case accurate
+    case fast
+}
+
 public protocol OCRRecognizing: Sendable {
     func recognizeText(in imageData: Data, timeoutSeconds: TimeInterval) async throws -> OCRTextResult
+    func recognizeText(
+        in imageData: Data,
+        timeoutSeconds: TimeInterval,
+        quality: OCRRecognitionQuality) async throws -> OCRTextResult
     func recognizeText(
         in imageData: Data,
         timeoutSeconds: TimeInterval,
@@ -89,6 +98,14 @@ public protocol OCRRecognizing: Sendable {
 }
 
 extension OCRRecognizing {
+    public func recognizeText(
+        in imageData: Data,
+        timeoutSeconds: TimeInterval,
+        quality _: OCRRecognitionQuality) async throws -> OCRTextResult
+    {
+        try await self.recognizeText(in: imageData, timeoutSeconds: timeoutSeconds)
+    }
+
     public func recognizeText(
         in imageData: Data,
         timeoutSeconds: TimeInterval,
@@ -116,8 +133,19 @@ public struct OCRService: OCRRecognizing {
         in imageData: Data,
         timeoutSeconds: TimeInterval = Self.defaultTimeoutSeconds) async throws -> OCRTextResult
     {
+        try await self.recognizeText(
+            in: imageData,
+            timeoutSeconds: timeoutSeconds,
+            quality: .accurate)
+    }
+
+    public nonisolated func recognizeText(
+        in imageData: Data,
+        timeoutSeconds: TimeInterval,
+        quality: OCRRecognitionQuality) async throws -> OCRTextResult
+    {
         try await OCRExecutionRunner.run(seconds: timeoutSeconds) {
-            try Self.performRecognition(in: imageData)
+            try Self.performRecognition(in: imageData, quality: quality)
         }
     }
 
@@ -134,21 +162,27 @@ public struct OCRService: OCRRecognizing {
         }
     }
 
-    private nonisolated static func performRecognition(in imageData: Data) throws -> OCRTextResult {
+    private nonisolated static func performRecognition(
+        in imageData: Data,
+        quality: OCRRecognitionQuality) throws -> OCRTextResult
+    {
         guard let source = CGImageSourceCreateWithData(imageData as CFData, nil),
               let image = CGImageSourceCreateImageAtIndex(source, 0, nil)
         else {
             throw OCRServiceError.invalidImageData
         }
 
-        let request = VNRecognizeTextRequest()
-        request.recognitionLevel = .accurate
-        request.usesLanguageCorrection = false
-
-        let handler = VNImageRequestHandler(cgImage: image, options: [:])
-        try handler.perform([request])
-
-        let observations = (request.results ?? []).compactMap { observation -> OCRTextObservation? in
+        let results = switch quality {
+        case .accurate:
+            try self.withRecognitionFallback(
+                primary: { try self.visionResults(in: image, recognitionLevel: .accurate) },
+                fallback: { try self.visionResults(in: image, recognitionLevel: .fast) })
+        case .fast:
+            try self.withSingleRecognitionAttempt {
+                try self.visionResults(in: image, recognitionLevel: .fast)
+            }
+        }
+        let observations = results.compactMap { observation -> OCRTextObservation? in
             guard let candidate = observation.topCandidates(1).first else { return nil }
             let text = candidate.string.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !text.isEmpty else { return nil }
@@ -176,11 +210,10 @@ public struct OCRService: OCRRecognizing {
         var observations: [OCRTextObservation] = []
         for region in regions {
             guard let crop = self.targetedCrop(region.normalizedBounds, from: image) else { continue }
-            let request = VNRecognizeTextRequest()
-            request.recognitionLevel = .fast
-            request.usesLanguageCorrection = false
-            try VNImageRequestHandler(cgImage: crop.image, options: [:]).perform([request])
-            observations.append(contentsOf: (request.results ?? []).compactMap { observation in
+            let results = try self.withSingleRecognitionAttempt {
+                try self.visionResults(in: crop.image, recognitionLevel: .fast)
+            }
+            observations.append(contentsOf: results.compactMap { observation in
                 guard let candidate = observation.topCandidates(1).first else { return nil }
                 let text = candidate.string.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !text.isEmpty else { return nil }
@@ -196,6 +229,57 @@ public struct OCRService: OCRRecognizing {
         return OCRTextResult(
             observations: observations,
             imageSize: CGSize(width: image.width, height: image.height))
+    }
+
+    private nonisolated static func visionResults(
+        in image: CGImage,
+        recognitionLevel: VNRequestTextRecognitionLevel) throws -> [VNRecognizedTextObservation]
+    {
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = recognitionLevel
+        request.usesLanguageCorrection = recognitionLevel == .fast
+        try VNImageRequestHandler(cgImage: image, options: [:]).perform([request])
+        return request.results ?? []
+    }
+
+    static func withRecognitionFallback<T>(
+        primary: () throws -> T,
+        fallback: () throws -> T) throws -> T
+    {
+        try Task.checkCancellation()
+        do {
+            let result = try primary()
+            try Task.checkCancellation()
+            return result
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            try Task.checkCancellation()
+            do {
+                let result = try fallback()
+                try Task.checkCancellation()
+                return result
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                throw OCRServiceError.incomplete(
+                    "Apple Vision text recognition failed in both primary and fast fallback modes")
+            }
+        }
+    }
+
+    static func withSingleRecognitionAttempt<T>(_ operation: () throws -> T) throws -> T {
+        try Task.checkCancellation()
+        do {
+            let result = try operation()
+            try Task.checkCancellation()
+            return result
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            try Task.checkCancellation()
+            throw OCRServiceError.incomplete("Apple Vision fast text recognition failed")
+        }
     }
 
     private nonisolated static func targetedCrop(
@@ -537,7 +621,6 @@ public enum ObservationOCRMapper {
         for observation in result.observations where observation.confidence >= minConfidence {
             let rect = self.screenRect(
                 from: observation.boundingBox,
-                imageSize: result.imageSize,
                 windowBounds: windowBounds)
 
             guard rect.width > 2, rect.height > 2 else { continue }
@@ -545,6 +628,7 @@ public enum ObservationOCRMapper {
             let attributes = [
                 "description": "ocr",
                 "confidence": String(format: "%.2f", observation.confidence),
+                "source": "ocr",
             ]
 
             elements.append(
@@ -602,7 +686,10 @@ public enum ObservationOCRMapper {
                     metadata.truncationInfo,
                     ocrResult.isComplete ? nil : DetectionTruncationInfo(
                         deadlineReached: ocrResult.deadlineReached,
-                        incompleteAccessibilityRead: false))))
+                        incompleteAccessibilityRead: false)),
+                desktopMutationCompletedAt: metadata.desktopMutationCompletedAt,
+                desktopMutationPreservationAllowed: metadata.desktopMutationPreservationAllowed,
+                captureCoordinateContext: metadata.captureCoordinateContext))
     }
 
     @_spi(Testing) public static func recoverSemanticLabels(
@@ -741,13 +828,12 @@ public enum ObservationOCRMapper {
 
     private static func screenRect(
         from normalizedBox: CGRect,
-        imageSize: CGSize,
         windowBounds: CGRect) -> CGRect
     {
-        let width = normalizedBox.width * imageSize.width
-        let height = normalizedBox.height * imageSize.height
-        let x = normalizedBox.origin.x * imageSize.width
-        let y = (1.0 - normalizedBox.origin.y - normalizedBox.height) * imageSize.height
+        let width = normalizedBox.width * windowBounds.width
+        let height = normalizedBox.height * windowBounds.height
+        let x = normalizedBox.origin.x * windowBounds.width
+        let y = (1.0 - normalizedBox.origin.y - normalizedBox.height) * windowBounds.height
         return CGRect(
             x: windowBounds.origin.x + x,
             y: windowBounds.origin.y + y,

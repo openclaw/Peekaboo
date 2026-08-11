@@ -12,6 +12,9 @@ enum InteractionTargetPointResolver {
         snapshotId: String?,
         snapshots: any SnapshotManagerProtocol
     ) async throws -> InteractionTargetPointResolution {
+        guard !element.isOCRSemanticEvidence else {
+            throw PeekabooError.invalidInput(OCRSemanticEvidencePolicy.interactionRefusalMessage)
+        }
         let originalPoint = CGPoint(x: element.bounds.midX, y: element.bounds.midY)
         return try await self.resolve(
             originalPoint: originalPoint,

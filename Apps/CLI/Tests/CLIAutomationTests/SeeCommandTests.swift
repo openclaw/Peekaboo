@@ -171,6 +171,7 @@ struct SeeCommandTests {
             role_description: nil,
             help: nil,
             identifier: nil,
+            confidence: nil,
             bounds: UIElementBounds(CGRect(x: 0, y: 0, width: 100, height: 30)),
             is_actionable: true,
             is_enabled: true,

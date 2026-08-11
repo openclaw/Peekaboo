@@ -56,6 +56,7 @@ struct UIElementSummary: Codable {
     let role_description: String?
     let help: String?
     let identifier: String?
+    let confidence: Double?
     let bounds: UIElementBounds
     let is_actionable: Bool
     let is_enabled: Bool?

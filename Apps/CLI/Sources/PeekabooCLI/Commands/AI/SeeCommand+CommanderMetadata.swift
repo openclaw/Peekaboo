@@ -115,6 +115,11 @@ extension SeeCommand: CommanderSignatureProviding {
                     long: "no-elements"
                 ),
                 .commandFlag(
+                    "ocr",
+                    help: "Add local Vision OCR text to the accessibility element map",
+                    long: "ocr"
+                ),
+                .commandFlag(
                     "tree",
                     help: "Print the accessibility text tree",
                     long: "tree"

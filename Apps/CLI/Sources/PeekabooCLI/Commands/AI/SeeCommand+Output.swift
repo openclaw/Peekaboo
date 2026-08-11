@@ -68,6 +68,7 @@ extension SeeCommand {
                 role_description: element.attributes["roleDescription"],
                 help: element.attributes["help"],
                 identifier: element.attributes["identifier"],
+                confidence: element.attributes["confidence"].flatMap(Double.init),
                 bounds: UIElementBounds(element.bounds),
                 is_actionable: element.isActionable,
                 is_enabled: element.knownIsEnabled,

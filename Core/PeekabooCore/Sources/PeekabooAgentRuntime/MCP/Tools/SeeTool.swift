@@ -61,6 +61,12 @@ public struct SeeTool: MCPTool {
                     Optional. Add interaction markers and IDs to the returned screenshot.
                     """,
                     default: false),
+                "ocr": SchemaBuilder.boolean(
+                    description: """
+                    Optional. Add text recognized locally with Apple Vision to the accessibility element map.
+                    OCR text is non-actionable and does not replace accessible controls.
+                    """,
+                    default: false),
                 "roi": SchemaBuilder.string(
                     description: """
                     Optional. Crop the exact window as x,y,width,height in window-local logical points. Requires
@@ -189,8 +195,9 @@ public struct SeeTool: MCPTool {
             target: target.observationTarget,
             capture: DesktopCaptureOptions(visualizerMode: .none, roi: request.roi),
             detection: DesktopDetectionOptions(
-                mode: .accessibility,
+                mode: request.ocr ? .accessibilityAndOCR : .accessibility,
                 allowWebFocusFallback: request.webFocus,
+                preferOCR: false,
                 traversalBudget: request.traversalBudget),
             output: DesktopObservationOutputOptions(
                 path: path,

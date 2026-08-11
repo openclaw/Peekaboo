@@ -175,6 +175,51 @@ struct TypeServiceTargetResolutionTests {
     }
 
     @Test
+    @MainActor
+    func `direct OCR target refuses before AX resolution or typing`() async {
+        let element = DetectedElement(
+            id: "ocr_1",
+            type: .staticText,
+            label: "August",
+            bounds: CGRect(x: 10, y: 20, width: 100, height: 20),
+            attributes: [
+                "description": "ocr",
+                "confidence": "0.93",
+            ])
+        let result = ElementDetectionResult(
+            snapshotId: "snapshot",
+            screenshotPath: "/tmp/calendar.png",
+            elements: DetectedElements(other: [element]),
+            metadata: DetectionMetadata(detectionTime: 0, elementCount: 1, method: "AXorcist+OCR"))
+        let resolver = RecordingTypeAutomationElementResolver()
+        var typed: [Character] = []
+        let service = TypeService(
+            snapshotManager: InMemorySnapshotManager(detectionResult: result),
+            inputPolicy: UIInputPolicy(defaultStrategy: .actionFirst),
+            automationElementResolver: resolver,
+            randomSource: SystemTypingCadenceRandomSource(),
+            targetedCharacterTyper: { character, _ in typed.append(character) })
+
+        do {
+            try await service.type(
+                text: "unsafe",
+                target: "ocr_1",
+                clearExisting: false,
+                typingDelay: 0,
+                snapshotId: "snapshot")
+            Issue.record("Expected OCR semantic evidence refusal")
+        } catch let PeekabooError.invalidInput(message) {
+            #expect(message.contains("semantic evidence"))
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+
+        #expect(resolver.detectedResolutionCount == 0)
+        #expect(resolver.queryResolutionCount == 0)
+        #expect(typed.isEmpty)
+    }
+
+    @Test
     func `special key mapping preserves raw SpecialKey semantics`() {
         #expect(TypeServiceSpecialKeyMapping.keyCode(for: .return) == 0x24)
         #expect(TypeServiceSpecialKeyMapping.keyCode(for: .enter) == 0x4C)
@@ -306,10 +351,12 @@ private enum TypeDeliveryTestError: LocalizedError {
 
 @MainActor
 private final class RecordingTypeAutomationElementResolver: AutomationElementResolving {
+    private(set) var detectedResolutionCount = 0
     private(set) var queryResolutionCount = 0
 
     func resolve(detectedElement _: DetectedElement, windowContext _: WindowContext?) -> AutomationElement? {
-        nil
+        self.detectedResolutionCount += 1
+        return nil
     }
 
     func resolve(query _: String, windowContext _: WindowContext?, requireTextInput _: Bool) -> AutomationElement? {

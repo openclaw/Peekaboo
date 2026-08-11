@@ -359,6 +359,9 @@ public struct TypeTool: MCPTool {
             throw TypeToolValidationError(
                 "Element '\(elementId)' not found in current snapshot. Run 'see' or 'inspect_ui' to update UI state.")
         }
+        guard !element.isOCRSemanticEvidence else {
+            throw TypeToolValidationError(OCRSemanticEvidencePolicy.interactionRefusalMessage)
+        }
 
         return TargetElementContext(snapshot: snapshot, element: element)
     }

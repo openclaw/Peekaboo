@@ -103,6 +103,7 @@ public final class SnapshotManager: SnapshotManagerProtocol {
                 help: element.attributes["help"],
                 roleDescription: element.attributes["roleDescription"],
                 identifier: element.attributes["identifier"],
+                confidence: element.attributes["confidence"].flatMap(Double.init),
                 frame: element.bounds,
                 isActionable: element.isActionable,
                 isEnabled: element.knownIsEnabled,
@@ -155,6 +156,9 @@ public final class SnapshotManager: SnapshotManagerProtocol {
             }
             if let roleDescription = uiElement.roleDescription {
                 attributes["roleDescription"] = roleDescription
+            }
+            if let confidence = uiElement.confidence {
+                attributes["confidence"] = String(format: "%.2f", confidence)
             }
             attributes["isActionable"] = String(uiElement.isActionable)
             attributes["axEnabledKnown"] = String(uiElement.isEnabled != nil)

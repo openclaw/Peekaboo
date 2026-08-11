@@ -580,7 +580,7 @@ struct ClickCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
         }
 
         let matches = detectionResult.elements.all.filter { element in
-            guard element.isEnabled else { return false }
+            guard element.isEnabled, !element.isOCRSemanticEvidence else { return false }
             let candidates = [
                 element.id,
                 element.label,

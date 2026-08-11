@@ -436,6 +436,7 @@ struct SeeCommandAnnotationTests {
                     role_description: nil,
                     help: nil,
                     identifier: nil,
+                    confidence: nil,
                     bounds: UIElementBounds(CGRect(x: 5, y: 5, width: 10, height: 5)),
                     is_actionable: true,
                     is_enabled: true,

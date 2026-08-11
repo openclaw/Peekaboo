@@ -124,6 +124,15 @@ public struct DetectedElement: Sendable, Codable {
         self.attributes["isValueSettable"].flatMap(Bool.init)
     }
 
+    public var isOCRSemanticEvidence: Bool {
+        OCRSemanticEvidencePolicy.isSemanticEvidence(
+            id: self.id,
+            isStaticText: self.type == .staticText,
+            isActionable: self.isActionable,
+            description: self.attributes["description"],
+            source: self.attributes["source"])
+    }
+
     public var knownIsEnabled: Bool? {
         guard let enabledKnown = self.attributes["axEnabledKnown"] else {
             return self.isEnabled
@@ -149,6 +158,28 @@ public struct DetectedElement: Sendable, Codable {
         self.isEnabled = isEnabled
         self.isSelected = isSelected
         self.attributes = attributes
+    }
+}
+
+public enum OCRSemanticEvidencePolicy {
+    public static let interactionRefusalMessage =
+        "OCR text is semantic evidence, not an actionable element. Use explicit coordinates with the exact " +
+        "snapshot/reference receipt when a pixel action is intentional."
+
+    public static func isSemanticEvidence(
+        id: String,
+        isStaticText: Bool,
+        isActionable: Bool,
+        description: String?,
+        source: String? = nil) -> Bool
+    {
+        if source?.caseInsensitiveCompare("ocr") == .orderedSame {
+            return true
+        }
+        return id.lowercased().hasPrefix("ocr_") &&
+            isStaticText &&
+            !isActionable &&
+            description?.caseInsensitiveCompare("ocr") == .orderedSame
     }
 }
 

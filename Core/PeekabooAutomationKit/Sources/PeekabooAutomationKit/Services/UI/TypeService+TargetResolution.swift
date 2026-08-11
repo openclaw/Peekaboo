@@ -42,7 +42,7 @@ extension TypeService {
         var bestMatch: DetectedElement?
         var bestScore = Int.min
 
-        for element in detectionResult.elements.all where element.isEnabled {
+        for element in detectionResult.elements.all where element.isEnabled && !element.isOCRSemanticEvidence {
             let label = element.label?.lowercased()
             let value = element.value?.lowercased()
             let identifier = element.attributes["identifier"]?.lowercased()

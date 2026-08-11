@@ -10,6 +10,7 @@ struct SeeRequest {
     let path: String?
     let snapshotId: String?
     let annotate: Bool
+    let ocr: Bool
     let webFocus: Bool
     let traversalBudget: AXTraversalBudget
     let roi: CaptureRegionOfInterest?
@@ -20,6 +21,7 @@ struct SeeRequest {
         self.path = arguments.getString("path")
         self.snapshotId = arguments.getString("snapshot")
         self.annotate = arguments.getBool("annotate") ?? false
+        self.ocr = arguments.getBool("ocr") ?? false
         self.webFocus = arguments.getBool("web_focus") ?? false
         if let rawROI = arguments.getString("roi")?.trimmingCharacters(in: .whitespacesAndNewlines),
            !rawROI.isEmpty
@@ -130,7 +132,7 @@ struct SeeSummaryBuilder {
         lines.append("")
         lines.append(contentsOf: self.elementSection())
         lines.append("")
-        lines.append("Copy opaque element IDs exactly into click, type, and other interaction commands.")
+        lines.append("Use opaque element IDs for interaction only when the element is marked actionable.")
         return lines.joined(separator: "\n")
     }
 

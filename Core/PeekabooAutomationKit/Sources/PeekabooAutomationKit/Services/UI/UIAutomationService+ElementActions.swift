@@ -134,6 +134,9 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
         if let detected = detectionResult.elements.findById(normalized) ??
             Self.findDetectedElement(matching: normalized, in: detectionResult)
         {
+            guard !detected.isOCRSemanticEvidence else {
+                throw PeekabooError.invalidInput(OCRSemanticEvidencePolicy.interactionRefusalMessage)
+            }
             guard let element = self.automationElementResolver.resolve(
                 detectedElement: detected,
                 windowContext: detectionResult.metadata.windowContext)
@@ -168,7 +171,8 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
         guard !query.isEmpty else { return nil }
 
         return detectionResult.elements.all.first { element in
-            [
+            guard !element.isOCRSemanticEvidence else { return false }
+            return [
                 element.label,
                 element.value,
                 element.attributes["title"],

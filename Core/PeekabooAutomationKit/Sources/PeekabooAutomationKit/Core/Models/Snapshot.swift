@@ -75,6 +75,7 @@ public nonisolated struct UIElement: Codable, Sendable {
     public let help: String?
     public let roleDescription: String?
     public let identifier: String?
+    public let confidence: Double?
     public var frame: CGRect
     public let isActionable: Bool
     public let isEnabled: Bool?
@@ -83,6 +84,15 @@ public nonisolated struct UIElement: Codable, Sendable {
     public let parentId: String?
     public let children: [String]
     public let keyboardShortcut: String?
+
+    public var isOCRSemanticEvidence: Bool {
+        OCRSemanticEvidencePolicy.isSemanticEvidence(
+            id: self.id,
+            isStaticText: self.role.caseInsensitiveCompare("AXStaticText") == .orderedSame ||
+                self.role.caseInsensitiveCompare("staticText") == .orderedSame,
+            isActionable: self.isActionable,
+            description: self.description)
+    }
 
     public init(
         id: String,
@@ -95,6 +105,7 @@ public nonisolated struct UIElement: Codable, Sendable {
         help: String? = nil,
         roleDescription: String? = nil,
         identifier: String? = nil,
+        confidence: Double? = nil,
         frame: CGRect,
         isActionable: Bool,
         isEnabled: Bool? = nil,
@@ -114,6 +125,7 @@ public nonisolated struct UIElement: Codable, Sendable {
         self.help = help
         self.roleDescription = roleDescription
         self.identifier = identifier
+        self.confidence = confidence
         self.frame = frame
         self.isActionable = isActionable
         self.isEnabled = isEnabled

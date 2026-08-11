@@ -19,6 +19,9 @@ extension DragTool {
             let screenshotMetadata = await snapshot.screenshotMetadata
             let windowID = screenshotMetadata?.windowInfo?.windowID
             if let element = await snapshot.getElement(byId: query) {
+                guard !element.isOCRSemanticEvidence else {
+                    throw CoordinateParseError(message: OCRSemanticEvidencePolicy.interactionRefusalMessage)
+                }
                 return DragPointDescription(
                     point: element.dragCenterPoint,
                     description: "element \(query) (\(element.dragHumanDescription))",
@@ -41,7 +44,9 @@ extension DragTool {
                 throw CoordinateParseError(message: "No elements found matching '\(query)' for \(parameterName)")
             }
 
-            let element = matches.first { $0.isActionable } ?? matches[0]
+            guard let element = SnapshotElementQuerySelector.preferred(in: matches) else {
+                throw CoordinateParseError(message: OCRSemanticEvidencePolicy.interactionRefusalMessage)
+            }
             return DragPointDescription(
                 point: element.dragCenterPoint,
                 description: element.dragHumanDescription,

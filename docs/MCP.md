@@ -28,7 +28,7 @@ Inventory is exposed on the nouns: use `app` with `action: "list"` for running a
 duplicate `server_status` view are not exposed. `menu` supports only application-menu `list` and `click` actions;
 status items use the dedicated menubar surface. MCP retains `sleep` because an MCP client may not have shell access.
 
-Call `see` first and pass element IDs through these tools when possible. Element-targeted calls preserve action-first routing; coordinate calls always use the synthetic path.
+Call `see` first and pass actionable element IDs through these tools when possible. Element-targeted calls preserve action-first routing; coordinate calls always use the synthetic path. OCR-only text is semantic evidence, not an element-action target.
 The same action tools are available to CLI users as `peekaboo set-value` and `peekaboo action`.
 `set_value` and `action` are exposed only when their resolved input strategy enables action invocation
 (`actionFirst` or `actionOnly`). They are hidden under `synthFirst` or `synthOnly`, because these operations do not
@@ -150,6 +150,12 @@ Every successful MCP `see` response includes the selected raw or annotated scree
 multiple calls intentionally share the same `path`, each response still returns pixels owned by its own capture; the
 path remains the caller-requested publication destination and therefore contains whichever concurrent write finishes
 last.
+
+Set `ocr: true` on `see` to add text recognized locally by Apple Vision to the Accessibility map. OCR is additive,
+never replaces accessible controls, preserves incomplete-AX warnings and exact capture receipts, and does not use a
+provider or network upload. OCR rows include confidence and global logical bounds, are marked non-actionable, and are
+refused by element interaction tools. If a deliberate pixel action is necessary, use explicit coordinates bound to
+the exact `snapshot`/`coordinate_reference` returned by `see`.
 
 Observation and capture do not activate a target by default. `see` and `inspect_ui` only perform the focus-changing `AXWebArea` retry when `web_focus: true` is supplied. `image` and live `capture` use `capture_focus: "background"` by default; pass `capture_focus: "foreground"` when activating the target is intentional. The legacy `auto` value remains accepted for focus-if-needed compatibility.
 

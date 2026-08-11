@@ -614,6 +614,9 @@ public struct ClickTool: MCPTool {
             throw ClickToolError(
                 "Element '\(id)' not found in current snapshot. Run 'see' or 'inspect_ui' to update UI state.")
         }
+        guard !element.isOCRSemanticEvidence else {
+            throw ClickToolError(OCRSemanticEvidencePolicy.interactionRefusalMessage)
+        }
         return element
     }
 
@@ -630,7 +633,10 @@ public struct ClickTool: MCPTool {
             throw ClickToolError("No elements found matching query: '\(query)'")
         }
 
-        return matches.first { $0.isActionable } ?? matches[0]
+        guard let match = SnapshotElementQuerySelector.preferred(in: matches) else {
+            throw ClickToolError(OCRSemanticEvidencePolicy.interactionRefusalMessage)
+        }
+        return match
     }
 }
 

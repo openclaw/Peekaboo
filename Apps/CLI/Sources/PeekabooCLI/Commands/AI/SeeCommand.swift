@@ -59,6 +59,9 @@ struct SeeCommand: ApplicationResolvable, ErrorHandlingCommand, RuntimeBackedCom
     @Flag(help: "Skip element detection for a faster screenshot-only capture")
     var noElements = false
 
+    @Flag(help: "Add local Vision OCR text to the accessibility element map")
+    var ocr = false
+
     @Flag(help: "Print the accessibility text tree")
     var tree = false
 
@@ -319,6 +322,17 @@ struct SeeCommand: ApplicationResolvable, ErrorHandlingCommand, RuntimeBackedCom
     ) throws {
         if self.tree, self.noElements {
             throw ValidationError("--tree cannot be combined with --no-elements")
+        }
+        if self.ocr, self.noElements {
+            throw ValidationError("--ocr cannot be combined with --no-elements")
+        }
+        if self.ocr, self.noScreenshot {
+            throw ValidationError("--ocr cannot be combined with --no-screenshot")
+        }
+        if self.ocr, forcesPixelOnlyMode || self.streamsImageToStdout {
+            throw ValidationError(
+                "--ocr requires screenshot-backed element detection for frontmost or app/window targets"
+            )
         }
         if self.noScreenshot, !self.tree {
             throw ValidationError("--no-screenshot requires --tree")
@@ -700,6 +714,7 @@ extension SeeCommand: CommanderBindableCommand {
         self.menubar = values.flag("menubar")
         self.retina = values.flag("retina")
         self.noElements = values.flag("noElements")
+        self.ocr = values.flag("ocr")
         self.tree = values.flag("tree")
         self.noScreenshot = values.flag("noScreenshot")
     }

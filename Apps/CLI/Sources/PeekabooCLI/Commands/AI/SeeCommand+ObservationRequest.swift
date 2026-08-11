@@ -107,7 +107,8 @@ extension SeeCommand {
             ),
             timeout: DesktopObservationTimeouts(
                 overall: self.overallTimeoutSeconds,
-                detection: self.overallTimeoutSeconds
+                detection: self.overallTimeoutSeconds,
+                ocr: self.ocr ? self.overallTimeoutSeconds : nil
             )
         )
     }
@@ -165,8 +166,9 @@ extension SeeCommand {
             )
         default:
             DesktopDetectionOptions(
-                mode: .accessibility,
+                mode: self.ocr ? .accessibilityAndOCR : .accessibility,
                 allowWebFocusFallback: self.webFocus,
+                preferOCR: false,
                 traversalBudget: self.axTraversalBudget()
             )
         }

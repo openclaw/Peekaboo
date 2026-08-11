@@ -4,6 +4,7 @@
 
 ### Added
 
+- Add opt-in local Vision OCR to CLI/MCP `see`, preserving incomplete AX evidence, exact snapshot receipts, logical bounds, confidence, and background-only observation.
 - Stateless exact-window ROI capture for CLI/MCP `see`, with generation-pinned
   full-window receipts, AX/OCR filtering, snapshot-bound pixel mapping, and
   fail-closed remote-host validation.
@@ -13,6 +14,7 @@
 
 ### Fixed
 - Keep `see --capture-engine` on the selected Bridge host instead of silently moving capture and TCC ownership into the caller; fail before local fallback when no compatible host is available, with `--no-remote` as the explicit caller-local opt-in.
+- Keep OCR bounds correct for Retina captures, retain AX mutation/coordinate receipts through OCR merges and snapshot/ROI round-trips, use one bounded fast local recognition attempt for automation, and refuse only provenance-bound semantic OCR IDs as element action targets.
 - Resolve standalone exact-window AX-only `see` targets from their live owner and bind results to a process-generation/window receipt before publishing actionable element IDs or a snapshot.
 - Retry one passive background observation when its exact capture receipt changes before element detection or output, while leaving mutation-capable observations fail-closed.
 - Keep raw SwiftPM CLI `--version` output stable with explicit `unknown` build placeholders instead of reading the original working copy and wall clock at runtime; stamped debug and release builds retain rich link-time metadata.

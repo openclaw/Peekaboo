@@ -14,6 +14,7 @@ enum DetectedElementSnapshotConverter {
                 help: element.attributes["help"],
                 roleDescription: element.attributes["roleDescription"],
                 identifier: element.attributes["identifier"],
+                confidence: element.attributes["confidence"].flatMap(Double.init),
                 frame: element.bounds,
                 isActionable: element.isActionable,
                 isEnabled: element.knownIsEnabled,

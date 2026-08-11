@@ -1028,6 +1028,30 @@ struct InteractionObservationContextTests {
     }
 
     @Test
+    func `Element target point resolver refuses OCR evidence before coordinate resolution`() async {
+        let snapshots = CoreSnapshotManagerStub()
+        let element = DetectedElement(
+            id: "ocr_1",
+            type: .staticText,
+            label: "August",
+            bounds: CGRect(x: 50, y: 70, width: 100, height: 40),
+            attributes: [
+                "description": "ocr",
+                "confidence": "0.93",
+            ]
+        )
+
+        await #expect(throws: PeekabooError.self) {
+            _ = try await InteractionTargetPointResolver.elementCenterResolution(
+                element: element,
+                elementId: "ocr_1",
+                snapshotId: nil,
+                snapshots: snapshots
+            )
+        }
+    }
+
+    @Test
     func `Target point diagnostics describe coordinate targets`() {
         let point = CGPoint(x: 10, y: 20)
         let resolution = InteractionTargetPointResolver.coordinate(point, source: .coordinates)

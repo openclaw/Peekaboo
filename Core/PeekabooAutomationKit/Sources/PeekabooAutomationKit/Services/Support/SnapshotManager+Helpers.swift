@@ -461,7 +461,12 @@ extension SnapshotManager {
         case "AXGroup": .group
         case "AXSlider": .slider
         case "AXCheckBox": .checkbox
-        case "AXMenu", "AXMenuItem": .menu
+        case "AXMenu": .menu
+        case "AXMenuItem": .menuItem
+        case "AXStaticText": .staticText
+        case "AXRadioButton": .radioButton
+        case "AXWindow": .window
+        case "AXDialog": .dialog
         default: .other
         }
     }

@@ -31,6 +31,7 @@ extension InMemorySnapshotManager {
                 help: element.attributes["help"],
                 roleDescription: element.attributes["roleDescription"],
                 identifier: element.attributes["identifier"],
+                confidence: element.attributes["confidence"].flatMap(Double.init),
                 frame: element.bounds,
                 isActionable: element.isActionable,
                 isEnabled: element.knownIsEnabled,
@@ -109,6 +110,9 @@ extension InMemorySnapshotManager {
             if let roleDescription = uiElement.roleDescription {
                 attributes["roleDescription"] = roleDescription
             }
+            if let confidence = uiElement.confidence {
+                attributes["confidence"] = String(format: "%.2f", confidence)
+            }
             attributes["isActionable"] = String(uiElement.isActionable)
             attributes["axEnabledKnown"] = String(uiElement.isEnabled != nil)
             if let isValueSettable = uiElement.isValueSettable {
@@ -172,7 +176,12 @@ extension InMemorySnapshotManager {
         case "AXGroup": .group
         case "AXSlider": .slider
         case "AXCheckBox": .checkbox
-        case "AXMenu", "AXMenuItem": .menu
+        case "AXMenu": .menu
+        case "AXMenuItem": .menuItem
+        case "AXStaticText": .staticText
+        case "AXRadioButton": .radioButton
+        case "AXWindow": .window
+        case "AXDialog": .dialog
         default: .other
         }
     }

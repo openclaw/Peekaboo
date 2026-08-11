@@ -38,6 +38,9 @@ extension MoveTool {
                     "Element '\(elementId)' not found in current snapshot. " +
                         "Run 'see' or 'inspect_ui' to update UI state.")
             }
+            guard !element.isOCRSemanticEvidence else {
+                throw MoveToolValidationError(OCRSemanticEvidencePolicy.interactionRefusalMessage)
+            }
             let location = CGPoint(x: element.frame.midX, y: element.frame.midY)
             let label = element.title ?? element.label ?? "untitled"
             let summary = "element \(elementId) (\(element.role): \(label))"

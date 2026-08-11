@@ -120,6 +120,9 @@ public final class ScrollService {
             if let detected = detectionResult.elements.findById(target) ??
                 Self.findDetectedElement(matching: target, in: detectionResult)
             {
+                guard !detected.isOCRSemanticEvidence else {
+                    throw PeekabooError.invalidInput(OCRSemanticEvidencePolicy.interactionRefusalMessage)
+                }
                 guard let element = self.automationElementResolver.resolve(
                     detectedElement: detected,
                     windowContext: detectionResult.metadata.windowContext)
@@ -166,7 +169,8 @@ public final class ScrollService {
         guard !query.isEmpty else { return nil }
 
         return detectionResult.elements.all.first { element in
-            [
+            guard !element.isOCRSemanticEvidence else { return false }
+            return [
                 element.label,
                 element.value,
                 element.attributes["title"],
@@ -232,6 +236,9 @@ public final class ScrollService {
             throw ActionInputError.staleElement
         }
         guard let element = detectionResult.elements.findById(target) else { return nil }
+        guard !element.isOCRSemanticEvidence else {
+            throw PeekabooError.invalidInput(OCRSemanticEvidencePolicy.interactionRefusalMessage)
+        }
 
         let point = CGPoint(x: element.bounds.midX, y: element.bounds.midY)
         return try await WindowMovementTracking.adjustPoint(

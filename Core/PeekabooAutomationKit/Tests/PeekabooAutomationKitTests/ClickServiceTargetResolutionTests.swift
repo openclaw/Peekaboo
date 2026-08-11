@@ -203,6 +203,86 @@ struct ClickServiceTargetResolutionTests {
 
     @Test
     @MainActor
+    func `OCR semantic element refuses before exact owner delivery or synthetic fallback`() async {
+        let pid = getpid()
+        let element = DetectedElement(
+            id: "ocr_1",
+            type: .staticText,
+            label: "August 10, 2026",
+            bounds: CGRect(x: 100, y: 120, width: 180, height: 24),
+            attributes: [
+                "description": "ocr",
+                "confidence": "0.93",
+            ])
+        let detectionResult = ElementDetectionResult(
+            snapshotId: "snapshot",
+            screenshotPath: "/tmp/calendar.png",
+            elements: DetectedElements(other: [element]),
+            metadata: DetectionMetadata(
+                detectionTime: 0.01,
+                elementCount: 1,
+                method: "AXorcist+OCR",
+                windowContext: Self.exactWindowContext(processIdentifier: pid)))
+        let action = ClickSuccessfulActionInputDriver()
+        let synthetic = ClickRecordingSyntheticInputDriver()
+        let resolver = ClickFixedAutomationElementResolver()
+        let service = ClickService(
+            snapshotManager: InMemorySnapshotManager(detectionResult: detectionResult),
+            inputPolicy: UIInputPolicy(defaultStrategy: .actionFirst),
+            actionInputDriver: action,
+            syntheticInputDriver: synthetic,
+            automationElementResolver: resolver,
+            exactWindowIdentityValidator: { _, _ in true })
+
+        do {
+            _ = try await service.click(
+                target: .elementId("ocr_1"),
+                clickType: .single,
+                snapshotId: "snapshot",
+                targetProcessIdentifier: pid)
+            Issue.record("Expected OCR semantic evidence refusal")
+        } catch let PeekabooError.invalidInput(message) {
+            #expect(message.contains("semantic evidence"))
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+
+        #expect(action.performedActionNames.isEmpty)
+        #expect(action.clickCount == 0)
+        #expect(synthetic.events.isEmpty)
+        #expect(resolver.targetProcessIdentifiers.isEmpty)
+    }
+
+    @Test
+    @MainActor
+    func `query resolution skips OCR when a later ordinary nonactionable match exists`() throws {
+        let ocr = DetectedElement(
+            id: "ocr_1",
+            type: .staticText,
+            label: "August",
+            bounds: CGRect(x: 10, y: 10, width: 100, height: 20),
+            attributes: [
+                "description": "ocr",
+                "confidence": "0.93",
+            ])
+        let ordinary = DetectedElement(
+            id: "S1",
+            type: .staticText,
+            label: "August",
+            bounds: CGRect(x: 10, y: 40, width: 100, height: 20))
+        let result = ElementDetectionResult(
+            snapshotId: "snapshot",
+            screenshotPath: "/tmp/calendar.png",
+            elements: DetectedElements(other: [ocr, ordinary]),
+            metadata: DetectionMetadata(detectionTime: 0, elementCount: 2, method: "test"))
+
+        let match = try #require(ClickService.resolveTargetElement(query: "August", in: result))
+
+        #expect(match.id == "S1")
+    }
+
+    @Test
+    @MainActor
     func `background coordinate click refuses PID only routing`() async {
         let synthetic = ClickRecordingSyntheticInputDriver()
         let service = ClickService(

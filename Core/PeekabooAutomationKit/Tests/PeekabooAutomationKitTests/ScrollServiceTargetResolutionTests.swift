@@ -105,6 +105,47 @@ struct ScrollServiceTargetResolutionTests {
 
     @Test
     @MainActor
+    func `foreground OCR target refuses before pointer motion or scroll dispatch`() async {
+        let element = DetectedElement(
+            id: "ocr_1",
+            type: .staticText,
+            label: "August",
+            bounds: CGRect(x: 10, y: 20, width: 100, height: 20),
+            attributes: [
+                "description": "ocr",
+                "confidence": "0.93",
+            ])
+        let result = ElementDetectionResult(
+            snapshotId: "snapshot",
+            screenshotPath: "/tmp/calendar.png",
+            elements: DetectedElements(other: [element]),
+            metadata: DetectionMetadata(detectionTime: 0, elementCount: 1, method: "AXorcist+OCR"))
+        let synthetic = ScrollRecordingSyntheticInputDriver()
+        let service = ScrollService(
+            snapshotManager: InMemorySnapshotManager(detectionResult: result),
+            inputPolicy: UIInputPolicy(defaultStrategy: .synthFirst),
+            syntheticInputDriver: synthetic)
+
+        do {
+            try await service.scroll(ScrollRequest(
+                direction: .down,
+                amount: 1,
+                target: "ocr_1",
+                smooth: true,
+                snapshotId: "snapshot",
+                foreground: true))
+            Issue.record("Expected OCR semantic evidence refusal")
+        } catch let PeekabooError.invalidInput(message) {
+            #expect(message.contains("semantic evidence"))
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+
+        #expect(synthetic.events.isEmpty)
+    }
+
+    @Test
+    @MainActor
     func `background unresolved snapshot target requires foreground without synthetic fallback`() async throws {
         let element = DetectedElement(
             id: "S1",

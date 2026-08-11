@@ -315,6 +315,9 @@ public final class ClickService {
             guard let element = detectionResult.elements.findById(id) else {
                 throw ActionInputError.unsupported(.missingElement)
             }
+            guard !element.isOCRSemanticEvidence else {
+                throw PeekabooError.invalidInput(OCRSemanticEvidencePolicy.interactionRefusalMessage)
+            }
             try self.requireExactWindowForTargetedAction(
                 element: element,
                 windowContext: detectionResult.metadata.windowContext,
@@ -546,6 +549,9 @@ public final class ClickService {
         guard let element = detectionResult.elements.findById(id) else {
             throw NotFoundError.element(id)
         }
+        guard !element.isOCRSemanticEvidence else {
+            throw PeekabooError.invalidInput(OCRSemanticEvidencePolicy.interactionRefusalMessage)
+        }
         try self.requireExactWindowForTargetedSynthesis(
             targetProcessIdentifier: destination.processIdentifier,
             targetWindowID: destination.windowID)
@@ -728,7 +734,7 @@ public final class ClickService {
         var bestMatch: DetectedElement?
         var bestScore = Int.min
 
-        for element in detectionResult.elements.all where element.isEnabled {
+        for element in detectionResult.elements.all where element.isEnabled && !element.isOCRSemanticEvidence {
             let label = element.label?.lowercased()
             let value = element.value?.lowercased()
             let identifier = element.attributes["identifier"]?.lowercased()

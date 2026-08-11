@@ -349,6 +349,7 @@ extension DesktopObservationServiceTests {
 
         XCTAssertEqual(automation.detectCalls, 1)
         XCTAssertEqual(ocr.recognizeCalls, 1)
+        XCTAssertEqual(ocr.qualities, [.fast])
         XCTAssertEqual(result.ocr?.observations.first?.text, "Document Title")
         XCTAssertEqual(result.elements?.elements.buttons.map(\.id), ["B1"])
         XCTAssertEqual(result.elements?.elements.other.first?.label, "Document Title")
@@ -1186,7 +1187,7 @@ private struct StableExactWindowMetadataProvider: ExactWindowMetadataProviding {
 }
 
 @MainActor
-private final class RecordingApplicationService: ApplicationServiceProtocol {
+final class RecordingApplicationService: ApplicationServiceProtocol {
     let applications: [ServiceApplicationInfo]
     let windows: [ServiceWindowInfo]
     var listApplicationsCalls = 0
@@ -1251,7 +1252,7 @@ private final class RecordingApplicationService: ApplicationServiceProtocol {
 }
 
 @MainActor
-private final class RecordingScreenCaptureService: ScreenCaptureServiceProtocol,
+final class RecordingScreenCaptureService: ScreenCaptureServiceProtocol,
 EngineAwareScreenCaptureServiceProtocol {
     enum Operation: Equatable {
         case screen(Int?, CaptureScalePreference, CaptureEnginePreference)
@@ -1343,25 +1344,36 @@ EngineAwareScreenCaptureServiceProtocol {
 }
 
 @MainActor
-private final class RecordingUIAutomationService: UIAutomationServiceProtocol {
+final class RecordingUIAutomationService: UIAutomationServiceProtocol {
     private let delay: TimeInterval
     private let ignoresCancellation: Bool
     private let elements: DetectedElements
+    private let result: ElementDetectionResult?
     private let detectionSuspension: ObservationDetectionSuspension?
     var detectCalls = 0
     var lastSnapshotID: String?
     var lastWindowContext: WindowContext?
 
-    init(
+    fileprivate init(
         delay: TimeInterval = 0,
         ignoresCancellation: Bool = false,
         elements: DetectedElements = DetectedElements(),
+        result: ElementDetectionResult? = nil,
         detectionSuspension: ObservationDetectionSuspension? = nil)
     {
         self.delay = delay
         self.ignoresCancellation = ignoresCancellation
         self.elements = elements
+        self.result = result
         self.detectionSuspension = detectionSuspension
+    }
+
+    init(fixedResult: ElementDetectionResult) {
+        self.delay = 0
+        self.ignoresCancellation = false
+        self.elements = fixedResult.elements
+        self.result = fixedResult
+        self.detectionSuspension = nil
     }
 
     func detectElements(
@@ -1384,6 +1396,9 @@ private final class RecordingUIAutomationService: UIAutomationServiceProtocol {
         self.detectCalls += 1
         self.lastSnapshotID = snapshotId
         self.lastWindowContext = windowContext
+        if let result = self.result {
+            return result
+        }
         return ElementDetectionResult(
             snapshotId: snapshotId ?? "generated",
             screenshotPath: "/tmp/fake.png",
@@ -1455,14 +1470,19 @@ private final class ObservationDetectionSuspension {
     }
 }
 
-private final class RecordingOCRRecognizer: OCRRecognizing, @unchecked Sendable {
+final class RecordingOCRRecognizer: OCRRecognizing, @unchecked Sendable {
     private let lock = NSLock()
     private let result: OCRTextResult
     var recognizeCalls = 0
     private var recordedTargetedRegions: [OCRRecognitionRegion] = []
+    private var recordedQualities: [OCRRecognitionQuality] = []
 
     var targetedRegions: [OCRRecognitionRegion] {
         self.lock.withLock { self.recordedTargetedRegions }
+    }
+
+    var qualities: [OCRRecognitionQuality] {
+        self.lock.withLock { self.recordedQualities }
     }
 
     init(result: OCRTextResult) {
@@ -1471,6 +1491,18 @@ private final class RecordingOCRRecognizer: OCRRecognizing, @unchecked Sendable 
 
     func recognizeText(in _: Data, timeoutSeconds _: TimeInterval) async throws -> OCRTextResult {
         self.lock.withLock { self.recognizeCalls += 1 }
+        return self.result
+    }
+
+    func recognizeText(
+        in _: Data,
+        timeoutSeconds _: TimeInterval,
+        quality: OCRRecognitionQuality) async throws -> OCRTextResult
+    {
+        self.lock.withLock {
+            self.recognizeCalls += 1
+            self.recordedQualities.append(quality)
+        }
         return self.result
     }
 

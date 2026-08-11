@@ -194,6 +194,9 @@ public struct ScrollTool: MCPTool {
             throw ScrollToolValidationError(
                 "Element '\(elementId)' not found in current snapshot. Run 'see' or 'inspect_ui' to update UI state.")
         }
+        guard !element.isOCRSemanticEvidence else {
+            throw ScrollToolValidationError(OCRSemanticEvidencePolicy.interactionRefusalMessage)
+        }
 
         let label = element.title ?? element.label ?? "untitled"
         let description = "on \(element.role): \(label)"

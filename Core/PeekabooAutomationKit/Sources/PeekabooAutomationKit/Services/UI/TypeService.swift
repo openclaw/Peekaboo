@@ -160,6 +160,9 @@ public final class TypeService {
                let detectionResult = try? await snapshotManager.getDetectionResult(snapshotId: snapshotId),
                let element = detectionResult.elements.findById(target)
             {
+                guard !element.isOCRSemanticEvidence else {
+                    throw PeekabooError.invalidInput(OCRSemanticEvidencePolicy.interactionRefusalMessage)
+                }
                 elementFound = true
                 elementFrame = element.bounds
                 elementId = element.id
@@ -422,6 +425,9 @@ public final class TypeService {
             if let element = detectionResult.elements.findById(target) ??
                 Self.resolveTargetElement(query: target, in: detectionResult)
             {
+                guard !element.isOCRSemanticEvidence else {
+                    throw PeekabooError.invalidInput(OCRSemanticEvidencePolicy.interactionRefusalMessage)
+                }
                 guard let resolved = self.automationElementResolver.resolve(
                     detectedElement: element,
                     windowContext: detectionResult.metadata.windowContext)

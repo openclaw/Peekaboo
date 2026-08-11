@@ -462,6 +462,66 @@ struct ActionInputDriverTests {
 
     @MainActor
     @Test
+    func `owner pinned element actions refuse OCR evidence before resolution or dispatch`() async throws {
+        let processIdentifier = getpid()
+        let processStartIdentity: UInt64 = 99
+        let bounds = CGRect(x: 100, y: 100, width: 800, height: 600)
+        let identity = WindowMutationIdentity(
+            windowID: 42,
+            ownerProcessIdentifier: processIdentifier,
+            ownerProcessStartIdentity: processStartIdentity,
+            capturedBounds: bounds)
+        let detected = DetectedElement(
+            id: "ocr_1",
+            type: .staticText,
+            label: "August",
+            bounds: CGRect(x: 120, y: 140, width: 100, height: 20),
+            attributes: [
+                "description": "ocr",
+                "confidence": "0.93",
+            ])
+        let detectionResult = ElementDetectionResult(
+            snapshotId: "snapshot",
+            screenshotPath: "/tmp/calendar.png",
+            elements: DetectedElements(other: [detected]),
+            metadata: DetectionMetadata(
+                detectionTime: 0.01,
+                elementCount: 1,
+                method: "AXorcist+OCR",
+                windowContext: WindowContext(
+                    applicationProcessId: processIdentifier,
+                    windowID: 42,
+                    windowBounds: bounds,
+                    windowMutationIdentity: identity)))
+        let service = UIAutomationService(
+            snapshotManager: InMemorySnapshotManager(detectionResult: detectionResult),
+            inputPolicy: UIInputPolicy(defaultStrategy: .actionOnly),
+            actionInputDriver: RecordingActionInputDriver(),
+            automationElementResolver: FixedActionAutomationElementResolver {
+                Issue.record("OCR action reached target resolution")
+            },
+            exactWindowIdentityValidator: { actual, actualBounds in
+                actual == identity && actualBounds == bounds
+            },
+            processStartIdentityProvider: { _ in processStartIdentity })
+
+        for operation in [
+            { try await service.performAction(target: "ocr_1", actionName: "AXPress", snapshotId: "snapshot") },
+            { try await service.setValue(target: "ocr_1", value: .string("unsafe"), snapshotId: "snapshot") },
+        ] {
+            do {
+                _ = try await operation()
+                Issue.record("Expected OCR semantic evidence refusal")
+            } catch let PeekabooError.invalidInput(message) {
+                #expect(message.contains("semantic evidence"))
+            } catch {
+                Issue.record("Unexpected error: \(error)")
+            }
+        }
+    }
+
+    @MainActor
+    @Test
     func `exact snapshot element mutations wait only for their process observation frame`() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("peekaboo-element-mutation-process-lane-\(UUID().uuidString)", isDirectory: true)

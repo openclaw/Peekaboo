@@ -26,6 +26,9 @@ struct SeeElementTextFormatter {
         if let identifier = element.identifier, !identifier.isEmpty {
             parts.append("identifier: \(identifier)")
         }
+        if let confidence = element.confidence {
+            parts.append(String(format: "confidence: %.0f%%", confidence * 100))
+        }
         if let isValueSettable = element.isValueSettable {
             parts.append(isValueSettable ? "[value settable]" : "[value read-only]")
         }
