@@ -121,6 +121,9 @@ verify_binary_artifact() {
     if printf '%s\n' "$version_output" | grep -Fq -- '-dirty'; then
         fail "$label was built from a dirty tree: $version_output"
     fi
+    if printf '%s\n' "$version_output" | grep -Fq 'unknown'; then
+        fail "$label has incomplete version provenance: $version_output"
+    fi
 }
 
 notarize_cli_binary() {
