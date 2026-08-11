@@ -395,6 +395,51 @@ extension MCPToolExecutionTests {
     }
 
     @Test
+    func `Click tool rejects snapshot PID without capture generation`() async throws {
+        await UISnapshotManager.shared.removeAllSnapshots()
+        let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
+        let applications = await MainActor.run {
+            MockApplicationService(applications: [ServiceApplicationInfo(
+                processIdentifier: 223,
+                processStartIdentity: 23,
+                bundleIdentifier: "com.example.snapshot",
+                name: "SnapshotApp")])
+        }
+        let context = await MCPToolTestHelpers.makeContext(
+            automation: automation,
+            applications: applications)
+        let snapshot = await UISnapshotManager.shared.createSnapshot()
+        let snapshotId = await snapshot.id
+        await snapshot.setTargetMetadata(from: WindowContext(
+            applicationName: "SnapshotApp",
+            applicationProcessId: 223,
+            windowTitle: "Document"))
+        await snapshot.setUIElements([
+            UIElement(
+                id: "B1",
+                elementId: "B1",
+                role: "button",
+                title: "OK",
+                label: "OK",
+                value: nil,
+                description: nil,
+                help: nil,
+                roleDescription: "button",
+                identifier: nil,
+                frame: CGRect(x: 10, y: 20, width: 80, height: 30),
+                isActionable: true),
+        ])
+
+        let response = try await ClickTool(context: context).execute(arguments: ToolArguments(raw: [
+            "on": "B1",
+            "snapshot": snapshotId,
+        ]))
+
+        #expect(response.isError)
+        #expect(await MainActor.run { automation.targetedClickCalls.isEmpty })
+    }
+
+    @Test
     func `Click tool reports routed background double click as unverifiable`() async throws {
         let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
         let context = await MCPToolTestHelpers.makeContext(automation: automation)

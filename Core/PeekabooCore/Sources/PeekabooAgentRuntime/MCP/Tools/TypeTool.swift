@@ -329,26 +329,16 @@ public struct TypeTool: MCPTool {
         guard let snapshot, let processIdentifier = snapshot.applicationProcessId, processIdentifier > 0 else {
             return nil
         }
+        if let windowIdentity = snapshot.windowMutationIdentity,
+           windowIdentity.ownerProcessIdentifier != processIdentifier
+        {
+            throw TypeToolValidationError("The selected snapshot has inconsistent process metadata.")
+        }
         if let identity = snapshot.applicationProcessIdentity {
             return identity
         }
-        if let windowIdentity = snapshot.windowMutationIdentity {
-            guard windowIdentity.ownerProcessIdentifier == processIdentifier else {
-                throw TypeToolValidationError("The selected snapshot has inconsistent process metadata.")
-            }
-            return ApplicationProcessIdentity(
-                processIdentifier: processIdentifier,
-                processStartIdentity: windowIdentity.ownerProcessStartIdentity)
-        }
-        let application = try await self.context.applications.findApplication(identifier: "PID:\(processIdentifier)")
-        guard application.processIdentifier == processIdentifier else {
-            throw TypeToolValidationError("The snapshot target process is no longer running.")
-        }
-        guard let identity = application.processIdentity else {
-            throw TypeToolValidationError(
-                "The runtime host could not pin the snapshot target to a process generation. Update the host.")
-        }
-        return identity
+        throw TypeToolValidationError(
+            "The selected snapshot has no capture-time process-generation receipt. Capture fresh UI state.")
     }
 
     @MainActor

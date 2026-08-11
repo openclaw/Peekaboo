@@ -1,8 +1,96 @@
+import CoreGraphics
 import PeekabooAutomationKit
+import PeekabooFoundation
 import Testing
 @testable import PeekabooAgentRuntime
 
 struct UISnapshotStoreConcurrencyTests {
+    @Test
+    func `same process detection metadata preserves capture generation receipt`() async {
+        let snapshot = UISnapshot()
+        await snapshot.setScreenshot(
+            path: "/tmp/screenshot.png",
+            metadata: CaptureMetadata(
+                size: CGSize(width: 200, height: 100),
+                mode: .window,
+                applicationInfo: ServiceApplicationInfo(
+                    processIdentifier: 901,
+                    processStartIdentity: 91,
+                    bundleIdentifier: "com.example.editor",
+                    name: "Editor")))
+
+        await snapshot.setTargetMetadata(from: WindowContext(
+            applicationName: "Editor",
+            applicationProcessId: 901,
+            windowTitle: "Document"))
+
+        #expect(snapshot.applicationProcessIdentity == ApplicationProcessIdentity(
+            processIdentifier: 901,
+            processStartIdentity: 91))
+    }
+
+    @Test
+    func `conflicting detection generation permanently invalidates snapshot receipt`() async {
+        let snapshot = UISnapshot()
+        await snapshot.setScreenshot(
+            path: "/tmp/screenshot.png",
+            metadata: CaptureMetadata(
+                size: CGSize(width: 200, height: 100),
+                mode: .window,
+                applicationInfo: ServiceApplicationInfo(
+                    processIdentifier: 902,
+                    processStartIdentity: 92,
+                    bundleIdentifier: "com.example.editor",
+                    name: "Editor")))
+        let conflictingContext = WindowContext(
+            applicationName: "Editor",
+            applicationProcessId: 902,
+            windowTitle: "Document",
+            windowID: 42,
+            windowBounds: CGRect(x: 10, y: 20, width: 200, height: 100),
+            windowMutationIdentity: WindowMutationIdentity(
+                windowID: 42,
+                ownerProcessIdentifier: 902,
+                ownerProcessStartIdentity: 93))
+
+        await snapshot.setTargetMetadata(from: conflictingContext)
+        #expect(snapshot.applicationProcessIdentity == nil)
+        #expect(snapshot.windowMutationIdentity == nil)
+
+        await snapshot.setTargetMetadata(from: conflictingContext)
+        #expect(snapshot.applicationProcessIdentity == nil)
+        #expect(snapshot.windowMutationIdentity == nil)
+    }
+
+    @Test
+    func `conflicting detection process invalidates captured receipt`() async {
+        let snapshot = UISnapshot()
+        await snapshot.setScreenshot(
+            path: "/tmp/screenshot.png",
+            metadata: CaptureMetadata(
+                size: CGSize(width: 200, height: 100),
+                mode: .window,
+                applicationInfo: ServiceApplicationInfo(
+                    processIdentifier: 903,
+                    processStartIdentity: 93,
+                    bundleIdentifier: "com.example.editor",
+                    name: "Editor")))
+
+        await snapshot.setTargetMetadata(from: WindowContext(
+            applicationName: "Other",
+            applicationProcessId: 904,
+            windowTitle: "Other Document",
+            windowID: 43,
+            windowBounds: CGRect(x: 10, y: 20, width: 200, height: 100),
+            windowMutationIdentity: WindowMutationIdentity(
+                windowID: 43,
+                ownerProcessIdentifier: 904,
+                ownerProcessStartIdentity: 94)))
+
+        #expect(snapshot.applicationProcessIdentity == nil)
+        #expect(snapshot.windowMutationIdentity == nil)
+    }
+
     @Test
     func `target cache supports concurrent production reads and writes`() async {
         let contexts = [

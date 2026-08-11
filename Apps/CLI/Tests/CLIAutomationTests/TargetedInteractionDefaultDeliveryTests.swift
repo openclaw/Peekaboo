@@ -35,6 +35,7 @@ struct TargetedInteractionDefaultDeliveryTests {
     func `no auto focus does not downgrade targeted keyboard delivery to global input`() async throws {
         let app = ServiceApplicationInfo(
             processIdentifier: 2468,
+            processStartIdentity: 7,
             bundleIdentifier: "com.apple.TextEdit",
             name: "TextEdit"
         )
@@ -140,7 +141,102 @@ struct TargetedInteractionDefaultDeliveryTests {
     }
 
     @Test
-    func `snapshot process metadata keeps keyboard delivery pid routed without an element`() async throws {
+    func `snapshot process receipt keeps keyboard delivery pid routed without an element`() async throws {
+        let app = ServiceApplicationInfo(
+            processIdentifier: 2468,
+            processStartIdentity: 7,
+            bundleIdentifier: "com.apple.TextEdit",
+            name: "TextEdit")
+        let context = TestServicesFactory.makeAutomationTestContext(
+            applications: StubApplicationService(applications: [app]))
+        let snapshotId = try await context.snapshots.createSnapshot()
+        let identity = WindowMutationIdentity(
+            windowID: 42,
+            ownerProcessIdentifier: 2468,
+            ownerProcessStartIdentity: 7)
+        try await context.snapshots.storeDetectionResult(
+            snapshotId: snapshotId,
+            result: ElementDetectionResult(
+                snapshotId: snapshotId,
+                screenshotPath: "/tmp/screenshot.png",
+                elements: DetectedElements(),
+                metadata: DetectionMetadata(
+                    detectionTime: 0,
+                    elementCount: 0,
+                    method: "stub",
+                    windowContext: WindowContext(
+                        applicationName: "TextEdit",
+                        applicationBundleId: "com.apple.TextEdit",
+                        applicationProcessId: 2468,
+                        windowID: identity.windowID,
+                        windowMutationIdentity: identity
+                    )
+                )
+            )
+        )
+
+        for arguments in [
+            ["type", "hello", "--snapshot", snapshotId, "--no-auto-focus"],
+            ["press", "return", "--snapshot", snapshotId, "--no-auto-focus"],
+        ] {
+            let result = try await InProcessCommandRunner.run(
+                arguments + ["--no-remote"],
+                services: context.services
+            )
+            #expect(result.exitStatus == 0, "Expected snapshot-targeted input to succeed: \(arguments)")
+        }
+
+        #expect(context.automation.targetedTypeActionsCalls.count == 1)
+        #expect(context.automation.targetedTypeActionsCalls.allSatisfy { $0.targetProcessIdentifier == 2468 })
+        #expect(context.automation.targetedHotkeyCalls.count == 1)
+        #expect(context.automation.targetedHotkeyCalls.first?.targetProcessIdentifier == 2468)
+        #expect(context.automation.hotkeyCalls.isEmpty)
+    }
+
+    @Test
+    func `explicit app cannot override stale snapshot generation`() async throws {
+        let app = ServiceApplicationInfo(
+            processIdentifier: 2468,
+            processStartIdentity: 8,
+            bundleIdentifier: "com.apple.TextEdit",
+            name: "TextEdit")
+        let context = TestServicesFactory.makeAutomationTestContext(
+            applications: StubApplicationService(applications: [app]))
+        let snapshotId = try await context.snapshots.createSnapshot()
+        try await context.snapshots.storeDetectionResult(
+            snapshotId: snapshotId,
+            result: ElementDetectionResult(
+                snapshotId: snapshotId,
+                screenshotPath: "/tmp/screenshot.png",
+                elements: DetectedElements(),
+                metadata: DetectionMetadata(
+                    detectionTime: 0,
+                    elementCount: 0,
+                    method: "stub",
+                    windowContext: WindowContext(
+                        applicationName: "TextEdit",
+                        applicationBundleId: "com.apple.TextEdit",
+                        applicationProcessId: 2468,
+                        windowID: 42,
+                        windowMutationIdentity: WindowMutationIdentity(
+                            windowID: 42,
+                            ownerProcessIdentifier: 2468,
+                            ownerProcessStartIdentity: 7)))))
+
+        let result = try await InProcessCommandRunner.run(
+            [
+                "type", "hello", "--app", "TextEdit", "--snapshot", snapshotId,
+                "--no-auto-focus", "--no-remote",
+            ],
+            services: context.services)
+
+        #expect(result.exitStatus != 0)
+        #expect(result.combinedOutput.contains("changed process generation"))
+        #expect(context.automation.targetedTypeActionsCalls.isEmpty)
+    }
+
+    @Test
+    func `snapshot PID without generation receipt never reaches keyboard delivery`() async throws {
         let context = TestServicesFactory.makeAutomationTestContext()
         let snapshotId = try await context.snapshots.createSnapshot()
         try await context.snapshots.storeDetectionResult(
@@ -170,13 +266,13 @@ struct TargetedInteractionDefaultDeliveryTests {
                 arguments + ["--no-remote"],
                 services: context.services
             )
-            #expect(result.exitStatus == 0, "Expected snapshot-targeted input to succeed: \(arguments)")
+            #expect(result.exitStatus != 0)
+            #expect(result.combinedOutput.contains("no capture-time process-generation receipt"))
         }
 
-        #expect(context.automation.targetedTypeActionsCalls.count == 1)
-        #expect(context.automation.targetedTypeActionsCalls.allSatisfy { $0.targetProcessIdentifier == 2468 })
-        #expect(context.automation.targetedHotkeyCalls.count == 1)
-        #expect(context.automation.targetedHotkeyCalls.first?.targetProcessIdentifier == 2468)
+        #expect(context.automation.targetedTypeActionsCalls.isEmpty)
+        #expect(context.automation.targetedHotkeyCalls.isEmpty)
+        #expect(context.automation.typeActionsCalls.isEmpty)
         #expect(context.automation.hotkeyCalls.isEmpty)
     }
 
@@ -209,6 +305,7 @@ struct TargetedInteractionDefaultDeliveryTests {
     func `targeted interaction commands default to background delivery`() async throws {
         let app = ServiceApplicationInfo(
             processIdentifier: 2468,
+            processStartIdentity: 7,
             bundleIdentifier: "com.apple.TextEdit",
             name: "TextEdit"
         )

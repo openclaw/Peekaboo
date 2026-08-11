@@ -226,7 +226,7 @@ struct ClickCommandTests {
             label: "Save",
             bounds: CGRect(x: 20, y: 30, width: 80, height: 30)
         )
-        let snapshotId = try await storeSnapshot(element: element, in: context.snapshots)
+        let snapshotId = try await storeSnapshot(element: element, windowID: 42, in: context.snapshots)
 
         let result = try await InProcessCommandRunner.run(
             ["click", "--on", "B1", "--snapshot", snapshotId, "--json"],
@@ -283,6 +283,31 @@ struct ClickCommandTests {
     }
 
     @Test
+    func `Background element click rejects snapshot PID without capture generation`() async throws {
+        let context = await self.makeContext()
+        let snapshotId = try await self.storeSnapshot(
+            element: DetectedElement(
+                id: "B1",
+                type: .button,
+                label: "Save",
+                bounds: CGRect(x: 20, y: 30, width: 80, height: 30)
+            ),
+            windowID: 42,
+            includeMutationIdentity: false,
+            in: context.snapshots
+        )
+
+        let result = try await InProcessCommandRunner.run(
+            ["click", "--on", "B1", "--snapshot", snapshotId, "--json"],
+            services: context.services
+        )
+
+        #expect(result.exitStatus != 0)
+        #expect(result.combinedOutput.contains("no capture-time process-generation receipt"))
+        #expect(await self.automationState(context) { $0.targetedClickCalls.isEmpty })
+    }
+
+    @Test
     func `Click command default query click resolves cached snapshot without waiting`() async throws {
         let context = await makeContext()
         let element = DetectedElement(
@@ -291,7 +316,7 @@ struct ClickCommandTests {
             label: "Save",
             bounds: CGRect(x: 20, y: 30, width: 80, height: 30)
         )
-        let snapshotId = try await storeSnapshot(element: element, in: context.snapshots)
+        let snapshotId = try await storeSnapshot(element: element, windowID: 42, in: context.snapshots)
 
         let result = try await InProcessCommandRunner.run(
             ["click", "Save", "--snapshot", snapshotId, "--json"],
@@ -525,7 +550,7 @@ struct ClickCommandTests {
             label: "Close",
             bounds: CGRect(x: 20, y: 30, width: 80, height: 30)
         )
-        let snapshotId = try await storeSnapshot(element: element, in: context.snapshots)
+        let snapshotId = try await storeSnapshot(element: element, windowID: 42, in: context.snapshots)
         context.snapshots.uiAutomationSnapshotError = .snapshotStale("target changed after click")
 
         let result = try await InProcessCommandRunner.run(
@@ -586,7 +611,7 @@ struct ClickCommandTests {
             label: "Save",
             bounds: CGRect(x: 20, y: 30, width: 80, height: 30)
         )
-        let snapshotId = try await storeSnapshot(element: element, in: context.snapshots)
+        let snapshotId = try await storeSnapshot(element: element, windowID: 42, in: context.snapshots)
         let result = try await InProcessCommandRunner.run(
             ["click", "Save", "--app", application.name, "--json"],
             services: context.services

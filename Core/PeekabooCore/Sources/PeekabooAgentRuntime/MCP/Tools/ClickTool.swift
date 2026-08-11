@@ -315,24 +315,31 @@ public struct ClickTool: MCPTool {
             selectedProcessIdentifier = resolution.targetProcessIdentifier
         }
         guard let selectedProcessIdentifier else { return nil }
-        let capturedIdentity: ApplicationProcessIdentity? = if let capturedWindowIdentity =
-            resolution.expectedWindowIdentity
-        {
-            ApplicationProcessIdentity(
+        if let capturedWindowIdentity = resolution.expectedWindowIdentity {
+            let capturedIdentity = ApplicationProcessIdentity(
                 processIdentifier: capturedWindowIdentity.ownerProcessIdentifier,
                 processStartIdentity: capturedWindowIdentity.ownerProcessStartIdentity)
-        } else if let snapshotId = resolution.snapshotId,
-                  let snapshot = await self.getSnapshot(id: snapshotId)
-        {
-            snapshot.applicationProcessIdentity
-        } else {
-            nil
-        }
-        if let capturedIdentity {
             guard capturedIdentity.processIdentifier == selectedProcessIdentifier else {
                 throw ClickToolError(
                     "The click snapshot belongs to PID \(capturedIdentity.processIdentifier), not " +
                         "PID \(selectedProcessIdentifier). Run see again before clicking.")
+            }
+            return capturedIdentity
+        }
+        if let snapshotId = resolution.snapshotId {
+            guard let snapshot = await self.getSnapshot(id: snapshotId) else {
+                throw ClickToolError("The click snapshot is unavailable. Run see again before clicking.")
+            }
+            if let snapshotProcessIdentifier = snapshot.applicationProcessId,
+               snapshotProcessIdentifier != selectedProcessIdentifier
+            {
+                throw ClickToolError(
+                    "The click snapshot belongs to PID \(snapshotProcessIdentifier), not " +
+                        "PID \(selectedProcessIdentifier). Run see again before clicking.")
+            }
+            guard let capturedIdentity = snapshot.applicationProcessIdentity else {
+                throw ClickToolError(
+                    "The click snapshot has no capture-time process-generation receipt. Run see again before clicking.")
             }
             return capturedIdentity
         }

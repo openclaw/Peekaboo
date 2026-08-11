@@ -972,6 +972,7 @@ extension ClickCommand {
     -> ApplicationProcessIdentity? {
         guard let snapshotId else { return nil }
         var snapshotProcessIdentifier: Int32?
+        var snapshotProcessIdentity: ApplicationProcessIdentity?
         if let snapshot = try? await self.services.snapshots.getUIAutomationSnapshot(snapshotId: snapshotId),
            let processIdentifier = snapshot.applicationProcessId {
             snapshotProcessIdentifier = processIdentifier
@@ -979,7 +980,7 @@ extension ClickCommand {
                 guard identity.ownerProcessIdentifier == processIdentifier else {
                     throw ValidationError("Snapshot '\(snapshotId)' has inconsistent process metadata.")
                 }
-                return ApplicationProcessIdentity(
+                snapshotProcessIdentity = ApplicationProcessIdentity(
                     processIdentifier: identity.ownerProcessIdentifier,
                     processStartIdentity: identity.ownerProcessStartIdentity
                 )
@@ -996,14 +997,28 @@ extension ClickCommand {
                 guard identity.ownerProcessIdentifier == processIdentifier else {
                     throw ValidationError("Snapshot '\(snapshotId)' has inconsistent process metadata.")
                 }
-                return ApplicationProcessIdentity(
+                let detectionIdentity = ApplicationProcessIdentity(
                     processIdentifier: identity.ownerProcessIdentifier,
                     processStartIdentity: identity.ownerProcessStartIdentity
                 )
+                if let existingIdentity = snapshotProcessIdentity, existingIdentity != detectionIdentity {
+                    throw ValidationError("Snapshot '\(snapshotId)' has inconsistent process metadata.")
+                }
+                snapshotProcessIdentity = detectionIdentity
             }
         }
-        guard let snapshotProcessIdentifier else { return nil }
-        return try await self.currentProcessIdentity(identifier: "PID:\(snapshotProcessIdentifier)")
+        guard snapshotProcessIdentifier != nil else {
+            throw ValidationError(
+                "Snapshot '\(snapshotId)' does not identify a target process. Run see again before clicking."
+            )
+        }
+        guard let snapshotProcessIdentity else {
+            throw ValidationError(
+                "Snapshot '\(snapshotId)' has no capture-time process-generation receipt. " +
+                    "Run see again before clicking."
+            )
+        }
+        return snapshotProcessIdentity
     }
 
     private func currentProcessIdentity(identifier: String) async throws -> ApplicationProcessIdentity {

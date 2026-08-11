@@ -14,26 +14,44 @@ enum KeyboardDeliverySupport {
         snapshotId: String?,
         services: any PeekabooServiceProviding
     ) async throws -> ApplicationProcessIdentity {
-        switch try await self.resolveBackgroundProcess(
+        let resolved = try await self.resolveBackgroundProcess(
             target: target,
             snapshotId: snapshotId,
             services: services
-        ) {
+        )
+        let selectedIdentity: ApplicationProcessIdentity
+        switch resolved {
         case let .pid(processIdentifier):
-            try await self.requireCurrentProcessIdentity(
+            selectedIdentity = try await self.requireCurrentProcessIdentity(
                 processIdentifier: processIdentifier,
                 services: services
             )
         case let .application(app, description):
-            try self.requireProcessIdentity(app, targetDescription: description)
+            selectedIdentity = try self.requireProcessIdentity(app, targetDescription: description)
         case let .snapshot(processIdentifier, capturedWindowIdentity, snapshotId):
-            try await self.requireSnapshotProcessIdentity(
+            return try await self.requireSnapshotProcessIdentity(
                 processIdentifier: processIdentifier,
                 capturedWindowIdentity: capturedWindowIdentity,
                 snapshotId: snapshotId,
                 services: services
             )
         }
+
+        if let snapshotId {
+            let snapshot = try await self.resolveSnapshotProcess(snapshotId: snapshotId, services: services)
+            let snapshotIdentity = try await self.requireSnapshotProcessIdentity(
+                processIdentifier: snapshot.processIdentifier,
+                capturedWindowIdentity: snapshot.windowIdentity,
+                snapshotId: snapshotId,
+                services: services
+            )
+            guard snapshotIdentity == selectedIdentity else {
+                throw ValidationError(
+                    "The selected snapshot belongs to a different process generation. Capture fresh UI state."
+                )
+            }
+        }
+        return selectedIdentity
     }
 
     static func requireBackgroundProcessIdentifier(
@@ -76,32 +94,12 @@ enum KeyboardDeliverySupport {
             return .application(app, description: "--app '\(appIdentifier)'")
         }
 
-        if let snapshotId,
-           let snapshot = try await services.snapshots.getUIAutomationSnapshot(snapshotId: snapshotId),
-           let processIdentifier = snapshot.applicationProcessId,
-           processIdentifier > 0 {
+        if let snapshotId {
+            let snapshot = try await self.resolveSnapshotProcess(snapshotId: snapshotId, services: services)
             return .snapshot(
-                processIdentifier,
-                capturedWindowIdentity: snapshot.windowMutationIdentity,
+                snapshot.processIdentifier,
+                capturedWindowIdentity: snapshot.windowIdentity,
                 snapshotId: snapshotId
-            )
-        }
-
-        if let snapshotId,
-           let detectionResult = try await services.snapshots.getDetectionResult(snapshotId: snapshotId),
-           let processIdentifier = detectionResult.metadata.windowContext?.applicationProcessId,
-           processIdentifier > 0 {
-            return .snapshot(
-                processIdentifier,
-                capturedWindowIdentity: detectionResult.metadata.windowContext?.windowMutationIdentity,
-                snapshotId: snapshotId
-            )
-        }
-
-        if snapshotId != nil {
-            throw ValidationError(
-                "The selected snapshot does not identify a target process. " +
-                    "Capture a window/app snapshot or add --foreground for intentional global input."
             )
         }
 
@@ -114,7 +112,7 @@ enum KeyboardDeliverySupport {
     private enum ResolvedBackgroundProcess {
         case pid(Int32)
         case application(ServiceApplicationInfo, description: String)
-        case snapshot(Int32, capturedWindowIdentity: WindowMutationIdentity?, snapshotId: String)
+        case snapshot(Int32, capturedWindowIdentity: WindowMutationIdentity, snapshotId: String)
 
         var processIdentifier: Int32 {
             switch self {
@@ -124,6 +122,11 @@ enum KeyboardDeliverySupport {
                 app.processIdentifier
             }
         }
+    }
+
+    private struct ResolvedSnapshotProcess {
+        let processIdentifier: Int32
+        let windowIdentity: WindowMutationIdentity
     }
 
     static func validateForegroundFlags(
@@ -142,7 +145,7 @@ enum KeyboardDeliverySupport {
 
     private static func requireSnapshotProcessIdentity(
         processIdentifier: Int32,
-        capturedWindowIdentity: WindowMutationIdentity?,
+        capturedWindowIdentity: WindowMutationIdentity,
         snapshotId: String,
         services: any PeekabooServiceProviding
     ) async throws -> ApplicationProcessIdentity {
@@ -150,8 +153,6 @@ enum KeyboardDeliverySupport {
             processIdentifier: processIdentifier,
             services: services
         )
-        guard let capturedWindowIdentity else { return currentIdentity }
-
         let capturedIdentity = ApplicationProcessIdentity(
             processIdentifier: capturedWindowIdentity.ownerProcessIdentifier,
             processStartIdentity: capturedWindowIdentity.ownerProcessStartIdentity
@@ -164,6 +165,63 @@ enum KeyboardDeliverySupport {
             )
         }
         return capturedIdentity
+    }
+
+    private static func resolveSnapshotProcess(
+        snapshotId: String,
+        services: any PeekabooServiceProviding
+    ) async throws -> ResolvedSnapshotProcess {
+        var capturedProcessIdentifier: Int32?
+        var capturedWindowIdentity: WindowMutationIdentity?
+
+        if let snapshot = try await services.snapshots.getUIAutomationSnapshot(snapshotId: snapshotId),
+           let processIdentifier = snapshot.applicationProcessId,
+           processIdentifier > 0
+        {
+            capturedProcessIdentifier = processIdentifier
+            if let identity = snapshot.windowMutationIdentity {
+                guard identity.ownerProcessIdentifier == processIdentifier else {
+                    throw ValidationError("Snapshot '\(snapshotId)' has inconsistent process metadata.")
+                }
+                capturedWindowIdentity = identity
+            }
+        }
+
+        if let detectionResult = try await services.snapshots.getDetectionResult(snapshotId: snapshotId),
+           let context = detectionResult.metadata.windowContext,
+           let processIdentifier = context.applicationProcessId,
+           processIdentifier > 0
+        {
+            if let capturedProcessIdentifier, capturedProcessIdentifier != processIdentifier {
+                throw ValidationError("Snapshot '\(snapshotId)' has inconsistent process metadata.")
+            }
+            capturedProcessIdentifier = processIdentifier
+            if let identity = context.windowMutationIdentity {
+                guard identity.ownerProcessIdentifier == processIdentifier else {
+                    throw ValidationError("Snapshot '\(snapshotId)' has inconsistent process metadata.")
+                }
+                if let existingIdentity = capturedWindowIdentity, existingIdentity != identity {
+                    throw ValidationError("Snapshot '\(snapshotId)' has inconsistent process metadata.")
+                }
+                capturedWindowIdentity = identity
+            }
+        }
+
+        guard let capturedProcessIdentifier else {
+            throw ValidationError(
+                "The selected snapshot does not identify a target process. " +
+                    "Capture a window/app snapshot or add --foreground for intentional global input."
+            )
+        }
+        guard let capturedWindowIdentity else {
+            throw ValidationError(
+                "The selected snapshot has no capture-time process-generation receipt. Capture fresh UI state."
+            )
+        }
+        return ResolvedSnapshotProcess(
+            processIdentifier: capturedProcessIdentifier,
+            windowIdentity: capturedWindowIdentity
+        )
     }
 
     private static func requireCurrentProcessIdentity(

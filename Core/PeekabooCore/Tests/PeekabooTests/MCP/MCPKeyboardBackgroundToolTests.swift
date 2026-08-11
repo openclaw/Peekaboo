@@ -185,6 +185,37 @@ struct MCPKeyboardBackgroundToolTests {
     }
 
     @Test
+    func `Snapshot PID without capture generation fails instead of targeting reused process`() async throws {
+        await UISnapshotManager.shared.removeAllSnapshots()
+        let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
+        let applications = await MainActor.run {
+            MockApplicationService(applications: [ServiceApplicationInfo(
+                processIdentifier: 445,
+                processStartIdentity: 45,
+                bundleIdentifier: "com.example.snapshot",
+                name: "SnapshotApp")])
+        }
+        let context = await MCPToolTestHelpers.makeContext(
+            automation: automation,
+            applications: applications)
+        let snapshot = await UISnapshotManager.shared.createSnapshot()
+        let snapshotId = await snapshot.id
+        await snapshot.setTargetMetadata(from: WindowContext(
+            applicationName: "SnapshotApp",
+            applicationProcessId: 445,
+            windowTitle: "Document"))
+
+        let response = try await TypeTool(context: context).execute(arguments: ToolArguments(raw: [
+            "snapshot": snapshotId,
+            "text": "hello",
+        ]))
+
+        #expect(response.isError)
+        #expect(await MainActor.run { automation.lastTypeActions } == nil)
+        #expect(await MainActor.run { automation.targetedTypeActionsCalls.isEmpty })
+    }
+
+    @Test
     func `Background keyboard tools reject window selectors instead of collapsing to pid`() async throws {
         let app = ServiceApplicationInfo(
             processIdentifier: 333,
