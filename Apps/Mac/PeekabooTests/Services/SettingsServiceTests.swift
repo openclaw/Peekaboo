@@ -148,7 +148,6 @@ struct PeekabooSettingsTests {
             }
         }
     }
-
 }
 
 @Suite(.tags(.services, .integration), .serialized)
