@@ -370,8 +370,11 @@ invariant_results() {
     jq -cn \
         --argjson expected "$CERTIFICATION_INVARIANTS_JSON" \
         --argjson observed "$observed_invariants" '
-        reduce (($expected + $observed) | unique[]) as $name
-            ({}; .[$name] = (($observed | index($name)) == null))
+        (($expected + $observed) | unique) |
+        map(. as $name | {
+            name: $name,
+            passed: (($observed | index($name)) == null)
+        })
     '
 }
 
@@ -478,9 +481,9 @@ if $SELF_TEST_ONLY; then
     INVARIANT_RESULTS_SELF_TEST="$(invariant_results "$INVARIANT_SELF_TEST")"
     if ! jq -e \
         --argjson catalog "$CERTIFICATION_INVARIANTS_JSON" '
-        .physical_cursor == false and
-        ([keys[] as $key | select(($catalog | index($key)) == null)] | length) == 0 and
-        ([.[] | select(. == false)] | length) == 1
+        ([.[] | select(.name == "physical_cursor" and .passed == false)] | length) == 1 and
+        all(.[]; .name as $name | ($catalog | index($name)) != null) and
+        ([.[] | select(.passed == false)] | length) == 1
     ' <<< "$INVARIANT_RESULTS_SELF_TEST" >/dev/null; then
         echo "Catalog-projected invariant result self-test failed." >&2
         exit 1
@@ -1370,7 +1373,7 @@ run_checked_case() {
             .evidence.monitor_liveness == true and
             .evidence.desktop_restored == true and
             .evidence.clipboard_policy == true and
-            all(.invariants[]; . == true) and
+            all(.invariants[]; .passed == true) and
             all(.oracles[]; . == true)
         ' "$case_dir/summary.json" >/dev/null; then
             contamination_only=false

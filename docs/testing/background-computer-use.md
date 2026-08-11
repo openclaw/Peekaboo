@@ -58,7 +58,8 @@ directories must be new or empty so a rerun cannot reuse old summaries, images, 
 The 34 required CLI cases are source-controlled in `scripts/background-computer-use-catalog.json`. Each row declares
 its exit contract and, where applicable, its effect, delivery, refusal code, allowed outcome tuples, and named checks.
 The catalog is the canonical list of monitored invariant families and projects their names into the native probe,
-harness summaries, synthetic fixtures, and reporter. The harness writes one exact named result map per case and
+harness summaries, synthetic fixtures, and reporter. The harness writes one exact array of closed `{name, passed}`
+results per case, preserving duplicate names so the reporter can reject them after ordinary JSON parsing. The reporter
 `scripts/validate-background-computer-use-report.mjs` rejects missing, duplicate, or unknown rows; surface, command, or
 phase drift; wrong refusal codes; disallowed conditional outcomes; effect or delivery drift; absent declared
 readback/log/artifact evidence; monitor failure; and every missing, unknown, or violated catalog invariant. A legacy
@@ -95,7 +96,7 @@ scripts/test-background-computer-use.sh --self-test
 That self-test also validates a complete synthetic certification report. The reporter's fail-closed corruptions run in
 the normal safe gate or directly with `pnpm run test:background-certification`; they cover deleted, duplicate, unknown,
 wrong-refusal, missing-evidence, disallowed conditional-outcome, effect/delivery-drift, catalog invariant corruption,
-legacy aggregate counts, and invariant-canary reports.
+duplicate/missing/unknown/violated invariant results, legacy object/aggregate shapes, and invariant-canary reports.
 
 Use `--bin`, `--artifacts`, `--sentinel-bundle-id`, or `--playground-app ... --skip-playground-build` to select an exact
 binary, require an already-frontmost app, or use a prebuilt signed fixture. The harness refuses rather than activating a

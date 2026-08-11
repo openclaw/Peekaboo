@@ -25,6 +25,12 @@ function caseById(report, id) {
   return entry;
 }
 
+function invariantByName(caseResult, name) {
+  const entry = caseResult.invariants.find((candidate) => candidate.name === name);
+  assert.ok(entry, `Missing test fixture invariant ${name}`);
+  return entry;
+}
+
 test("passing report covers the complete 34-case catalog", () => {
   const report = makePassingReport(catalog);
   const result = validateCertification(catalog, report);
@@ -156,7 +162,7 @@ test("effect and delivery drift are rejected", () => {
 test("probe canary and invariant violations are unsuppressible", () => {
   const report = makePassingReport(catalog);
   report.probe_canary = false;
-  caseById(report, "type-text").invariants.physical_cursor = false;
+  invariantByName(caseById(report, "type-text"), "physical_cursor").passed = false;
 
   const result = validateCertification(catalog, report);
 
@@ -195,9 +201,9 @@ test("catalog contamination retry policy is explicitly boolean", () => {
 test("missing unknown and violated invariant results fail closed", () => {
   const report = makePassingReport(catalog);
   const typeCase = caseById(report, "type-text");
-  delete typeCase.invariants.frontmost_window;
-  typeCase.invariants.physical_cursor = false;
-  typeCase.invariants.not_cataloged = true;
+  typeCase.invariants = typeCase.invariants.filter((entry) => entry.name !== "frontmost_window");
+  invariantByName(typeCase, "physical_cursor").passed = false;
+  typeCase.invariants.push({ name: "not_cataloged", passed: true });
 
   const result = validateCertification(catalog, report);
 
@@ -207,10 +213,42 @@ test("missing unknown and violated invariant results fail closed", () => {
   assert.ok(rules(result).has("unknown_invariant"));
 });
 
-test("legacy violation counts cannot stand in for named invariant results", () => {
+test("duplicate invariant results remain visible after JSON parsing and fail closed", () => {
   const report = makePassingReport(catalog);
   const typeCase = caseById(report, "type-text");
-  delete typeCase.invariants;
+  invariantByName(typeCase, "physical_cursor").passed = false;
+  typeCase.invariants.push({ name: "physical_cursor", passed: true });
+  const parsedReport = JSON.parse(JSON.stringify(report));
+
+  const result = validateCertification(catalog, parsedReport);
+
+  assert.equal(result.success, false);
+  assert.ok(rules(result).has("duplicate_invariant_result"));
+  assert.ok(rules(result).has("violated_invariant"));
+});
+
+test("invariant result entries have a closed typed schema", () => {
+  const corruptions = [
+    "not-an-entry",
+    { name: "physical_cursor", passed: "yes" },
+    { name: "", passed: true },
+    { name: "physical_cursor", passed: true, ignored: false },
+  ];
+  for (const corruption of corruptions) {
+    const report = makePassingReport(catalog);
+    caseById(report, "type-text").invariants[0] = corruption;
+
+    const result = validateCertification(catalog, report);
+
+    assert.equal(result.success, false);
+    assert.ok(rules(result).has("invariant_schema"));
+  }
+});
+
+test("legacy violation counts and invariant objects cannot stand in for named invariant results", () => {
+  const report = makePassingReport(catalog);
+  const typeCase = caseById(report, "type-text");
+  typeCase.invariants = { physical_cursor: true };
   typeCase.invariant_violations = 0;
 
   const result = validateCertification(catalog, report);

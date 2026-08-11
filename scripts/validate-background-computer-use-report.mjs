@@ -173,18 +173,43 @@ export function validateCertification(catalog, report) {
       ));
     }
     const invariantResults = observed.invariants;
-    if (!invariantResults || typeof invariantResults !== "object" || Array.isArray(invariantResults)) {
-      failures.push(failure(expected.id, "invariant_schema", "Observed invariants must be an object"));
+    if (!Array.isArray(invariantResults)) {
+      failures.push(failure(expected.id, "invariant_schema", "Observed invariants must be an array"));
     } else {
-      const observedInvariantNames = Object.keys(invariantResults);
+      const validInvariantResults = [];
+      for (const result of invariantResults) {
+        const keys = result && typeof result === "object" && !Array.isArray(result)
+          ? Object.keys(result).sort()
+          : [];
+        if (keys.length !== 2 || keys[0] !== "name" || keys[1] !== "passed"
+            || typeof result.name !== "string" || result.name.length === 0
+            || typeof result.passed !== "boolean") {
+          failures.push(failure(
+            expected.id,
+            "invariant_schema",
+            "Invariant results must be closed {name, passed} entries",
+          ));
+          continue;
+        }
+        validInvariantResults.push(result);
+      }
+      const observedInvariantNames = validInvariantResults.map((result) => result.name);
+      for (const invariantName of duplicateValues(observedInvariantNames)) {
+        failures.push(failure(
+          expected.id,
+          "duplicate_invariant_result",
+          `Invariant result '${invariantName}' is duplicated`,
+        ));
+      }
       for (const invariantName of catalog.invariants) {
-        if (!Object.hasOwn(invariantResults, invariantName)) {
+        const matchingResults = validInvariantResults.filter((result) => result.name === invariantName);
+        if (matchingResults.length === 0) {
           failures.push(failure(
             expected.id,
             "missing_invariant",
             `Missing invariant '${invariantName}'`,
           ));
-        } else if (invariantResults[invariantName] !== true) {
+        } else if (matchingResults.some((result) => result.passed !== true)) {
           failures.push(failure(
             expected.id,
             "violated_invariant",
@@ -231,7 +256,7 @@ export function makePassingReport(catalog) {
       : entry.expected_exit !== "failure";
     const evidence = Object.fromEntries(catalog.required_evidence.map((name) => [name, true]));
     const oracles = Object.fromEntries(entry.required_oracles.map((name) => [name, true]));
-    const invariants = Object.fromEntries(catalog.invariants.map((name) => [name, true]));
+    const invariants = catalog.invariants.map((name) => ({ name, passed: true }));
     return {
       id: entry.id,
       surface: entry.surface,
