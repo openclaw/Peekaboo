@@ -1,6 +1,6 @@
 import Foundation
-@testable import PeekabooCLI
 import Testing
+@testable import PeekabooCLI
 
 @Suite(.serialized)
 struct ElementActionSnapshotRequiredTests {
@@ -12,11 +12,10 @@ struct ElementActionSnapshotRequiredTests {
         ]
 
         for testCase in cases {
-            let context = await TestServicesFactory.makeAutomationTestContext()
+            let context = TestServicesFactory.makeAutomationTestContext()
             let result = try await InProcessCommandRunner.run(
                 testCase.arguments + ["--json", "--no-remote"],
-                services: context.services
-            )
+                services: context.services)
 
             #expect(result.exitStatus == 1, "Expected \(testCase.expectedCommand) to refuse")
             #expect(result.combinedOutput.contains("No UI snapshot is available"))
