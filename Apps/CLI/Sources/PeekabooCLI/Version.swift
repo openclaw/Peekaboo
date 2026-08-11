@@ -14,8 +14,8 @@ enum Version {
     }
 }
 
-private enum VersionMetadata {
-    struct Values {
+enum VersionMetadata {
+    struct Values: Equatable, Sendable {
         let current: String
         let gitCommit: String
         let gitCommitDate: String
@@ -23,8 +23,8 @@ private enum VersionMetadata {
         let buildDate: String
     }
 
-    static func resolve() -> Values {
-        if let info = valuesFromInfoDictionary() {
+    static func resolve(infoDictionary: [String: Any]? = Bundle.main.infoDictionary) -> Values {
+        if let info = valuesFromInfoDictionary(infoDictionary) {
             return info
         }
 
@@ -37,27 +37,33 @@ private enum VersionMetadata {
         )
     }
 
-    private static func valuesFromInfoDictionary() -> Values? {
-        guard let info = Bundle.main.infoDictionary else { return nil }
-
-        guard let shortVersion = info["CFBundleShortVersionString"] as? String else {
+    private static func valuesFromInfoDictionary(_ info: [String: Any]?) -> Values? {
+        guard let info else { return nil }
+        guard let shortVersion = info["CFBundleShortVersionString"] as? String,
+              !shortVersion.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else {
             return nil
         }
 
-        let display = info["PeekabooVersionDisplayString"] as? String ?? "Peekaboo \(shortVersion)"
+        let display = self.nonemptyString(info["PeekabooVersionDisplayString"]) ?? "Peekaboo \(shortVersion)"
 
         return Values(
             current: display,
-            gitCommit: self.metadataValue("PeekabooGitCommit", in: info),
-            gitCommitDate: self.metadataValue("PeekabooGitCommitDate", in: info),
-            gitBranch: self.metadataValue("PeekabooGitBranch", in: info),
-            buildDate: self.metadataValue("PeekabooBuildDate", in: info)
+            gitCommit: self.metadataValue(info["PeekabooGitCommit"]),
+            gitCommitDate: self.metadataValue(info["PeekabooGitCommitDate"]),
+            gitBranch: self.metadataValue(info["PeekabooGitBranch"]),
+            buildDate: self.metadataValue(info["PeekabooBuildDate"])
         )
     }
 
-    private static func metadataValue(_ key: String, in info: [String: Any]) -> String {
-        guard let rawValue = info[key] as? String else { return "unknown" }
-        let value = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        return value.isEmpty ? "unknown" : value
+    private static func metadataValue(_ value: Any?) -> String {
+        self.nonemptyString(value) ?? "unknown"
+    }
+
+    private static func nonemptyString(_ value: Any?) -> String? {
+        guard let value = value as? String,
+              !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else { return nil }
+        return value
     }
 }

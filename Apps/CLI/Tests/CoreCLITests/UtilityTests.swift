@@ -99,6 +99,56 @@ struct UtilityTests {
         func `Version is not empty`() {
             #expect(!Version.current.isEmpty)
         }
+
+        @Test
+        func `Partial embedded metadata remains stable without runtime provenance`() {
+            let values = VersionMetadata.resolve(infoDictionary: [
+                "CFBundleShortVersionString": "4.2.0",
+                "PeekabooVersionDisplayString": "Peekaboo 4.2.0-beta.1",
+            ])
+
+            #expect(values == VersionMetadata.Values(
+                current: "Peekaboo 4.2.0-beta.1",
+                gitCommit: "unknown",
+                gitCommitDate: "unknown",
+                gitBranch: "unknown",
+                buildDate: "unknown"
+            ))
+        }
+
+        @Test
+        func `Complete embedded metadata is preserved`() {
+            let values = VersionMetadata.resolve(infoDictionary: [
+                "CFBundleShortVersionString": "4.2.0",
+                "PeekabooVersionDisplayString": "Peekaboo 4.2.0",
+                "PeekabooGitCommit": "abc1234-dirty",
+                "PeekabooGitCommitDate": "2026-08-10 12:34:56 -0700",
+                "PeekabooGitBranch": "release/4.2.0",
+                "PeekabooBuildDate": "2026-08-10T19:35:00Z",
+            ])
+
+            #expect(values == VersionMetadata.Values(
+                current: "Peekaboo 4.2.0",
+                gitCommit: "abc1234-dirty",
+                gitCommitDate: "2026-08-10 12:34:56 -0700",
+                gitBranch: "release/4.2.0",
+                buildDate: "2026-08-10T19:35:00Z"
+            ))
+        }
+
+        @Test
+        func `Missing or malformed embedded versions use a deterministic fallback`() {
+            let expected = VersionMetadata.Values(
+                current: "Peekaboo 0.0.0",
+                gitCommit: "unknown",
+                gitCommitDate: "unknown",
+                gitBranch: "unknown",
+                buildDate: "unknown"
+            )
+
+            #expect(VersionMetadata.resolve(infoDictionary: nil) == expected)
+            #expect(VersionMetadata.resolve(infoDictionary: ["CFBundleShortVersionString": "   "]) == expected)
+        }
     }
 
     @Suite(.tags(.safe))
@@ -143,6 +193,16 @@ struct UtilityTests {
 
     @Suite(.tags(.safe))
     struct BuildStalenessCheckerTests {
+        @Test(arguments: ["", "   ", "unknown"])
+        func `Missing embedded commits skip Git staleness checks`(commit: String) {
+            #expect(!shouldCheckGitCommitStaleness(embeddedCommit: commit))
+        }
+
+        @Test
+        func `Embedded commit enables Git staleness checks`() {
+            #expect(shouldCheckGitCommitStaleness(embeddedCommit: "abc1234"))
+        }
+
         @Test
         func `Parses disabled build staleness setting`() {
             let config = """

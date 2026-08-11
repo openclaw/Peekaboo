@@ -118,6 +118,13 @@ private func findGitConfigPath(startingAt path: String) -> String? {
 
 /// Check if the embedded git commit differs from the current git commit
 private func checkGitCommitStaleness() {
+    // Get embedded commit from build (strip -dirty suffix if present). Raw SwiftPM
+    // builds intentionally omit provenance, so avoid spawning Git for them.
+    let embeddedCommit = Version.gitCommit.replacingOccurrences(of: "-dirty", with: "")
+    guard shouldCheckGitCommitStaleness(embeddedCommit: embeddedCommit) else {
+        return
+    }
+
     // Get current git commit hash
     let gitProcess = Process()
     gitProcess.executableURL = URL(fileURLWithPath: "/usr/bin/git")
@@ -140,9 +147,6 @@ private func checkGitCommitStaleness() {
         let currentCommit = rawCommitString?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
 
-        // Get embedded commit from build (strip -dirty suffix if present)
-        let embeddedCommit = Version.gitCommit.replacingOccurrences(of: "-dirty", with: "")
-
         // Compare commits
         if !currentCommit.isEmpty && currentCommit != embeddedCommit {
             logError("❌ CLI binary is outdated and needs to be rebuilt!")
@@ -155,6 +159,11 @@ private func checkGitCommitStaleness() {
     } catch {
         return // Git command failed, skip check
     }
+}
+
+func shouldCheckGitCommitStaleness(embeddedCommit: String) -> Bool {
+    let commit = embeddedCommit.trimmingCharacters(in: .whitespacesAndNewlines)
+    return !commit.isEmpty && commit != "unknown"
 }
 
 /// Check if any tracked files have been modified after the build time
