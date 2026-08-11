@@ -32,7 +32,7 @@ struct UIAutomationServiceVisualizerTests {
         let feedback = RecordingAutomationFeedbackClient()
         let service = UIAutomationService(feedbackClient: feedback)
 
-        try await service.visualizeClick(
+        await service.visualizeClick(
             target: .coordinates(CGPoint(x: 10, y: 20)),
             actionAnchor: CGPoint(x: 10, y: 20),
             clickType: .single,
@@ -83,7 +83,7 @@ struct UIAutomationServiceVisualizerTests {
             snapshotManager: InMemorySnapshotManager(detectionResult: detectionResult),
             feedbackClient: feedback)
 
-        try await service.visualizeClick(
+        await service.visualizeClick(
             target: .coordinates(CGPoint(x: 10, y: 20)),
             actionAnchor: CGPoint(x: 10, y: 20),
             clickType: .single,
@@ -110,7 +110,7 @@ struct UIAutomationServiceVisualizerTests {
         let feedback = RecordingAutomationFeedbackClient()
         let service = UIAutomationService(feedbackClient: feedback)
 
-        try await service.visualizeClick(
+        await service.visualizeClick(
             target: .coordinates(CGPoint(x: 10, y: 20)),
             actionAnchor: CGPoint(x: 10, y: 20),
             clickType: .single,
