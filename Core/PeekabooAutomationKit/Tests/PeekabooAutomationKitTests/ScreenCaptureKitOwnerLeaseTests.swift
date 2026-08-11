@@ -136,6 +136,7 @@ struct ScreenCaptureKitOwnerLeaseTests {
     func `Potential host classification includes only exact entry points`() throws {
         let signedHosts: [(path: String, signingIdentifier: String)] = [
             ("/tmp/renamed-cli", "peekaboo"),
+            ("/tmp/renamed-debug-cli", "boo.peekaboo"),
             ("/tmp/renamed-cli", "boo.peekaboo.peekaboo"),
             ("/Applications/Peekaboo.app/Contents/MacOS/Peekaboo", "boo.peekaboo.mac"),
             ("/Applications/Peekaboo.app/Contents/MacOS/Peekaboo", "boo.peekaboo.mac.debug"),

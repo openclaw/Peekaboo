@@ -324,6 +324,7 @@ enum ScreenCaptureKitProcessCapabilityRegistry {
 
     private static let screenCaptureKitHostIdentifiers: Set<String> = [
         "peekaboo",
+        "boo.peekaboo",
         "boo.peekaboo.peekaboo",
         "boo.peekaboo.mac",
         "boo.peekaboo.mac.debug",
