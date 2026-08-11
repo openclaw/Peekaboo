@@ -41,7 +41,7 @@ peekaboo see --app Calendar --window-id 12345 --ocr --json --path /tmp/calendar.
 | `--mode screen|window|frontmost|multi|area` | Override the target picker. `multi` captures every screen; `area` uses `--region`. |
 | `--region x,y,width,height` | Capture a rectangular region (`area` mode is inferred). |
 | `--format png|jpg` / `--retina` | Select the image encoding and native display scale. |
-| `--capture-engine auto|modern|sckit|classic|cg` | Select the engine on the chosen Bridge host without changing runtime ownership. If no compatible host is available, Peekaboo fails instead of capturing locally; add `--no-remote` to explicitly opt into caller-local capture. |
+| `--capture-engine auto|modern|sckit|classic|cg` | Select the engine for this request on the chosen Bridge host without changing runtime ownership. Explicit remote modern/classic selection requires the host's `desktopObservationCaptureEngine` capability. If no compatible host is available, Peekaboo fails instead of capturing locally; add `--no-remote` to explicitly opt into caller-local capture. |
 | `--no-elements` | Skip element detection for the cheapest screenshot-only CLI path. |
 | `--ocr` | Add Apple Vision text recognized on the selected runtime host to the AX element map. Requires screenshot-backed element detection and cannot be combined with `--no-elements`, `--no-screenshot`, `--path -`, `area`, or `multi`. |
 | `--tree` | Print the accessibility text tree. |

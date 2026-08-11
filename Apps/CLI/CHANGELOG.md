@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Encode annotated observations directly from their rendered bitmap, removing redundant PNG/TIFF round trips while preserving exact pixels, metadata, and output paths.
 
 ### Fixed
+- Require remote hosts to advertise per-request desktop-observation capture-engine support before sending explicit modern/classic selections, and keep those selections out of a reusable daemon's inherited environment so later `auto` requests retain their own backend policy.
 - Pin process-targeted background typing, paste, clicks, and MCP key sequences to one process generation, rejecting Bridge hosts older than protocol 1.22 instead of letting them ignore the receipt or redirect input to a recycled PID.
 - Keep `see --capture-engine` on the selected Bridge host instead of silently moving capture and TCC ownership into the caller; fail before local fallback when no compatible host is available, with `--no-remote` as the explicit caller-local opt-in.
 - Keep OCR bounds correct for Retina captures, retain AX mutation/coordinate receipts through OCR merges and snapshot/ROI round-trips, use one bounded fast local recognition attempt for automation, and refuse only provenance-bound semantic OCR IDs as element action targets.

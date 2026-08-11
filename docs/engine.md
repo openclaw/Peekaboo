@@ -16,7 +16,7 @@ Peekaboo supports two capture backends:
 - Environment:
   - `PEEKABOO_CAPTURE_ENGINE=auto|modern|sckit|classic|cg` (preferred)
   - Back-compat: `PEEKABOO_USE_MODERN_CAPTURE=true|false|modern-only|legacy`
-- CLI flags (set the env for this invocation):
+- CLI flags (select the backend for this invocation):
   - `peekaboo capture live --capture-engine auto|modern|sckit|classic|cg`
   - `peekaboo see --no-elements --capture-engine ...`
   - `peekaboo see --capture-engine ...`
@@ -26,6 +26,12 @@ silently move capture or TCC ownership into the CLI process. If no compatible Br
 fails before caller-local capture. Add `--no-remote` only when caller-local execution is intentional and that process
 is known to own Screen Recording in the active Aqua session. Other capture commands remain caller-local until their
 remote protocols explicitly carry the engine preference.
+
+Remote `modern` and `classic` selections require a host that advertises
+`desktopObservationCaptureEngine`; older hosts are refused before the observation request is sent rather than silently
+running `auto`. The `auto` value retains backward-compatible observation semantics. Transported `see` preferences stay
+inside the individual request and never become a reusable daemon's inherited process environment, so one explicit
+`modern` request cannot make later `auto` requests modern-only.
 
 Aliases:
 - modern: `modern`, `sckit`, `sc`, `sck`

@@ -111,6 +111,10 @@ enum BridgeCapabilityPolicy {
         if options.requiresDesktopObservationOCR, !self.supportsDesktopObservationOCR(for: handshake) {
             return false
         }
+        if options.requiresCaptureEnginePreferenceCapability,
+           !self.supportsDesktopObservationCaptureEngine(for: handshake) {
+            return false
+        }
         if options.requiresExactWindowROIObservation,
            !self.supportsExactWindowROIObservation(for: handshake) {
             return false
@@ -319,6 +323,15 @@ enum BridgeCapabilityPolicy {
     static func supportsDesktopObservationOCR(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {
         self.supportsDesktopObservation(for: handshake) &&
             handshake.hostCapabilities?.contains(PeekabooBridgeHostCapability.desktopObservationOCR) == true
+    }
+
+    static func supportsDesktopObservationCaptureEngine(
+        for handshake: PeekabooBridgeHandshakeResponse
+    ) -> Bool {
+        self.supportsDesktopObservation(for: handshake) &&
+            handshake.hostCapabilities?.contains(
+                PeekabooBridgeHostCapability.desktopObservationCaptureEngine
+            ) == true
     }
 
     static func supportsExactWindowROIObservation(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {

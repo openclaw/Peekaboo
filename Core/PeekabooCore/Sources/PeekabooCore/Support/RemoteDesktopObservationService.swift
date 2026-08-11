@@ -18,23 +18,39 @@ enum RemoteDesktopObservationCapabilityPolicy {
             or use --no-remote to explicitly run Vision OCR in the caller process.
             """)
     }
+
+    static func requiresCaptureEnginePreferenceCapability(_ request: DesktopObservationRequest) -> Bool {
+        request.capture.engine != .auto
+    }
+
+    static func captureEnginePreferenceUnavailableError() -> PeekabooBridgeErrorEnvelope {
+        PeekabooBridgeErrorEnvelope(
+            code: .operationNotSupported,
+            message: """
+            Remote Bridge host does not advertise desktopObservationCaptureEngine. Update and relaunch Peekaboo on \
+            that host, or use --no-remote to explicitly run the selected capture engine in the caller process.
+            """)
+    }
 }
 
 @MainActor
 public final class RemoteDesktopObservationService: DesktopObservationServiceProtocol {
     private let client: PeekabooBridgeClient
     private let supportsDesktopObservationOCR: Bool
+    private let supportsDesktopObservationCaptureEngine: Bool
     private let supportsExactWindowROIObservation: Bool
     private let artifactInstallationPreflight: @MainActor @Sendable () throws -> Void
 
     public convenience init(
         client: PeekabooBridgeClient,
         supportsDesktopObservationOCR: Bool = false,
+        supportsDesktopObservationCaptureEngine: Bool = false,
         supportsExactWindowROIObservation: Bool = false)
     {
         self.init(
             client: client,
             supportsDesktopObservationOCR: supportsDesktopObservationOCR,
+            supportsDesktopObservationCaptureEngine: supportsDesktopObservationCaptureEngine,
             supportsExactWindowROIObservation: supportsExactWindowROIObservation,
             artifactInstallationPreflight: {})
     }
@@ -42,11 +58,13 @@ public final class RemoteDesktopObservationService: DesktopObservationServicePro
     package init(
         client: PeekabooBridgeClient,
         supportsDesktopObservationOCR: Bool = false,
+        supportsDesktopObservationCaptureEngine: Bool = false,
         supportsExactWindowROIObservation: Bool,
         artifactInstallationPreflight: @escaping @MainActor @Sendable () throws -> Void)
     {
         self.client = client
         self.supportsDesktopObservationOCR = supportsDesktopObservationOCR
+        self.supportsDesktopObservationCaptureEngine = supportsDesktopObservationCaptureEngine
         self.supportsExactWindowROIObservation = supportsExactWindowROIObservation
         self.artifactInstallationPreflight = artifactInstallationPreflight
     }
@@ -56,6 +74,11 @@ public final class RemoteDesktopObservationService: DesktopObservationServicePro
             self.supportsDesktopObservationOCR
         else {
             throw RemoteDesktopObservationCapabilityPolicy.ocrUnavailableError()
+        }
+        guard !RemoteDesktopObservationCapabilityPolicy.requiresCaptureEnginePreferenceCapability(request) ||
+            self.supportsDesktopObservationCaptureEngine
+        else {
+            throw RemoteDesktopObservationCapabilityPolicy.captureEnginePreferenceUnavailableError()
         }
         guard request.capture.roi != nil else {
             return try await self.client.desktopObservation(request)

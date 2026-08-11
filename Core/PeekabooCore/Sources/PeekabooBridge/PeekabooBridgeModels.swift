@@ -294,6 +294,7 @@ public enum PeekabooBridgeHostCapability {
     public static let codeSignatureBuildIdentity = "codeSignatureBuildIdentity"
     public static let backgroundBridgeHost = "backgroundBridgeHost"
     public static let desktopObservationOCR = "desktopObservationOCR"
+    public static let desktopObservationCaptureEngine = "desktopObservationCaptureEngine"
 }
 
 public struct PeekabooBridgeHandshakeResponse: Codable, Sendable {

@@ -211,6 +211,10 @@ enum CommanderCLIBinder {
         options.captureEnginePreference = captureEngine
         if options.transportsCaptureEnginePreference {
             options.requiresCaptureEnginePreferenceHost = true
+            options.requiresCaptureEnginePreferenceCapability = ObservationCommandSupport.captureEnginePreference(
+                cliValue: captureEngine,
+                configuredValue: nil
+            ) != .auto
         } else if !options.requiresApplicationLaunchOptions, !options.requiresHostApplicationInventory {
             options.preferRemote = false
         }

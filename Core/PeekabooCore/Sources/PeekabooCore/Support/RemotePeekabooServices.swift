@@ -57,6 +57,7 @@ public final class RemotePeekabooServices: PeekabooServiceProviding {
         supportsElementActions: Bool = false,
         supportsDesktopObservation: Bool = false,
         supportsDesktopObservationOCR: Bool = false,
+        supportsDesktopObservationCaptureEngine: Bool = false,
         supportsExactWindowROIObservation: Bool = false,
         supportsImplicitLatestSnapshotInvalidation: Bool = false,
         supportsApplicationLaunchOptions: Bool = false,
@@ -70,6 +71,8 @@ public final class RemotePeekabooServices: PeekabooServiceProviding {
         self.client = client
         self.supportsPostEventPermissionRequest = supportsPostEventPermissionRequest
         let supportsRemoteDesktopObservationOCR = supportsDesktopObservation && supportsDesktopObservationOCR
+        let supportsRemoteCaptureEnginePreference = supportsDesktopObservation &&
+            supportsDesktopObservationCaptureEngine
 
         self.logging = LoggingService()
         self.screenCapture = RemoteScreenCaptureService(client: client)
@@ -144,6 +147,7 @@ public final class RemotePeekabooServices: PeekabooServiceProviding {
             RemoteDesktopObservationService(
                 client: client,
                 supportsDesktopObservationOCR: supportsRemoteDesktopObservationOCR,
+                supportsDesktopObservationCaptureEngine: supportsRemoteCaptureEnginePreference,
                 supportsExactWindowROIObservation: supportsExactWindowROIObservation)
         } else {
             LegacyRemoteDesktopObservationService(delegate: DesktopObservationService(
@@ -201,6 +205,9 @@ private final class LegacyRemoteDesktopObservationService: DesktopObservationSer
     }
 
     func observe(_ request: DesktopObservationRequest) async throws -> DesktopObservationResult {
+        guard !RemoteDesktopObservationCapabilityPolicy.requiresCaptureEnginePreferenceCapability(request) else {
+            throw RemoteDesktopObservationCapabilityPolicy.captureEnginePreferenceUnavailableError()
+        }
         guard !RemoteDesktopObservationCapabilityPolicy.requiresOCRCapability(request) else {
             throw RemoteDesktopObservationCapabilityPolicy.ocrUnavailableError()
         }

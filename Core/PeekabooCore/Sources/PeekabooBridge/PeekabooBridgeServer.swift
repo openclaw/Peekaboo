@@ -90,6 +90,7 @@ public final class PeekabooBridgeServer {
         }
         if self.allowedOperations.contains(.desktopObservation) {
             resolvedHostCapabilities.insert(PeekabooBridgeHostCapability.desktopObservationOCR)
+            resolvedHostCapabilities.insert(PeekabooBridgeHostCapability.desktopObservationCaptureEngine)
         }
         self.hostCapabilities = resolvedHostCapabilities
         self.daemonControl = daemonControl

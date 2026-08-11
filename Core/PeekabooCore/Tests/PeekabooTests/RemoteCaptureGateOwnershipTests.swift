@@ -72,6 +72,43 @@ struct RemoteCaptureGateOwnershipTests {
         #expect(error?.message.contains("--no-remote") == true)
     }
 
+    @Test(arguments: [CaptureEnginePreference.modern, .legacy])
+    func `remote capture engine rejects a host without capability before transport`(
+        engine: CaptureEnginePreference) async
+    {
+        let remote = RemoteDesktopObservationService(client: PeekabooBridgeClient(
+            socketPath: "/tmp/nonexistent-capture-engine-\(UUID().uuidString).sock",
+            requestTimeoutSec: 1))
+
+        let error = await #expect(throws: PeekabooBridgeErrorEnvelope.self) {
+            _ = try await remote.observe(DesktopObservationRequest(
+                target: .screen(index: 0),
+                capture: DesktopCaptureOptions(engine: engine),
+                detection: DesktopDetectionOptions(mode: .none)))
+        }
+
+        #expect(error?.code == .operationNotSupported)
+        #expect(error?.message.contains(PeekabooBridgeHostCapability.desktopObservationCaptureEngine) == true)
+        #expect(error?.message.contains("--no-remote") == true)
+    }
+
+    @Test
+    func `legacy remote observation rejects capture engine before local fallback transport`() async {
+        let remote = RemotePeekabooServices(client: PeekabooBridgeClient(
+            socketPath: "/tmp/nonexistent-legacy-capture-engine-\(UUID().uuidString).sock",
+            requestTimeoutSec: 1))
+
+        let error = await #expect(throws: PeekabooBridgeErrorEnvelope.self) {
+            _ = try await remote.desktopObservation.observe(DesktopObservationRequest(
+                target: .screen(index: 0),
+                capture: DesktopCaptureOptions(engine: .modern),
+                detection: DesktopDetectionOptions(mode: .none)))
+        }
+
+        #expect(error?.code == .operationNotSupported)
+        #expect(error?.message.contains(PeekabooBridgeHostCapability.desktopObservationCaptureEngine) == true)
+    }
+
     @Test
     func `legacy remote observation rejects OCR before local fallback capture transport`() async {
         let remote = RemotePeekabooServices(client: PeekabooBridgeClient(
@@ -133,6 +170,18 @@ struct RemoteCaptureGateOwnershipTests {
         _ = try await legacyRemote.observe(preferredOCRRequest)
 
         #expect(services.desktopObservationStub.lastRequest == preferredOCRRequest)
+
+        let engineRemote = RemoteDesktopObservationService(
+            client: client,
+            supportsDesktopObservationCaptureEngine: true)
+        let engineRequest = DesktopObservationRequest(
+            target: .screen(index: 0),
+            capture: DesktopCaptureOptions(engine: .modern),
+            detection: DesktopDetectionOptions(mode: .none))
+
+        _ = try await engineRemote.observe(engineRequest)
+
+        #expect(services.desktopObservationStub.lastRequest == engineRequest)
         await host.stop()
     }
 

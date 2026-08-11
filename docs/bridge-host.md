@@ -141,6 +141,13 @@ moving explicit additive OCR into the caller process. The older `preferOCR` requ
 `see --menubar` remains compatible without this new capability. Relaunch an updated host, or use
 explicit `--no-remote` caller-local CLI execution when that ownership change is intended.
 
+The additive `desktopObservationCaptureEngine` capability likewise identifies hosts that apply a
+non-`auto` capture-engine preference inside each desktop-observation request. Clients refuse
+explicit remote `modern` or `classic` selection before transport when this capability or the
+enabled `desktopObservation` operation is absent; an older host cannot silently ignore the field
+and run its default backend. `auto` remains compatible, and request-scoped selection does not alter
+the long-lived daemon's fallback policy.
+
 Protocol `1.22` adds process-generation receipts to process-targeted typing and clicks. Current CLI, Agent, and MCP background input retain the application discovery receipt through Bridge admission and native dispatch. Typing revalidates it before every emitted unit; clicks validate before dispatch and report a retry-unsafe indeterminate outcome if the generation changes after dispatch. Process-targeted Cmd+V uses the generation-pinned hotkey contract introduced in 1.19. New clients refuse older hosts before sending these inputs because an older decoder could otherwise ignore the optional receipt and route input using only a reusable PID. Legacy raw-PID payloads remain decodable for old clients, but current user-facing paths never select them.
 
 ## Security

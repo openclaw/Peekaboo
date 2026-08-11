@@ -52,8 +52,8 @@ enum CommanderRuntimeExecutor {
                 from: resolved.parsedValues,
                 commandType: resolved.type
             )
-            if let capturePreference = runtimeOptions.captureEnginePreference,
-               !capturePreference.isEmpty {
+            if self.shouldExportCaptureEnginePreference(runtimeOptions),
+               let capturePreference = runtimeOptions.captureEnginePreference {
                 // Respect explicit engine choice; also allow disabling CG globally.
                 setenv("PEEKABOO_CAPTURE_ENGINE", capturePreference, 1)
             }
@@ -79,6 +79,10 @@ enum CommanderRuntimeExecutor {
 
         var plainCommand = command
         try await plainCommand.run()
+    }
+
+    static func shouldExportCaptureEnginePreference(_ options: CommandRuntimeOptions) -> Bool {
+        options.captureEnginePreference?.isEmpty == false && !options.transportsCaptureEnginePreference
     }
 
     static func catchUpSelectedHostIfNeeded(

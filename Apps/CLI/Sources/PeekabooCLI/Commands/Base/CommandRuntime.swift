@@ -27,6 +27,9 @@ struct CommandRuntimeOptions {
     /// An explicit engine must run on a compatible host or fail; local fallback would silently
     /// change capture/TCC ownership. Explicit `--no-remote` remains the local opt-in.
     var requiresCaptureEnginePreferenceHost = false
+    /// Non-auto engine values need an additive host capability so an older host cannot silently
+    /// ignore the transported preference and run its default backend.
+    var requiresCaptureEnginePreferenceCapability = false
     var requiresDesktopObservation = false
     /// `accessibilityAndOCR` is additive inside protocol 1.22. Require a raw host capability so
     /// an older 1.22 host cannot try to decode the enum case before the client can fail safely.
@@ -102,6 +105,10 @@ struct CommandRuntimeOptions {
             options.captureEnginePreference = captureEngine
             if options.transportsCaptureEnginePreference {
                 options.requiresCaptureEnginePreferenceHost = true
+                options.requiresCaptureEnginePreferenceCapability = ObservationCommandSupport.captureEnginePreference(
+                    cliValue: captureEngine,
+                    configuredValue: nil
+                ) != .auto
             } else if !options.requiresApplicationLaunchOptions, !options.requiresHostApplicationInventory {
                 options.preferRemote = false
             }
@@ -357,6 +364,12 @@ extension CommandRuntime {
 
     static func supportsDesktopObservationOCR(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {
         BridgeCapabilityPolicy.supportsDesktopObservationOCR(for: handshake)
+    }
+
+    static func supportsDesktopObservationCaptureEngine(
+        for handshake: PeekabooBridgeHandshakeResponse
+    ) -> Bool {
+        BridgeCapabilityPolicy.supportsDesktopObservationCaptureEngine(for: handshake)
     }
 
     static func supportsExactWindowROIObservation(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {
