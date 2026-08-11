@@ -122,24 +122,18 @@ struct HiddenWindowView: View {
     }
 }
 
-private struct HiddenWindowConfigurator: NSViewRepresentable {
-    func makeNSView(context _: Context) -> NSView {
-        let view = NSView(frame: .zero)
-        DispatchQueue.main.async {
-            self.configureWindow(for: view)
-        }
-        return view
+@MainActor
+final class HiddenWindowContentView: NSView {
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        guard let window else { return }
+        HiddenWindowPolicy.configure(window)
     }
+}
 
-    func updateNSView(_ nsView: NSView, context _: Context) {
-        DispatchQueue.main.async {
-            self.configureWindow(for: nsView)
-        }
-    }
-
-    private func configureWindow(for view: NSView) {
-        guard let window = view.window else { return }
-
+@MainActor
+enum HiddenWindowPolicy {
+    static func configure(_ window: NSWindow) {
         window.identifier = NSUserInterfaceItemIdentifier("hidden-settings-helper")
         window.title = ""
         window.isExcludedFromWindowsMenu = true
@@ -147,6 +141,17 @@ private struct HiddenWindowConfigurator: NSViewRepresentable {
         window.ignoresMouseEvents = true
         window.collectionBehavior.insert(.transient)
         window.orderOut(nil)
+    }
+}
+
+private struct HiddenWindowConfigurator: NSViewRepresentable {
+    func makeNSView(context _: Context) -> NSView {
+        HiddenWindowContentView(frame: .zero)
+    }
+
+    func updateNSView(_ nsView: NSView, context _: Context) {
+        guard let window = nsView.window else { return }
+        HiddenWindowPolicy.configure(window)
     }
 }
 

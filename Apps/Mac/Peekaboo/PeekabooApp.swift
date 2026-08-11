@@ -249,14 +249,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var didSetupNotificationObservers = false
     private var didObserveAgentMode = false
 
+    func applicationWillFinishLaunching(_: Notification) {
+        if let activationPolicy = self.launchPolicy.initialActivationPolicy {
+            NSApp.setActivationPolicy(activationPolicy)
+        }
+    }
+
     func applicationDidFinishLaunching(_: Notification) {
         self.logger.info("Peekaboo launching...")
         NSLog("PeekabooApp: applicationDidFinishLaunching")
 
         if self.launchPolicy.isBackgroundBridgeHost {
-            // Establish accessory mode before SwiftUI creates its hidden settings helper. The
-            // Dock manager keeps this invariant for the rest of the unattended process lifetime.
-            NSApp.setActivationPolicy(.accessory)
             DockIconManager.shared.setBackgroundBridgeHostMode(true)
         }
 

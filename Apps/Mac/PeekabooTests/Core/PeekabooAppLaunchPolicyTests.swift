@@ -1,3 +1,4 @@
+import AppKit
 import Testing
 @testable import Peekaboo
 
@@ -15,6 +16,7 @@ struct PeekabooAppLaunchPolicyTests {
         #expect(policy.allowsPermissionsOnboarding)
         #expect(!policy.suppressesAutomaticScenePresentation)
         #expect(!policy.disablesSceneRestoration)
+        #expect(policy.initialActivationPolicy == nil)
         #expect(policy.maximumBridgeOwnershipRetries == nil)
         #expect(!policy.terminatesOnPermanentBridgeFailure)
     }
@@ -34,6 +36,7 @@ struct PeekabooAppLaunchPolicyTests {
         #expect(!policy.allowsPermissionsOnboarding)
         #expect(policy.suppressesAutomaticScenePresentation)
         #expect(policy.disablesSceneRestoration)
+        #expect(policy.initialActivationPolicy == .accessory)
         #expect(policy.maximumBridgeOwnershipRetries == 6)
         #expect(policy.terminatesOnPermanentBridgeFailure)
     }
@@ -46,5 +49,26 @@ struct PeekabooAppLaunchPolicyTests {
         ])
 
         #expect(policy.mode == .interactive)
+    }
+
+    @Test
+    @MainActor
+    func `hidden settings helper is suppressed synchronously when attached`() {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 64, height: 64),
+            styleMask: [.titled],
+            backing: .buffered,
+            defer: false)
+        let contentView = HiddenWindowContentView(frame: window.contentView?.bounds ?? .zero)
+
+        window.contentView = contentView
+
+        #expect(window.identifier?.rawValue == "hidden-settings-helper")
+        #expect(window.title.isEmpty)
+        #expect(window.isExcludedFromWindowsMenu)
+        #expect(window.alphaValue == 0)
+        #expect(window.ignoresMouseEvents)
+        #expect(window.collectionBehavior.contains(.transient))
+        #expect(!window.isVisible)
     }
 }

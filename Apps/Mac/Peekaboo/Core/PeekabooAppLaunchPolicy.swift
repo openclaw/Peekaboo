@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 
 /// Launch-time behavior that keeps deployment-owned Bridge hosts completely unattended.
@@ -53,6 +54,10 @@ struct PeekabooAppLaunchPolicy: Equatable, Sendable {
 
     var disablesSceneRestoration: Bool {
         self.isBackgroundBridgeHost
+    }
+
+    var initialActivationPolicy: NSApplication.ActivationPolicy? {
+        self.isBackgroundBridgeHost ? .accessory : nil
     }
 
     var maximumBridgeOwnershipRetries: Int? {
