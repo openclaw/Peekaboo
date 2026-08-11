@@ -4,9 +4,11 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 TEST_DIR="$(mktemp -d /tmp/peekaboo-restart-test.XXXXXX)"
+TEST_DIR="$(cd "${TEST_DIR}" && pwd -P)"
 TEMPLATE_BIN="${TEST_DIR}/template-bin"
 TEMPLATE_SOURCE="${TEST_DIR}/template-source"
-trap 'rm -rf "$TEST_DIR"' EXIT
+LOCK_HOLDER=""
+trap '[[ -z "${LOCK_HOLDER:-}" ]] || kill "${LOCK_HOLDER}" 2>/dev/null || true; rm -rf "$TEST_DIR"' EXIT
 
 fail() {
   printf 'test-restart-peekaboo: %s\n' "$*" >&2
@@ -23,6 +25,78 @@ assert_text() {
   [[ "${actual}" == "${expected}" ]] || fail "expected '${expected}' in ${path}, got '${actual}'"
 }
 
+write_lock_owner() {
+  local parent="$1"
+  local lock_dir="${parent}/.Peekaboo.install-lock"
+
+  mkdir -p "${parent}"
+  [[ -d "${lock_dir}" ]] || mkdir -m 700 "${lock_dir}"
+  touch "${lock_dir}/lock"
+}
+
+test_bundle_digest() {
+  local bundle="$1"
+  local candidate content_digest manifest mode relative_path symlink_target
+
+  manifest="$(mktemp -t peekaboo-test-digest.XXXXXX)"
+  while IFS= read -r -d '' candidate; do
+    relative_path="${candidate#"${bundle}"/}"
+    if [[ -L "${candidate}" ]]; then
+      symlink_target="$(readlink "${candidate}")"
+      printf 'L\0%s\0%s\0' "${relative_path}" "${symlink_target}" >>"${manifest}"
+    elif [[ -f "${candidate}" ]]; then
+      content_digest="$(shasum -a 256 "${candidate}" | awk '{print $1}')"
+      mode="$(stat -f %Lp "${candidate}")"
+      printf 'F\0%s\0%s\0%s\0' "${relative_path}" "${mode}" "${content_digest}" >>"${manifest}"
+    fi
+  done < <(find -s "${bundle}" \( -type f -o -type l \) -print0)
+  shasum -a 256 "${manifest}" | awk '{print $1}'
+  rm -f "${manifest}"
+}
+
+write_journal() {
+  local parent="$1"
+  local target="$2"
+  local install_root="$3"
+  local phase="$4"
+  local had_previous="$5"
+  local previous_running="$6"
+  local artifact_bundle artifact_digest previous_bundle previous_digest=""
+
+  if [[ -d "${install_root}/candidate.app" ]]; then
+    artifact_bundle="${install_root}/candidate.app"
+  elif [[ "${phase}" == "installed" && -d "${target}" ]]; then
+    artifact_bundle="${target}"
+  else
+    artifact_bundle=""
+  fi
+  if [[ -n "${artifact_bundle}" ]]; then
+    artifact_digest="$(test_bundle_digest "${artifact_bundle}")"
+  else
+    artifact_digest='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+  fi
+
+  if [[ -d "${install_root}/previous.app" ]]; then
+    previous_bundle="${install_root}/previous.app"
+  elif [[ "${had_previous}" == "1" && -d "${target}" ]]; then
+    previous_bundle="${target}"
+  else
+    previous_bundle=""
+  fi
+  [[ -z "${previous_bundle}" ]] || previous_digest="$(test_bundle_digest "${previous_bundle}")"
+
+  printf '%s\n' \
+    'version=2' \
+    "phase=${phase}" \
+    "target=${target}" \
+    "install_root=${install_root}" \
+    "had_previous=${had_previous}" \
+    "previous_running=${previous_running}" \
+    "artifact_digest=${artifact_digest}" \
+    "previous_digest=${previous_digest}" \
+    >"${parent}/.Peekaboo.install.journal"
+}
+
 make_bundle() {
   local path="$1"
   local build_id="$2"
@@ -32,8 +106,12 @@ make_bundle() {
   printf '%s\n' 'TESTTEAM' >"${path}/.team-id"
   printf '%s\n' 'boo.peekaboo.mac' >"${path}/.bundle-id"
   printf '%s\n' 'developer-id' >"${path}/.requirement"
+  printf '%s\n' '1111111111111111111111111111111111111111' >"${path}/.cdhash"
+  touch "${path}/.trusted-anchor"
   /usr/bin/plutil -create xml1 "${path}/Contents/Info.plist"
   /usr/bin/plutil -insert CFBundleExecutable -string Peekaboo "${path}/Contents/Info.plist"
+  /usr/bin/plutil -insert CFBundleShortVersionString -string 4.0.1 "${path}/Contents/Info.plist"
+  /usr/bin/plutil -insert CFBundleVersion -string 4000199 "${path}/Contents/Info.plist"
   printf '#!/usr/bin/env bash\n' >"${path}/Contents/MacOS/Peekaboo"
   chmod +x "${path}/Contents/MacOS/Peekaboo"
 }
@@ -50,7 +128,19 @@ new_case() {
 
 run_restart() {
   local case_dir="$1"
+  local -a cli_args env_args
   shift
+
+  env_args=()
+  cli_args=()
+  while (($# > 0)) && [[ "$1" != "--" ]]; do
+    env_args+=("$1")
+    shift
+  done
+  if (($# > 0)); then
+    shift
+    cli_args=("$@")
+  fi
 
   env \
     HOME="${case_dir}/home" \
@@ -60,6 +150,7 @@ run_restart() {
     PEEKABOO_APPLICATIONS_DIR="${case_dir}/Applications" \
     PEEKABOO_BUILD_SCRIPT="${case_dir}/bin/build-app" \
     PEEKABOO_CODESIGN_BIN="${case_dir}/bin/codesign" \
+    PEEKABOO_DITTO_BIN="${case_dir}/bin/ditto" \
     PEEKABOO_FILE_BIN="${case_dir}/bin/file" \
     PEEKABOO_NM_BIN="${case_dir}/bin/nm" \
     PEEKABOO_STRINGS_BIN="${case_dir}/bin/strings" \
@@ -70,10 +161,17 @@ run_restart() {
     PEEKABOO_PGREP_BIN="${case_dir}/bin/pgrep" \
     PEEKABOO_KILL_BIN="${case_dir}/bin/kill" \
     PEEKABOO_SLEEP_BIN="${case_dir}/bin/sleep" \
+    PEEKABOO_SYNC_BIN="${case_dir}/bin/sync" \
     PEEKABOO_LAUNCH_VERIFY_ATTEMPTS=2 \
+    PEEKABOO_HEALTH_VERIFY_ATTEMPTS=2 \
+    PEEKABOO_HEALTHCHECK_CLI="${case_dir}/bin/peekaboo-health" \
+    PEEKABOO_APP_BRIDGE_SOCKET="${case_dir}/bridge.sock" \
     PEEKABOO_APP_SIGN_IDENTITY='Developer ID Application: Test (TESTTEAM)' \
-    "$@" \
-    "${ROOT_DIR}/scripts/restart-peekaboo.sh" >/dev/null
+    PEEKABOO_APP_EXPECTED_TEAM_ID='TESTTEAM' \
+    PEEKABOO_APP_SIGN_REQUIREMENT='anchor apple generic and certificate leaf[subject.OU] = "TESTTEAM"' \
+    PEEKABOO_APP_ENTITLEMENTS="${ROOT_DIR}/Apps/Mac/Peekaboo/Peekaboo.entitlements" \
+    "${env_args[@]}" \
+    "${ROOT_DIR}/scripts/restart-peekaboo.sh" "${cli_args[@]}" >"${case_dir}/stdout"
 }
 
 mkdir -p "${TEMPLATE_BIN}" "${TEMPLATE_SOURCE}/Apps"
@@ -89,11 +187,13 @@ bundle="${DERIVED_DATA_PATH}/Build/Products/${CONFIGURATION}/${APP_NAME}.app"
 printf '%s\n' 'build' >>"${state_dir}/events"
 mkdir -p "${bundle}/Contents/MacOS"
 printf '%s\n' 'new' >"${bundle}/build-id"
+printf '%s\n' '2222222222222222222222222222222222222222' >"${bundle}/.cdhash"
 printf 'configuration:%s\n' "${CONFIGURATION}" >>"${state_dir}/events"
 if [[ -f "${state_dir}/adhoc-build" ]]; then
   printf '%s\n' 'adhoc' >"${bundle}/.team-id"
 else
   printf '%s\n' 'TESTTEAM' >"${bundle}/.team-id"
+  [[ -f "${state_dir}/untrusted-anchor-build" ]] || touch "${bundle}/.trusted-anchor"
 fi
 if [[ -f "${state_dir}/apple-development-build" ]]; then
   printf '%s\n' 'apple-development' >"${bundle}/.requirement"
@@ -104,11 +204,15 @@ else
 fi
 if [[ -f "${state_dir}/different-build-identifier" ]]; then
   printf '%s\n' 'boo.peekaboo.mac.debug' >"${bundle}/.bundle-id"
+elif [[ "${CONFIGURATION}" == "Debug" ]]; then
+  printf '%s\n' 'boo.peekaboo.mac.debug' >"${bundle}/.bundle-id"
 else
   printf '%s\n' 'boo.peekaboo.mac' >"${bundle}/.bundle-id"
 fi
 /usr/bin/plutil -create xml1 "${bundle}/Contents/Info.plist"
 /usr/bin/plutil -insert CFBundleExecutable -string Peekaboo "${bundle}/Contents/Info.plist"
+/usr/bin/plutil -insert CFBundleShortVersionString -string 4.0.1 "${bundle}/Contents/Info.plist"
+/usr/bin/plutil -insert CFBundleVersion -string 4000199 "${bundle}/Contents/Info.plist"
 if [[ -f "${state_dir}/apple-events-description" ]]; then
   /usr/bin/plutil -insert NSAppleEventsUsageDescription -string 'Forbidden' "${bundle}/Contents/Info.plist"
 fi
@@ -120,7 +224,49 @@ if [[ -f "${state_dir}/nested-apple-events-description" ]]; then
 fi
 [[ ! -f "${state_dir}/apple-events-entitlement" ]] || touch "${bundle}/.apple-events-entitlement"
 [[ ! -f "${state_dir}/nsapplescript-import" ]] || touch "${bundle}/.nsapplescript-import"
+[[ ! -f "${state_dir}/osa-api-import" ]] || touch "${bundle}/.osa-api-import"
 [[ ! -f "${state_dir}/apple-events-string" ]] || touch "${bundle}/.apple-events-string"
+[[ ! -f "${state_dir}/dynamic-applescript-string" ]] || touch "${bundle}/.dynamic-applescript-string"
+if [[ -f "${state_dir}/compiled-script-resource" ]]; then
+  mkdir -p "${bundle}/Contents/Resources"
+  touch "${bundle}/Contents/Resources/Action.scpt"
+fi
+if [[ -f "${state_dir}/text-osascript-resource" ]]; then
+  mkdir -p "${bundle}/Contents/Resources"
+  printf '%s\n' '/usr/bin/osascript payload.applescript' >"${bundle}/Contents/Resources/Run.txt"
+fi
+if [[ -f "${state_dir}/executable-script-resource" ]]; then
+  mkdir -p "${bundle}/Contents/Resources"
+  printf '%s\n' '#!/usr/bin/env python3' 'NSAppleScript = "forbidden"' \
+    >"${bundle}/Contents/Resources/Run.py"
+  chmod +x "${bundle}/Contents/Resources/Run.py"
+fi
+if [[ -f "${state_dir}/raw-applescript-text" ]]; then
+  mkdir -p "${bundle}/Contents/Resources"
+  printf '%s\n' 'tell application "System Events" to keystroke "x"' \
+    >"${bundle}/Contents/Resources/Action.txt"
+fi
+if [[ -f "${state_dir}/raw-applescript-display" ]]; then
+  mkdir -p "${bundle}/Contents/Resources"
+  printf '%s\n' 'display dialog "x"' >"${bundle}/Contents/Resources/Prompt.payload"
+fi
+if [[ -f "${state_dir}/prefixed-applescript-command" ]]; then
+  mkdir -p "${bundle}/Contents/Resources"
+  printf '%s\n' 'set result to (display dialog "x")' \
+    >"${bundle}/Contents/Resources/Assigned.payload"
+  printf '%s\n' '(* leading comment *) display alert "x"' \
+    >"${bundle}/Contents/Resources/Commented.payload"
+fi
+if [[ -f "${state_dir}/mode-0740-resource" ]]; then
+  mkdir -p "${bundle}/Contents/Resources"
+  printf '%s\n' 'inert fixture' >"${bundle}/Contents/Resources/Mode.dat"
+  chmod 0740 "${bundle}/Contents/Resources/Mode.dat"
+fi
+if [[ -f "${state_dir}/nested-wrong-signer" ]]; then
+  mkdir -p "${bundle}/Contents/Frameworks"
+  printf '%s\n' 'nested Mach-O fixture' >"${bundle}/Contents/Frameworks/Bad.dylib"
+  chmod 644 "${bundle}/Contents/Frameworks/Bad.dylib"
+fi
 printf '#!/usr/bin/env bash\n' >"${bundle}/Contents/MacOS/Peekaboo"
 chmod +x "${bundle}/Contents/MacOS/Peekaboo"
 EOF
@@ -130,6 +276,35 @@ cat >"${TEMPLATE_BIN}/codesign" <<'EOF'
 set -euo pipefail
 state_dir="$(cd "$(dirname "$0")/.." && pwd)"
 bundle="${!#}"
+
+if [[ "${bundle}" == */bin/peekaboo-health ]]; then
+  if [[ "${1:-}" == "-dv" ]]; then
+    if [[ -f "${state_dir}/untrusted-health-cli" ]]; then
+      authority='Developer ID Application: Other (OTHERTEAM)'
+      team_id='OTHERTEAM'
+    else
+      authority="${PEEKABOO_APP_SIGN_IDENTITY:-Developer ID Application: Test (TESTTEAM)}"
+      team_id="${PEEKABOO_APP_EXPECTED_TEAM_ID:-TESTTEAM}"
+    fi
+    printf '%s\n' 'Identifier=boo.peekaboo.peekaboo' "Authority=${authority}" \
+      "TeamIdentifier=${team_id}" 'CDHash=5555555555555555555555555555555555555555' >&2
+    exit 0
+  fi
+  [[ "${1:-}" == "--verify" ]] || exit 2
+  [[ ! -f "${state_dir}/untrusted-health-cli" ]] || exit 1
+  exit 0
+fi
+
+if [[ "${bundle}" == */Contents/Frameworks/Bad.dylib ]]; then
+  if [[ "${1:-}" == "-dv" ]]; then
+    printf '%s\n' 'Identifier=bad.helper' 'Authority=Developer ID Application: Other (OTHERTEAM)' \
+      'TeamIdentifier=OTHERTEAM' 'CDHash=4444444444444444444444444444444444444444' >&2
+    exit 0
+  fi
+  [[ "${1:-}" == "--verify" ]] || exit 2
+  [[ "$*" != *' -R='* ]] || exit 1
+  exit 0
+fi
 
 if [[ "${1:-}" == "-d" && "${2:-}" == "--entitlements" ]]; then
   entitlement_root="${bundle%%/Contents/*}"
@@ -153,8 +328,20 @@ bundle_id="$(<"${bundle}/.bundle-id")"
 requirement="$(<"${bundle}/.requirement")"
 
 if [[ "${1:-}" == "--force" ]]; then
+  expected_identity="${PEEKABOO_APP_SIGN_IDENTITY:-}"
+  expected_team="${PEEKABOO_APP_EXPECTED_TEAM_ID:-}"
+  [[ -n "${expected_identity}" && -n "${expected_team}" ]] || exit 3
+  if [[ "$*" == *' --deep '* ]]; then
+    [[ "$*" == "--force --deep --options runtime --timestamp --sign ${expected_identity} ${bundle}" ]] || exit 4
+  else
+    expected_entitlements="${PEEKABOO_APP_ENTITLEMENTS:-}"
+    [[ -n "${expected_entitlements}" ]] || exit 5
+    [[ "$*" == "--force --options runtime --timestamp --entitlements ${expected_entitlements} --sign ${expected_identity} ${bundle}" ]] || exit 6
+  fi
   printf '%s\n' 'TESTTEAM' >"${bundle}/.team-id"
   printf '%s\n' 'developer-id' >"${bundle}/.requirement"
+  printf '%s\n' '2222222222222222222222222222222222222222' >"${bundle}/.cdhash"
+  touch "${bundle}/.trusted-anchor"
   printf '%s\n' 'sign' >>"${state_dir}/events"
   exit 0
 fi
@@ -168,14 +355,21 @@ if [[ "${1:-}" == "-dv" ]]; then
     elif [[ "${requirement}" == "other-developer-id" ]]; then
       authority='Developer ID Application: Other (TESTTEAM)'
     else
-      authority='Developer ID Application: Test (TESTTEAM)'
+      authority="${PEEKABOO_APP_SIGN_IDENTITY:-Developer ID Application: Test (TESTTEAM)}"
     fi
-    printf '%s\n' "Identifier=${bundle_id}" "Authority=${authority}" "TeamIdentifier=${team_id}" >&2
+    printf '%s\n' "Identifier=${bundle_id}" "Authority=${authority}" \
+      "TeamIdentifier=${team_id}" "CDHash=$(<"${bundle}/.cdhash")" >&2
   fi
   exit 0
 fi
 
 [[ "${1:-}" == "--verify" ]] || exit 2
+if [[ "$*" == *' -R='* ]]; then
+  [[ -f "${bundle}/.trusted-anchor" ]] || exit 1
+  [[ "${team_id}" == "${PEEKABOO_APP_EXPECTED_TEAM_ID:-TESTTEAM}" ]] || exit 1
+  [[ "${bundle_id}" == "${PEEKABOO_APP_EXPECTED_BUNDLE_ID:-${bundle_id}}" ]] || exit 1
+  [[ "$*" == *'anchor apple generic'* ]] || exit 1
+fi
 exit 0
 EOF
 
@@ -184,8 +378,35 @@ cat >"${TEMPLATE_BIN}/file" <<'EOF'
 set -euo pipefail
 if [[ "${1:-}" == "-b" && "${2:-}" == */Contents/MacOS/Peekaboo ]]; then
   printf '%s\n' 'Mach-O 64-bit executable arm64'
+elif [[ "${1:-}" == "-b" && "${2:-}" == */Contents/Frameworks/Bad.dylib ]]; then
+  printf '%s\n' 'Mach-O 64-bit dynamically linked shared library arm64'
+elif [[ "${1:-}" == "-b" && "${2:-}" == */Contents/Resources/Run.txt ]]; then
+  printf '%s\n' 'ASCII text'
+elif [[ "${1:-}" == "-b" && "${2:-}" == */Contents/Resources/Run.py ]]; then
+  printf '%s\n' 'Python script text executable'
+elif [[ "${1:-}" == "-b" && "${2:-}" == */Contents/Resources/*.txt ]]; then
+  printf '%s\n' 'ASCII text'
+elif [[ "${1:-}" == "-b" && "${2:-}" == */Contents/Resources/Mode.dat ]]; then
+  printf '%s\n' 'ASCII text'
+elif [[ "${1:-}" == "-b" && "${2:-}" == */Contents/Resources/Prompt.payload ]]; then
+  printf '%s\n' 'ASCII text'
+elif [[ "${1:-}" == "-b" && "${2:-}" == */Contents/Resources/*.payload ]]; then
+  printf '%s\n' 'ASCII text'
 else
   printf '%s\n' 'data'
+fi
+EOF
+
+cat >"${TEMPLATE_BIN}/ditto" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+state_dir="$(cd "$(dirname "$0")/.." && pwd)"
+/usr/bin/ditto "$@"
+candidate="${!#}"
+if [[ -f "${state_dir}/mutate-staged-native" ]]; then
+  mkdir -p "${candidate}/Contents/Resources"
+  printf '%s\n' 'tell application "System Events" to keystroke "x"' \
+    >"${candidate}/Contents/Resources/Injected.txt"
 fi
 EOF
 
@@ -196,6 +417,8 @@ candidate="${!#}"
 bundle="${candidate%%/Contents/*}"
 if [[ -f "${bundle}/.nsapplescript-import" ]]; then
   printf '%s\n' '                 U _OBJC_CLASS_$_NSAppleScript'
+elif [[ -f "${bundle}/.osa-api-import" ]]; then
+  printf '%s\n' '                 U _OSADoScript'
 fi
 EOF
 
@@ -206,6 +429,8 @@ candidate="${!#}"
 bundle="${candidate%%/Contents/*}"
 if [[ -f "${bundle}/.apple-events-string" ]]; then
   printf '%s\n' '<key>NSAppleEventsUsageDescription</key>'
+elif [[ -f "${bundle}/.dynamic-applescript-string" ]]; then
+  printf '%s\n' '/usr/bin/osascript'
 else
   printf '%s\n' 'NSAppleEventsUsageDescription may appear in harmless prose'
 fi
@@ -235,6 +460,10 @@ if [[ -f "${state_dir}/fail-second-move" && "${count}" -eq 2 ]]; then
 fi
 /bin/mv "$@"
 target="${!#}"
+if [[ -f "${state_dir}/fail-after-restore-move" && "${1:-}" == */previous.app && \
+  "${target}" == */Peekaboo.app ]]; then
+  exit 70
+fi
 if [[ -f "${state_dir}/mutate-final-team" && "${count}" -eq 2 ]]; then
   printf '%s\n' 'OTHERTEAM' >"${target}/.team-id"
 fi
@@ -250,8 +479,9 @@ cat >"${TEMPLATE_BIN}/open" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 state_dir="$(cd "$(dirname "$0")/.." && pwd)"
-[[ "${1:-}" == "-gj" ]] || exit 72
-bundle="${!#}"
+[[ "${1:-}" == "-gj" && "${3:-}" == "--args" && \
+  "${4:-}" == "--background-bridge-host" && "$#" -eq 4 ]] || exit 72
+bundle="$2"
 build_id="$(<"${bundle}/build-id")"
 printf '%s\n' "${1}" >>"${state_dir}/open-flags"
 printf '%s|%s\n' "${bundle}" "${build_id}" >>"${state_dir}/open-log"
@@ -260,6 +490,36 @@ if [[ -f "${state_dir}/fail-new-open" && "${build_id}" == "new" ]]; then
   exit 71
 fi
 printf '%s\n' "${bundle}" >"${state_dir}/running-path"
+if [[ -f "${state_dir}/transient-new-process" && "${build_id}" == "new" ]]; then
+  printf '%s\n' '0' >"${state_dir}/pgrep-count"
+fi
+if [[ -f "${state_dir}/fail-old-process" && "${build_id}" == "old" ]]; then
+  rm -f "${state_dir}/running-path"
+fi
+EOF
+
+cat >"${TEMPLATE_BIN}/peekaboo-health" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+state_dir="$(cd "$(dirname "$0")/.." && pwd)"
+[[ "${1:-}" == "bridge" && "${2:-}" == "status" && "${3:-}" == "--bridge-socket" && \
+  "${4:-}" == "${state_dir}/bridge.sock" && "${5:-}" == "--json" && "$#" -eq 5 ]] || exit 72
+[[ ! -f "${state_dir}/fail-health" ]] || exit 71
+bundle="$(<"${state_dir}/running-path")"
+bundle_id="$(<"${bundle}/.bundle-id")"
+code_hash="$(<"${bundle}/.cdhash")"
+host_pid=4242
+capabilities='["backgroundBridgeHost","hostGenerationIdentity","codeSignatureBuildIdentity"]'
+[[ ! -f "${state_dir}/health-wrong-pid" ]] || host_pid=9999
+[[ ! -f "${state_dir}/health-wrong-hash" ]] || code_hash=0000000000000000000000000000000000000000
+[[ ! -f "${state_dir}/health-missing-capability" ]] || capabilities='["hostGenerationIdentity","codeSignatureBuildIdentity"]'
+short_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' \
+  "${bundle}/Contents/Info.plist")"
+bundle_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' \
+  "${bundle}/Contents/Info.plist")"
+printf '{"success":true,"data":{"selected":{"source":"remote","socketPath":"%s","handshake":{"hostKind":"gui","hostIdentity":{"processIdentifier":%s,"processStartIdentity":123456,"bundleIdentifier":"%s","bundleShortVersion":"%s","bundleVersion":"%s","codeSignatureHash":"%s"},"hostCapabilities":%s}}}}\n' \
+  "${state_dir}/bridge.sock" "${host_pid}" "${bundle_id}" "${short_version}" "${bundle_version}" \
+  "${code_hash}" "${capabilities}"
 EOF
 
 cat >"${TEMPLATE_BIN}/pgrep" <<'EOF'
@@ -268,6 +528,14 @@ set -euo pipefail
 state_dir="$(cd "$(dirname "$0")/.." && pwd)"
 [[ -f "${state_dir}/running-path" ]] || exit 1
 running_path="$(<"${state_dir}/running-path")"
+if [[ -f "${state_dir}/pgrep-count" ]]; then
+  count="$(<"${state_dir}/pgrep-count")"
+  count=$((count + 1))
+  printf '%s\n' "${count}" >"${state_dir}/pgrep-count"
+  if ((count <= 2)); then
+    exit 1
+  fi
+fi
 case "${1:-}" in
   -f)
     executable="${running_path}/Contents/MacOS/Peekaboo"
@@ -285,11 +553,21 @@ cat >"${TEMPLATE_BIN}/kill" <<'EOF'
 set -euo pipefail
 state_dir="$(cd "$(dirname "$0")/.." && pwd)"
 [[ "${1:-}" == "-TERM" && "${2:-}" == "4242" && "$#" -eq 2 ]] || exit 2
+[[ ! -f "${state_dir}/refuse-stop" ]] || exit 70
+if [[ -f "${state_dir}/refuse-new-stop" && -f "${state_dir}/running-path" ]]; then
+  running_path="$(<"${state_dir}/running-path")"
+  [[ "$(<"${running_path}/build-id")" != "new" ]] || exit 70
+fi
 printf '%s\n' 'stop' >>"${state_dir}/events"
 rm -f "${state_dir}/running-path"
 EOF
 
 cat >"${TEMPLATE_BIN}/sleep" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+
+cat >"${TEMPLATE_BIN}/sync" <<'EOF'
 #!/usr/bin/env bash
 exit 0
 EOF
@@ -314,6 +592,114 @@ if run_restart "${invalid_target_dir}" PEEKABOO_APP_BUNDLE="${invalid_target_dir
   fail 'an explicit target with another app name must be rejected'
 fi
 [[ ! -f "${invalid_target_dir}/events" ]] || fail 'invalid target rejection started a build'
+
+# The CLI supplying readiness evidence must itself carry the expected signed CLI identity.
+untrusted_health_dir="$(new_case untrusted-health-cli-refusal)"
+mkdir -p "${untrusted_health_dir}/Applications"
+touch "${untrusted_health_dir}/untrusted-health-cli"
+if run_restart "${untrusted_health_dir}"; then
+  fail 'expected untrusted healthcheck CLI refusal'
+fi
+[[ ! -f "${untrusted_health_dir}/events" ]] || fail 'untrusted healthcheck CLI started a build'
+
+# A live canonical-target lock refuses a concurrent installer before build or mutation.
+locked_dir="$(new_case live-lock-refusal)"
+locked_target="${locked_dir}/Applications/Peekaboo.app"
+mkdir -p "$(dirname "${locked_target}")"
+make_bundle "${locked_target}" old
+write_lock_owner "$(dirname "${locked_target}")" ignored ignored
+lock_marker="${locked_dir}/lock-held"
+/usr/bin/lockf -k "$(dirname "${locked_target}")/.Peekaboo.install-lock/lock" \
+  /bin/sh -c "touch '${lock_marker}'; sleep 60" &
+lock_holder=$!
+LOCK_HOLDER="${lock_holder}"
+for _ in {1..50}; do
+  [[ -f "${lock_marker}" ]] && break
+  /bin/sleep 0.02
+done
+[[ -f "${lock_marker}" ]] || fail 'test lock holder did not acquire the installer lock'
+if run_restart "${locked_dir}"; then
+  fail 'expected a live installer lock to refuse concurrent mutation'
+fi
+if run_restart "${locked_dir}" TZ=UTC LC_ALL=C; then
+  fail 'expected live installer lock refusal to be independent of timezone and locale'
+fi
+assert_text "${locked_target}/build-id" old
+[[ ! -f "${locked_dir}/events" ]] || fail 'live lock refusal started a build'
+kill "${lock_holder}" 2>/dev/null || true
+wait "${lock_holder}" 2>/dev/null || true
+LOCK_HOLDER=""
+
+# A dead lock is recoverable, and lock ownership is released after success.
+dead_lock_dir="$(new_case dead-lock-recovery)"
+dead_lock_target="${dead_lock_dir}/Applications/Peekaboo.app"
+mkdir -p "$(dirname "${dead_lock_target}")"
+make_bundle "${dead_lock_target}" old
+write_lock_owner "$(dirname "${dead_lock_target}")" ignored ignored
+run_restart "${dead_lock_dir}"
+assert_text "${dead_lock_target}/build-id" new
+[[ -f "$(dirname "${dead_lock_target}")/.Peekaboo.install-lock/lock" ]] || \
+  fail 'successful unlocked-lock reuse lost its persistent lock file'
+
+# A staged crash before the first rename recognizes the unchanged running target and cleans safely.
+staged_crash_dir="$(new_case crash-before-backup-rename)"
+staged_crash_parent="${staged_crash_dir}/Applications"
+staged_crash_target="${staged_crash_parent}/Peekaboo.app"
+staged_crash_root="${staged_crash_parent}/.Peekaboo.install.CRASH00"
+mkdir -p "${staged_crash_root}"
+make_bundle "${staged_crash_target}" old
+make_bundle "${staged_crash_root}/candidate.app" interrupted-new
+printf '%s\n' "${staged_crash_target}" >"${staged_crash_dir}/running-path"
+write_journal "${staged_crash_parent}" "${staged_crash_target}" "${staged_crash_root}" staged 1 1
+write_lock_owner "${staged_crash_parent}" 99999999 'dead process'
+run_restart "${staged_crash_dir}"
+assert_text "${staged_crash_target}/build-id" new
+assert_text "${staged_crash_dir}/open-log" "${staged_crash_target}|new"
+[[ ! -e "${staged_crash_root}" && ! -e "${staged_crash_parent}/.Peekaboo.install.journal" ]] || \
+  fail 'staged crash recovery did not clean the unchanged transaction'
+
+# A crash after moving the previous app is recovered from the durable sibling journal before rebuilding.
+rename_crash_dir="$(new_case crash-after-backup-rename)"
+rename_crash_parent="${rename_crash_dir}/Applications"
+rename_crash_target="${rename_crash_parent}/Peekaboo.app"
+rename_crash_root="${rename_crash_parent}/.Peekaboo.install.CRASH01"
+mkdir -p "${rename_crash_root}"
+make_bundle "${rename_crash_root}/previous.app" old
+make_bundle "${rename_crash_root}/candidate.app" interrupted-new
+write_journal "${rename_crash_parent}" "${rename_crash_target}" "${rename_crash_root}" backing-up 1 1
+write_lock_owner "${rename_crash_parent}" 99999999 'dead process'
+run_restart "${rename_crash_dir}"
+assert_text "${rename_crash_target}/build-id" new
+expected_crash_recovery_log="${rename_crash_target}|old
+${rename_crash_target}|new"
+assert_text "${rename_crash_dir}/open-log" "${expected_crash_recovery_log}"
+[[ ! -e "${rename_crash_root}" && ! -e "${rename_crash_parent}/.Peekaboo.install.journal" ]] || \
+  fail 'rename-crash recovery did not clean its completed transaction'
+
+# Recovery never restores the backup over a live replacement; it keeps every bundle and the journal.
+live_recovery_dir="$(new_case live-replacement-recovery-refusal)"
+live_recovery_parent="${live_recovery_dir}/Applications"
+live_recovery_target="${live_recovery_parent}/Peekaboo.app"
+live_recovery_root="${live_recovery_parent}/.Peekaboo.install.CRASH02"
+mkdir -p "${live_recovery_root}"
+make_bundle "${live_recovery_root}/previous.app" old
+make_bundle "${live_recovery_target}" interrupted-new
+printf '%s\n' "${live_recovery_target}" >"${live_recovery_dir}/running-path"
+write_journal "${live_recovery_parent}" "${live_recovery_target}" "${live_recovery_root}" installed 1 1
+write_lock_owner "${live_recovery_parent}" 99999999 'dead process'
+if run_restart "${live_recovery_dir}"; then
+  fail 'expected live interrupted replacement recovery to fail closed'
+fi
+assert_text "${live_recovery_target}/build-id" interrupted-new
+assert_text "${live_recovery_root}/previous.app/build-id" old
+[[ -f "${live_recovery_parent}/.Peekaboo.install.journal" ]] || \
+  fail 'live replacement recovery discarded its journal'
+rm -f "${live_recovery_dir}/running-path"
+run_restart "${live_recovery_dir}"
+assert_text "${live_recovery_target}/build-id" new
+expected_live_recovery_log="${live_recovery_target}|old
+${live_recovery_target}|new"
+assert_text "${live_recovery_dir}/open-log" "${expected_live_recovery_log}"
 
 # An existing Applications-style install is the destination, never the stale launch source.
 success_dir="$(new_case applications-success)"
@@ -359,6 +745,85 @@ expected_launch_log="${launch_target}|new
 ${launch_target}|old"
 assert_text "${launch_dir}/open-log" "${expected_launch_log}"
 assert_text "${launch_dir}/running-path" "${launch_target}"
+
+# A process is not committed until the explicit GUI Bridge identifies that PID, build, and launch mode.
+for health_case in fail-health health-wrong-pid health-wrong-hash health-missing-capability; do
+  health_dir="$(new_case ${health_case}-rollback)"
+  health_target="${health_dir}/Applications/Peekaboo.app"
+  mkdir -p "$(dirname "${health_target}")"
+  make_bundle "${health_target}" old
+  printf '%s\n' "${health_target}" >"${health_dir}/running-path"
+  touch "${health_dir}/${health_case}"
+  if run_restart "${health_dir}"; then
+    fail "expected ${health_case} readiness failure"
+  fi
+  assert_text "${health_target}/build-id" old
+  expected_health_rollback_log="${health_target}|new
+${health_target}|old"
+  assert_text "${health_dir}/open-log" "${expected_health_rollback_log}"
+  [[ ! -e "$(dirname "${health_target}")/.Peekaboo.install.journal" ]] || \
+    fail "${health_case} rollback left a completed journal"
+done
+
+# If the replacement cannot be stopped, rollback preserves both bundles and never restores over it.
+stop_refusal_dir="$(new_case rollback-stop-refusal)"
+stop_refusal_target="${stop_refusal_dir}/Applications/Peekaboo.app"
+mkdir -p "$(dirname "${stop_refusal_target}")"
+make_bundle "${stop_refusal_target}" old
+printf '%s\n' "${stop_refusal_target}" >"${stop_refusal_dir}/running-path"
+touch "${stop_refusal_dir}/transient-new-process" "${stop_refusal_dir}/refuse-new-stop"
+if run_restart "${stop_refusal_dir}"; then
+  fail 'expected rollback to refuse restoring over a live replacement'
+fi
+assert_text "${stop_refusal_target}/build-id" new
+stop_refusal_root="$(find "$(dirname "${stop_refusal_target}")" -maxdepth 1 -type d \
+  -name '.Peekaboo.install.*' ! -name '*.lock' -print -quit)"
+[[ -n "${stop_refusal_root}" ]] || fail 'live rollback did not preserve its transaction root'
+assert_text "${stop_refusal_root}/previous.app/build-id" old
+[[ -f "$(dirname "${stop_refusal_target}")/.Peekaboo.install.journal" ]] || \
+  fail 'live rollback discarded its recovery journal'
+rm -f "${stop_refusal_dir}/running-path" "${stop_refusal_dir}/refuse-new-stop" \
+  "${stop_refusal_dir}/transient-new-process" "${stop_refusal_dir}/pgrep-count"
+run_restart "${stop_refusal_dir}"
+assert_text "${stop_refusal_target}/build-id" new
+
+# Restoring a bundle is not enough: rollback keeps its journal until a new old-app process is observed.
+restore_verify_dir="$(new_case restored-generation-verification)"
+restore_verify_target="${restore_verify_dir}/Applications/Peekaboo.app"
+mkdir -p "$(dirname "${restore_verify_target}")"
+make_bundle "${restore_verify_target}" old
+printf '%s\n' "${restore_verify_target}" >"${restore_verify_dir}/running-path"
+touch "${restore_verify_dir}/fail-new-open" "${restore_verify_dir}/fail-old-process"
+if run_restart "${restore_verify_dir}"; then
+  fail 'expected unobserved restored process generation to keep recovery state'
+fi
+assert_text "${restore_verify_target}/build-id" old
+grep -q '^phase=restored$' "$(dirname "${restore_verify_target}")/.Peekaboo.install.journal" || \
+  fail 'unobserved restored generation did not keep a restored-phase journal'
+rm -f "${restore_verify_dir}/fail-new-open" "${restore_verify_dir}/fail-old-process"
+run_restart "${restore_verify_dir}"
+assert_text "${restore_verify_target}/build-id" new
+
+# A crash after the backup rename but before the restored journal write is idempotently recoverable.
+restore_crash_dir="$(new_case crash-after-restore-rename)"
+restore_crash_target="${restore_crash_dir}/Applications/Peekaboo.app"
+mkdir -p "$(dirname "${restore_crash_target}")"
+make_bundle "${restore_crash_target}" old
+printf '%s\n' "${restore_crash_target}" >"${restore_crash_dir}/running-path"
+touch "${restore_crash_dir}/fail-new-open" "${restore_crash_dir}/fail-after-restore-move"
+if run_restart "${restore_crash_dir}"; then
+  fail 'expected simulated crash after restore rename'
+fi
+assert_text "${restore_crash_target}/build-id" old
+grep -q '^phase=restoring$' "$(dirname "${restore_crash_target}")/.Peekaboo.install.journal" || \
+  fail 'post-restore-rename crash did not retain the restoring phase'
+rm -f "${restore_crash_dir}/fail-new-open" "${restore_crash_dir}/fail-after-restore-move"
+run_restart "${restore_crash_dir}"
+assert_text "${restore_crash_target}/build-id" new
+expected_restore_crash_log="${restore_crash_target}|new
+${restore_crash_target}|old
+${restore_crash_target}|new"
+assert_text "${restore_crash_dir}/open-log" "${expected_restore_crash_log}"
 
 # With no Applications install, an existing dist target is replaced transactionally; install failure restores it.
 install_dir="$(new_case install-rollback)"
@@ -413,6 +878,67 @@ assert_text "${sign_target}/build-id" new
 first_sign_line="$(grep -n '^sign$' "${sign_dir}/events" | head -n 1 | cut -d: -f1)"
 sign_stop_line="$(grep -n '^stop$' "${sign_dir}/events" | cut -d: -f1)"
 ((first_sign_line < sign_stop_line)) || fail 'app was stopped before signing completed'
+
+# Exact-artifact mode does not build or re-sign and reports one content digest through installation.
+artifact_dir="$(new_case exact-source-artifact)"
+artifact_source="${artifact_dir}/Source/Peekaboo.app"
+artifact_target="${artifact_dir}/Applications/Peekaboo.app"
+mkdir -p "$(dirname "${artifact_source}")" "$(dirname "${artifact_target}")"
+make_bundle "${artifact_source}" artifact
+make_bundle "${artifact_target}" old
+printf '%s\n' "${artifact_target}" >"${artifact_dir}/running-path"
+run_restart "${artifact_dir}" -- --source-app "${artifact_source}"
+assert_text "${artifact_source}/build-id" artifact
+assert_text "${artifact_target}/build-id" artifact
+if grep -Eq '^(build|sign)$' "${artifact_dir}/events"; then
+  fail 'exact-source artifact mode rebuilt or re-signed its input'
+fi
+grep -Eq '^Artifact SHA-256: [0-9a-f]{64}$' "${artifact_dir}/stdout" || \
+  fail 'exact-source artifact mode did not report its digest'
+grep -Eq '^OK: .*\(SHA-256 [0-9a-f]{64}\)\.$' "${artifact_dir}/stdout" || \
+  fail 'exact-source artifact mode did not report the installed digest'
+
+# --no-build can reuse an explicit already-signed build output without touching it.
+no_build_dir="$(new_case no-build-artifact)"
+no_build_source="${no_build_dir}/Prebuilt/Peekaboo.app"
+no_build_target="${no_build_dir}/Applications/Peekaboo.app"
+mkdir -p "$(dirname "${no_build_source}")" "$(dirname "${no_build_target}")"
+make_bundle "${no_build_source}" prebuilt
+make_bundle "${no_build_target}" old
+printf '%s\n' "${no_build_target}" >"${no_build_dir}/running-path"
+run_restart "${no_build_dir}" BUILT_APP_BUNDLE="${no_build_source}" -- --no-build
+assert_text "${no_build_target}/build-id" prebuilt
+if grep -Eq '^(build|sign)$' "${no_build_dir}/events"; then
+  fail '--no-build mode rebuilt or re-signed its input'
+fi
+
+# Textual Authority/Team metadata cannot substitute for the expected Apple trust requirement.
+untrusted_source_dir="$(new_case untrusted-source-artifact)"
+untrusted_source="${untrusted_source_dir}/Source/Peekaboo.app"
+mkdir -p "$(dirname "${untrusted_source}")" "${untrusted_source_dir}/Applications"
+make_bundle "${untrusted_source}" untrusted
+rm -f "${untrusted_source}/.trusted-anchor"
+if run_restart "${untrusted_source_dir}" -- --source-app "${untrusted_source}"; then
+  fail 'expected same-authority artifact without the trusted requirement to fail'
+fi
+[[ ! -f "${untrusted_source_dir}/events" ]] || fail 'untrusted source artifact started or mutated the app'
+
+# Existing unstable identity fails closed unless the operator explicitly accepts a TCC migration.
+unstable_dir="$(new_case unstable-existing-identity)"
+unstable_target="${unstable_dir}/Applications/Peekaboo.app"
+mkdir -p "$(dirname "${unstable_target}")"
+make_bundle "${unstable_target}" old
+rm -f "${unstable_target}/.team-id" "${unstable_target}/.requirement" "${unstable_target}/.trusted-anchor"
+printf '%s\n' "${unstable_target}" >"${unstable_dir}/running-path"
+if run_restart "${unstable_dir}"; then
+  fail 'expected unstable existing identity to fail closed by default'
+fi
+assert_text "${unstable_target}/build-id" old
+if grep -q '^stop$' "${unstable_dir}/events"; then
+  fail 'unstable identity refusal stopped the existing app'
+fi
+run_restart "${unstable_dir}" -- --allow-unstable-existing-identity
+assert_text "${unstable_target}/build-id" new
 
 # A same-team Apple Development build is re-signed when the configured Developer ID is available.
 resign_dir="$(new_case requirement-resign-success)"
@@ -473,9 +999,19 @@ if run_restart "${source_policy_dir}"; then
 fi
 [[ ! -f "${source_policy_dir}/events" ]] || fail 'source policy refusal started a build'
 
+source_resource_dir="$(new_case source-resource-refusal)"
+touch "${source_resource_dir}/source/Apps/Action.scpt"
+if run_restart "${source_resource_dir}"; then
+  fail 'expected production AppleScript resource policy refusal'
+fi
+[[ ! -f "${source_resource_dir}/events" ]] || fail 'source resource refusal started a build'
+
 for policy_case in \
   apple-events-description nested-apple-events-description \
-  apple-events-entitlement nsapplescript-import apple-events-string; do
+  apple-events-entitlement nsapplescript-import apple-events-string \
+  osa-api-import dynamic-applescript-string compiled-script-resource text-osascript-resource \
+  executable-script-resource raw-applescript-text raw-applescript-display prefixed-applescript-command \
+  mode-0740-resource; do
   policy_dir="$(new_case ${policy_case}-refusal)"
   policy_target="${policy_dir}/Applications/Peekaboo.app"
   make_bundle "${policy_target}" old
@@ -489,6 +1025,80 @@ for policy_case in \
     fail "${policy_case} refusal stopped or launched the app"
   fi
 done
+
+
+# The exact staged candidate is native-scanned after copying, not just its mutable source path.
+staged_native_dir="$(new_case staged-native-tamper-refusal)"
+staged_native_target="${staged_native_dir}/Applications/Peekaboo.app"
+mkdir -p "$(dirname "${staged_native_target}")"
+make_bundle "${staged_native_target}" old
+printf '%s\n' "${staged_native_target}" >"${staged_native_dir}/running-path"
+touch "${staged_native_dir}/mutate-staged-native"
+if run_restart "${staged_native_dir}"; then
+  fail 'expected staged native-only tamper refusal'
+fi
+assert_text "${staged_native_target}/build-id" old
+if grep -q '^stop$' "${staged_native_dir}/events"; then
+  fail 'staged native-only refusal stopped the previous app'
+fi
+
+# Every nested Mach-O must carry the expected signer even when it is not executable on disk.
+nested_signer_dir="$(new_case nested-nonexecutable-signer-refusal)"
+nested_signer_target="${nested_signer_dir}/Applications/Peekaboo.app"
+mkdir -p "$(dirname "${nested_signer_target}")"
+make_bundle "${nested_signer_target}" old
+printf '%s\n' "${nested_signer_target}" >"${nested_signer_dir}/running-path"
+touch "${nested_signer_dir}/nested-wrong-signer"
+if run_restart "${nested_signer_dir}"; then
+  fail 'expected non-executable nested Mach-O wrong-signer refusal'
+fi
+assert_text "${nested_signer_target}/build-id" old
+if grep -q '^stop$' "${nested_signer_dir}/events"; then
+  fail 'nested signer refusal stopped the previous app'
+fi
+
+# Target and exact-artifact symlinks are rejected before build, stop, or copy.
+target_symlink_dir="$(new_case target-symlink-refusal)"
+target_symlink_parent="${target_symlink_dir}/Applications"
+mkdir -p "${target_symlink_parent}" "${target_symlink_dir}/Elsewhere"
+make_bundle "${target_symlink_dir}/Elsewhere/Peekaboo.app" old
+ln -s "${target_symlink_dir}/Elsewhere/Peekaboo.app" "${target_symlink_parent}/Peekaboo.app"
+if run_restart "${target_symlink_dir}"; then
+  fail 'expected symlinked install target refusal'
+fi
+[[ ! -f "${target_symlink_dir}/events" ]] || fail 'symlink target refusal started a build'
+
+source_symlink_dir="$(new_case source-symlink-refusal)"
+mkdir -p "${source_symlink_dir}/Source" "${source_symlink_dir}/Real" \
+  "${source_symlink_dir}/Applications"
+make_bundle "${source_symlink_dir}/Real/Peekaboo.app" source
+ln -s "${source_symlink_dir}/Real/Peekaboo.app" "${source_symlink_dir}/Source/Peekaboo.app"
+if run_restart "${source_symlink_dir}" -- --source-app "${source_symlink_dir}/Source/Peekaboo.app"; then
+  fail 'expected symlinked source artifact refusal'
+fi
+[[ ! -f "${source_symlink_dir}/events" ]] || fail 'symlink source refusal mutated the app'
+
+main_symlink_dir="$(new_case main-executable-symlink-refusal)"
+main_symlink_source="${main_symlink_dir}/Source/Peekaboo.app"
+mkdir -p "$(dirname "${main_symlink_source}")" "${main_symlink_dir}/Applications"
+make_bundle "${main_symlink_source}" source
+rm -f "${main_symlink_source}/Contents/MacOS/Peekaboo"
+ln -s /usr/bin/true "${main_symlink_source}/Contents/MacOS/Peekaboo"
+if run_restart "${main_symlink_dir}" -- --source-app "${main_symlink_source}"; then
+  fail 'expected symlinked CFBundleExecutable refusal'
+fi
+[[ ! -f "${main_symlink_dir}/events" ]] || fail 'symlinked main executable mutated the app'
+
+resource_symlink_dir="$(new_case escaping-resource-symlink-refusal)"
+resource_symlink_source="${resource_symlink_dir}/Source/Peekaboo.app"
+mkdir -p "$(dirname "${resource_symlink_source}")" "${resource_symlink_dir}/Applications"
+make_bundle "${resource_symlink_source}" source
+mkdir -p "${resource_symlink_source}/Contents/Resources"
+ln -s /usr/bin/true "${resource_symlink_source}/Contents/Resources/ExternalTool"
+if run_restart "${resource_symlink_dir}" -- --source-app "${resource_symlink_source}"; then
+  fail 'expected payload symlink escaping Contents to fail'
+fi
+[[ ! -f "${resource_symlink_dir}/events" ]] || fail 'escaping resource symlink mutated the app'
 
 # An ad-hoc build is rejected before the current target is stopped or changed.
 adhoc_dir="$(new_case adhoc-refusal)"
