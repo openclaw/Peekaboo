@@ -43,6 +43,26 @@ public struct SystemWindowIdentity: Sendable, Equatable {
 /// PIDs are generation-bound because they are recycled; CGWindowID is Apple's session-scoped
 /// WindowServer identifier, with owner generation and bounds retained as fail-closed change evidence.
 public enum SystemIdentityResolver {
+    private struct WindowSafetyFingerprint: Equatable {
+        let windowID: CGWindowID
+        let ownerProcessIdentifier: pid_t
+        let bounds: CGRect
+        let layer: Int
+        let alpha: CGFloat
+        let isOnScreen: Bool
+        let sharingState: WindowSharingState?
+
+        init(_ identity: SystemWindowIdentity) {
+            self.windowID = identity.windowID
+            self.ownerProcessIdentifier = identity.ownerProcessIdentifier
+            self.bounds = identity.bounds
+            self.layer = identity.layer
+            self.alpha = identity.alpha
+            self.isOnScreen = identity.isOnScreen
+            self.sharingState = identity.sharingState
+        }
+    }
+
     struct WindowMutationIdentityProviders {
         let processStartIdentity: (pid_t) -> UInt64?
         let windowIdentity: (CGWindowID) -> SystemWindowIdentity?
@@ -96,6 +116,41 @@ public enum SystemIdentityResolver {
             return nil
         }
         return identity
+    }
+
+    /// Captures one generation-bound exact-window identity while allowing descriptive metadata
+    /// such as the title or application name to refresh between reads. Those fields do not define
+    /// WindowServer identity and must not invalidate a safe capture plan by themselves.
+    static func stableWindowIdentity(
+        _ windowID: CGWindowID,
+        windowIdentityProvider: (CGWindowID) -> SystemWindowIdentity? = SystemIdentityResolver.windowIdentity,
+        processStartIdentityProvider: (pid_t) -> UInt64? = SystemIdentityResolver.processStartIdentity)
+        -> SystemWindowIdentity?
+    {
+        guard windowID != kCGNullWindowID,
+              let before = windowIdentityProvider(windowID),
+              before.windowID == windowID,
+              let beforeGeneration = processStartIdentityProvider(before.ownerProcessIdentifier),
+              let after = windowIdentityProvider(windowID),
+              after.windowID == windowID,
+              let afterGeneration = processStartIdentityProvider(after.ownerProcessIdentifier),
+              beforeGeneration == afterGeneration,
+              WindowSafetyFingerprint(before) == WindowSafetyFingerprint(after)
+        else {
+            return nil
+        }
+
+        return SystemWindowIdentity(
+            windowID: after.windowID,
+            ownerProcessIdentifier: after.ownerProcessIdentifier,
+            ownerProcessStartIdentity: afterGeneration,
+            title: after.title,
+            bounds: after.bounds,
+            layer: after.layer,
+            alpha: after.alpha,
+            isOnScreen: after.isOnScreen,
+            sharingState: after.sharingState,
+            applicationName: after.applicationName)
     }
 
     /// Lists one process's current WindowServer entries in front-to-back order without AX traversal.

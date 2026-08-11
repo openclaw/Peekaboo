@@ -92,7 +92,9 @@ import CoreGraphics
         plan: Plan,
         finalPixelSize: CGSize,
         engine: ScreenCaptureAPI? = nil,
-        fallbackReason: String? = nil) -> CaptureDiagnostics
+        fallbackReason: String? = nil,
+        windowPlanCacheStatus: CaptureWindowPlanCacheStatus? = nil,
+        windowPlanCacheGeneration: UInt64? = nil) -> CaptureDiagnostics
     {
         CaptureDiagnostics(
             requestedScale: plan.preference,
@@ -101,7 +103,9 @@ import CoreGraphics
             scaleSource: plan.source.rawValue,
             finalPixelSize: finalPixelSize,
             engine: engine?.description,
-            fallbackReason: fallbackReason)
+            fallbackReason: fallbackReason,
+            windowPlanCacheStatus: windowPlanCacheStatus,
+            windowPlanCacheGeneration: windowPlanCacheGeneration)
     }
 
     private static func nativeScaleWithSource(

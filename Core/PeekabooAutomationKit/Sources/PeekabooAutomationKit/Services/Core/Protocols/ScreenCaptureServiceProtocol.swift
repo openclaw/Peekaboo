@@ -255,6 +255,11 @@ public struct CaptureViewport: Sendable, Codable, Equatable {
     }
 }
 
+public enum CaptureWindowPlanCacheStatus: String, Sendable, Codable, Equatable {
+    case hit
+    case miss
+}
+
 public struct CaptureDiagnostics: Sendable, Codable, Equatable {
     public let requestedScale: CaptureScalePreference
     public let nativeScale: CGFloat
@@ -263,6 +268,8 @@ public struct CaptureDiagnostics: Sendable, Codable, Equatable {
     public let finalPixelSize: CGSize
     public let engine: String?
     public let fallbackReason: String?
+    public let windowPlanCacheStatus: CaptureWindowPlanCacheStatus?
+    public let windowPlanCacheGeneration: UInt64?
 
     public init(
         requestedScale: CaptureScalePreference,
@@ -271,7 +278,9 @@ public struct CaptureDiagnostics: Sendable, Codable, Equatable {
         scaleSource: String,
         finalPixelSize: CGSize,
         engine: String? = nil,
-        fallbackReason: String? = nil)
+        fallbackReason: String? = nil,
+        windowPlanCacheStatus: CaptureWindowPlanCacheStatus? = nil,
+        windowPlanCacheGeneration: UInt64? = nil)
     {
         self.requestedScale = requestedScale
         self.nativeScale = nativeScale
@@ -280,6 +289,8 @@ public struct CaptureDiagnostics: Sendable, Codable, Equatable {
         self.finalPixelSize = finalPixelSize
         self.engine = engine
         self.fallbackReason = fallbackReason
+        self.windowPlanCacheStatus = windowPlanCacheStatus
+        self.windowPlanCacheGeneration = windowPlanCacheGeneration
     }
 }
 
@@ -318,7 +329,9 @@ extension CaptureMetadata {
                 scaleSource: diagnostics.scaleSource,
                 finalPixelSize: deliveredPixelSize,
                 engine: diagnostics.engine,
-                fallbackReason: diagnostics.fallbackReason)
+                fallbackReason: diagnostics.fallbackReason,
+                windowPlanCacheStatus: diagnostics.windowPlanCacheStatus,
+                windowPlanCacheGeneration: diagnostics.windowPlanCacheGeneration)
         }
 
         return CaptureMetadata(
@@ -342,7 +355,9 @@ extension CaptureMetadata {
                 scaleSource: diagnostics.scaleSource,
                 finalPixelSize: deliveredPixelSize,
                 engine: diagnostics.engine,
-                fallbackReason: diagnostics.fallbackReason)
+                fallbackReason: diagnostics.fallbackReason,
+                windowPlanCacheStatus: diagnostics.windowPlanCacheStatus,
+                windowPlanCacheGeneration: diagnostics.windowPlanCacheGeneration)
         }
         return CaptureMetadata(
             size: deliveredPixelSize,
@@ -489,7 +504,9 @@ extension CaptureResult {
                 scaleSource: diagnostics.scaleSource,
                 finalPixelSize: diagnostics.finalPixelSize,
                 engine: engine ?? diagnostics.engine,
-                fallbackReason: fallbackReason ?? diagnostics.fallbackReason)),
+                fallbackReason: fallbackReason ?? diagnostics.fallbackReason,
+                windowPlanCacheStatus: diagnostics.windowPlanCacheStatus,
+                windowPlanCacheGeneration: diagnostics.windowPlanCacheGeneration)),
             warning: self.warning)
     }
 }

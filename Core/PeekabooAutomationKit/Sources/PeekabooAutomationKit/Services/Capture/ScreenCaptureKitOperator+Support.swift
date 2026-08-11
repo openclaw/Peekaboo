@@ -41,8 +41,19 @@ extension ScreenCaptureKitOperator {
         ScreenCaptureScaleResolver.plan(
             preference: preference,
             displayID: display.displayID,
-            fallbackPixelWidth: display.width,
+            fallbackPixelWidth: CGDisplayPixelsWide(display.displayID),
             frameWidth: display.frame.width)
+    }
+
+    func scalePlan(
+        for display: ScreenCaptureDisplayTopology.Display,
+        preference: CaptureScalePreference) -> ScreenCaptureScaleResolver.Plan
+    {
+        ScreenCaptureScaleResolver.plan(
+            preference: preference,
+            displayID: display.displayID,
+            fallbackPixelWidth: display.pixelWidth,
+            frameWidth: display.bounds.width)
     }
 
     func display(for window: SCWindow, displays: [SCDisplay]) -> SCDisplay? {

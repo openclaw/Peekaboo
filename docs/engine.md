@@ -96,7 +96,26 @@ Aliases:
 
 ## Logging & telemetry
 - ScreenCaptureService logs which engine was attempted and when fallback occurs.
+- Exact-window ScreenCaptureKit observations include `window_plan_cache=miss|hit` and a process-local
+  `window_plan_cache_generation` in the `capture.window` observation span. The Bridge host identity identifies the owning
+  process; the plan generation is meaningful only inside that exact owner process.
 - Consider adding env `PEEKABOO_DISABLE_CGWINDOWLIST` if you want to dogfood pure SC.
+
+## Exact-window warm plans
+
+The modern exact-`window_id` path retains at most 32 screenshot plans for two seconds inside each
+`ScreenCaptureKitOperator`. A plan contains only an `SCContentFilter`, screenshot configuration, expected pixel size,
+and immutable receipt/topology/scale evidence. It contains no `SCStream`, captured pixels, or cached result metadata.
+The process owner is rechecked at every ScreenCaptureKit leaf even on a cache hit.
+
+Before and after capture, Peekaboo validates the exact window owner generation, bounds, layer, visibility, sharing
+state, active-display logical and physical topology, rotation, mirroring, and scale. Known drift evicts and rebuilds
+once. Unavailable evidence bypasses the cache for one fresh capture. Cancellation, timeout, permission, and quarantine
+failures are evicted and returned unchanged; they never trigger an internal cache retry or backend fallback.
+
+The cache belongs to the selected owner host. Separate caller-local CLI processes cannot share it, and a replacement
+host starts again at generation 1. `classic` never touches the cache. A successful `auto` CoreGraphics capture does not
+touch it; only an allowed ScreenCaptureKit attempt uses the warm-plan path.
 
 ## When to use which
 - Prefer **auto** for regular commands. Use **modern** for explicit ScreenCaptureKit regression checks.

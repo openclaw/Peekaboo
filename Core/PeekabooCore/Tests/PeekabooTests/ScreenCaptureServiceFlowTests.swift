@@ -238,6 +238,33 @@ struct ScreenCaptureServiceFlowTests {
         #expect(failingOperator.captureScreenAttempts == 1)
     }
 
+    @Test(arguments: [CaptureEnginePreference.legacy, .auto])
+    func `legacy and successful auto exact-window capture never dispatch modern`(
+        engine: CaptureEnginePreference) async throws
+    {
+        let fixtures = self.makeFixtures()
+        let modernOperator = FixtureCaptureOperator(fixtures: fixtures)
+        let legacyOperator = FixtureCaptureOperator(fixtures: fixtures)
+        let dependencies = ScreenCaptureService.Dependencies(
+            feedbackClient: StubAutomationFeedbackClient(),
+            permissionEvaluator: CountingPermissionEvaluator(),
+            fallbackRunner: ScreenCaptureFallbackRunner(apis: [.legacy, .modern]),
+            applicationResolver: FixtureResolver(fixtures: fixtures),
+            makeFrameSource: { _ in NoOpCaptureFrameSource() },
+            makeModernOperator: { _, _ in modernOperator },
+            makeLegacyOperator: { _ in legacyOperator })
+        let service = ScreenCaptureService(loggingService: MockLoggingService(), dependencies: dependencies)
+        let windowID = CGWindowID(truncatingIfNeeded: "Dashboard".hashValue)
+
+        let result = try await service.withCaptureEngine(engine) {
+            try await service.captureWindow(windowID: windowID)
+        }
+
+        #expect(modernOperator.captureWindowIDAttempts == 0)
+        #expect(legacyOperator.captureWindowIDAttempts == 1)
+        #expect(result.metadata.diagnostics?.engine == "CGWindowList")
+    }
+
     @Test
     func `captureScreen checks permission once`() async throws {
         let fixtures = self.makeFixtures()
@@ -381,6 +408,7 @@ private struct FixtureResolver: ApplicationResolving {
 private final class FixtureCaptureOperator: ModernScreenCaptureOperating, LegacyScreenCaptureOperating,
 @unchecked Sendable {
     private let fixtures: ScreenCaptureService.TestFixtures
+    private(set) var captureWindowIDAttempts = 0
 
     init(fixtures: ScreenCaptureService.TestFixtures) {
         self.fixtures = fixtures
@@ -467,8 +495,10 @@ private final class FixtureCaptureOperator: ModernScreenCaptureOperating, Legacy
         visualizerMode _: CaptureVisualizerMode,
         scale: CaptureScalePreference) async throws -> CaptureResult
     {
+        self.captureWindowIDAttempts += 1
         let allWindows = self.fixtures.windowsByPID.values.flatMap(\.self)
-        guard let target = allWindows.first(where: { CGWindowID($0.title.hashValue) == windowID }) else {
+        guard let target = allWindows.first(where: { CGWindowID(truncatingIfNeeded: $0.title.hashValue) == windowID })
+        else {
             throw PeekabooError.windowNotFound(criteria: "window_id \(windowID)")
         }
 
@@ -496,7 +526,13 @@ private final class FixtureCaptureOperator: ModernScreenCaptureOperating, Legacy
                 index: 0,
                 name: self.fixtures.displays.first?.name,
                 bounds: self.fixtures.displays.first?.bounds ?? target.bounds,
-                scaleFactor: scale == .native ? (self.fixtures.displays.first?.scaleFactor ?? 1.0) : 1.0))
+                scaleFactor: scale == .native ? (self.fixtures.displays.first?.scaleFactor ?? 1.0) : 1.0),
+            diagnostics: CaptureDiagnostics(
+                requestedScale: scale,
+                nativeScale: self.fixtures.displays.first?.scaleFactor ?? 1.0,
+                outputScale: scaleFactor,
+                scaleSource: "fixture",
+                finalPixelSize: outputSize))
         return CaptureResult(imageData: imageData, metadata: metadata)
     }
 

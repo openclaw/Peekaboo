@@ -104,9 +104,13 @@ public final class DesktopObservationService: DesktopObservationServiceProtocol 
                     }
                     try self.validateResolvedTarget(target, for: lanePlan)
 
-                    let rawCapture = try await tracer.span("capture.\(Self.captureSpanName(for: target.kind))") {
+                    let captureSpanName = "capture.\(Self.captureSpanName(for: target.kind))"
+                    let rawCapture = try await tracer.span(captureSpanName) {
                         try await self.capture(target, options: request.capture, snapshot: stateSnapshot)
                     }
+                    tracer.annotateLastSpan(
+                        named: captureSpanName,
+                        metadata: rawCapture.metadata.diagnostics?.observationSpanMetadata ?? [:])
                     try Self.validateCaptureReceipt(rawCapture, for: target)
                     try self.validateCurrentLaneIdentity(lanePlan)
                     let capture = Self.normalize(capture: rawCapture, for: target)
@@ -232,5 +236,24 @@ public final class DesktopObservationService: DesktopObservationServiceProtocol 
             return false
         }
         return true
+    }
+}
+
+extension CaptureDiagnostics {
+    fileprivate var observationSpanMetadata: [String: String] {
+        var metadata: [String: String] = [:]
+        if let engine {
+            metadata["engine"] = engine
+        }
+        if let fallbackReason {
+            metadata["fallback_reason"] = fallbackReason
+        }
+        if let windowPlanCacheStatus {
+            metadata["window_plan_cache"] = windowPlanCacheStatus.rawValue
+        }
+        if let windowPlanCacheGeneration {
+            metadata["window_plan_cache_generation"] = String(windowPlanCacheGeneration)
+        }
+        return metadata
     }
 }

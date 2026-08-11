@@ -7,6 +7,8 @@ final class ScreenCaptureKitOperator: ModernScreenCaptureOperating {
     let logger: CategoryLogger
     let feedbackClient: any AutomationFeedbackClient
     let frameSource: any CaptureFrameSource
+    let exactWindowPlanCache = ScreenCaptureKitWindowPlanCache<ExactWindowCapturePlan>()
+    var nextExactWindowPlanGeneration: UInt64 = 1
 
     init(
         logger: CategoryLogger,
