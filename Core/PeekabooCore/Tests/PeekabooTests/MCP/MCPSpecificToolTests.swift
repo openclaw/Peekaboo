@@ -28,7 +28,9 @@ struct MCPSpecificToolTests {
         guard case let .object(schema) = tool.inputSchema,
               case let .object(properties)? = schema["properties"],
               case let .object(action)? = properties["action"],
-              case let .array(actions)? = action["enum"]
+              case let .array(actions)? = action["enum"],
+              case let .object(outputPath)? = properties["outputPath"],
+              case let .string(outputPathDescription)? = outputPath["description"]
         else {
             Issue.record("Expected clipboard schema properties and action enum")
             return
@@ -41,6 +43,35 @@ struct MCPSpecificToolTests {
         #expect(properties["dataBase64"] == nil)
         #expect(!actions.contains(.string("load")))
         #expect(actions == ["get", "set", "clear", "save", "restore"].map(Value.string))
+        #expect(outputPathDescription.contains("'-' stdout sentinel is not supported"))
+        #expect(outputPathDescription.contains("JSON-RPC"))
+    }
+
+    @Test
+    func `Clipboard rejects stdout output path before reading`() async throws {
+        let tool = makeTestTool(ClipboardTool.init)
+        let response = try await tool.execute(arguments: ToolArguments(raw: [
+            "action": "get",
+            "outputPath": "-",
+        ]))
+
+        #expect(response.isError)
+        guard case let .text(text, _, _) = response.content.first else {
+            Issue.record("Expected actionable clipboard stdout refusal")
+            return
+        }
+        #expect(text.contains("stdout carries JSON-RPC"))
+        #expect(text.contains("Omit outputPath"))
+        #expect(text.contains("filesystem path"))
+
+        guard case let .object(meta)? = response.meta else {
+            Issue.record("Expected structured clipboard stdout refusal metadata")
+            return
+        }
+        #expect(meta["effect"] == .string("refused"))
+        #expect(meta["error_code"] == .string("MCP_CLIPBOARD_STDOUT_UNAVAILABLE"))
+        #expect(meta["mutation_dispatched"] == .bool(false))
+        #expect(meta["retry_safe"] == .bool(true))
     }
 
     // MARK: - See Tool Tests

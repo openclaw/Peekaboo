@@ -17,6 +17,7 @@
 ### Fixed
 - Preserve display-column-safe terminal input and styled table output for wide Unicode, SGR colors, and OSC-8 links, while making terminal stop/restart idempotent and preventing queued renders from escaping a stopped session.
 - Reject non-finite, fractional, and overflowing MCP numeric arguments before dispatch, and expose integer-shaped delays, durations, counts, process IDs, window selectors, and Space targets as integers in tool schemas.
+- Reject MCP clipboard `outputPath: "-"` before reading or writing anything, with structured filesystem/text guidance, so arbitrary clipboard bytes can never corrupt the stdio JSON-RPC stream or create a literal `-` file.
 - Preserve negative numeric option values through Commander parsing so command-owned range validation reports them accurately instead of misclassifying them as short flags.
 - Reject invalid live/action capture cadence instead of silently clamping or trapping, apply post-motion timing with a monotonic deadline, and report sampled throughput, capture failures, diff-filtered frames, and retained throughput separately from artifact postprocessing.
 - Keep remote `window close` background-only by default, matching local execution, and require explicit foreground consent before routing a close through focus or global-input fallbacks.

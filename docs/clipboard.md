@@ -31,6 +31,7 @@ Peekaboo ships one `clipboard` domain in the CLI and MCP server for text, images
 - Required parameter: `action` with `get | set | clear | save | restore`.
 - Optional parameters: `text`, `file_path`, `data_base64`, `uti`, `prefer`, `outputPath`, `slot`, `alsoText`, and `allowLarge`.
 - Results use normal MCP text responses plus metadata such as `uti`, `size`, `textPreview`, `filePath`, and `slot` when available.
+- MCP `outputPath` accepts a filesystem path only. `outputPath: "-"` is rejected because MCP stdout is the JSON-RPC transport; omit `outputPath` to receive UTF-8 text in the tool response, or provide a path for binary data. Peekaboo does not put arbitrary clipboard bytes on the protocol stream.
 
 The MCP surface does not expose the CLI-only `--verify` readback option.
 

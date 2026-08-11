@@ -16,7 +16,8 @@ public struct ClipboardTool: MCPTool {
     public var description: String {
         """
         Work with the macOS clipboard (pasteboard). Actions: get, set, clear, save, restore.
-        - get: read the clipboard; optionally prefer a UTI and/or write binary data to a file.
+        - get: read the clipboard; optionally prefer a UTI and/or write binary data to a filesystem path.
+          MCP stdout is reserved for JSON-RPC, so outputPath '-' is rejected.
         - set: write text, file, image, or base64+UTI data to the clipboard (optionally also set plain text).
         - clear: empty the clipboard.
         - save/restore: snapshot and restore clipboard contents to/from a named slot (default slot \"0\").
@@ -35,7 +36,9 @@ public struct ClipboardTool: MCPTool {
                 "uti": SchemaBuilder.string(description: "Uniform Type Identifier for data_base64 or to force type"),
                 "prefer": SchemaBuilder.string(description: "Preferred UTI when reading clipboard"),
                 "outputPath": SchemaBuilder
-                    .string(description: "When reading, path to write binary data. Use '-' for stdout."),
+                    .string(description: "When reading, filesystem path to write binary data. " +
+                        "The '-' stdout sentinel is not supported because MCP stdout carries JSON-RPC; " +
+                        "omit outputPath to receive UTF-8 text in the tool response."),
                 "slot": SchemaBuilder.string(description: "Save/restore slot name (default: \"0\")"),
                 "alsoText": SchemaBuilder.string(description: "Optional plain text companion when setting binary data"),
                 "allowLarge": SchemaBuilder.boolean(description: "Allow writes larger than the 10 MB guard"),
@@ -73,6 +76,19 @@ public struct ClipboardTool: MCPTool {
 
     @MainActor
     private func handleGet(arguments: ToolArguments) throws -> ToolResponse {
+        if arguments.getString("outputPath") == "-" {
+            return ToolResponse.error(
+                "outputPath '-' is not supported by the MCP clipboard tool because stdout carries JSON-RPC " +
+                    "messages. Omit outputPath to receive UTF-8 clipboard text in the tool response, or provide " +
+                    "a filesystem path for binary data.",
+                meta: .object([
+                    "effect": .string("refused"),
+                    "error_code": .string("MCP_CLIPBOARD_STDOUT_UNAVAILABLE"),
+                    "mutation_dispatched": .bool(false),
+                    "retry_safe": .bool(true),
+                ]))
+        }
+
         let preferUTI = arguments.getString("prefer").flatMap { UTType($0) }
         guard let result = try self.context.clipboard.get(prefer: preferUTI) else {
             return ToolResponse.error("Clipboard is empty.")

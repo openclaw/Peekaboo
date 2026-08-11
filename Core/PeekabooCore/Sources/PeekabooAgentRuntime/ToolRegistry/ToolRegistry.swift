@@ -112,7 +112,8 @@ public enum ToolRegistry {
             abstract: "Read/write the macOS clipboard (text, images, files) with save/restore slots.",
             discussion: """
             Use `action: set` with text, file_path, or data_base64+uti to write the clipboard.
-            Use `action: get` to read it (optionally prefer a UTI or write binary to outputPath).
+            Use `action: get` to read it (optionally prefer a UTI or write binary to a filesystem outputPath).
+            MCP stdout carries JSON-RPC, so outputPath `-` is rejected; omit it to receive UTF-8 text.
             `save`/`restore` keep user content safe while automating; `clear` empties the pasteboard.
             """,
             examples: [

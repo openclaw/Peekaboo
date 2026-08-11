@@ -44,6 +44,10 @@ whole values (including whole-number JSON doubles and integer strings) but rejec
 out-of-range values. Fields published as `number` must be finite. Rejections report `mutation_dispatched: false` and
 `retry_safe: true`; an invalid optional value is never treated as omitted or replaced by a default.
 
+The stdio server reserves stdout exclusively for newline-delimited JSON-RPC messages. Tools never stream raw payload
+bytes onto that channel. In particular, MCP `clipboard` rejects `outputPath: "-"`; omit `outputPath` for UTF-8 text or
+provide a filesystem path for binary clipboard data. The separate CLI `clipboard get --output -` contract is unchanged.
+
 ## Install in MCP clients
 
 Most MCP clients can launch Peekaboo through either the npm package or a local binary.
