@@ -87,7 +87,7 @@ enum ScreenCaptureKitProcessCapabilityRegistry {
             try Lease.prepareLockDirectory(for: markerPath)
             let descriptor = open(
                 markerPath,
-                O_CREAT | O_RDWR | O_CLOEXEC | O_CLOFORK | O_NOFOLLOW,
+                O_CREAT | O_RDWR | O_CLOEXEC | Lease.closeOnForkOpenFlag | O_NOFOLLOW,
                 S_IRUSR | S_IWUSR)
             guard descriptor >= 0 else {
                 throw LeaseError.systemCall(operation: "open process capability", path: markerPath, code: errno)
@@ -234,7 +234,9 @@ enum ScreenCaptureKitProcessCapabilityRegistry {
             processIdentifier: processIdentifier,
             processStartIdentity: processStartIdentity,
             directory: directory).path
-        let descriptor = open(markerPath, O_RDONLY | O_CLOEXEC | O_CLOFORK | O_NOFOLLOW | O_NONBLOCK)
+        let descriptor = open(
+            markerPath,
+            O_RDONLY | O_CLOEXEC | Lease.closeOnForkOpenFlag | O_NOFOLLOW | O_NONBLOCK)
         guard descriptor >= 0 else { return false }
         defer { close(descriptor) }
 
@@ -394,7 +396,9 @@ enum ScreenCaptureKitProcessCapabilityRegistry {
                 continue
             }
 
-            let descriptor = open(path, O_RDONLY | O_CLOEXEC | O_CLOFORK | O_NOFOLLOW | O_NONBLOCK)
+            let descriptor = open(
+                path,
+                O_RDONLY | O_CLOEXEC | Lease.closeOnForkOpenFlag | O_NOFOLLOW | O_NONBLOCK)
             guard descriptor >= 0 else { continue }
             defer { close(descriptor) }
             do {

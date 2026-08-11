@@ -50,7 +50,9 @@ struct ScreenCaptureKitOwnerLeaseTests {
         #expect(fileInfo.st_mode & mode_t(S_IRWXU | S_IRWXG | S_IRWXO) == mode_t(S_IRUSR | S_IWUSR))
         let heldDescriptor = try #require(self.descriptor(for: fileInfo))
         #expect(fcntl(heldDescriptor, F_GETFD) & FD_CLOEXEC == FD_CLOEXEC)
+        #if compiler(>=6.4)
         #expect(fcntl(heldDescriptor, F_GETFD) & FD_CLOFORK == FD_CLOFORK)
+        #endif
 
         let contender = open(markerURL.path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW)
         #expect(contender >= 0)
@@ -298,7 +300,9 @@ struct ScreenCaptureKitOwnerLeaseTests {
 
         let heldDescriptor = try #require(self.descriptor(for: fileInfo))
         #expect(fcntl(heldDescriptor, F_GETFD) & FD_CLOEXEC == FD_CLOEXEC)
+        #if compiler(>=6.4)
         #expect(fcntl(heldDescriptor, F_GETFD) & FD_CLOFORK == FD_CLOFORK)
+        #endif
 
         let descriptor = open(fixture.lockURL.path, O_RDONLY | O_NOFOLLOW)
         #expect(descriptor >= 0)

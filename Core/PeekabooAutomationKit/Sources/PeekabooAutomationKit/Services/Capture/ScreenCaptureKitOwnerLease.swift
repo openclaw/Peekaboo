@@ -190,6 +190,14 @@ public final class ScreenCaptureKitOwnerLease: Sendable {
     public static let processCapabilityDirectoryURL = ScreenCaptureKitProcessCapabilityRegistry.directoryURL
 
     private static let maximumReceiptBytes = 4096
+    static let closeOnForkOpenFlag: Int32 = {
+        #if compiler(>=6.4)
+        O_CLOFORK
+        #else
+        0
+        #endif
+    }()
+
     private static let registryLock = NSLock()
     private nonisolated(unsafe) static var heldDescriptorsByPath: [String: HeldDescriptor] = [:]
     private nonisolated(unsafe) static var cachedOwnerIdentity: OwnerIdentity?
@@ -252,7 +260,9 @@ public final class ScreenCaptureKitOwnerLease: Sendable {
                 return held.receipt
             }
 
-            let descriptor = open(lockPath, O_RDONLY | O_CLOEXEC | O_CLOFORK | O_NOFOLLOW | O_NONBLOCK)
+            let descriptor = open(
+                lockPath,
+                O_RDONLY | O_CLOEXEC | self.closeOnForkOpenFlag | O_NOFOLLOW | O_NONBLOCK)
             if descriptor < 0, errno == ENOENT {
                 return nil
             }
@@ -338,7 +348,7 @@ public final class ScreenCaptureKitOwnerLease: Sendable {
             try Self.prepareLockDirectory(for: self.lockPath)
             let descriptor = open(
                 self.lockPath,
-                O_CREAT | O_RDWR | O_CLOEXEC | O_CLOFORK | O_NOFOLLOW,
+                O_CREAT | O_RDWR | O_CLOEXEC | Self.closeOnForkOpenFlag | O_NOFOLLOW,
                 S_IRUSR | S_IWUSR)
             guard descriptor >= 0 else {
                 throw LeaseError.systemCall(operation: "open", path: self.lockPath, code: errno)
