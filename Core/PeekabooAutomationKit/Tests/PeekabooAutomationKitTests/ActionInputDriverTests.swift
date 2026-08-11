@@ -972,53 +972,53 @@ private final class RecordingActionInputDriver: ActionInputDriving {
         self.elementActionError = elementActionError
     }
 
-    func tryClick(element _: AutomationElement) throws -> UIInputExecutionReceipt.Action {
+    func tryClick(element _: AutomationElement) throws -> UIInputExecutionResult.Action {
         Issue.record("Action driver should not be called")
-        return UIInputExecutionReceipt.Action(outcome: .confirmedNoChange())
+        return UIInputExecutionResult.Action(outcome: .confirmedNoChange())
     }
 
-    func tryRightClick(element _: any AutomationElementRepresenting) async throws -> UIInputExecutionReceipt.Action {
+    func tryRightClick(element _: any AutomationElementRepresenting) async throws -> UIInputExecutionResult.Action {
         Issue.record("Action driver should not be called")
-        return UIInputExecutionReceipt.Action(outcome: .confirmedNoChange())
+        return UIInputExecutionResult.Action(outcome: .confirmedNoChange())
     }
 
     func tryScroll(
         element _: AutomationElement,
         direction _: PeekabooFoundation.ScrollDirection,
-        pages _: Int) throws -> UIInputExecutionReceipt.Action
+        pages _: Int) throws -> UIInputExecutionResult.Action
     {
         Issue.record("Action driver should not be called")
-        return UIInputExecutionReceipt.Action(outcome: .confirmedNoChange())
+        return UIInputExecutionResult.Action(outcome: .confirmedNoChange())
     }
 
     func trySetText(element _: AutomationElement, text _: String, replace _: Bool) throws
-    -> UIInputExecutionReceipt.Action {
+    -> UIInputExecutionResult.Action {
         Issue.record("Action driver should not be called")
-        return UIInputExecutionReceipt.Action(outcome: .confirmedNoChange())
+        return UIInputExecutionResult.Action(outcome: .confirmedNoChange())
     }
 
     func tryHotkey(application _: NSRunningApplication, keys _: [String]) throws
-    -> UIInputExecutionReceipt.Action {
+    -> UIInputExecutionResult.Action {
         Issue.record("Action driver should not be called")
-        return UIInputExecutionReceipt.Action(outcome: .confirmedNoChange())
+        return UIInputExecutionResult.Action(outcome: .confirmedNoChange())
     }
 
     func trySetValue(element _: AutomationElement, value _: UIElementValue) throws
-    -> UIInputExecutionReceipt.Action {
+    -> UIInputExecutionResult.Action {
         if let elementActionError {
             throw elementActionError
         }
         Issue.record("Action driver should not be called")
-        return UIInputExecutionReceipt.Action(outcome: .confirmedNoChange())
+        return UIInputExecutionResult.Action(outcome: .confirmedNoChange())
     }
 
     func tryPerformAction(element _: AutomationElement, actionName _: String) throws
-    -> UIInputExecutionReceipt.Action {
+    -> UIInputExecutionResult.Action {
         if let elementActionError {
             throw elementActionError
         }
         Issue.record("Action driver should not be called")
-        return UIInputExecutionReceipt.Action(outcome: .confirmedNoChange())
+        return UIInputExecutionResult.Action(outcome: .confirmedNoChange())
     }
 }
 

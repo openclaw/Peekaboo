@@ -104,7 +104,7 @@ public final class ClickService {
     @discardableResult
     @MainActor
     public func click(target: ClickTarget, clickType: ClickType, snapshotId: String?) async throws
-        -> UIInputExecutionReceipt
+        -> UIInputExecutionResult
     {
         try await self.click(
             target: target,
@@ -125,7 +125,7 @@ public final class ClickService {
         expectedProcessIdentity: ApplicationProcessIdentity? = nil,
         targetWindowID: Int? = nil,
         expectedWindowIdentity: WindowMutationIdentity? = nil,
-        expectedWindowBounds: CGRect? = nil) async throws -> UIInputExecutionReceipt
+        expectedWindowBounds: CGRect? = nil) async throws -> UIInputExecutionResult
     {
         self.logger.debug("Click requested - target: \(String(describing: target)), type: \(clickType)")
         try Self.validateExpectedProcessIdentity(
@@ -221,7 +221,7 @@ public final class ClickService {
         clickType: ClickType,
         snapshotId: String?,
         targetProcessIdentifier: pid_t?,
-        mutationReceipt: ClickMutationReceipt) async throws -> UIInputExecutionReceipt.Action
+        mutationReceipt: ClickMutationReceipt) async throws -> UIInputExecutionResult.Action
     {
         guard let element = try await self.resolveAutomationElement(
             target: target,
@@ -236,7 +236,7 @@ public final class ClickService {
         switch clickType {
         case .single:
             let valueBefore = element.intAttribute(AXAttributeNames.kAXValueAttribute)
-            let result: UIInputExecutionReceipt.Action = if targetProcessIdentifier != nil {
+            let result: UIInputExecutionResult.Action = if targetProcessIdentifier != nil {
                 try self.actionInputDriver.tryPerformAction(
                     element: element,
                     actionName: AXActionNames.kAXPressAction)
@@ -293,18 +293,6 @@ public final class ClickService {
                 snapshotId: snapshotId,
                 destination: destination)
         }
-
-        let isBackground = destination.processIdentifier != nil
-        let mechanism: DesktopActionOutcome.Delivery.Mechanism = if !isBackground {
-            .globalEvents
-        } else if clickType == .right || clickType == .double {
-            .windowTargetedEvents
-        } else {
-            .accessibilityAction
-        }
-        return .dispatchedUnverified(
-            delivery: .init(mechanism: mechanism, mode: isBackground ? .background : .foreground),
-            evidence: .deliveryAccepted)
     }
 
     private func resolveAutomationElement(
@@ -550,7 +538,7 @@ public final class ClickService {
         id: String,
         clickType: ClickType,
         snapshotId: String?,
-        destination: SyntheticClickDestination) async throws
+        destination: SyntheticClickDestination) async throws -> DesktopActionOutcome
     {
         guard let snapshotId else {
             throw NotFoundError.element(id)
@@ -569,7 +557,7 @@ public final class ClickService {
             targetWindowID: destination.windowID)
         let center = CGPoint(x: element.bounds.midX, y: element.bounds.midY)
         let adjusted = try await self.resolveAdjustedPoint(center, snapshotId: snapshotId)
-        try await self.performClick(
+        let outcome = try await self.performClick(
             at: adjusted,
             clickType: clickType,
             destination: destination)
@@ -579,6 +567,7 @@ public final class ClickService {
             expectedIdentifier: element.attributes["identifier"],
             targetProcessIdentifier: destination.processIdentifier)
         self.logger.debug("Clicked element \(id) at (\(adjusted.x), \(adjusted.y))")
+        return outcome
     }
 
     @MainActor
@@ -586,7 +575,7 @@ public final class ClickService {
         query: String,
         clickType: ClickType,
         snapshotId: String?,
-        destination: SyntheticClickDestination) async throws
+        destination: SyntheticClickDestination) async throws -> DesktopActionOutcome
     {
         // First try to find in snapshot data if available (much faster)
         var found = false
@@ -630,7 +619,7 @@ public final class ClickService {
             let adjusted = try await self.resolveAdjustedPoint(
                 center,
                 snapshotId: resolvedElement != nil ? snapshotId : nil)
-            try await self.performClick(
+            let outcome = try await self.performClick(
                 at: adjusted,
                 clickType: clickType,
                 destination: destination)
@@ -640,6 +629,7 @@ public final class ClickService {
                 expectedIdentifier: resolvedElement?.attributes["identifier"],
                 targetProcessIdentifier: destination.processIdentifier)
             self.logger.debug("Clicked element matching '\(query)' at (\(adjusted.x), \(adjusted.y))")
+            return outcome
         } else {
             throw NotFoundError.element(query)
         }
@@ -708,7 +698,7 @@ public final class ClickService {
 
         for dy in nudges {
             let candidate = CGPoint(x: point.x, y: point.y + dy)
-            try await self.performClick(
+            _ = try await self.performClick(
                 at: candidate,
                 clickType: .single,
                 destination: SyntheticClickDestination(
@@ -869,7 +859,7 @@ public final class ClickService {
     private func performClick(
         at point: CGPoint,
         clickType: ClickType,
-        destination: SyntheticClickDestination) async throws
+        destination: SyntheticClickDestination) async throws -> DesktopActionOutcome
     {
         self.logger.debug("Performing \(clickType) click at (\(point.x), \(point.y))")
 
@@ -877,21 +867,21 @@ public final class ClickService {
         switch clickType {
         case .single:
             try self.requireCurrentExactWindow(destination.exactWindowReceipt, afterDispatch: false)
-            try await self.performSyntheticClick(
+            return try await self.performSyntheticClick(
                 at: point,
                 button: .left,
                 count: 1,
                 destination: destination)
         case .right:
             try self.requireCurrentExactWindow(destination.exactWindowReceipt, afterDispatch: false)
-            try await self.performSyntheticClick(
+            return try await self.performSyntheticClick(
                 at: point,
                 button: .right,
                 count: 1,
                 destination: destination)
         case .double:
             try self.requireCurrentExactWindow(destination.exactWindowReceipt, afterDispatch: false)
-            try await self.performSyntheticClick(
+            return try await self.performSyntheticClick(
                 at: point,
                 button: .left,
                 count: 2,
@@ -902,6 +892,9 @@ public final class ClickService {
                     "Long press requires foreground delivery")
             }
             try await self.performLongPress(at: point)
+            return .dispatchedUnverified(
+                delivery: .init(mechanism: .globalEvents, mode: .foreground),
+                evidence: .deliveryAccepted)
         }
     }
 
@@ -909,7 +902,7 @@ public final class ClickService {
         at point: CGPoint,
         button: MouseButton,
         count: Int,
-        destination: SyntheticClickDestination) async throws
+        destination: SyntheticClickDestination) async throws -> DesktopActionOutcome
     {
         if let targetProcessIdentifier = destination.processIdentifier {
             if let exactWindowReceipt = destination.exactWindowReceipt {

@@ -4,6 +4,7 @@ import ApplicationServices
 import CoreGraphics
 import Foundation
 import PeekabooAutomationKitTestSupport
+import struct PeekabooFoundation.DesktopActionOutcome
 import enum PeekabooFoundation.PeekabooError
 import enum PeekabooFoundation.ScrollDirection
 import Testing
@@ -342,7 +343,12 @@ struct ClickServiceTargetResolutionTests {
                 method: "test",
                 windowContext: Self.exactWindowContext(processIdentifier: pid)))
         let action = ClickSuccessfulActionInputDriver()
-        let synthetic = ClickRecordingSyntheticInputDriver()
+        let unitCount = try #require(DesktopActionOutcome.DispatchUnitCount(4))
+        let expectedOutcome = DesktopActionOutcome.dispatchedUnverified(
+            delivery: .init(mechanism: .windowTargetedEvents, mode: .background),
+            evidence: .deliveryAccepted,
+            unitCount: unitCount)
+        let synthetic = ClickRecordingSyntheticInputDriver(targetedClickOutcome: expectedOutcome)
         let service = ClickService(
             snapshotManager: InMemorySnapshotManager(detectionResult: detectionResult),
             inputPolicy: UIInputPolicy(defaultStrategy: .actionFirst),
@@ -359,6 +365,8 @@ struct ClickServiceTargetResolutionTests {
 
         #expect(result.path == .synth)
         #expect(result.fallbackReason == .actionUnsupported)
+        #expect(result.outcome == expectedOutcome)
+        #expect(result.outcome.dispatchState.unitCount == unitCount)
         #expect(action.performedActionNames.isEmpty)
         #expect(synthetic.events == [
             .targetedClick(
@@ -1243,16 +1251,29 @@ final class ClickRecordingSyntheticInputDriver: SyntheticInputDriving {
     private(set) var events: [Event] = []
     private(set) var targetedClickAttempts = 0
     private let targetedClickError: (any Error)?
+    private let targetedClickOutcome: DesktopActionOutcome
 
-    init(targetedClickError: (any Error)? = nil) {
+    init(
+        targetedClickError: (any Error)? = nil,
+        targetedClickOutcome: DesktopActionOutcome = AutomationTestFixtures.uiActionReceipt().outcome)
+    {
         self.targetedClickError = targetedClickError
+        self.targetedClickOutcome = targetedClickOutcome
     }
 
-    func click(at point: CGPoint, button: MouseButton, count: Int) throws {
+    func click(at point: CGPoint, button: MouseButton, count: Int) throws -> DesktopActionOutcome {
         self.events.append(.click(point: point, button: button, count: count))
+        return .dispatchedUnverified(
+            delivery: .init(mechanism: .globalEvents, mode: .foreground),
+            evidence: .deliveryAccepted)
     }
 
-    func click(at point: CGPoint, button: MouseButton, count: Int, targetProcessIdentifier: pid_t) async throws {
+    func click(
+        at point: CGPoint,
+        button: MouseButton,
+        count: Int,
+        targetProcessIdentifier: pid_t) async throws -> DesktopActionOutcome
+    {
         try await self.click(
             at: point,
             button: button,
@@ -1266,7 +1287,7 @@ final class ClickRecordingSyntheticInputDriver: SyntheticInputDriving {
         button: MouseButton,
         count: Int,
         targetProcessIdentifier: pid_t,
-        targetWindowID: CGWindowID?) async throws
+        targetWindowID: CGWindowID?) async throws -> DesktopActionOutcome
     {
         self.targetedClickAttempts += 1
         if let targetedClickError {
@@ -1278,6 +1299,7 @@ final class ClickRecordingSyntheticInputDriver: SyntheticInputDriving {
             count: count,
             targetProcessIdentifier: targetProcessIdentifier,
             targetWindowID: targetWindowID))
+        return self.targetedClickOutcome
     }
 
     func move(to point: CGPoint) throws {
@@ -1401,7 +1423,7 @@ private final class ClickSuccessfulActionInputDriver: ActionInputDriving {
         self.afterAction = afterAction
     }
 
-    func tryClick(element _: AutomationElement) throws -> UIInputExecutionReceipt.Action {
+    func tryClick(element _: AutomationElement) throws -> UIInputExecutionResult.Action {
         self.clickCount += 1
         return AutomationTestFixtures.uiActionReceipt(
             actionName: "AXPress",
@@ -1410,7 +1432,7 @@ private final class ClickSuccessfulActionInputDriver: ActionInputDriving {
     }
 
     func tryRightClick(element _: any AutomationElementRepresenting) async throws
-        -> UIInputExecutionReceipt.Action
+        -> UIInputExecutionResult.Action
     {
         self.rightClickCount += 1
         return AutomationTestFixtures.uiActionReceipt(
@@ -1420,27 +1442,27 @@ private final class ClickSuccessfulActionInputDriver: ActionInputDriving {
     }
 
     func tryScroll(element _: AutomationElement, direction _: ScrollDirection, pages _: Int) throws
-    -> UIInputExecutionReceipt.Action {
+    -> UIInputExecutionResult.Action {
         AutomationTestFixtures.uiActionReceipt()
     }
 
     func trySetText(element _: AutomationElement, text _: String, replace _: Bool) throws
-    -> UIInputExecutionReceipt.Action {
+    -> UIInputExecutionResult.Action {
         AutomationTestFixtures.uiActionReceipt()
     }
 
     func tryHotkey(application _: NSRunningApplication, keys _: [String]) throws
-    -> UIInputExecutionReceipt.Action {
+    -> UIInputExecutionResult.Action {
         AutomationTestFixtures.uiActionReceipt()
     }
 
     func trySetValue(element _: AutomationElement, value _: UIElementValue) throws
-    -> UIInputExecutionReceipt.Action {
+    -> UIInputExecutionResult.Action {
         AutomationTestFixtures.uiActionReceipt()
     }
 
     func tryPerformAction(element _: AutomationElement, actionName: String) throws
-    -> UIInputExecutionReceipt.Action {
+    -> UIInputExecutionResult.Action {
         self.performedActionNames.append(actionName)
         self.afterAction?()
         return AutomationTestFixtures.uiActionReceipt(
@@ -1472,38 +1494,38 @@ private final class ClickFailingActionInputDriver: ActionInputDriving {
         self.error = error
     }
 
-    func tryClick(element _: AutomationElement) throws -> UIInputExecutionReceipt.Action {
+    func tryClick(element _: AutomationElement) throws -> UIInputExecutionResult.Action {
         throw self.error
     }
 
     func tryRightClick(element _: any AutomationElementRepresenting) async throws
-        -> UIInputExecutionReceipt.Action
+        -> UIInputExecutionResult.Action
     {
         throw self.error
     }
 
     func tryScroll(element _: AutomationElement, direction _: ScrollDirection, pages _: Int) throws
-    -> UIInputExecutionReceipt.Action {
+    -> UIInputExecutionResult.Action {
         throw self.error
     }
 
     func trySetText(element _: AutomationElement, text _: String, replace _: Bool) throws
-    -> UIInputExecutionReceipt.Action {
+    -> UIInputExecutionResult.Action {
         throw self.error
     }
 
     func tryHotkey(application _: NSRunningApplication, keys _: [String]) throws
-    -> UIInputExecutionReceipt.Action {
+    -> UIInputExecutionResult.Action {
         throw self.error
     }
 
     func trySetValue(element _: AutomationElement, value _: UIElementValue) throws
-    -> UIInputExecutionReceipt.Action {
+    -> UIInputExecutionResult.Action {
         throw self.error
     }
 
     func tryPerformAction(element _: AutomationElement, actionName _: String) throws
-    -> UIInputExecutionReceipt.Action {
+    -> UIInputExecutionResult.Action {
         throw self.error
     }
 }

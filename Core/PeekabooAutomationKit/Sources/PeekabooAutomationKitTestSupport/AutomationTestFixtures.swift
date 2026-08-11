@@ -13,9 +13,9 @@ public enum AutomationTestFixtures {
             evidence: .deliveryAccepted),
         actionName: String? = nil,
         anchorPoint: CGPoint? = nil,
-        elementRole: String? = nil) -> UIInputExecutionReceipt.Action
+        elementRole: String? = nil) -> UIInputExecutionResult.Action
     {
-        UIInputExecutionReceipt.Action(
+        UIInputExecutionResult.Action(
             outcome: outcome,
             actionName: actionName,
             anchorPoint: anchorPoint,

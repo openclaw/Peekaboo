@@ -1,9 +1,58 @@
+import Foundation
 import PeekabooFoundation
 import Testing
 @testable import PeekabooAutomationKit
 
 @MainActor
 struct UIInputDispatcherTests {
+    @Test
+    func `v4 initializer remains source compatible and never invents outcome evidence`() {
+        let result = UIInputExecutionResult(
+            verb: .click,
+            strategy: .actionFirst,
+            path: .action,
+            actionName: "AXPress")
+
+        #expect(result.verb == .click)
+        #expect(result.strategy == .actionFirst)
+        #expect(result.path == .action)
+        #expect(result.actionName == "AXPress")
+        #expect(result.outcome.state == .indeterminate)
+        #expect(result.outcome.delivery == nil)
+        #expect(result.outcome.dispatchState == .mayHaveDispatched(unitCount: nil))
+        #expect(result.outcome.retrySafety == .unsafe)
+    }
+
+    @Test
+    func `v4 payload without outcome decodes conservatively`() throws {
+        let data = Data(#"{"verb":"click","strategy":"actionFirst","path":"action","duration":0.25}"#.utf8)
+
+        let result = try JSONDecoder().decode(UIInputExecutionResult.self, from: data)
+
+        #expect(result.duration == 0.25)
+        #expect(result.outcome.state == .indeterminate)
+        #expect(result.outcome.evidence == .completionUnknown)
+        #expect(result.outcome.dispatchState == .mayHaveDispatched(unitCount: nil))
+        #expect(result.outcome.retrySafety == .unsafe)
+    }
+
+    @Test
+    func `current execution result round trips its exact outcome`() throws {
+        let result = UIInputExecutionResult(
+            outcome: Self.actionOutcome,
+            verb: .click,
+            strategy: .actionFirst,
+            path: .action,
+            actionName: "AXPress")
+
+        let decoded = try JSONDecoder().decode(
+            UIInputExecutionResult.self,
+            from: JSONEncoder().encode(result))
+
+        #expect(decoded == result)
+        #expect(decoded.outcome == Self.actionOutcome)
+    }
+
     @Test
     func `action-first success returns action path`() async throws {
         var synthCalled = false
@@ -12,7 +61,7 @@ struct UIInputDispatcherTests {
             verb: .click,
             strategy: .actionFirst,
             action: {
-                UIInputExecutionReceipt.Action(
+                UIInputExecutionResult.Action(
                     outcome: Self.actionOutcome,
                     actionName: "AXPress",
                     anchorPoint: nil,
@@ -192,7 +241,7 @@ struct UIInputDispatcherTests {
             strategy: .synthFirst,
             action: {
                 actionCalled = true
-                return UIInputExecutionReceipt.Action(
+                return UIInputExecutionResult.Action(
                     outcome: Self.actionOutcome,
                     actionName: "AXPress",
                     anchorPoint: nil,
@@ -220,7 +269,7 @@ struct UIInputDispatcherTests {
             strategy: .synthOnly,
             action: {
                 actionCalled = true
-                return UIInputExecutionReceipt.Action(
+                return UIInputExecutionResult.Action(
                     outcome: Self.actionOutcome,
                     actionName: "AXScrollDownByPage",
                     anchorPoint: nil,

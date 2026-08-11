@@ -434,21 +434,21 @@ private struct PostedKeyboardEvent {
 
 @MainActor
 private final class RecordingHotkeyActionDriver: ActionInputDriving {
-    private let result: UIInputExecutionReceipt.Action?
+    private let result: UIInputExecutionResult.Action?
     private let error: ActionInputError?
     private(set) var hotkeyCalls: [[String]] = []
 
-    init(result: UIInputExecutionReceipt.Action? = nil, error: ActionInputError? = nil) {
+    init(result: UIInputExecutionResult.Action? = nil, error: ActionInputError? = nil) {
         self.result = result
         self.error = error
     }
 
-    func tryClick(element _: AutomationElement) throws -> UIInputExecutionReceipt.Action {
+    func tryClick(element _: AutomationElement) throws -> UIInputExecutionResult.Action {
         throw ActionInputError.unsupported(.actionUnsupported)
     }
 
     func tryRightClick(element _: any AutomationElementRepresenting) async throws
-        -> UIInputExecutionReceipt.Action
+        -> UIInputExecutionResult.Action
     {
         throw ActionInputError.unsupported(.actionUnsupported)
     }
@@ -456,19 +456,19 @@ private final class RecordingHotkeyActionDriver: ActionInputDriving {
     func tryScroll(
         element _: AutomationElement,
         direction _: ScrollDirection,
-        pages _: Int) throws -> UIInputExecutionReceipt.Action
+        pages _: Int) throws -> UIInputExecutionResult.Action
     {
         throw ActionInputError.unsupported(.actionUnsupported)
     }
 
     func trySetText(element _: AutomationElement, text _: String, replace _: Bool) throws
-        -> UIInputExecutionReceipt.Action
+        -> UIInputExecutionResult.Action
     {
         throw ActionInputError.unsupported(.attributeUnsupported)
     }
 
     func tryHotkey(application _: NSRunningApplication, keys: [String]) throws
-        -> UIInputExecutionReceipt.Action
+        -> UIInputExecutionResult.Action
     {
         self.hotkeyCalls.append(keys)
         if let error {
@@ -478,13 +478,13 @@ private final class RecordingHotkeyActionDriver: ActionInputDriving {
     }
 
     func trySetValue(element _: AutomationElement, value _: UIElementValue) throws
-        -> UIInputExecutionReceipt.Action
+        -> UIInputExecutionResult.Action
     {
         throw ActionInputError.unsupported(.valueNotSettable)
     }
 
     func tryPerformAction(element _: AutomationElement, actionName _: String) throws
-        -> UIInputExecutionReceipt.Action
+        -> UIInputExecutionResult.Action
     {
         throw ActionInputError.unsupported(.actionUnsupported)
     }

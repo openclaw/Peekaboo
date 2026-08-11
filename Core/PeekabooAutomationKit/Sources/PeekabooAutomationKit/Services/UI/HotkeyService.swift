@@ -57,7 +57,7 @@ public final class HotkeyService {
     /// Press a hotkey combination.
     /// Keys are comma-separated (e.g. "cmd,shift,4" or "ctrl,alt,backspace").
     @discardableResult
-    public func hotkey(keys: String, holdDuration: Int) async throws -> UIInputExecutionReceipt {
+    public func hotkey(keys: String, holdDuration: Int) async throws -> UIInputExecutionResult {
         self.logger.debug("Hotkey requested: '\(keys)', hold: \(holdDuration)ms")
         let parsedKeys = try self.parsedKeys(keys)
         let application = NSWorkspace.shared.frontmostApplication
@@ -94,7 +94,7 @@ public final class HotkeyService {
         holdDuration: Int,
         targetProcessIdentifier: pid_t,
         deliveryValidator: (@MainActor @Sendable () async throws -> Void)? = nil) async throws
-        -> UIInputExecutionReceipt
+        -> UIInputExecutionResult
     {
         self.logger.debug(
             "Targeted hotkey requested: '\(keys)', hold: \(holdDuration)ms, pid: \(targetProcessIdentifier)")

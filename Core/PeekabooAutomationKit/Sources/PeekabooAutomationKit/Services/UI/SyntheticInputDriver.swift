@@ -1,6 +1,7 @@
 import AXorcist
 import CoreGraphics
 import Foundation
+import struct PeekabooFoundation.DesktopActionOutcome
 import enum PeekabooFoundation.PeekabooError
 
 struct ExactWindowPointerTarget: Sendable {
@@ -10,19 +11,20 @@ struct ExactWindowPointerTarget: Sendable {
 
 @MainActor
 protocol SyntheticInputDriving: Sendable {
-    func click(at point: CGPoint, button: MouseButton, count: Int) throws
+    func click(at point: CGPoint, button: MouseButton, count: Int) throws -> DesktopActionOutcome
     func click(at point: CGPoint, button: MouseButton, count: Int, targetProcessIdentifier: pid_t) async throws
+        -> DesktopActionOutcome
     func click(
         at point: CGPoint,
         button: MouseButton,
         count: Int,
         targetProcessIdentifier: pid_t,
-        targetWindowID: CGWindowID?) async throws
+        targetWindowID: CGWindowID?) async throws -> DesktopActionOutcome
     func click(
         at point: CGPoint,
         button: MouseButton,
         count: Int,
-        target: ExactWindowPointerTarget) async throws
+        target: ExactWindowPointerTarget) async throws -> DesktopActionOutcome
     func move(to point: CGPoint) throws
     func currentLocation() -> CGPoint?
     func pressHold(at point: CGPoint, button: MouseButton, duration: TimeInterval) async throws
@@ -37,7 +39,7 @@ extension SyntheticInputDriving {
         at point: CGPoint,
         button: MouseButton,
         count: Int,
-        target: ExactWindowPointerTarget) async throws
+        target: ExactWindowPointerTarget) async throws -> DesktopActionOutcome
     {
         try await self.click(
             at: point,
@@ -52,13 +54,13 @@ extension SyntheticInputDriving {
         button: MouseButton,
         count: Int,
         targetProcessIdentifier: pid_t,
-        targetWindowID: CGWindowID?) async throws
+        targetWindowID: CGWindowID?) async throws -> DesktopActionOutcome
     {
         guard targetWindowID == nil else {
             throw PeekabooError.serviceUnavailable(
                 "Synthetic input driver does not support exact-window click delivery")
         }
-        try await self.click(
+        return try await self.click(
             at: point,
             button: button,
             count: count,
@@ -89,15 +91,18 @@ struct SyntheticInputDriver: SyntheticInputDriving {
         self.holdSleeper = holdSleeper
     }
 
-    func click(at point: CGPoint, button: MouseButton = .left, count: Int = 1) throws {
+    func click(at point: CGPoint, button: MouseButton = .left, count: Int = 1) throws -> DesktopActionOutcome {
         try InputDriver.click(at: point, button: button, count: count)
+        return .dispatchedUnverified(
+            delivery: .init(mechanism: .globalEvents, mode: .foreground),
+            evidence: .deliveryAccepted)
     }
 
     func click(
         at point: CGPoint,
         button: MouseButton = .left,
         count: Int = 1,
-        targetProcessIdentifier: pid_t) async throws
+        targetProcessIdentifier: pid_t) async throws -> DesktopActionOutcome
     {
         try await self.click(
             at: point,
@@ -112,9 +117,9 @@ struct SyntheticInputDriver: SyntheticInputDriving {
         button: MouseButton = .left,
         count: Int = 1,
         targetProcessIdentifier: pid_t,
-        targetWindowID: CGWindowID?) async throws
+        targetWindowID: CGWindowID?) async throws -> DesktopActionOutcome
     {
-        _ = try await BackgroundInputDriver.click(
+        try await BackgroundInputDriver.click(
             at: point,
             button: button,
             count: count,
@@ -126,9 +131,9 @@ struct SyntheticInputDriver: SyntheticInputDriving {
         at point: CGPoint,
         button: MouseButton = .left,
         count: Int = 1,
-        target: ExactWindowPointerTarget) async throws
+        target: ExactWindowPointerTarget) async throws -> DesktopActionOutcome
     {
-        _ = try await BackgroundInputDriver.click(
+        try await BackgroundInputDriver.click(
             at: point,
             button: button,
             count: count,

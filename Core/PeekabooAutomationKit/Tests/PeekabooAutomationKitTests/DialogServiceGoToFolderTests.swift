@@ -1,6 +1,7 @@
 @preconcurrency import AXorcist
 import CoreGraphics
 import Foundation
+import struct PeekabooFoundation.DesktopActionOutcome
 import Testing
 @testable import PeekabooAutomationKit
 
@@ -56,8 +57,19 @@ private final class FailingDialogSyntheticInputDriver: SyntheticInputDriving {
         self.failingHotkeyCall = failingHotkeyCall
     }
 
-    func click(at _: CGPoint, button _: MouseButton, count _: Int) throws {}
-    func click(at _: CGPoint, button _: MouseButton, count _: Int, targetProcessIdentifier _: pid_t) async throws {}
+    func click(at _: CGPoint, button _: MouseButton, count _: Int) throws -> DesktopActionOutcome {
+        Self.clickOutcome
+    }
+
+    func click(
+        at _: CGPoint,
+        button _: MouseButton,
+        count _: Int,
+        targetProcessIdentifier _: pid_t) async throws -> DesktopActionOutcome
+    {
+        Self.clickOutcome
+    }
+
     func move(to _: CGPoint) throws {}
     func currentLocation() -> CGPoint? {
         nil
@@ -81,4 +93,8 @@ private final class FailingDialogSyntheticInputDriver: SyntheticInputDriving {
             throw DialogInputError.hotkeyFailed(self.hotkeyCallCount)
         }
     }
+
+    private static let clickOutcome = DesktopActionOutcome.dispatchedUnverified(
+        delivery: .init(mechanism: .globalEvents, mode: .foreground),
+        evidence: .deliveryAccepted)
 }

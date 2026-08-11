@@ -94,7 +94,7 @@ public final class TypeService {
         target: String?,
         clearExisting: Bool,
         typingDelay: Int,
-        snapshotId: String?) async throws -> UIInputExecutionReceipt
+        snapshotId: String?) async throws -> UIInputExecutionResult
     {
         self.logger
             .debug("Type requested - text: '\(text)', target: \(target ?? "current focus"), clear: \(clearExisting)")
@@ -128,7 +128,7 @@ public final class TypeService {
         text: String,
         target: String?,
         clearExisting: Bool,
-        snapshotId: String?) async throws -> UIInputExecutionReceipt.Action
+        snapshotId: String?) async throws -> UIInputExecutionResult.Action
     {
         guard let target,
               let element = try await self.resolveAutomationElement(target: target, snapshotId: snapshotId)

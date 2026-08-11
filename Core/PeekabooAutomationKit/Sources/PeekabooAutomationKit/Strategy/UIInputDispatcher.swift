@@ -11,8 +11,8 @@ enum UIInputDispatcher {
         verb: UIInputVerb,
         strategy: UIInputStrategy,
         bundleIdentifier: String? = nil,
-        action: (() async throws -> UIInputExecutionReceipt.Action)?,
-        synth: () async throws -> DesktopActionOutcome) async throws -> UIInputExecutionReceipt
+        action: (() async throws -> UIInputExecutionResult.Action)?,
+        synth: () async throws -> DesktopActionOutcome) async throws -> UIInputExecutionResult
     {
         let startedAt = Date()
         let context = DispatchContext(
@@ -31,7 +31,7 @@ enum UIInputDispatcher {
                     path: .action,
                     fallbackReason: nil,
                     duration: duration)
-                return UIInputExecutionReceipt(
+                return UIInputExecutionResult(
                     outcome: result.outcome,
                     verb: verb,
                     strategy: strategy,
@@ -78,7 +78,7 @@ enum UIInputDispatcher {
                     path: .action,
                     fallbackReason: nil,
                     duration: duration)
-                return UIInputExecutionReceipt(
+                return UIInputExecutionResult(
                     outcome: result.outcome,
                     verb: verb,
                     strategy: strategy,
@@ -105,8 +105,8 @@ enum UIInputDispatcher {
     }
 
     private static func runAction(
-        _ action: (() async throws -> UIInputExecutionReceipt.Action)?) async throws
-        -> UIInputExecutionReceipt.Action
+        _ action: (() async throws -> UIInputExecutionResult.Action)?) async throws
+        -> UIInputExecutionResult.Action
     {
         guard let action else {
             throw ActionInputError.unsupported(.missingElement)
@@ -117,7 +117,7 @@ enum UIInputDispatcher {
     private static func runSynth(
         context: DispatchContext,
         fallbackReason: UIInputFallbackReason?,
-        synth: () async throws -> DesktopActionOutcome) async throws -> UIInputExecutionReceipt
+        synth: () async throws -> DesktopActionOutcome) async throws -> UIInputExecutionResult
     {
         do {
             let outcome = try await synth()
@@ -127,7 +127,7 @@ enum UIInputDispatcher {
                 path: .synth,
                 fallbackReason: fallbackReason,
                 duration: duration)
-            return UIInputExecutionReceipt(
+            return UIInputExecutionResult(
                 outcome: outcome,
                 verb: context.verb,
                 strategy: context.strategy,

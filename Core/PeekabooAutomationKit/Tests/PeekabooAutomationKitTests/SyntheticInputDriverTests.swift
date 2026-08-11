@@ -1,6 +1,7 @@
 @preconcurrency import AXorcist
 import CoreGraphics
 import Foundation
+import struct PeekabooFoundation.DesktopActionOutcome
 import enum PeekabooFoundation.PeekabooError
 import Testing
 @testable import PeekabooAutomationKit
@@ -74,6 +75,8 @@ struct SyntheticInputDriverTests {
             snapshotId: nil)
 
         #expect(result.path == UIInputExecutionPath.synth)
+        #expect(result.outcome.delivery == .init(mechanism: .globalEvents, mode: .foreground))
+        #expect(result.outcome.dispatchState == .dispatched(unitCount: nil))
         #expect(synthetic.events == [
             .click(point: CGPoint(x: 12, y: 34), button: .left, count: 2),
         ])
@@ -228,12 +231,19 @@ private final class RecordingSyntheticInputDriver: SyntheticInputDriving {
         self.location = currentLocation
     }
 
-    func click(at point: CGPoint, button: MouseButton, count: Int) throws {
+    func click(at point: CGPoint, button: MouseButton, count: Int) throws -> DesktopActionOutcome {
         self.events.append(.click(point: point, button: button, count: count))
+        return Self.clickOutcome
     }
 
-    func click(at point: CGPoint, button: MouseButton, count: Int, targetProcessIdentifier _: pid_t) async throws {
+    func click(
+        at point: CGPoint,
+        button: MouseButton,
+        count: Int,
+        targetProcessIdentifier _: pid_t) async throws -> DesktopActionOutcome
+    {
         self.events.append(.click(point: point, button: button, count: count))
+        return Self.clickOutcome
     }
 
     func move(to point: CGPoint) throws {
@@ -264,4 +274,8 @@ private final class RecordingSyntheticInputDriver: SyntheticInputDriving {
     func hotkey(keys: [String], holdDuration: TimeInterval) throws {
         self.events.append(.hotkey(keys: keys, holdDuration: holdDuration))
     }
+
+    private static let clickOutcome = DesktopActionOutcome.dispatchedUnverified(
+        delivery: .init(mechanism: .globalEvents, mode: .foreground),
+        evidence: .deliveryAccepted)
 }

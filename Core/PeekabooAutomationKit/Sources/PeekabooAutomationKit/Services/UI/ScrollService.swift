@@ -55,7 +55,7 @@ public final class ScrollService {
     /// Perform scroll operation
     @discardableResult
     @MainActor
-    public func scroll(_ request: ScrollRequest) async throws -> UIInputExecutionReceipt {
+    public func scroll(_ request: ScrollRequest) async throws -> UIInputExecutionResult {
         let description =
             "Scroll requested - direction: \(request.direction), amount: \(request.amount), " +
             "smooth: \(request.smooth)"
@@ -102,7 +102,7 @@ public final class ScrollService {
 
     private func performActionScroll(
         _ request: ScrollRequest,
-        strategy: UIInputStrategy) async throws -> UIInputExecutionReceipt.Action
+        strategy: UIInputStrategy) async throws -> UIInputExecutionResult.Action
     {
         let detectionResult: ElementDetectionResult?
         if let snapshotId = request.snapshotId {
