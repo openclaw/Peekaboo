@@ -15,6 +15,7 @@
 - Reuse two-second, owner-host-local ScreenCaptureKit exact-window screenshot plans without caching pixels, revalidating process generation, window receipt, display topology, and scale around every capture while exposing miss/hit generation diagnostics.
 
 ### Fixed
+- Reduce reusable-daemon window-tracker MainActor work by retaining only bounds and owner PID, avoiding unused per-window application and Accessibility metadata on every reconciliation pass.
 - Refresh AXorcist to dispatch native accessibility actions once with typed AX errors and route legacy `AXSetValue` requests through the `AXValue` attribute instead of action discovery.
 - Preserve display-column-safe terminal input and styled table output for wide Unicode, SGR colors, and OSC-8 links, while making terminal stop/restart idempotent and preventing queued renders from escaping a stopped session.
 - Reject non-finite, fractional, and overflowing MCP numeric arguments before dispatch, and expose integer-shaped delays, durations, counts, process IDs, window selectors, and Space targets as integers in tool schemas.

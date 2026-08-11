@@ -80,7 +80,7 @@ Older daemons may still occupy Peekaboo.app's `bridge.sock`. Current daemon cont
 - active requests, last activity, idle timeout, and idle deadline
 - Screen Recording, Accessibility, and Event Synthesizing permissions
 - snapshot count and last access
-- tracked windows, AX observers, and poll interval
+- tracked windows, AX observers, and poll interval; reconciliation retains only the exact bounds and owner PID needed for move-aware input
 - browser MCP connection, tool count, and detected browsers
 
 See [`peekaboo daemon`](commands/daemon.md) for command flags and [Bridge host](bridge-host.md) for transport and

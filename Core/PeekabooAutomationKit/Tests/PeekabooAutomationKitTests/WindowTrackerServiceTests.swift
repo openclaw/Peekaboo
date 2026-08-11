@@ -14,7 +14,7 @@ struct WindowTrackerServiceTests {
             ownerPID: 111))
         let tracker = WindowTrackerService(
             configuration: WindowTrackerConfiguration(useAXNotifications: false),
-            windowInfoProvider: { source.info(for: $0) })
+            exactWindowIdentityProvider: { source.info(for: $0) })
         let previousTracker = WindowMovementTracking.provider
         WindowMovementTracking.provider = tracker
         defer { WindowMovementTracking.provider = previousTracker }
@@ -48,7 +48,7 @@ struct WindowTrackerServiceTests {
             ownerPID: 111))
         let tracker = WindowTrackerService(
             configuration: WindowTrackerConfiguration(useAXNotifications: false),
-            windowInfoProvider: { _ in source.currentInfo })
+            exactWindowIdentityProvider: { _ in source.currentInfo })
 
         tracker.refreshWindow(windowID: windowID)
         #expect(tracker.windowBounds(for: windowID) == CGRect(x: 10, y: 20, width: 300, height: 200))
@@ -68,35 +68,122 @@ struct WindowTrackerServiceTests {
         #expect(tracker.windowOwnerProcessIdentifier(for: windowID) == nil)
     }
 
+    @Test
+    @MainActor
+    func `Full reconciliation keeps only bounds and owner and removes vanished windows`() {
+        let exactSource = WindowInfoSource(currentInfo: nil)
+        let catalog = VisibleWindowCatalog(rows: [
+            Self.windowDictionary(
+                windowID: 42,
+                bounds: CGRect(x: 10, y: 20, width: 300, height: 200),
+                ownerPID: 111),
+            Self.windowDictionary(
+                windowID: 43,
+                bounds: CGRect(x: 30, y: 40, width: 500, height: 400),
+                ownerPID: 222),
+        ])
+        let tracker = WindowTrackerService(
+            configuration: WindowTrackerConfiguration(useAXNotifications: false),
+            exactWindowIdentityProvider: { exactSource.info(for: $0) },
+            visibleWindowInfoProvider: { catalog.rows })
+
+        tracker.refreshAllWindows()
+        #expect(tracker.windowBounds(for: 42) == CGRect(x: 10, y: 20, width: 300, height: 200))
+        #expect(tracker.windowOwnerProcessIdentifier(for: 42) == 111)
+        #expect(tracker.windowBounds(for: 43) == CGRect(x: 30, y: 40, width: 500, height: 400))
+        #expect(exactSource.requestedWindowIDs.isEmpty)
+
+        catalog.rows = [
+            Self.windowDictionary(
+                windowID: 42,
+                bounds: CGRect(x: 70, y: 80, width: 300, height: 200),
+                ownerPID: 333),
+        ]
+        tracker.refreshAllWindows()
+
+        #expect(tracker.windowBounds(for: 42) == CGRect(x: 70, y: 80, width: 300, height: 200))
+        #expect(tracker.windowOwnerProcessIdentifier(for: 42) == 333)
+        #expect(tracker.windowBounds(for: 43) == nil)
+        #expect(exactSource.requestedWindowIDs.isEmpty)
+    }
+
+    @Test
+    @MainActor
+    func `Stop clears cached window state`() {
+        let windowID = CGWindowID(42)
+        let source = WindowInfoSource(currentInfo: Self.windowInfo(
+            windowID: windowID,
+            bounds: CGRect(x: 10, y: 20, width: 300, height: 200),
+            ownerPID: 111))
+        let tracker = WindowTrackerService(
+            configuration: WindowTrackerConfiguration(useAXNotifications: false),
+            exactWindowIdentityProvider: { source.info(for: $0) })
+
+        tracker.refreshWindow(windowID: windowID)
+        #expect(tracker.windowBounds(for: windowID) != nil)
+
+        tracker.stop()
+
+        #expect(tracker.windowBounds(for: windowID) == nil)
+        #expect(tracker.windowOwnerProcessIdentifier(for: windowID) == nil)
+    }
+
     private static func windowInfo(
         windowID: CGWindowID,
         bounds: CGRect,
-        ownerPID: pid_t) -> WindowIdentityInfo
+        ownerPID: pid_t) -> SystemWindowIdentity
     {
-        WindowIdentityInfo(
+        SystemWindowIdentity(
             windowID: windowID,
-            title: nil,
+            ownerProcessIdentifier: ownerPID,
+            title: "",
             bounds: bounds,
-            ownerPID: ownerPID,
-            applicationName: nil,
-            bundleIdentifier: nil,
             layer: 0,
             alpha: 1,
-            axIdentifier: nil)
+            isOnScreen: true,
+            sharingState: nil)
+    }
+
+    private static func windowDictionary(
+        windowID: Int,
+        bounds: CGRect,
+        ownerPID: Int) -> [String: Any]
+    {
+        [
+            kCGWindowNumber as String: windowID,
+            kCGWindowOwnerPID as String: ownerPID,
+            kCGWindowBounds as String: [
+                "X": bounds.origin.x,
+                "Y": bounds.origin.y,
+                "Width": bounds.size.width,
+                "Height": bounds.size.height,
+            ],
+            kCGWindowOwnerName as String: "Ignored Owner",
+            kCGWindowName as String: "Ignored Title",
+        ]
     }
 }
 
 @MainActor
 private final class WindowInfoSource {
-    var currentInfo: WindowIdentityInfo?
+    var currentInfo: SystemWindowIdentity?
     private(set) var requestedWindowIDs: [CGWindowID] = []
 
-    init(currentInfo: WindowIdentityInfo?) {
+    init(currentInfo: SystemWindowIdentity?) {
         self.currentInfo = currentInfo
     }
 
-    func info(for windowID: CGWindowID) -> WindowIdentityInfo? {
+    func info(for windowID: CGWindowID) -> SystemWindowIdentity? {
         self.requestedWindowIDs.append(windowID)
         return self.currentInfo
+    }
+}
+
+@MainActor
+private final class VisibleWindowCatalog {
+    var rows: [[String: Any]]
+
+    init(rows: [[String: Any]]) {
+        self.rows = rows
     }
 }

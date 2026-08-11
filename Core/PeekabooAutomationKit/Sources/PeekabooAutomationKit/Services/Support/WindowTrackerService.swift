@@ -1,4 +1,4 @@
-import AppKit
+import ApplicationServices
 import AXorcist
 import CoreGraphics
 import Foundation
@@ -39,15 +39,15 @@ public struct WindowTrackerConfiguration: Sendable {
 @MainActor
 public final class WindowTrackerService: WindowTrackingProviding {
     private struct TrackedWindow {
-        let info: WindowIdentityInfo
-        var lastEventAt: Date?
-        var lastUpdatedAt: Date?
+        let bounds: CGRect
+        let ownerProcessIdentifier: pid_t
     }
 
     private let logger = Logger(subsystem: "boo.peekaboo.core", category: "WindowTracker")
     private let config: WindowTrackerConfiguration
     private let windowIdentityService = WindowIdentityService()
-    private let windowInfoProvider: (@MainActor (CGWindowID) -> WindowIdentityInfo?)?
+    private let exactWindowIdentityProvider: @MainActor (CGWindowID) -> SystemWindowIdentity?
+    private let visibleWindowInfoProvider: @MainActor () -> [[String: Any]]?
 
     private var windows: [CGWindowID: TrackedWindow] = [:]
     private var watchers: [NotificationWatcher] = []
@@ -57,15 +57,18 @@ public final class WindowTrackerService: WindowTrackingProviding {
 
     public init(configuration: WindowTrackerConfiguration = WindowTrackerConfiguration()) {
         self.config = configuration
-        self.windowInfoProvider = nil
+        self.exactWindowIdentityProvider = SystemIdentityResolver.windowIdentity
+        self.visibleWindowInfoProvider = WindowInfoHelper.getVisibleWindows
     }
 
     init(
         configuration: WindowTrackerConfiguration = WindowTrackerConfiguration(),
-        windowInfoProvider: @escaping @MainActor (CGWindowID) -> WindowIdentityInfo?)
+        exactWindowIdentityProvider: @escaping @MainActor (CGWindowID) -> SystemWindowIdentity?,
+        visibleWindowInfoProvider: @escaping @MainActor () -> [[String: Any]]? = WindowInfoHelper.getVisibleWindows)
     {
         self.config = configuration
-        self.windowInfoProvider = windowInfoProvider
+        self.exactWindowIdentityProvider = exactWindowIdentityProvider
+        self.visibleWindowInfoProvider = visibleWindowInfoProvider
     }
 
     public func start() {
@@ -88,14 +91,15 @@ public final class WindowTrackerService: WindowTrackingProviding {
             watcher.stop()
         }
         self.watchers.removeAll()
+        self.windows.removeAll()
     }
 
     public func windowBounds(for windowID: CGWindowID) -> CGRect? {
-        self.windows[windowID]?.info.bounds
+        self.windows[windowID]?.bounds
     }
 
     public func windowOwnerProcessIdentifier(for windowID: CGWindowID) -> pid_t? {
-        guard let ownerProcessIdentifier = self.windows[windowID]?.info.ownerPID,
+        guard let ownerProcessIdentifier = self.windows[windowID]?.ownerProcessIdentifier,
               ownerProcessIdentifier > 0
         else {
             return nil
@@ -179,46 +183,33 @@ public final class WindowTrackerService: WindowTrackingProviding {
     }
 
     func refreshWindow(windowID: CGWindowID) {
-        let info = if let windowInfoProvider {
-            windowInfoProvider(windowID)
-        } else {
-            self.windowIdentityService.getWindowInfo(windowID: windowID)
-        }
-        guard let info else {
+        guard let identity = self.exactWindowIdentityProvider(windowID) else {
             self.windows[windowID] = nil
             return
         }
 
-        let now = Date()
         self.windows[windowID] = TrackedWindow(
-            info: info,
-            lastEventAt: now,
-            lastUpdatedAt: now)
+            bounds: identity.bounds,
+            ownerProcessIdentifier: identity.ownerProcessIdentifier)
     }
 
-    private func refreshAllWindows() {
-        guard let windowInfo = WindowInfoHelper.getVisibleWindows() else {
+    func refreshAllWindows() {
+        guard let windowInfo = self.visibleWindowInfoProvider() else {
             return
         }
 
         var newWindows: [CGWindowID: TrackedWindow] = [:]
-        let now = Date()
 
         for entry in windowInfo {
             guard let windowID = entry[kCGWindowNumber as String] as? Int else { continue }
-            guard let info = self.buildIdentityInfo(from: entry, windowID: windowID) else { continue }
-
-            let previous = self.windows[CGWindowID(windowID)]
-            newWindows[CGWindowID(windowID)] = TrackedWindow(
-                info: info,
-                lastEventAt: previous?.lastEventAt,
-                lastUpdatedAt: now)
+            guard let trackedWindow = Self.buildTrackedWindow(from: entry) else { continue }
+            newWindows[CGWindowID(windowID)] = trackedWindow
         }
 
         self.windows = newWindows
     }
 
-    private func buildIdentityInfo(from dict: [String: Any], windowID: Int) -> WindowIdentityInfo? {
+    private static func buildTrackedWindow(from dict: [String: Any]) -> TrackedWindow? {
         guard let boundsDict = dict[kCGWindowBounds as String] as? [String: CGFloat] else { return nil }
 
         let bounds = CGRect(
@@ -227,21 +218,15 @@ public final class WindowTrackerService: WindowTrackingProviding {
             width: boundsDict["Width"] ?? 0,
             height: boundsDict["Height"] ?? 0)
 
-        let ownerPID = dict[kCGWindowOwnerPID as String] as? Int ?? 0
-        let app = NSRunningApplication(processIdentifier: pid_t(ownerPID))
-        let title = dict[kCGWindowName as String] as? String
-        let layer = dict[kCGWindowLayer as String] as? Int ?? 0
-        let alpha = dict[kCGWindowAlpha as String] as? CGFloat ?? 1.0
+        guard let ownerPID = dict[kCGWindowOwnerPID as String] as? Int,
+              let ownerProcessIdentifier = pid_t(exactly: ownerPID),
+              ownerProcessIdentifier > 0
+        else {
+            return nil
+        }
 
-        return WindowIdentityInfo(
-            windowID: CGWindowID(windowID),
-            title: title,
+        return TrackedWindow(
             bounds: bounds,
-            ownerPID: pid_t(ownerPID),
-            applicationName: app?.localizedName,
-            bundleIdentifier: app?.bundleIdentifier,
-            layer: layer,
-            alpha: alpha,
-            axIdentifier: nil)
+            ownerProcessIdentifier: ownerProcessIdentifier)
     }
 }
