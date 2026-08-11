@@ -160,6 +160,7 @@ run_restart() {
     PEEKABOO_OPEN_BIN="${case_dir}/bin/open" \
     PEEKABOO_PGREP_BIN="${case_dir}/bin/pgrep" \
     PEEKABOO_KILL_BIN="${case_dir}/bin/kill" \
+    PEEKABOO_LSOF_BIN="${case_dir}/bin/lsof" \
     PEEKABOO_SLEEP_BIN="${case_dir}/bin/sleep" \
     PEEKABOO_SYNC_BIN="${case_dir}/bin/sync" \
     PEEKABOO_LAUNCH_VERIFY_ATTEMPTS=2 \
@@ -508,24 +509,40 @@ if [[ "${1:-}" == "app" ]]; then
   [[ "${2:-}" == "list" && "${3:-}" == "--include-hidden" && \
     "${4:-}" == "--include-background" && "${5:-}" == "--no-remote" && \
     "${6:-}" == "--json" && "$#" -eq 6 ]] || exit 72
-  bundle="$(<"${state_dir}/running-path")"
+  bundle_id='boo.peekaboo.mac'
+  if [[ -f "${state_dir}/running-path" ]]; then
+    bundle="$(<"${state_dir}/running-path")"
+    bundle_id="$(<"${bundle}/.bundle-id")"
+  fi
   query_count=0
   [[ ! -f "${state_dir}/identity-query-count" ]] || query_count="$(<"${state_dir}/identity-query-count")"
   query_count=$((query_count + 1))
   printf '%s\n' "${query_count}" >"${state_dir}/identity-query-count"
+  if [[ -f "${state_dir}/empty-health-app-list" && "${query_count}" -eq 1 ]]; then
+    printf '%s\n' '{"success":true,"data":{"count":0,"apps":[],"schema_capabilities":["processStartIdentityDecimal"]}}'
+    exit 0
+  fi
   process_start_identity=123456
   if [[ -f "${state_dir}/health-start-drift" && "${query_count}" -ge 3 ]]; then
     process_start_identity=654321
   fi
   [[ ! -f "${state_dir}/health-adjacent-large-start" ]] || process_start_identity=9007199254740993
-  printf '{"success":true,"data":{"count":1,"apps":[{"name":"Peekaboo","bundle_id":"%s","pid":4242,"process_start_identity":%s,"process_start_identity_decimal":"%s","is_active":false,"is_hidden":false}]}}\n' \
-    "$(<"${bundle}/.bundle-id")" "${process_start_identity}" "${process_start_identity}"
+  if [[ -f "${state_dir}/legacy-health-contract" ]]; then
+    printf '{"success":true,"data":{"count":1,"apps":[{"name":"Peekaboo","bundle_id":"%s","pid":4242,"process_start_identity":%s,"is_active":false,"is_hidden":false}]}}\n' \
+      "${bundle_id}" "${process_start_identity}"
+  else
+    printf '{"success":true,"data":{"count":1,"apps":[{"name":"Peekaboo","bundle_id":"%s","pid":4242,"process_start_identity":%s,"process_start_identity_decimal":"%s","is_active":false,"is_hidden":false}],"schema_capabilities":["processStartIdentityDecimal"]}}\n' \
+      "${bundle_id}" "${process_start_identity}" "${process_start_identity}"
+  fi
   exit 0
 fi
 [[ "${1:-}" == "bridge" && "${2:-}" == "status" && "${3:-}" == "--bridge-socket" && \
   "${4:-}" == "${state_dir}/bridge.sock" && "${5:-}" == "--json" && "$#" -eq 5 ]] || exit 72
-[[ ! -f "${state_dir}/fail-health" ]] || exit 71
 bundle="$(<"${state_dir}/running-path")"
+build_id="$(<"${bundle}/build-id")"
+if [[ -f "${state_dir}/fail-health" && "${build_id}" == "new" ]]; then
+  exit 71
+fi
 bundle_id="$(<"${bundle}/.bundle-id")"
 code_hash="$(<"${bundle}/.cdhash")"
 host_pid=4242
@@ -596,6 +613,20 @@ if [[ -f "${state_dir}/interrupt-during-stop" ]]; then
 fi
 EOF
 
+cat >"${TEMPLATE_BIN}/lsof" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+state_dir="$(cd "$(dirname "$0")/.." && pwd)"
+[[ "${1:-}" == "-t" && "${2:-}" == "-a" && "${3:-}" == "-U" && \
+  "${4:-}" == "--" && "${5:-}" == "${state_dir}/bridge.sock" && "$#" -eq 5 ]] || exit 72
+[[ -f "${state_dir}/running-path" ]] || exit 1
+bundle="$(<"${state_dir}/running-path")"
+if [[ -f "${state_dir}/restored-bridge-never-ready" && "$(<"${bundle}/build-id")" == "old" ]]; then
+  exit 1
+fi
+printf '%s\n' 4242
+EOF
+
 cat >"${TEMPLATE_BIN}/sleep" <<'EOF'
 #!/usr/bin/env bash
 exit 0
@@ -635,6 +666,23 @@ if run_restart "${untrusted_health_dir}"; then
   fail 'expected untrusted healthcheck CLI refusal'
 fi
 [[ ! -f "${untrusted_health_dir}/events" ]] || fail 'untrusted healthcheck CLI started a build'
+
+# A previous-release signed CLI is rejected before the app is built, stopped, or renamed.
+legacy_health_dir="$(new_case legacy-health-cli-refusal)"
+mkdir -p "${legacy_health_dir}/Applications"
+touch "${legacy_health_dir}/legacy-health-contract"
+if run_restart "${legacy_health_dir}"; then
+  fail 'expected previous-release healthcheck CLI refusal'
+fi
+[[ ! -f "${legacy_health_dir}/events" ]] || fail 'previous-release healthcheck CLI started a build'
+
+# The explicit schema capability remains valid when the preflight inventory is legitimately empty.
+empty_health_dir="$(new_case empty-health-app-list)"
+empty_health_target="${empty_health_dir}/Applications/Peekaboo.app"
+mkdir -p "$(dirname "${empty_health_target}")"
+touch "${empty_health_dir}/empty-health-app-list"
+run_restart "${empty_health_dir}" PEEKABOO_APP_BUNDLE="${empty_health_target}"
+assert_text "${empty_health_target}/build-id" new
 
 # A live canonical-target lock refuses a concurrent installer before build or mutation.
 locked_dir="$(new_case live-lock-refusal)"
@@ -816,6 +864,23 @@ ${health_target}|old"
   [[ ! -e "$(dirname "${health_target}")/.Peekaboo.install.journal" ]] || \
     fail "${health_case} rollback left a completed journal"
 done
+
+# A restored PID is not enough: keep recovery durable when the previous generation never owns its Bridge.
+restored_health_dir="$(new_case restored-bridge-readiness-refusal)"
+restored_health_target="${restored_health_dir}/Applications/Peekaboo.app"
+mkdir -p "$(dirname "${restored_health_target}")"
+make_bundle "${restored_health_target}" old
+printf '%s\n' "${restored_health_target}" >"${restored_health_dir}/running-path"
+touch "${restored_health_dir}/fail-health" "${restored_health_dir}/restored-bridge-never-ready"
+if run_restart "${restored_health_dir}"; then
+  fail 'expected restored Bridge readiness failure'
+fi
+assert_text "${restored_health_target}/build-id" old
+[[ -f "$(dirname "${restored_health_target}")/.Peekaboo.install.journal" ]] || \
+  fail 'restored Bridge readiness failure discarded its recovery journal'
+find "$(dirname "${restored_health_target}")" -maxdepth 1 -type d \
+  -name '.Peekaboo.install.*' | grep -q . || \
+  fail 'restored Bridge readiness failure discarded its recovery bundle'
 
 # If the replacement cannot be stopped, rollback preserves both bundles and never restores over it.
 stop_refusal_dir="$(new_case rollback-stop-refusal)"

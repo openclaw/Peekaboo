@@ -364,6 +364,31 @@ final class PeekabooSettings {
 }
 
 extension PeekabooSettings {
+    /// Deployment owns the lifecycle of a background Bridge host. A main-app login registration
+    /// cannot retain its required launch argument, so leaving it registered would silently restart
+    /// the same bundle in interactive mode at the next login.
+    func disableLoginLaunchForManagedBackgroundHost(
+        status: SMAppService.Status = SMAppService.mainApp.status,
+        unregister: () throws -> Void = { try SMAppService.mainApp.unregister() }) throws
+    {
+        switch status {
+        case .notRegistered:
+            break
+        case .enabled, .requiresApproval:
+            try unregister()
+        case .notFound:
+            throw ManagedBackgroundHostLaunchError.loginServiceNotFound
+        @unknown default:
+            throw ManagedBackgroundHostLaunchError.unknownLoginServiceState
+        }
+
+        let wasLoading = self.isLoading
+        self.isLoading = true
+        self.launchAtLogin = false
+        self.isLoading = wasLoading
+        self.userDefaults.set(false, forKey: self.namespaced("launchAtLogin"))
+    }
+
     private func load() {
         self.isLoading = true
         defer { self.isLoading = false }
@@ -1079,6 +1104,20 @@ extension PeekabooSettings {
             true
         default:
             false
+        }
+    }
+}
+
+private enum ManagedBackgroundHostLaunchError: LocalizedError {
+    case loginServiceNotFound
+    case unknownLoginServiceState
+
+    var errorDescription: String? {
+        switch self {
+        case .loginServiceNotFound:
+            "The main-app login service is unavailable"
+        case .unknownLoginServiceState:
+            "The main-app login service returned an unknown state"
         }
     }
 }

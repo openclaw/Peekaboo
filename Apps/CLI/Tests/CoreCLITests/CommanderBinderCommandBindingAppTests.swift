@@ -187,6 +187,7 @@ struct CommanderBinderAppConfigTests {
         )
         #expect(command.includeHidden == true)
         #expect(command.includeBackground == true)
+        #expect(AppCommand.ListSubcommand.schemaCapabilities == ["processStartIdentityDecimal"])
     }
 
     @Test

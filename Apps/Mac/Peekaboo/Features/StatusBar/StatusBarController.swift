@@ -429,10 +429,12 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         settingsItem.keyEquivalentModifierMask = .command
         menu.addItem(settingsItem)
 
-        menu.addItem(NSMenuItem(
-            title: "Check for Updates…",
-            action: #selector(self.checkForUpdates),
-            keyEquivalent: ""))
+        if self.updater.isAvailable {
+            menu.addItem(NSMenuItem(
+                title: "Check for Updates…",
+                action: #selector(self.checkForUpdates),
+                keyEquivalent: ""))
+        }
 
         menu.addItem(NSMenuItem(
             title: "About Peekaboo",

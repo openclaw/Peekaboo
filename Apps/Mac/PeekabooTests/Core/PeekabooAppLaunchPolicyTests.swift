@@ -76,7 +76,7 @@ struct PeekabooAppLaunchPolicyTests {
 
     @Test
     @MainActor
-    func `background Bridge host never starts the updater`() {
+    func `background Bridge host does not start an unavailable updater`() {
         let policy = PeekabooAppLaunchPolicy(arguments: [
             "Peekaboo",
             PeekabooAppLaunchPolicy.backgroundBridgeHostArgument,

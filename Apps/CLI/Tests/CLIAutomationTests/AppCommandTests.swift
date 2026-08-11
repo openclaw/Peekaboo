@@ -94,9 +94,11 @@ struct AppCommandTests {
         let data = try #require(object["data"] as? [String: Any])
         let apps = try #require(data["apps"] as? [[String: Any]])
         let app = try #require(apps.first)
+        let schemaCapabilities = try #require(data["schema_capabilities"] as? [String])
 
         #expect((app["process_start_identity"] as? NSNumber)?.uint64Value == generation)
         #expect(app["process_start_identity_decimal"] as? String == String(generation))
+        #expect(schemaCapabilities.contains("processStartIdentityDecimal"))
     }
 
     @Test

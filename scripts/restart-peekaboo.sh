@@ -30,6 +30,7 @@ FIND_BIN="${PEEKABOO_FIND_BIN:-/usr/bin/find}"
 ID_BIN="${PEEKABOO_ID_BIN:-/usr/bin/id}"
 JQ_BIN="${PEEKABOO_JQ_BIN:-$(command -v jq || true)}"
 LOCKF_BIN="/usr/bin/lockf"
+LSOF_BIN="${PEEKABOO_LSOF_BIN:-/usr/sbin/lsof}"
 MKTEMP_BIN="${PEEKABOO_MKTEMP_BIN:-/usr/bin/mktemp}"
 MV_BIN="${PEEKABOO_MV_BIN:-/bin/mv}"
 OPEN_BIN="${PEEKABOO_OPEN_BIN:-/usr/bin/open}"
@@ -377,9 +378,9 @@ recover_interrupted_install() {
       fail "Could not digest restored previous app: ${APP_BUNDLE}"
     [[ -n "${previous_digest}" && "${recovered_digest}" == "${previous_digest}" ]] || \
       fail "Restored target no longer matches the previous bundle; preserving ${install_root}"
-    if [[ "${previous_running}" == "1" ]] && ! is_bundle_running "${APP_BUNDLE}"; then
-      launch_and_verify_bundle "${APP_BUNDLE}" || \
-        fail "Previous app is restored but did not relaunch; preserving ${install_root}"
+    if [[ "${previous_running}" == "1" ]]; then
+      ensure_restored_bundle_ready "${APP_BUNDLE}" || \
+        fail "Previous app is restored but did not regain its Bridge; preserving ${install_root}"
     fi
     if [[ -e "${install_root}" ]]; then
       validated_recovery_root "${install_root}" || \
@@ -413,9 +414,9 @@ recover_interrupted_install() {
     write_journal_state restored "${install_root}" "${had_previous}" "${previous_running}" \
       "${artifact_digest}" "${previous_digest}" || \
       fail "Could not record resumed restoration; preserving ${install_root}"
-    if [[ "${previous_running}" == "1" ]] && ! is_bundle_running "${APP_BUNDLE}"; then
-      launch_and_verify_bundle "${APP_BUNDLE}" || \
-        fail "Previous app was restored but did not relaunch; preserving ${install_root}"
+    if [[ "${previous_running}" == "1" ]]; then
+      ensure_restored_bundle_ready "${APP_BUNDLE}" || \
+        fail "Previous app was restored but did not regain its Bridge; preserving ${install_root}"
     fi
     "${RM_BIN}" -rf -- "${install_root}" || \
       fail "Could not finish resumed restoration cleanup: ${install_root}"
@@ -431,12 +432,12 @@ recover_interrupted_install() {
       fail "Could not digest unchanged app: ${APP_BUNDLE}"
     [[ -n "${previous_digest}" && "${recovered_digest}" == "${previous_digest}" ]] || \
       fail "Pre-rename target no longer matches the previous bundle; preserving ${install_root}"
-    if [[ "${previous_running}" == "1" ]] && ! is_bundle_running "${APP_BUNDLE}"; then
+    if [[ "${previous_running}" == "1" ]]; then
       write_journal_state restored "${install_root}" "${had_previous}" \
         "${previous_running}" "${artifact_digest}" "${previous_digest}" || \
         fail "Could not record unchanged-app recovery; preserving ${install_root}"
-      launch_and_verify_bundle "${APP_BUNDLE}" || \
-        fail "Unchanged app did not relaunch; preserving interrupted transaction at ${install_root}"
+      ensure_restored_bundle_ready "${APP_BUNDLE}" || \
+        fail "Unchanged app did not regain its Bridge; preserving interrupted transaction at ${install_root}"
     fi
     if [[ -e "${install_root}" ]]; then
       validated_recovery_root "${install_root}" || \
@@ -471,8 +472,8 @@ recover_interrupted_install() {
       "${artifact_digest}" "${previous_digest}" || \
       fail "Could not record restored transaction; preserving ${install_root}"
     if [[ "${previous_running}" == "1" ]]; then
-      launch_and_verify_bundle "${APP_BUNDLE}" || \
-        fail "Previous app is restored but did not relaunch; preserving ${install_root}"
+      ensure_restored_bundle_ready "${APP_BUNDLE}" || \
+        fail "Previous app is restored but did not regain its Bridge; preserving ${install_root}"
     fi
     "${RM_BIN}" -rf -- "${install_root}" || \
       fail "Could not finish recovered transaction cleanup: ${install_root}"
@@ -898,12 +899,14 @@ query_process_start_identity() {
 }
 
 validate_healthcheck_configuration() {
-  local healthcheck_identifier
+  local healthcheck_identifier output
 
   [[ -n "${HEALTHCHECK_CLI}" && "${HEALTHCHECK_CLI}" == /* && -x "${HEALTHCHECK_CLI}" ]] || \
     fail 'A current signed Peekaboo CLI is required; pass --healthcheck-cli <absolute-path>'
   [[ -n "${JQ_BIN}" && "${JQ_BIN}" == /* && -x "${JQ_BIN}" ]] || \
     fail 'jq is required for exact GUI Bridge readiness verification'
+  [[ "${LSOF_BIN}" == /* && -x "${LSOF_BIN}" ]] || \
+    fail 'lsof is required to bind legacy restored Bridge readiness to the exact process'
   [[ "${BRIDGE_SOCKET}" == /* && "${BRIDGE_SOCKET}" != *$'\n'* ]] || \
     fail "PEEKABOO_APP_BRIDGE_SOCKET must be an absolute path: ${BRIDGE_SOCKET}"
   verify_expected_code_authority "${HEALTHCHECK_CLI}" || \
@@ -912,6 +915,27 @@ validate_healthcheck_configuration() {
     fail "Healthcheck CLI has no signed identifier: ${HEALTHCHECK_CLI}"
   [[ "${healthcheck_identifier}" == "${HEALTHCHECK_CLI_BUNDLE_ID}" ]] || \
     fail "Healthcheck CLI identifier is ${healthcheck_identifier}; expected ${HEALTHCHECK_CLI_BUNDLE_ID}"
+
+  # This installer depends on lossless process-generation receipts added alongside the GUI host
+  # identity handshake. Reject an older signed CLI before building, stopping, or renaming anything;
+  # accepting it here would make the ordinary first upgrade fail only after installation.
+  output="$(
+    env -i \
+      HOME="${HOME}" \
+      USER="${USER:-$(id -un)}" \
+      LOGNAME="${LOGNAME:-$(id -un)}" \
+      TMPDIR="${TMPDIR:-/tmp}" \
+      PATH="/usr/bin:/bin:/usr/sbin:/sbin" \
+      LANG="${LANG:-en_US.UTF-8}" \
+      "${HEALTHCHECK_CLI}" app list --include-hidden --include-background --no-remote --json 2>/dev/null
+  )" || fail "Healthcheck CLI could not prove the current installer contract: ${HEALTHCHECK_CLI}"
+  "${JQ_BIN}" -e '
+    .success == true and
+    (.data.apps | type == "array") and
+    (.data.schema_capabilities | type == "array") and
+    (.data.schema_capabilities | index("processStartIdentityDecimal") != null)
+  ' <<<"${output}" >/dev/null || fail \
+    "Healthcheck CLI predates exact host-generation readiness; build and sign this checkout's CLI or pass --healthcheck-cli <absolute-current-path>"
 }
 
 verify_replacement_bridge_health() {
@@ -976,6 +1000,79 @@ verify_replacement_bridge_health() {
   return 1
 }
 
+verify_restored_bridge_health() {
+  local attempt current_pids_after current_pids_before current_start_identity_after
+  local current_start_identity_before output socket_pids_after socket_pids_before
+
+  [[ "${LAUNCHED_PID}" =~ ^[0-9]+$ && "${LAUNCHED_PROCESS_START_IDENTITY}" =~ ^[0-9]+$ ]] || return 1
+  for ((attempt = 0; attempt < HEALTH_VERIFY_ATTEMPTS; attempt += 1)); do
+    current_start_identity_before="$(query_process_start_identity "${LAUNCHED_PID}")" || {
+      "${SLEEP_BIN}" "${HEALTH_VERIFY_INTERVAL}"
+      continue
+    }
+    current_pids_before="$(bundle_pids "${APP_BUNDLE}" 2>/dev/null || true)"
+    socket_pids_before="$("${LSOF_BIN}" -t -a -U -- "${BRIDGE_SOCKET}" 2>/dev/null | awk '!seen[$0]++')"
+    if output="$(
+      env -i \
+        HOME="${HOME}" \
+        USER="${USER:-$(id -un)}" \
+        LOGNAME="${LOGNAME:-$(id -un)}" \
+        TMPDIR="${TMPDIR:-/tmp}" \
+        PATH="/usr/bin:/bin:/usr/sbin:/sbin" \
+        LANG="${LANG:-en_US.UTF-8}" \
+        "${HEALTHCHECK_CLI}" bridge status --bridge-socket "${BRIDGE_SOCKET}" --json 2>/dev/null
+    )" && "${JQ_BIN}" -e \
+      --arg socket "${BRIDGE_SOCKET}" '
+        .success == true and
+        .data.selected.source == "remote" and
+        .data.selected.socketPath == $socket and
+        .data.selected.handshake.hostKind == "gui"
+      ' <<<"${output}" >/dev/null &&
+       current_start_identity_after="$(query_process_start_identity "${LAUNCHED_PID}")" &&
+       current_pids_after="$(bundle_pids "${APP_BUNDLE}" 2>/dev/null || true)" &&
+       socket_pids_after="$("${LSOF_BIN}" -t -a -U -- "${BRIDGE_SOCKET}" 2>/dev/null | awk '!seen[$0]++')" &&
+       [[ "${current_start_identity_before}" == "${LAUNCHED_PROCESS_START_IDENTITY}" &&
+          "${current_start_identity_after}" == "${LAUNCHED_PROCESS_START_IDENTITY}" &&
+          "${current_pids_before}" == "${LAUNCHED_PID}" &&
+          "${current_pids_after}" == "${LAUNCHED_PID}" &&
+          "${socket_pids_before}" == "${LAUNCHED_PID}" &&
+          "${socket_pids_after}" == "${LAUNCHED_PID}" ]]
+    then
+      return 0
+    fi
+    "${SLEEP_BIN}" "${HEALTH_VERIFY_INTERVAL}"
+  done
+  printf 'Restored process %s did not regain exact GUI Bridge ownership at %s\n' \
+    "${LAUNCHED_PID}" "${BRIDGE_SOCKET}" >&2
+  return 1
+}
+
+observe_running_bundle_generation() {
+  local bundle="$1" pid pids seen_pid="" seen_pid_count=0
+
+  pids="$(bundle_pids "${bundle}" 2>/dev/null || true)"
+  while IFS= read -r pid; do
+    [[ "${pid}" =~ ^[0-9]+$ ]] || continue
+    seen_pid="${pid}"
+    seen_pid_count=$((seen_pid_count + 1))
+  done <<<"${pids}"
+  ((seen_pid_count == 1)) || return 1
+  LAUNCHED_PID="${seen_pid}"
+  LAUNCHED_PROCESS_START_IDENTITY="$(query_process_start_identity "${seen_pid}")" || return 1
+  [[ "${LAUNCHED_PROCESS_START_IDENTITY}" =~ ^[1-9][0-9]*$ ]]
+}
+
+ensure_restored_bundle_ready() {
+  local bundle="$1"
+
+  if is_bundle_running "${bundle}"; then
+    observe_running_bundle_generation "${bundle}" || return 1
+  else
+    launch_and_verify_bundle "${bundle}" || return 1
+  fi
+  verify_restored_bridge_health
+}
+
 launch_and_verify() {
   launch_and_verify_bundle "${APP_BUNDLE}" || return 1
   verify_replacement_bridge_health
@@ -1029,8 +1126,8 @@ rollback_install() {
           release_install_lock || true
           exit "${exit_code}"
         fi
-        if ! launch_and_verify_bundle "${APP_BUNDLE}"; then
-          printf 'ERROR: The unchanged app was preserved but its new process generation was not observed.\n' >&2
+        if ! ensure_restored_bundle_ready "${APP_BUNDLE}"; then
+          printf 'ERROR: The unchanged app was preserved but its Bridge did not recover.\n' >&2
           release_install_lock || true
           exit "${exit_code}"
         fi
@@ -1105,8 +1202,8 @@ rollback_install() {
     fi
 
     if ((restored == 1 && TARGET_WAS_RUNNING == 1)) && [[ -d "${APP_BUNDLE}" ]]; then
-      if ! launch_and_verify_bundle "${APP_BUNDLE}"; then
-        printf 'ERROR: The previous app was restored but its new process generation was not observed.\n' >&2
+      if ! ensure_restored_bundle_ready "${APP_BUNDLE}"; then
+        printf 'ERROR: The previous app was restored but its Bridge did not recover.\n' >&2
         release_install_lock || true
         exit "${exit_code}"
       fi

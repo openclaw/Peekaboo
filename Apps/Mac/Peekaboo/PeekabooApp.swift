@@ -169,10 +169,10 @@ struct PeekabooApp: App {
         }
         .windowResizability(.automatic)
         .defaultSize(width: 900, height: 700)
-        // Deployment-owned Bridge hosts suppress every automatic scene; ordinary launches keep
-        // SwiftUI's interactive presentation and restoration behavior.
-        .defaultLaunchBehavior(self.launchPolicy.suppressesAutomaticScenePresentation ? .suppressed : .automatic)
-        .restorationBehavior(self.launchPolicy.disablesSceneRestoration ? .disabled : .automatic)
+        // Sessions are explicit-user-only in every launch mode. Restoring the scene on an ordinary
+        // app/login launch used to reopen it without consent and could steal focus.
+        .defaultLaunchBehavior(.suppressed)
+        .restorationBehavior(.disabled)
 
         // Inspector window
         WindowGroup("Inspector", id: "inspector") {
@@ -248,6 +248,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var didSetupKeyboardShortcuts = false
     private var didSetupNotificationObservers = false
     private var didObserveAgentMode = false
+    private var didReconcileManagedLaunchAtLogin = false
 
     override init() {
         let launchPolicy = PeekabooAppLaunchPolicy.current
@@ -280,6 +281,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     fileprivate func connectToState(_ context: AppStateConnectionContext) {
+        if self.launchPolicy.isBackgroundBridgeHost, !self.didReconcileManagedLaunchAtLogin {
+            do {
+                try context.settings.disableLoginLaunchForManagedBackgroundHost()
+                self.didReconcileManagedLaunchAtLogin = true
+            } catch {
+                self.handlePermanentBridgeStartFailure(
+                    "Could not disable incompatible Launch at Login state: \(error.localizedDescription)")
+                return
+            }
+        }
+
         self.settings = context.settings
         self.sessionStore = context.sessionStore
         self.permissions = context.permissions

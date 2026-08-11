@@ -148,6 +148,37 @@ struct PeekabooSettingsTests {
             }
         }
     }
+
+    @Test
+    func `managed background host relinquishes incompatible login registration`() throws {
+        try withIsolatedSettingsEnvironment { _ in
+            let settings = PeekabooSettings()
+            var unregisterCount = 0
+
+            try settings.disableLoginLaunchForManagedBackgroundHost(status: .requiresApproval) {
+                unregisterCount += 1
+            }
+
+            #expect(unregisterCount == 1)
+            #expect(!settings.launchAtLogin)
+            #expect(!UserDefaults.standard.bool(forKey: "peekaboo.launchAtLogin"))
+        }
+    }
+
+    @Test
+    func `managed background host accepts an absent login registration`() throws {
+        try withIsolatedSettingsEnvironment { _ in
+            let settings = PeekabooSettings()
+            var unregisterCount = 0
+
+            try settings.disableLoginLaunchForManagedBackgroundHost(status: .notRegistered) {
+                unregisterCount += 1
+            }
+
+            #expect(unregisterCount == 0)
+            #expect(!settings.launchAtLogin)
+        }
+    }
 }
 
 @Suite(.tags(.services, .integration), .serialized)

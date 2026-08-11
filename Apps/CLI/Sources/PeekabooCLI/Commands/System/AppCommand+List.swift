@@ -10,6 +10,8 @@ extension AppCommand {
     @MainActor
 
     struct ListSubcommand: InjectedRuntimeBackedCommand {
+        static let schemaCapabilities = ["processStartIdentityDecimal"]
+
         static let commandDescription = CommandDescription(
             commandName: "list",
             abstract: "List running applications",
@@ -83,6 +85,7 @@ extension AppCommand {
                     let count: Int
                     let apps: [AppInfo]
                     let warnings: [String]
+                    let schema_capabilities: [String]
                 }
 
                 let data = ListResult(
@@ -99,7 +102,8 @@ extension AppCommand {
                             metadata_warnings: app.metadataWarnings
                         )
                     },
-                    warnings: appsOutput.metadata.warnings
+                    warnings: appsOutput.metadata.warnings,
+                    schema_capabilities: Self.schemaCapabilities
                 )
                 AutomationEventLogger.log(
                     .app,

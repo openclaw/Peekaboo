@@ -6,6 +6,12 @@ import Testing
 @Suite(.tags(.ui, .unit))
 @MainActor
 struct StatusBarControllerTests {
+    private final class AvailableUpdater: UpdaterProviding {
+        var automaticallyChecksForUpdates = false
+        let isAvailable = true
+        func checkForUpdates(_: Any?) {}
+    }
+
     private final class MockPermissionsService: ObservablePermissionsServiceProtocol {
         var screenRecordingStatus: ObservablePermissionsService.PermissionState = .authorized
         var accessibilityStatus: ObservablePermissionsService.PermissionState = .authorized
@@ -23,8 +29,9 @@ struct StatusBarControllerTests {
         func requestPostEvent() async {}
     }
 
-    private func makeController(permissionsService: MockPermissionsService = MockPermissionsService())
-        -> StatusBarController
+    private func makeController(
+        permissionsService: MockPermissionsService = MockPermissionsService(),
+        updater: any UpdaterProviding = DisabledUpdaterController()) -> StatusBarController
     {
         let settings = PeekabooSettings()
         let sessionStore = SessionStore(
@@ -39,7 +46,7 @@ struct StatusBarControllerTests {
             sessionStore: sessionStore,
             permissions: permissions,
             settings: settings,
-            updater: DisabledUpdaterController())
+            updater: updater)
     }
 
     @Test
@@ -88,7 +95,6 @@ struct StatusBarControllerTests {
             "Permissions…",
             "<separator>",
             "Settings…",
-            "Check for Updates…",
             "About Peekaboo",
             "<separator>",
             "Quit Peekaboo",
@@ -117,6 +123,22 @@ struct StatusBarControllerTests {
         let quitItem = try #require(menu.items.first(where: { $0.title == "Quit Peekaboo" }))
         #expect(quitItem.keyEquivalent == "q")
         #expect(quitItem.keyEquivalentModifierMask == .command)
+    }
+
+    @Test
+    func `Update action is shown only when the updater is available`() {
+        let disabled = self.makeController()
+        let available = self.makeController(updater: AvailableUpdater())
+        defer {
+            disabled.removeStatusItem()
+            available.removeStatusItem()
+        }
+
+        let disabledMenu = disabled.makeContextMenu(agentModeEnabled: false, sessions: [])
+        let availableMenu = available.makeContextMenu(agentModeEnabled: false, sessions: [])
+
+        #expect(!disabledMenu.items.contains(where: { $0.title == "Check for Updates…" }))
+        #expect(availableMenu.items.contains(where: { $0.title == "Check for Updates…" }))
     }
 
     @Test
