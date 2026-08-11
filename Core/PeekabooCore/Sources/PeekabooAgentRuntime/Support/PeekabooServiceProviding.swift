@@ -1,9 +1,10 @@
 import Foundation
 import PeekabooAutomation
+import PeekabooAutomationKit
 
 /// Aggregated service provider protocol exposed to higher-level modules.
 @MainActor
-public protocol PeekabooServiceProviding: AnyObject, Sendable {
+public protocol PeekabooServiceProviding: AnyObject, Sendable, PermissionsStatusProviding {
     var logging: any LoggingServiceProtocol { get }
     var desktopObservation: any DesktopObservationServiceProtocol { get }
     var screenCapture: any ScreenCaptureServiceProtocol { get }
@@ -28,6 +29,16 @@ public protocol PeekabooServiceProviding: AnyObject, Sendable {
 
 @MainActor
 extension PeekabooServiceProviding {
+    public func permissionsStatus() async throws -> PermissionsStatus {
+        let screenRecording = await self.screenCapture.hasScreenRecordingPermission()
+        let accessibility = await self.automation.hasAccessibilityPermission()
+        let postEvent = self.permissions.checkPostEventPermission()
+        return PermissionsStatus(
+            screenRecording: screenRecording,
+            accessibility: accessibility,
+            postEvent: postEvent)
+    }
+
     public var desktopObservation: any DesktopObservationServiceProtocol {
         DesktopObservationService(
             screenCapture: self.screenCapture,

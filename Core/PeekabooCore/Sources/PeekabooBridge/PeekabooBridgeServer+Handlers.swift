@@ -7,11 +7,12 @@ import PeekabooFoundation
 extension PeekabooBridgeServer {
     func handleAuthorized(
         _ request: PeekabooBridgeRequest,
-        peer: PeekabooBridgePeer?) async throws -> PeekabooBridgeResponse
+        peer: PeekabooBridgePeer?,
+        permissions: PermissionsStatus) async throws -> PeekabooBridgeResponse
     {
         switch request.operation {
         case .permissionsStatus, .requestPostEventPermission, .daemonStatus, .daemonStop:
-            try await self.handleCoreRequest(request, peer: peer)
+            try await self.handleCoreRequest(request, peer: peer, permissions: permissions)
         case .browserStatus, .browserConnect, .browserDisconnect, .browserExecute:
             try await self.handleBrowserRequest(request)
         case .captureScreen, .captureWindow, .captureFrontmost, .captureArea:
@@ -74,11 +75,12 @@ extension PeekabooBridgeServer {
 
     private func handleCoreRequest(
         _ request: PeekabooBridgeRequest,
-        peer: PeekabooBridgePeer?) async throws -> PeekabooBridgeResponse
+        peer: PeekabooBridgePeer?,
+        permissions: PermissionsStatus) async throws -> PeekabooBridgeResponse
     {
         switch request {
         case .permissionsStatus:
-            return .permissionsStatus(self.currentPermissions())
+            return .permissionsStatus(permissions)
         case .requestPostEventPermission:
             return .bool(self.postEventAccessRequester())
         case .daemonStatus:
@@ -106,7 +108,7 @@ extension PeekabooBridgeServer {
             let stopped = await daemonControl.requestStop(expectedPID: payload.expectedPID)
             return .bool(stopped)
         case let .handshake(payload):
-            return try self.handleHandshake(payload, peer: peer)
+            return try self.handleHandshake(payload, peer: peer, permissions: permissions)
         default:
             throw Self.invalidRequest(for: request)
         }

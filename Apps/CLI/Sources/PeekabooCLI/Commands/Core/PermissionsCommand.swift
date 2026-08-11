@@ -44,11 +44,7 @@ extension PermissionsCommand {
             self.runtime = runtime
 
             if self.allSources {
-                let response = await PermissionHelpers.getAllPermissionSources(
-                    services: runtime.services,
-                    allowRemote: !self.noRemote,
-                    socketPath: self.bridgeSocket
-                )
+                let response = try await PermissionHelpers.getAllPermissionSources(services: runtime.services)
 
                 if self.jsonOutput {
                     outputSuccessCodable(data: response, logger: self.outputLogger)
@@ -63,11 +59,7 @@ extension PermissionsCommand {
                 return
             }
 
-            let response = await PermissionHelpers.getCurrentPermissionsWithSource(
-                services: runtime.services,
-                allowRemote: !self.noRemote,
-                socketPath: self.bridgeSocket
-            )
+            let response = try await PermissionHelpers.getCurrentPermissionsWithSource(services: runtime.services)
 
             if self.jsonOutput {
                 outputSuccessCodable(data: response, logger: self.outputLogger)
@@ -91,7 +83,7 @@ extension PermissionsCommand {
         mutating func run(using runtime: CommandRuntime) async throws {
             self.runtime = runtime
 
-            let permissions = await PermissionHelpers.getCurrentPermissions(services: runtime.services)
+            let permissions = try await PermissionHelpers.getCurrentPermissions(services: runtime.services)
             if self.jsonOutput {
                 outputSuccessCodable(data: permissions, logger: self.outputLogger)
             } else {

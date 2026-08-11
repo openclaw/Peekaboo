@@ -1,6 +1,7 @@
 import Foundation
 import MCP
 import PeekabooAutomation
+import PeekabooAutomationKit
 import TachikomaMCP
 
 /// MCP tool for checking macOS system permissions
@@ -10,8 +11,8 @@ public struct PermissionsTool: MCPTool {
     public let name = "permissions"
     public let description = """
     Check macOS system permissions required for automation.
-    Verifies both Screen Recording and Accessibility permissions.
-    Returns the current permission status for each required permission.
+    Verifies Screen Recording and Accessibility as required permissions and reports
+    Event Synthesizing as an action-specific input limitation when it is unavailable.
     \(PeekabooMCPVersion.banner) using openai/gpt-5.6, anthropic/claude-opus-5
     """
 
@@ -27,25 +28,45 @@ public struct PermissionsTool: MCPTool {
 
     @MainActor
     public func execute(arguments: ToolArguments) async throws -> ToolResponse {
-        // Get permissions from PeekabooCore services
-        let screenRecording = await self.context.screenCapture.hasScreenRecordingPermission()
-        let accessibility = await self.context.automation.hasAccessibilityPermission()
+        _ = arguments
+        let status: PermissionsStatus
+        do {
+            status = try await self.context.permissionsStatusProvider.permissionsStatus()
+        } catch {
+            let meta: Value = .object([
+                "permission_snapshot_available": .bool(false),
+                "screen_recording": .null,
+                "accessibility": .null,
+                "event_synthesizing": .null,
+                "required_permissions_granted": .null,
+                "event_synthesizing_limits": .array([]),
+            ])
+            let summary = ToolEventSummary(
+                actionDescription: "Permissions",
+                notes: "Selected-host permission snapshot unavailable")
+            return ToolResponse.error(
+                "Could not read permissions from the selected execution host: \(error.localizedDescription)",
+                meta: ToolEventSummary.merge(summary: summary, into: meta))
+        }
 
-        // Build response text
         var lines: [String] = []
         lines.append("macOS Permissions Status:")
         lines.append("")
-        let screenRecordingStatus = screenRecording
+        let screenRecordingStatus = status.screenRecording
             ? "\(AgentDisplayTokens.Status.success) Granted"
             : "\(AgentDisplayTokens.Status.failure) Not Granted"
-        let accessibilityStatus = accessibility
+        let accessibilityStatus = status.accessibility
             ? "\(AgentDisplayTokens.Status.success) Granted"
-            : "\(AgentDisplayTokens.Status.warning) Not Granted (Optional)"
+            : "\(AgentDisplayTokens.Status.failure) Not Granted"
+        let eventSynthesizingStatus = status.postEvent
+            ? "\(AgentDisplayTokens.Status.success) Granted"
+            : "\(AgentDisplayTokens.Status.warning) Not Granted"
 
-        lines.append("Screen Recording: \(screenRecordingStatus)")
-        lines.append("Accessibility: \(accessibilityStatus)")
+        lines.append("Screen Recording (Required): \(screenRecordingStatus)")
+        lines.append("Accessibility (Required): \(accessibilityStatus)")
+        lines.append("Event Synthesizing (Action-specific): \(eventSynthesizingStatus)")
 
-        if !screenRecording {
+        if !status.screenRecording {
             lines.append("")
             let warning = "\(AgentDisplayTokens.Status.warning) Screen Recording permission is REQUIRED " +
                 "for capturing screenshots."
@@ -53,30 +74,46 @@ public struct PermissionsTool: MCPTool {
             lines.append("Grant via: System Settings > Privacy & Security > Screen Recording")
         }
 
-        if !accessibility {
+        if !status.accessibility {
             lines.append("")
-            lines.append("ℹ️  Accessibility permission is optional but needed for UI automation.")
+            lines.append("\(AgentDisplayTokens.Status.warning) Accessibility permission is REQUIRED " +
+                "for UI automation.")
             lines.append("Grant via: System Settings > Privacy & Security > Accessibility")
         }
 
-        let responseText = lines.joined(separator: "\n")
-
-        // Return error response if required permissions are missing
-        if !screenRecording {
-            let summary = ToolEventSummary(actionDescription: "Permissions", notes: "Screen Recording missing")
-            return ToolResponse.error(responseText, meta: ToolEventSummary.merge(summary: summary, into: nil))
+        let eventSynthesizingLimits: [String] = status.postEvent
+            ? []
+            : ["background keyboard input", "foreground synthetic pointer input"]
+        if !eventSynthesizingLimits.isEmpty {
+            lines.append("")
+            lines.append("Event Synthesizing is not globally required, but these actions are unavailable: " +
+                eventSynthesizingLimits.joined(separator: ", ") + ".")
+            lines.append("Background Accessibility actions remain available.")
         }
 
+        let responseText = lines.joined(separator: "\n")
+        let requiredPermissionsGranted = status.screenRecording && status.accessibility
         let baseMeta: [String: Value] = [
-            "screen_recording": .bool(screenRecording),
-            "accessibility": .bool(accessibility),
+            "permission_snapshot_available": .bool(true),
+            "screen_recording": .bool(status.screenRecording),
+            "accessibility": .bool(status.accessibility),
+            "event_synthesizing": .bool(status.postEvent),
+            "required_permissions_granted": .bool(requiredPermissionsGranted),
+            "event_synthesizing_limits": .array(eventSynthesizingLimits.map(Value.string)),
         ]
         let summary = ToolEventSummary(
             actionDescription: "Permissions",
-            notes: "Screen Recording ✅, Accessibility \(accessibility ? "✅" : "⚠️")")
+            notes: "Screen Recording \(status.screenRecording ? "✅" : "❌"), " +
+                "Accessibility \(status.accessibility ? "✅" : "❌"), " +
+                "Event Synthesizing \(status.postEvent ? "✅" : "⚠️")")
+        let meta = ToolEventSummary.merge(summary: summary, into: .object(baseMeta))
+
+        if !requiredPermissionsGranted {
+            return ToolResponse.error(responseText, meta: meta)
+        }
 
         return ToolResponse.text(
             responseText,
-            meta: ToolEventSummary.merge(summary: summary, into: .object(baseMeta)))
+            meta: meta)
     }
 }

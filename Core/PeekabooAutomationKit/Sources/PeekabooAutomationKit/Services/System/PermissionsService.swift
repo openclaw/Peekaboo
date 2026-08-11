@@ -307,6 +307,18 @@ public final class PermissionsService {
     }
 }
 
+/// Provides one permission snapshot owned by the selected execution host.
+@MainActor
+public protocol PermissionsStatusProviding: Sendable {
+    func permissionsStatus() async throws -> PermissionsStatus
+}
+
+extension PermissionsService: PermissionsStatusProviding {
+    public func permissionsStatus() async throws -> PermissionsStatus {
+        self.checkAllPermissions()
+    }
+}
+
 /// Status of system permissions
 public struct PermissionsStatus: Sendable, Codable {
     public let screenRecording: Bool

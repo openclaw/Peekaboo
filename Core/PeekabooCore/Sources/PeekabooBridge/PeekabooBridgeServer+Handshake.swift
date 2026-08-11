@@ -12,7 +12,8 @@ extension PeekabooBridgeServer {
 
     func handleHandshake(
         _ payload: PeekabooBridgeHandshake,
-        peer: PeekabooBridgePeer?) throws -> PeekabooBridgeResponse
+        peer: PeekabooBridgePeer?,
+        permissions: PermissionsStatus) throws -> PeekabooBridgeResponse
     {
         let resolvedBundle = peer?.bundleIdentifier ?? payload.client.bundleIdentifier
         let resolvedTeam = peer?.teamIdentifier ?? payload.client.teamIdentifier
@@ -57,7 +58,6 @@ extension PeekabooBridgeServer {
             max(payload.protocolVersion, self.supportedVersions.lowerBound),
             self.supportedVersions.upperBound)
 
-        let permissions = self.currentPermissions()
         let advertisedOps = Array(self.operationsCompatibleWithNegotiatedVersion(
             self.allowedOperationsToAdvertise(),
             negotiated)).sorted { $0.rawValue < $1.rawValue }
@@ -202,7 +202,7 @@ extension PeekabooBridgeServer {
             screenRecording: permissions.screenRecording,
             accessibility: permissions.accessibility,
             appleScript: false,
-            postEvent: self.postEventAccessEvaluator())
+            postEvent: permissions.postEvent)
     }
 
     static func bridgePermission(for error: PeekabooError) -> PeekabooBridgePermissionKind? {

@@ -9,6 +9,12 @@ read_when:
 
 `peekaboo permissions` centralizes entitlement checks. The default `status` subcommand reports the runtime view of Screen Recording, Accessibility, and Event Synthesizing. `grant` prints the same table plus human-readable steps so you can fix issues without hunting through docs.
 
+Status is one snapshot from the execution host selected by normal runtime routing. A Bridge-backed CLI or MCP session
+therefore reports the Bridge host's three grants with one request; it never mixes remote Screen Recording or
+Accessibility with caller-local Event Synthesizing state. Screen Recording and Accessibility are required. Event
+Synthesizing remains optional globally and is reported with the actions it limits: background keyboard input and
+foreground synthetic pointer input.
+
 Peekaboo's application, Dock, and UI operations use native macOS APIs. It does not probe, request, or require
 Automation (AppleScript) permission. The Bridge protocol still decodes the legacy field so mixed-version clients
 receive a structured compatibility result instead of failing the whole handshake.
@@ -25,6 +31,8 @@ receive a structured compatibility result instead of failing the whole handshake
 - The command executes entirely on the main actor, avoiding extra prompts or sandbox warnings—the same code path runs at CLI startup to warn if entitlements are missing.
 - JSON mode uses `outputSuccessCodable`, which means status results include a `permissions` array with `{name, isRequired, isGranted, grantInstructions}` entries that can be diffed over time.
 - `--all-sources --json` returns `{selectedSource, sources}` so callers can distinguish Bridge TCC grants from local CLI grants.
+- The MCP `permissions` tool returns an error when either required permission is missing, while retaining all three
+  permission fields and the action-specific Event Synthesizing limitations in response metadata.
 
 ## Examples
 ```bash

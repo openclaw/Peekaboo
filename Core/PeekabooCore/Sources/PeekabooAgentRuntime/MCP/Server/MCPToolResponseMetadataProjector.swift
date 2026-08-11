@@ -34,6 +34,15 @@ enum MCPToolResponseMetadataProjector {
         "warnings",
     ]
 
+    private static let permissionKeys: Set<String> = [
+        "accessibility",
+        "event_synthesizing",
+        "event_synthesizing_limits",
+        "permission_snapshot_available",
+        "required_permissions_granted",
+        "screen_recording",
+    ]
+
     static func externalFields(from value: Value?, toolName: String?) -> [String: Value] {
         guard case let .object(fields)? = value else { return [:] }
         var allowed = Self.safetyKeys
@@ -42,12 +51,17 @@ enum MCPToolResponseMetadataProjector {
             allowed.formUnion(Self.captureErrorKeys)
             allowed.formUnion(Self.captureSuccessKeys)
         }
+        if toolName == "permissions" {
+            allowed.formUnion(Self.permissionKeys)
+        }
         return fields.filter { allowed.contains($0.key) }
     }
 
     static func agentFields(from value: Value?) -> [String: Value] {
         guard case let .object(fields)? = value else { return [:] }
-        let allowed = Self.safetyKeys.union(Self.captureErrorKeys)
+        let allowed = Self.safetyKeys
+            .union(Self.captureErrorKeys)
+            .union(Self.permissionKeys)
         return fields.filter { allowed.contains($0.key) }
     }
 }

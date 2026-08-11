@@ -54,25 +54,6 @@ struct MCPToolExecutionTests {
     // MARK: - Permissions Tool Tests
 
     @Test
-    func `Permissions tool execution`() async throws {
-        let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
-        let screenCapture = await MainActor.run { MockScreenCaptureService(screenRecordingGranted: true) }
-        let context = await MCPToolTestHelpers.makeContext(
-            automation: automation,
-            screenCapture: screenCapture)
-        let tool = PermissionsTool(context: context)
-        let args = ToolArguments(raw: [:])
-
-        let response = try await tool.execute(arguments: args)
-        #expect(response.isError == false)
-
-        if case let .text(text: output, annotations: _, _meta: _) = response.content.first {
-            // Should contain information about permissions
-            #expect(output.contains("Accessibility") || output.contains("Screen Recording"))
-        }
-    }
-
-    @Test
     func `Image tool returns MCP error response when screen recording is missing`() async throws {
         let screenCapture = await MainActor.run { MockScreenCaptureService(screenRecordingGranted: false) }
         let context = await MCPToolTestHelpers.makeContext(screenCapture: screenCapture)
@@ -871,6 +852,7 @@ enum MCPToolTestHelpers {
         screens: (any ScreenServiceProtocol)? = nil,
         clipboard: (any ClipboardServiceProtocol)? = nil,
         snapshots: (any SnapshotManagerProtocol)? = nil,
+        permissionsStatusProvider: (any PermissionsStatusProviding)? = nil,
         snapshotMutationCoordinator: (any MCPToolSnapshotMutationCoordinating)? = nil,
         snapshotExecutionGate: MCPToolSnapshotExecutionGate = MCPToolSnapshotExecutionGate(),
         exactWindowMetadataProvider: any ExactWindowMetadataProviding = SystemExactWindowMetadataProvider()) async
@@ -901,6 +883,7 @@ enum MCPToolTestHelpers {
                 permissions: services.permissions,
                 clipboard: clipboard ?? services.clipboard,
                 browser: services.browser,
+                permissionsStatusProvider: permissionsStatusProvider,
                 snapshotMutationCoordinator: snapshotMutationCoordinator,
                 snapshotExecutionGate: snapshotExecutionGate)
         }

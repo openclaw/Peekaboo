@@ -18,7 +18,7 @@ struct PermissionCommandTests {
     }
 
     @Test
-    func `permissions command emits JSON with stub statuses`() async {
+    func `permissions command emits JSON with stub statuses`() async throws {
         let automation = StubAutomationService()
         automation.accessibilityPermissionGranted = false
         let screenCapture = StubScreenCaptureService(permissionGranted: false)
@@ -30,9 +30,10 @@ struct PermissionCommandTests {
             )
         }
 
-        let payload = await CodableJSONResponse(
+        let permissions = try await PermissionHelpers.getCurrentPermissions(services: services)
+        let payload = CodableJSONResponse(
             success: true,
-            data: PermissionHelpers.getCurrentPermissions(services: services, allowRemote: false),
+            data: permissions,
             messages: nil,
             debug_logs: []
         )

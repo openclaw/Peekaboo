@@ -24,7 +24,7 @@ If you use a Bridge host, grant permissions to the host reported by `peekaboo pe
 
 - **macOS 15.0+ (Sequoia)** – core automation APIs depend on Sequoia.
 - **Screen Recording (required)** – enables CGWindow capture and multi-app automation.
-- **Accessibility (recommended)** – improves window focus, menu interaction, dialog control, and action-based element/query clicks.
+- **Accessibility (required)** – enables window, menu, dialog, and action-based element/query automation.
 - **Event Synthesizing (optional)** – enables background keyboard input and explicitly foreground synthetic pointer input (`click --foreground`, targetless/smooth scroll, move, drag, and swipe). Background clicks use Accessibility.
 
 For build and runtime version details, see [platform-support.md](platform-support.md).

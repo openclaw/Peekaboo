@@ -17,7 +17,7 @@ Use this checklist to exercise the Swift MCP server with mcporter. It mirrors th
   `export MCPORTER="${MCPORTER:-npx mcporter}"`  
   If you have the local repo, prefer `MCPORTER="pnpm --dir ~/Projects/mcporter exec tsx ~/Projects/mcporter/src/cli.ts"`.
 - mcporter timeouts are **milliseconds**. Use `--timeout 15000` (15s), not `--timeout 15`.
-- Permissions: run `$PEEKABOO_BIN permissions status` once to confirm Screen Recording + Accessibility are granted; the `permissions` tool will fail if screen capture is blocked.
+- Permissions: run `$PEEKABOO_BIN permissions status` once to confirm Screen Recording + Accessibility are granted; the `permissions` tool fails when either required grant is missing and reports Event Synthesizing separately.
 - AI analysis (optional steps below) needs providers set in `~/.peekaboo/config.json` and env keys (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, etc.).
 
 ## Test cases (run in order)

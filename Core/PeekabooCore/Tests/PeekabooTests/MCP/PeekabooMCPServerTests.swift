@@ -58,6 +58,41 @@ struct PeekabooMCPServerTests {
     }
 
     @Test
+    func `server preserves the complete permission snapshot on MCP failures`() throws {
+        let response = ToolResponse.error(
+            "Accessibility is required.",
+            meta: .object([
+                "permission_snapshot_available": .bool(true),
+                "screen_recording": .bool(true),
+                "accessibility": .bool(false),
+                "event_synthesizing": .bool(false),
+                "required_permissions_granted": .bool(false),
+                "event_synthesizing_limits": .array([
+                    .string("background keyboard input"),
+                    .string("foreground synthetic pointer input"),
+                ]),
+                "internal_diagnostics": .string("private"),
+            ]))
+
+        let result = PeekabooMCPServer.callToolResult(from: response, toolName: "permissions")
+        let encoded = try JSONEncoder().encode(result)
+        let json = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        let metadata = try #require(json["_meta"] as? [String: Any])
+
+        #expect(result.isError == true)
+        #expect(metadata["permission_snapshot_available"] as? Bool == true)
+        #expect(metadata["screen_recording"] as? Bool == true)
+        #expect(metadata["accessibility"] as? Bool == false)
+        #expect(metadata["event_synthesizing"] as? Bool == false)
+        #expect(metadata["required_permissions_granted"] as? Bool == false)
+        #expect(metadata["event_synthesizing_limits"] as? [String] == [
+            "background keyboard input",
+            "foreground synthetic pointer input",
+        ])
+        #expect(metadata["internal_diagnostics"] == nil)
+    }
+
+    @Test
     @MainActor
     func `click wire schema requires an exclusive target and a background coordinate receipt`() async throws {
         let context = await MCPToolTestHelpers.makeContext()

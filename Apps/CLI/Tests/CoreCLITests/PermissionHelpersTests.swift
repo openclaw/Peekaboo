@@ -40,44 +40,6 @@ struct PermissionHelpersTests {
     }
 
     @Test
-    func `permission bridge follows the runtime daemon socket`() {
-        let paths = PermissionHelpers.remotePermissionSocketPaths(
-            explicitSocket: nil,
-            environment: ["PEEKABOO_DAEMON_SOCKET": "/tmp/custom-daemon.sock"]
-        )
-
-        #expect(paths == ["/tmp/custom-daemon.sock"])
-    }
-
-    @Test
-    func `permission bridge includes the default legacy runtime fallback`() throws {
-        let paths = PermissionHelpers.remotePermissionSocketPaths(
-            explicitSocket: nil,
-            environment: [:]
-        )
-
-        let buildScopedPath = DaemonLaunchPolicy.buildScopedDaemonSocketPath(
-            daemonSocketPath: PeekabooBridgeConstants.daemonSocketPath,
-            runtimeBuildIdentity: DaemonLaunchPolicy.runtimeBuildIdentity()
-        )
-        #expect(try paths == [
-            PeekabooBridgeConstants.daemonSocketPath,
-            #require(buildScopedPath),
-            PeekabooBridgeConstants.peekabooSocketPath,
-        ])
-    }
-
-    @Test
-    func `permission bridge explicit socket overrides the daemon`() {
-        let paths = PermissionHelpers.remotePermissionSocketPaths(
-            explicitSocket: "/tmp/explicit.sock",
-            environment: ["PEEKABOO_DAEMON_SOCKET": "/tmp/custom-daemon.sock"]
-        )
-
-        #expect(paths == ["/tmp/explicit.sock"])
-    }
-
-    @Test
     func `bridge hint explains remote screen recording denial`() {
         let response = PermissionHelpers.PermissionStatusResponse(
             source: "bridge",

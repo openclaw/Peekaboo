@@ -21,6 +21,7 @@ public struct MCPToolContext: @unchecked Sendable {
     public let screens: any ScreenServiceProtocol
     public let agent: (any AgentServiceProtocol)?
     public let permissions: PermissionsService
+    public let permissionsStatusProvider: any PermissionsStatusProviding
     public let clipboard: any ClipboardServiceProtocol
     public let browser: any BrowserMCPClientProviding
     public let snapshotMutationCoordinator: (any MCPToolSnapshotMutationCoordinating)?
@@ -134,6 +135,7 @@ public struct MCPToolContext: @unchecked Sendable {
         permissions: PermissionsService,
         clipboard: any ClipboardServiceProtocol,
         browser: any BrowserMCPClientProviding,
+        permissionsStatusProvider: (any PermissionsStatusProviding)? = nil,
         snapshotMutationCoordinator: (any MCPToolSnapshotMutationCoordinating)? = nil,
         snapshotExecutionGate: MCPToolSnapshotExecutionGate? = nil)
     {
@@ -149,6 +151,7 @@ public struct MCPToolContext: @unchecked Sendable {
         self.screens = screens
         self.agent = agent
         self.permissions = permissions
+        self.permissionsStatusProvider = permissionsStatusProvider ?? permissions
         self.clipboard = clipboard
         self.browser = browser
         self.snapshotMutationCoordinator = snapshotMutationCoordinator
@@ -181,6 +184,7 @@ public struct MCPToolContext: @unchecked Sendable {
             permissions: services.permissions,
             clipboard: services.clipboard,
             browser: services.browser,
+            permissionsStatusProvider: services,
             snapshotMutationCoordinator: snapshotMutationCoordinator,
             snapshotExecutionGate: resolvedSnapshotExecutionGate)
     }

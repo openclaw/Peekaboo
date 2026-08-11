@@ -258,6 +258,9 @@ Use the shared physical pointer only with explicit foreground consent:
 ## Troubleshooting
 
 - Ensure Screen Recording + Accessibility permissions are granted (`peekaboo permissions status`).
+- The `permissions` tool reads one complete snapshot from the selected execution host. Missing Screen Recording or
+  Accessibility is a tool failure; missing Event Synthesizing remains a structured limitation for background keyboard
+  and foreground synthetic pointer actions rather than a global failure.
 - If the MCP client cannot connect, confirm you are launching Peekaboo with `mcp` or `mcp serve` and that the client is using stdio transport.
 - Use absolute binary paths for local checkouts.
 - Confirm the binary is executable (`chmod +x /path/to/peekaboo`).

@@ -35,7 +35,6 @@ public final class PeekabooBridgeServer {
     let hostIdentity: PeekabooBridgeHostIdentity?
     let hostCapabilities: Set<String>
     let daemonControl: (any PeekabooDaemonControlProviding)?
-    let postEventAccessEvaluator: @MainActor @Sendable () -> Bool
     let postEventAccessRequester: @MainActor @Sendable () -> Bool
     let permissionStatusEvaluator: @MainActor @Sendable (_ allowAppleScriptLaunch: Bool) -> PermissionsStatus
     let windowOwnerProcessIdentifierProvider: @Sendable (CGWindowID) -> pid_t?
@@ -107,17 +106,24 @@ public final class PeekabooBridgeServer {
         self.windowOwnerProcessIdentifierProvider = windowOwnerProcessIdentifierProvider
         self.windowBoundsProvider = windowBoundsProvider
         self.processStartIdentityProvider = processStartIdentityProvider
-        self.postEventAccessEvaluator = postEventAccessEvaluator ?? { [services] in
+        let resolvedPostEventAccessEvaluator = postEventAccessEvaluator ?? { [services] in
             services.permissions.checkPostEventPermission()
         }
         self.postEventAccessRequester = postEventAccessRequester ?? { [services] in
             services.permissions.requestPostEventPermission(interactive: true)
         }
-        if let permissionStatusEvaluator {
+        if let permissionStatusEvaluator, postEventAccessEvaluator != nil {
+            self.permissionStatusEvaluator = { allowAppleScriptLaunch in
+                permissionStatusEvaluator(allowAppleScriptLaunch)
+                    .withPostEvent(resolvedPostEventAccessEvaluator())
+            }
+        } else if let permissionStatusEvaluator {
             self.permissionStatusEvaluator = permissionStatusEvaluator
         } else {
             self.permissionStatusEvaluator = { [services] _ in
-                services.permissions.checkAllPermissions()
+                let status = services.permissions.checkAllPermissions()
+                guard postEventAccessEvaluator != nil else { return status }
+                return status.withPostEvent(resolvedPostEventAccessEvaluator())
             }
         }
         self.encoder = encoder
@@ -187,7 +193,10 @@ public final class PeekabooBridgeServer {
                     await daemonControl.recordActivityStart(operation: op)
                 }
                 do {
-                    let response = try await self.handleAuthorizedWithDesktopMutationBarrier(request, peer: peer)
+                    let response = try await self.handleAuthorizedWithDesktopMutationBarrier(
+                        request,
+                        peer: peer,
+                        permissions: permissions)
                     await daemonControl.recordActivityEnd(operation: op)
                     return response
                 } catch {
@@ -196,7 +205,10 @@ public final class PeekabooBridgeServer {
                 }
             }
 
-            return try await self.handleAuthorizedWithDesktopMutationBarrier(request, peer: peer)
+            return try await self.handleAuthorizedWithDesktopMutationBarrier(
+                request,
+                peer: peer,
+                permissions: permissions)
         } catch let envelope as PeekabooBridgeErrorEnvelope {
             failed = true
             let duration = Date().timeIntervalSince(start)
@@ -442,7 +454,8 @@ public final class PeekabooBridgeServer {
 
     private func handleAuthorizedWithDesktopMutationBarrier(
         _ request: PeekabooBridgeRequest,
-        peer: PeekabooBridgePeer?) async throws -> PeekabooBridgeResponse
+        peer: PeekabooBridgePeer?,
+        permissions: PermissionsStatus) async throws -> PeekabooBridgeResponse
     {
         let nativeLeafOwnsLane = request.nativeLeafOwnsDesktopOperationLane &&
             self.services.ownsDesktopOperationLane(for: request.operation)
@@ -451,7 +464,10 @@ public final class PeekabooBridgeServer {
                 for: request,
                 proposed: proposedReadLane)
             {
-                try await self.handleAuthorizedWithOwnedDesktopOperationLane(request, peer: peer)
+                try await self.handleAuthorizedWithOwnedDesktopOperationLane(
+                    request,
+                    peer: peer,
+                    permissions: permissions)
             }
         }
 
@@ -460,24 +476,31 @@ public final class PeekabooBridgeServer {
                 scope: request.desktopOperationScope,
                 access: .write)
             {
-                try await self.handleAuthorizedWithOwnedDesktopOperationLane(request, peer: peer)
+                try await self.handleAuthorizedWithOwnedDesktopOperationLane(
+                    request,
+                    peer: peer,
+                    permissions: permissions)
             }
         }
-        return try await self.handleAuthorizedWithOwnedDesktopOperationLane(request, peer: peer)
+        return try await self.handleAuthorizedWithOwnedDesktopOperationLane(
+            request,
+            peer: peer,
+            permissions: permissions)
     }
 
     private func handleAuthorizedWithOwnedDesktopOperationLane(
         _ request: PeekabooBridgeRequest,
-        peer: PeekabooBridgePeer?) async throws -> PeekabooBridgeResponse
+        peer: PeekabooBridgePeer?,
+        permissions: PermissionsStatus) async throws -> PeekabooBridgeResponse
     {
         guard request.mayMutateDesktop else {
-            return try await self.handleAuthorized(request, peer: peer)
+            return try await self.handleAuthorized(request, peer: peer, permissions: permissions)
         }
 
         guard let desktopMutationWatermarkStore else {
             try PeekabooBridgeRequestContext.checkRequestIsActive()
             try self.validatePinnedWindowMutation(request)
-            return try await self.handleAuthorized(request, peer: peer)
+            return try await self.handleAuthorized(request, peer: peer, permissions: permissions)
         }
         try PeekabooBridgeRequestContext.checkRequestIsActive()
         try self.validatePinnedWindowMutation(request)
@@ -510,7 +533,7 @@ public final class PeekabooBridgeServer {
         let response: PeekabooBridgeResponse?
         let operationError: (any Error)?
         do {
-            response = try await self.handleAuthorized(request, peer: peer)
+            response = try await self.handleAuthorized(request, peer: peer, permissions: permissions)
             operationError = nil
         } catch {
             response = nil
