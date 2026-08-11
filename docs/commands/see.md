@@ -21,7 +21,7 @@ peekaboo see --app "Google Chrome" --window-title "Login" --json --path /tmp/chr
 # Crop one exact window without activating it
 peekaboo see --window-id 12345 --roi 100,80,500,300 --json --path /tmp/window-roi.png
 
-# Add local Vision text when an app exposes a sparse or incomplete AX tree
+# Add host-local Vision text when an app exposes a sparse or incomplete AX tree
 peekaboo see --app Calendar --window-id 12345 --ocr --json --path /tmp/calendar.png
 ```
 
@@ -43,7 +43,7 @@ peekaboo see --app Calendar --window-id 12345 --ocr --json --path /tmp/calendar.
 | `--format png|jpg` / `--retina` | Select the image encoding and native display scale. |
 | `--capture-engine auto|modern|sckit|classic|cg` | Select the engine on the chosen Bridge host without changing runtime ownership. If no compatible host is available, Peekaboo fails instead of capturing locally; add `--no-remote` to explicitly opt into caller-local capture. |
 | `--no-elements` | Skip element detection for the cheapest screenshot-only CLI path. |
-| `--ocr` | Add locally recognized Apple Vision text to the AX element map. Requires screenshot-backed element detection and cannot be combined with `--no-elements`, `--no-screenshot`, `--path -`, `area`, or `multi`. |
+| `--ocr` | Add Apple Vision text recognized on the selected runtime host to the AX element map. Requires screenshot-backed element detection and cannot be combined with `--no-elements`, `--no-screenshot`, `--path -`, `area`, or `multi`. |
 | `--tree` | Print the accessibility text tree. |
 | `--no-screenshot` | Skip pixel capture; requires `--tree` and rejects `--capture-engine` because no backend runs. Ambient engine configuration is ignored so it cannot reroute this AX-only form. Element IDs and a snapshot publish only after pinning the exact process generation, window, and bounds; target drift or a missing receipt fails before publication. |
 | `--annotate` | Overlay element bounds/IDs on the output image. |
@@ -62,9 +62,11 @@ Note: `--app menubar` captures only the menu bar strip; `--menubar` attempts to 
 `--ocr` is additive: Accessibility controls remain the authoritative actionable elements, while Vision text is
 returned as `staticText` with global logical bounds and confidence. OCR rows are marked non-actionable and are
 refused as element targets; use an explicit exact-window coordinate plus the returned snapshot/reference receipt
-when a deliberate pixel click is required. Recognition runs locally on macOS and does not use an AI provider,
-upload pixels, or activate the target app. Incomplete AX warnings remain in the successful result so OCR text never
-turns missing Accessibility evidence into a false completeness claim.
+when a deliberate pixel click is required. Recognition runs locally on the selected macOS runtime host and does not
+use an AI provider, upload pixels, or activate the target app. Remote OCR requires a current Bridge host advertising
+`desktopObservationOCR`; older hosts are refused before the observation request is sent. Update and relaunch that host,
+or pass `--no-remote` to explicitly run Vision OCR in the caller process. Incomplete AX warnings remain in the
+successful result so OCR text never turns missing Accessibility evidence into a false completeness claim.
 
 For agent and automation runs, pass `--path` to a known temporary file when using `see` so capture artifacts land where expected. Use `peekaboo see --tree --no-screenshot --json` when you need AX metadata without a screenshot artifact.
 

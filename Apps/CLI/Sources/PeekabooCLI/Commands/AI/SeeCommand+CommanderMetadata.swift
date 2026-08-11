@@ -116,7 +116,7 @@ extension SeeCommand: CommanderSignatureProviding {
                 ),
                 .commandFlag(
                     "ocr",
-                    help: "Add local Vision OCR text to the accessibility element map",
+                    help: "Add host-local Vision OCR text to the accessibility element map",
                     long: "ocr"
                 ),
                 .commandFlag(

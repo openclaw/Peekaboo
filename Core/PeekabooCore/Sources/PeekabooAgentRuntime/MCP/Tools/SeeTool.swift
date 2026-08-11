@@ -63,8 +63,8 @@ public struct SeeTool: MCPTool {
                     default: false),
                 "ocr": SchemaBuilder.boolean(
                     description: """
-                    Optional. Add text recognized locally with Apple Vision to the accessibility element map.
-                    OCR text is non-actionable and does not replace accessible controls.
+                    Optional. Add text recognized locally on the selected host with Apple Vision to the accessibility
+                    element map. OCR text is non-actionable and does not replace accessible controls.
                     """,
                     default: false),
                 "roi": SchemaBuilder.string(

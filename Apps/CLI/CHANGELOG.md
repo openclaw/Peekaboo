@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [4.0.1] - Unreleased
 
 ### Added
-- Add `see --ocr` for additive local Vision text with preserved AX warnings, exact snapshot receipts, logical bounds, confidence, and background-only observation.
+- Add `see --ocr` for additive host-local Vision text with preserved AX warnings, exact snapshot receipts, logical bounds, confidence, background-only observation, and fail-before-dispatch compatibility with older Bridge hosts.
 - Add `see --roi x,y,width,height` for stateless exact-window crops with fresh snapshot receipts, ROI-local element output, and safe coordinate metadata.
 
 ### Changed

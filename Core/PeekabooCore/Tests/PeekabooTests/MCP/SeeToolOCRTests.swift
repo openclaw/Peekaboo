@@ -2,6 +2,8 @@ import CoreGraphics
 import Foundation
 import MCP
 import PeekabooAutomationKit
+import PeekabooBridge
+import PeekabooCore
 import PeekabooFoundation
 import TachikomaMCP
 import Testing
@@ -118,6 +120,38 @@ struct SeeToolOCRTests {
         let request = try SeeRequest(arguments: ToolArguments(raw: [:]))
 
         #expect(!request.ocr)
+    }
+
+    @Test
+    func `remote MCP See OCR refuses an incapable host before transport`() async throws {
+        let snapshots = await MainActor.run { InMemorySnapshotManager() }
+        let remoteObservation = await MainActor.run {
+            RemotePeekabooServices(
+                client: PeekabooBridgeClient(
+                    socketPath: "/tmp/nonexistent-mcp-ocr-\(UUID().uuidString).sock",
+                    requestTimeoutSec: 1),
+                supportsDesktopObservation: true,
+                supportsDesktopObservationOCR: false)
+                .desktopObservation
+        }
+        let context = await self.makeContext(
+            desktopObservation: remoteObservation,
+            snapshots: snapshots)
+
+        let response = try await SeeTool(context: context).execute(arguments: ToolArguments(raw: [
+            "ocr": true,
+        ]))
+
+        #expect(response.isError)
+        guard let first = response.content.first,
+              case let .text(message, annotations: _, _meta: _) = first
+        else {
+            Issue.record("Expected structured remote OCR capability refusal")
+            return
+        }
+        #expect(message.contains(PeekabooBridgeHostCapability.desktopObservationOCR))
+        #expect(message.contains("Update and relaunch"))
+        #expect(message.contains("--no-remote"))
     }
 
     private func makeContext(

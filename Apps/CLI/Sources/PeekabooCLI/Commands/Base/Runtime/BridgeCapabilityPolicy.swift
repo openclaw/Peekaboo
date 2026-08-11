@@ -27,12 +27,7 @@ enum BridgeCapabilityPolicy {
             return false
         }
 
-        if options.requiresDesktopObservation, !self.supportsDesktopObservation(for: handshake) {
-            return false
-        }
-
-        if options.requiresExactWindowROIObservation,
-           !self.supportsExactWindowROIObservation(for: handshake) {
+        if !self.supportsObservationRequirements(for: handshake, options: options) {
             return false
         }
 
@@ -103,6 +98,23 @@ enum BridgeCapabilityPolicy {
             return false
         }
 
+        return true
+    }
+
+    private static func supportsObservationRequirements(
+        for handshake: PeekabooBridgeHandshakeResponse,
+        options: CommandRuntimeOptions
+    ) -> Bool {
+        if options.requiresDesktopObservation, !self.supportsDesktopObservation(for: handshake) {
+            return false
+        }
+        if options.requiresDesktopObservationOCR, !self.supportsDesktopObservationOCR(for: handshake) {
+            return false
+        }
+        if options.requiresExactWindowROIObservation,
+           !self.supportsExactWindowROIObservation(for: handshake) {
+            return false
+        }
         return true
     }
 
@@ -302,6 +314,11 @@ enum BridgeCapabilityPolicy {
     static func supportsDesktopObservation(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {
         handshake.negotiatedVersion >= PeekabooBridgeProtocolVersion(major: 1, minor: 5) &&
             self.supportsOperation(.desktopObservation, for: handshake)
+    }
+
+    static func supportsDesktopObservationOCR(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {
+        self.supportsDesktopObservation(for: handshake) &&
+            handshake.hostCapabilities?.contains(PeekabooBridgeHostCapability.desktopObservationOCR) == true
     }
 
     static func supportsExactWindowROIObservation(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {

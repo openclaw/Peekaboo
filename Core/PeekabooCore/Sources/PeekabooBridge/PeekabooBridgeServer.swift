@@ -88,6 +88,9 @@ public final class PeekabooBridgeServer {
         if hostIdentity?.codeSignatureHash != nil {
             resolvedHostCapabilities.insert(PeekabooBridgeHostCapability.codeSignatureBuildIdentity)
         }
+        if self.allowedOperations.contains(.desktopObservation) {
+            resolvedHostCapabilities.insert(PeekabooBridgeHostCapability.desktopObservationOCR)
+        }
         self.hostCapabilities = resolvedHostCapabilities
         self.daemonControl = daemonControl
         self.desktopMutationWatermarkStore = desktopMutationWatermarkStore

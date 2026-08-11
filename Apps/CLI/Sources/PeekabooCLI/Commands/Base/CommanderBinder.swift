@@ -44,18 +44,19 @@ enum CommanderCLIBinder {
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) throws -> CommandRuntimeOptions {
         var options = CommandRuntimeOptions()
+        let commandValues = CommanderBindableValues(parsedValues: parsedValues)
         options.requiresApplicationLaunchOptions = Self.requiresApplicationLaunchOptions(commandType)
         options.requiresNewApplicationInstanceLaunch = commandType == AppCommand.LaunchSubcommand.self &&
-            CommanderBindableValues(parsedValues: parsedValues).flag("newInstance")
+            commandValues.flag("newInstance")
         options.requiresApplicationWindowReadiness =
             commandType == AppCommand.LaunchSubcommand.self &&
-            CommanderBindableValues(parsedValues: parsedValues).flag("waitForWindow")
+            commandValues.flag("waitForWindow")
         options.requiresApplicationRelaunch = commandType == AppCommand.RelaunchSubcommand.self
         options.requiresSurvivingApplicationHost = commandType == AppCommand.QuitSubcommand.self
         options.requiresProcessGenerationPinnedApplicationQuit = commandType == AppCommand.QuitSubcommand.self
         options.requiresProcessGenerationPinnedHotkeys = commandType == PressCommand.self &&
-            !CommanderBindableValues(parsedValues: parsedValues).flag("foreground")
-        let usesBackgroundInput = !CommanderBindableValues(parsedValues: parsedValues).flag("foreground")
+            !commandValues.flag("foreground")
+        let usesBackgroundInput = !commandValues.flag("foreground")
         options.requiresProcessGenerationPinnedTypeActions =
             (commandType == TypeCommand.self || commandType == PasteCommand.self) && usesBackgroundInput
         if commandType == PasteCommand.self, usesBackgroundInput {
@@ -63,8 +64,10 @@ enum CommanderCLIBinder {
         }
         options.requiresHostApplicationInventory = Self.requiresHostApplicationInventory(commandType)
         let seeSkipsPixels = commandType == SeeCommand.self &&
-            CommanderBindableValues(parsedValues: parsedValues).flag("noScreenshot")
+            commandValues.flag("noScreenshot")
         options.requiresDesktopObservation = commandType == SeeCommand.self && !seeSkipsPixels
+        options.requiresDesktopObservationOCR = commandType == SeeCommand.self &&
+            (commandValues.flag("ocr") || commandValues.flag("menubar"))
         options.transportsCaptureEnginePreference = options.requiresDesktopObservation
         options.ignoresCaptureEnginePreference = seeSkipsPixels
         options.requiresImplicitSnapshotInvalidation = Self.requiresImplicitSnapshotInvalidation(
@@ -89,7 +92,7 @@ enum CommanderCLIBinder {
             options.requiresProcessGenerationPinnedClicks = true
         }
         options.requiresTargetedScroll = commandType == ScrollCommand.self &&
-            !CommanderBindableValues(parsedValues: parsedValues).flag("foreground")
+            !commandValues.flag("foreground")
         options.requiresPostEventPermission = Self.requiresPostEventPermission(
             commandType,
             parsedValues: parsedValues
@@ -98,7 +101,6 @@ enum CommanderCLIBinder {
             commandType,
             parsedValues: parsedValues
         )
-        let commandValues = CommanderBindableValues(parsedValues: parsedValues)
         options.requiresLongPressClick = commandType == ClickCommand.self &&
             commandValues.flag("longPress") && commandValues.flag("foreground")
         options.requiresBackgroundWindowClose = commandType == WindowCommand.CloseSubcommand.self &&

@@ -293,6 +293,7 @@ public enum PeekabooBridgeHostCapability {
     public static let hostGenerationIdentity = "hostGenerationIdentity"
     public static let codeSignatureBuildIdentity = "codeSignatureBuildIdentity"
     public static let backgroundBridgeHost = "backgroundBridgeHost"
+    public static let desktopObservationOCR = "desktopObservationOCR"
 }
 
 public struct PeekabooBridgeHandshakeResponse: Codable, Sendable {

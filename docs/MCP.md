@@ -151,11 +151,13 @@ multiple calls intentionally share the same `path`, each response still returns 
 path remains the caller-requested publication destination and therefore contains whichever concurrent write finishes
 last.
 
-Set `ocr: true` on `see` to add text recognized locally by Apple Vision to the Accessibility map. OCR is additive,
-never replaces accessible controls, preserves incomplete-AX warnings and exact capture receipts, and does not use a
-provider or network upload. OCR rows include confidence and global logical bounds, are marked non-actionable, and are
-refused by element interaction tools. If a deliberate pixel action is necessary, use explicit coordinates bound to
-the exact `snapshot`/`coordinate_reference` returned by `see`.
+Set `ocr: true` on `see` to add text recognized locally by Apple Vision on the selected runtime host to the
+Accessibility map. OCR is additive, never replaces accessible controls, preserves incomplete-AX warnings and exact
+capture receipts, and does not use a provider or network upload. Remote OCR requires a Bridge host advertising
+`desktopObservationOCR`; MCP refuses an incapable host before sending the dynamic observation request. Update and
+relaunch that host, or use a caller-local MCP runtime when local OCR is intentional. OCR rows include confidence and
+global logical bounds, are marked non-actionable, and are refused by element interaction tools. If a deliberate pixel
+action is necessary, use explicit coordinates bound to the exact `snapshot`/`coordinate_reference` returned by `see`.
 
 Observation and capture do not activate a target by default. `see` and `inspect_ui` only perform the focus-changing `AXWebArea` retry when `web_focus: true` is supplied. `image` and live `capture` use `capture_focus: "background"` by default; pass `capture_focus: "foreground"` when activating the target is intentional. The legacy `auto` value remains accepted for focus-if-needed compatibility.
 

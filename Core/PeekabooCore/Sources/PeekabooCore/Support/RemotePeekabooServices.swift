@@ -56,6 +56,7 @@ public final class RemotePeekabooServices: PeekabooServiceProviding {
         supportsPostEventPermissionRequest: Bool = false,
         supportsElementActions: Bool = false,
         supportsDesktopObservation: Bool = false,
+        supportsDesktopObservationOCR: Bool = false,
         supportsExactWindowROIObservation: Bool = false,
         supportsImplicitLatestSnapshotInvalidation: Bool = false,
         supportsApplicationLaunchOptions: Bool = false,
@@ -68,6 +69,7 @@ public final class RemotePeekabooServices: PeekabooServiceProviding {
     {
         self.client = client
         self.supportsPostEventPermissionRequest = supportsPostEventPermissionRequest
+        let supportsRemoteDesktopObservationOCR = supportsDesktopObservation && supportsDesktopObservationOCR
 
         self.logging = LoggingService()
         self.screenCapture = RemoteScreenCaptureService(client: client)
@@ -141,9 +143,10 @@ public final class RemotePeekabooServices: PeekabooServiceProviding {
         self.desktopObservation = if supportsDesktopObservation {
             RemoteDesktopObservationService(
                 client: client,
+                supportsDesktopObservationOCR: supportsRemoteDesktopObservationOCR,
                 supportsExactWindowROIObservation: supportsExactWindowROIObservation)
         } else {
-            ExactWindowROIUnsupportedDesktopObservationService(delegate: DesktopObservationService(
+            LegacyRemoteDesktopObservationService(delegate: DesktopObservationService(
                 screenCapture: self.screenCapture,
                 automation: self.automation,
                 applications: self.applications,
@@ -190,7 +193,7 @@ public final class RemotePeekabooServices: PeekabooServiceProviding {
 }
 
 @MainActor
-private final class ExactWindowROIUnsupportedDesktopObservationService: DesktopObservationServiceProtocol {
+private final class LegacyRemoteDesktopObservationService: DesktopObservationServiceProtocol {
     private let delegate: any DesktopObservationServiceProtocol
 
     init(delegate: any DesktopObservationServiceProtocol) {
@@ -198,6 +201,9 @@ private final class ExactWindowROIUnsupportedDesktopObservationService: DesktopO
     }
 
     func observe(_ request: DesktopObservationRequest) async throws -> DesktopObservationResult {
+        guard !RemoteDesktopObservationCapabilityPolicy.requiresOCR(request) else {
+            throw RemoteDesktopObservationCapabilityPolicy.ocrUnavailableError()
+        }
         guard request.capture.roi == nil else {
             throw PeekabooBridgeErrorEnvelope(
                 code: .operationNotSupported,

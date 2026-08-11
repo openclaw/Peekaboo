@@ -4,7 +4,7 @@
 
 ### Added
 
-- Add opt-in local Vision OCR to CLI/MCP `see`, preserving incomplete AX evidence, exact snapshot receipts, logical bounds, confidence, and background-only observation.
+- Add opt-in host-local Vision OCR to CLI/MCP `see`, preserving incomplete AX evidence, exact snapshot receipts, logical bounds, confidence, background-only observation, and fail-before-dispatch compatibility with older Bridge hosts.
 - Stateless exact-window ROI capture for CLI/MCP `see`, with generation-pinned
   full-window receipts, AX/OCR filtering, snapshot-bound pixel mapping, and
   fail-closed remote-host validation.

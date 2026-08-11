@@ -225,6 +225,10 @@ enum RuntimeHostResolver {
     }
 
     static func requiredHostFailure(explicitSocket: String?, options: CommandRuntimeOptions) -> String? {
+        if options.requiresDesktopObservationOCR {
+            return "No compatible Bridge host advertises desktopObservationOCR. Update and relaunch Peekaboo " +
+                "on the selected host, or pass --no-remote to explicitly run Vision OCR in the caller process."
+        }
         if explicitSocket != nil, options.requiresExactWindowROIObservation {
             return "The explicitly selected Bridge host does not support exact-window ROI observation; " +
                 "protocol 1.21 with enabled observation and atomic snapshot publication is required."
@@ -639,6 +643,7 @@ enum RuntimeHostResolver {
             ),
             supportsElementActions: BridgeCapabilityPolicy.supportsElementActions(for: handshake),
             supportsDesktopObservation: BridgeCapabilityPolicy.supportsDesktopObservation(for: handshake),
+            supportsDesktopObservationOCR: BridgeCapabilityPolicy.supportsDesktopObservationOCR(for: handshake),
             supportsExactWindowROIObservation: BridgeCapabilityPolicy.supportsExactWindowROIObservation(for: handshake),
             supportsImplicitLatestSnapshotInvalidation: BridgeCapabilityPolicy.supportsImplicitSnapshotInvalidation(
                 for: handshake

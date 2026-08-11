@@ -59,7 +59,7 @@ struct SeeCommand: ApplicationResolvable, ErrorHandlingCommand, RuntimeBackedCom
     @Flag(help: "Skip element detection for a faster screenshot-only capture")
     var noElements = false
 
-    @Flag(help: "Add local Vision OCR text to the accessibility element map")
+    @Flag(help: "Add host-local Vision OCR text to the accessibility element map")
     var ocr = false
 
     @Flag(help: "Print the accessibility text tree")

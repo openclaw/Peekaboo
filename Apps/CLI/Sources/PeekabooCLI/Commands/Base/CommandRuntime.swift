@@ -28,6 +28,9 @@ struct CommandRuntimeOptions {
     /// change capture/TCC ownership. Explicit `--no-remote` remains the local opt-in.
     var requiresCaptureEnginePreferenceHost = false
     var requiresDesktopObservation = false
+    /// `accessibilityAndOCR` is additive inside protocol 1.22. Require a raw host capability so
+    /// an older 1.22 host cannot try to decode the enum case before the client can fail safely.
+    var requiresDesktopObservationOCR = false
     var inputStrategy: UIInputStrategy?
     var preferRemote = true
     var remoteIsolationRequested = false
@@ -350,6 +353,10 @@ extension CommandRuntime {
 
     static func supportsDesktopObservation(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {
         BridgeCapabilityPolicy.supportsDesktopObservation(for: handshake)
+    }
+
+    static func supportsDesktopObservationOCR(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {
+        BridgeCapabilityPolicy.supportsDesktopObservationOCR(for: handshake)
     }
 
     static func supportsExactWindowROIObservation(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {
