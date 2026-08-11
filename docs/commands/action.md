@@ -21,4 +21,5 @@ is `action`.
 
 Every action resolves through a current UI snapshot. Pass `--snapshot` explicitly, reuse the latest unmodified `see`
 snapshot, or supply app/PID/window target flags so Peekaboo captures a fresh targeted snapshot before dispatch. If no
-snapshot can be established, the command refuses rather than searching the user's frontmost app.
+snapshot can be established, the command refuses rather than searching the user's frontmost app. Exact-window snapshots
+also pin the process generation, window identity, and bounds; drift before dispatch is refused.

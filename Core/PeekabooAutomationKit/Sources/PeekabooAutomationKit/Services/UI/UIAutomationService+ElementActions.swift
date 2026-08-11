@@ -1,12 +1,12 @@
 import Foundation
 import PeekabooFoundation
 
-private struct ElementSetValueLanePlan: Sendable {
+private struct ElementMutationLanePlan: Sendable {
     let scope: DesktopOperationScope
     let expectedProcessIdentity: ApplicationProcessIdentity?
     let expectedWindowIdentity: WindowMutationIdentity?
 
-    static let global = ElementSetValueLanePlan(
+    static let global = ElementMutationLanePlan(
         scope: .global,
         expectedProcessIdentity: nil,
         expectedWindowIdentity: nil)
@@ -19,12 +19,12 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
         snapshotId: String?) async throws -> ElementActionResult
     {
         let requiredSnapshotId = try Self.requireElementActionSnapshotID(snapshotId)
-        let lanePlan = await self.setValueLanePlan(snapshotId: requiredSnapshotId)
+        let lanePlan = try await self.elementMutationLanePlan(snapshotId: requiredSnapshotId)
         return try await self.operationLaneCoordinator.run(scope: lanePlan.scope, access: .write) {
             self.logger.debug("Set value requested - target: \(target, privacy: .public)")
             defer { self.elementDetectionService.invalidateCache() }
             let resolved = try await self.resolveActionTarget(target, snapshotId: requiredSnapshotId)
-            try self.validateSetValueTarget(resolved.windowContext, plan: lanePlan)
+            try self.validateElementMutationTarget(resolved.windowContext, plan: lanePlan)
             let oldValue = self.safeValueDescription(resolved.element.value)
                 ?? resolved.element.selectedValue.map(String.init)
             let result = try await self.normalizingSnapshotErrors {
@@ -68,7 +68,8 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
         snapshotId: String?) async throws -> ElementActionResult
     {
         let requiredSnapshotId = try Self.requireElementActionSnapshotID(snapshotId)
-        return try await self.operationLaneCoordinator.run(scope: .global, access: .write) {
+        let lanePlan = try await self.elementMutationLanePlan(snapshotId: requiredSnapshotId)
+        return try await self.operationLaneCoordinator.run(scope: lanePlan.scope, access: .write) {
             let requestDescription = "Perform action requested - target: \(target), action: \(actionName)"
             self.logger.debug("\(requestDescription, privacy: .public)")
             defer { self.elementDetectionService.invalidateCache() }
@@ -78,6 +79,7 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
             }
 
             let resolved = try await self.resolveActionTarget(target, snapshotId: requiredSnapshotId)
+            try self.validateElementMutationTarget(resolved.windowContext, plan: lanePlan)
             let result = try await self.normalizingSnapshotErrors {
                 try await UIInputDispatcher.run(
                     verb: .performAction,
@@ -183,12 +185,14 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
         return "\(element.id) \(element.type.rawValue): \(label)"
     }
 
-    private func setValueLanePlan(snapshotId: String?) async -> ElementSetValueLanePlan {
-        guard let snapshotId,
-              let detectionResult = try? await self.snapshotManager.getDetectionResult(snapshotId: snapshotId),
+    private func elementMutationLanePlan(snapshotId: String) async throws -> ElementMutationLanePlan {
+        guard let detectionResult = try? await self.snapshotManager.getDetectionResult(snapshotId: snapshotId),
               let context = detectionResult.metadata.windowContext,
-              let identity = context.windowMutationIdentity,
-              let bounds = context.windowBounds,
+              let identity = context.windowMutationIdentity
+        else {
+            return .global
+        }
+        guard let bounds = context.windowBounds,
               context.applicationProcessId == identity.ownerProcessIdentifier,
               context.windowID == identity.windowID,
               identity.capturedBounds == bounds,
@@ -196,20 +200,21 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
               identity.ownerProcessStartIdentity,
               self.exactWindowIdentityValidator(identity, bounds)
         else {
-            return .global
+            throw PeekabooError.snapshotStale(
+                "target window owner, process generation, or bounds changed before element mutation")
         }
         let processIdentity = ApplicationProcessIdentity(
             processIdentifier: identity.ownerProcessIdentifier,
             processStartIdentity: identity.ownerProcessStartIdentity)
-        return ElementSetValueLanePlan(
+        return ElementMutationLanePlan(
             scope: .process(processIdentity),
             expectedProcessIdentity: processIdentity,
             expectedWindowIdentity: identity)
     }
 
-    private func validateSetValueTarget(
+    private func validateElementMutationTarget(
         _ context: WindowContext?,
-        plan: ElementSetValueLanePlan) throws
+        plan: ElementMutationLanePlan) throws
     {
         guard let expectedProcessIdentity = plan.expectedProcessIdentity,
               let expectedWindowIdentity = plan.expectedWindowIdentity
@@ -221,18 +226,18 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
               context.windowID == expectedWindowIdentity.windowID,
               context.windowBounds == expectedWindowIdentity.capturedBounds,
               let resolvedWindowIdentity = context.windowMutationIdentity,
-              Self.sameSetValueWindowIdentity(resolvedWindowIdentity, expectedWindowIdentity),
+              Self.sameElementMutationWindowIdentity(resolvedWindowIdentity, expectedWindowIdentity),
               self.processStartIdentityProvider(expectedProcessIdentity.processIdentifier) ==
               expectedProcessIdentity.processStartIdentity,
               let bounds = expectedWindowIdentity.capturedBounds,
               self.exactWindowIdentityValidator(expectedWindowIdentity, bounds)
         else {
             throw PeekabooError.snapshotStale(
-                "target window owner, process generation, or bounds changed before value dispatch")
+                "target window owner, process generation, or bounds changed before element mutation dispatch")
         }
     }
 
-    private nonisolated static func sameSetValueWindowIdentity(
+    private nonisolated static func sameElementMutationWindowIdentity(
         _ lhs: WindowMutationIdentity,
         _ rhs: WindowMutationIdentity) -> Bool
     {

@@ -23,7 +23,8 @@ read_when:
 
 - The target element must expose a settable accessibility value.
 - Every mutation requires a current snapshot. App/PID/window target flags capture one automatically; without target
-  flags, run `peekaboo see` first. A missing snapshot is refused instead of falling through to the frontmost app.
+  flags, run `peekaboo see` first. A missing snapshot is refused instead of falling through to the frontmost app. Exact
+  process/window receipts are revalidated before the value is written.
 - Secure/password fields are rejected; use explicit typing flows for those contexts.
 - This is not a replacement for `peekaboo type` when the app needs observable keystrokes, IME handling, autocomplete, or undo grouping.
 - JSON output includes `target`, `actionName`, `oldValue`, `newValue`, and `executionTime`.
