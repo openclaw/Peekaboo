@@ -9,6 +9,13 @@ private struct Point: Codable, Equatable {
     let y: Double
 }
 
+private struct Rectangle: Codable, Equatable {
+    let x: Double
+    let y: Double
+    let width: Double
+    let height: Double
+}
+
 private struct SystemSample: Codable {
     let timestamp: Double
     let frontmostPID: Int32?
@@ -18,6 +25,7 @@ private struct SystemSample: Codable {
     let clipboardChangeCount: Int
     let clipboardDigest: String
     let peekabooWindowIDs: [UInt32]
+    let visibleScreenFramesTopLeft: [Rectangle]
 }
 
 private struct Violation: Codable, Hashable {
@@ -137,6 +145,16 @@ private func sample(includeClipboardDigest: Bool = true) throws -> SystemSample 
     } ?? workspace.frontmostApplication
     let frontmostPID = windowOwnerPID ?? frontmost?.processIdentifier
     let pasteboard = NSPasteboard.general
+    let primaryDisplayHeight = (NSScreen.screens.first { $0.frame.origin == .zero }
+        ?? NSScreen.main)?.frame.height ?? 0
+    let visibleScreenFramesTopLeft = NSScreen.screens.map { screen in
+        let frame = screen.visibleFrame
+        return Rectangle(
+            x: frame.origin.x,
+            y: primaryDisplayHeight - frame.maxY,
+            width: frame.width,
+            height: frame.height)
+    }
 
     return SystemSample(
         timestamp: Date().timeIntervalSince1970,
@@ -146,7 +164,8 @@ private func sample(includeClipboardDigest: Bool = true) throws -> SystemSample 
         cursor: Point(x: event.location.x, y: event.location.y),
         clipboardChangeCount: pasteboard.changeCount,
         clipboardDigest: includeClipboardDigest ? clipboardDigest(pasteboard) : "",
-        peekabooWindowIDs: peekabooWindowIDs(windows: windows))
+        peekabooWindowIDs: peekabooWindowIDs(windows: windows),
+        visibleScreenFramesTopLeft: visibleScreenFramesTopLeft)
 }
 
 private func processStartIdentity(pid: Int32) -> UInt64? {
@@ -252,9 +271,9 @@ private func runWatch(arguments: [String]) throws -> Never {
     let baselineData = try Data(contentsOf: URL(fileURLWithPath: baselinePath))
     let baseline = try JSONDecoder().decode(SystemSample.self, from: baselineData)
     FileManager.default.createFile(atPath: outputPath, contents: nil)
-    try Data("ready\n".utf8).write(to: URL(fileURLWithPath: readyPath), options: .atomic)
 
     var recorded = Set<Violation>()
+    var firstSample = true
     while true {
         let current = try sample(includeClipboardDigest: false)
         for violation in violations(
@@ -264,6 +283,10 @@ private func runWatch(arguments: [String]) throws -> Never {
         {
             try appendJSONLine(violation, to: outputPath)
             recorded.insert(violation)
+        }
+        if firstSample {
+            try Data("ready\n".utf8).write(to: URL(fileURLWithPath: readyPath), options: .atomic)
+            firstSample = false
         }
         usleep(useconds_t(max(1, intervalMilliseconds) * 1000))
     }
@@ -278,7 +301,8 @@ private func runSelfTest() throws {
         cursor: Point(x: 50, y: 60),
         clipboardChangeCount: 3,
         clipboardDigest: "digest",
-        peekabooWindowIDs: [301])
+        peekabooWindowIDs: [301],
+        visibleScreenFramesTopLeft: [Rectangle(x: 0, y: 0, width: 800, height: 600)])
 
     guard violations(baseline: baseline, current: baseline, allowClipboardMutation: false).isEmpty else {
         throw ProbeError.invalidArguments("equal samples must not produce violations")
@@ -292,7 +316,8 @@ private func runSelfTest() throws {
         cursor: Point(x: 51, y: 60),
         clipboardChangeCount: 4,
         clipboardDigest: "different",
-        peekabooWindowIDs: [301, 302])
+        peekabooWindowIDs: [301, 302],
+        visibleScreenFramesTopLeft: baseline.visibleScreenFramesTopLeft)
     let kinds = Set(violations(
         baseline: baseline,
         current: changed,

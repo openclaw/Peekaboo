@@ -3,6 +3,9 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+CERTIFICATION_CATALOG="$ROOT_DIR/scripts/background-computer-use-catalog.json"
+CERTIFICATION_REPORTER="$ROOT_DIR/scripts/validate-background-computer-use-report.mjs"
+CERTIFICATION_TEST="$ROOT_DIR/tests/background-computer-use-report.test.mjs"
 PLAYGROUND_BUNDLE_ID="boo.peekaboo.playground.debug"
 SENTINEL_BUNDLE_ID="com.apple.calculator"
 PEEKABOO_BIN="${PEEKABOO_BIN:-}"
@@ -85,7 +88,7 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
     exit 2
 fi
 
-for command_name in jq rg swiftc xcodebuild codesign security; do
+for command_name in jq node rg swiftc xcodebuild codesign security; do
     if ! command -v "$command_name" >/dev/null 2>&1; then
         echo "Missing required command: $command_name" >&2
         exit 2
@@ -96,6 +99,15 @@ if [[ -z "$ARTIFACT_ROOT" ]]; then
     ARTIFACT_ROOT="$ROOT_DIR/.artifacts/background-computer-use/$(date -u +%Y%m%dT%H%M%SZ)"
 elif [[ "$ARTIFACT_ROOT" != /* ]]; then
     ARTIFACT_ROOT="$ROOT_DIR/$ARTIFACT_ROOT"
+fi
+if [[ -e "$ARTIFACT_ROOT" && ! -d "$ARTIFACT_ROOT" ]]; then
+    echo "Artifact path exists and is not a directory: $ARTIFACT_ROOT" >&2
+    exit 2
+fi
+if [[ -d "$ARTIFACT_ROOT" ]] && \
+   [[ -n "$(find "$ARTIFACT_ROOT" -mindepth 1 -maxdepth 1 -print -quit)" ]]; then
+    echo "Artifact directory must be new or empty: $ARTIFACT_ROOT" >&2
+    exit 2
 fi
 mkdir -p "$ARTIFACT_ROOT" "$ARTIFACT_ROOT/cases" "$ARTIFACT_ROOT/bin"
 
@@ -169,12 +181,24 @@ quit_with_process_receipt() {
 
 verified_maximize_result() {
     local result_file="$1"
-    jq -e '
-        .success == true and
-        .effect == "confirmed" and
-        .data.action == "maximize" and
-        .data.new_bounds.width > 0 and
-        .data.new_bounds.height > 0
+    local readback_file="$2"
+    local sample_file="$3"
+    local window_id="$4"
+    jq -e --argjson windowID "$window_id" \
+        --slurpfile readback "$readback_file" --slurpfile sample "$sample_file" '
+        . as $result |
+        [$readback[0].data.windows[] | select(.window_id == $windowID)] | first as $window |
+        $result.success == true and
+        $result.effect == "confirmed" and
+        $result.data.action == "maximize" and
+        $window != null and
+        ($window.bounds.width != 640 or $window.bounds.height != 480) and
+        $window.bounds == $result.data.new_bounds and
+        any($sample[0].visibleScreenFramesTopLeft[];
+            ((.x - $window.bounds.x) | fabs) <= 4 and
+            ((.y - $window.bounds.y) | fabs) <= 4 and
+            ((.width - $window.bounds.width) | fabs) <= 4 and
+            ((.height - $window.bounds.height) | fabs) <= 4)
     ' "$result_file" >/dev/null
 }
 
@@ -252,26 +276,41 @@ if $SELF_TEST_ONLY; then
     fi
     VALID_MAXIMIZE_RESULT="$ARTIFACT_ROOT/valid-maximize-result.json"
     STALE_MAXIMIZE_RESULT="$ARTIFACT_ROOT/stale-maximize-result.json"
+    VALID_MAXIMIZE_READBACK="$ARTIFACT_ROOT/valid-maximize-readback.json"
+    VALID_MAXIMIZE_SAMPLE="$ARTIFACT_ROOT/valid-maximize-sample.json"
     VALID_SCROLL_RESULT="$ARTIFACT_ROOT/valid-scroll-result.json"
     STALE_SCROLL_RESULT="$ARTIFACT_ROOT/stale-scroll-result.json"
     printf '%s\n' \
-        '{"success":true,"effect":"confirmed","data":{"action":"maximize","new_bounds":{"width":800,"height":600}}}' \
+        '{"success":true,"effect":"confirmed","data":{"action":"maximize","new_bounds":{"x":0,"y":0,"width":800,"height":600}}}' \
         > "$VALID_MAXIMIZE_RESULT"
     printf '%s\n' \
         '{"success":true,"data":{"success":true,"new_bounds":{"width":800,"height":600}}}' \
         > "$STALE_MAXIMIZE_RESULT"
     printf '%s\n' \
+        '{"data":{"windows":[{"window_id":55,"bounds":{"x":0,"y":0,"width":800,"height":600}}]}}' \
+        > "$VALID_MAXIMIZE_READBACK"
+    printf '%s\n' \
+        '{"visibleScreenFramesTopLeft":[{"x":0,"y":0,"width":800,"height":600}]}' \
+        > "$VALID_MAXIMIZE_SAMPLE"
+    printf '%s\n' \
         '{"success":true,"effect":"confirmed","data":{"targetPoint":{"source":"element"},"totalTicks":1}}' \
         > "$VALID_SCROLL_RESULT"
     printf '%s\n' \
         '{"success":false,"effect":"refused","data":null}' > "$STALE_SCROLL_RESULT"
-    if ! verified_maximize_result "$VALID_MAXIMIZE_RESULT" || \
-       verified_maximize_result "$STALE_MAXIMIZE_RESULT" || \
+    if ! verified_maximize_result \
+        "$VALID_MAXIMIZE_RESULT" "$VALID_MAXIMIZE_READBACK" "$VALID_MAXIMIZE_SAMPLE" 55 || \
+       verified_maximize_result \
+        "$STALE_MAXIMIZE_RESULT" "$VALID_MAXIMIZE_READBACK" "$VALID_MAXIMIZE_SAMPLE" 55 || \
        ! confirmed_element_scroll_result "$VALID_SCROLL_RESULT" || \
        confirmed_element_scroll_result "$STALE_SCROLL_RESULT"; then
         echo "Current maximize/scroll result contract self-test failed." >&2
         exit 1
     fi
+    node "$CERTIFICATION_REPORTER" \
+        --catalog "$CERTIFICATION_CATALOG" \
+        --self-test \
+        --output "$ARTIFACT_ROOT/certification-self-test.json"
+    node --test "$CERTIFICATION_TEST" > "$ARTIFACT_ROOT/certification-tests.tap"
     echo "Probe self-test passed: $ARTIFACT_ROOT/probe-self-test.json"
     exit 0
 fi
@@ -451,10 +490,37 @@ fi
 
 FAILURES=0
 LAST_RESULT=""
+LAST_CASE=""
 
 record_failure() {
     echo "FAIL: $1" >&2
     FAILURES=$((FAILURES + 1))
+}
+
+case_dir_path() {
+    printf '%s/cases/%s' "$ARTIFACT_ROOT" "$1"
+}
+
+case_summary_path() {
+    printf '%s/summary.json' "$(case_dir_path "$1")"
+}
+
+record_case_oracle() {
+    local case_name="$1"
+    local oracle="$2"
+    local passed="$3"
+    local summary
+    summary="$(case_summary_path "$case_name")"
+    [[ -f "$summary" ]] || return 1
+    jq --arg oracle "$oracle" --argjson passed "$passed" \
+        '.oracles[$oracle] = $passed' "$summary" > "$summary.tmp"
+    mv "$summary.tmp" "$summary"
+    [[ "$passed" == "true" ]]
+}
+
+record_last_case_oracle() {
+    [[ -n "$LAST_CASE" ]] || return 1
+    record_case_oracle "$LAST_CASE" "$1" "$2"
 }
 
 run_case() {
@@ -463,8 +529,19 @@ run_case() {
     local expected_exit="$3"
     shift 3
 
+    local setup_window_id=""
+    local setup_pid=""
+    if [[ "${1:-}" == "--setup-nonmaximized-window" ]]; then
+        setup_window_id="$2"
+        setup_pid="$3"
+        shift 3
+    fi
+
     local case_dir="$ARTIFACT_ROOT/cases/$name"
-    mkdir -p "$case_dir"
+    if ! mkdir "$case_dir"; then
+        record_failure "$name reused an existing case artifact directory"
+        return 1
+    fi
     local before="$case_dir/before.json"
     local after="$case_dir/after.json"
     local monitor="$case_dir/monitor.jsonl"
@@ -472,6 +549,9 @@ run_case() {
     local result="$case_dir/result.json"
     local stderr_file="$case_dir/stderr.txt"
     local exit_file="$case_dir/exit-code.txt"
+    local summary="$case_dir/summary.json"
+    local failed=false
+    local nonmaximized_precondition=null
 
     "$PROBE_BIN" sample --output "$before"
     if [[ "$(jq -r '.frontmostPID // empty' "$before")" != "$SENTINEL_PID" || \
@@ -503,35 +583,108 @@ run_case() {
         return 1
     fi
 
+    if [[ -n "$setup_window_id" ]]; then
+        local setup_result="$case_dir/nonmaximized-setup.json"
+        local setup_readback="$case_dir/nonmaximized-readback.json"
+        set +e
+        pb window set-bounds --window-id "$setup_window_id" \
+            --x 80 --y 80 --width 640 --height 480 --json \
+            > "$setup_result" 2> "$case_dir/nonmaximized-setup-stderr.txt"
+        local setup_exit=$?
+        pb window list --pid "$setup_pid" --json > "$setup_readback"
+        local setup_readback_exit=$?
+        set -e
+        if [[ $setup_readback_exit -eq 0 ]] && jq -e --argjson windowID "$setup_window_id" '
+            [.data.windows[] |
+                select(.window_id == $windowID) |
+                select(.bounds.width == 640 and .bounds.height == 480)] |
+            length == 1
+        ' "$setup_readback" >/dev/null; then
+            nonmaximized_precondition=true
+        else
+            nonmaximized_precondition=false
+            record_failure "$name could not establish a non-maximized 640x480 exact-window precondition (set-bounds exit $setup_exit, readback exit $setup_readback_exit)"
+            failed=true
+        fi
+    fi
+
     set +e
     pb "$@" --json > "$result" 2> "$stderr_file"
     local command_exit=$?
     set -e
     printf '%s\n' "$command_exit" > "$exit_file"
 
+    if [[ -n "$setup_window_id" ]]; then
+        set +e
+        pb window list --pid "$setup_pid" --json > "$case_dir/maximize-readback.json"
+        set -e
+    fi
+
     sleep 0.15
     "$PROBE_BIN" sample --output "$after"
-    kill "$MONITOR_PID" >/dev/null 2>&1 || true
-    wait "$MONITOR_PID" 2>/dev/null || true
+    local monitor_liveness=true
+    local monitor_kill_exit=1
+    local monitor_wait_exit=0
+    if kill -0 "$MONITOR_PID" >/dev/null 2>&1; then
+        set +e
+        kill "$MONITOR_PID" >/dev/null 2>&1
+        monitor_kill_exit=$?
+        wait "$MONITOR_PID" 2>/dev/null
+        monitor_wait_exit=$?
+        set -e
+    else
+        set +e
+        wait "$MONITOR_PID" 2>/dev/null
+        monitor_wait_exit=$?
+        set -e
+    fi
+    if [[ $monitor_kill_exit -ne 0 || $monitor_wait_exit -ne 143 ]]; then
+        monitor_liveness=false
+        record_failure "$name invariant monitor exited unexpectedly (status $monitor_wait_exit)"
+        failed=true
+    fi
     MONITOR_PID=""
     LAST_RESULT="$result"
+    LAST_CASE="$name"
 
-    local failed=false
+    local result_contract=true
+    local result_success=null
+    local effect=null
+    local delivery_mode=null
+    local error_code=null
+    if jq -e 'type == "object"' "$result" >/dev/null 2>&1; then
+        result_success="$(jq -c 'if has("success") then .success else null end' "$result")"
+        effect="$(jq -c '.effect // null' "$result")"
+        delivery_mode="$(jq -c '.data.deliveryMode // .data.delivery_mode // null' "$result")"
+        error_code="$(jq -c '.error.code // null' "$result")"
+    else
+        result_contract=false
+    fi
     if [[ "$expected_exit" == "success" ]]; then
-        if [[ $command_exit -ne 0 ]] || ! jq -e '(.success // true) == true' "$result" >/dev/null 2>&1; then
-            record_failure "$name command failed (exit $command_exit)"
-            failed=true
+        if [[ $command_exit -ne 0 || "$result_success" != "true" ]]; then
+            result_contract=false
         fi
-    elif [[ "$expected_exit" == "failure" && $command_exit -eq 0 ]]; then
-        record_failure "$name was expected to fail but exited zero"
+    elif [[ "$expected_exit" == "failure" ]]; then
+        if [[ $command_exit -eq 0 || "$result_success" != "false" ]]; then
+            result_contract=false
+        fi
+    elif ! { [[ $command_exit -eq 0 && "$result_success" == "true" ]] || \
+             [[ $command_exit -ne 0 && "$result_success" == "false" ]]; }; then
+        result_contract=false
+    fi
+    if [[ "$result_contract" == "false" ]]; then
+        record_failure "$name command result violated its $expected_exit contract (exit $command_exit)"
         failed=true
     fi
 
+    local monitor_clean=true
     if [[ -s "$monitor" ]]; then
         record_failure "$name leaked focus, cursor, clipboard, or a Peekaboo overlay"
+        monitor_clean=false
         failed=true
     fi
 
+    local desktop_restored=true
     if ! jq -e --slurpfile after "$after" '
         .frontmostPID == $after[0].frontmostPID and
         .frontmostWindowID == $after[0].frontmostWindowID and
@@ -542,22 +695,52 @@ run_case() {
         (($after[0].peekabooWindowIDs - .peekabooWindowIDs) | length) == 0
     ' "$before" >/dev/null; then
         record_failure "$name did not restore the stable desktop state"
+        desktop_restored=false
         failed=true
     fi
+    local clipboard_policy_passed=true
     if [[ "$clipboard_policy" == "unchanged" ]] && \
        ! jq -e --slurpfile after "$after" '.clipboardChangeCount == $after[0].clipboardChangeCount' \
             "$before" >/dev/null; then
         record_failure "$name changed the clipboard"
+        clipboard_policy_passed=false
         failed=true
     fi
 
     jq -n \
-        --arg name "$name" \
-        --arg expectation "$expected_exit" \
+        --arg id "$name" \
+        --arg expectedExit "$expected_exit" \
         --argjson exitCode "$command_exit" \
+        --argjson resultSuccess "$result_success" \
+        --argjson effect "$effect" \
+        --argjson deliveryMode "$delivery_mode" \
+        --argjson errorCode "$error_code" \
         --argjson invariantViolations "$(wc -l < "$monitor" | tr -d ' ')" \
-        '{name: $name, expectation: $expectation, exit_code: $exitCode, invariant_violations: $invariantViolations}' \
-        > "$case_dir/summary.json"
+        --argjson resultContract "$result_contract" \
+        --argjson monitorLiveness "$monitor_liveness" \
+        --argjson monitorClean "$monitor_clean" \
+        --argjson desktopRestored "$desktop_restored" \
+        --argjson clipboardPolicy "$clipboard_policy_passed" \
+        --argjson nonmaximizedPrecondition "$nonmaximized_precondition" \
+        '{
+            id: $id,
+            expected_exit: $expectedExit,
+            exit_code: $exitCode,
+            result_success: $resultSuccess,
+            effect: $effect,
+            delivery_mode: $deliveryMode,
+            error_code: $errorCode,
+            invariant_violations: $invariantViolations,
+            evidence: {
+                result_contract: $resultContract,
+                monitor_liveness: $monitorLiveness,
+                monitor_clean: $monitorClean,
+                desktop_restored: $desktopRestored,
+                clipboard_policy: $clipboardPolicy
+            },
+            oracles: (if $nonmaximizedPrecondition == null then {}
+                else {nonmaximized_precondition: $nonmaximizedPrecondition} end)
+        }' > "$summary"
 
     [[ "$failed" == false ]]
 }
@@ -593,29 +776,167 @@ element_id_from_result() {
 }
 
 assert_result_contains() {
-    local name="$1"
+    local oracle="$1"
     local result_file="$2"
     local expected="$3"
+    assert_case_result_contains "$LAST_CASE" "$oracle" "$result_file" "$expected"
+}
+
+assert_case_result_contains() {
+    local case_name="$1"
+    local oracle="$2"
+    local result_file="$3"
+    local expected="$4"
     if ! jq -e --arg expected "$expected" '[.. | strings] | any(contains($expected))' \
         "$result_file" >/dev/null; then
-        record_failure "$name did not expose expected app-owned state"
+        record_case_oracle "$case_name" "$oracle" false || true
+        record_failure "$case_name did not expose expected app-owned state for $oracle"
         return 1
     fi
+    record_case_oracle "$case_name" "$oracle" true
 }
 
 assert_background_delivery() {
     local name="$1"
     local result_file="$2"
     if ! jq -e '.data.deliveryMode == "background"' "$result_file" >/dev/null; then
+        record_last_case_oracle background_delivery false || true
         record_failure "$name did not report background delivery"
         return 1
     fi
+    record_last_case_oracle background_delivery true
+}
+
+assert_case_artifacts() {
+    local case_name="$1"
+    shift
+    local artifact
+    for artifact in "$@"; do
+        if [[ ! -s "$artifact" ]]; then
+            record_case_oracle "$case_name" artifact false || true
+            record_failure "$case_name did not produce required artifact: $artifact"
+            return 1
+        fi
+    done
+    record_case_oracle "$case_name" artifact true
+}
+
+assert_snapshot_identifiers() {
+    local case_name="$1"
+    shift
+    local identifier
+    for identifier in "$@"; do
+        if [[ -z "$identifier" ]]; then
+            record_case_oracle "$case_name" snapshot_identifiers false || true
+            return 1
+        fi
+    done
+    record_case_oracle "$case_name" snapshot_identifiers true
+}
+
+capture_playground_log() {
+    local output="$1"
+    "$ROOT_DIR/Apps/Playground/scripts/playground-log.sh" --last 10m --all --json \
+        --output "$output" >/dev/null
+    jq -e 'type == "array"' "$output" >/dev/null
+}
+
+playground_log_count() {
+    local input="$1"
+    local expected="$2"
+    jq -r --argjson pid "$PLAYGROUND_PID" --arg expected "$expected" '
+        [.[] |
+            select(.processID == $pid) |
+            select((.eventMessage // "") | contains($expected))] |
+        length
+    ' "$input"
+}
+
+assert_playground_log() {
+    local case_name="$1"
+    local oracle="$2"
+    local input="$3"
+    local expected="$4"
+    if [[ "$(playground_log_count "$input" "$expected")" -lt 1 ]]; then
+        record_case_oracle "$case_name" "$oracle" false || true
+        record_failure "$case_name lacked controlled Playground log evidence: $expected"
+        return 1
+    fi
+    record_case_oracle "$case_name" "$oracle" true
+}
+
+assert_playground_log_line() {
+    local case_name="$1"
+    local oracle="$2"
+    local input="$3"
+    local expected="$4"
+    local detail="$5"
+    if ! jq -e --argjson pid "$PLAYGROUND_PID" --arg expected "$expected" --arg detail "$detail" '
+        any(.[];
+            .processID == $pid and
+            ((.eventMessage // "") | contains($expected) and contains($detail)))
+    ' "$input" >/dev/null; then
+        record_case_oracle "$case_name" "$oracle" false || true
+        record_failure "$case_name lacked one PID-scoped Playground log line containing both expected values"
+        return 1
+    fi
+    record_case_oracle "$case_name" "$oracle" true
+}
+
+assert_playground_log_delta() {
+    local case_name="$1"
+    local before="$2"
+    local after="$3"
+    local expected="$4"
+    local before_count
+    local after_count
+    before_count="$(playground_log_count "$before" "$expected")"
+    after_count="$(playground_log_count "$after" "$expected")"
+    if [[ "$after_count" -le "$before_count" ]]; then
+        record_case_oracle "$case_name" playground_log_delta false || true
+        record_failure "$case_name did not add a fresh PID-scoped Playground log entry: $expected"
+        return 1
+    fi
+    record_case_oracle "$case_name" playground_log_delta true
+}
+
+last_playground_scroll_offset() {
+    local input="$1"
+    jq -r --argjson pid "$PLAYGROUND_PID" '
+        [.[] |
+            select(.processID == $pid) |
+            (.eventMessage // "") |
+            select(contains("Vertical scroll offset")) |
+            (try capture("y=(?<value>-?[0-9]+)").value catch empty)] |
+        last // empty
+    ' "$input"
+}
+
+assert_playground_scroll_changed() {
+    local case_name="$1"
+    local before="$2"
+    local after="$3"
+    local before_count
+    local after_count
+    local before_offset
+    local after_offset
+    before_count="$(playground_log_count "$before" "Vertical scroll offset")"
+    after_count="$(playground_log_count "$after" "Vertical scroll offset")"
+    before_offset="$(last_playground_scroll_offset "$before")"
+    after_offset="$(last_playground_scroll_offset "$after")"
+    if [[ "$after_count" -le "$before_count" || -z "$after_offset" || "$after_offset" == "$before_offset" ]]; then
+        record_case_oracle "$case_name" scroll_offset_changed false || true
+        record_failure "$case_name did not produce an independent Playground scroll-offset change"
+        return 1
+    fi
+    record_case_oracle "$case_name" scroll_offset_changed true
 }
 
 read_lifecycle_launch_receipt() {
     local name="$1"
     local result_file="$2"
     if [[ -z "$result_file" || ! -s "$result_file" ]]; then
+        record_case_oracle "$name" launch_receipt false || true
         record_failure "$name did not produce a launch receipt"
         LIFECYCLE_PID=""
         LIFECYCLE_WINDOW_ID=""
@@ -623,6 +944,7 @@ read_lifecycle_launch_receipt() {
         return 1
     fi
     if ! read_launch_process_receipt "$result_file"; then
+        record_case_oracle "$name" launch_receipt false || true
         record_failure "$name did not return its launch-bound process-generation receipt"
         LIFECYCLE_PID=""
         LIFECYCLE_WINDOW_ID=""
@@ -639,6 +961,7 @@ read_lifecycle_launch_receipt() {
            .data.window_count > 0 and
            (.data.window_ids | length) == .data.window_count
        ' "$result_file" >/dev/null; then
+        record_case_oracle "$name" launch_receipt false || true
         record_failure "$name did not return a refreshed exact window receipt"
         LIFECYCLE_PID=""
         LIFECYCLE_WINDOW_ID=""
@@ -647,6 +970,54 @@ read_lifecycle_launch_receipt() {
     fi
     LIFECYCLE_PIDS+=("$LIFECYCLE_PID")
     LIFECYCLE_PROCESS_START_IDENTITIES+=("$LIFECYCLE_PROCESS_START_IDENTITY")
+    record_case_oracle "$name" launch_receipt true
+}
+
+assert_lifecycle_quit_outcome() {
+    local case_name="$1"
+    local result_file="$2"
+    local pid="$3"
+    local expected_start_identity="$4"
+    local identity_file
+    identity_file="$(case_dir_path "$case_name")/post-quit-process-identity.json"
+    local current_start_identity=""
+    local identity_probe_succeeded=false
+    if "$PROBE_BIN" process-identity --pid "$pid" --output "$identity_file" 2>/dev/null; then
+        current_start_identity="$(jq -r '.startIdentity // empty' "$identity_file")"
+        identity_probe_succeeded=true
+    fi
+    local pid_alive=false
+    if kill -0 "$pid" 2>/dev/null; then
+        pid_alive=true
+    fi
+    local passed=false
+    if jq -e '
+        .success == true and
+        .effect == "confirmed" and
+        .error == null
+    ' "$result_file" >/dev/null && {
+        [[ "$pid_alive" == false ]] || {
+            [[ "$identity_probe_succeeded" == true ]] &&
+                ! same_process_generation "$expected_start_identity" "$current_start_identity"
+        }
+    }; then
+        passed=true
+    elif jq -e '
+        .success == false and
+        .effect == "suspected_noop" and
+        .error.code == "INTERACTION_FAILED"
+    ' "$result_file" >/dev/null && \
+         [[ "$pid_alive" == true ]] && \
+         [[ "$identity_probe_succeeded" == true ]] && \
+         same_process_generation "$expected_start_identity" "$current_start_identity"; then
+        passed=true
+    fi
+    if [[ "$passed" != true ]]; then
+        record_case_oracle "$case_name" process_exit_truth false || true
+        record_failure "$case_name did not match an exact quit-result/process-state tuple"
+        return 1
+    fi
+    record_case_oracle "$case_name" process_exit_truth true
 }
 
 LIFECYCLE_PID=""
@@ -657,9 +1028,17 @@ run_checked_case lifecycle-launch-maximize-close unchanged success \
 if read_lifecycle_launch_receipt lifecycle-launch-maximize-close "$LAST_RESULT"; then
     MAXIMIZE_TEXTEDIT_WINDOW_ID="$LIFECYCLE_WINDOW_ID"
     run_checked_case lifecycle-maximize unchanged success \
+        --setup-nonmaximized-window "$MAXIMIZE_TEXTEDIT_WINDOW_ID" "$LIFECYCLE_PID" \
         window maximize --window-id "$MAXIMIZE_TEXTEDIT_WINDOW_ID" || true
-    if ! verified_maximize_result "$LAST_RESULT"; then
+    if ! verified_maximize_result \
+        "$LAST_RESULT" \
+        "$(case_dir_path lifecycle-maximize)/maximize-readback.json" \
+        "$(case_dir_path lifecycle-maximize)/before.json" \
+        "$MAXIMIZE_TEXTEDIT_WINDOW_ID"; then
+        record_last_case_oracle verified_bounds false || true
         record_failure "lifecycle-maximize did not return verified settled bounds"
+    else
+        record_last_case_oracle verified_bounds true
     fi
     run_checked_case lifecycle-close unchanged success \
         window close --window-id "$MAXIMIZE_TEXTEDIT_WINDOW_ID" || true
@@ -676,9 +1055,8 @@ if read_lifecycle_launch_receipt lifecycle-launch-quit "$LAST_RESULT"; then
     run_checked_case lifecycle-quit unchanged either \
         app quit --pid "$QUIT_TEXTEDIT_PID" \
         --expected-process-start-identity "$QUIT_TEXTEDIT_PROCESS_START_IDENTITY" || true
-    if jq -e '.success == true' "$LAST_RESULT" >/dev/null && kill -0 "$QUIT_TEXTEDIT_PID" 2>/dev/null; then
-        record_failure "lifecycle-quit reported success while PID $QUIT_TEXTEDIT_PID remained alive"
-    fi
+    assert_lifecycle_quit_outcome lifecycle-quit "$LAST_RESULT" "$QUIT_TEXTEDIT_PID" \
+        "$QUIT_TEXTEDIT_PROCESS_START_IDENTITY" || true
 fi
 
 open_fixture() {
@@ -692,7 +1070,10 @@ open_fixture() {
         window list --pid "$PLAYGROUND_PID" || true
     OPENED_WINDOW_ID="$(window_id_from_result "$LAST_RESULT" "$title")"
     if [[ -z "$OPENED_WINDOW_ID" ]]; then
+        record_last_case_oracle window_discovery false || true
         record_failure "$slug fixture did not open in the background"
+    else
+        record_last_case_oracle window_discovery true
     fi
 }
 
@@ -711,6 +1092,8 @@ run_checked_case see-text unchanged success \
 TEXT_SNAPSHOT="$(snapshot_id_from_result "$LAST_RESULT")"
 BASIC_FIELD_ID="$(element_id_from_result "$LAST_RESULT" basic-text-field)"
 FOCUS_BUTTON_ID="$(element_id_from_result "$LAST_RESULT" focus-basic-button)"
+assert_case_artifacts see-text "$ARTIFACT_ROOT/text-see.png" || true
+assert_snapshot_identifiers see-text "$TEXT_SNAPSHOT" "$BASIC_FIELD_ID" "$FOCUS_BUTTON_ID" || true
 if [[ -z "$TEXT_SNAPSHOT" || -z "$BASIC_FIELD_ID" || -z "$FOCUS_BUTTON_ID" ]]; then
     record_failure "text fixture snapshot was missing deterministic identifiers"
     echo "Cannot continue safely without an exact text snapshot." >&2
@@ -720,20 +1103,30 @@ fi
 run_checked_case inspect-text unchanged success \
     see --tree --no-screenshot --pid "$PLAYGROUND_PID" --window-id "$TEXT_WINDOW_ID" \
     --max-elements 300 || true
-assert_result_contains inspect-text "$LAST_RESULT" "Basic Text Field" || true
+assert_result_contains inspect_text "$LAST_RESULT" "Basic Text Field" || true
 
 run_checked_case screenshot-text unchanged success \
     see --no-elements --pid "$PLAYGROUND_PID" --window-id "$TEXT_WINDOW_ID" \
     --path "$ARTIFACT_ROOT/text-screenshot.png" || true
+assert_case_artifacts screenshot-text "$ARTIFACT_ROOT/text-screenshot.png" || true
 
 run_checked_case capture-text unchanged success \
     capture live --pid "$PLAYGROUND_PID" --window-title "Text Fixture" --mode window \
     --duration 1s --idle-fps 2 --active-fps 2 --path "$ARTIFACT_ROOT/text-capture" || true
+assert_case_artifacts capture-text \
+    "$ARTIFACT_ROOT/text-capture/contact.png" \
+    "$ARTIFACT_ROOT/text-capture/metadata.json" || true
 
+FOCUS_LOG_BEFORE="$ARTIFACT_ROOT/playground-focus-before.json"
+capture_playground_log "$FOCUS_LOG_BEFORE"
 run_checked_case focus-basic-field unchanged success \
     click --on "$FOCUS_BUTTON_ID" --snapshot "$TEXT_SNAPSHOT" \
     --pid "$PLAYGROUND_PID" --window-id "$TEXT_WINDOW_ID" || true
 assert_background_delivery focus-basic-field "$LAST_RESULT" || true
+FOCUS_LOG_AFTER="$ARTIFACT_ROOT/playground-focus-after.json"
+capture_playground_log "$FOCUS_LOG_AFTER"
+assert_playground_log_delta focus-basic-field "$FOCUS_LOG_BEFORE" "$FOCUS_LOG_AFTER" \
+    "Programmatically focused basic field" || true
 
 run_checked_case stale-snapshot unchanged failure \
     click --on "$FOCUS_BUTTON_ID" --snapshot "missing-snapshot-$$" \
@@ -746,7 +1139,7 @@ SET_TOKEN="set-$RUN_TOKEN"
 
 run_checked_case type-window-selector-rejected unchanged failure \
     type "must-not-route-$RUN_TOKEN" --pid "$PLAYGROUND_PID" --window-id "$TEXT_WINDOW_ID" || true
-assert_result_contains type-window-selector-rejected "$LAST_RESULT" "cannot safely target a specific window" || true
+assert_result_contains refusal_guidance "$LAST_RESULT" "cannot safely target a specific window" || true
 
 run_checked_case type-text unchanged success \
     type "$TYPE_TOKEN" --pid "$PLAYGROUND_PID" || true
@@ -761,7 +1154,8 @@ assert_background_delivery paste-text "$LAST_RESULT" || true
 run_checked_case see-text-after-paste unchanged success \
     see --pid "$PLAYGROUND_PID" --window-id "$TEXT_WINDOW_ID" \
     --path "$ARTIFACT_ROOT/text-after-paste.png" || true
-assert_result_contains see-text-after-paste "$LAST_RESULT" "$PASTE_TOKEN" || true
+assert_case_artifacts see-text-after-paste "$ARTIFACT_ROOT/text-after-paste.png" || true
+assert_result_contains paste_readback "$LAST_RESULT" "$PASTE_TOKEN" || true
 TEXT_SNAPSHOT="$(snapshot_id_from_result "$LAST_RESULT")"
 BASIC_FIELD_ID="$(element_id_from_result "$LAST_RESULT" basic-text-field)"
 
@@ -770,7 +1164,8 @@ run_checked_case set-value unchanged success \
 run_checked_case see-text-after-set-value unchanged success \
     see --pid "$PLAYGROUND_PID" --window-id "$TEXT_WINDOW_ID" \
     --path "$ARTIFACT_ROOT/text-after-set-value.png" || true
-assert_result_contains see-text-after-set-value "$LAST_RESULT" "$SET_TOKEN" || true
+assert_case_artifacts see-text-after-set-value "$ARTIFACT_ROOT/text-after-set-value.png" || true
+assert_result_contains set_value_readback "$LAST_RESULT" "$SET_TOKEN" || true
 
 open_fixture 1 "Click Fixture" click
 CLICK_WINDOW_ID="$OPENED_WINDOW_ID"
@@ -786,11 +1181,15 @@ run_checked_case see-click unchanged success \
     --path "$ARTIFACT_ROOT/click-see.png" || true
 CLICK_SNAPSHOT="$(snapshot_id_from_result "$LAST_RESULT")"
 SINGLE_CLICK_ID="$(element_id_from_result "$LAST_RESULT" single-click-button)"
+assert_case_artifacts see-click "$ARTIFACT_ROOT/click-see.png" || true
+assert_snapshot_identifiers see-click "$CLICK_SNAPSHOT" "$SINGLE_CLICK_ID" || true
 if [[ -z "$CLICK_SNAPSHOT" || -z "$SINGLE_CLICK_ID" ]]; then
     record_failure "click fixture snapshot was missing deterministic identifiers"
     echo "Cannot continue safely without an exact click snapshot." >&2
     exit 1
 fi
+CLICK_LOG_BASELINE="$ARTIFACT_ROOT/playground-click-baseline.json"
+capture_playground_log "$CLICK_LOG_BASELINE"
 
 run_checked_case click-id unchanged success \
     click --on "$SINGLE_CLICK_ID" --snapshot "$CLICK_SNAPSHOT" \
@@ -799,7 +1198,12 @@ assert_background_delivery click-id "$LAST_RESULT" || true
 run_checked_case see-click-after-id unchanged success \
     see --pid "$PLAYGROUND_PID" --window-id "$CLICK_WINDOW_ID" \
     --path "$ARTIFACT_ROOT/click-after-id.png" || true
-assert_result_contains click-id-state "$LAST_RESULT" "1 total clicks" || true
+assert_case_artifacts see-click-after-id "$ARTIFACT_ROOT/click-after-id.png" || true
+assert_case_result_contains click-id click_id_readback "$LAST_RESULT" "1 total clicks" || true
+CLICK_LOG_AFTER_ID="$ARTIFACT_ROOT/playground-click-after-id.json"
+capture_playground_log "$CLICK_LOG_AFTER_ID"
+assert_playground_log_delta click-id "$CLICK_LOG_BASELINE" "$CLICK_LOG_AFTER_ID" \
+    "Single click on 'Single Click' button" || true
 CLICK_QUERY_SNAPSHOT="$(snapshot_id_from_result "$LAST_RESULT")"
 
 run_checked_case click-query unchanged success \
@@ -811,43 +1215,65 @@ run_checked_case see-click-for-action unchanged success \
     --path "$ARTIFACT_ROOT/click-for-action.png" || true
 CLICK_SNAPSHOT="$(snapshot_id_from_result "$LAST_RESULT")"
 SINGLE_CLICK_ID="$(element_id_from_result "$LAST_RESULT" single-click-button)"
+assert_case_artifacts see-click-for-action "$ARTIFACT_ROOT/click-for-action.png" || true
+assert_snapshot_identifiers see-click-for-action "$CLICK_SNAPSHOT" "$SINGLE_CLICK_ID" || true
+CLICK_LOG_AFTER_QUERY="$ARTIFACT_ROOT/playground-click-after-query.json"
+capture_playground_log "$CLICK_LOG_AFTER_QUERY"
+assert_playground_log_delta click-query "$CLICK_LOG_AFTER_ID" "$CLICK_LOG_AFTER_QUERY" \
+    "Clicked 'Secondary Button'" || true
 
 run_checked_case action unchanged success \
     action AXPress --on "$SINGLE_CLICK_ID" --snapshot "$CLICK_SNAPSHOT" || true
 run_checked_case see-click-after-action unchanged success \
     see --pid "$PLAYGROUND_PID" --window-id "$CLICK_WINDOW_ID" \
     --path "$ARTIFACT_ROOT/click-after-action.png" || true
-assert_result_contains action-state "$LAST_RESULT" "2 total clicks" || true
+assert_case_artifacts see-click-after-action "$ARTIFACT_ROOT/click-after-action.png" || true
+assert_case_result_contains action action_readback "$LAST_RESULT" "2 total clicks" || true
+CLICK_LOG_AFTER_ACTION="$ARTIFACT_ROOT/playground-click-after-action.json"
+capture_playground_log "$CLICK_LOG_AFTER_ACTION"
+assert_playground_log_delta action "$CLICK_LOG_AFTER_QUERY" "$CLICK_LOG_AFTER_ACTION" \
+    "Single click on 'Single Click' button" || true
 
 CLICK_SNAPSHOT="$(snapshot_id_from_result "$LAST_RESULT")"
 SINGLE_CLICK_ID="$(element_id_from_result "$LAST_RESULT" single-click-button)"
 run_checked_case unsupported-action unchanged failure \
     action AXDefinitelyUnsupported --on "$SINGLE_CLICK_ID" --snapshot "$CLICK_SNAPSHOT" || true
+assert_result_contains refusal_guidance "$LAST_RESULT" "is not supported" || true
 
 run_checked_case see-scroll unchanged success \
     see --pid "$PLAYGROUND_PID" --window-id "$SCROLL_WINDOW_ID" \
     --path "$ARTIFACT_ROOT/scroll-see.png" || true
 SCROLL_SNAPSHOT="$(snapshot_id_from_result "$LAST_RESULT")"
 VERTICAL_SCROLL_ID="$(element_id_from_result "$LAST_RESULT" vertical-scroll)"
+assert_case_artifacts see-scroll "$ARTIFACT_ROOT/scroll-see.png" || true
+assert_snapshot_identifiers see-scroll "$SCROLL_SNAPSHOT" "$VERTICAL_SCROLL_ID" || true
 if [[ -z "$SCROLL_SNAPSHOT" || -z "$VERTICAL_SCROLL_ID" ]]; then
     record_failure "scroll fixture snapshot was missing the vertical scroll target"
 else
+    SCROLL_LOG_BEFORE="$ARTIFACT_ROOT/playground-scroll-before.json"
+    capture_playground_log "$SCROLL_LOG_BEFORE"
     run_checked_case scroll-action-background unchanged success \
         scroll --direction down --amount 1 --delay 0ms --on "$VERTICAL_SCROLL_ID" \
         --snapshot "$SCROLL_SNAPSHOT" --pid "$PLAYGROUND_PID" --window-id "$SCROLL_WINDOW_ID" || true
     if ! confirmed_element_scroll_result "$LAST_RESULT"; then
+        record_last_case_oracle confirmed_scroll false || true
         record_failure "scroll-action-background did not confirm exact element scrolling"
+    else
+        record_last_case_oracle confirmed_scroll true
     fi
+    sleep 0.3
+    SCROLL_LOG_AFTER="$ARTIFACT_ROOT/playground-scroll-after.json"
+    capture_playground_log "$SCROLL_LOG_AFTER"
+    assert_playground_scroll_changed scroll-action-background "$SCROLL_LOG_BEFORE" "$SCROLL_LOG_AFTER" || true
 fi
 
 sleep 0.3
-"$ROOT_DIR/Apps/Playground/scripts/playground-log.sh" --last 10m --all \
-    --output "$ARTIFACT_ROOT/playground.log" >/dev/null
-for expected_log in "$TYPE_TOKEN" "$PASTE_TOKEN" "$SET_TOKEN" "Single click on 'Single Click' button"; do
-    if ! rg -Fq "$expected_log" "$ARTIFACT_ROOT/playground.log"; then
-        record_failure "Playground log did not contain controlled state evidence: $expected_log"
-    fi
-done
+capture_playground_log "$ARTIFACT_ROOT/playground.json"
+assert_playground_log type-text playground_log "$ARTIFACT_ROOT/playground.json" "$TYPE_TOKEN" || true
+assert_playground_log_line press-return submit_log "$ARTIFACT_ROOT/playground.json" \
+    "Submitted basic text field" "$TYPE_TOKEN" || true
+assert_playground_log paste-text playground_log "$ARTIFACT_ROOT/playground.json" "$PASTE_TOKEN" || true
+assert_playground_log set-value playground_log "$ARTIFACT_ROOT/playground.json" "$SET_TOKEN" || true
 
 if $RUN_FOREGROUND_PHASE; then
     FOREGROUND_DIR="$ARTIFACT_ROOT/foreground"
@@ -883,6 +1309,23 @@ if $RUN_FOREGROUND_PHASE; then
         > "$FOREGROUND_DIR/restore-sentinel.json"
 fi
 
+OBSERVED_CERTIFICATION="$ARTIFACT_ROOT/certification-observed.json"
+CERTIFICATION_RESULT="$ARTIFACT_ROOT/certification.json"
+case_summaries=("$ARTIFACT_ROOT"/cases/*/summary.json)
+jq -s --slurpfile probe "$ARTIFACT_ROOT/probe-self-test.json" \
+    '{probe_canary: ($probe[0].success == true), cases: .}' \
+    "${case_summaries[@]}" > "$OBSERVED_CERTIFICATION"
+set +e
+node "$CERTIFICATION_REPORTER" \
+    --catalog "$CERTIFICATION_CATALOG" \
+    --report "$OBSERVED_CERTIFICATION" \
+    --output "$CERTIFICATION_RESULT"
+CERTIFICATION_EXIT=$?
+set -e
+if [[ $CERTIFICATION_EXIT -ne 0 ]]; then
+    record_failure "background certification catalog/report validation failed"
+fi
+
 CASE_COUNT="$(find "$ARTIFACT_ROOT/cases" -name summary.json -type f | wc -l | tr -d ' ')"
 jq -n \
     --arg peekaboo "$(head -n 1 "$ARTIFACT_ROOT/peekaboo-version.txt")" \
@@ -893,6 +1336,7 @@ jq -n \
     --argjson cases "$CASE_COUNT" \
     --argjson failures "$FAILURES" \
     --argjson foregroundPhase "$RUN_FOREGROUND_PHASE" \
+    --slurpfile certification "$CERTIFICATION_RESULT" \
     '{
         success: ($failures == 0),
         peekaboo: $peekaboo,
@@ -900,7 +1344,8 @@ jq -n \
         sentinel: {pid: $sentinelPID, window_id: $sentinelWindowID},
         cases: $cases,
         failures: $failures,
-        foreground_phase: $foregroundPhase
+        foreground_phase: $foregroundPhase,
+        certification: $certification[0]
     }' > "$ARTIFACT_ROOT/summary.json"
 
 if [[ $FAILURES -ne 0 ]]; then

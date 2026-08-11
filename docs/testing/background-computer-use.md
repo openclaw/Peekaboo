@@ -16,26 +16,44 @@ scripts/test-background-computer-use.sh
 It builds the Playground fixture, signs it with the OpenClaw Foundation Developer ID, launches it without activation,
 and keeps Calculator as a controlled foreground sentinel. It then exercises fresh, exact PID/window snapshots through
 `see` (including AX-only and screenshot-only modes), `capture live`, click by ID and query, `type`, `press`, `paste`,
-`set-value`, `action`, and Accessibility-only targeted scroll. Stale snapshots and unsupported actions—including a target
-without an AX scroll action—must fail nonzero instead of falling back to foreground synthesis.
-The monitored lifecycle phase also launches distinct TextEdit processes with exact window receipts, maximizes and
-closes one exact background window, and rejects any quit success receipt while the other process remains alive. An app
-may refuse graceful quit; that is an honest nonzero result rather than a false success.
+`set-value`, `action`, and Accessibility-only targeted scroll. Stale snapshots and unsupported named AX actions must
+fail nonzero instead of falling back to foreground synthesis. Targeted scroll must report confirmed Accessibility
+delivery and produce an independent, PID-scoped Playground offset change.
+The monitored lifecycle phase also launches distinct TextEdit processes with exact window receipts, establishes a
+non-maximized exact frame, then maximizes and closes that background window. Quit accepts exactly two tuples: confirmed
+success with the target process gone, or `suspected_noop`/`INTERACTION_FAILED` with that target still alive. The harness
+does not infer the state of an unrelated sibling process from the quit result.
 Harness cleanup consumes each controlled PID and process-start identity directly from the launch/relaunch result and
-passes both values in one generation-pinned `app quit` request. A missing receipt fails the harness immediately; it never
-probes a bare post-launch PID to mint cleanup ownership or issues a separate unpinned quit that could hit a recycled process.
-Background keyboard requests with a window selector fail unless Peekaboo can prove a focused element inside that exact
-snapshot window through a named type field or an immediately preceding exact-window click. Process-only cases use the
-exact PID because macOS process-targeted key events cannot otherwise isolate sibling windows.
+passes both values in one generation-pinned `app quit` request. A missing receipt for the essential Playground fixture
+aborts immediately; a missing lifecycle receipt records a failed/omitted catalog case. Cleanup never probes a bare
+post-launch PID to mint ownership or issues a separate unpinned quit that could hit a recycled process. Background
+keyboard requests with a window selector are refused. Process-only cases use the exact PID to isolate the target
+process and intentionally do not claim sibling-window isolation.
 The harness invokes the current CLI directly; it does not use AppleScript or a command runner.
 
-Every background case is continuously sampled at 10 ms and fails if the sentinel PID or top window changes, the
-physical cursor moves, the clipboard leaks, or a new visible Peekaboo window appears. Clipboard contents are hashed,
-never printed. App-owned state is verified from fresh UI inspection plus controlled Playground logs; unrelated app
-windows and content are not collected. Results go under `.artifacts/background-computer-use/<UTC>/`.
+Every background case starts only after the 10 ms monitor completes its first sample. The case fails if that monitor
+does not remain alive until the harness terminates it, or if the sentinel PID/top window changes, the physical cursor
+moves, the clipboard leaks, or a new visible Peekaboo window appears. Clipboard contents are hashed, never printed.
+Selected mutations use fresh UI readback or PID-scoped Playground log checks and deltas; result contracts cover the
+remaining cases. Unrelated app windows and content are not collected. Artifact directories must be new or empty so a
+rerun cannot reuse old summaries, images, or logs. Results go under `.artifacts/background-computer-use/<UTC>/`.
 
-Background is the omission contract. `--foreground` is the only consent for activation, global keyboard input,
-physical cursor movement, or synthetic pointer/wheel events. The optional physical phase is deliberately separate:
+The 34 required CLI cases are source-controlled in `scripts/background-computer-use-catalog.json`. Each row declares
+its exit contract and, where applicable, its effect, delivery, refusal code, allowed outcome tuples, and named checks.
+The catalog documents the monitored invariant families. The harness writes its observed facts per case and
+`scripts/validate-background-computer-use-report.mjs` rejects missing, duplicate, or unknown rows; wrong refusal codes;
+disallowed conditional outcomes; effect or delivery drift; absent declared readback/log/artifact evidence; monitor
+failure; and every recorded invariant violation. A run is not certified merely because the cases that happened to
+execute passed. The machine-readable verdict is `certification.json` beside the normal summary.
+
+Completeness is relative to this source-controlled 34-case single-controller matrix; it is not a claim that every
+Peekaboo CLI combination is represented. Dual-controller overlap is intentionally outside these rows and is not yet an
+in-tree certification cell. Once source-controlled, it should remain one complementary workflow-level cell rather than
+duplicating its internal steps in this catalog.
+
+For the interaction commands exercised here, background is the omission contract: `--foreground` is the only consent
+for focus/activation, global keyboard input, physical cursor movement, or synthetic pointer/wheel events. Explicit app
+switching and other inherently foreground commands are outside that statement. The optional physical phase is separate:
 
 ```bash
 scripts/test-background-computer-use.sh --foreground-phase
@@ -50,6 +68,10 @@ For a fast helper check with no GUI automation:
 ```bash
 scripts/test-background-computer-use.sh --self-test
 ```
+
+That self-test also validates a complete synthetic certification report. The reporter's fail-closed corruptions run in
+the normal safe gate or directly with `pnpm run test:background-certification`; they cover deleted, duplicate, unknown,
+wrong-refusal, missing-evidence, disallowed conditional-outcome, effect/delivery-drift, and invariant-canary reports.
 
 Use `--bin`, `--artifacts`, `--sentinel-bundle-id`, or `--playground-app ... --skip-playground-build` to select an exact
 binary, controlled foreground app, or prebuilt signed fixture. Add `--no-remote` when the exact CLI is team-signed and
