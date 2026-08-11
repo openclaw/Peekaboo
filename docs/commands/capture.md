@@ -23,6 +23,10 @@ The MCP server exposes the same primitive as the `capture` tool. MCP arguments u
 - `metadata.json` (`CaptureResult`) with stats, warnings, grid info, and source (live|video)
 - Optional MP4 (`--video-out`) built from kept frames
 
+For diff-filtered captures, each retained frame's `changePercent` and `motionBoxes` compare it with the previous
+retained frame, not with an internal sample that was dropped. This keeps heartbeat metadata truthful when a small
+visible edit stayed below the motion threshold; the edit remains a heartbeat, but reports its nonzero retained delta.
+
 For `capture video`, `metadata.json` and JSON stdout include `options.video` with the requested sampling/trim options plus the effective FPS used by the frame reader. `stats.decodeFailures` identifies the decode-failure subset of `stats.framesDropped`; ordinary diff drops remain in `framesDropped` without increasing `decodeFailures`. A bounded `videoDecodeFailure` warning retains the first and last decode errors when later samples still succeed.
 
 ## `capture live` flags
@@ -32,6 +36,11 @@ For `capture video`, `metadata.json` and JSON stdout include `options.video` wit
 - Caps: `--max-frames` (default 800), `--max-mb`
 - Diff/output: `--highlight-changes`, `--resolution-cap` (default 1440), `--diff-strategy fast|quality`, `--diff-budget`, `--video-out <path>`
 - Paths: `--path <dir>` (default temp `capture-sessions/capture-<uuid>`), `--autoclean <duration>` (default `7200s`)
+
+`--threshold` is a whole-frame percentage against the immediately preceding sample, not OCR or text sensitivity. It
+controls immediate motion-frame retention and the switch to active FPS. A small localized text edit can stay below the
+default and arrive in the next heartbeat keyframe; lower the threshold for that workload, or use `0` to keep every
+valid sample.
 
 ## `capture action` flags
 - Targeting/focus/cadence/caps/output: same as `capture live`, except `--duration` is replaced by `--duration-limit` (default `60s`, max `180s`; bare values are milliseconds).

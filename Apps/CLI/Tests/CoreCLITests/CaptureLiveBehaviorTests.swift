@@ -86,4 +86,11 @@ struct CaptureLiveBehaviorTests {
             _ = try video.buildOptions()
         }
     }
+
+    @Test
+    func `human output preserves nonzero tiny frame deltas`() {
+        #expect(CaptureLiveCommand.formatChangePercent(0) == "0.00")
+        #expect(CaptureLiveCommand.formatChangePercent(0.004) == "0.004")
+        #expect(CaptureLiveCommand.formatChangePercent(0.012) == "0.01")
+    }
 }

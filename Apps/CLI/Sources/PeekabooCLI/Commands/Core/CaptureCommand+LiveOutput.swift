@@ -18,11 +18,18 @@ extension CaptureLiveCommand {
         for frame in result.frames {
             print(
                 "🖼️  \(frame.reason.rawValue) t=\(frame.timestampMs)ms "
-                    + "Δ=\(String(format: "%.2f", frame.changePercent))% → \(frame.path)"
+                    + "Δ=\(Self.formatChangePercent(frame.changePercent))% → \(frame.path)"
             )
         }
         for warning in result.warnings {
             print("⚠️  \(warning.code.rawValue): \(warning.message)")
         }
+    }
+
+    static func formatChangePercent(_ value: Double) -> String {
+        if value > 0, value < 0.01 {
+            return String(format: "%.3g", value)
+        }
+        return String(format: "%.2f", value)
     }
 }

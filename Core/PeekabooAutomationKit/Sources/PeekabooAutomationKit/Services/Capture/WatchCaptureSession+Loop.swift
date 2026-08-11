@@ -16,6 +16,8 @@ extension WatchCaptureSession {
         var lastActivityTime: Date
         var activeMode: Bool
         var lastDiffBuffer: WatchFrameDiffer.LumaBuffer?
+        var lastKeptDiffBuffer: WatchFrameDiffer.LumaBuffer?
+        var lastKeptFrameIndex: Int?
         var frameIndex: Int
         var frameAttempts: Int
         var consecutiveDecodeFailures: Int
@@ -58,6 +60,8 @@ extension WatchCaptureSession {
             lastActivityTime: timing.start,
             activeMode: false,
             lastDiffBuffer: nil,
+            lastKeptDiffBuffer: nil,
+            lastKeptFrameIndex: nil,
             frameIndex: 0,
             frameAttempts: 0,
             consecutiveDecodeFailures: 0,
@@ -173,16 +177,24 @@ extension WatchCaptureSession {
                 enterActive: diff.enterActive)
 
             if decision.keep {
+                let outputDiff = self.diffForOutputFrame(
+                    sampledDiff: diff,
+                    previousKept: state.lastKeptDiffBuffer,
+                    previousKeptFrameIndex: state.lastKeptFrameIndex,
+                    currentFrameIndex: state.frameIndex,
+                    originalSize: CGSize(width: cgImage.width, height: cgImage.height))
                 let saveContext = FrameSaveContext(
                     capture: capture,
                     index: state.frameIndex,
                     timestampMs: timestampMs,
-                    changePercent: diff.changePercent,
+                    changePercent: outputDiff.changePercent,
                     reason: decision.reason,
-                    motionBoxes: diff.motionBoxes)
+                    motionBoxes: outputDiff.motionBoxes)
                 let saved = try await self.saveFrame(cgImage: cgImage, context: saveContext)
                 self.frames.append(saved)
                 state.lastKeptTime = now
+                state.lastKeptDiffBuffer = diff.buffer
+                state.lastKeptFrameIndex = state.frameIndex
             } else {
                 self.framesDropped += 1
             }
@@ -279,16 +291,49 @@ extension WatchCaptureSession {
         previous: WatchFrameDiffer.LumaBuffer?) -> DiffComputation
     {
         let downscaled = WatchFrameDiffer.makeLumaBuffer(from: cgImage, maxWidth: Constants.diffScaleWidth)
+        return self.computeDiff(
+            current: downscaled,
+            previous: previous,
+            originalSize: CGSize(width: cgImage.width, height: cgImage.height),
+            recordDowngradeWarning: true)
+    }
+
+    func diffForOutputFrame(
+        sampledDiff: DiffComputation,
+        previousKept: WatchFrameDiffer.LumaBuffer?,
+        previousKeptFrameIndex: Int?,
+        currentFrameIndex: Int,
+        originalSize: CGSize) -> DiffComputation
+    {
+        guard let previousKept,
+              previousKeptFrameIndex != currentFrameIndex - 1
+        else {
+            return sampledDiff
+        }
+
+        return self.computeDiff(
+            current: sampledDiff.buffer,
+            previous: previousKept,
+            originalSize: originalSize,
+            recordDowngradeWarning: false)
+    }
+
+    private func computeDiff(
+        current: WatchFrameDiffer.LumaBuffer,
+        previous: WatchFrameDiffer.LumaBuffer?,
+        originalSize: CGSize,
+        recordDowngradeWarning: Bool) -> DiffComputation
+    {
         let diff = WatchFrameDiffer.computeChange(
             using: WatchFrameDiffer.DiffInput(
                 strategy: self.options.diffStrategy,
                 diffBudgetMs: self.options.diffBudgetMs,
                 previous: previous,
-                current: downscaled,
+                current: current,
                 deltaThreshold: Constants.motionDelta,
-                originalSize: CGSize(width: cgImage.width, height: cgImage.height)))
+                originalSize: originalSize))
 
-        if diff.downgraded {
+        if diff.downgraded, recordDowngradeWarning {
             self.warnings.append(
                 WatchWarning(code: .diffDowngraded, message: "Diff downgraded to fast due to budget"))
         }
@@ -296,7 +341,7 @@ extension WatchCaptureSession {
         return DiffComputation(
             changePercent: diff.changePercent,
             motionBoxes: diff.boundingBoxes,
-            buffer: downscaled,
+            buffer: current,
             enterActive: diff.changePercent >= self.options.changeThresholdPercent)
     }
 

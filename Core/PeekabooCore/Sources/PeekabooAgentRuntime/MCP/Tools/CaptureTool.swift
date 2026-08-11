@@ -46,7 +46,8 @@ public struct CaptureTool: MCPTool {
                 "duration_seconds": SchemaBuilder.number(description: "Duration seconds (default 60, max 180)"),
                 "idle_fps": SchemaBuilder.number(description: "Idle FPS (default 2, min 0.1, max 5)"),
                 "active_fps": SchemaBuilder.number(description: "Active FPS (default 8, max 15)"),
-                "threshold_percent": SchemaBuilder.number(description: "Change threshold percent (default 2.5)"),
+                "threshold_percent": SchemaBuilder.number(
+                    description: "Whole-frame change percent to keep motion frames (default 2.5; 0 keeps all)"),
                 "heartbeat_sec": SchemaBuilder
                     .number(description: "Heartbeat interval seconds (default 5, 0 disables)"),
                 "quiet_ms": SchemaBuilder.number(description: "Calm period before returning to idle (default 1000)"),

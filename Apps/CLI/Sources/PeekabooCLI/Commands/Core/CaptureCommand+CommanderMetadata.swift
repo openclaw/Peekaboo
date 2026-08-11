@@ -38,7 +38,11 @@ extension CaptureLiveCommand: CommanderSignatureProviding {
                 ),
                 .commandOption("idleFps", help: "Idle FPS (default 2)", long: "idle-fps"),
                 .commandOption("activeFps", help: "Active FPS (default 8, max 15)", long: "active-fps"),
-                .commandOption("threshold", help: "Change threshold percent (default 2.5)", long: "threshold"),
+                .commandOption(
+                    "threshold",
+                    help: "Whole-frame change percent to keep motion frames (default 2.5; 0 keeps all)",
+                    long: "threshold"
+                ),
                 .commandOption("heartbeat", help: "Heartbeat interval (default 5s)", long: "heartbeat"),
                 .commandOption("quiet", help: "Calm period before idle (default 1s)", long: "quiet"),
                 .commandOption("maxFrames", help: "Soft frame cap (default 800)", long: "max-frames"),

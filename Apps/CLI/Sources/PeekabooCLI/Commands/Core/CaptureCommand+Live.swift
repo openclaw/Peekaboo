@@ -36,7 +36,8 @@ InjectedRuntimeBackedCommand {
     var duration: CLIDuration?
     @Option(name: .long, help: "Idle FPS during quiet periods (default 2)") var idleFps: Double?
     @Option(name: .long, help: "Active FPS during motion (default 8, max 15)") var activeFps: Double?
-    @Option(name: .long, help: "Change threshold percent to enter active mode (default 2.5)") var threshold: Double?
+    @Option(name: .long, help: "Whole-frame change percent to keep motion frames (default 2.5; 0 keeps all)")
+    var threshold: Double?
     @Option(
         name: .customLong("heartbeat"),
         help: "Heartbeat keyframe interval (default 5s, 0 disables)"

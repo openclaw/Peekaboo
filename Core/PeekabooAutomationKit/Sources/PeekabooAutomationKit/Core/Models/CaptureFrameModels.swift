@@ -13,6 +13,7 @@ public struct CaptureFrameInfo: Codable, Sendable, Equatable {
     public let path: String
     public let file: String
     public let timestampMs: Int
+    /// Difference from the previous retained frame when diff filtering is enabled.
     public let changePercent: Double
     public let reason: Reason
     public let motionBoxes: [CGRect]?

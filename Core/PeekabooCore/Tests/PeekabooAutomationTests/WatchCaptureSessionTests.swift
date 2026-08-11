@@ -113,6 +113,51 @@ struct WatchCaptureSessionTests {
     }
 
     @Test
+    @MainActor
+    func `Output diff compares with previous retained frame after dropped samples`() {
+        let png = Self.makePNG(size: CGSize(width: 40, height: 40))
+        let session = WatchCaptureSession(
+            dependencies: WatchCaptureDependencies(
+                screenCapture: StubScreenCaptureService(result: png, size: CGSize(width: 40, height: 40)),
+                screenService: StubScreenService()),
+            configuration: WatchCaptureConfiguration(
+                scope: CaptureScope(kind: .frontmost),
+                options: Self.defaultWatchOptions(),
+                outputRoot: FileManager.default.temporaryDirectory,
+                autoclean: WatchAutocleanConfig(minutes: 1, managed: false)))
+        let previousKept = WatchFrameDiffer.LumaBuffer(
+            width: 4,
+            height: 4,
+            pixels: Array(repeating: 0, count: 16))
+        var changedPixels = Array(repeating: UInt8(0), count: 16)
+        changedPixels[5] = 255
+        let current = WatchFrameDiffer.LumaBuffer(width: 4, height: 4, pixels: changedPixels)
+        let sampledDiff = WatchCaptureSession.DiffComputation(
+            changePercent: 0,
+            motionBoxes: nil,
+            buffer: current,
+            enterActive: false)
+
+        let retainedDiff = session.diffForOutputFrame(
+            sampledDiff: sampledDiff,
+            previousKept: previousKept,
+            previousKeptFrameIndex: 0,
+            currentFrameIndex: 2,
+            originalSize: CGSize(width: 40, height: 40))
+        #expect(retainedDiff.changePercent == 6.25)
+        #expect(retainedDiff.motionBoxes?.isEmpty == false)
+
+        let adjacentDiff = session.diffForOutputFrame(
+            sampledDiff: sampledDiff,
+            previousKept: previousKept,
+            previousKeptFrameIndex: 1,
+            currentFrameIndex: 2,
+            originalSize: CGSize(width: 40, height: 40))
+        #expect(adjacentDiff.changePercent == 0)
+        #expect(adjacentDiff.motionBoxes == nil)
+    }
+
+    @Test
     func `Quality diff near-zero for identical frames`() {
         let buffer = WatchFrameDiffer.LumaBuffer(width: 4, height: 4, pixels: Array(repeating: 64, count: 16))
         let result = WatchFrameDiffer.computeChange(
