@@ -120,6 +120,15 @@ struct CaptureLiveBehaviorTests {
     }
 
     @Test
+    func `Commander preserves negative cadence for shared validation`() throws {
+        let command = try CaptureLiveCommand.parse(["--idle-fps", "-1"])
+        #expect(command.idleFps == -1)
+        #expect(throws: CaptureCadenceValidationError.self) {
+            _ = try command.buildOptions()
+        }
+    }
+
+    @Test
     func `Commander cadence metadata declares the complete validation contract`() {
         let live = CaptureLiveCommand.commanderSignature()
         let action = CaptureActionCommand.commanderSignature()
