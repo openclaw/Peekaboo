@@ -99,14 +99,14 @@ public final class ObservationAnnotationRenderer {
             throw OperationError.captureFailed(reason: "Failed to load screenshot for annotation: \(originalPath)")
         }
 
-        guard let annotatedImage = try self.renderAnnotatedImage(
+        guard let bitmapRep = try self.renderAnnotatedBitmap(
             from: sourceImage,
             detectionResult: detectionResult)
         else {
             return nil
         }
 
-        guard let pngData = Self.pngData(from: annotatedImage) else {
+        guard let pngData = bitmapRep.representation(using: .png, properties: [:]) else {
             throw OperationError.captureFailed(reason: "Failed to encode annotated screenshot")
         }
 
@@ -119,6 +119,22 @@ public final class ObservationAnnotationRenderer {
     public func renderAnnotatedImage(
         from sourceImage: NSImage,
         detectionResult: ElementDetectionResult) throws -> NSImage?
+    {
+        guard let bitmapRep = try self.renderAnnotatedBitmap(
+            from: sourceImage,
+            detectionResult: detectionResult)
+        else {
+            return nil
+        }
+
+        let image = NSImage(size: sourceImage.size)
+        image.addRepresentation(bitmapRep)
+        return image
+    }
+
+    private func renderAnnotatedBitmap(
+        from sourceImage: NSImage,
+        detectionResult: ElementDetectionResult) throws -> NSBitmapImageRep?
     {
         let enabledElements = detectionResult.elements.all.filter(\.isEnabled)
         guard !enabledElements.isEmpty else {
@@ -233,10 +249,7 @@ public final class ObservationAnnotationRenderer {
             idString.draw(at: NSPoint(x: labelRect.origin.x + 4, y: labelRect.origin.y + 2))
         }
 
-        guard let image = NSImage(data: bitmapRep.representation(using: .png, properties: [:]) ?? Data()) else {
-            throw OperationError.captureFailed(reason: "Failed to create annotated image")
-        }
-        return image
+        return bitmapRep
     }
 
     private static func color(for type: ElementType) -> NSColor {
@@ -248,14 +261,5 @@ public final class ObservationAnnotationRenderer {
         default:
             NSColor(red: 0.557, green: 0.557, blue: 0.576, alpha: 1)
         }
-    }
-
-    private static func pngData(from image: NSImage) -> Data? {
-        guard let tiff = image.tiffRepresentation,
-              let bitmap = NSBitmapImageRep(data: tiff)
-        else {
-            return nil
-        }
-        return bitmap.representation(using: .png, properties: [:])
     }
 }

@@ -11,6 +11,7 @@
 
 ### Changed
 - Default new agent configurations to GPT-5.6 and Claude Opus 5 while keeping credential-only Anthropic discovery on Opus 4.8 for zero-retention compatibility and preserving explicit model selections.
+- Encode annotated observations directly from their rendered bitmap, removing redundant PNG/TIFF round trips while preserving exact pixels, metadata, and output paths.
 
 ### Fixed
 - Keep `see --capture-engine` on the selected Bridge host instead of silently moving capture and TCC ownership into the caller; fail before local fallback when no compatible host is available, with `--no-remote` as the explicit caller-local opt-in.

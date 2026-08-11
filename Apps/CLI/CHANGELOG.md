@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - Default new agent configurations to GPT-5.6 and Claude Opus 5 while keeping credential-only Anthropic discovery on Opus 4.8 for zero-retention compatibility and preserving explicit model selections.
+- Encode annotated observations directly from their rendered bitmap, removing redundant PNG/TIFF round trips while preserving exact pixels, metadata, and output paths.
 
 ### Fixed
 - Pin process-targeted background typing, paste, clicks, and MCP key sequences to one process generation, rejecting Bridge hosts older than protocol 1.22 instead of letting them ignore the receipt or redirect input to a recycled PID.
