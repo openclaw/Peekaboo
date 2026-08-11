@@ -194,13 +194,14 @@ public final class WatchCaptureSession {
     public func run() async throws -> CaptureSessionResult {
         do {
             // Validate public API options before creating or cleaning any artifacts.
-            let timing = try self.makeTiming()
+            let validatedTiming = try self.validateTiming()
             try self.store.prepareOutputRoot()
             if let autocleanWarning = self.store.performAutoclean() {
                 self.warnings.append(autocleanWarning)
             }
             // videoWriter is created lazily on first saved frame to match actual dimensions.
 
+            let timing = self.makeTiming(from: validatedTiming)
             let sampling = try await self.captureFrames(timing: timing)
             try Task.checkCancellation()
 

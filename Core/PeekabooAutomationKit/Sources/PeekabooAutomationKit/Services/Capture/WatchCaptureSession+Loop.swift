@@ -13,6 +13,13 @@ extension WatchCaptureSession {
         let cadenceActiveNs: UInt64
     }
 
+    struct ValidatedTiming {
+        let durationNs: UInt64
+        let heartbeatNs: UInt64
+        let cadenceIdleNs: UInt64
+        let cadenceActiveNs: UInt64
+    }
+
     struct SamplingMetrics {
         let durationNs: UInt64
         let captureAttempts: Int
@@ -55,7 +62,7 @@ extension WatchCaptureSession {
         case stopRequested
     }
 
-    func makeTiming() throws -> SessionTiming {
+    func validateTiming() throws -> ValidatedTiming {
         let idleFps: Double
         let activeFps: Double
         if self.sourceKind == .live {
@@ -83,15 +90,27 @@ extension WatchCaptureSession {
         let cadenceIdleNs = try Self.cadenceNanoseconds(fps: idleFps)
         let cadenceActiveNs = try Self.cadenceNanoseconds(fps: activeFps)
 
-        let monotonicStartNs = self.clock.nowNanoseconds()
-        let (deadlineNs, deadlineOverflow) = monotonicStartNs.addingReportingOverflow(durationNs)
-        return SessionTiming(
-            monotonicStartNs: monotonicStartNs,
-            deadlineNs: deadlineOverflow ? UInt64.max : deadlineNs,
+        return ValidatedTiming(
             durationNs: durationNs,
             heartbeatNs: heartbeatNs,
             cadenceIdleNs: cadenceIdleNs,
             cadenceActiveNs: cadenceActiveNs)
+    }
+
+    func makeTiming(from validated: ValidatedTiming) -> SessionTiming {
+        let monotonicStartNs = self.clock.nowNanoseconds()
+        let (deadlineNs, deadlineOverflow) = monotonicStartNs.addingReportingOverflow(validated.durationNs)
+        return SessionTiming(
+            monotonicStartNs: monotonicStartNs,
+            deadlineNs: deadlineOverflow ? UInt64.max : deadlineNs,
+            durationNs: validated.durationNs,
+            heartbeatNs: validated.heartbeatNs,
+            cadenceIdleNs: validated.cadenceIdleNs,
+            cadenceActiveNs: validated.cadenceActiveNs)
+    }
+
+    func makeTiming() throws -> SessionTiming {
+        try self.makeTiming(from: self.validateTiming())
     }
 
     func captureFrames(timing: SessionTiming) async throws -> SamplingMetrics {

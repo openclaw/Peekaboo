@@ -131,6 +131,19 @@ struct WatchCaptureCadenceSchedulingTests {
     }
 
     @Test
+    func `timing anchor starts after validated setup work`() throws {
+        let clock = TestWatchCaptureClock()
+        let session = Self.makeSession(clock: clock)
+        let validated = try session.validateTiming()
+
+        clock.advance(nanoseconds: 500_000_000)
+        let timing = session.makeTiming(from: validated)
+
+        #expect(timing.monotonicStartNs == 500_000_000)
+        #expect(timing.deadlineNs - timing.monotonicStartNs == 1_000_000_000)
+    }
+
+    @Test
     func `raw invalid options fail before floating point conversion`() {
         let clock = TestWatchCaptureClock()
         let session = Self.makeSession(clock: clock, idleFps: .nan, activeFps: 10)
