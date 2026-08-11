@@ -142,6 +142,34 @@ extension MCPToolExecutionTests {
     }
 
     @Test
+    func `Click tool refuses empty or conflicting target shapes before dispatch or invalidation`() async throws {
+        await UISnapshotManager.shared.removeAllSnapshots()
+        let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
+        let context = await MCPToolTestHelpers.makeContext(automation: automation)
+        let snapshot = await UISnapshotManager.shared.createSnapshot()
+        let snapshotId = await snapshot.id
+        let invalidArguments: [[String: Any]] = [
+            ["on": "B1", "query": "OK"],
+            ["on": "B1", "coords": "10,20", "foreground": true],
+            ["query": "OK", "coords": "10,20", "foreground": true],
+            ["on": "B1", "query": "OK", "coords": "10,20", "foreground": true],
+            ["on": " ", "query": " "],
+        ]
+
+        for arguments in invalidArguments {
+            let response = try await ClickTool(context: context).execute(arguments: ToolArguments(raw: arguments))
+
+            #expect(response.isError == true)
+            #expect(response.meta?["mutation_dispatched"] == .bool(false))
+            #expect(response.meta?["retry_safe"] == .bool(true))
+        }
+
+        #expect(await MainActor.run { automation.clickCalls.isEmpty })
+        #expect(await MainActor.run { automation.targetedClickCalls.isEmpty })
+        #expect(await UISnapshotManager.shared.getSnapshot(id: nil)?.id == snapshotId)
+    }
+
+    @Test
     func `Click tool preserves resolved query element target for automation service`() async throws {
         let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
         let context = await MCPToolTestHelpers.makeContext(automation: automation)

@@ -578,24 +578,34 @@ private struct ClickRequest {
         }
         let coordinateReference = Self.nonEmptyString(arguments.getString("coordinate_reference"))
         let snapshotId = Self.nonEmptyString(arguments.getString("snapshot"))
+        let coords = Self.nonEmptyString(arguments.getString("coords"))
+        let elementId = Self.nonEmptyString(arguments.getString("on"))
+        let query = Self.nonEmptyString(arguments.getString("query"))
+        let targetCount = [coords, elementId, query].compactMap(\.self).count
+        guard targetCount > 0 else {
+            throw ClickToolError("Must specify exactly one of 'query', 'on', or 'coords'.")
+        }
+        guard targetCount == 1 else {
+            throw ClickToolError("Click targets are mutually exclusive; specify exactly one of query, on, or coords.")
+        }
 
-        if let coords = Self.nonEmptyString(arguments.getString("coords")) {
+        if let coords {
             self.target = .coordinates(coords)
             if let coordinateSpace, coordinateSpace.requiresReference, coordinateReference == nil {
                 throw ClickToolError("\(coordinateSpace.rawValue) coordinates require coordinate_reference from see.")
             }
-        } else if let elementId = Self.nonEmptyString(arguments.getString("on")) {
+        } else if let elementId {
             guard coordinateSpace == nil, coordinateReference == nil else {
                 throw ClickToolError("coordinate_space and coordinate_reference are only valid with coords.")
             }
             self.target = .elementId(elementId)
-        } else if let query = Self.nonEmptyString(arguments.getString("query")) {
+        } else if let query {
             guard coordinateSpace == nil, coordinateReference == nil else {
                 throw ClickToolError("coordinate_space and coordinate_reference are only valid with coords.")
             }
             self.target = .query(query)
         } else {
-            throw ClickToolError("Must specify either 'query', 'on', or 'coords'.")
+            throw ClickToolError("Must specify exactly one of 'query', 'on', or 'coords'.")
         }
 
         self.snapshotId = snapshotId

@@ -6,12 +6,15 @@ import PeekabooCore
 extension ClickCommand {
     mutating func validate() throws {
         try self.target.validate()
-        guard self.query != nil || self.on != nil || self.at != nil else {
+        self.query = Self.nonEmptyClickSelector(self.query)
+        self.on = Self.nonEmptyClickSelector(self.on)
+        self.at = Self.nonEmptyClickSelector(self.at)
+        let targetCount = [self.query, self.on, self.at].compactMap(\.self).count
+        guard targetCount > 0 else {
             throw ValidationError("Specify an element query, --on, or --at.")
         }
-
-        if self.on != nil && self.at != nil {
-            throw ValidationError("Cannot specify both --on and --at.")
+        guard targetCount == 1 else {
+            throw ValidationError("Specify exactly one click target: element query, --on, or --at.")
         }
 
         if let coordString = self.at, Self.parseCoordinates(coordString) == nil {
@@ -85,6 +88,13 @@ extension ClickCommand {
             return nil
         }
         return CGPoint(x: x, y: y)
+    }
+
+    private static func nonEmptyClickSelector(_ value: String?) -> String? {
+        guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else {
+            return nil
+        }
+        return value
     }
 
     /// Create element locator from query string.

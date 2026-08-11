@@ -43,6 +43,28 @@ struct ClickCommandTests {
     }
 
     @Test
+    func `Click command refuses empty or conflicting target shapes before dispatch`() async throws {
+        let invalidArguments = [
+            ["click", "Save", "--on", "B1"],
+            ["click", "Save", "--at", "10,20"],
+            ["click", "--on", "B1", "--at", "10,20"],
+            ["click", "Save", "--on", "B1", "--at", "10,20"],
+            ["click", " ", "--on", " "],
+        ]
+
+        for arguments in invalidArguments {
+            let context = await makeContext()
+            let result = try await InProcessCommandRunner.run(arguments + ["--json"], services: context.services)
+
+            #expect(result.exitStatus == 1)
+            #expect(result.combinedOutput.contains("click target") || result.combinedOutput.contains("element query"))
+            #expect(await self.automationState(context) { $0.clickCalls }.isEmpty)
+            #expect(await self.automationState(context) { $0.targetedClickCalls }.isEmpty)
+            #expect(context.snapshots.invalidationCutoffs.isEmpty)
+        }
+    }
+
+    @Test
     func `Long press uses foreground stationary click type`() async throws {
         let context = await makeContext()
         let result = try await InProcessCommandRunner.run(

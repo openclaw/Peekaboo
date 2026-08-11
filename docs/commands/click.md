@@ -7,7 +7,7 @@ read_when:
 
 # `peekaboo click`
 
-`click` is the primary interaction command. It accepts element IDs, fuzzy text queries, or literal coordinates and then drives `AutomationServiceBridge.click`. Background delivery is the default so target apps do not need to become frontmost; pass `--foreground` for focused foreground mouse behavior.
+`click` is the primary interaction command. It accepts exactly one of an element ID, fuzzy text query, or literal coordinate target and then drives `AutomationServiceBridge.click`. Contradictory or whitespace-only target shapes fail before lookup, focus, or mutation. Background delivery is the default so target apps do not need to become frontmost; pass `--foreground` for focused foreground mouse behavior.
 
 ## Key options
 | Flag | Description |
@@ -37,7 +37,7 @@ read_when:
 - Right-click (`--right`) issues `AXShowMenu` without waiting for the context menu to close: a successfully opened menu runs a nested tracking runloop in the target app, so the command reports success once the menu is up instead of timing out behind it.
 
 ## Implementation notes
-- Validation makes sure you only provide one targeting strategy (ID/query vs. `--at`) and that coordinate strings parse cleanly into doubles. Target-relative coordinate clicks fail if the point is outside the resolved window.
+- Validation requires exactly one targeting strategy (`[query]`, `--on`, or `--at`) and parses coordinate strings into doubles. Target-relative coordinate clicks fail if the point is outside the resolved window.
 - When no `--snapshot` is provided, element/query clicks may use the most recent snapshot. Foreground global coordinates remain snapshot-free. Background coordinates never infer ownership at dispatch time: they resolve through the explicit capture snapshot and pass its exact receipt through the automation/Bridge boundary.
 - Background element/query clicks re-resolve cached elements in the target process and exact snapshot window, then invoke their AX action; when the element cannot be re-resolved, the adjusted snapshot point is hit-tested and the AX element found there is pressed. Mismatched process/window selectors and unverifiable window snapshots are rejected. Run `peekaboo see` first when you need fresh element IDs or target metadata.
 - Foreground element-based clicks call `AutomationServiceBridge.waitForElement` with the supplied timeout so you don’t have to insert manual sleeps. Helpful hints are printed when timeouts expire.
