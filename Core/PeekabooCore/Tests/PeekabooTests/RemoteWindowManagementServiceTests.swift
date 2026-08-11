@@ -54,7 +54,7 @@ struct RemoteWindowManagementServiceTests {
         let pinnedMutations = await windows.pinnedMutations
         #expect(legacyMutations.isEmpty)
         #expect(pinnedMutations.map(\.operation) == [
-            "close",
+            "background-close",
             "close",
             "minimize",
             "restore",
@@ -69,7 +69,7 @@ struct RemoteWindowManagementServiceTests {
     }
 
     @Test
-    func `default close forwards foreground compatibility while strict close requires capability`() async throws {
+    func `default close remains background-only while explicit foreground fallback propagates`() async throws {
         let socketPath = "/tmp/peekaboo-remote-window-close-compat-\(UUID().uuidString).sock"
         let windows = RemoteWindowMutationFixture(identity: self.identity)
         let server = PeekabooBridgeServer(
@@ -92,14 +92,13 @@ struct RemoteWindowManagementServiceTests {
             client: PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 2),
             supportsBackgroundClose: false,
             supportsPinnedWindowMutations: true)
-        try await remote.closeWindow(target: .title("Fixture"))
-
         do {
-            try await remote.closeWindow(target: .title("Fixture"), allowForegroundFallback: false)
-            Issue.record("Expected strict background close to require the advertised capability")
+            try await remote.closeWindow(target: .title("Fixture"))
+            Issue.record("Expected default background close to require the advertised capability")
         } catch let error as PeekabooBridgeErrorEnvelope {
             #expect(error.code == .operationNotSupported)
         }
+        try await remote.closeWindow(target: .title("Fixture"), allowForegroundFallback: true)
         #expect(await windows.pinnedMutations.map(\.operation) == ["close"])
         await host.stop()
     }

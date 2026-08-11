@@ -25,7 +25,7 @@ public final class RemoteWindowManagementService: WindowManagementServiceProtoco
     }
 
     public func closeWindow(target: WindowTarget) async throws {
-        try await self.closeWindow(target: target, allowForegroundFallback: true)
+        try await self.closeWindow(target: target, allowForegroundFallback: false)
     }
 
     public func closeWindow(target: WindowTarget, allowForegroundFallback: Bool) async throws {
