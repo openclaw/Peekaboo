@@ -206,6 +206,82 @@ extension MCPToolExecutionTests {
     }
 
     @Test
+    func `Click tool projects canonical post-dispatch failure without replay`() async throws {
+        await UISnapshotManager.shared.removeAllSnapshots()
+        let failure = DesktopActionFailure.dispatchedUnverified(
+            delivery: .init(mechanism: .accessibilityAction, mode: .background),
+            evidence: .deliveryAccepted,
+            message: "Click was dispatched, but post-click validation failed",
+            hint: "Observe the target before retrying this click.",
+            causeDescription: "post-dispatch identity drift")
+        let automation = await MainActor.run {
+            let automation = MockAutomationService(accessibilityGranted: true)
+            automation.pinnedClickError = { _ in failure }
+            return automation
+        }
+        let context = await MCPToolTestHelpers.makeContext(automation: automation)
+        let snapshot = await UISnapshotManager.shared.createSnapshot()
+        let snapshotId = await snapshot.id
+        await snapshot.setScreenshot(
+            path: "/tmp/screenshot.png",
+            metadata: CaptureMetadata(
+                size: CGSize(width: 200, height: 100),
+                mode: .window,
+                applicationInfo: ServiceApplicationInfo(
+                    processIdentifier: 113,
+                    processStartIdentity: 13,
+                    bundleIdentifier: "com.example.snapshot",
+                    name: "SnapshotApp")))
+        await snapshot.setUIElements([
+            UIElement(
+                id: "B1",
+                elementId: "B1",
+                role: "button",
+                title: "OK",
+                label: "OK",
+                value: nil,
+                description: nil,
+                help: nil,
+                roleDescription: "button",
+                identifier: nil,
+                frame: CGRect(x: 10, y: 20, width: 80, height: 30),
+                isActionable: true),
+        ])
+
+        let response = try await ClickTool(context: context).execute(arguments: ToolArguments(raw: [
+            "on": "B1",
+            "snapshot": snapshotId,
+        ]))
+
+        #expect(response.isError)
+        #expect(await MainActor.run { automation.targetedClickCalls.count } == 1)
+        guard case let .object(meta) = response.meta else {
+            Issue.record("Expected canonical click failure metadata")
+            return
+        }
+        #expect(meta["effect"] == .string("unverifiable"))
+        #expect(meta["mutation_dispatched"] == .bool(true))
+        #expect(meta["retry_safe"] == .bool(false))
+        #expect(meta["requires_fresh_observation"] == .bool(true))
+        #expect(meta["invalidated_snapshot"] == .string(snapshotId))
+        let wireResult = PeekabooMCPServer.callToolResult(from: response, toolName: "click")
+        let wireData = try JSONEncoder().encode(wireResult)
+        let wireJSON = try #require(JSONSerialization.jsonObject(with: wireData) as? [String: Any])
+        let wireMeta = try #require(wireJSON["_meta"] as? [String: Any])
+        #expect(wireMeta["effect"] as? String == "unverifiable")
+        #expect(wireMeta["mutation_dispatched"] as? Bool == true)
+        #expect(wireMeta["retry_safe"] as? Bool == false)
+        #expect(wireMeta["requires_fresh_observation"] as? Bool == true)
+        guard case let .text(message, _, _)? = response.content.first else {
+            Issue.record("Expected canonical click failure guidance")
+            return
+        }
+        #expect(message.contains("Observe the target before retrying this click."))
+        #expect(await UISnapshotManager.shared.getSnapshot(id: snapshotId) != nil)
+        #expect(await UISnapshotManager.shared.getSnapshot(id: nil) == nil)
+    }
+
+    @Test
     func `Click tool refuses empty or conflicting target shapes before dispatch or invalidation`() async throws {
         await UISnapshotManager.shared.removeAllSnapshots()
         let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
