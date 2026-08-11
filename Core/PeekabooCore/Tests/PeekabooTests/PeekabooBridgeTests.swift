@@ -1757,7 +1757,7 @@ extension PeekabooBridgeTests {
                         screenRecording: false,
                         accessibility: true,
                         appleScript: false,
-                        postEvent: false)
+                        postEvent: true)
                 })
         }
         let host = PeekabooBridgeHost(
