@@ -129,6 +129,12 @@ enum DaemonLaunchPolicy {
         return PeekabooBridgeConstants.daemonSocketPath
     }
 
+    static func onDemandDaemonEnvironment(_ environment: [String: String]) -> [String: String] {
+        var sanitized = environment
+        sanitized.removeValue(forKey: "PEEKABOO_CAPTURE_ENGINE")
+        return sanitized
+    }
+
     static func runtimeBuildIdentity(
         executableURL: URL? = Bundle.main.executableURL,
         executableUUIDProvider: (URL) -> [String] = executableUUIDs
@@ -495,6 +501,7 @@ enum DaemonLaunchPolicy {
         }
 
         let fallbackIdleTimeoutSeconds = self.daemonIdleTimeoutSeconds(environment: environment)
+        let launchEnvironment = self.onDemandDaemonEnvironment(environment)
         var launchArguments = self.daemonArguments(
             socketPath: socketPath,
             mode: .auto,
@@ -514,7 +521,8 @@ enum DaemonLaunchPolicy {
 
                 guard let replacement = try? await launchDaemon(
                     socketPath: socketPath,
-                    arguments: launchArguments
+                    arguments: launchArguments,
+                    environment: launchEnvironment
                 )
                 else {
                     return await self.compatibleLegacyFallbackSocketPath {
@@ -566,7 +574,8 @@ enum DaemonLaunchPolicy {
         do {
             _ = try await self.launchDaemon(
                 socketPath: socketPath,
-                arguments: launchArguments
+                arguments: launchArguments,
+                environment: launchEnvironment
             )
             return socketPath
         } catch {
@@ -677,7 +686,8 @@ enum DaemonLaunchPolicy {
         arguments: [String],
         timeout: TimeInterval = 3,
         executableURL: URL? = nil,
-        logHandle: FileHandle? = nil
+        logHandle: FileHandle? = nil,
+        environment: [String: String]? = nil
     ) async throws -> LaunchResult {
         try Task.checkCancellation()
         guard let executableURL = executableURL ?? self.daemonExecutableURL() else {
@@ -687,6 +697,9 @@ enum DaemonLaunchPolicy {
         let process = Process()
         process.executableURL = executableURL
         process.arguments = arguments
+        if let environment {
+            process.environment = environment
+        }
         let daemonLogURL = DaemonPaths.daemonLogURL()
         let outputHandle = logHandle ?? DaemonPaths.openDaemonLogForAppend() ?? FileHandle.nullDevice
         process.standardOutput = outputHandle

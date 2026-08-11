@@ -17,7 +17,8 @@ struct RuntimeHostApplicationSelectionTests {
             hostKind: .onDemand,
             build: nil,
             supportedOperations: supportedOperations,
-            enabledOperations: supportedOperations
+            enabledOperations: supportedOperations,
+            hostCapabilities: [PeekabooBridgeHostCapability.desktopObservationCaptureEngine]
         )
         let captureOnly = PeekabooBridgeHandshakeResponse(
             negotiatedVersion: PeekabooBridgeConstants.protocolVersion,

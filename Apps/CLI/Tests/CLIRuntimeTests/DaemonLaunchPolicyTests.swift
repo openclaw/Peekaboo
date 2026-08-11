@@ -133,6 +133,37 @@ struct DaemonLaunchPolicyTests {
         }
     }
 
+    @Test
+    func `on demand daemon launch removes request scoped capture engine environment`() async throws {
+        let outputURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekaboo-daemon-engine-env-\(UUID().uuidString).txt")
+        defer { try? FileManager.default.removeItem(at: outputURL) }
+        let command = "printf '%s' \"${PEEKABOO_CAPTURE_ENGINE-unset}\" > \(outputURL.path); exec /bin/sleep 30"
+        let environment = DaemonLaunchPolicy.onDemandDaemonEnvironment([
+            "PATH": "/usr/bin:/bin",
+            "PEEKABOO_CAPTURE_ENGINE": "modern",
+        ])
+
+        do {
+            _ = try await DaemonLaunchPolicy.launchDaemon(
+                socketPath: "/tmp/peekaboo-daemon-engine-env-\(UUID().uuidString).sock",
+                arguments: ["-c", command],
+                timeout: 0.2,
+                executableURL: URL(fileURLWithPath: "/bin/sh"),
+                logHandle: .nullDevice,
+                environment: environment
+            )
+            Issue.record("Expected daemon readiness to time out")
+        } catch let error as DaemonLaunchPolicy.DaemonLaunchError {
+            guard case .timedOut = error else {
+                Issue.record("Expected a readiness timeout, got \(error)")
+                return
+            }
+        }
+
+        #expect(try String(contentsOf: outputURL, encoding: .utf8) == "unset")
+    }
+
     @Test(.timeLimit(.minutes(1)))
     func `daemon timeout bounds termination for a TERM ignoring child`() async throws {
         let pidURL = URL(fileURLWithPath: "/tmp/peekaboo-daemon-term-\(UUID().uuidString).pid")

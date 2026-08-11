@@ -143,12 +143,20 @@ struct PeekabooBridgeHostIdentityTests {
             allowlistedBundles: [],
             allowedOperations: [.captureScreen],
             hostIdentity: nil)
+        let unverifiedObservationServer = PeekabooBridgeServer(
+            services: StubServices(),
+            allowlistedTeams: [],
+            allowlistedBundles: [],
+            allowedOperations: [.desktopObservation],
+            hostIdentity: nil)
 
         #expect(observationServer.hostCapabilities.contains(PeekabooBridgeHostCapability.desktopObservationOCR))
         #expect(observationServer.hostCapabilities.contains(
             PeekabooBridgeHostCapability.desktopObservationCaptureEngine))
         #expect(!captureOnlyServer.hostCapabilities.contains(PeekabooBridgeHostCapability.desktopObservationOCR))
         #expect(!captureOnlyServer.hostCapabilities.contains(
+            PeekabooBridgeHostCapability.desktopObservationCaptureEngine))
+        #expect(!unverifiedObservationServer.hostCapabilities.contains(
             PeekabooBridgeHostCapability.desktopObservationCaptureEngine))
     }
 

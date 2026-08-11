@@ -82,6 +82,15 @@ struct DesktopObservationCaptureEngineRuntimeCapabilityTests {
 
         #expect(!CommanderRuntimeExecutor.shouldExportCaptureEnginePreference(modern))
         #expect(CommanderRuntimeExecutor.shouldExportCaptureEnginePreference(localOnly))
+
+        let launchEnvironment = DaemonLaunchPolicy.onDemandDaemonEnvironment([
+            "PATH": "/usr/bin:/bin",
+            "PEEKABOO_CAPTURE_ENGINE": "modern",
+            "PEEKABOO_LOG_LEVEL": "debug",
+        ])
+        #expect(launchEnvironment["PEEKABOO_CAPTURE_ENGINE"] == nil)
+        #expect(launchEnvironment["PATH"] == "/usr/bin:/bin")
+        #expect(launchEnvironment["PEEKABOO_LOG_LEVEL"] == "debug")
     }
 
     private static func options(engine: String) throws -> CommandRuntimeOptions {

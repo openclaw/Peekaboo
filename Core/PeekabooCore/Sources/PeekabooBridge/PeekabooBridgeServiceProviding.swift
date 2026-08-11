@@ -16,6 +16,7 @@ public protocol PeekabooBridgeServiceProviding: AnyObject, Sendable {
     var dialogs: any DialogServiceProtocol { get }
     var snapshots: any SnapshotManagerProtocol { get }
     var desktopObservation: any DesktopObservationServiceProtocol { get }
+    var supportsDesktopObservationCaptureEngine: Bool { get }
 
     /// Whether the concrete native service owns the lane for this exact operation.
     /// Test doubles and older hosts default to Bridge-owned conservative coordination.
@@ -30,6 +31,10 @@ public protocol PeekabooBridgeServiceProviding: AnyObject, Sendable {
 
 @MainActor
 extension PeekabooBridgeServiceProviding {
+    public var supportsDesktopObservationCaptureEngine: Bool {
+        self.screenCapture is any EngineAwareScreenCaptureServiceProtocol
+    }
+
     public func ownsDesktopOperationLane(for _: PeekabooBridgeOperation) -> Bool {
         false
     }
