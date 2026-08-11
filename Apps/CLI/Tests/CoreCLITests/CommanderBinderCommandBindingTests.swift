@@ -214,12 +214,27 @@ struct CommanderBinderCommandBindingTests {
     }
 
     @Test
-    func `Permissions status binding`() throws {
-        let parsed = ParsedValues(positional: [], options: [:], flags: [])
-        _ = try CommanderCLIBinder.instantiateCommand(
+    func `Permissions status host selectors configure the runtime owner`() throws {
+        let local = try CommanderCLIBinder.instantiateCommand(
             ofType: PermissionsCommand.StatusSubcommand.self,
-            parsedValues: parsed
+            parsedValues: ParsedValues(positional: [], options: [:], flags: ["no-remote"])
         )
+        #expect(local.noRemote)
+        #expect(!local.runtimeOptions.preferRemote)
+        #expect(local.runtimeOptions.remoteIsolationRequested)
+
+        let socketPath = "/tmp/selected-permission-host.sock"
+        let explicit = try CommanderCLIBinder.instantiateCommand(
+            ofType: PermissionsCommand.StatusSubcommand.self,
+            parsedValues: ParsedValues(
+                positional: [],
+                options: ["bridge-socket": [socketPath]],
+                flags: []
+            )
+        )
+        #expect(explicit.bridgeSocket == socketPath)
+        #expect(explicit.runtimeOptions.preferRemote)
+        #expect(explicit.runtimeOptions.bridgeSocketPath == socketPath)
     }
 
     @Test

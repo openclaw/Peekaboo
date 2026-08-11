@@ -43,6 +43,10 @@ extension PermissionsCommand {
         mutating func run(using runtime: CommandRuntime) async throws {
             self.runtime = runtime
 
+            // CommanderCLIBinder applies --no-remote and --bridge-socket before it resolves
+            // CommandRuntime. The injected services therefore already represent the exact
+            // caller-selected host; resolving another host here would split ownership again.
+
             if self.allSources {
                 let response = try await PermissionHelpers.getAllPermissionSources(services: runtime.services)
 
