@@ -160,8 +160,12 @@ extension MCPToolExecutionTests {
             let response = try await ClickTool(context: context).execute(arguments: ToolArguments(raw: arguments))
 
             #expect(response.isError == true)
-            #expect(response.meta?["mutation_dispatched"] == .bool(false))
-            #expect(response.meta?["retry_safe"] == .bool(true))
+            guard case let .object(meta) = response.meta else {
+                Issue.record("Expected typed pre-dispatch click metadata")
+                continue
+            }
+            #expect(meta["mutation_dispatched"] == .bool(false))
+            #expect(meta["retry_safe"] == .bool(true))
         }
 
         #expect(await MainActor.run { automation.clickCalls.isEmpty })
