@@ -156,11 +156,65 @@ test("effect and delivery drift are rejected", () => {
 test("probe canary and invariant violations are unsuppressible", () => {
   const report = makePassingReport(catalog);
   report.probe_canary = false;
-  caseById(report, "type-text").invariant_violations = 1;
+  caseById(report, "type-text").invariants.physical_cursor = false;
 
   const result = validateCertification(catalog, report);
 
   assert.equal(result.success, false);
   assert.ok(rules(result).has("canary"));
-  assert.ok(rules(result).has("invariant"));
+  assert.ok(rules(result).has("violated_invariant"));
+});
+
+test("catalog invariants are required nonempty and unique", () => {
+  const corruptions = [
+    [[], "schema"],
+    [[...catalog.invariants, catalog.invariants[0]], "duplicate_catalog_invariant"],
+    [[...catalog.invariants, ""], "schema"],
+  ];
+
+  for (const [invariants, expectedRule] of corruptions) {
+    const corruptCatalog = structuredClone(catalog);
+    corruptCatalog.invariants = invariants;
+    const result = validateCertification(corruptCatalog, makePassingReport(catalog));
+
+    assert.equal(result.success, false);
+    assert.ok(rules(result).has(expectedRule));
+  }
+});
+
+test("catalog contamination retry policy is explicitly boolean", () => {
+  const corruptCatalog = structuredClone(catalog);
+  corruptCatalog.cases[0].contamination_retry_safe = "yes";
+
+  const result = validateCertification(corruptCatalog, makePassingReport(catalog));
+
+  assert.equal(result.success, false);
+  assert.ok(rules(result).has("schema"));
+});
+
+test("missing unknown and violated invariant results fail closed", () => {
+  const report = makePassingReport(catalog);
+  const typeCase = caseById(report, "type-text");
+  delete typeCase.invariants.frontmost_window;
+  typeCase.invariants.physical_cursor = false;
+  typeCase.invariants.not_cataloged = true;
+
+  const result = validateCertification(catalog, report);
+
+  assert.equal(result.success, false);
+  assert.ok(rules(result).has("missing_invariant"));
+  assert.ok(rules(result).has("violated_invariant"));
+  assert.ok(rules(result).has("unknown_invariant"));
+});
+
+test("legacy violation counts cannot stand in for named invariant results", () => {
+  const report = makePassingReport(catalog);
+  const typeCase = caseById(report, "type-text");
+  delete typeCase.invariants;
+  typeCase.invariant_violations = 0;
+
+  const result = validateCertification(catalog, report);
+
+  assert.equal(result.success, false);
+  assert.ok(rules(result).has("invariant_schema"));
 });

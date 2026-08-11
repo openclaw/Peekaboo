@@ -95,6 +95,16 @@ for command_name in jq node rg swiftc xcodebuild codesign security; do
     fi
 done
 
+CERTIFICATION_INVARIANTS_JSON="$(jq -cer '
+    .invariants |
+    select(type == "array" and length > 0) |
+    select(all(.[]; type == "string" and length > 0)) |
+    select((unique | length) == length)
+' "$CERTIFICATION_CATALOG")" || {
+    echo "Certification catalog must declare unique nonempty invariant names." >&2
+    exit 2
+}
+
 if [[ -z "$ARTIFACT_ROOT" ]]; then
     ARTIFACT_ROOT="$ROOT_DIR/.artifacts/background-computer-use/$(date -u +%Y%m%dT%H%M%SZ)"
 elif [[ "$ARTIFACT_ROOT" != /* ]]; then
@@ -280,6 +290,18 @@ wait_for_monitor_advance() {
         sleep 0.01
     done
     return 1
+}
+
+invariant_results() {
+    local violations_path="$1"
+    local observed_invariants
+    observed_invariants="$(jq -sc '[.[].kind]' "$violations_path")"
+    jq -cn \
+        --argjson expected "$CERTIFICATION_INVARIANTS_JSON" \
+        --argjson observed "$observed_invariants" '
+        reduce (($expected + $observed) | unique[]) as $name
+            ({}; .[$name] = (($observed | index($name)) == null))
+    '
 }
 
 if $SELF_TEST_ONLY; then
@@ -942,10 +964,15 @@ run_case() {
 
     local monitor_clean=true
     if [[ -s "$monitor" ]]; then
-        record_failure "$name leaked focus, cursor, clipboard, or a Peekaboo overlay"
+        local violated_invariants
+        violated_invariants="$(jq -sr '[.[].kind] | unique | join(", ")' "$monitor")"
+        record_failure "$name violated cataloged background invariant(s): $violated_invariants"
         monitor_clean=false
         failed=true
     fi
+
+    local invariant_results_json
+    invariant_results_json="$(invariant_results "$monitor")"
 
     local desktop_restored=true
     if ! jq -e --slurpfile after "$after" '
@@ -981,7 +1008,7 @@ run_case() {
         --argjson effect "$effect" \
         --argjson deliveryMode "$delivery_mode" \
         --argjson errorCode "$error_code" \
-        --argjson invariantViolations "$(wc -l < "$monitor" | tr -d ' ')" \
+        --argjson invariants "$invariant_results_json" \
         --argjson resultContract "$result_contract" \
         --argjson monitorLiveness "$monitor_liveness" \
         --argjson monitorClean "$monitor_clean" \
@@ -1001,7 +1028,7 @@ run_case() {
             effect: $effect,
             delivery_mode: $deliveryMode,
             error_code: $errorCode,
-            invariant_violations: $invariantViolations,
+            invariants: $invariants,
             evidence: {
                 result_contract: $resultContract,
                 monitor_liveness: $monitorLiveness,

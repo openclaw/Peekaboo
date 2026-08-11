@@ -27,6 +27,16 @@ function validateCatalog(catalog) {
   if (!Array.isArray(catalog.required_evidence) || catalog.required_evidence.length === 0) {
     failures.push(failure("catalog", "schema", "Catalog must declare required_evidence"));
   }
+  if (!Array.isArray(catalog.invariants) || catalog.invariants.length === 0) {
+    failures.push(failure("catalog", "schema", "Catalog must declare invariants"));
+  } else {
+    if (catalog.invariants.some((name) => typeof name !== "string" || name.length === 0)) {
+      failures.push(failure("catalog", "schema", "Catalog invariants must be nonempty strings"));
+    }
+    for (const name of duplicateValues(catalog.invariants)) {
+      failures.push(failure("catalog", "duplicate_catalog_invariant", `Catalog invariant '${name}' is duplicated`));
+    }
+  }
   const ids = catalog.cases.map((entry) => entry?.id).filter(Boolean);
   for (const id of duplicateValues(ids)) {
     failures.push(failure(id, "duplicate_catalog_case", `Catalog case '${id}' is duplicated`));
@@ -49,6 +59,14 @@ function validateCatalog(catalog) {
     }
     if (!Array.isArray(entry?.required_oracles)) {
       failures.push(failure(entry?.id ?? "catalog", "schema", "required_oracles must be an array"));
+    }
+    if (entry?.contamination_retry_safe !== undefined
+        && typeof entry.contamination_retry_safe !== "boolean") {
+      failures.push(failure(
+        entry?.id ?? "catalog",
+        "schema",
+        "contamination_retry_safe must be a boolean",
+      ));
     }
     if (entry?.allowed_outcomes !== undefined) {
       if (!Array.isArray(entry.allowed_outcomes) || entry.allowed_outcomes.length === 0
@@ -154,8 +172,35 @@ export function validateCertification(catalog, report) {
         `Expected error '${expected.expected_error_code}', observed '${observed.error_code ?? "missing"}'`,
       ));
     }
-    if (observed.invariant_violations !== 0) {
-      failures.push(failure(expected.id, "invariant", "Invariant monitor recorded a violation"));
+    const invariantResults = observed.invariants;
+    if (!invariantResults || typeof invariantResults !== "object" || Array.isArray(invariantResults)) {
+      failures.push(failure(expected.id, "invariant_schema", "Observed invariants must be an object"));
+    } else {
+      const observedInvariantNames = Object.keys(invariantResults);
+      for (const invariantName of catalog.invariants) {
+        if (!Object.hasOwn(invariantResults, invariantName)) {
+          failures.push(failure(
+            expected.id,
+            "missing_invariant",
+            `Missing invariant '${invariantName}'`,
+          ));
+        } else if (invariantResults[invariantName] !== true) {
+          failures.push(failure(
+            expected.id,
+            "violated_invariant",
+            `Invariant '${invariantName}' did not pass`,
+          ));
+        }
+      }
+      for (const invariantName of observedInvariantNames) {
+        if (!catalog.invariants.includes(invariantName)) {
+          failures.push(failure(
+            expected.id,
+            "unknown_invariant",
+            `Observed invariant '${invariantName}' is not cataloged`,
+          ));
+        }
+      }
     }
     for (const evidenceName of catalog.required_evidence) {
       if (observed.evidence?.[evidenceName] !== true) {
@@ -186,6 +231,7 @@ export function makePassingReport(catalog) {
       : entry.expected_exit !== "failure";
     const evidence = Object.fromEntries(catalog.required_evidence.map((name) => [name, true]));
     const oracles = Object.fromEntries(entry.required_oracles.map((name) => [name, true]));
+    const invariants = Object.fromEntries(catalog.invariants.map((name) => [name, true]));
     return {
       id: entry.id,
       surface: entry.surface,
@@ -197,7 +243,7 @@ export function makePassingReport(catalog) {
       effect: selectedOutcome?.effect ?? entry.expected_effect ?? null,
       delivery_mode: entry.expected_delivery ?? null,
       error_code: selectedOutcome?.error_code ?? entry.expected_error_code ?? null,
-      invariant_violations: 0,
+      invariants,
       evidence,
       oracles,
     };
