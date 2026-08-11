@@ -27,7 +27,7 @@
     {"id":"screenshot-text","surface":"cli","command":"see --no-elements","phase":"background","expected_exit":"success","required_oracles":["artifact"]},
     {"id":"capture-text","surface":"cli","command":"capture live","phase":"background","expected_exit":"success","required_oracles":["artifact"]},
     {"id":"focus-basic-field","surface":"cli","command":"click","phase":"background","expected_exit":"success","expected_effect":"confirmed","expected_delivery":"background","required_oracles":["background_delivery","playground_log_delta"]},
-    {"id":"stale-snapshot","surface":"cli","command":"click","phase":"background","expected_exit":"failure","expected_effect":"refused","expected_error_code":"SNAPSHOT_NOT_FOUND","required_oracles":[]},
+    {"id":"stale-snapshot","surface":"cli","command":"click","phase":"background","expected_exit":"failure","expected_effect":"refused","expected_error_code":"SNAPSHOT_STALE","required_oracles":["snapshot_window_drift","target_window_restored"]},
     {"id":"type-window-selector-rejected","surface":"cli","command":"type","phase":"background","expected_exit":"failure","expected_effect":"refused","expected_error_code":"VALIDATION_ERROR","required_oracles":["refusal_guidance"]},
     {"id":"type-text","surface":"cli","command":"type","phase":"background","expected_exit":"success","expected_effect":"unverifiable","expected_delivery":"background","required_oracles":["background_delivery","playground_log"]},
     {"id":"press-return","surface":"cli","command":"press","phase":"background","expected_exit":"success","expected_effect":"unverifiable","expected_delivery":"background","required_oracles":["background_delivery","submit_log"]},

@@ -43,8 +43,10 @@ its exit contract and, where applicable, its effect, delivery, refusal code, all
 The catalog documents the monitored invariant families. The harness writes its observed facts per case and
 `scripts/validate-background-computer-use-report.mjs` rejects missing, duplicate, or unknown rows; wrong refusal codes;
 disallowed conditional outcomes; effect or delivery drift; absent declared readback/log/artifact evidence; monitor
-failure; and every recorded invariant violation. A run is not certified merely because the cases that happened to
-execute passed. The machine-readable verdict is `certification.json` beside the normal summary.
+failure; and every recorded invariant violation. The stale-snapshot row moves the exact captured window under the same
+monitor, requires `SNAPSHOT_STALE` when reusing that real snapshot ID, and restores the original bounds before the case
+can pass. A run is not certified merely because the cases that happened to execute passed. The machine-readable verdict
+is `certification.json` beside the normal summary.
 
 Completeness is relative to this source-controlled 34-case single-controller matrix; it is not a claim that every
 Peekaboo CLI combination is represented. Dual-controller overlap is intentionally outside these rows and is not yet an

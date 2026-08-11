@@ -71,6 +71,21 @@ test("wrong refusal code is rejected", () => {
   assert.ok(rules(result).has("refusal_code"));
 });
 
+test("stale snapshot certification requires controlled window drift and restoration", () => {
+  const staleCase = catalog.cases.find((entry) => entry.id === "stale-snapshot");
+  assert.equal(staleCase?.expected_error_code, "SNAPSHOT_STALE");
+  assert.deepEqual(staleCase?.required_oracles, ["snapshot_window_drift", "target_window_restored"]);
+
+  for (const oracle of staleCase.required_oracles) {
+    const report = makePassingReport(catalog);
+    caseById(report, "stale-snapshot").oracles[oracle] = false;
+    const result = validateCertification(catalog, report);
+
+    assert.equal(result.success, false);
+    assert.ok(rules(result).has("missing_oracle"));
+  }
+});
+
 test("either exit still requires an explicit success envelope", () => {
   const report = makePassingReport(catalog);
   const quit = caseById(report, "lifecycle-quit");

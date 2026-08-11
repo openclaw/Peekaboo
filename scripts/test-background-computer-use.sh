@@ -536,6 +536,13 @@ run_case() {
         setup_pid="$3"
         shift 3
     fi
+    local stale_window_id=""
+    local stale_pid=""
+    if [[ "${1:-}" == "--setup-stale-window" ]]; then
+        stale_window_id="$2"
+        stale_pid="$3"
+        shift 3
+    fi
 
     local case_dir="$ARTIFACT_ROOT/cases/$name"
     if ! mkdir "$case_dir"; then
@@ -552,6 +559,12 @@ run_case() {
     local summary="$case_dir/summary.json"
     local failed=false
     local nonmaximized_precondition=null
+    local snapshot_window_drift=null
+    local target_window_restored=null
+    local stale_original_x=""
+    local stale_original_y=""
+    local stale_original_width=""
+    local stale_original_height=""
 
     "$PROBE_BIN" sample --output "$before"
     if [[ "$(jq -r '.frontmostPID // empty' "$before")" != "$SENTINEL_PID" || \
@@ -608,6 +621,68 @@ run_case() {
         fi
     fi
 
+    if [[ -n "$stale_window_id" ]]; then
+        local stale_original_readback="$case_dir/stale-original-readback.json"
+        local stale_move_result="$case_dir/stale-move-result.json"
+        local stale_moved_readback="$case_dir/stale-moved-readback.json"
+        local stale_bounds=""
+        set +e
+        pb window list --pid "$stale_pid" --json > "$stale_original_readback"
+        local stale_inventory_exit=$?
+        set -e
+        if [[ $stale_inventory_exit -eq 0 ]]; then
+            stale_bounds="$(jq -er --argjson windowID "$stale_window_id" '
+                [.data.windows[] | select(.window_id == $windowID)] | first as $window |
+                select($window != null) |
+                [
+                    ($window.bounds.x | round),
+                    ($window.bounds.y | round),
+                    ($window.bounds.width | round),
+                    ($window.bounds.height | round)
+                ] | @tsv
+            ' "$stale_original_readback")" || stale_bounds=""
+        fi
+        if [[ -n "$stale_bounds" ]]; then
+            IFS=$'\t' read -r \
+                stale_original_x stale_original_y stale_original_width stale_original_height <<< "$stale_bounds"
+            local stale_moved_x=$((stale_original_x < 32 ? stale_original_x + 17 : stale_original_x - 17))
+            local stale_moved_y=$((stale_original_y < 32 ? stale_original_y + 17 : stale_original_y - 17))
+            set +e
+            pb window set-bounds --window-id "$stale_window_id" \
+                --x "$stale_moved_x" --y "$stale_moved_y" \
+                --width "$stale_original_width" --height "$stale_original_height" --json \
+                > "$stale_move_result" 2> "$case_dir/stale-move-stderr.txt"
+            local stale_move_exit=$?
+            pb window list --pid "$stale_pid" --json > "$stale_moved_readback"
+            local stale_moved_readback_exit=$?
+            set -e
+            if [[ $stale_move_exit -eq 0 && $stale_moved_readback_exit -eq 0 ]] && \
+               jq -e \
+                   --argjson windowID "$stale_window_id" \
+                   --argjson x "$stale_moved_x" \
+                   --argjson y "$stale_moved_y" \
+                   --argjson width "$stale_original_width" \
+                   --argjson height "$stale_original_height" '
+                    [.data.windows[] |
+                        select(.window_id == $windowID) |
+                        select(
+                            .bounds.x == $x and .bounds.y == $y and
+                            .bounds.width == $width and .bounds.height == $height)] |
+                    length == 1
+               ' "$stale_moved_readback" >/dev/null; then
+                snapshot_window_drift=true
+            else
+                snapshot_window_drift=false
+                record_failure "$name could not move the exact snapshot window before stale-snapshot reuse"
+                failed=true
+            fi
+        else
+            snapshot_window_drift=false
+            record_failure "$name could not read the exact snapshot window bounds"
+            failed=true
+        fi
+    fi
+
     set +e
     pb "$@" --json > "$result" 2> "$stderr_file"
     local command_exit=$?
@@ -618,6 +693,46 @@ run_case() {
         set +e
         pb window list --pid "$setup_pid" --json > "$case_dir/maximize-readback.json"
         set -e
+    fi
+
+    if [[ -n "$stale_window_id" ]]; then
+        if [[ -n "$stale_original_x" ]]; then
+            local stale_restore_result="$case_dir/stale-restore-result.json"
+            local stale_restored_readback="$case_dir/stale-restored-readback.json"
+            set +e
+            pb window set-bounds --window-id "$stale_window_id" \
+                --x "$stale_original_x" --y "$stale_original_y" \
+                --width "$stale_original_width" --height "$stale_original_height" --json \
+                > "$stale_restore_result" 2> "$case_dir/stale-restore-stderr.txt"
+            local stale_restore_exit=$?
+            pb window list --pid "$stale_pid" --json > "$stale_restored_readback"
+            local stale_restored_readback_exit=$?
+            set -e
+            if [[ $stale_restore_exit -eq 0 && $stale_restored_readback_exit -eq 0 ]] && \
+               jq -e \
+                   --argjson windowID "$stale_window_id" \
+                   --argjson x "$stale_original_x" \
+                   --argjson y "$stale_original_y" \
+                   --argjson width "$stale_original_width" \
+                   --argjson height "$stale_original_height" '
+                    [.data.windows[] |
+                        select(.window_id == $windowID) |
+                        select(
+                            .bounds.x == $x and .bounds.y == $y and
+                            .bounds.width == $width and .bounds.height == $height)] |
+                    length == 1
+               ' "$stale_restored_readback" >/dev/null; then
+                target_window_restored=true
+            else
+                target_window_restored=false
+            fi
+        else
+            target_window_restored=false
+        fi
+        if [[ "$target_window_restored" != true ]]; then
+            record_failure "$name did not restore the exact target window after stale-snapshot proof"
+            failed=true
+        fi
     fi
 
     sleep 0.15
@@ -722,6 +837,8 @@ run_case() {
         --argjson desktopRestored "$desktop_restored" \
         --argjson clipboardPolicy "$clipboard_policy_passed" \
         --argjson nonmaximizedPrecondition "$nonmaximized_precondition" \
+        --argjson snapshotWindowDrift "$snapshot_window_drift" \
+        --argjson targetWindowRestored "$target_window_restored" \
         '{
             id: $id,
             expected_exit: $expectedExit,
@@ -738,8 +855,14 @@ run_case() {
                 desktop_restored: $desktopRestored,
                 clipboard_policy: $clipboardPolicy
             },
-            oracles: (if $nonmaximizedPrecondition == null then {}
-                else {nonmaximized_precondition: $nonmaximizedPrecondition} end)
+            oracles: (
+                (if $nonmaximizedPrecondition == null then {}
+                    else {nonmaximized_precondition: $nonmaximizedPrecondition} end) +
+                (if $snapshotWindowDrift == null then {}
+                    else {snapshot_window_drift: $snapshotWindowDrift} end) +
+                (if $targetWindowRestored == null then {}
+                    else {target_window_restored: $targetWindowRestored} end)
+            )
         }' > "$summary"
 
     [[ "$failed" == false ]]
@@ -1129,7 +1252,8 @@ assert_playground_log_delta focus-basic-field "$FOCUS_LOG_BEFORE" "$FOCUS_LOG_AF
     "Programmatically focused basic field" || true
 
 run_checked_case stale-snapshot unchanged failure \
-    click --on "$FOCUS_BUTTON_ID" --snapshot "missing-snapshot-$$" \
+    --setup-stale-window "$TEXT_WINDOW_ID" "$PLAYGROUND_PID" \
+    click --on "$FOCUS_BUTTON_ID" --snapshot "$TEXT_SNAPSHOT" \
     --pid "$PLAYGROUND_PID" --window-id "$TEXT_WINDOW_ID" || true
 
 RUN_TOKEN="background-$RANDOM-$$"
