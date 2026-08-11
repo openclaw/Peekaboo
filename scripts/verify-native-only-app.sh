@@ -8,7 +8,6 @@ GIT_BIN="${PEEKABOO_GIT_BIN:-/usr/bin/git}"
 NM_BIN="${PEEKABOO_NM_BIN:-/usr/bin/nm}"
 PLISTBUDDY_BIN="${PEEKABOO_PLISTBUDDY_BIN:-/usr/libexec/PlistBuddy}"
 REALPATH_BIN="${PEEKABOO_REALPATH_BIN:-$(command -v realpath || true)}"
-STAT_BIN="${PEEKABOO_STAT_BIN:-/usr/bin/stat}"
 STRINGS_BIN="${PEEKABOO_STRINGS_BIN:-/usr/bin/strings}"
 
 SOURCE_ROOT=""
@@ -153,9 +152,6 @@ if [[ -n "${APP_BUNDLE}" ]]; then
 
   mach_o_count=0
   while IFS= read -r -d '' candidate; do
-    candidate_mode="$("${STAT_BIN}" -f %Lp "${candidate}" 2>/dev/null || true)"
-    [[ "${candidate_mode}" =~ ^[0-7]{3,4}$ ]] || fail "Could not read payload mode bits: ${candidate}"
-    candidate_mode_value=$((8#${candidate_mode}))
     file_description="$("${FILE_BIN}" -b "${candidate}" 2>/dev/null || true)"
     if grep -q 'Mach-O' <<<"${file_description}"; then
       mach_o_count=$((mach_o_count + 1))
@@ -182,8 +178,6 @@ if [[ -n "${APP_BUNDLE}" ]]; then
       fi
     elif grep -qi 'AppleScript' <<<"${file_description}"; then
       fail "Payload contains compiled AppleScript data: ${candidate}"
-    elif (( (candidate_mode_value & 8#111) != 0 )); then
-      fail "App payload contains a non-Mach-O executable: ${candidate}"
     elif grep -Eqi 'text|script|JSON|XML|property list' <<<"${file_description}" && \
          { grep -Eq \
              'NSAppleScript|NSUserAppleScriptTask|OSAKit|OSAScript|OSA(Compile|Execute|DoScript|LoadExecute|CompileExecute)|kOSAComponentType' \

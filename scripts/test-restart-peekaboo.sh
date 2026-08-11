@@ -1132,8 +1132,7 @@ for policy_case in \
   apple-events-description nested-apple-events-description \
   apple-events-entitlement nsapplescript-import apple-events-string \
   osa-api-import dynamic-applescript-string compiled-script-resource text-osascript-resource \
-  executable-script-resource raw-applescript-text raw-applescript-display prefixed-applescript-command \
-  mode-0740-resource; do
+  executable-script-resource raw-applescript-text raw-applescript-display prefixed-applescript-command; do
   policy_dir="$(new_case ${policy_case}-refusal)"
   policy_target="${policy_dir}/Applications/Peekaboo.app"
   make_bundle "${policy_target}" old
@@ -1147,6 +1146,17 @@ for policy_case in \
     fail "${policy_case} refusal stopped or launched the app"
   fi
 done
+
+# Benign signed executable resources are allowed; native-only means no AppleScript/OSA surface,
+# not that every bundled helper must be a Mach-O file.
+benign_executable_dir="$(new_case benign-executable-resource)"
+benign_executable_target="${benign_executable_dir}/Applications/Peekaboo.app"
+mkdir -p "$(dirname "${benign_executable_target}")"
+make_bundle "${benign_executable_target}" old
+printf '%s\n' "${benign_executable_target}" >"${benign_executable_dir}/running-path"
+touch "${benign_executable_dir}/mode-0740-resource"
+run_restart "${benign_executable_dir}"
+assert_text "${benign_executable_target}/build-id" new
 
 
 # The exact staged candidate is native-scanned after copying, not just its mutable source path.

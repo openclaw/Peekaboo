@@ -179,6 +179,8 @@ acquire_install_lock() {
       fail "Installer lock file is owned by another user: ${LOCK_FILE}"
   fi
 
+  # macOS lockf's descriptor form locks this inherited open-file description. The shell's fd 9
+  # keeps that BSD lock alive after the lockf child exits, until release_install_lock closes it.
   exec 9>"${LOCK_FILE}"
   if ! "${LOCKF_BIN}" -s -t 0 9; then
     exec 9>&-
