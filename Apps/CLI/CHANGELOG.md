@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Reuse two-second, owner-host-local ScreenCaptureKit exact-window screenshot plans without caching pixels, revalidating process generation, window receipt, display topology, and scale around every capture while exposing miss/hit generation diagnostics.
 
 ### Fixed
+- Preserve display-column-safe terminal input and styled table output for wide Unicode, SGR colors, and OSC-8 links, while making terminal stop/restart idempotent and preventing queued renders from escaping a stopped session.
 - Serialize ScreenCaptureKit ownership across Peekaboo processes for the lifetime of the first explicit local-modern claimant or real SCK caller, with build-bound process-awareness receipts, owner-affine auto/modern routing, current-policy capability checks for every transported engine, and fail-closed rolling-upgrade detection for old Bridge and long-running local processes; explicit classic remains a process-isolated, in-process-SCK-free escape hatch and refuses false-preflight captures unless protected WindowServer metadata independently proves access.
 - Keep modern capture inside bounded, coordinator-owned `SCScreenshotManager` calls instead of service-lifetime `SCStream` sessions, eliminating persistent stream overlap and rechecking ownership before every new framework dispatch.
 - Preserve negative numeric option values through Commander parsing so command-owned range validation reports them accurately instead of misclassifying them as short flags.

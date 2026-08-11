@@ -15,6 +15,7 @@
 - Reuse two-second, owner-host-local ScreenCaptureKit exact-window screenshot plans without caching pixels, revalidating process generation, window receipt, display topology, and scale around every capture while exposing miss/hit generation diagnostics.
 
 ### Fixed
+- Preserve display-column-safe terminal input and styled table output for wide Unicode, SGR colors, and OSC-8 links, while making terminal stop/restart idempotent and preventing queued renders from escaping a stopped session.
 - Reject non-finite, fractional, and overflowing MCP numeric arguments before dispatch, and expose integer-shaped delays, durations, counts, process IDs, window selectors, and Space targets as integers in tool schemas.
 - Preserve negative numeric option values through Commander parsing so command-owned range validation reports them accurately instead of misclassifying them as short flags.
 - Reject invalid live/action capture cadence instead of silently clamping or trapping, apply post-motion timing with a monotonic deadline, and report sampled throughput, capture failures, diff-filtered frames, and retained throughput separately from artifact postprocessing.
