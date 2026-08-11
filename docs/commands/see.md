@@ -63,10 +63,11 @@ Note: `--app menubar` captures only the menu bar strip; `--menubar` attempts to 
 returned as `staticText` with global logical bounds and confidence. OCR rows are marked non-actionable and are
 refused as element targets; use an explicit exact-window coordinate plus the returned snapshot/reference receipt
 when a deliberate pixel click is required. Recognition runs locally on the selected macOS runtime host and does not
-use an AI provider, upload pixels, or activate the target app. Remote OCR requires a current Bridge host advertising
-`desktopObservationOCR`; older hosts are refused before the observation request is sent. Update and relaunch that host,
-or pass `--no-remote` to explicitly run Vision OCR in the caller process. Incomplete AX warnings remain in the
-successful result so OCR text never turns missing Accessibility evidence into a false completeness claim.
+use an AI provider, upload pixels, or activate the target app. Explicit remote `--ocr` requires a current Bridge host
+advertising `desktopObservationOCR`; older hosts are refused before the new observation mode is sent. Update and
+relaunch that host, or pass `--no-remote` to explicitly run Vision OCR in the caller process. The existing `--menubar`
+preferred-OCR path retains its legacy Bridge contract. Incomplete AX warnings remain in the successful result so OCR
+text never turns missing Accessibility evidence into a false completeness claim.
 
 For agent and automation runs, pass `--path` to a known temporary file when using `see` so capture artifacts land where expected. Use `peekaboo see --tree --no-screenshot --json` when you need AX metadata without a screenshot artifact.
 

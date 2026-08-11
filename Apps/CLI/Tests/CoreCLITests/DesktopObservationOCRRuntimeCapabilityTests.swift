@@ -50,10 +50,11 @@ struct DesktopObservationOCRRuntimeCapabilityTests {
         let legacy = Self.handshake(capabilities: nil)
 
         #expect(ocr.requiresDesktopObservationOCR)
-        #expect(menubar.requiresDesktopObservationOCR)
+        #expect(!menubar.requiresDesktopObservationOCR)
         #expect(!ordinary.requiresDesktopObservationOCR)
         #expect(CommandRuntime.supportsRemoteRequirements(for: capable, options: ocr))
         #expect(!CommandRuntime.supportsRemoteRequirements(for: legacy, options: ocr))
+        #expect(CommandRuntime.supportsRemoteRequirements(for: legacy, options: menubar))
         #expect(CommandRuntime.supportsRemoteRequirements(for: legacy, options: ordinary))
     }
 

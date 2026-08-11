@@ -66,8 +66,7 @@ enum CommanderCLIBinder {
         let seeSkipsPixels = commandType == SeeCommand.self &&
             commandValues.flag("noScreenshot")
         options.requiresDesktopObservation = commandType == SeeCommand.self && !seeSkipsPixels
-        options.requiresDesktopObservationOCR = commandType == SeeCommand.self &&
-            (commandValues.flag("ocr") || commandValues.flag("menubar"))
+        options.requiresDesktopObservationOCR = commandType == SeeCommand.self && commandValues.flag("ocr")
         options.transportsCaptureEnginePreference = options.requiresDesktopObservation
         options.ignoresCaptureEnginePreference = seeSkipsPixels
         options.requiresImplicitSnapshotInvalidation = Self.requiresImplicitSnapshotInvalidation(

@@ -5,8 +5,9 @@ import PeekabooBridge
 import PeekabooFoundation
 
 enum RemoteDesktopObservationCapabilityPolicy {
-    static func requiresOCR(_ request: DesktopObservationRequest) -> Bool {
-        request.detection.mode == .accessibilityAndOCR || request.detection.preferOCR
+    /// `preferOCR` predates the additive enum case and remains compatible with older hosts.
+    static func requiresOCRCapability(_ request: DesktopObservationRequest) -> Bool {
+        request.detection.mode == .accessibilityAndOCR
     }
 
     static func ocrUnavailableError() -> PeekabooBridgeErrorEnvelope {
@@ -51,7 +52,8 @@ public final class RemoteDesktopObservationService: DesktopObservationServicePro
     }
 
     public func observe(_ request: DesktopObservationRequest) async throws -> DesktopObservationResult {
-        guard !RemoteDesktopObservationCapabilityPolicy.requiresOCR(request) || self.supportsDesktopObservationOCR
+        guard !RemoteDesktopObservationCapabilityPolicy.requiresOCRCapability(request) ||
+            self.supportsDesktopObservationOCR
         else {
             throw RemoteDesktopObservationCapabilityPolicy.ocrUnavailableError()
         }

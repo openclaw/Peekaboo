@@ -201,7 +201,7 @@ private final class LegacyRemoteDesktopObservationService: DesktopObservationSer
     }
 
     func observe(_ request: DesktopObservationRequest) async throws -> DesktopObservationResult {
-        guard !RemoteDesktopObservationCapabilityPolicy.requiresOCR(request) else {
+        guard !RemoteDesktopObservationCapabilityPolicy.requiresOCRCapability(request) else {
             throw RemoteDesktopObservationCapabilityPolicy.ocrUnavailableError()
         }
         guard request.capture.roi == nil else {
