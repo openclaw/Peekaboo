@@ -15,13 +15,15 @@ read_when:
 | --- | --- |
 | `<value>` | String value to write. |
 | `--on <id-or-query>` | Element ID from `peekaboo see`, or a query used by the automation service. Required. |
-| `--snapshot <id>` | Snapshot ID from `peekaboo see`; uses the latest action context when omitted. |
+| `--snapshot <id>` | Snapshot ID from `peekaboo see`; uses the latest unmodified UI snapshot when omitted. |
 | Target flags | `--app`, `--pid`, `--window-id`, `--window-title`, and `--window-index` scope the mutation without activating the app. |
 | `--foreground` | Explicitly focus the target before mutation and allow web-content discovery to focus the page when required. |
 
 ## Notes
 
 - The target element must expose a settable accessibility value.
+- Every mutation requires a current snapshot. App/PID/window target flags capture one automatically; without target
+  flags, run `peekaboo see` first. A missing snapshot is refused instead of falling through to the frontmost app.
 - Secure/password fields are rejected; use explicit typing flows for those contexts.
 - This is not a replacement for `peekaboo type` when the app needs observable keystrokes, IME handling, autocomplete, or undo grouping.
 - JSON output includes `target`, `actionName`, `oldValue`, `newValue`, and `executionTime`.

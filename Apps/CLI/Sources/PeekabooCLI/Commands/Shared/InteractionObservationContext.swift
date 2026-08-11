@@ -225,6 +225,7 @@ enum InteractionObservationRefresher {
             reason: "explicit target for element '\(options.elementTarget)'",
             target: target,
             allowWebFocusFallback: options.allowWebFocusFallback,
+            requireElementResult: true,
             dependencies: dependencies,
             logger: logger
         )
@@ -351,6 +352,7 @@ enum InteractionObservationRefresher {
         reason: String,
         target: InteractionTargetOptions,
         allowWebFocusFallback: Bool = true,
+        requireElementResult: Bool = false,
         dependencies: InteractionObservationRefreshDependencies,
         logger: Logger
     ) async throws -> InteractionObservationContext {
@@ -377,6 +379,12 @@ enum InteractionObservationRefresher {
                 )
             ))
             guard result.elements != nil else {
+                if requireElementResult {
+                    throw PeekabooError.snapshotNotAvailable(
+                        "The targeted observation for \(reason) did not produce a usable UI snapshot. " +
+                            "Run 'peekaboo see' for the target and retry."
+                    )
+                }
                 try? await dependencies.snapshots.cleanSnapshot(snapshotId: snapshotID)
                 _ = try? await dependencies.snapshots.invalidateImplicitLatestSnapshot(through: Date())
                 return observation

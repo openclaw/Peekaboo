@@ -18,3 +18,7 @@ Use `--app`, `--pid`, `--window-id`, `--window-title`, or `--window-index` to re
 activating it. Window title/index selectors require an app or PID. Add `--foreground` only when the action depends on
 focused-window state; this also permits web-content discovery to focus the page when required. The equivalent MCP tool
 is `action`.
+
+Every action resolves through a current UI snapshot. Pass `--snapshot` explicitly, reuse the latest unmodified `see`
+snapshot, or supply app/PID/window target flags so Peekaboo captures a fresh targeted snapshot before dispatch. If no
+snapshot can be established, the command refuses rather than searching the user's frontmost app.

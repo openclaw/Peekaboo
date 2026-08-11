@@ -727,6 +727,68 @@ struct InteractionObservationContextTests {
     }
 
     @Test
+    func `Targeted element action never retains an unrelated latest when refresh has no elements`() async throws {
+        let snapshots = CoreSnapshotManagerStub()
+        let unrelatedSnapshotID = try await snapshots.createSnapshot(id: "unrelated-latest")
+        try await snapshots.storeDetectionResult(
+            snapshotId: unrelatedSnapshotID,
+            result: Self.detectionResult(
+                snapshotId: unrelatedSnapshotID,
+                element: Self.buttonElement(id: "B1")
+            )
+        )
+        let observation = await InteractionObservationContext.resolve(
+            explicitSnapshot: nil,
+            fallbackToLatest: true,
+            snapshots: snapshots
+        )
+        let desktopObservation = RecordingDesktopObservationService(
+            elements: Self.detectionResult(
+                snapshotId: "unused",
+                element: Self.buttonElement(id: "B1")
+            ),
+            snapshots: snapshots
+        )
+        desktopObservation.observeHandler = { _ in
+            DesktopObservationResult(
+                target: ResolvedObservationTarget(kind: .frontmost),
+                capture: CaptureResult(
+                    imageData: Data(),
+                    metadata: CaptureMetadata(size: CGSize(width: 1, height: 1), mode: .frontmost)
+                ),
+                elements: nil,
+                diagnostics: DesktopObservationDiagnostics()
+            )
+        }
+        var target = InteractionTargetOptions()
+        target.app = "TargetApp"
+
+        do {
+            _ = try await InteractionObservationRefresher.refreshForTargetIfNeeded(
+                observation,
+                options: TargetedElementObservationRefreshOptions(
+                    elementTarget: "B1",
+                    allowWebFocusFallback: false
+                ),
+                target: target,
+                dependencies: InteractionObservationRefreshDependencies(
+                    desktopObservation: desktopObservation,
+                    snapshots: snapshots
+                ),
+                logger: Logger.shared
+            )
+            Issue.record("Expected an unusable targeted refresh to fail")
+        } catch let PeekabooError.snapshotNotAvailable(message) {
+            #expect(message.contains("did not produce a usable UI snapshot"))
+        }
+
+        #expect(desktopObservation.requests.count == 1)
+        #expect(await snapshots.getMostRecentSnapshot() == nil)
+        #expect(try await snapshots.getDetectionResult(snapshotId: unrelatedSnapshotID) != nil)
+        #expect(try await Set(snapshots.listSnapshots().map(\.id)) == [unrelatedSnapshotID])
+    }
+
+    @Test
     func `Targeted element action refresh preserves scope and explicit web focus policy`() async throws {
         var appTarget = InteractionTargetOptions()
         appTarget.app = "TargetApp"

@@ -57,21 +57,39 @@ public struct ActionTool: MCPTool {
                 executionTime: Date().timeIntervalSince(startTime),
                 invalidatedSnapshotId: invalidatedSnapshotId)
         } catch let error as ActionToolError {
-            return ToolResponse.error(error.message)
+            return Self.preDispatchErrorResponse(error)
         } catch {
             self.logger.error("action failed: \(error.localizedDescription)")
             return ToolResponse.error("Failed to perform action: \(error.localizedDescription)")
         }
     }
 
-    private func effectiveSnapshotId(_ requestedSnapshotId: String?) async throws -> String? {
+    private func effectiveSnapshotId(_ requestedSnapshotId: String?) async throws -> String {
         if let requestedSnapshotId {
             guard let snapshot = await UISnapshotManager.shared.getSnapshot(id: requestedSnapshotId) else {
-                throw ActionToolError("Snapshot '\(requestedSnapshotId)' not found. Run 'see' or 'inspect_ui' again.")
+                throw ActionToolError(
+                    "Snapshot '\(requestedSnapshotId)' not found. Run 'see' or 'inspect_ui' again.",
+                    errorCode: "SNAPSHOT_NOT_FOUND")
             }
             return snapshot.id
         }
-        return await UISnapshotManager.shared.getSnapshot(id: nil)?.id
+        guard let snapshot = await UISnapshotManager.shared.getSnapshot(id: nil) else {
+            throw ActionToolError(
+                "No active UI snapshot is available. Run 'see' or 'inspect_ui' before using action.",
+                errorCode: "SNAPSHOT_NOT_FOUND")
+        }
+        return snapshot.id
+    }
+
+    private static func preDispatchErrorResponse(_ error: ActionToolError) -> ToolResponse {
+        ToolResponse.error(
+            error.message,
+            meta: .object([
+                "effect": .string("refused"),
+                "error_code": .string(error.errorCode),
+                "mutation_dispatched": .bool(false),
+                "retry_safe": .bool(true),
+            ]))
     }
 
     private func buildResponse(
@@ -123,7 +141,10 @@ private struct ActionRequest {
 
 private struct ActionToolError: Error {
     let message: String
-    init(_ message: String) {
+    let errorCode: String
+
+    init(_ message: String, errorCode: String = "VALIDATION_ERROR") {
         self.message = message
+        self.errorCode = errorCode
     }
 }

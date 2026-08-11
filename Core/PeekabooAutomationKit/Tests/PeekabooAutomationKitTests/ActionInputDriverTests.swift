@@ -382,6 +382,32 @@ struct ActionInputDriverTests {
 
     @MainActor
     @Test
+    func `element actions require a snapshot before target resolution or dispatch`() async throws {
+        let service = UIAutomationService(
+            snapshotManager: InMemorySnapshotManager(),
+            inputPolicy: UIInputPolicy(defaultStrategy: .actionOnly),
+            actionInputDriver: RecordingActionInputDriver(),
+            automationElementResolver: FixedActionAutomationElementResolver {
+                Issue.record("Snapshotless element action reached target resolution")
+            })
+
+        do {
+            _ = try await service.setValue(target: "Delete", value: .string("yes"), snapshotId: nil)
+            Issue.record("Expected snapshotless setValue to fail")
+        } catch let PeekabooError.snapshotNotAvailable(message) {
+            #expect(message.contains("require a current UI snapshot"))
+        }
+
+        do {
+            _ = try await service.performAction(target: "Delete", actionName: "AXPress", snapshotId: nil)
+            Issue.record("Expected snapshotless performAction to fail")
+        } catch let PeekabooError.snapshotNotAvailable(message) {
+            #expect(message.contains("require a current UI snapshot"))
+        }
+    }
+
+    @MainActor
+    @Test
     func `element actions reject missing explicit snapshot instead of live lookup`() async throws {
         let service = UIAutomationService(
             snapshotManager: InMemorySnapshotManager(),

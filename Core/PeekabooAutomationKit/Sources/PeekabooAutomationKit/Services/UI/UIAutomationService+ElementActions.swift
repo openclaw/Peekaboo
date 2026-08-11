@@ -18,11 +18,12 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
         value: UIElementValue,
         snapshotId: String?) async throws -> ElementActionResult
     {
-        let lanePlan = await self.setValueLanePlan(snapshotId: snapshotId)
+        let requiredSnapshotId = try Self.requireElementActionSnapshotID(snapshotId)
+        let lanePlan = await self.setValueLanePlan(snapshotId: requiredSnapshotId)
         return try await self.operationLaneCoordinator.run(scope: lanePlan.scope, access: .write) {
             self.logger.debug("Set value requested - target: \(target, privacy: .public)")
             defer { self.elementDetectionService.invalidateCache() }
-            let resolved = try await self.resolveActionTarget(target, snapshotId: snapshotId)
+            let resolved = try await self.resolveActionTarget(target, snapshotId: requiredSnapshotId)
             try self.validateSetValueTarget(resolved.windowContext, plan: lanePlan)
             let oldValue = self.safeValueDescription(resolved.element.value)
                 ?? resolved.element.selectedValue.map(String.init)
@@ -66,7 +67,8 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
         actionName: String,
         snapshotId: String?) async throws -> ElementActionResult
     {
-        try await self.operationLaneCoordinator.run(scope: .global, access: .write) {
+        let requiredSnapshotId = try Self.requireElementActionSnapshotID(snapshotId)
+        return try await self.operationLaneCoordinator.run(scope: .global, access: .write) {
             let requestDescription = "Perform action requested - target: \(target), action: \(actionName)"
             self.logger.debug("\(requestDescription, privacy: .public)")
             defer { self.elementDetectionService.invalidateCache() }
@@ -75,7 +77,7 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
                     "Invalid action name '\(actionName)'. Use an accessibility action name such as AXPress.")
             }
 
-            let resolved = try await self.resolveActionTarget(target, snapshotId: snapshotId)
+            let resolved = try await self.resolveActionTarget(target, snapshotId: requiredSnapshotId)
             let result = try await self.normalizingSnapshotErrors {
                 try await UIInputDispatcher.run(
                     verb: .performAction,
@@ -107,7 +109,7 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
         }
     }
 
-    private func resolveActionTarget(_ target: String, snapshotId: String?) async throws
+    private func resolveActionTarget(_ target: String, snapshotId: String) async throws
         -> (element: AutomationElement, description: String, bundleIdentifier: String?, windowContext: WindowContext?)
     {
         let normalized = target.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -115,48 +117,46 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
             throw PeekabooError.invalidInput("Element target is required")
         }
 
-        if let snapshotId {
-            let detectionResult: ElementDetectionResult
-            do {
-                guard let result = try await self.snapshotManager.getDetectionResult(snapshotId: snapshotId) else {
-                    throw PeekabooError.snapshotNotFound(snapshotId)
-                }
-                detectionResult = result
-            } catch let error as PeekabooError {
-                throw error
-            } catch {
+        let detectionResult: ElementDetectionResult
+        do {
+            guard let result = try await self.snapshotManager.getDetectionResult(snapshotId: snapshotId) else {
                 throw PeekabooError.snapshotNotFound(snapshotId)
             }
-
-            if let detected = detectionResult.elements.findById(normalized) ??
-                Self.findDetectedElement(matching: normalized, in: detectionResult)
-            {
-                guard let element = self.automationElementResolver.resolve(
-                    detectedElement: detected,
-                    windowContext: detectionResult.metadata.windowContext)
-                else {
-                    throw PeekabooError.snapshotStale("target element is no longer available")
-                }
-                return (
-                    element,
-                    Self.describe(detected),
-                    detectionResult.metadata.windowContext?.applicationBundleId,
-                    detectionResult.metadata.windowContext)
-            }
-
-            throw NotFoundError.element(normalized)
+            detectionResult = result
+        } catch let error as PeekabooError {
+            throw error
+        } catch {
+            throw PeekabooError.snapshotNotFound(snapshotId)
         }
 
-        if let element = self.automationElementResolver.resolve(
-            query: normalized,
-            windowContext: nil,
-            requireTextInput: false)
+        if let detected = detectionResult.elements.findById(normalized) ??
+            Self.findDetectedElement(matching: normalized, in: detectionResult)
         {
-            return (element, element.name ?? normalized, nil, nil)
+            guard let element = self.automationElementResolver.resolve(
+                detectedElement: detected,
+                windowContext: detectionResult.metadata.windowContext)
+            else {
+                throw PeekabooError.snapshotStale("target element is no longer available")
+            }
+            return (
+                element,
+                Self.describe(detected),
+                detectionResult.metadata.windowContext?.applicationBundleId,
+                detectionResult.metadata.windowContext)
         }
 
-        throw PeekabooError.invalidInput(
-            "No active snapshot or matching element for '\(normalized)'. Run 'see' first and pass an element ID.")
+        throw NotFoundError.element(normalized)
+    }
+
+    private static func requireElementActionSnapshotID(_ snapshotId: String?) throws -> String {
+        guard let snapshotId = snapshotId?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !snapshotId.isEmpty
+        else {
+            throw PeekabooError.snapshotNotAvailable(
+                "Direct element actions require a current UI snapshot. Run 'peekaboo see' first, then retry " +
+                    "with its element ID or snapshot context.")
+        }
+        return snapshotId
     }
 
     private static func findDetectedElement(matching query: String, in detectionResult: ElementDetectionResult)

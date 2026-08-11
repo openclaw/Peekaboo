@@ -186,6 +186,7 @@ enum ElementActionCommandExecutor {
                 }
             )
             try await observation.validateIfExplicit(using: services.snapshots)
+            let actionSnapshotId = try observation.requireSnapshot()
             let startTime = Date()
             runtime.beginInteractionMutation()
             if Self.shouldFocus(target: target, focusOptions: context.focusOptions) {
@@ -200,7 +201,7 @@ enum ElementActionCommandExecutor {
                 services.automation,
                 prepared.target,
                 prepared.value,
-                observation.snapshotId
+                actionSnapshotId
             )
             await InteractionObservationInvalidator.invalidateAfterMutation(
                 targets: runtime.interactionMutationTargets,

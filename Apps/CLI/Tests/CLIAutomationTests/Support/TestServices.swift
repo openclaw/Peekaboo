@@ -111,7 +111,7 @@ final class StubScreenCaptureService: ScreenCaptureServiceProtocol {
 
 @MainActor
 final class StubAutomationService: TargetedHotkeyServiceProtocol, TargetedTypeServiceProtocol,
-ExactWindowTargetedClickServiceProtocol {
+ExactWindowTargetedClickServiceProtocol, ElementActionAutomationServiceProtocol {
     struct ClickCall {
         let target: ClickTarget
         let clickType: ClickType
@@ -193,6 +193,18 @@ ExactWindowTargetedClickServiceProtocol {
         let snapshotId: String?
     }
 
+    struct SetValueCall {
+        let target: String
+        let value: UIElementValue
+        let snapshotId: String?
+    }
+
+    struct PerformActionCall {
+        let target: String
+        let actionName: String
+        let snapshotId: String?
+    }
+
     private enum WaitTargetKey: Hashable {
         case elementId(String)
         case query(String)
@@ -211,6 +223,8 @@ ExactWindowTargetedClickServiceProtocol {
     var targetedTypeActionsCalls: [TargetedTypeActionsCall] = []
     var targetedClickCalls: [TargetedClickCall] = []
     var waitForElementCalls: [WaitForElementCall] = []
+    var setValueCalls: [SetValueCall] = []
+    var performActionCalls: [PerformActionCall] = []
     var detectElementsCalls: [(imageData: Data, snapshotId: String?, windowContext: WindowContext?)] = []
     var inspectAccessibilityTreeCalls: [WindowContext?] = []
     var supportsTargetedHotkeys = true
@@ -402,6 +416,28 @@ ExactWindowTargetedClickServiceProtocol {
         self.scrollCalls.append(
             ScrollCall(request: request)
         )
+    }
+
+    func setValue(
+        target: String,
+        value: UIElementValue,
+        snapshotId: String?
+    ) async throws -> ElementActionResult {
+        self.setValueCalls.append(SetValueCall(target: target, value: value, snapshotId: snapshotId))
+        return ElementActionResult(target: target, actionName: nil, anchorPoint: nil)
+    }
+
+    func performAction(
+        target: String,
+        actionName: String,
+        snapshotId: String?
+    ) async throws -> ElementActionResult {
+        self.performActionCalls.append(PerformActionCall(
+            target: target,
+            actionName: actionName,
+            snapshotId: snapshotId
+        ))
+        return ElementActionResult(target: target, actionName: actionName, anchorPoint: nil)
     }
 
     func hotkey(keys: String, holdDuration: Int) async throws {

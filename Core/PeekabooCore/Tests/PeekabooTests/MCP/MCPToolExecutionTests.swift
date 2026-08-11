@@ -733,6 +733,36 @@ struct MCPToolExecutionTests {
 
 struct MCPElementActionToolExecutionTests {
     @Test
+    func `element action tools refuse without an active snapshot before automation dispatch`() async throws {
+        await UISnapshotManager.shared.removeAllSnapshots()
+        let automation = await MainActor.run { MockElementActionAutomationService(accessibilityGranted: true) }
+        let context = await MCPToolTestHelpers.makeContext(automation: automation)
+
+        let actionResponse = try await ActionTool(context: context).execute(arguments: ToolArguments(raw: [
+            "on": "B1",
+            "action": "AXPress",
+        ]))
+        let setValueResponse = try await SetValueTool(context: context).execute(arguments: ToolArguments(raw: [
+            "on": "T1",
+            "value": "hello",
+        ]))
+
+        for response in [actionResponse, setValueResponse] {
+            #expect(response.isError)
+            guard case let .object(meta) = response.meta else {
+                Issue.record("Expected typed pre-dispatch metadata")
+                continue
+            }
+            #expect(meta["effect"] == .string("refused"))
+            #expect(meta["error_code"] == .string("SNAPSHOT_NOT_FOUND"))
+            #expect(meta["mutation_dispatched"] == .bool(false))
+            #expect(meta["retry_safe"] == .bool(true))
+        }
+        #expect(await MainActor.run { automation.performActionCalls.isEmpty })
+        #expect(await MainActor.run { automation.setValueCalls.isEmpty })
+    }
+
+    @Test
     func `set_value tool calls element action service`() async throws {
         let automation = await MainActor.run { MockElementActionAutomationService(accessibilityGranted: true) }
         let context = await MCPToolTestHelpers.makeContext(automation: automation)
