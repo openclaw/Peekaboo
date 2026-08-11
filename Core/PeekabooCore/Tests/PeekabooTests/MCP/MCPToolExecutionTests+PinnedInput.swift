@@ -17,6 +17,9 @@ extension MockAutomationService {
             targetProcessIdentifier: expectedProcessIdentity.processIdentifier,
             targetWindowID: nil,
             expectedProcessIdentity: expectedProcessIdentity))
+        if let error = self.pinnedClickError?(target) {
+            throw error
+        }
     }
 
     func typeActions(
@@ -31,6 +34,9 @@ extension MockAutomationService {
             snapshotId: snapshotId,
             targetProcessIdentifier: expectedProcessIdentity.processIdentifier,
             expectedProcessIdentity: expectedProcessIdentity))
+        if let error = self.pinnedTypeError?(actions) {
+            throw error
+        }
         return try await self.typeActions(actions, cadence: cadence, snapshotId: snapshotId)
     }
 
@@ -51,5 +57,8 @@ extension MockAutomationService {
             targetProcessIdentifier: expectedProcessIdentity.processIdentifier,
             expectedProcessIdentity: expectedProcessIdentity))
         self.afterPinnedHotkey?()
+        if let error = self.pinnedHotkeyError?(keys) {
+            throw error
+        }
     }
 }

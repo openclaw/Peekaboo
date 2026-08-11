@@ -141,7 +141,11 @@ public struct PressTool: MCPTool {
                     }
                 }
             } catch let error as InputDeliveryIndeterminateError {
-                throw error
+                let cumulativeCount = error.emittedUnitCount.map { completed + $0 }
+                throw InputDeliveryIndeterminateError(
+                    operation: .hotkey,
+                    emittedUnitCount: cumulativeCount,
+                    causeDescription: error.causeDescription)
             } catch {
                 guard completed > 0 else { throw error }
                 throw InputDeliveryIndeterminateError(

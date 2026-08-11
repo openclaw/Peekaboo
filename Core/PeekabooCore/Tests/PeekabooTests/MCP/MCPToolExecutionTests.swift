@@ -1030,6 +1030,7 @@ TargetedTypeServiceProtocol {
     var supportsProcessGenerationPinnedHotkeys = true
     var currentProcessIdentity: ((pid_t) -> ApplicationProcessIdentity?)?
     var afterPinnedHotkey: (() -> Void)?
+    var pinnedHotkeyError: ((String) -> (any Error)?)?
     var targetedHotkeyUnavailableReason: String?
     var targetedHotkeyRequiresEventSynthesizingPermission = false
     var supportsTargetedTypeActions = true
@@ -1037,6 +1038,8 @@ TargetedTypeServiceProtocol {
     var targetedTypeUnavailableReason: String?
     var targetedTypeRequiresEventSynthesizingPermission = false
     var supportsProcessGenerationPinnedClicks = true
+    var pinnedClickError: ((ClickTarget) -> (any Error)?)?
+    var pinnedTypeError: (([TypeAction]) -> (any Error)?)?
 
     init(
         accessibilityGranted: Bool,

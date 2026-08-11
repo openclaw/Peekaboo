@@ -295,6 +295,103 @@ struct MCPKeyboardBackgroundToolTests {
     }
 
     @Test
+    func `Type tool reports failure after background focus click as retry unsafe`() async throws {
+        await UISnapshotManager.shared.removeAllSnapshots()
+        let automation = await MainActor.run {
+            let automation = MockAutomationService(accessibilityGranted: true)
+            automation.pinnedTypeError = { _ in
+                PeekabooError.invalidInput("target process changed generation")
+            }
+            return automation
+        }
+        let context = await MCPToolTestHelpers.makeContext(automation: automation)
+        let snapshot = await UISnapshotManager.shared.createSnapshot()
+        let snapshotId = await snapshot.id
+        await snapshot.setScreenshot(
+            path: "/tmp/screenshot.png",
+            metadata: CaptureMetadata(
+                size: CGSize(width: 200, height: 100),
+                mode: .window,
+                applicationInfo: ServiceApplicationInfo(
+                    processIdentifier: 113,
+                    processStartIdentity: 13,
+                    bundleIdentifier: "com.example.snapshot",
+                    name: "SnapshotApp")))
+        await snapshot.setUIElements([
+            UIElement(
+                id: "T1",
+                elementId: "T1",
+                role: "textField",
+                title: nil,
+                label: "Name",
+                value: nil,
+                description: nil,
+                help: nil,
+                roleDescription: "text field",
+                identifier: nil,
+                frame: CGRect(x: 10, y: 20, width: 160, height: 30),
+                isActionable: true),
+        ])
+
+        let response = try await TypeTool(context: context).execute(arguments: ToolArguments(raw: [
+            "on": "T1",
+            "text": "hello",
+            "snapshot": snapshotId,
+        ]))
+
+        #expect(response.isError)
+        #expect(await MainActor.run { automation.targetedClickCalls.count } == 1)
+        #expect(await MainActor.run { automation.targetedTypeActionsCalls.count } == 1)
+        guard case let .object(meta) = response.meta else {
+            Issue.record("Expected indeterminate type metadata")
+            return
+        }
+        #expect(meta["mutation_dispatched"] == .bool(true))
+        #expect(meta["retry_safe"] == .bool(false))
+        #expect(meta["characters_typed"] == .null)
+        #expect(meta["invalidated_snapshot"] == .string(snapshotId))
+        #expect(await UISnapshotManager.shared.getSnapshot(id: snapshotId) != nil)
+        #expect(await UISnapshotManager.shared.getSnapshot(id: nil) == nil)
+    }
+
+    @Test
+    func `Type tool does not count an indeterminate focus click as typed characters`() async throws {
+        await UISnapshotManager.shared.removeAllSnapshots()
+        let automation = await MainActor.run {
+            let automation = MockAutomationService(accessibilityGranted: true)
+            automation.pinnedClickError = { _ in
+                InputDeliveryIndeterminateError(
+                    operation: .click,
+                    emittedUnitCount: 1,
+                    causeDescription: "focus click completion drift")
+            }
+            return automation
+        }
+        let context = await MCPToolTestHelpers.makeContext(automation: automation)
+        let snapshotId = await self.makeTypingSnapshot(
+            processIdentifier: 114,
+            processStartIdentity: 14)
+
+        let response = try await TypeTool(context: context).execute(arguments: ToolArguments(raw: [
+            "on": "T1",
+            "text": "hello",
+            "snapshot": snapshotId,
+        ]))
+
+        #expect(response.isError)
+        #expect(await MainActor.run { automation.targetedClickCalls.count } == 1)
+        #expect(await MainActor.run { automation.targetedTypeActionsCalls.isEmpty })
+        guard case let .object(meta) = response.meta else {
+            Issue.record("Expected indeterminate type metadata")
+            return
+        }
+        #expect(meta["mutation_dispatched"] == .bool(true))
+        #expect(meta["retry_safe"] == .bool(false))
+        #expect(meta["characters_typed"] == .null)
+        #expect(meta["invalidated_snapshot"] == .string(snapshotId))
+    }
+
+    @Test
     func `Press tool uses targeted delivery when pid is supplied`() async throws {
         let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
         let applications = await MainActor.run {
@@ -368,6 +465,89 @@ struct MCPKeyboardBackgroundToolTests {
         #expect(meta["mutation_dispatched"] == .bool(true))
         #expect(meta["retry_safe"] == .bool(false))
         #expect(meta["emitted_units"] == .int(1))
+    }
+
+    @Test
+    func `Press sequence includes prior chords in indeterminate emitted count`() async throws {
+        let identity = ApplicationProcessIdentity(processIdentifier: 224, processStartIdentity: 24)
+        let automation = await MainActor.run {
+            let automation = MockAutomationService(accessibilityGranted: true)
+            automation.pinnedHotkeyError = { keys in
+                guard keys == "cmd,k" else { return nil }
+                return InputDeliveryIndeterminateError(
+                    operation: .hotkey,
+                    emittedUnitCount: 1,
+                    causeDescription: "completion identity drift")
+            }
+            return automation
+        }
+        let applications = await MainActor.run {
+            MockApplicationService(applications: [ServiceApplicationInfo(
+                processIdentifier: identity.processIdentifier,
+                processStartIdentity: identity.processStartIdentity,
+                bundleIdentifier: "com.example.target",
+                name: "Target")])
+        }
+        let context = await MCPToolTestHelpers.makeContext(
+            automation: automation,
+            applications: applications)
+
+        let response = try await PressTool(context: context).execute(arguments: ToolArguments(raw: [
+            "keys": ["cmd+l", "cmd+k"],
+            "pid": Int(identity.processIdentifier),
+            "delay": 0,
+        ]))
+
+        #expect(response.isError)
+        #expect(await MainActor.run { automation.targetedHotkeyCalls.count } == 2)
+        guard case let .object(meta) = response.meta else {
+            Issue.record("Expected indeterminate press metadata")
+            return
+        }
+        #expect(meta["mutation_dispatched"] == .bool(true))
+        #expect(meta["retry_safe"] == .bool(false))
+        #expect(meta["emitted_units"] == .int(2))
+    }
+
+    @Test
+    func `Press sequence preserves unknown count for indeterminate current chord`() async throws {
+        let identity = ApplicationProcessIdentity(processIdentifier: 225, processStartIdentity: 25)
+        let automation = await MainActor.run {
+            let automation = MockAutomationService(accessibilityGranted: true)
+            automation.pinnedHotkeyError = { keys in
+                guard keys == "cmd,k" else { return nil }
+                return InputDeliveryIndeterminateError(
+                    operation: .hotkey,
+                    causeDescription: "unknown current chord completion")
+            }
+            return automation
+        }
+        let applications = await MainActor.run {
+            MockApplicationService(applications: [ServiceApplicationInfo(
+                processIdentifier: identity.processIdentifier,
+                processStartIdentity: identity.processStartIdentity,
+                bundleIdentifier: "com.example.target",
+                name: "Target")])
+        }
+        let context = await MCPToolTestHelpers.makeContext(
+            automation: automation,
+            applications: applications)
+
+        let response = try await PressTool(context: context).execute(arguments: ToolArguments(raw: [
+            "keys": ["cmd+l", "cmd+k"],
+            "pid": Int(identity.processIdentifier),
+            "delay": 0,
+        ]))
+
+        #expect(response.isError)
+        #expect(await MainActor.run { automation.targetedHotkeyCalls.count } == 2)
+        guard case let .object(meta) = response.meta else {
+            Issue.record("Expected indeterminate press metadata")
+            return
+        }
+        #expect(meta["mutation_dispatched"] == .bool(true))
+        #expect(meta["retry_safe"] == .bool(false))
+        #expect(meta["emitted_units"] == .null)
     }
 
     @Test
@@ -538,6 +718,40 @@ struct MCPKeyboardBackgroundToolTests {
         #expect(meta["restore_succeeded"] == .bool(false))
         #expect(meta["restore_error"] == .string("Failed to write to clipboard: simulated restore failure"))
         #expect(await MainActor.run { clipboard.restoreCallCount } == 1)
+    }
+
+    private func makeTypingSnapshot(
+        processIdentifier: pid_t,
+        processStartIdentity: UInt64) async -> String
+    {
+        let snapshot = await UISnapshotManager.shared.createSnapshot()
+        let snapshotId = await snapshot.id
+        await snapshot.setScreenshot(
+            path: "/tmp/screenshot.png",
+            metadata: CaptureMetadata(
+                size: CGSize(width: 200, height: 100),
+                mode: .window,
+                applicationInfo: ServiceApplicationInfo(
+                    processIdentifier: processIdentifier,
+                    processStartIdentity: processStartIdentity,
+                    bundleIdentifier: "com.example.snapshot",
+                    name: "SnapshotApp")))
+        await snapshot.setUIElements([
+            UIElement(
+                id: "T1",
+                elementId: "T1",
+                role: "textField",
+                title: nil,
+                label: "Name",
+                value: nil,
+                description: nil,
+                help: nil,
+                roleDescription: "text field",
+                identifier: nil,
+                frame: CGRect(x: 10, y: 20, width: 160, height: 30),
+                isActionable: true),
+        ])
+        return snapshotId
     }
 }
 

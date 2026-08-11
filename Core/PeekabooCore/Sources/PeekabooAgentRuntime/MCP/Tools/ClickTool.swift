@@ -147,9 +147,11 @@ public struct ClickTool: MCPTool {
         }
 
         let startTime = Date()
+        var snapshotIdToInvalidate: String?
 
         do {
             let resolution = try await self.resolveClickTarget(for: request)
+            snapshotIdToInvalidate = resolution.snapshotIdToInvalidate
             let effectiveTargetProcessIdentity = try await self.backgroundProcessIdentity(
                 request: request,
                 resolution: resolution)
@@ -172,13 +174,19 @@ public struct ClickTool: MCPTool {
         } catch let error as ClickToolError {
             return Self.preDispatchErrorResponse(error)
         } catch let error as InputDeliveryIndeterminateError {
+            let invalidatedSnapshotId = await UISnapshotManager.shared
+                .invalidateActiveSnapshot(id: snapshotIdToInvalidate)
+            var meta: [String: Value] = [
+                "mutation_dispatched": .bool(true),
+                "retry_safe": .bool(false),
+                "requires_fresh_observation": .bool(true),
+            ]
+            if let invalidatedSnapshotId {
+                meta["invalidated_snapshot"] = .string(invalidatedSnapshotId)
+            }
             return ToolResponse.error(
                 error.localizedDescription,
-                meta: .object([
-                    "mutation_dispatched": .bool(true),
-                    "retry_safe": .bool(false),
-                    "requires_fresh_observation": .bool(true),
-                ]))
+                meta: .object(meta))
         } catch {
             self.logger.error("Click execution failed: \(error.localizedDescription)")
             return ToolResponse.error("Failed to perform click: \(error.localizedDescription)")

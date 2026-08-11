@@ -66,22 +66,29 @@ public struct TypeTool: MCPTool {
 
     @MainActor
     public func execute(arguments: ToolArguments) async throws -> ToolResponse {
+        let mutationTracker = TypeMutationTracker()
         do {
             let request = try self.parseRequest(arguments: arguments)
-            return try await self.performType(request: request)
+            return try await self.performType(request: request, mutationTracker: mutationTracker)
         } catch let error as TypeToolValidationError {
             return ToolResponse.error(error.message)
         } catch let error as MCPInteractionTargetError {
             return ToolResponse.error(error.localizedDescription)
         } catch let error as InputDeliveryIndeterminateError {
+            let invalidatedSnapshotId = await UISnapshotManager.shared
+                .invalidateActiveSnapshot(id: mutationTracker.snapshotId)
+            var meta: [String: Value] = [
+                "mutation_dispatched": .bool(true),
+                "retry_safe": .bool(false),
+                "requires_fresh_observation": .bool(true),
+                "characters_typed": error.emittedUnitCount.map(Value.int) ?? .null,
+            ]
+            if let invalidatedSnapshotId {
+                meta["invalidated_snapshot"] = .string(invalidatedSnapshotId)
+            }
             return ToolResponse.error(
                 error.localizedDescription,
-                meta: .object([
-                    "mutation_dispatched": .bool(true),
-                    "retry_safe": .bool(false),
-                    "requires_fresh_observation": .bool(true),
-                    "characters_typed": error.emittedUnitCount.map(Value.int) ?? .null,
-                ]))
+                meta: .object(meta))
         } catch {
             self.logger.error("Type execution failed: \(error)")
             return ToolResponse.error("Failed to type text: \(error.localizedDescription)")
@@ -139,7 +146,10 @@ public struct TypeTool: MCPTool {
     }
 
     @MainActor
-    private func performType(request: TypeRequest) async throws -> ToolResponse {
+    private func performType(
+        request: TypeRequest,
+        mutationTracker: TypeMutationTracker) async throws -> ToolResponse
+    {
         let automation = self.context.automation
         let startTime = Date()
 
@@ -152,26 +162,51 @@ public struct TypeTool: MCPTool {
             request: request,
             snapshot: snapshotContext)
         let targetProcessIdentifier = targetProcessIdentity.map { Int($0.processIdentifier) }
-
-        try await self.focusIfNeeded(
-            targetContext: targetContext,
-            request: request,
-            automation: automation,
-            targetProcessIdentity: targetProcessIdentity)
         let actions = try self.buildActions(for: request)
         let effectiveSnapshotId = snapshotContext?.id
-        let typeResult: TypeResult = if let targetProcessIdentity {
-            try await self.performBackgroundType(
-                actions: actions,
-                cadence: request.cadence,
-                snapshotId: effectiveSnapshotId,
-                expectedProcessIdentity: targetProcessIdentity,
-                automation: automation)
-        } else {
-            try await automation.typeActions(
-                actions,
-                cadence: request.cadence,
-                snapshotId: effectiveSnapshotId)
+        mutationTracker.snapshotId = effectiveSnapshotId
+
+        let elementFocusClickCompleted: Bool
+        do {
+            elementFocusClickCompleted = try await self.focusIfNeeded(
+                targetContext: targetContext,
+                request: request,
+                automation: automation,
+                targetProcessIdentity: targetProcessIdentity)
+        } catch let error as InputDeliveryIndeterminateError {
+            throw InputDeliveryIndeterminateError(
+                operation: .type,
+                causeDescription: error.causeDescription ?? error.localizedDescription)
+        }
+
+        let typeResult: TypeResult
+        do {
+            if elementFocusClickCompleted {
+                try await Task.sleep(nanoseconds: 100_000_000)
+            }
+            if let targetProcessIdentity {
+                typeResult = try await self.performBackgroundType(
+                    actions: actions,
+                    cadence: request.cadence,
+                    snapshotId: effectiveSnapshotId,
+                    expectedProcessIdentity: targetProcessIdentity,
+                    automation: automation)
+            } else {
+                typeResult = try await automation.typeActions(
+                    actions,
+                    cadence: request.cadence,
+                    snapshotId: effectiveSnapshotId)
+            }
+        } catch let error as InputDeliveryIndeterminateError {
+            throw InputDeliveryIndeterminateError(
+                operation: .type,
+                emittedUnitCount: error.emittedUnitCount,
+                causeDescription: error.causeDescription ?? error.localizedDescription)
+        } catch {
+            guard elementFocusClickCompleted else { throw error }
+            throw InputDeliveryIndeterminateError(
+                operation: .type,
+                causeDescription: error.localizedDescription)
         }
 
         let invalidatedSnapshotId = await UISnapshotManager.shared.invalidateActiveSnapshot(id: effectiveSnapshotId)
@@ -208,7 +243,7 @@ public struct TypeTool: MCPTool {
         targetContext: TargetElementContext?,
         request: TypeRequest,
         automation: any UIAutomationServiceProtocol,
-        targetProcessIdentity: ApplicationProcessIdentity?) async throws
+        targetProcessIdentity: ApplicationProcessIdentity?) async throws -> Bool
     {
         guard let context = targetContext else {
             if targetProcessIdentity == nil {
@@ -216,7 +251,7 @@ public struct TypeTool: MCPTool {
                     windows: self.context.windows,
                     onlyWhenTargeted: true)
             }
-            return
+            return false
         }
 
         let element = context.element
@@ -238,7 +273,7 @@ public struct TypeTool: MCPTool {
                 clickType: .single,
                 snapshotId: context.snapshot.id)
         }
-        try await Task.sleep(nanoseconds: 100_000_000)
+        return true
     }
 
     private func backgroundProcessIdentity(
@@ -344,4 +379,9 @@ public struct TypeTool: MCPTool {
         }
         return snapshot
     }
+}
+
+@MainActor
+private final class TypeMutationTracker {
+    var snapshotId: String?
 }

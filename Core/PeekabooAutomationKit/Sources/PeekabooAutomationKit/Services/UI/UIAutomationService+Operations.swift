@@ -159,7 +159,7 @@ extension UIAutomationService {
                 try await self.clickService.click(target: target, clickType: clickType, snapshotId: snapshotId)
             }
 
-            try await self.visualizeClick(
+            await self.visualizeClick(
                 target: target,
                 actionAnchor: result.anchorPoint,
                 clickType: clickType,
@@ -185,7 +185,7 @@ extension UIAutomationService {
                     targetProcessIdentifier: targetProcessIdentifier)
             }
 
-            try await self.visualizeClick(
+            await self.visualizeClick(
                 target: target,
                 actionAnchor: result.anchorPoint,
                 clickType: clickType,
@@ -236,7 +236,7 @@ extension UIAutomationService {
                     causeDescription: "The target process changed generation before completion validation")
             }
 
-            try await self.visualizeClick(
+            await self.visualizeClick(
                 target: target,
                 actionAnchor: result.anchorPoint,
                 clickType: clickType,
@@ -274,7 +274,7 @@ extension UIAutomationService {
                     expectedWindowBounds: expectedWindowBounds)
             }
 
-            try await self.visualizeClick(
+            await self.visualizeClick(
                 target: target,
                 actionAnchor: result.anchorPoint,
                 clickType: clickType,
@@ -290,10 +290,10 @@ extension UIAutomationService {
         actionAnchor: CGPoint?,
         clickType: ClickType,
         snapshotId: String?,
-        targetProcessIdentifier: pid_t?) async throws
+        targetProcessIdentifier: pid_t?) async
     {
         guard targetProcessIdentifier == nil else { return }
-        let fallbackPoint = try await self.getClickPoint(for: target, snapshotId: snapshotId)
+        let fallbackPoint = await self.getClickPoint(for: target, snapshotId: snapshotId)
         if let clickPoint = Self.visualFeedbackPoint(actionAnchor: actionAnchor, fallbackPoint: fallbackPoint) {
             _ = await self.feedbackClient.showClickFeedback(
                 at: clickPoint,
@@ -312,7 +312,7 @@ extension UIAutomationService {
         }
     }
 
-    private func getClickPoint(for target: ClickTarget, snapshotId: String?) async throws -> CGPoint? {
+    private func getClickPoint(for target: ClickTarget, snapshotId: String?) async -> CGPoint? {
         switch target {
         case let .coordinates(point):
             return point
