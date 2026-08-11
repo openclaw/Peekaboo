@@ -8,6 +8,11 @@ import PeekabooFoundation
 /// Service for handling typing and text input operations
 @MainActor
 public final class TypeService {
+    struct TypeExecutionSummary {
+        let result: UIInputExecutionResult
+        let typedIntoSecureField: Bool
+    }
+
     struct TypeActionExecutionSummary {
         let result: TypeResult
         let typedIntoSecureField: Bool
@@ -23,6 +28,8 @@ public final class TypeService {
     private let automationElementResolver: any AutomationElementResolving
     private let focusedElementSecurityProbe: @MainActor (pid_t?) -> Bool
     private let targetedCharacterTyper: @MainActor (Character, pid_t) throws -> Void
+    private let desktopOperationExecutor: DesktopOperationExecutor
+    private let operationFinalizer: @MainActor () -> Void
 
     public convenience init(
         snapshotManager: (any SnapshotManagerProtocol)? = nil,
@@ -44,7 +51,9 @@ public final class TypeService {
         inputPolicy: UIInputPolicy = .currentBehavior,
         actionInputDriver: any ActionInputDriving = ActionInputDriver(),
         syntheticInputDriver: any SyntheticInputDriving = SyntheticInputDriver(),
-        automationElementResolver: any AutomationElementResolving = AutomationElementResolver())
+        automationElementResolver: any AutomationElementResolving = AutomationElementResolver(),
+        desktopOperationExecutor: DesktopOperationExecutor = DesktopOperationExecutor(),
+        operationFinalizer: @escaping @MainActor () -> Void = {})
     {
         self.init(
             snapshotManager: snapshotManager,
@@ -54,7 +63,9 @@ public final class TypeService {
             syntheticInputDriver: syntheticInputDriver,
             automationElementResolver: automationElementResolver,
             randomSource: SystemTypingCadenceRandomSource(),
-            focusedElementSecurityProbe: Self.focusedElementIsSecureField)
+            focusedElementSecurityProbe: Self.focusedElementIsSecureField,
+            desktopOperationExecutor: desktopOperationExecutor,
+            operationFinalizer: operationFinalizer)
     }
 
     init(
@@ -67,7 +78,9 @@ public final class TypeService {
         randomSource: any TypingCadenceRandomSource,
         focusedElementSecurityProbe: @escaping @MainActor (pid_t?) -> Bool = TypeService.focusedElementIsSecureField,
         targetedCharacterTyper: @escaping @MainActor (Character, pid_t) throws -> Void = TypeService
-            .typeTargetedCharacter)
+            .typeTargetedCharacter,
+        desktopOperationExecutor: DesktopOperationExecutor = DesktopOperationExecutor(),
+        operationFinalizer: @escaping @MainActor () -> Void = {})
     {
         let manager = snapshotManager ?? SnapshotManager()
         self.snapshotManager = manager
@@ -76,7 +89,9 @@ public final class TypeService {
             inputPolicy: inputPolicy,
             actionInputDriver: actionInputDriver,
             syntheticInputDriver: syntheticInputDriver,
-            automationElementResolver: automationElementResolver)
+            automationElementResolver: automationElementResolver,
+            desktopOperationExecutor: desktopOperationExecutor,
+            operationFinalizer: operationFinalizer)
         self.inputPolicy = inputPolicy
         self.actionInputDriver = actionInputDriver
         self.syntheticInputDriver = syntheticInputDriver
@@ -84,6 +99,8 @@ public final class TypeService {
         self.cadenceRandom = randomSource
         self.focusedElementSecurityProbe = focusedElementSecurityProbe
         self.targetedCharacterTyper = targetedCharacterTyper
+        self.desktopOperationExecutor = desktopOperationExecutor
+        self.operationFinalizer = operationFinalizer
     }
 
     /// Type text with optional target and settings
@@ -96,32 +113,67 @@ public final class TypeService {
         typingDelay: Int,
         snapshotId: String?) async throws -> UIInputExecutionResult
     {
+        try await self.typeTrackingSecureInput(
+            text: text,
+            target: target,
+            clearExisting: clearExisting,
+            typingDelay: typingDelay,
+            snapshotId: snapshotId).result
+    }
+
+    func typeTrackingSecureInput(
+        text: String,
+        target: String?,
+        clearExisting: Bool,
+        typingDelay: Int,
+        snapshotId: String?,
+        lanePreparation: @escaping @MainActor () async -> Void = {}) async throws -> TypeExecutionSummary
+    {
         self.logger
             .debug("Type requested - text: '\(text)', target: \(target ?? "current focus"), clear: \(clearExisting)")
-        let bundleIdentifier = await self.bundleIdentifier(snapshotId: snapshotId)
-
-        let result = try await UIInputDispatcher.run(
+        var bundleIdentifier: String?
+        var typedIntoSecureField = false
+        let plan = try DesktopOperationPlan(
             verb: .type,
-            strategy: self.inputPolicy.strategy(for: .type, bundleIdentifier: bundleIdentifier),
-            bundleIdentifier: bundleIdentifier,
-            action: {
+            selector: .element(target),
+            captureReceipt: DesktopOperationPlan.CaptureReceipt(
+                snapshotID: snapshotId),
+            deliveryIntent: .foreground,
+            strategy: self.inputPolicy.strategy(for: .type),
+            prepare: {
+                bundleIdentifier = await self.bundleIdentifier(snapshotId: snapshotId)
+                typedIntoSecureField = if let target {
+                    await self.typingTargetIsSecureField(target: target, snapshotId: snapshotId)
+                } else {
+                    self.focusedElementSecurityProbe(nil)
+                }
+                await lanePreparation()
+            },
+            routing: {
+                DesktopOperationPlan.Routing(
+                    strategy: self.inputPolicy.strategy(for: .type, bundleIdentifier: bundleIdentifier),
+                    bundleIdentifier: bundleIdentifier)
+            },
+            action: DesktopOperationPlan.ActionRoute(requirements: .accessibilityAction) {
                 try await self.performActionType(
                     text: text,
                     target: target,
                     clearExisting: clearExisting,
                     snapshotId: snapshotId)
             },
-            synth: {
+            synthesis: DesktopOperationPlan.SynthesisRoute(requirements: .globalEvents) {
                 try await self.performSyntheticType(
                     text: text,
                     target: target,
                     clearExisting: clearExisting,
                     typingDelay: typingDelay,
                     snapshotId: snapshotId)
-            })
+            },
+            finalize: self.operationFinalizer)
+        let result = try await self.desktopOperationExecutor.execute(plan)
 
         self.logger.debug("Type completed via \(result.path.rawValue, privacy: .public)")
-        return result
+        return TypeExecutionSummary(result: result, typedIntoSecureField: typedIntoSecureField)
     }
 
     private func performActionType(
@@ -177,14 +229,14 @@ public final class TypeService {
 
             if elementFound {
                 if let elementId {
-                    try await self.clickService.click(
+                    _ = try await self.clickService.clickOwned(
                         target: .elementId(elementId),
                         clickType: .single,
                         snapshotId: snapshotId)
                 } else if let frame = elementFrame {
                     let center = CGPoint(x: frame.midX, y: frame.midY)
                     let adjusted = try await self.resolveAdjustedPoint(center, snapshotId: snapshotId)
-                    try await self.clickService.click(
+                    _ = try await self.clickService.clickOwned(
                         target: .coordinates(adjusted),
                         clickType: .single,
                         snapshotId: snapshotId)
@@ -242,15 +294,27 @@ public final class TypeService {
         cadence: TypingCadence,
         snapshotId: String?,
         targetProcessIdentifier: pid_t?,
-        deliveryValidator: (@MainActor @Sendable () async throws -> Void)? = nil) async throws
+        deliveryValidator: (@MainActor @Sendable () async throws -> Void)? = nil,
+        expectedProcessIdentity: ApplicationProcessIdentity? = nil,
+        lanePreparation: @escaping @MainActor () async -> Void = {}) async throws
         -> TypeActionExecutionSummary
     {
         var summary: TypeActionExecutionSummary?
-        _ = try await UIInputDispatcher.run(
+        let foreground = targetProcessIdentifier == nil
+        let plan = try DesktopOperationPlan(
             verb: .type,
+            selector: .focused,
+            captureReceipt: DesktopOperationPlan.CaptureReceipt(
+                snapshotID: snapshotId,
+                processIdentifier: targetProcessIdentifier,
+                processIdentity: expectedProcessIdentity),
+            deliveryIntent: foreground ? .foreground : .background,
             strategy: targetProcessIdentifier == nil ? self.inputPolicy.strategy(for: .type) : .synthOnly,
+            prepare: { await lanePreparation() },
             action: nil,
-            synth: {
+            synthesis: DesktopOperationPlan.SynthesisRoute(
+                requirements: foreground ? .globalEvents : .processTargetedEvents)
+            {
                 summary = try await self.performSyntheticTypeActions(
                     actions,
                     cadence: cadence,
@@ -262,7 +326,9 @@ public final class TypeService {
                         mechanism: targetProcessIdentifier == nil ? .globalEvents : .processTargetedEvents,
                         mode: targetProcessIdentifier == nil ? .foreground : .background),
                     evidence: .deliveryAccepted)
-            })
+            },
+            finalize: self.operationFinalizer)
+        _ = try await self.desktopOperationExecutor.execute(plan)
 
         guard let summary else {
             throw PeekabooError.operationError(message: "Type action execution did not produce a result")

@@ -15,6 +15,8 @@ public final class ScrollService {
     private let actionInputDriver: any ActionInputDriving
     private let syntheticInputDriver: any SyntheticInputDriving
     private let automationElementResolver: any AutomationElementResolving
+    private let desktopOperationExecutor: DesktopOperationExecutor
+    private let operationFinalizer: @MainActor () -> Void
 
     public convenience init(
         snapshotManager: (any SnapshotManagerProtocol)? = nil,
@@ -36,7 +38,9 @@ public final class ScrollService {
         inputPolicy: UIInputPolicy = .currentBehavior,
         actionInputDriver: any ActionInputDriving = ActionInputDriver(),
         syntheticInputDriver: any SyntheticInputDriving = SyntheticInputDriver(),
-        automationElementResolver: any AutomationElementResolving = AutomationElementResolver())
+        automationElementResolver: any AutomationElementResolving = AutomationElementResolver(),
+        desktopOperationExecutor: DesktopOperationExecutor = DesktopOperationExecutor(),
+        operationFinalizer: @escaping @MainActor () -> Void = {})
     {
         let manager = snapshotManager ?? SnapshotManager()
         self.snapshotManager = manager
@@ -45,40 +49,65 @@ public final class ScrollService {
             inputPolicy: inputPolicy,
             actionInputDriver: actionInputDriver,
             syntheticInputDriver: syntheticInputDriver,
-            automationElementResolver: automationElementResolver)
+            automationElementResolver: automationElementResolver,
+            desktopOperationExecutor: desktopOperationExecutor,
+            operationFinalizer: operationFinalizer)
         self.inputPolicy = inputPolicy
         self.actionInputDriver = actionInputDriver
         self.syntheticInputDriver = syntheticInputDriver
         self.automationElementResolver = automationElementResolver
+        self.desktopOperationExecutor = desktopOperationExecutor
+        self.operationFinalizer = operationFinalizer
     }
 
     /// Perform scroll operation
     @discardableResult
     @MainActor
     public func scroll(_ request: ScrollRequest) async throws -> UIInputExecutionResult {
+        try await self.scrollWithLanePreparation(request)
+    }
+
+    func scrollWithLanePreparation(
+        _ request: ScrollRequest,
+        lanePreparation: @escaping @MainActor () async -> Void = {}) async throws -> UIInputExecutionResult
+    {
         let description =
             "Scroll requested - direction: \(request.direction), amount: \(request.amount), " +
             "smooth: \(request.smooth)"
         self.logger.debug("\(description, privacy: .public)")
-        let bundleIdentifier = await self.bundleIdentifier(snapshotId: request.snapshotId)
+        var bundleIdentifier: String?
         let strategy: UIInputStrategy = request.foreground ? .synthOnly : .actionOnly
 
         do {
-            let result = try await UIInputDispatcher.run(
+            let plan = try DesktopOperationPlan(
                 verb: .scroll,
+                selector: .element(request.target),
+                captureReceipt: DesktopOperationPlan.CaptureReceipt(
+                    snapshotID: request.snapshotId),
+                deliveryIntent: request.foreground ? .foreground : .background,
                 strategy: strategy,
-                bundleIdentifier: bundleIdentifier,
-                action: {
+                prepare: {
+                    bundleIdentifier = await self.bundleIdentifier(snapshotId: request.snapshotId)
+                    await lanePreparation()
+                },
+                routing: {
+                    DesktopOperationPlan.Routing(
+                        strategy: strategy,
+                        bundleIdentifier: bundleIdentifier)
+                },
+                action: DesktopOperationPlan.ActionRoute(requirements: .accessibilityAction) {
                     try await self.performActionScroll(request, strategy: strategy)
                 },
-                synth: {
+                synthesis: DesktopOperationPlan.SynthesisRoute(requirements: .globalEvents) {
                     try await self.performSyntheticScroll(request)
                     return .dispatchedUnverified(
                         delivery: DesktopActionOutcome.Delivery(
                             mechanism: .globalEvents,
                             mode: .foreground),
                         evidence: .deliveryAccepted)
-                })
+                },
+                finalize: self.operationFinalizer)
+            let result = try await self.desktopOperationExecutor.execute(plan)
             self.logger.debug("Scroll completed via \(result.path.rawValue, privacy: .public)")
             return result
         } catch let error as ActionInputError

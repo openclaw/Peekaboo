@@ -57,6 +57,19 @@ private struct SyntheticClickDestination {
     let expectedProcessIdentity: ApplicationProcessIdentity?
 }
 
+private struct ClickExecutionRequest: Sendable {
+    let target: ClickTarget
+    let clickType: ClickType
+    let snapshotID: String?
+    let targetProcessIdentifier: pid_t?
+    let expectedProcessIdentity: ApplicationProcessIdentity?
+    let targetWindowID: Int?
+    let expectedWindowIdentity: WindowMutationIdentity?
+    let expectedWindowBounds: CGRect?
+    let acquireLane: Bool
+    let lanePreparation: @MainActor @Sendable () async -> Void
+}
+
 private func validatedClickWindowID(_ windowID: Int?) throws -> CGWindowID? {
     guard let windowID else { return nil }
     guard windowID > 0, let cgWindowID = CGWindowID(exactly: windowID) else {
@@ -97,6 +110,8 @@ public final class ClickService {
     private let automationElementResolver: any AutomationElementResolving
     private let exactWindowIdentityValidator: @Sendable (WindowMutationIdentity, CGRect) -> Bool
     private let processStartIdentityProvider: @Sendable (pid_t) -> UInt64?
+    private let desktopOperationExecutor: DesktopOperationExecutor
+    private let operationFinalizer: @MainActor () -> Void
 
     public convenience init(
         snapshotManager: (any SnapshotManagerProtocol)? = nil,
@@ -119,7 +134,9 @@ public final class ClickService {
         exactWindowIdentityValidator: @escaping @Sendable (WindowMutationIdentity, CGRect) -> Bool =
             SystemIdentityResolver.validateWindowMutationIdentity,
         processStartIdentityProvider: @escaping @Sendable (pid_t) -> UInt64? =
-            SystemIdentityResolver.processStartIdentity)
+            SystemIdentityResolver.processStartIdentity,
+        desktopOperationExecutor: DesktopOperationExecutor = DesktopOperationExecutor(),
+        operationFinalizer: @escaping @MainActor () -> Void = {})
     {
         self.snapshotManager = snapshotManager ?? SnapshotManager()
         self.inputPolicy = inputPolicy
@@ -128,127 +145,8 @@ public final class ClickService {
         self.automationElementResolver = automationElementResolver
         self.exactWindowIdentityValidator = exactWindowIdentityValidator
         self.processStartIdentityProvider = processStartIdentityProvider
-    }
-
-    /// Perform a click operation
-    @discardableResult
-    @MainActor
-    public func click(target: ClickTarget, clickType: ClickType, snapshotId: String?) async throws
-        -> UIInputExecutionResult
-    {
-        try await self.click(
-            target: target,
-            clickType: clickType,
-            snapshotId: snapshotId,
-            targetProcessIdentifier: nil,
-            targetWindowID: nil)
-    }
-
-    /// Perform a click, optionally delivering synthetic fallback events directly to a target process.
-    @discardableResult
-    @MainActor
-    public func click(
-        target: ClickTarget,
-        clickType: ClickType,
-        snapshotId: String?,
-        targetProcessIdentifier: pid_t?,
-        expectedProcessIdentity: ApplicationProcessIdentity? = nil,
-        targetWindowID: Int? = nil,
-        expectedWindowIdentity: WindowMutationIdentity? = nil,
-        expectedWindowBounds: CGRect? = nil) async throws -> UIInputExecutionResult
-    {
-        self.logger.debug("Click requested - target: \(String(describing: target)), type: \(clickType)")
-        try Self.validateExpectedProcessIdentity(
-            expectedProcessIdentity,
-            targetProcessIdentifier: targetProcessIdentifier)
-        if targetProcessIdentifier != nil,
-           targetWindowID == nil,
-           case .coordinates = target
-        {
-            throw PeekabooError.invalidInput(
-                "Background coordinate clicks require an exact capture-time window receipt; " +
-                    "PID-only coordinate routing is refused")
-        }
-        let bundleIdentifier = await self.bundleIdentifier(
-            snapshotId: snapshotId,
-            targetProcessIdentifier: targetProcessIdentifier)
-        let strategy = self.inputPolicy.strategy(for: .click, bundleIdentifier: bundleIdentifier)
-
-        let requestedExactWindowReceipt = try Self.exactWindowReceipt(
-            targetProcessIdentifier: targetProcessIdentifier,
-            targetWindowID: targetWindowID,
-            expectedWindowIdentity: expectedWindowIdentity,
-            expectedWindowBounds: expectedWindowBounds)
-        do {
-            let exactTargetWindowID = try await self.validateSnapshotTarget(
-                target: target,
-                snapshotId: snapshotId,
-                targetProcessIdentifier: targetProcessIdentifier,
-                requestedTargetWindowID: targetWindowID,
-                exactWindowReceipt: requestedExactWindowReceipt)
-            let exactWindowReceipt = try await self.resolvedExactWindowReceipt(
-                requestedExactWindowReceipt,
-                snapshotId: snapshotId,
-                targetProcessIdentifier: targetProcessIdentifier,
-                targetWindowID: exactTargetWindowID)
-            try Self.validateExpectedProcessIdentity(
-                expectedProcessIdentity,
-                exactWindowReceipt: exactWindowReceipt)
-            let mutationReceipt = ClickMutationReceipt(
-                processIdentity: expectedProcessIdentity,
-                exactWindow: exactWindowReceipt)
-            let syntheticDestination = SyntheticClickDestination(
-                processIdentifier: targetProcessIdentifier,
-                windowID: exactTargetWindowID,
-                exactWindowReceipt: exactWindowReceipt,
-                expectedProcessIdentity: expectedProcessIdentity)
-            let result = try await UIInputDispatcher.run(
-                verb: .click,
-                strategy: strategy,
-                bundleIdentifier: bundleIdentifier,
-                action: {
-                    do {
-                        return try await self.performActionClick(
-                            target: target,
-                            clickType: clickType,
-                            snapshotId: snapshotId,
-                            targetProcessIdentifier: targetProcessIdentifier,
-                            mutationReceipt: mutationReceipt)
-                    } catch let error as ActionInputError
-                        where strategy == .actionFirst &&
-                        targetProcessIdentifier != nil &&
-                        (error == .permissionDenied || error == .targetUnavailable)
-                    {
-                        throw ActionInputError.unsupported(.actionUnsupported)
-                    }
-                },
-                synth: {
-                    try await self.performSyntheticClick(
-                        target: target,
-                        clickType: clickType,
-                        snapshotId: snapshotId,
-                        destination: syntheticDestination)
-                })
-            do {
-                try self.requireCurrentProcess(expectedProcessIdentity, afterDispatch: true)
-                try self.requireCurrentExactWindow(exactWindowReceipt, afterDispatch: true)
-            } catch {
-                throw clickPostDispatchFailure(
-                    outcome: result.outcome,
-                    message: "Click was dispatched, but final target identity validation failed",
-                    cause: error)
-            }
-            self.logger.debug("Click completed via \(result.path.rawValue, privacy: .public)")
-            return result
-        } catch let error as ActionInputError
-            where targetProcessIdentifier != nil && strategy == .actionOnly && error == .permissionDenied
-        {
-            self.logger.error("Click failed: \(error.localizedDescription)")
-            throw PeekabooError.permissionDeniedAccessibility
-        } catch {
-            self.logger.error("Click failed: \(error.localizedDescription)")
-            throw error
-        }
+        self.desktopOperationExecutor = desktopOperationExecutor
+        self.operationFinalizer = operationFinalizer
     }
 
     // MARK: - Private Methods
@@ -1075,6 +973,230 @@ extension ClickService {
             }
             throw PeekabooError.invalidInput(
                 "Background click target process exited or changed process generation before final dispatch")
+        }
+    }
+}
+
+extension ClickService {
+    /// Perform a click operation.
+    @discardableResult
+    public func click(target: ClickTarget, clickType: ClickType, snapshotId: String?) async throws
+        -> UIInputExecutionResult
+    {
+        try await self.click(
+            target: target,
+            clickType: clickType,
+            snapshotId: snapshotId,
+            targetProcessIdentifier: nil,
+            targetWindowID: nil)
+    }
+
+    /// Perform a click, optionally delivering synthetic fallback events directly to a target process.
+    @discardableResult
+    public func click(
+        target: ClickTarget,
+        clickType: ClickType,
+        snapshotId: String?,
+        targetProcessIdentifier: pid_t?,
+        expectedProcessIdentity: ApplicationProcessIdentity? = nil,
+        targetWindowID: Int? = nil,
+        expectedWindowIdentity: WindowMutationIdentity? = nil,
+        expectedWindowBounds: CGRect? = nil) async throws -> UIInputExecutionResult
+    {
+        try await self.executeClick(ClickExecutionRequest(
+            target: target,
+            clickType: clickType,
+            snapshotID: snapshotId,
+            targetProcessIdentifier: targetProcessIdentifier,
+            expectedProcessIdentity: expectedProcessIdentity,
+            targetWindowID: targetWindowID,
+            expectedWindowIdentity: expectedWindowIdentity,
+            expectedWindowBounds: expectedWindowBounds,
+            acquireLane: true,
+            lanePreparation: {}))
+    }
+
+    func clickWithLanePreparation(
+        target: ClickTarget,
+        clickType: ClickType,
+        snapshotId: String?,
+        lanePreparation: @escaping @MainActor @Sendable () async -> Void) async throws -> UIInputExecutionResult
+    {
+        try await self.executeClick(ClickExecutionRequest(
+            target: target,
+            clickType: clickType,
+            snapshotID: snapshotId,
+            targetProcessIdentifier: nil,
+            expectedProcessIdentity: nil,
+            targetWindowID: nil,
+            expectedWindowIdentity: nil,
+            expectedWindowBounds: nil,
+            acquireLane: true,
+            lanePreparation: lanePreparation))
+    }
+
+    func clickOwned(target: ClickTarget, clickType: ClickType, snapshotId: String?) async throws
+        -> UIInputExecutionResult
+    {
+        try await self.executeClick(ClickExecutionRequest(
+            target: target,
+            clickType: clickType,
+            snapshotID: snapshotId,
+            targetProcessIdentifier: nil,
+            expectedProcessIdentity: nil,
+            targetWindowID: nil,
+            expectedWindowIdentity: nil,
+            expectedWindowBounds: nil,
+            acquireLane: false,
+            lanePreparation: {}))
+    }
+
+    private func executeClick(_ request: ClickExecutionRequest) async throws -> UIInputExecutionResult {
+        let target = request.target
+        let clickType = request.clickType
+        let snapshotID = request.snapshotID
+        let targetProcessIdentifier = request.targetProcessIdentifier
+        let expectedProcessIdentity = request.expectedProcessIdentity
+        self.logger.debug("Click requested - target: \(String(describing: target)), type: \(clickType)")
+        try Self.validateExpectedProcessIdentity(
+            expectedProcessIdentity,
+            targetProcessIdentifier: targetProcessIdentifier)
+        if targetProcessIdentifier != nil,
+           request.targetWindowID == nil,
+           case .coordinates = target
+        {
+            throw PeekabooError.invalidInput(
+                "Background coordinate clicks require an exact capture-time window receipt; " +
+                    "PID-only coordinate routing is refused")
+        }
+        let requestedExactWindowReceipt = try Self.exactWindowReceipt(
+            targetProcessIdentifier: targetProcessIdentifier,
+            targetWindowID: request.targetWindowID,
+            expectedWindowIdentity: request.expectedWindowIdentity,
+            expectedWindowBounds: request.expectedWindowBounds)
+        let requestedPlanWindowReceipt = try requestedExactWindowReceipt.map {
+            try DesktopOperationPlan.ExactWindowReceipt(identity: $0.identity, bounds: $0.bounds)
+        }
+        let synthesisRequirements: DesktopOperationPlan.RouteRequirements = if targetProcessIdentifier == nil {
+            .globalEvents
+        } else if requestedPlanWindowReceipt != nil {
+            .windowTargetedEvents
+        } else {
+            DesktopOperationPlan.RouteRequirements(
+                permissions: [.eventSynthesizing],
+                capabilities: [.processTargetedEvents, .windowTargetedEvents])
+        }
+        var bundleIdentifier: String?
+        var strategy = self.inputPolicy.strategy(for: .click)
+        var exactWindowReceipt: ExactWindowClickReceipt?
+        var mutationReceipt: ClickMutationReceipt?
+        var syntheticDestination: SyntheticClickDestination?
+        do {
+            let plan = try DesktopOperationPlan(
+                verb: .click,
+                selector: .click(target),
+                captureReceipt: DesktopOperationPlan.CaptureReceipt(
+                    snapshotID: snapshotID,
+                    processIdentifier: targetProcessIdentifier,
+                    processIdentity: expectedProcessIdentity,
+                    exactWindow: requestedPlanWindowReceipt),
+                deliveryIntent: targetProcessIdentifier == nil ? .foreground : .background,
+                strategy: strategy,
+                prepare: {
+                    bundleIdentifier = await self.bundleIdentifier(
+                        snapshotId: snapshotID,
+                        targetProcessIdentifier: targetProcessIdentifier)
+                    strategy = self.inputPolicy.strategy(for: .click, bundleIdentifier: bundleIdentifier)
+                    await request.lanePreparation()
+                    let exactTargetWindowID = try await self.validateSnapshotTarget(
+                        target: target,
+                        snapshotId: snapshotID,
+                        targetProcessIdentifier: targetProcessIdentifier,
+                        requestedTargetWindowID: request.targetWindowID,
+                        exactWindowReceipt: requestedExactWindowReceipt)
+                    exactWindowReceipt = try await self.resolvedExactWindowReceipt(
+                        requestedExactWindowReceipt,
+                        snapshotId: snapshotID,
+                        targetProcessIdentifier: targetProcessIdentifier,
+                        targetWindowID: exactTargetWindowID)
+                    try Self.validateExpectedProcessIdentity(
+                        expectedProcessIdentity,
+                        exactWindowReceipt: exactWindowReceipt)
+                    try self.requireCurrentProcess(expectedProcessIdentity, afterDispatch: false)
+                    mutationReceipt = ClickMutationReceipt(
+                        processIdentity: expectedProcessIdentity,
+                        exactWindow: exactWindowReceipt)
+                    syntheticDestination = SyntheticClickDestination(
+                        processIdentifier: targetProcessIdentifier,
+                        windowID: exactTargetWindowID,
+                        exactWindowReceipt: exactWindowReceipt,
+                        expectedProcessIdentity: expectedProcessIdentity)
+                },
+                routing: {
+                    DesktopOperationPlan.Routing(
+                        strategy: strategy,
+                        bundleIdentifier: bundleIdentifier)
+                },
+                action: DesktopOperationPlan.ActionRoute(requirements: .accessibilityAction) {
+                    guard let mutationReceipt else {
+                        throw PeekabooError.operationError(message: "Click target was not prepared")
+                    }
+                    do {
+                        return try await self.performActionClick(
+                            target: target,
+                            clickType: clickType,
+                            snapshotId: snapshotID,
+                            targetProcessIdentifier: targetProcessIdentifier,
+                            mutationReceipt: mutationReceipt)
+                    } catch let error as ActionInputError
+                        where strategy == .actionFirst &&
+                        targetProcessIdentifier != nil &&
+                        (error == .permissionDenied || error == .targetUnavailable)
+                    {
+                        throw ActionInputError.unsupported(.actionUnsupported)
+                    }
+                },
+                synthesis: DesktopOperationPlan.SynthesisRoute(requirements: synthesisRequirements) {
+                    guard let syntheticDestination else {
+                        throw PeekabooError.operationError(message: "Click destination was not prepared")
+                    }
+                    return try await self.performSyntheticClick(
+                        target: target,
+                        clickType: clickType,
+                        snapshotId: snapshotID,
+                        destination: syntheticDestination)
+                },
+                postvalidate: { result in
+                    do {
+                        try self.requireCurrentProcess(expectedProcessIdentity, afterDispatch: true)
+                        try self.requireCurrentExactWindow(exactWindowReceipt, afterDispatch: true)
+                    } catch {
+                        throw clickPostDispatchFailure(
+                            outcome: result.outcome,
+                            message: "Click was dispatched, but final target identity validation failed",
+                            cause: error)
+                    }
+                },
+                finalize: {
+                    if request.acquireLane {
+                        self.operationFinalizer()
+                    }
+                })
+            let result = if request.acquireLane {
+                try await self.desktopOperationExecutor.execute(plan)
+            } else {
+                try await self.desktopOperationExecutor.executeOwned(plan)
+            }
+            self.logger.debug("Click completed via \(result.path.rawValue, privacy: .public)")
+            return result
+        } catch let error as ActionInputError
+            where targetProcessIdentifier != nil && strategy == .actionOnly && error == .permissionDenied
+        {
+            self.logger.error("Click failed: \(error.localizedDescription)")
+            throw PeekabooError.permissionDeniedAccessibility
+        } catch {
+            self.logger.error("Click failed: \(error.localizedDescription)")
+            throw error
         }
     }
 }

@@ -1,16 +1,11 @@
 import Foundation
 import PeekabooFoundation
 
-private struct ElementMutationLanePlan: Sendable {
-    let scope: DesktopOperationScope
-    let expectedProcessIdentity: ApplicationProcessIdentity?
-    let expectedWindowIdentity: WindowMutationIdentity?
-
-    static let global = ElementMutationLanePlan(
-        scope: .global,
-        expectedProcessIdentity: nil,
-        expectedWindowIdentity: nil)
-}
+private typealias ResolvedElementMutationTarget = (
+    element: AutomationElement,
+    description: String,
+    bundleIdentifier: String?,
+    windowContext: WindowContext?)
 
 extension UIAutomationService: ElementActionAutomationServiceProtocol {
     public func setValue(
@@ -19,47 +14,78 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
         snapshotId: String?) async throws -> ElementActionResult
     {
         let requiredSnapshotId = try Self.requireElementActionSnapshotID(snapshotId)
-        let lanePlan = try await self.elementMutationLanePlan(snapshotId: requiredSnapshotId)
-        return try await self.operationLaneCoordinator.run(scope: lanePlan.scope, access: .write) {
-            self.logger.debug("Set value requested - target: \(target, privacy: .public)")
-            defer { self.elementDetectionService.invalidateCache() }
-            let resolved = try await self.resolveActionTarget(target, snapshotId: requiredSnapshotId)
-            try self.validateElementMutationTarget(resolved.windowContext, plan: lanePlan)
-            let oldValue = self.safeValueDescription(resolved.element.value)
-                ?? resolved.element.selectedValue.map(String.init)
-            let result = try await self.normalizingSnapshotErrors {
-                try await UIInputDispatcher.run(
-                    verb: .setValue,
-                    strategy: self.inputPolicy.strategy(for: .setValue, bundleIdentifier: resolved.bundleIdentifier),
-                    bundleIdentifier: resolved.bundleIdentifier,
-                    action: {
-                        do {
-                            return try self.actionInputDriver.trySetValue(element: resolved.element, value: value)
-                        } catch let error as ActionInputError where error.isUnsupportedValueMutation {
-                            throw PeekabooError.invalidInput(Self.unsupportedSetValueMessage(
-                                target: resolved.description,
-                                reason: error.localizedDescription))
-                        }
-                    },
-                    synth: {
-                        throw PeekabooError.invalidInput(Self.unsupportedSetValueMessage(
-                            target: resolved.description,
-                            reason: "Direct value setting is not supported for this element."))
-                    })
-            }
-            guard let newValue = self.safeValueDescription(resolved.element.value)
-                ?? resolved.element.selectedValue.map(String.init)
-            else {
-                throw PeekabooError.operationError(message: "Accessibility value could not be verified after setting")
-            }
-
-            return ElementActionResult(
-                target: resolved.description,
-                actionName: result.actionName,
-                anchorPoint: result.anchorPoint,
-                oldValue: oldValue,
-                newValue: newValue)
+        let captureReceipt = try await self.elementMutationCaptureReceipt(snapshotId: requiredSnapshotId)
+        var resolved: ResolvedElementMutationTarget?
+        var oldValue: String?
+        var newValue: String?
+        let plan = try DesktopOperationPlan(
+            verb: .setValue,
+            selector: .element(target),
+            captureReceipt: captureReceipt,
+            deliveryIntent: .background,
+            strategy: self.inputPolicy.strategy(
+                for: .setValue,
+                bundleIdentifier: captureReceipt.bundleIdentifier),
+            prepare: {
+                let target = try await self.resolveActionTarget(target, snapshotId: requiredSnapshotId)
+                try self.validateElementMutationTarget(target.windowContext, receipt: captureReceipt)
+                resolved = target
+                oldValue = self.safeValueDescription(target.element.value)
+                    ?? target.element.selectedValue.map(String.init)
+            },
+            routing: {
+                let bundleIdentifier = resolved?.bundleIdentifier ?? captureReceipt.bundleIdentifier
+                return DesktopOperationPlan.Routing(
+                    strategy: self.inputPolicy.strategy(for: .setValue, bundleIdentifier: bundleIdentifier),
+                    bundleIdentifier: bundleIdentifier)
+            },
+            action: DesktopOperationPlan.ActionRoute(requirements: .accessibilityAction) {
+                guard let resolved else {
+                    throw PeekabooError.operationError(message: "Element mutation target was not prepared")
+                }
+                do {
+                    return try self.actionInputDriver.trySetValue(element: resolved.element, value: value)
+                } catch let error as ActionInputError where error.isUnsupportedValueMutation {
+                    throw PeekabooError.invalidInput(Self.unsupportedSetValueMessage(
+                        target: resolved.description,
+                        reason: error.localizedDescription))
+                }
+            },
+            synthesis: DesktopOperationPlan.SynthesisRoute(requirements: .accessibilityAction) {
+                throw PeekabooError.invalidInput(Self.unsupportedSetValueMessage(
+                    target: resolved?.description ?? target,
+                    reason: "Direct value setting is not supported for this element."))
+            },
+            postvalidate: { result in
+                guard let resolved else {
+                    throw PeekabooError.operationError(message: "Element mutation target was not prepared")
+                }
+                newValue = self.safeValueDescription(resolved.element.value)
+                    ?? resolved.element.selectedValue.map(String.init)
+                guard newValue != nil else {
+                    throw DesktopActionFailure.indeterminate(
+                        delivery: result.outcome.delivery,
+                        evidence: .completionUnknown,
+                        unitCount: result.outcome.dispatchState.unitCount,
+                        message: "Accessibility value could not be verified after setting",
+                        hint: "Observe the target before retrying this value mutation.")
+                }
+            },
+            finalize: { self.elementDetectionService.invalidateCache() })
+        self.logger.debug("Set value requested - target: \(target, privacy: .public)")
+        let result = try await self.normalizingSnapshotErrors {
+            try await self.desktopOperationExecutor.execute(plan)
         }
+        guard let resolved, let newValue else {
+            throw PeekabooError.operationError(message: "Element value result was not captured")
+        }
+
+        return ElementActionResult(
+            target: resolved.description,
+            actionName: result.actionName,
+            anchorPoint: result.anchorPoint,
+            oldValue: oldValue,
+            newValue: newValue)
     }
 
     public func performAction(
@@ -68,51 +94,67 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
         snapshotId: String?) async throws -> ElementActionResult
     {
         let requiredSnapshotId = try Self.requireElementActionSnapshotID(snapshotId)
-        let lanePlan = try await self.elementMutationLanePlan(snapshotId: requiredSnapshotId)
-        return try await self.operationLaneCoordinator.run(scope: lanePlan.scope, access: .write) {
-            let requestDescription = "Perform action requested - target: \(target), action: \(actionName)"
-            self.logger.debug("\(requestDescription, privacy: .public)")
-            defer { self.elementDetectionService.invalidateCache() }
-            guard Self.isValidActionName(actionName) else {
-                throw PeekabooError.invalidInput(
-                    "Invalid action name '\(actionName)'. Use an accessibility action name such as AXPress.")
-            }
-
-            let resolved = try await self.resolveActionTarget(target, snapshotId: requiredSnapshotId)
-            try self.validateElementMutationTarget(resolved.windowContext, plan: lanePlan)
-            let result = try await self.normalizingSnapshotErrors {
-                try await UIInputDispatcher.run(
-                    verb: .performAction,
-                    strategy: self.inputPolicy.strategy(
-                        for: .performAction,
-                        bundleIdentifier: resolved.bundleIdentifier),
-                    bundleIdentifier: resolved.bundleIdentifier,
-                    action: {
-                        do {
-                            return try self.actionInputDriver.tryPerformAction(
-                                element: resolved.element,
-                                actionName: actionName)
-                        } catch let error as ActionInputError where error.isUnsupportedActionInvocation {
-                            throw PeekabooError.invalidInput(Self.unsupportedActionMessage(
-                                actionName: actionName,
-                                target: resolved.description,
-                                advertisedActions: resolved.element.actionNames))
-                        }
-                    },
-                    synth: {
-                        throw ActionInputError.unsupported(.actionUnsupported)
-                    })
-            }
-
-            return ElementActionResult(
-                target: resolved.description,
-                actionName: result.actionName,
-                anchorPoint: result.anchorPoint)
+        let captureReceipt = try await self.elementMutationCaptureReceipt(snapshotId: requiredSnapshotId)
+        var resolved: ResolvedElementMutationTarget?
+        let plan = try DesktopOperationPlan(
+            verb: .performAction,
+            selector: .element(target),
+            captureReceipt: captureReceipt,
+            deliveryIntent: .background,
+            strategy: self.inputPolicy.strategy(
+                for: .performAction,
+                bundleIdentifier: captureReceipt.bundleIdentifier),
+            prepare: {
+                guard Self.isValidActionName(actionName) else {
+                    throw PeekabooError.invalidInput(
+                        "Invalid action name '\(actionName)'. Use an accessibility action name such as AXPress.")
+                }
+                let target = try await self.resolveActionTarget(target, snapshotId: requiredSnapshotId)
+                try self.validateElementMutationTarget(target.windowContext, receipt: captureReceipt)
+                resolved = target
+            },
+            routing: {
+                let bundleIdentifier = resolved?.bundleIdentifier ?? captureReceipt.bundleIdentifier
+                return DesktopOperationPlan.Routing(
+                    strategy: self.inputPolicy.strategy(for: .performAction, bundleIdentifier: bundleIdentifier),
+                    bundleIdentifier: bundleIdentifier)
+            },
+            action: DesktopOperationPlan.ActionRoute(requirements: .accessibilityAction) {
+                guard let resolved else {
+                    throw PeekabooError.operationError(message: "Element action target was not prepared")
+                }
+                do {
+                    return try self.actionInputDriver.tryPerformAction(
+                        element: resolved.element,
+                        actionName: actionName)
+                } catch let error as ActionInputError where error.isUnsupportedActionInvocation {
+                    throw PeekabooError.invalidInput(Self.unsupportedActionMessage(
+                        actionName: actionName,
+                        target: resolved.description,
+                        advertisedActions: resolved.element.actionNames))
+                }
+            },
+            synthesis: DesktopOperationPlan.SynthesisRoute(requirements: .accessibilityAction) {
+                throw ActionInputError.unsupported(.actionUnsupported)
+            },
+            finalize: { self.elementDetectionService.invalidateCache() })
+        let requestDescription = "Perform action requested - target: \(target), action: \(actionName)"
+        self.logger.debug("\(requestDescription, privacy: .public)")
+        let result = try await self.normalizingSnapshotErrors {
+            try await self.desktopOperationExecutor.execute(plan)
         }
+        guard let resolved else {
+            throw PeekabooError.operationError(message: "Element action target was not prepared")
+        }
+
+        return ElementActionResult(
+            target: resolved.description,
+            actionName: result.actionName,
+            anchorPoint: result.anchorPoint)
     }
 
     private func resolveActionTarget(_ target: String, snapshotId: String) async throws
-        -> (element: AutomationElement, description: String, bundleIdentifier: String?, windowContext: WindowContext?)
+        -> ResolvedElementMutationTarget
     {
         let normalized = target.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalized.isEmpty else {
@@ -189,12 +231,19 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
         return "\(element.id) \(element.type.rawValue): \(label)"
     }
 
-    private func elementMutationLanePlan(snapshotId: String) async throws -> ElementMutationLanePlan {
-        guard let detectionResult = try? await self.snapshotManager.getDetectionResult(snapshotId: snapshotId),
-              let context = detectionResult.metadata.windowContext,
+    private func elementMutationCaptureReceipt(snapshotId: String) async throws
+        -> DesktopOperationPlan.CaptureReceipt
+    {
+        guard let detectionResult = try? await self.snapshotManager.getDetectionResult(snapshotId: snapshotId) else {
+            return try DesktopOperationPlan.CaptureReceipt(snapshotID: snapshotId)
+        }
+        guard let context = detectionResult.metadata.windowContext,
               let identity = context.windowMutationIdentity
         else {
-            return .global
+            return try DesktopOperationPlan.CaptureReceipt(
+                snapshotID: snapshotId,
+                bundleIdentifier: detectionResult.metadata.windowContext?.applicationBundleId,
+                coordinateContext: detectionResult.metadata.captureCoordinateContext)
         }
         guard let bounds = context.windowBounds,
               context.applicationProcessId == identity.ownerProcessIdentifier,
@@ -210,25 +259,29 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
         let processIdentity = ApplicationProcessIdentity(
             processIdentifier: identity.ownerProcessIdentifier,
             processStartIdentity: identity.ownerProcessStartIdentity)
-        return ElementMutationLanePlan(
-            scope: .process(processIdentity),
-            expectedProcessIdentity: processIdentity,
-            expectedWindowIdentity: identity)
+        return try DesktopOperationPlan.CaptureReceipt(
+            snapshotID: snapshotId,
+            bundleIdentifier: context.applicationBundleId,
+            processIdentifier: processIdentity.processIdentifier,
+            processIdentity: processIdentity,
+            exactWindow: DesktopOperationPlan.ExactWindowReceipt(identity: identity, bounds: bounds),
+            coordinateContext: detectionResult.metadata.captureCoordinateContext)
     }
 
     private func validateElementMutationTarget(
         _ context: WindowContext?,
-        plan: ElementMutationLanePlan) throws
+        receipt: DesktopOperationPlan.CaptureReceipt) throws
     {
-        guard let expectedProcessIdentity = plan.expectedProcessIdentity,
-              let expectedWindowIdentity = plan.expectedWindowIdentity
+        guard let expectedProcessIdentity = receipt.processIdentity,
+              let exactWindow = receipt.exactWindow
         else {
             return
         }
+        let expectedWindowIdentity = exactWindow.identity
         guard let context,
               context.applicationProcessId == expectedProcessIdentity.processIdentifier,
               context.windowID == expectedWindowIdentity.windowID,
-              context.windowBounds == expectedWindowIdentity.capturedBounds,
+              context.windowBounds == exactWindow.bounds,
               let resolvedWindowIdentity = context.windowMutationIdentity,
               Self.sameElementMutationWindowIdentity(resolvedWindowIdentity, expectedWindowIdentity),
               self.processStartIdentityProvider(expectedProcessIdentity.processIdentifier) ==
