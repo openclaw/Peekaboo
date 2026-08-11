@@ -1065,7 +1065,7 @@ extension MCPToolExecutionTests {
                 mode: .window,
                 applicationInfo: ServiceApplicationInfo(
                     processIdentifier: 111,
-                    processStartIdentity: 11,
+                    processStartIdentity: 7,
                     bundleIdentifier: "com.example.snapshot",
                     name: "SnapshotApp"),
                 windowInfo: window))
@@ -1098,7 +1098,7 @@ extension MCPToolExecutionTests {
                 mode: .window,
                 applicationInfo: ServiceApplicationInfo(
                     processIdentifier: 111,
-                    processStartIdentity: 11,
+                    processStartIdentity: 7,
                     bundleIdentifier: "com.example.snapshot",
                     name: "SnapshotApp"),
                 windowInfo: window,
