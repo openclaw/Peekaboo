@@ -49,10 +49,15 @@ enum WatchFrameDiffer {
     static func computeChange(using input: DiffInput) -> DiffResult {
         guard let previous = input.previous else {
             // First frame: force 100% change and a full-frame box so downstream logic always keeps it.
-            return DiffResult(
-                changePercent: 100.0,
-                boundingBoxes: [CGRect(origin: .zero, size: input.originalSize)],
-                downgraded: false)
+            return self.fullFrameChange(originalSize: input.originalSize)
+        }
+
+        guard previous.width == input.current.width,
+              previous.height == input.current.height
+        else {
+            // Luma coordinates are incomparable after a geometry change. Treat the current frame as wholly changed
+            // instead of truncating unequal buffers and publishing a partial percentage or misplaced motion box.
+            return self.fullFrameChange(originalSize: input.originalSize)
         }
 
         // Fast path always runs to get bounding boxes; quality may replace change% but keeps the boxes.
@@ -90,6 +95,13 @@ enum WatchFrameDiffer {
         return DiffResult(
             changePercent: changePercent,
             boundingBoxes: pixelDiff.boundingBoxes,
+            downgraded: false)
+    }
+
+    private static func fullFrameChange(originalSize: CGSize) -> DiffResult {
+        DiffResult(
+            changePercent: 100.0,
+            boundingBoxes: [CGRect(origin: .zero, size: originalSize)],
             downgraded: false)
     }
 

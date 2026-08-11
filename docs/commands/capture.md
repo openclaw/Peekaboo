@@ -26,6 +26,9 @@ The MCP server exposes the same primitive as the `capture` tool. MCP arguments u
 For diff-filtered captures, each retained frame's `changePercent` and `motionBoxes` compare it with the previous
 retained frame, not with an internal sample that was dropped. This keeps heartbeat metadata truthful when a small
 visible edit stayed below the motion threshold; the edit remains a heartbeat, but reports its nonzero retained delta.
+Equal-size samples retain the configured threshold and cadence behavior. When the luma geometry changes after a window,
+region, or display resize, Peekaboo treats the current frame as a 100% full-frame change because the old coordinates are
+not comparable; that frame enters active sampling and its saved motion box covers the current frame.
 
 For `capture video`, `metadata.json` and JSON stdout include `options.video` with the requested sampling/trim options plus the effective FPS used by the frame reader. `stats.decodeFailures` identifies the decode-failure subset of `stats.framesDropped`; ordinary diff drops remain in `framesDropped` without increasing `decodeFailures`. A bounded `videoDecodeFailure` warning retains the first and last decode errors when later samples still succeed.
 
