@@ -61,6 +61,22 @@ test("duplicate and unknown rows fail closed", () => {
   assert.ok(rules(result).has("unknown_case"));
 });
 
+test("surface command and phase drift are rejected", () => {
+  const corruptions = [
+    ["surface", "mcp", "surface_mismatch"],
+    ["command", "type", "command_mismatch"],
+    ["phase", "foreground", "phase_mismatch"],
+  ];
+  for (const [field, value, expectedRule] of corruptions) {
+    const report = makePassingReport(catalog);
+    caseById(report, "click-id")[field] = value;
+    const result = validateCertification(catalog, report);
+
+    assert.equal(result.success, false);
+    assert.ok(rules(result).has(expectedRule));
+  }
+});
+
 test("wrong refusal code is rejected", () => {
   const report = makePassingReport(catalog);
   caseById(report, "stale-snapshot").error_code = "UNKNOWN_ERROR";

@@ -212,6 +212,41 @@ confirmed_element_scroll_result() {
     ' "$result_file" >/dev/null
 }
 
+certification_command_identity() {
+    local root_command="${1:-}"
+    shift || true
+    case "$root_command" in
+        app|capture|window)
+            [[ -n "${1:-}" ]] || return 1
+            printf '%s %s\n' "$root_command" "$1"
+            ;;
+        see)
+            local argument
+            local has_tree=false
+            local has_no_elements=false
+            for argument in "$@"; do
+                [[ "$argument" == "--tree" ]] && has_tree=true
+                [[ "$argument" == "--no-elements" ]] && has_no_elements=true
+            done
+            if $has_tree && $has_no_elements; then
+                return 1
+            elif $has_tree; then
+                printf '%s\n' "see --tree"
+            elif $has_no_elements; then
+                printf '%s\n' "see --no-elements"
+            else
+                printf '%s\n' "see"
+            fi
+            ;;
+        action|click|paste|press|scroll|set-value|type)
+            printf '%s\n' "$root_command"
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
 if $SELF_TEST_ONLY; then
     "$PROBE_BIN" process-identity --pid "$$" \
         --output "$ARTIFACT_ROOT/probe-process-identity.json"
@@ -221,6 +256,27 @@ if $SELF_TEST_ONLY; then
     same_process_generation 7 7
     if same_process_generation 7 8 || same_process_generation "" 7; then
         echo "Process-generation cleanup guard self-test failed." >&2
+        exit 1
+    fi
+    if [[ "$(certification_command_identity app launch TextEdit)" != "app launch" ]] || \
+       [[ "$(certification_command_identity window maximize --window-id 42)" != "window maximize" ]] || \
+       [[ "$(certification_command_identity window close --window-id 42)" != "window close" ]] || \
+       [[ "$(certification_command_identity app quit --pid 42)" != "app quit" ]] || \
+       [[ "$(certification_command_identity press return --pid 42)" != "press" ]] || \
+       [[ "$(certification_command_identity window list --pid 42)" != "window list" ]] || \
+       [[ "$(certification_command_identity see --pid 42)" != "see" ]] || \
+       [[ "$(certification_command_identity see --tree --no-screenshot --pid 42)" != "see --tree" ]] || \
+       [[ "$(certification_command_identity see --no-elements --pid 42)" != "see --no-elements" ]] || \
+       [[ "$(certification_command_identity capture live --pid 42)" != "capture live" ]] || \
+       [[ "$(certification_command_identity click --on B1)" != "click" ]] || \
+       [[ "$(certification_command_identity type text --pid 42)" != "type" ]] || \
+       [[ "$(certification_command_identity paste text --pid 42)" != "paste" ]] || \
+       [[ "$(certification_command_identity set-value text --on B1)" != "set-value" ]] || \
+       [[ "$(certification_command_identity action AXPress --on B1)" != "action" ]] || \
+       [[ "$(certification_command_identity scroll --direction down)" != "scroll" ]] || \
+       certification_command_identity see --tree --no-elements >/dev/null || \
+       certification_command_identity unknown >/dev/null; then
+        echo "Certification command identity self-test failed." >&2
         exit 1
     fi
     VALID_LAUNCH_RECEIPT="$ARTIFACT_ROOT/valid-launch-receipt.json"
@@ -558,6 +614,7 @@ run_case() {
     local exit_file="$case_dir/exit-code.txt"
     local summary="$case_dir/summary.json"
     local failed=false
+    local observed_command=""
     local nonmaximized_precondition=null
     local snapshot_window_drift=null
     local target_window_restored=null
@@ -565,6 +622,11 @@ run_case() {
     local stale_original_y=""
     local stale_original_width=""
     local stale_original_height=""
+    if ! observed_command="$(certification_command_identity "$@")"; then
+        observed_command="unresolved"
+        record_failure "$name does not map to one canonical certification command"
+        failed=true
+    fi
 
     "$PROBE_BIN" sample --output "$before"
     if [[ "$(jq -r '.frontmostPID // empty' "$before")" != "$SENTINEL_PID" || \
@@ -824,6 +886,9 @@ run_case() {
 
     jq -n \
         --arg id "$name" \
+        --arg surface "cli" \
+        --arg command "$observed_command" \
+        --arg phase "background" \
         --arg expectedExit "$expected_exit" \
         --argjson exitCode "$command_exit" \
         --argjson resultSuccess "$result_success" \
@@ -841,6 +906,9 @@ run_case() {
         --argjson targetWindowRestored "$target_window_restored" \
         '{
             id: $id,
+            surface: $surface,
+            command: $command,
+            phase: $phase,
             expected_exit: $expectedExit,
             exit_code: $exitCode,
             result_success: $resultSuccess,

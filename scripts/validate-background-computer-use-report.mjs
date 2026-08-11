@@ -35,6 +35,15 @@ function validateCatalog(catalog) {
     failures.push(failure("catalog", "schema", "Every catalog case must have a nonempty id"));
   }
   for (const entry of catalog.cases) {
+    if (entry?.surface !== "cli") {
+      failures.push(failure(entry?.id ?? "catalog", "schema", "Catalog surface must be 'cli'"));
+    }
+    if (typeof entry?.command !== "string" || entry.command.length === 0) {
+      failures.push(failure(entry?.id ?? "catalog", "schema", "Catalog command must be nonempty"));
+    }
+    if (!["background", "foreground"].includes(entry?.phase)) {
+      failures.push(failure(entry?.id ?? "catalog", "schema", "Invalid catalog phase"));
+    }
     if (!entry || !["success", "failure", "either"].includes(entry.expected_exit)) {
       failures.push(failure(entry?.id ?? "catalog", "schema", "Invalid expected_exit"));
     }
@@ -105,6 +114,15 @@ export function validateCertification(catalog, report) {
       failures.push(failure(expected.id, "missing_case", `Required case '${expected.id}' is missing`));
       continue;
     }
+    for (const field of ["surface", "command", "phase"]) {
+      if (observed[field] !== expected[field]) {
+        failures.push(failure(
+          expected.id,
+          `${field}_mismatch`,
+          `Expected ${field} '${expected[field]}', observed '${observed[field] ?? "missing"}'`,
+        ));
+      }
+    }
     if (observed.expected_exit !== expected.expected_exit) {
       failures.push(failure(expected.id, "expectation", "Observed exit expectation differs from catalog"));
     }
@@ -170,6 +188,9 @@ export function makePassingReport(catalog) {
     const oracles = Object.fromEntries(entry.required_oracles.map((name) => [name, true]));
     return {
       id: entry.id,
+      surface: entry.surface,
+      command: entry.command,
+      phase: entry.phase,
       expected_exit: entry.expected_exit,
       exit_code: exitsSuccessfully ? 0 : 1,
       result_success: exitsSuccessfully,
