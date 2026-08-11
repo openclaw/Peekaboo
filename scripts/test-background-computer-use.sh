@@ -763,8 +763,8 @@ run_case() {
 
     if [[ -n "$stale_window_id" ]]; then
         local stale_original_readback="$case_dir/stale-original-readback.json"
-        local stale_move_result="$case_dir/stale-move-result.json"
-        local stale_moved_readback="$case_dir/stale-moved-readback.json"
+        local stale_resize_result="$case_dir/stale-resize-result.json"
+        local stale_resized_readback="$case_dir/stale-resized-readback.json"
         local stale_bounds=""
         set +e
         pb window list --pid "$stale_pid" --json > "$stale_original_readback"
@@ -785,35 +785,35 @@ run_case() {
         if [[ -n "$stale_bounds" ]]; then
             IFS=$'\t' read -r \
                 stale_original_x stale_original_y stale_original_width stale_original_height <<< "$stale_bounds"
-            local stale_moved_x=$((stale_original_x < 32 ? stale_original_x + 17 : stale_original_x - 17))
-            local stale_moved_y=$((stale_original_y < 32 ? stale_original_y + 17 : stale_original_y - 17))
+            local stale_resized_width=$((stale_original_width + 17))
+            local stale_resized_height=$((stale_original_height + 17))
             set +e
             pb window set-bounds --window-id "$stale_window_id" \
-                --x "$stale_moved_x" --y "$stale_moved_y" \
-                --width "$stale_original_width" --height "$stale_original_height" --json \
-                > "$stale_move_result" 2> "$case_dir/stale-move-stderr.txt"
-            local stale_move_exit=$?
-            pb window list --pid "$stale_pid" --json > "$stale_moved_readback"
-            local stale_moved_readback_exit=$?
+                --x "$stale_original_x" --y "$stale_original_y" \
+                --width "$stale_resized_width" --height "$stale_resized_height" --json \
+                > "$stale_resize_result" 2> "$case_dir/stale-resize-stderr.txt"
+            local stale_resize_exit=$?
+            pb window list --pid "$stale_pid" --json > "$stale_resized_readback"
+            local stale_resized_readback_exit=$?
             set -e
-            if [[ $stale_move_exit -eq 0 && $stale_moved_readback_exit -eq 0 ]] && \
+            if [[ $stale_resize_exit -eq 0 && $stale_resized_readback_exit -eq 0 ]] && \
                jq -e \
                    --argjson windowID "$stale_window_id" \
-                   --argjson x "$stale_moved_x" \
-                   --argjson y "$stale_moved_y" \
-                   --argjson width "$stale_original_width" \
-                   --argjson height "$stale_original_height" '
+                   --argjson x "$stale_original_x" \
+                   --argjson y "$stale_original_y" \
+                   --argjson width "$stale_resized_width" \
+                   --argjson height "$stale_resized_height" '
                     [.data.windows[] |
                         select(.window_id == $windowID) |
                         select(
                             .bounds.x == $x and .bounds.y == $y and
                             .bounds.width == $width and .bounds.height == $height)] |
                     length == 1
-               ' "$stale_moved_readback" >/dev/null; then
+               ' "$stale_resized_readback" >/dev/null; then
                 snapshot_window_drift=true
             else
                 snapshot_window_drift=false
-                record_failure "$name could not move the exact snapshot window before stale-snapshot reuse"
+                record_failure "$name could not resize the exact snapshot window before stale-snapshot reuse"
                 failed=true
             fi
         else

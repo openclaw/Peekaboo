@@ -47,7 +47,7 @@ The catalog documents the monitored invariant families. The harness writes its o
 phase drift; wrong refusal codes; disallowed conditional outcomes; effect or delivery drift; absent declared
 readback/log/artifact evidence; monitor failure; and every recorded invariant violation. Command and phase identity are
 derived from the actual harness arguments rather than copied from the catalog, so adding `--foreground` invalidates a
-background row. The stale-snapshot row moves the exact captured window under the same monitor, requires
+background row. The stale-snapshot row resizes the exact captured window under the same monitor, requires
 `SNAPSHOT_STALE` when reusing that real snapshot ID, and restores the original bounds before the case can pass. A run is
 not certified merely because the cases that happened to execute passed. The machine-readable verdict is
 `certification.json` beside the normal summary.
