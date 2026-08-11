@@ -28,6 +28,17 @@ tar -xzf "$ARCHIVE_PATH" -C "$EXTRACT_DIR"
 
 EXTRACTED_DIR="$EXTRACT_DIR/peekaboo-macos-universal"
 "$ROOT_DIR/scripts/verify-swift-runtime-libraries.sh" "$EXTRACTED_DIR/peekaboo" "$EXTRACTED_DIR"
-"$EXTRACTED_DIR/peekaboo" --version | grep -Fq "Peekaboo $VERSION"
+VERSION_OUTPUT_1=$("$EXTRACTED_DIR/peekaboo" --version)
+sleep 1
+VERSION_OUTPUT_2=$("$EXTRACTED_DIR/peekaboo" --version)
+[ "$VERSION_OUTPUT_1" = "$VERSION_OUTPUT_2" ] || {
+    echo "Extracted CLI version output changed between invocations" >&2
+    exit 1
+}
+printf '%s\n' "$VERSION_OUTPUT_1" | grep -Fq "Peekaboo $VERSION"
+if printf '%s\n' "$VERSION_OUTPUT_1" | grep -Fq "unknown"; then
+    echo "Extracted release CLI is missing embedded build metadata" >&2
+    exit 1
+fi
 
 echo "test-extracted-cli-artifact: ok"

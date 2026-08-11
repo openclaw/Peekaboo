@@ -14,6 +14,7 @@
 ### Fixed
 - Resolve standalone exact-window AX-only `see` targets from their live owner and bind results to a process-generation/window receipt before publishing actionable element IDs or a snapshot.
 - Retry one passive background observation when its exact capture receipt changes before element detection or output, while leaving mutation-capable observations fail-closed.
+- Keep raw SwiftPM CLI `--version` output stable with explicit `unknown` build placeholders instead of reading the original working copy and wall clock at runtime; stamped debug and release builds retain rich link-time metadata.
 - Probe Bridge diagnostic sockets concurrently under a one-second per-host deadline with bounded cancellation while preserving runtime selection and candidate order, so `bridge status --verbose` neither accumulates nor inherits a wedged host's full handshake latency.
 - Require explicit foreground consent before Dock/menu-bar global UI or targetless frontmost application-menu clicks; keep discovery read-only/background and return typed refusals before lookup or dispatch.
 - Preserve semantic AX labels, scalar values, roles, descriptions, enabled/selected state, and bounded value-settable capability through background `see` output, persisted snapshots, and agent summaries instead of reducing controls to generic role names.

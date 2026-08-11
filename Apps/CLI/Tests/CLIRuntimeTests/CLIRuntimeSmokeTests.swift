@@ -21,6 +21,49 @@ struct CLIRuntimeSmokeTests {
     }
 
     @Test
+    func `raw CLI version is stable across processes and working copy changes`() async throws {
+        guard Self.ensureLocalRuntimeAvailable() else { return }
+        let temporaryDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekaboo-version-stability-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: temporaryDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporaryDirectory) }
+
+        let fakeGit = temporaryDirectory.appendingPathComponent("git")
+        let inheritedPath = ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin"
+        let environment = ["PATH": "\(temporaryDirectory.path):\(inheritedPath)"]
+
+        try Self.writeFakeGit(to: fakeGit, identity: "first")
+        let first = try await TestChildProcess.runPeekaboo(["--version"], environment: environment)
+        try await Task.sleep(for: .seconds(1.1))
+        try Self.writeFakeGit(to: fakeGit, identity: "second")
+        let second = try await TestChildProcess.runPeekaboo(["--version"], environment: environment)
+
+        #expect(first.status == .exited(0))
+        #expect(second.status == .exited(0))
+        #expect(first.standardError.isEmpty)
+        #expect(second.standardError.isEmpty)
+        #expect(first.standardOutput == second.standardOutput)
+        if ProcessInfo.processInfo.environment["PEEKABOO_CLI_BINARY"] == nil {
+            #expect(first.standardOutput.contains("(unknown/unknown, built: unknown)"))
+        }
+    }
+
+    private static func writeFakeGit(to url: URL, identity: String) throws {
+        let script = """
+        #!/bin/sh
+        case "$*" in
+          "rev-parse --short HEAD") echo "\(identity)-commit" ;;
+          "status --porcelain") exit 0 ;;
+          "show -s --format=%ci HEAD") echo "2026-01-01 00:00:00 +0000" ;;
+          "rev-parse --abbrev-ref HEAD") echo "\(identity)-branch" ;;
+          *) exit 2 ;;
+        esac
+        """
+        try Data(script.utf8).write(to: url, options: .atomic)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
+    }
+
+    @Test
     func `peekaboo app list emits JSON via Commander`() async throws {
         guard Self.ensureLocalRuntimeAvailable() else { return }
         let result = try await TestChildProcess.runPeekaboo(["app", "list", "--json", "--no-remote"])
