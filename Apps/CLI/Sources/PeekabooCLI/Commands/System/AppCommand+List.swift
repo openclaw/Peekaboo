@@ -72,6 +72,8 @@ extension AppCommand {
                     let name: String
                     let bundle_id: String
                     let pid: Int32
+                    let process_start_identity: UInt64?
+                    let process_start_identity_decimal: String?
                     let is_active: Bool
                     let is_hidden: Bool?
                     let metadata_warnings: [String]?
@@ -90,6 +92,8 @@ extension AppCommand {
                             name: app.name,
                             bundle_id: app.bundleIdentifier ?? "unknown",
                             pid: app.processIdentifier,
+                            process_start_identity: app.processStartIdentity,
+                            process_start_identity_decimal: app.processStartIdentity.map(String.init),
                             is_active: app.isActive,
                             is_hidden: app.isHiddenKnown == false ? nil : app.isHidden,
                             metadata_warnings: app.metadataWarnings

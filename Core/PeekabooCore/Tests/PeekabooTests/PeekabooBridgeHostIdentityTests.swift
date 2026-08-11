@@ -21,6 +21,46 @@ struct PeekabooBridgeHostIdentityTests {
 
         #expect(identity.processIdentifier == getpid())
         #expect(identity.processStartIdentity == SystemIdentityResolver.processStartIdentity(getpid()))
+        #expect(identity.processStartIdentityDecimal == identity.processStartIdentity.map(String.init))
+    }
+
+    @Test
+    func `host identity preserves a lossless decimal process generation`() throws {
+        let generation: UInt64 = 9_007_199_254_740_993
+        let identity = PeekabooBridgeHostIdentity(
+            processIdentifier: 4242,
+            processStartIdentity: generation,
+            bundleIdentifier: "boo.peekaboo.mac",
+            bundleShortVersion: "4.0.0",
+            bundleVersion: "400",
+            codeSignatureHash: "abcdef")
+
+        let data = try JSONEncoder.peekabooBridgeEncoder().encode(identity)
+        let object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        #expect(object["processStartIdentityDecimal"] as? String == String(generation))
+        #expect(try JSONDecoder.peekabooBridgeDecoder().decode(
+            PeekabooBridgeHostIdentity.self,
+            from: data).processStartIdentityDecimal == String(generation))
+    }
+
+    @Test
+    func `new clients decode older host identity without decimal generation`() throws {
+        let data = Data(#"""
+        {
+            "processIdentifier":4242,
+            "processStartIdentity":9876543,
+            "bundleIdentifier":"boo.peekaboo.mac",
+            "bundleShortVersion":"4.0.0",
+            "bundleVersion":"400",
+            "codeSignatureHash":"abcdef"
+        }
+        """#.utf8)
+
+        let identity = try JSONDecoder.peekabooBridgeDecoder().decode(
+            PeekabooBridgeHostIdentity.self,
+            from: data)
+        #expect(identity.processStartIdentity == 9_876_543)
+        #expect(identity.processStartIdentityDecimal == nil)
     }
 
     @Test

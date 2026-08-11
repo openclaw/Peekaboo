@@ -504,6 +504,24 @@ cat >"${TEMPLATE_BIN}/peekaboo-health" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 state_dir="$(cd "$(dirname "$0")/.." && pwd)"
+if [[ "${1:-}" == "app" ]]; then
+  [[ "${2:-}" == "list" && "${3:-}" == "--include-hidden" && \
+    "${4:-}" == "--include-background" && "${5:-}" == "--no-remote" && \
+    "${6:-}" == "--json" && "$#" -eq 6 ]] || exit 72
+  bundle="$(<"${state_dir}/running-path")"
+  query_count=0
+  [[ ! -f "${state_dir}/identity-query-count" ]] || query_count="$(<"${state_dir}/identity-query-count")"
+  query_count=$((query_count + 1))
+  printf '%s\n' "${query_count}" >"${state_dir}/identity-query-count"
+  process_start_identity=123456
+  if [[ -f "${state_dir}/health-start-drift" && "${query_count}" -ge 3 ]]; then
+    process_start_identity=654321
+  fi
+  [[ ! -f "${state_dir}/health-adjacent-large-start" ]] || process_start_identity=9007199254740993
+  printf '{"success":true,"data":{"count":1,"apps":[{"name":"Peekaboo","bundle_id":"%s","pid":4242,"process_start_identity":%s,"process_start_identity_decimal":"%s","is_active":false,"is_hidden":false}]}}\n' \
+    "$(<"${bundle}/.bundle-id")" "${process_start_identity}" "${process_start_identity}"
+  exit 0
+fi
 [[ "${1:-}" == "bridge" && "${2:-}" == "status" && "${3:-}" == "--bridge-socket" && \
   "${4:-}" == "${state_dir}/bridge.sock" && "${5:-}" == "--json" && "$#" -eq 5 ]] || exit 72
 [[ ! -f "${state_dir}/fail-health" ]] || exit 71
@@ -511,17 +529,28 @@ bundle="$(<"${state_dir}/running-path")"
 bundle_id="$(<"${bundle}/.bundle-id")"
 code_hash="$(<"${bundle}/.cdhash")"
 host_pid=4242
+host_process_start_identity=123456
+host_process_start_identity_decimal=123456
 capabilities='["backgroundBridgeHost","hostGenerationIdentity","codeSignatureBuildIdentity"]'
 [[ ! -f "${state_dir}/health-wrong-pid" ]] || host_pid=9999
+[[ ! -f "${state_dir}/health-wrong-start" ]] || host_process_start_identity=999999
+if [[ -f "${state_dir}/health-wrong-start" ]]; then
+  host_process_start_identity_decimal=999999
+fi
+if [[ -f "${state_dir}/health-adjacent-large-start" ]]; then
+  host_process_start_identity=9007199254740992
+  host_process_start_identity_decimal=9007199254740992
+fi
 [[ ! -f "${state_dir}/health-wrong-hash" ]] || code_hash=0000000000000000000000000000000000000000
 [[ ! -f "${state_dir}/health-missing-capability" ]] || capabilities='["hostGenerationIdentity","codeSignatureBuildIdentity"]'
 short_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' \
   "${bundle}/Contents/Info.plist")"
 bundle_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' \
   "${bundle}/Contents/Info.plist")"
-printf '{"success":true,"data":{"selected":{"source":"remote","socketPath":"%s","handshake":{"hostKind":"gui","hostIdentity":{"processIdentifier":%s,"processStartIdentity":123456,"bundleIdentifier":"%s","bundleShortVersion":"%s","bundleVersion":"%s","codeSignatureHash":"%s"},"hostCapabilities":%s}}}}\n' \
-  "${state_dir}/bridge.sock" "${host_pid}" "${bundle_id}" "${short_version}" "${bundle_version}" \
-  "${code_hash}" "${capabilities}"
+printf '{"success":true,"data":{"selected":{"source":"remote","socketPath":"%s","handshake":{"hostKind":"gui","hostIdentity":{"processIdentifier":%s,"processStartIdentity":%s,"processStartIdentityDecimal":"%s","bundleIdentifier":"%s","bundleShortVersion":"%s","bundleVersion":"%s","codeSignatureHash":"%s"},"hostCapabilities":%s}}}}\n' \
+  "${state_dir}/bridge.sock" "${host_pid}" "${host_process_start_identity}" \
+  "${host_process_start_identity_decimal}" "${bundle_id}" \
+  "${short_version}" "${bundle_version}" "${code_hash}" "${capabilities}"
 EOF
 
 cat >"${TEMPLATE_BIN}/pgrep" <<'EOF'
@@ -749,7 +778,9 @@ assert_text "${launch_dir}/open-log" "${expected_launch_log}"
 assert_text "${launch_dir}/running-path" "${launch_target}"
 
 # A process is not committed until the explicit GUI Bridge identifies that PID, build, and launch mode.
-for health_case in fail-health health-wrong-pid health-wrong-hash health-missing-capability; do
+for health_case in \
+  fail-health health-wrong-pid health-wrong-start health-start-drift health-adjacent-large-start \
+  health-wrong-hash health-missing-capability; do
   health_dir="$(new_case ${health_case}-rollback)"
   health_target="${health_dir}/Applications/Peekaboo.app"
   mkdir -p "$(dirname "${health_target}")"

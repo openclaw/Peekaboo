@@ -77,6 +77,29 @@ struct AppCommandTests {
     }
 
     @Test
+    func `App list exposes numeric and lossless decimal process receipts`() async throws {
+        let generation: UInt64 = 9_007_199_254_740_993
+        let (output, _) = try await runAppCommandWithService(
+            ["app", "list", "--include-background", "--json"]
+        ) { service in
+            service.applications = [ServiceApplicationInfo(
+                processIdentifier: 4242,
+                processStartIdentity: generation,
+                bundleIdentifier: "boo.peekaboo.mac",
+                name: "Peekaboo",
+                activationPolicy: .regular
+            )]
+        }
+        let object = try #require(JSONSerialization.jsonObject(with: Data(output.utf8)) as? [String: Any])
+        let data = try #require(object["data"] as? [String: Any])
+        let apps = try #require(data["apps"] as? [[String: Any]])
+        let app = try #require(apps.first)
+
+        #expect((app["process_start_identity"] as? NSNumber)?.uint64Value == generation)
+        #expect(app["process_start_identity_decimal"] as? String == String(generation))
+    }
+
+    @Test
     func `App relaunch JSON returns the new launch-bound process receipt`() async throws {
         let output = try await runAppCommand([
             "app", "relaunch", "TextEdit", "--wait", "0", "--json",

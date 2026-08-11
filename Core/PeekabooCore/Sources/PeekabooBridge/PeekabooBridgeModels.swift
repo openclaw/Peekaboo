@@ -262,6 +262,8 @@ public struct PeekabooBridgeHandshake: Codable, Sendable {
 public struct PeekabooBridgeHostIdentity: Codable, Sendable, Equatable {
     public let processIdentifier: pid_t
     public let processStartIdentity: UInt64?
+    /// Canonical decimal representation for consumers that cannot losslessly decode every UInt64 JSON number.
+    public let processStartIdentityDecimal: String?
     public let bundleIdentifier: String?
     public let bundleShortVersion: String?
     public let bundleVersion: String?
@@ -277,6 +279,7 @@ public struct PeekabooBridgeHostIdentity: Codable, Sendable, Equatable {
     {
         self.processIdentifier = processIdentifier
         self.processStartIdentity = processStartIdentity
+        self.processStartIdentityDecimal = processStartIdentity.map(String.init)
         self.bundleIdentifier = bundleIdentifier
         self.bundleShortVersion = bundleShortVersion
         self.bundleVersion = bundleVersion

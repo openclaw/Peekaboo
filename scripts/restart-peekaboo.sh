@@ -81,6 +81,7 @@ ARTIFACT_DIGEST=""
 PREVIOUS_DIGEST=""
 HAD_PREVIOUS_APP=0
 LAUNCHED_PID=""
+LAUNCHED_PROCESS_START_IDENTITY=""
 
 log() { printf '%s\n' "$*"; }
 
@@ -856,6 +857,9 @@ launch_and_verify_bundle() {
       done <<<"${pids}"
       if ((seen_pid_count == 1)); then
         LAUNCHED_PID="${seen_pid}"
+        LAUNCHED_PROCESS_START_IDENTITY="$(query_process_start_identity "${seen_pid}")" || return 1
+        [[ "${LAUNCHED_PROCESS_START_IDENTITY}" =~ ^[0-9]+$ ]] || return 1
+        [[ "${LAUNCHED_PROCESS_START_IDENTITY}" != "0" ]] || return 1
         return 0
       fi
       printf 'Expected one new %s process from %s, found %s\n' \
@@ -866,6 +870,30 @@ launch_and_verify_bundle() {
   done
   printf '%s launched no process from %s\n' "${APP_NAME}" "${bundle}" >&2
   return 1
+}
+
+query_process_start_identity() {
+  local pid="$1"
+  local output process_start_identity
+
+  output="$(
+    env -i \
+      HOME="${HOME}" \
+      USER="${USER:-$(id -un)}" \
+      LOGNAME="${LOGNAME:-$(id -un)}" \
+      TMPDIR="${TMPDIR:-/tmp}" \
+      PATH="/usr/bin:/bin:/usr/sbin:/sbin" \
+      LANG="${LANG:-en_US.UTF-8}" \
+      "${HEALTHCHECK_CLI}" app list --include-hidden --include-background --no-remote --json 2>/dev/null
+  )" || return 1
+  # shellcheck disable=SC2016
+  process_start_identity="$("${JQ_BIN}" -er --argjson pid "${pid}" '
+    select(.success == true) |
+    [.data.apps[] | select(.pid == $pid) | .process_start_identity_decimal] |
+    if length == 1 then .[0] else empty end
+  ' <<<"${output}")" || return 1
+  [[ "${process_start_identity}" =~ ^[0-9]+$ ]] || return 1
+  printf '%s\n' "${process_start_identity}"
 }
 
 validate_healthcheck_configuration() {
@@ -886,9 +914,10 @@ validate_healthcheck_configuration() {
 }
 
 verify_replacement_bridge_health() {
-  local attempt code_hash output short_version bundle_version
+  local attempt code_hash current_pids current_start_identity_after current_start_identity_before
+  local output short_version bundle_version
 
-  [[ "${LAUNCHED_PID}" =~ ^[0-9]+$ ]] || return 1
+  [[ "${LAUNCHED_PID}" =~ ^[0-9]+$ && "${LAUNCHED_PROCESS_START_IDENTITY}" =~ ^[0-9]+$ ]] || return 1
   code_hash="$(bundle_code_signature_hash "${APP_BUNDLE}")" || return 1
   short_version="$("${PLISTBUDDY_BIN}" -c 'Print :CFBundleShortVersionString' \
     "${APP_BUNDLE}/Contents/Info.plist" 2>/dev/null)" || return 1
@@ -909,6 +938,7 @@ verify_replacement_bridge_health() {
     )" && "${JQ_BIN}" -e \
       --arg socket "${BRIDGE_SOCKET}" \
       --argjson pid "${LAUNCHED_PID}" \
+      --arg process_start_identity "${LAUNCHED_PROCESS_START_IDENTITY}" \
       --arg bundle_id "${EXPECTED_BUNDLE_ID}" \
       --arg short_version "${short_version}" \
       --arg bundle_version "${bundle_version}" \
@@ -918,7 +948,7 @@ verify_replacement_bridge_health() {
         .data.selected.socketPath == $socket and
         .data.selected.handshake.hostKind == "gui" and
         .data.selected.handshake.hostIdentity.processIdentifier == $pid and
-        (.data.selected.handshake.hostIdentity.processStartIdentity > 0) and
+        .data.selected.handshake.hostIdentity.processStartIdentityDecimal == $process_start_identity and
         .data.selected.handshake.hostIdentity.bundleIdentifier == $bundle_id and
         .data.selected.handshake.hostIdentity.bundleShortVersion == $short_version and
         .data.selected.handshake.hostIdentity.bundleVersion == $bundle_version and
@@ -928,7 +958,15 @@ verify_replacement_bridge_health() {
         (.data.selected.handshake.hostCapabilities | index("codeSignatureBuildIdentity")) != null
       ' <<<"${output}" >/dev/null
     then
-      return 0
+      current_start_identity_before="$(query_process_start_identity "${LAUNCHED_PID}")" || return 1
+      current_pids="$(bundle_pids "${APP_BUNDLE}" 2>/dev/null || true)"
+      current_start_identity_after="$(query_process_start_identity "${LAUNCHED_PID}")" || return 1
+      if [[ "${current_start_identity_before}" == "${LAUNCHED_PROCESS_START_IDENTITY}" &&
+            "${current_start_identity_after}" == "${LAUNCHED_PROCESS_START_IDENTITY}" &&
+            "${current_pids}" == "${LAUNCHED_PID}" ]]; then
+        return 0
+      fi
+      return 1
     fi
     "${SLEEP_BIN}" "${HEALTH_VERIFY_INTERVAL}"
   done
