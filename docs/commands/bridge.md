@@ -16,7 +16,9 @@ read_when:
 | `status` (default) | Probes the configured socket paths, attempts a Bridge handshake, and reports which host would be selected (or if Peekaboo will fall back to local in-process execution). |
 
 ## Notes
-- Host discovery order is documented in `docs/bridge-host.md`.
+- Normal automation routing reuses a healthy daemon, then tries a capable Peekaboo.app host before starting a daemon
+  on demand; operation-specific requirements can prefer the GUI host or require a surviving daemon. The complete host
+  discovery order is documented in `docs/bridge-host.md`.
 - `--no-remote` (or `PEEKABOO_NO_REMOTE`) skips remote probing and forces local execution.
 - `--bridge-socket <path>` (or `PEEKABOO_BRIDGE_SOCKET`) overrides host discovery and probes only that socket.
 - Status probes run concurrently and give each candidate one second to complete its read-only diagnostic handshake. A `timeout` entry means that host missed the diagnostic deadline; other candidates are still reported and normal runtime selection order is unchanged.
@@ -43,7 +45,7 @@ peekaboo bridge status --bridge-socket \
 peekaboo bridge status --bridge-socket \
   ~/Library/Application\ Support/Claude/bridge.sock
 
-# Force local (skip Peekaboo.app / Clawdbot.app hosts)
+# Force local (skip the reusable daemon and all Bridge app hosts)
 peekaboo bridge status --no-remote
 
 # OpenClaw/subprocess capture workaround when the caller already has Screen Recording

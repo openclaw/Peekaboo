@@ -9,8 +9,10 @@ struct BridgeCommand: ParsableCommand {
         Peekaboo Bridge lets the CLI run permission-bound operations (Screen Recording, Accessibility,
         and Event Synthesizing) via a host app that already has the needed TCC grants.
 
-        By default, automation commands use the dedicated Peekaboo daemon and fall back to local execution.
-        Peekaboo.app, Claude.app, and ClawdBot.app sockets are shown for diagnostics and can be selected explicitly.
+        Most automation commands first reuse a healthy Peekaboo daemon, then try a capable Peekaboo.app Bridge host,
+        and otherwise start a daemon on demand. Operations that allow local fallback can finally run in the caller.
+        Application inventory and launch prefer Peekaboo.app; relaunch and quit require a reusable daemon.
+        Claude.app and ClawdBot.app sockets are diagnostic-only unless selected explicitly.
 
         Examples:
           peekaboo bridge status

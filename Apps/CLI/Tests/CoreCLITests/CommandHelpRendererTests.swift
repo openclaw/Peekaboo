@@ -56,6 +56,24 @@ struct CommandHelpRendererTests {
         #expect(help.contains("--duration 2s"))
         #expect(help.contains("--delay 50ms"))
     }
+
+    @Test
+    func `Bridge help describes the selectable GUI host and on demand fallback`() {
+        let help = BridgeCommand.helpMessage()
+            .split(whereSeparator: \.isWhitespace)
+            .joined(separator: " ")
+
+        #expect(help.contains(
+            "Most automation commands first reuse a healthy Peekaboo daemon, then try a capable " +
+                "Peekaboo.app Bridge host, and otherwise start a daemon on demand."
+        ))
+        #expect(help.contains(
+            "Application inventory and launch prefer Peekaboo.app; relaunch and quit require a reusable daemon."
+        ))
+        #expect(help.contains("Claude.app and ClawdBot.app sockets are diagnostic-only unless selected explicitly."))
+        #expect(!help.contains("dedicated Peekaboo daemon and fall back to local execution"))
+        #expect(!help.contains("Peekaboo.app, Claude.app, and ClawdBot.app sockets are shown for diagnostics"))
+    }
 }
 
 private struct SampleHelpCommand: ParsableCommand {

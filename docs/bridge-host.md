@@ -14,8 +14,10 @@ This replaces the previous XPC-based helper approach.
 
 ## Hosts and discovery
 
-Normal CLI automation commands prefer the on-demand Peekaboo daemon socket and will auto-start that daemon when it
-is missing. This keeps bursty command sequences warm without probing unrelated host apps.
+Most CLI automation commands first reuse a healthy Peekaboo daemon. If none can satisfy the operation, they try a
+capable Peekaboo.app GUI Bridge host before starting a daemon on demand. Operations that permit process-local fallback
+can use it when no compatible host is available. Application inventory and launch prefer the GUI host, while relaunch
+and quit require a reusable daemon that survives the caller.
 
 Bridge diagnostics inspect sockets in this order:
 
@@ -27,11 +29,10 @@ Bridge diagnostics inspect sockets in this order:
    - Socket: `~/Library/Application Support/Claude/bridge.sock`
 4. **Clawdbot.app** (fallback host)
    - Socket: `~/Library/Application Support/clawdbot/bridge.sock`
-5. **Local in-process** (no host available; requires the caller process to have TCC grants)
+5. **Local in-process** (operation-dependent fallback or explicit `--no-remote`; requires caller-process TCC grants)
 
-Normal runtime selection prefers the reusable daemon, then a healthy Peekaboo.app GUI host before starting a daemon.
-This preserves existing app-held TCC grants while keeping socket ownership separate. Other app-host sockets remain
-diagnostic-only unless selected with `--bridge-socket` or `PEEKABOO_BRIDGE_SOCKET`.
+This selection preserves existing app-held TCC grants while keeping socket ownership separate. Claude.app and
+Clawdbot.app sockets remain diagnostic-only unless selected with `--bridge-socket` or `PEEKABOO_BRIDGE_SOCKET`.
 
 There is **no auto-launch** of Peekaboo.app.
 

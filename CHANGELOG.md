@@ -15,6 +15,7 @@
 - Reuse two-second, owner-host-local ScreenCaptureKit exact-window screenshot plans without caching pixels, revalidating process generation, window receipt, display topology, and scale around every capture while exposing miss/hit generation diagnostics.
 
 ### Fixed
+- Correct `peekaboo bridge --help` and Bridge docs to describe capability-aware reusable-daemon, Peekaboo.app, on-demand-daemon, and local-fallback routing.
 - Keep AX-only `see --tree --no-screenshot` independent of capture backends and ScreenCaptureKit ownership while still requiring Accessibility on the selected execution host.
 - Reduce reusable-daemon window-tracker MainActor work by retaining only bounds and owner PID, avoiding unused per-window application and Accessibility metadata on every reconciliation pass.
 - Refresh AXorcist to dispatch native accessibility actions once with typed AX errors and route legacy `AXSetValue` requests through the `AXValue` attribute instead of action discovery.
