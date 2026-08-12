@@ -59,27 +59,6 @@ struct DesktopOperationPlanTests {
         #expect(foreground.laneScope == .global)
     }
 
-    @Test
-    func `route requirements remain path specific`() throws {
-        let plan = try DesktopOperationPlan(
-            verb: .click,
-            selector: .focused,
-            captureReceipt: DesktopOperationPlan.CaptureReceipt(),
-            deliveryIntent: .foreground,
-            strategy: .actionFirst,
-            action: .init(requirements: .accessibilityAction) {
-                UIInputExecutionResult.Action(outcome: .confirmedNoChange())
-            },
-            synthesis: .init(requirements: .globalEvents) {
-                .confirmedNoChange()
-            })
-
-        #expect(plan.action?.requirements.permissions == [.accessibility])
-        #expect(plan.action?.requirements.capabilities == [.accessibilityAction])
-        #expect(plan.synthesis.requirements.permissions == [.eventSynthesizing])
-        #expect(plan.synthesis.requirements.capabilities == [.globalEvents])
-    }
-
     private func makePlan(
         selector: DesktopOperationPlan.Selector = .focused,
         receipt: DesktopOperationPlan.CaptureReceipt? = nil,
@@ -92,7 +71,7 @@ struct DesktopOperationPlanTests {
             deliveryIntent: intent,
             strategy: .synthOnly,
             action: nil,
-            synthesis: .init(requirements: .globalEvents) { .confirmedNoChange() })
+            synthesis: .init { .confirmedNoChange() })
     }
 
     private static func exactWindowReceipt(

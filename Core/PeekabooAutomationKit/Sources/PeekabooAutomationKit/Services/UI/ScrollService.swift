@@ -69,7 +69,9 @@ public final class ScrollService {
 
     func scrollWithLanePreparation(
         _ request: ScrollRequest,
-        lanePreparation: @escaping @MainActor () async -> Void = {}) async throws -> UIInputExecutionResult
+        lanePreparation: @escaping @MainActor () async -> Void = {},
+        laneCompletion: @escaping @MainActor (UIInputExecutionResult) async -> Void = { _ in }) async throws
+        -> UIInputExecutionResult
     {
         let description =
             "Scroll requested - direction: \(request.direction), amount: \(request.amount), " +
@@ -95,10 +97,10 @@ public final class ScrollService {
                         strategy: strategy,
                         bundleIdentifier: bundleIdentifier)
                 },
-                action: DesktopOperationPlan.ActionRoute(requirements: .accessibilityAction) {
+                action: DesktopOperationPlan.ActionRoute {
                     try await self.performActionScroll(request, strategy: strategy)
                 },
-                synthesis: DesktopOperationPlan.SynthesisRoute(requirements: .globalEvents) {
+                synthesis: DesktopOperationPlan.SynthesisRoute {
                     try await self.performSyntheticScroll(request)
                     return .dispatchedUnverified(
                         delivery: DesktopActionOutcome.Delivery(
@@ -106,6 +108,7 @@ public final class ScrollService {
                             mode: .foreground),
                         evidence: .deliveryAccepted)
                 },
+                success: laneCompletion,
                 finalize: self.operationFinalizer)
             let result = try await self.desktopOperationExecutor.execute(plan)
             self.logger.debug("Scroll completed via \(result.path.rawValue, privacy: .public)")

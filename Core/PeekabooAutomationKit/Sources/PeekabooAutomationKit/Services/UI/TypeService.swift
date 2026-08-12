@@ -127,7 +127,9 @@ public final class TypeService {
         clearExisting: Bool,
         typingDelay: Int,
         snapshotId: String?,
-        lanePreparation: @escaping @MainActor () async -> Void = {}) async throws -> TypeExecutionSummary
+        lanePreparation: @escaping @MainActor () async -> Void = {},
+        laneCompletion: @escaping @MainActor (UIInputExecutionResult, Bool) async -> Void = { _, _ in })
+        async throws -> TypeExecutionSummary
     {
         self.logger
             .debug("Type requested - text: '\(text)', target: \(target ?? "current focus"), clear: \(clearExisting)")
@@ -154,14 +156,14 @@ public final class TypeService {
                     strategy: self.inputPolicy.strategy(for: .type, bundleIdentifier: bundleIdentifier),
                     bundleIdentifier: bundleIdentifier)
             },
-            action: DesktopOperationPlan.ActionRoute(requirements: .accessibilityAction) {
+            action: DesktopOperationPlan.ActionRoute {
                 try await self.performActionType(
                     text: text,
                     target: target,
                     clearExisting: clearExisting,
                     snapshotId: snapshotId)
             },
-            synthesis: DesktopOperationPlan.SynthesisRoute(requirements: .globalEvents) {
+            synthesis: DesktopOperationPlan.SynthesisRoute {
                 try await self.performSyntheticType(
                     text: text,
                     target: target,
@@ -169,6 +171,7 @@ public final class TypeService {
                     typingDelay: typingDelay,
                     snapshotId: snapshotId)
             },
+            success: { result in await laneCompletion(result, typedIntoSecureField) },
             finalize: self.operationFinalizer)
         let result = try await self.desktopOperationExecutor.execute(plan)
 
@@ -296,7 +299,8 @@ public final class TypeService {
         targetProcessIdentifier: pid_t?,
         deliveryValidator: (@MainActor @Sendable () async throws -> Void)? = nil,
         expectedProcessIdentity: ApplicationProcessIdentity? = nil,
-        lanePreparation: @escaping @MainActor () async -> Void = {}) async throws
+        lanePreparation: @escaping @MainActor () async -> Void = {},
+        laneCompletion: @escaping @MainActor (TypeActionExecutionSummary) async -> Void = { _ in }) async throws
         -> TypeActionExecutionSummary
     {
         var summary: TypeActionExecutionSummary?
@@ -312,9 +316,7 @@ public final class TypeService {
             strategy: targetProcessIdentifier == nil ? self.inputPolicy.strategy(for: .type) : .synthOnly,
             prepare: { await lanePreparation() },
             action: nil,
-            synthesis: DesktopOperationPlan.SynthesisRoute(
-                requirements: foreground ? .globalEvents : .processTargetedEvents)
-            {
+            synthesis: DesktopOperationPlan.SynthesisRoute {
                 summary = try await self.performSyntheticTypeActions(
                     actions,
                     cadence: cadence,
@@ -326,6 +328,12 @@ public final class TypeService {
                         mechanism: targetProcessIdentifier == nil ? .globalEvents : .processTargetedEvents,
                         mode: targetProcessIdentifier == nil ? .foreground : .background),
                     evidence: .deliveryAccepted)
+            },
+            success: { _ in
+                guard let summary else {
+                    return
+                }
+                await laneCompletion(summary)
             },
             finalize: self.operationFinalizer)
         _ = try await self.desktopOperationExecutor.execute(plan)

@@ -84,7 +84,7 @@ extension UIAutomationService {
     {
         self.logger.debug("Delegating type to TypeService")
         var visualizerTarget: VisualizerTargetWindow?
-        let summary = try await self.normalizingSnapshotErrors {
+        _ = try await self.normalizingSnapshotErrors {
             try await self.typeService.typeTrackingSecureInput(
                 text: text,
                 target: target,
@@ -93,14 +93,15 @@ extension UIAutomationService {
                 snapshotId: snapshotId,
                 lanePreparation: {
                     visualizerTarget = await self.visualizerTargetWindow(snapshotId: snapshotId)
+                },
+                laneCompletion: { _, typedIntoSecureField in
+                    await self.visualizeTyping(
+                        keys: Array(text).map { String($0) },
+                        cadence: .fixed(milliseconds: typingDelay),
+                        typedIntoSecureField: typedIntoSecureField,
+                        visualizerTarget: visualizerTarget)
                 })
         }
-
-        await self.visualizeTyping(
-            keys: Array(text).map { String($0) },
-            cadence: .fixed(milliseconds: typingDelay),
-            typedIntoSecureField: summary.typedIntoSecureField,
-            visualizerTarget: visualizerTarget)
     }
 
     public func typeActions(
@@ -118,13 +119,15 @@ extension UIAutomationService {
                 targetProcessIdentifier: nil,
                 lanePreparation: {
                     visualizerTarget = await self.visualizerTargetWindow(snapshotId: snapshotId)
+                },
+                laneCompletion: { summary in
+                    await self.visualizeTypeActions(
+                        actions,
+                        cadence: cadence,
+                        typedIntoSecureField: summary.typedIntoSecureField,
+                        visualizerTarget: visualizerTarget)
                 })
         }
-        await self.visualizeTypeActions(
-            actions,
-            cadence: cadence,
-            typedIntoSecureField: summary.typedIntoSecureField,
-            visualizerTarget: visualizerTarget)
         return summary.result
     }
 

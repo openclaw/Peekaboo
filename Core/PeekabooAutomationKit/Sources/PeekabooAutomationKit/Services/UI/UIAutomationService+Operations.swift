@@ -155,7 +155,7 @@ extension UIAutomationService {
         self.logger.debug("Delegating click to ClickService")
         var fallbackPoint: CGPoint?
         var visualizerTarget: VisualizerTargetWindow?
-        let result = try await self.normalizingSnapshotErrors {
+        _ = try await self.normalizingSnapshotErrors {
             try await self.clickService.clickWithLanePreparation(
                 target: target,
                 clickType: clickType,
@@ -163,17 +163,18 @@ extension UIAutomationService {
                 lanePreparation: {
                     fallbackPoint = await self.getClickPoint(for: target, snapshotId: snapshotId)
                     visualizerTarget = await self.visualizerTargetWindow(snapshotId: snapshotId)
+                },
+                laneCompletion: { result in
+                    await self.visualizeClick(
+                        target: target,
+                        actionAnchor: result.anchorPoint,
+                        clickType: clickType,
+                        snapshotId: snapshotId,
+                        targetProcessIdentifier: nil,
+                        fallbackPoint: fallbackPoint,
+                        visualizerTarget: visualizerTarget)
                 })
         }
-
-        await self.visualizeClick(
-            target: target,
-            actionAnchor: result.anchorPoint,
-            clickType: clickType,
-            snapshotId: snapshotId,
-            targetProcessIdentifier: nil,
-            fallbackPoint: fallbackPoint,
-            visualizerTarget: visualizerTarget)
     }
 
     public func click(

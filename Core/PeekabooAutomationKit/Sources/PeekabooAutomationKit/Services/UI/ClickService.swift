@@ -68,6 +68,7 @@ private struct ClickExecutionRequest: Sendable {
     let expectedWindowBounds: CGRect?
     let acquireLane: Bool
     let lanePreparation: @MainActor @Sendable () async -> Void
+    let laneCompletion: @MainActor @Sendable (UIInputExecutionResult) async -> Void
 }
 
 private func validatedClickWindowID(_ windowID: Int?) throws -> CGWindowID? {
@@ -1013,14 +1014,17 @@ extension ClickService {
             expectedWindowIdentity: expectedWindowIdentity,
             expectedWindowBounds: expectedWindowBounds,
             acquireLane: true,
-            lanePreparation: {}))
+            lanePreparation: {},
+            laneCompletion: { _ in }))
     }
 
     func clickWithLanePreparation(
         target: ClickTarget,
         clickType: ClickType,
         snapshotId: String?,
-        lanePreparation: @escaping @MainActor @Sendable () async -> Void) async throws -> UIInputExecutionResult
+        lanePreparation: @escaping @MainActor @Sendable () async -> Void,
+        laneCompletion: @escaping @MainActor @Sendable (UIInputExecutionResult) async -> Void = { _ in })
+        async throws -> UIInputExecutionResult
     {
         try await self.executeClick(ClickExecutionRequest(
             target: target,
@@ -1032,7 +1036,8 @@ extension ClickService {
             expectedWindowIdentity: nil,
             expectedWindowBounds: nil,
             acquireLane: true,
-            lanePreparation: lanePreparation))
+            lanePreparation: lanePreparation,
+            laneCompletion: laneCompletion))
     }
 
     func clickOwned(target: ClickTarget, clickType: ClickType, snapshotId: String?) async throws
@@ -1048,7 +1053,8 @@ extension ClickService {
             expectedWindowIdentity: nil,
             expectedWindowBounds: nil,
             acquireLane: false,
-            lanePreparation: {}))
+            lanePreparation: {},
+            laneCompletion: { _ in }))
     }
 
     private func executeClick(_ request: ClickExecutionRequest) async throws -> UIInputExecutionResult {
@@ -1076,15 +1082,6 @@ extension ClickService {
             expectedWindowBounds: request.expectedWindowBounds)
         let requestedPlanWindowReceipt = try requestedExactWindowReceipt.map {
             try DesktopOperationPlan.ExactWindowReceipt(identity: $0.identity, bounds: $0.bounds)
-        }
-        let synthesisRequirements: DesktopOperationPlan.RouteRequirements = if targetProcessIdentifier == nil {
-            .globalEvents
-        } else if requestedPlanWindowReceipt != nil {
-            .windowTargetedEvents
-        } else {
-            DesktopOperationPlan.RouteRequirements(
-                permissions: [.eventSynthesizing],
-                capabilities: [.processTargetedEvents, .windowTargetedEvents])
         }
         var bundleIdentifier: String?
         var strategy = self.inputPolicy.strategy(for: .click)
@@ -1137,7 +1134,7 @@ extension ClickService {
                         strategy: strategy,
                         bundleIdentifier: bundleIdentifier)
                 },
-                action: DesktopOperationPlan.ActionRoute(requirements: .accessibilityAction) {
+                action: DesktopOperationPlan.ActionRoute {
                     guard let mutationReceipt else {
                         throw PeekabooError.operationError(message: "Click target was not prepared")
                     }
@@ -1156,7 +1153,7 @@ extension ClickService {
                         throw ActionInputError.unsupported(.actionUnsupported)
                     }
                 },
-                synthesis: DesktopOperationPlan.SynthesisRoute(requirements: synthesisRequirements) {
+                synthesis: DesktopOperationPlan.SynthesisRoute {
                     guard let syntheticDestination else {
                         throw PeekabooError.operationError(message: "Click destination was not prepared")
                     }
@@ -1177,6 +1174,7 @@ extension ClickService {
                             cause: error)
                     }
                 },
+                success: request.laneCompletion,
                 finalize: {
                     if request.acquireLane {
                         self.operationFinalizer()

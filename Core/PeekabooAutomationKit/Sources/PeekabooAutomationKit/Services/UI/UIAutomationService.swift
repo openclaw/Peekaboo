@@ -2,6 +2,13 @@ import Foundation
 import os.log
 import PeekabooFoundation
 
+@MainActor
+struct HotkeyServiceFactoryContext {
+    let desktopOperationExecutor: DesktopOperationExecutor
+    let operationFinalizer: @MainActor () -> Void
+    let processStartIdentityProvider: @Sendable (pid_t) -> UInt64?
+}
+
 /**
  * Primary UI automation service orchestrating specialized automation components.
  *
@@ -140,7 +147,7 @@ public final class UIAutomationService: TargetedHotkeyServiceProtocol, TargetedT
         actionInputDriver: any ActionInputDriving,
         syntheticInputDriver: any SyntheticInputDriving = SyntheticInputDriver(),
         automationElementResolver: any AutomationElementResolving,
-        hotkeyService: HotkeyService? = nil,
+        hotkeyServiceFactory: ((HotkeyServiceFactoryContext) -> HotkeyService)? = nil,
         feedbackClient: any AutomationFeedbackClient = NoopAutomationFeedbackClient(),
         exactWindowFocusReader: @escaping @Sendable (pid_t) -> ExactWindowFocusSnapshot? =
             DetachedExactWindowFocusReader.read,
@@ -204,13 +211,16 @@ public final class UIAutomationService: TargetedHotkeyServiceProtocol, TargetedT
             automationElementResolver: automationElementResolver,
             desktopOperationExecutor: executor,
             operationFinalizer: operationFinalizer)
-        if let hotkeyService {
-            hotkeyService.bindDesktopOperationExecutor(executor, operationFinalizer: operationFinalizer)
-            self.hotkeyService = hotkeyService
+        if let hotkeyServiceFactory {
+            self.hotkeyService = hotkeyServiceFactory(HotkeyServiceFactoryContext(
+                desktopOperationExecutor: executor,
+                operationFinalizer: operationFinalizer,
+                processStartIdentityProvider: processStartIdentityProvider))
         } else {
             self.hotkeyService = HotkeyService(
                 inputPolicy: inputPolicy,
                 actionInputDriver: actionInputDriver,
+                processStartIdentityProvider: processStartIdentityProvider,
                 desktopOperationExecutor: executor,
                 operationFinalizer: operationFinalizer)
         }

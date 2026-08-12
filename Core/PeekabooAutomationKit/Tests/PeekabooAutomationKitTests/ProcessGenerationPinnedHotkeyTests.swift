@@ -95,15 +95,19 @@ struct ProcessGenerationPinnedHotkeyTests {
         currentGeneration: @escaping @Sendable () -> UInt64?,
         eventPoster: @escaping @MainActor @Sendable (CGEvent, pid_t) -> Void) -> UIAutomationService
     {
-        let hotkeyService = HotkeyService(
-            inputPolicy: UIInputPolicy(defaultStrategy: .synthOnly),
-            postEventAccessEvaluator: { true },
-            eventPoster: eventPoster)
-        return UIAutomationService(
+        UIAutomationService(
             inputPolicy: UIInputPolicy(defaultStrategy: .synthOnly),
             actionInputDriver: ActionInputDriver(),
             automationElementResolver: AutomationElementResolver(),
-            hotkeyService: hotkeyService,
+            hotkeyServiceFactory: { context in
+                HotkeyService(
+                    inputPolicy: UIInputPolicy(defaultStrategy: .synthOnly),
+                    postEventAccessEvaluator: { true },
+                    eventPoster: eventPoster,
+                    processStartIdentityProvider: context.processStartIdentityProvider,
+                    desktopOperationExecutor: context.desktopOperationExecutor,
+                    operationFinalizer: context.operationFinalizer)
+            },
             processStartIdentityProvider: { _ in currentGeneration() })
     }
 

@@ -39,7 +39,7 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
                     strategy: self.inputPolicy.strategy(for: .setValue, bundleIdentifier: bundleIdentifier),
                     bundleIdentifier: bundleIdentifier)
             },
-            action: DesktopOperationPlan.ActionRoute(requirements: .accessibilityAction) {
+            action: DesktopOperationPlan.ActionRoute {
                 guard let resolved else {
                     throw PeekabooError.operationError(message: "Element mutation target was not prepared")
                 }
@@ -51,7 +51,7 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
                         reason: error.localizedDescription))
                 }
             },
-            synthesis: DesktopOperationPlan.SynthesisRoute(requirements: .accessibilityAction) {
+            synthesis: DesktopOperationPlan.SynthesisRoute {
                 throw PeekabooError.invalidInput(Self.unsupportedSetValueMessage(
                     target: resolved?.description ?? target,
                     reason: "Direct value setting is not supported for this element."))
@@ -119,7 +119,7 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
                     strategy: self.inputPolicy.strategy(for: .performAction, bundleIdentifier: bundleIdentifier),
                     bundleIdentifier: bundleIdentifier)
             },
-            action: DesktopOperationPlan.ActionRoute(requirements: .accessibilityAction) {
+            action: DesktopOperationPlan.ActionRoute {
                 guard let resolved else {
                     throw PeekabooError.operationError(message: "Element action target was not prepared")
                 }
@@ -134,7 +134,7 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
                         advertisedActions: resolved.element.actionNames))
                 }
             },
-            synthesis: DesktopOperationPlan.SynthesisRoute(requirements: .accessibilityAction) {
+            synthesis: DesktopOperationPlan.SynthesisRoute {
                 throw ActionInputError.unsupported(.actionUnsupported)
             },
             finalize: { self.elementDetectionService.invalidateCache() })

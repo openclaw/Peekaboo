@@ -1,5 +1,6 @@
 import Foundation
 import os.log
+import PeekabooFoundation
 
 /// Executes one validated desktop operation under exactly one coordination lane.
 @MainActor
@@ -58,8 +59,37 @@ final class DesktopOperationExecutor {
         case .actionOnly:
             result = try await self.executeAction(plan, routing: routing, startedAt: startedAt)
         }
+        try Self.validateDeliveryIntent(plan.deliveryIntent, result: result)
         try await plan.postvalidate(result)
+        await plan.success(result)
         return result
+    }
+
+    private static func validateDeliveryIntent(
+        _ intent: DesktopOperationPlan.DeliveryIntent,
+        result: UIInputExecutionResult) throws
+    {
+        let delivery = result.outcome.delivery
+        let reportsBackgroundDelivery = delivery?.mode == .background && delivery?.mechanism != .globalEvents
+        guard intent == .background,
+              result.outcome.dispatchState.mutationDispatched,
+              !reportsBackgroundDelivery
+        else { return }
+        let message = "Background desktop operation did not report background delivery"
+        let hint = "Observe both the target and foreground app before retrying."
+        if let failure = DesktopActionFailure(
+            outcome: result.outcome,
+            message: message,
+            hint: hint)
+        {
+            throw failure
+        }
+        throw DesktopActionFailure.indeterminate(
+            delivery: result.outcome.delivery,
+            evidence: .completionUnknown,
+            unitCount: result.outcome.dispatchState.unitCount,
+            message: message,
+            hint: hint)
     }
 
     private func executeAction(

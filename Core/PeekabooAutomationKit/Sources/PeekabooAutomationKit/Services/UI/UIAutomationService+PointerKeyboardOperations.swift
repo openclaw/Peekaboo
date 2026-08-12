@@ -21,16 +21,19 @@ extension UIAutomationService {
     public func scroll(_ request: ScrollRequest) async throws {
         self.logger.debug("Delegating scroll to ScrollService")
         var visualizerTarget: VisualizerTargetWindow?
-        let result = try await self.normalizingSnapshotErrors {
-            try await self.scrollService.scrollWithLanePreparation(request) {
-                visualizerTarget = await self.visualizerTargetWindow(snapshotId: request.snapshotId)
-            }
+        _ = try await self.normalizingSnapshotErrors {
+            try await self.scrollService.scrollWithLanePreparation(
+                request,
+                lanePreparation: {
+                    visualizerTarget = await self.visualizerTargetWindow(snapshotId: request.snapshotId)
+                },
+                laneCompletion: { result in
+                    await self.visualizeScroll(
+                        request,
+                        actionAnchor: result.anchorPoint,
+                        visualizerTarget: visualizerTarget)
+                })
         }
-
-        await self.visualizeScroll(
-            request,
-            actionAnchor: result.anchorPoint,
-            visualizerTarget: visualizerTarget)
     }
 
     /// Background scrolls are AX actions scoped to a snapshot element and never emit foreground feedback.
@@ -81,14 +84,18 @@ extension UIAutomationService {
     public func hotkey(keys: String, holdDuration: Int) async throws {
         self.logger.debug("Delegating hotkey to HotkeyService")
         var visualizerTarget: VisualizerTargetWindow?
-        _ = try await self.hotkeyService.hotkeyWithLanePreparation(keys: keys, holdDuration: holdDuration) {
-            visualizerTarget = VisualizerTargetWindowResolver.frontmostWindow()
-        }
-
-        await self.visualizeHotkey(
+        _ = try await self.hotkeyService.hotkeyWithLanePreparation(
             keys: keys,
-            targetProcessIdentifier: nil,
-            visualizerTarget: visualizerTarget)
+            holdDuration: holdDuration,
+            lanePreparation: {
+                visualizerTarget = VisualizerTargetWindowResolver.frontmostWindow()
+            },
+            laneCompletion: { _ in
+                await self.visualizeHotkey(
+                    keys: keys,
+                    targetProcessIdentifier: nil,
+                    visualizerTarget: visualizerTarget)
+            })
     }
 
     public func hotkey(keys: String, holdDuration: Int, targetProcessIdentifier: pid_t) async throws {

@@ -94,71 +94,27 @@ struct DesktopOperationPlan {
         case foreground
     }
 
-    enum Permission: Hashable, Sendable {
-        case accessibility
-        case eventSynthesizing
-    }
-
-    enum Capability: Hashable, Sendable {
-        case accessibilityAction
-        case processTargetedEvents
-        case windowTargetedEvents
-        case globalEvents
-    }
-
-    struct RouteRequirements: Equatable, Sendable {
-        let permissions: Set<Permission>
-        let capabilities: Set<Capability>
-
-        init(
-            permissions: Set<Permission> = [],
-            capabilities: Set<Capability> = [])
-        {
-            self.permissions = permissions
-            self.capabilities = capabilities
-        }
-
-        static let accessibilityAction = Self(
-            permissions: [.accessibility],
-            capabilities: [.accessibilityAction])
-        static let globalEvents = Self(
-            permissions: [.eventSynthesizing],
-            capabilities: [.globalEvents])
-        static let processTargetedEvents = Self(
-            permissions: [.eventSynthesizing],
-            capabilities: [.processTargetedEvents])
-        static let windowTargetedEvents = Self(
-            permissions: [.eventSynthesizing],
-            capabilities: [.windowTargetedEvents])
-    }
-
     struct ActionRoute {
-        let requirements: RouteRequirements
         let preflight: @MainActor () async throws -> Void
         let execute: @MainActor () async throws -> UIInputExecutionResult.Action
 
         init(
-            requirements: RouteRequirements,
             preflight: @escaping @MainActor () async throws -> Void = {},
             execute: @escaping @MainActor () async throws -> UIInputExecutionResult.Action)
         {
-            self.requirements = requirements
             self.preflight = preflight
             self.execute = execute
         }
     }
 
     struct SynthesisRoute {
-        let requirements: RouteRequirements
         let preflight: @MainActor () async throws -> Void
         let execute: @MainActor () async throws -> DesktopActionOutcome
 
         init(
-            requirements: RouteRequirements,
             preflight: @escaping @MainActor () async throws -> Void = {},
             execute: @escaping @MainActor () async throws -> DesktopActionOutcome)
         {
-            self.requirements = requirements
             self.preflight = preflight
             self.execute = execute
         }
@@ -179,6 +135,7 @@ struct DesktopOperationPlan {
     let action: ActionRoute?
     let synthesis: SynthesisRoute
     let postvalidate: @MainActor (UIInputExecutionResult) async throws -> Void
+    let success: @MainActor (UIInputExecutionResult) async -> Void
     let finalize: @MainActor () async -> Void
 
     init(
@@ -192,6 +149,7 @@ struct DesktopOperationPlan {
         action: ActionRoute?,
         synthesis: SynthesisRoute,
         postvalidate: @escaping @MainActor (UIInputExecutionResult) async throws -> Void = { _ in },
+        success: @escaping @MainActor (UIInputExecutionResult) async -> Void = { _ in },
         finalize: @escaping @MainActor () async -> Void = {}) throws
     {
         let normalizedSelector = try Self.normalized(selector)
@@ -217,6 +175,7 @@ struct DesktopOperationPlan {
         self.action = action
         self.synthesis = synthesis
         self.postvalidate = postvalidate
+        self.success = success
         self.finalize = finalize
     }
 

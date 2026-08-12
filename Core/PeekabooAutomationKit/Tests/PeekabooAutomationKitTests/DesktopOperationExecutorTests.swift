@@ -42,7 +42,7 @@ struct DesktopOperationExecutorTests {
     }
 
     @Test
-    func `action first selects action and does not inspect synthesis requirements`() async throws {
+    func `action first selects action and does not run synthesis preflight`() async throws {
         let root = Self.temporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let executor = DesktopOperationExecutor(
@@ -52,7 +52,6 @@ struct DesktopOperationExecutorTests {
         let plan = try self.makePlan(
             strategy: .actionFirst,
             action: .init(
-                requirements: .accessibilityAction,
                 preflight: { actionPreflightCount += 1 },
                 execute: {
                     UIInputExecutionResult.Action(
@@ -61,7 +60,6 @@ struct DesktopOperationExecutorTests {
                         elementRole: "AXButton")
                 }),
             synthesis: .init(
-                requirements: .globalEvents,
                 preflight: { synthesisPreflightCount += 1 },
                 execute: { Self.synthOutcome }))
 
@@ -78,10 +76,10 @@ struct DesktopOperationExecutorTests {
         var synthesisCount = 0
         let plan = try self.makePlan(
             strategy: .actionFirst,
-            action: .init(requirements: .accessibilityAction) {
+            action: .init {
                 throw ActionInputError.unsupported(.actionUnsupported)
             },
-            synthesis: .init(requirements: .globalEvents) {
+            synthesis: .init {
                 synthesisCount += 1
                 return Self.synthOutcome
             })
@@ -97,11 +95,11 @@ struct DesktopOperationExecutorTests {
     func `action only and synth first never invoke the other route`() async throws {
         var actionCount = 0
         var synthesisCount = 0
-        let action = DesktopOperationPlan.ActionRoute(requirements: .accessibilityAction) {
+        let action = DesktopOperationPlan.ActionRoute {
             actionCount += 1
             return UIInputExecutionResult.Action(outcome: Self.actionOutcome)
         }
-        let synthesis = DesktopOperationPlan.SynthesisRoute(requirements: .globalEvents) {
+        let synthesis = DesktopOperationPlan.SynthesisRoute {
             synthesisCount += 1
             return Self.synthOutcome
         }
@@ -126,8 +124,8 @@ struct DesktopOperationExecutorTests {
             do {
                 let plan = try self.makePlan(
                     strategy: .actionFirst,
-                    action: .init(requirements: .accessibilityAction) { throw failure },
-                    synthesis: .init(requirements: .globalEvents) {
+                    action: .init { throw failure },
+                    synthesis: .init {
                         synthesisCount += 1
                         return Self.synthOutcome
                     })
@@ -149,7 +147,7 @@ struct DesktopOperationExecutorTests {
             let plan = try self.makePlan(
                 strategy: .synthOnly,
                 action: nil,
-                synthesis: .init(requirements: .globalEvents) {
+                synthesis: .init {
                     dispatchCount += 1
                     throw DesktopActionFailure.dispatchedUnverified(
                         delivery: .init(mechanism: .globalEvents, mode: .foreground),
@@ -170,12 +168,13 @@ struct DesktopOperationExecutorTests {
     @Test
     func `postvalidation can downgrade dispatched evidence before finalization`() async {
         var dispatchCount = 0
+        var successCount = 0
         var finalizerCount = 0
         do {
             let plan = try self.makePlan(
                 strategy: .synthOnly,
                 action: nil,
-                synthesis: .init(requirements: .globalEvents) {
+                synthesis: .init {
                     dispatchCount += 1
                     return Self.synthOutcome
                 },
@@ -185,6 +184,7 @@ struct DesktopOperationExecutorTests {
                         evidence: .completionUnknown,
                         message: "Post-read failed")
                 },
+                success: { _ in successCount += 1 },
                 finalize: { finalizerCount += 1 })
             _ = try await DesktopOperationExecutor().execute(plan)
             Issue.record("Expected postvalidation failure")
@@ -195,7 +195,102 @@ struct DesktopOperationExecutorTests {
             Issue.record("Unexpected error: \(error)")
         }
         #expect(dispatchCount == 1)
+        #expect(successCount == 0)
         #expect(finalizerCount == 1)
+    }
+
+    @Test
+    func `background plan preserves unsafe foreground failure semantics`() async throws {
+        let identity = ApplicationProcessIdentity(processIdentifier: 501, processStartIdentity: 1)
+        let plan = try self.makePlan(
+            strategy: .synthOnly,
+            receipt: DesktopOperationPlan.CaptureReceipt(processIdentity: identity),
+            action: nil,
+            synthesis: .init { Self.synthOutcome })
+
+        do {
+            _ = try await DesktopOperationExecutor().execute(plan)
+            Issue.record("Expected background delivery mismatch")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .dispatchedUnverified)
+            #expect(failure.outcome.delivery?.mode == .foreground)
+            #expect(failure.outcome.retrySafety == .unsafe)
+            #expect(failure.outcome.dispatchState.mutationDispatched)
+        }
+    }
+
+    @Test
+    func `background plan downgrades confirmed foreground delivery to indeterminate`() async throws {
+        let identity = ApplicationProcessIdentity(processIdentifier: 501, processStartIdentity: 1)
+        let plan = try self.makePlan(
+            strategy: .synthOnly,
+            receipt: DesktopOperationPlan.CaptureReceipt(processIdentity: identity),
+            action: nil,
+            synthesis: .init {
+                .confirmedChange(delivery: .init(mechanism: .globalEvents, mode: .foreground))
+            })
+
+        do {
+            _ = try await DesktopOperationExecutor().execute(plan)
+            Issue.record("Expected background delivery mismatch")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .indeterminate)
+            #expect(failure.outcome.delivery?.mechanism == .globalEvents)
+            #expect(failure.outcome.retrySafety == .unsafe)
+        }
+    }
+
+    @Test
+    func `background plan rejects global events even when mislabeled background`() async throws {
+        let identity = ApplicationProcessIdentity(processIdentifier: 501, processStartIdentity: 1)
+        let plan = try self.makePlan(
+            strategy: .synthOnly,
+            receipt: DesktopOperationPlan.CaptureReceipt(processIdentity: identity),
+            action: nil,
+            synthesis: .init {
+                .dispatchedUnverified(
+                    delivery: .init(mechanism: .globalEvents, mode: .background),
+                    evidence: .deliveryAccepted)
+            })
+
+        await #expect(throws: DesktopActionFailure.self) {
+            _ = try await DesktopOperationExecutor().execute(plan)
+        }
+    }
+
+    @Test
+    func `background plan rejects mutation without delivery evidence`() async throws {
+        let identity = ApplicationProcessIdentity(processIdentifier: 501, processStartIdentity: 1)
+        let plan = try self.makePlan(
+            strategy: .synthOnly,
+            receipt: DesktopOperationPlan.CaptureReceipt(processIdentity: identity),
+            action: nil,
+            synthesis: .init {
+                .indeterminate(evidence: .completionUnknown)
+            })
+
+        do {
+            _ = try await DesktopOperationExecutor().execute(plan)
+            Issue.record("Expected missing background delivery evidence")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .indeterminate)
+            #expect(failure.outcome.delivery == nil)
+            #expect(failure.outcome.retrySafety == .unsafe)
+        }
+    }
+
+    @Test
+    func `background plan allows confirmed no change without delivery`() async throws {
+        let identity = ApplicationProcessIdentity(processIdentifier: 501, processStartIdentity: 1)
+        let plan = try self.makePlan(
+            strategy: .synthOnly,
+            receipt: DesktopOperationPlan.CaptureReceipt(processIdentity: identity),
+            action: nil,
+            synthesis: .init { .confirmedNoChange() })
+
+        let result = try await DesktopOperationExecutor().execute(plan)
+        #expect(result.outcome.state == .confirmedNoChange)
+        #expect(!result.outcome.dispatchState.mutationDispatched)
     }
 
     @Test
@@ -214,12 +309,19 @@ struct DesktopOperationExecutorTests {
                 }
             },
             action: nil,
-            synthesis: .init(requirements: .globalEvents) {
+            synthesis: .init {
                 phases.append("execute")
                 return Self.synthOutcome
             },
             postvalidate: { _ in
                 phases.append("postvalidate")
+                await #expect(throws: DesktopOperationLaneError.self) {
+                    try await coordinator.run(scope: .global, access: .write) { true }
+                }
+            },
+            success: { result in
+                phases.append("success")
+                #expect(result.path == .synth)
                 await #expect(throws: DesktopOperationLaneError.self) {
                     try await coordinator.run(scope: .global, access: .write) { true }
                 }
@@ -232,7 +334,7 @@ struct DesktopOperationExecutorTests {
             })
 
         _ = try await executor.execute(plan)
-        #expect(phases == ["prepare", "execute", "postvalidate", "finalize"])
+        #expect(phases == ["prepare", "execute", "postvalidate", "success", "finalize"])
     }
 
     @Test
@@ -252,11 +354,11 @@ struct DesktopOperationExecutorTests {
                     strategy: preparedBundle == nil ? .actionOnly : .synthOnly,
                     bundleIdentifier: preparedBundle)
             },
-            action: .init(requirements: .accessibilityAction) {
+            action: .init {
                 actionCount += 1
                 return UIInputExecutionResult.Action(outcome: Self.actionOutcome)
             },
-            synthesis: .init(requirements: .globalEvents) {
+            synthesis: .init {
                 synthesisCount += 1
                 return Self.synthOutcome
             })
@@ -281,7 +383,7 @@ struct DesktopOperationExecutorTests {
                 strategy: .synthOnly,
                 prepare: { throw ActionInputError.staleElement },
                 action: nil,
-                synthesis: .init(requirements: .globalEvents) { Self.synthOutcome },
+                synthesis: .init { Self.synthOutcome },
                 finalize: {
                     finalizerCount += 1
                     await #expect(throws: DesktopOperationLaneError.self) {
@@ -299,30 +401,28 @@ struct DesktopOperationExecutorTests {
     }
 
     @Test
-    func `injected hotkey service resolves target through UI service lane`() async throws {
+    func `hotkey factory receives UI service executor without mutating a shared service`() async throws {
         let root = Self.temporaryRoot()
-        let otherRoot = Self.temporaryRoot()
-        defer {
-            try? FileManager.default.removeItem(at: root)
-            try? FileManager.default.removeItem(at: otherRoot)
-        }
+        defer { try? FileManager.default.removeItem(at: root) }
         let coordinator = DesktopOperationLaneCoordinator(coordinationRootURL: root)
         let executor = DesktopOperationExecutor(laneCoordinator: coordinator)
         let blocker = LaneBlocker()
         var resolverCount = 0
-        let injected = HotkeyService(
-            inputPolicy: UIInputPolicy(defaultStrategy: .actionOnly),
-            runningApplicationResolver: { _ in
-                resolverCount += 1
-                return nil
-            },
-            desktopOperationExecutor: DesktopOperationExecutor(
-                laneCoordinator: DesktopOperationLaneCoordinator(coordinationRootURL: otherRoot)))
         let service = UIAutomationService(
             inputPolicy: UIInputPolicy(defaultStrategy: .actionOnly),
             actionInputDriver: ActionInputDriver(),
             automationElementResolver: AutomationElementResolver(),
-            hotkeyService: injected,
+            hotkeyServiceFactory: { context in
+                HotkeyService(
+                    inputPolicy: UIInputPolicy(defaultStrategy: .actionOnly),
+                    runningApplicationResolver: { _ in
+                        resolverCount += 1
+                        return nil
+                    },
+                    processStartIdentityProvider: context.processStartIdentityProvider,
+                    desktopOperationExecutor: context.desktopOperationExecutor,
+                    operationFinalizer: context.operationFinalizer)
+            },
             operationLaneCoordinator: coordinator,
             desktopOperationExecutor: executor)
         let holder = Task {
@@ -356,6 +456,7 @@ struct DesktopOperationExecutorTests {
         let blocker = LaneBlocker()
         var probeCount = 0
         var feedbackPreparationCount = 0
+        var successCount = 0
         let service = TypeService(
             inputPolicy: UIInputPolicy(defaultStrategy: .synthOnly),
             randomSource: SystemTypingCadenceRandomSource(),
@@ -378,7 +479,14 @@ struct DesktopOperationExecutorTests {
                 clearExisting: false,
                 typingDelay: 0,
                 snapshotId: nil,
-                lanePreparation: { feedbackPreparationCount += 1 })
+                lanePreparation: { feedbackPreparationCount += 1 },
+                laneCompletion: { _, typedIntoSecureField in
+                    successCount += 1
+                    #expect(typedIntoSecureField)
+                    await #expect(throws: DesktopOperationLaneError.self) {
+                        try await coordinator.run(scope: .global, access: .write) { true }
+                    }
+                })
         }
 
         try await Task.sleep(for: .milliseconds(60))
@@ -389,6 +497,7 @@ struct DesktopOperationExecutorTests {
         let summary = try await operation.value
         #expect(probeCount == 1)
         #expect(feedbackPreparationCount == 1)
+        #expect(successCount == 1)
         #expect(summary.typedIntoSecureField)
     }
 
@@ -404,6 +513,7 @@ struct DesktopOperationExecutorTests {
             syntheticInputDriver: synthetic,
             desktopOperationExecutor: DesktopOperationExecutor(laneCoordinator: coordinator))
         var preparationCount = 0
+        var successCount = 0
         let holder = Task {
             try await coordinator.run(scope: .global, access: .write) {
                 await blocker.hold()
@@ -416,7 +526,13 @@ struct DesktopOperationExecutorTests {
                 target: .coordinates(CGPoint(x: 10, y: 20)),
                 clickType: .single,
                 snapshotId: nil,
-                lanePreparation: { preparationCount += 1 })
+                lanePreparation: { preparationCount += 1 },
+                laneCompletion: { _ in
+                    successCount += 1
+                    await #expect(throws: DesktopOperationLaneError.self) {
+                        try await coordinator.run(scope: .global, access: .write) { true }
+                    }
+                })
         }
 
         try await Task.sleep(for: .milliseconds(60))
@@ -425,6 +541,7 @@ struct DesktopOperationExecutorTests {
         _ = try await holder.value
         _ = try await operation.value
         #expect(preparationCount == 1)
+        #expect(successCount == 1)
     }
 
     @Test
@@ -446,9 +563,10 @@ struct DesktopOperationExecutorTests {
         }
         await blocker.waitUntilHeld()
         let operation = Task {
-            try await service.hotkeyWithLanePreparation(keys: "cmd,k", holdDuration: 0) {
-                preparationCount += 1
-            }
+            try await service.hotkeyWithLanePreparation(
+                keys: "cmd,k",
+                holdDuration: 0,
+                lanePreparation: { preparationCount += 1 })
         }
 
         try await Task.sleep(for: .milliseconds(60))
@@ -474,6 +592,7 @@ struct DesktopOperationExecutorTests {
             syntheticInputDriver: synthetic,
             desktopOperationExecutor: DesktopOperationExecutor(laneCoordinator: coordinator))
         var preparationCount = 0
+        var successCount = 0
         let holder = Task {
             try await coordinator.run(scope: .global, access: .write) {
                 await blocker.hold()
@@ -482,16 +601,21 @@ struct DesktopOperationExecutorTests {
         }
         await blocker.waitUntilHeld()
         let operation = Task {
-            try await service.scrollWithLanePreparation(ScrollRequest(
-                direction: .down,
-                amount: 1,
-                target: nil,
-                smooth: false,
-                delay: 0,
-                foreground: true))
-            {
-                preparationCount += 1
-            }
+            try await service.scrollWithLanePreparation(
+                ScrollRequest(
+                    direction: .down,
+                    amount: 1,
+                    target: nil,
+                    smooth: false,
+                    delay: 0,
+                    foreground: true),
+                lanePreparation: { preparationCount += 1 },
+                laneCompletion: { _ in
+                    successCount += 1
+                    await #expect(throws: DesktopOperationLaneError.self) {
+                        try await coordinator.run(scope: .global, access: .write) { true }
+                    }
+                })
         }
 
         try await Task.sleep(for: .milliseconds(60))
@@ -500,6 +624,7 @@ struct DesktopOperationExecutorTests {
         _ = try await holder.value
         _ = try await operation.value
         #expect(preparationCount == 1)
+        #expect(successCount == 1)
         #expect(synthetic.events.contains { event in
             if case .scroll = event {
                 return true
@@ -515,11 +640,13 @@ struct DesktopOperationExecutorTests {
         let coordinator = DesktopOperationLaneCoordinator(coordinationRootURL: root)
         let executor = DesktopOperationExecutor(laneCoordinator: coordinator)
         let synthetic = ClickRecordingSyntheticInputDriver()
+        let feedback = LaneCheckingFeedbackClient(coordinator: coordinator)
         let service = UIAutomationService(
             inputPolicy: UIInputPolicy(defaultStrategy: .synthOnly),
             actionInputDriver: ActionInputDriver(),
             syntheticInputDriver: synthetic,
             automationElementResolver: AutomationElementResolver(),
+            feedbackClient: feedback,
             operationLaneCoordinator: coordinator,
             desktopOperationExecutor: executor)
 
@@ -531,6 +658,7 @@ struct DesktopOperationExecutorTests {
         #expect(synthetic.events == [
             .click(point: CGPoint(x: 20, y: 30), button: .left, count: 1),
         ])
+        #expect(feedback.clickCount == 1)
     }
 
     @Test
@@ -570,6 +698,7 @@ struct DesktopOperationExecutorTests {
         action: DesktopOperationPlan.ActionRoute?,
         synthesis: DesktopOperationPlan.SynthesisRoute,
         postvalidate: @escaping @MainActor (UIInputExecutionResult) async throws -> Void = { _ in },
+        success: @escaping @MainActor (UIInputExecutionResult) async -> Void = { _ in },
         finalize: @escaping @MainActor () async -> Void = {}) throws
         -> DesktopOperationPlan
     {
@@ -583,6 +712,7 @@ struct DesktopOperationExecutorTests {
             action: action,
             synthesis: synthesis,
             postvalidate: postvalidate,
+            success: success,
             finalize: finalize)
     }
 
@@ -596,14 +726,14 @@ struct DesktopOperationExecutorTests {
             strategy: .synthOnly,
             receipt: receipt,
             action: nil,
-            synthesis: .init(requirements: .processTargetedEvents) {
+            synthesis: .init {
                 if let probe {
                     await probe.enterAndWait()
                 }
                 if let serialProbe {
                     await serialProbe.enterAndWait()
                 }
-                return Self.synthOutcome
+                return Self.backgroundSynthOutcome
             })
     }
 
@@ -618,6 +748,58 @@ struct DesktopOperationExecutorTests {
     private static let synthOutcome = DesktopActionOutcome.dispatchedUnverified(
         delivery: .init(mechanism: .globalEvents, mode: .foreground),
         evidence: .deliveryAccepted)
+    private static let backgroundSynthOutcome = DesktopActionOutcome.dispatchedUnverified(
+        delivery: .init(mechanism: .processTargetedEvents, mode: .background),
+        evidence: .deliveryAccepted)
+}
+
+@MainActor
+private final class LaneCheckingFeedbackClient: AutomationFeedbackClient {
+    private let coordinator: DesktopOperationLaneCoordinator
+    private(set) var clickCount = 0
+
+    init(coordinator: DesktopOperationLaneCoordinator) {
+        self.coordinator = coordinator
+    }
+
+    func showClickFeedback(
+        at _: CGPoint,
+        type _: ClickType,
+        target _: VisualizerTargetWindow?) async -> Bool
+    {
+        self.clickCount += 1
+        await #expect(throws: DesktopOperationLaneError.self) {
+            try await self.coordinator.run(scope: .global, access: .write) { true }
+        }
+        return true
+    }
+
+    func showTypingFeedback(
+        keys _: [String],
+        duration _: TimeInterval,
+        cadence _: TypingCadence,
+        masksTypedText _: Bool,
+        target _: VisualizerTargetWindow?) async -> Bool
+    {
+        true
+    }
+
+    func showHotkeyDisplay(
+        keys _: [String],
+        duration _: TimeInterval,
+        target _: VisualizerTargetWindow?) async -> Bool
+    {
+        true
+    }
+
+    func showScrollFeedback(
+        at _: CGPoint,
+        direction _: ScrollDirection,
+        amount _: Int,
+        target _: VisualizerTargetWindow?) async -> Bool
+    {
+        true
+    }
 }
 
 private actor LaneBlocker {

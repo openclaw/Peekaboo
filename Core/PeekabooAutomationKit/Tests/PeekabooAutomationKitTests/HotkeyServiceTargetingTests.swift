@@ -159,6 +159,26 @@ struct HotkeyServiceTargetingTests {
         }
     }
 
+    @Test func `generation pinned hotkey validates its receipt without an external validator`() async throws {
+        var postedEventCount = 0
+        let service = HotkeyService(
+            inputPolicy: UIInputPolicy(defaultStrategy: .synthOnly),
+            postEventAccessEvaluator: { true },
+            eventPoster: { _, _ in postedEventCount += 1 },
+            processStartIdentityProvider: { _ in 12 })
+
+        await #expect(throws: PeekabooError.self) {
+            try await service.hotkey(
+                keys: "cmd,l",
+                holdDuration: 0,
+                targetProcessIdentifier: getpid(),
+                expectedProcessIdentity: ApplicationProcessIdentity(
+                    processIdentifier: getpid(),
+                    processStartIdentity: 11))
+        }
+        #expect(postedEventCount == 0)
+    }
+
     @Test func `targeted lifecycle hotkeys fail before posting unverifiable events`() async throws {
         var postedEventCount = 0
         let service = HotkeyService(
