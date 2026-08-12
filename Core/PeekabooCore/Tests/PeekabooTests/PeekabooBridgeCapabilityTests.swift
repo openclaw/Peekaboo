@@ -72,7 +72,7 @@ struct PeekabooBridgeCapabilityTests {
 
     @Test
     @MainActor
-    func `production bridge classifier preserves indeterminate input delivery`() {
+    func `production bridge classifier preserves indeterminate input delivery`() throws {
         let error = InputDeliveryIndeterminateError(
             operation: .type,
             emittedUnitCount: 1,
@@ -84,6 +84,13 @@ struct PeekabooBridgeCapabilityTests {
         #expect(envelope.operationMayHaveCompleted)
         #expect(envelope.message.contains("do not retry blindly"))
         #expect(envelope.message.contains("window focus drifted"))
+        let failure = try #require(envelope.desktopActionFailure)
+        #expect(failure.outcome.route == .bridge)
+        #expect(failure.outcome.state == .indeterminate)
+        #expect(failure.outcome.evidence == .completionUnknown)
+        #expect(failure.outcome.dispatchState.unitCount?.rawValue == 1)
+        #expect(failure.outcome.projection.requiresFreshObservation)
+        #expect(failure.causeDescription == "window focus drifted")
     }
 
     @Test

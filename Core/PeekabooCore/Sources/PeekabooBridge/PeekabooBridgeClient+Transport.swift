@@ -7,7 +7,17 @@ extension PeekabooBridgeClient {
         _ request: PeekabooBridgeRequest,
         timeoutSec: TimeInterval? = nil) async throws -> PeekabooBridgeResponse
     {
-        let payload = try self.encoder.encode(request)
+        let explicitlyProjected = if case .projectedAction = request {
+            true
+        } else {
+            false
+        }
+        let expectsProjectedResponse = explicitlyProjected ||
+            (self.actionProjectionEnabled && request.mayMutateDesktop)
+        let wireRequest = expectsProjectedResponse && !explicitlyProjected
+            ? PeekabooBridgeRequest.projectedAction(.init(request: request))
+            : request
+        let payload = try self.encoder.encode(wireRequest)
         let op = request.operation
         let start = Date()
         self.logger.debug("Sending bridge request \(op.rawValue, privacy: .public)")
@@ -60,9 +70,9 @@ extension PeekabooBridgeClient {
                 causeDescription: details)
         }
 
-        let response: PeekabooBridgeResponse
+        let wireResponse: PeekabooBridgeResponse
         do {
-            response = try self.decoder.decode(PeekabooBridgeResponse.self, from: responseData)
+            wireResponse = try self.decoder.decode(PeekabooBridgeResponse.self, from: responseData)
         } catch {
             guard request.mayMutateDesktop else {
                 throw PeekabooBridgeErrorEnvelope(
@@ -74,6 +84,10 @@ extension PeekabooBridgeClient {
                 operation: op,
                 causeDescription: "Bridge response decoding failed: \(error)")
         }
+        let response = try Self.unwrapResponse(
+            wireResponse,
+            expectsProjectedResponse: expectsProjectedResponse,
+            request: request)
         if case let .error(envelope) = response,
            request.mayMutateDesktop
         {
@@ -88,6 +102,43 @@ extension PeekabooBridgeClient {
         self.logger.debug(
             "bridge \(op.rawValue, privacy: .public) completed in \(duration, format: .fixed(precision: 3))s")
         return response
+    }
+
+    private nonisolated static func unwrapResponse(
+        _ response: PeekabooBridgeResponse,
+        expectsProjectedResponse: Bool,
+        request: PeekabooBridgeRequest) throws -> PeekabooBridgeResponse
+    {
+        if expectsProjectedResponse {
+            guard case let .projectedAction(payload) = response else {
+                throw self.responseLostFailure(
+                    operation: request.operation,
+                    causeDescription: "A projection-capable Bridge host returned an unwrapped action response")
+            }
+            if case .projectedAction = payload.response {
+                throw Self.responseLostFailure(
+                    operation: request.operation,
+                    causeDescription: "A projection-capable Bridge host returned nested action carriage")
+            }
+            if case let .error(envelope) = payload.response,
+               payload.outcome != envelope.actionOutcome
+            {
+                throw Self.responseLostFailure(
+                    operation: request.operation,
+                    causeDescription: "Bridge action response and error envelope carried contradictory outcomes")
+            }
+            return payload.response
+        }
+
+        guard case .projectedAction = response else { return response }
+        if request.mayMutateDesktop {
+            throw self.responseLostFailure(
+                operation: request.operation,
+                causeDescription: "Bridge host returned unrequested action projection carriage")
+        }
+        throw PeekabooBridgeErrorEnvelope(
+            code: .decodingFailed,
+            message: "Bridge host returned an unexpected projected response")
     }
 
     func sendExpectOK(

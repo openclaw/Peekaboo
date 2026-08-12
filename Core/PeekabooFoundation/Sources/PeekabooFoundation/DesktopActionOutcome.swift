@@ -339,6 +339,22 @@ public struct DesktopActionOutcome: Codable, Equatable, Sendable {
             escalation: .observeBeforeRetry)
     }
 
+    /// Reassigns only the transport route of an already-validated outcome.
+    ///
+    /// Bridge code uses this at its ownership boundary instead of rebuilding state-specific
+    /// fields and risking a second, contradictory outcome model.
+    public func routed(to route: Route) -> DesktopActionOutcome {
+        Self(
+            state: self.state,
+            route: route,
+            delivery: self.delivery,
+            evidence: self.evidence,
+            dispatchState: self.dispatchState,
+            retrySafety: self.retrySafety,
+            escalation: self.escalation,
+            refusalReason: self.refusalReason)
+    }
+
     private enum CodingKeys: String, CodingKey {
         case state
         case effect
@@ -645,6 +661,15 @@ public struct DesktopActionFailure: Codable, Equatable, LocalizedError, Sendable
 
     public var recoverySuggestion: String? {
         self.hint
+    }
+
+    /// Reassigns the route while preserving the validated failure state and its exact context.
+    public func routed(to route: DesktopActionOutcome.Route) -> DesktopActionFailure {
+        Self(
+            validatedOutcome: self.outcome.routed(to: route),
+            message: self.message,
+            hint: self.hint,
+            causeDescription: self.causeDescription)
     }
 
     private enum CodingKeys: String, CodingKey {

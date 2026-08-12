@@ -227,6 +227,9 @@ extension PeekabooBridgeRequest {
     }
 
     var mayMutateDesktop: Bool {
+        if case let .projectedAction(payload) = self {
+            return payload.request.mayMutateDesktop
+        }
         if case let .dialogFindActive(request) = self {
             return request.windowTitle != nil
         }

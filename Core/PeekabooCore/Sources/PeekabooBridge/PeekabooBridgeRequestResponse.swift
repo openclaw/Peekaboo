@@ -3,6 +3,7 @@ import Foundation
 import PeekabooAutomationKit
 
 public enum PeekabooBridgeRequest: Codable, Sendable {
+    indirect case projectedAction(PeekabooBridgeProjectedActionRequest)
     case handshake(PeekabooBridgeHandshake)
     case permissionsStatus
     case requestPostEventPermission
@@ -104,6 +105,7 @@ public enum PeekabooBridgeRequest: Codable, Sendable {
 extension PeekabooBridgeRequest {
     public var operation: PeekabooBridgeOperation {
         switch self {
+        case let .projectedAction(payload): payload.request.operation
         case .handshake: .permissionsStatus
         case .permissionsStatus: .permissionsStatus
         case .requestPostEventPermission: .requestPostEventPermission
@@ -206,6 +208,7 @@ extension PeekabooBridgeRequest {
 }
 
 public enum PeekabooBridgeResponse: Codable, Sendable {
+    indirect case projectedAction(PeekabooBridgeProjectedActionResponse)
     case handshake(PeekabooBridgeHandshakeResponse)
     case permissionsStatus(PermissionsStatus)
     case daemonStatus(PeekabooDaemonStatus)

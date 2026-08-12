@@ -123,6 +123,7 @@ struct PeekabooBridgeHostIdentityTests {
         #expect(handshake.hostCapabilities == [
             PeekabooBridgeHostCapability.backgroundBridgeHost,
             PeekabooBridgeHostCapability.codeSignatureBuildIdentity,
+            PeekabooBridgeHostCapability.desktopActionOutcomeProjection,
             PeekabooBridgeHostCapability.desktopObservationCaptureEngine,
             PeekabooBridgeHostCapability.desktopObservationOCR,
             PeekabooBridgeHostCapability.hostGenerationIdentity,

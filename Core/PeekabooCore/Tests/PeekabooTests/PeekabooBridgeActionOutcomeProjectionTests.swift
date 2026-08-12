@@ -1,4 +1,5 @@
 import CoreGraphics
+import Darwin
 import Foundation
 import PeekabooAutomationKit
 import PeekabooBridgeTestSupport
@@ -60,6 +61,82 @@ struct PeekabooBridgeActionOutcomeProjectionTests {
         }
         #expect(handshake.hostCapabilities?.contains(
             PeekabooBridgeHostCapability.desktopActionOutcomeProjection) == true)
+    }
+
+    @Test
+    func `client wraps mutations only after current capability negotiation`() async throws {
+        let currentHandshake = BridgeTestFixtures.handshake(
+            negotiatedVersion: PeekabooBridgeConstants.protocolVersion,
+            supportedOperations: [.click],
+            hostCapabilities: [PeekabooBridgeHostCapability.desktopActionOutcomeProjection])
+        let currentPeer = try NegotiatedProjectionBridgePeer(responses: [
+            .handshake(currentHandshake),
+            .projectedAction(.init(response: .ok, outcome: nil)),
+        ])
+        let currentClient = PeekabooBridgeClient(socketPath: currentPeer.socketPath, requestTimeoutSec: 1)
+
+        _ = try await currentClient.handshake(client: Self.clientIdentity)
+        try await currentClient.sendExpectOK(Self.clickRequest)
+        let currentRequests = await currentPeer.requests
+        #expect(currentRequests.count == 2)
+        let currentAction = try JSONDecoder.peekabooBridgeDecoder().decode(
+            PeekabooBridgeRequest.self,
+            from: currentRequests[1])
+        guard case let .projectedAction(payload) = currentAction,
+              case .click = payload.request
+        else {
+            Issue.record("Expected a projected click after current capability negotiation")
+            await currentPeer.waitUntilFinished()
+            return
+        }
+        await currentPeer.waitUntilFinished()
+
+        let previousHandshake = BridgeTestFixtures.handshake(
+            negotiatedVersion: .init(major: 1, minor: 22),
+            supportedOperations: [.click],
+            hostCapabilities: [PeekabooBridgeHostCapability.desktopActionOutcomeProjection])
+        let previousPeer = try NegotiatedProjectionBridgePeer(responses: [
+            .handshake(previousHandshake),
+            .ok,
+        ])
+        let previousClient = PeekabooBridgeClient(socketPath: previousPeer.socketPath, requestTimeoutSec: 1)
+
+        _ = try await previousClient.handshake(client: Self.clientIdentity)
+        try await previousClient.sendExpectOK(Self.clickRequest)
+        let previousRequests = await previousPeer.requests
+        #expect(previousRequests.count == 2)
+        let previousAction = try JSONDecoder.peekabooBridgeDecoder().decode(
+            PeekabooBridgeRequest.self,
+            from: previousRequests[1])
+        guard case .click = previousAction else {
+            Issue.record("Expected legacy click carriage for a previous protocol host")
+            await previousPeer.waitUntilFinished()
+            return
+        }
+        await previousPeer.waitUntilFinished()
+    }
+
+    @Test
+    func `capable client treats a missing projected response as lost`() async throws {
+        let handshake = BridgeTestFixtures.handshake(
+            negotiatedVersion: PeekabooBridgeConstants.protocolVersion,
+            supportedOperations: [.click],
+            hostCapabilities: [PeekabooBridgeHostCapability.desktopActionOutcomeProjection])
+        let peer = try NegotiatedProjectionBridgePeer(responses: [.handshake(handshake), .ok])
+        let client = PeekabooBridgeClient(socketPath: peer.socketPath, requestTimeoutSec: 1)
+
+        _ = try await client.handshake(client: Self.clientIdentity)
+        do {
+            try await client.sendExpectOK(Self.clickRequest)
+            Issue.record("Expected unwrapped capable-host response to fail closed")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.route == .bridge)
+            #expect(failure.outcome.state == .indeterminate)
+            #expect(failure.outcome.evidence == .responseLost)
+            #expect(failure.outcome.projection.requiresFreshObservation)
+            #expect(!failure.outcome.projection.retrySafe)
+        }
+        await peer.waitUntilFinished()
     }
 
     @Test
@@ -261,6 +338,68 @@ struct PeekabooBridgeActionOutcomeProjectionTests {
     }
 
     @Test
+    @MainActor
+    func `projected request preflight rejects unsafe shapes before routing or recursive decode`() async throws {
+        let services = StubServices()
+        var permissionEvaluationCount = 0
+        let server = PeekabooBridgeServer(
+            services: services,
+            allowlistedTeams: [],
+            allowlistedBundles: [],
+            hostIdentity: nil,
+            permissionStatusEvaluator: { _ in
+                permissionEvaluationCount += 1
+                return PermissionsStatus(
+                    screenRecording: false,
+                    accessibility: false,
+                    postEvent: false)
+            })
+
+        let readOnly = try await Self.send(.projectedAction(.init(request: .permissionsStatus)), to: server)
+        Self.expectProjectedInvalidResponse(readOnly)
+        let handshake = PeekabooBridgeRequest.handshake(.init(
+            protocolVersion: PeekabooBridgeConstants.protocolVersion,
+            client: Self.clientIdentity))
+        let wrappedHandshake = try await Self.send(.projectedAction(.init(request: handshake)), to: server)
+        Self.expectProjectedInvalidResponse(wrappedHandshake)
+        #expect(permissionEvaluationCount == 0)
+        #expect(services.automationStub.lastClick == nil)
+
+        let escapedNestedWrapper = Data(
+            #"{"projectedAction":{"_0":{"request":{"projected\u0041ction":{"_0":{"request":BROKEN}}}}}}"#.utf8)
+        let nestedResponse = try await Self.decodeRaw(escapedNestedWrapper, with: server)
+        guard case let .error(nestedEnvelope) = nestedResponse else {
+            Issue.record("Expected raw preflight to reject nested projection carriage")
+            return
+        }
+        #expect(nestedEnvelope.code == .invalidRequest)
+        #expect(nestedEnvelope.message == "Projected Bridge action requests cannot be nested")
+
+        let deepPrefix = #"{"projectedAction":{"_0":{"request":{"click":{"_0":{"target":"#
+        let deepRequest = Data((
+            deepPrefix +
+                String(repeating: "[", count: PeekabooBridgeRequestPreflight.maximumJSONNestingDepth + 1))
+            .utf8)
+        let deepResponse = try await Self.decodeRaw(deepRequest, with: server)
+        guard case let .error(deepEnvelope) = deepResponse else {
+            Issue.record("Expected raw preflight to reject excessive JSON depth")
+            return
+        }
+        #expect(deepEnvelope.code == .invalidRequest)
+        #expect(deepEnvelope.message == "Bridge request JSON exceeds the maximum nesting depth")
+        #expect(permissionEvaluationCount == 0)
+        #expect(services.automationStub.lastClick == nil)
+
+        let arbitraryPayloadKey = PeekabooBridgeRequest.projectedAction(.init(request: .browserExecute(.init(
+            toolName: "fixture",
+            arguments: ["projectedAction": .string("ordinary nested browser payload")]))))
+        let arbitraryPayloadData = try JSONEncoder.peekabooBridgeEncoder().encode(arbitraryPayloadKey)
+        #expect(throws: Never.self) {
+            try PeekabooBridgeRequestPreflight.validate(arbitraryPayloadData)
+        }
+    }
+
+    @Test
     func `projection capability is introduced at protocol 1 23`() {
         let expectedVersion = PeekabooBridgeProtocolVersion(major: 1, minor: 23)
 
@@ -284,6 +423,17 @@ struct PeekabooBridgeActionOutcomeProjectionTests {
         } catch {
             Issue.record("Expected a Bridge invalid-request envelope, got \(error)")
         }
+    }
+
+    private static func expectProjectedInvalidResponse(_ response: PeekabooBridgeResponse) {
+        guard case let .projectedAction(payload) = response,
+              case let .error(envelope) = payload.response
+        else {
+            Issue.record("Expected projected invalid-request response")
+            return
+        }
+        #expect(envelope.code == .invalidRequest)
+        #expect(payload.outcome == nil)
     }
 
     private static func legacyResponse(for outcome: DesktopActionOutcome) -> PeekabooBridgeResponse {
@@ -385,9 +535,24 @@ struct PeekabooBridgeActionOutcomeProjectionTests {
         return try JSONDecoder.peekabooBridgeDecoder().decode(PeekabooBridgeResponse.self, from: responseData)
     }
 
+    @MainActor
+    private static func decodeRaw(
+        _ requestData: Data,
+        with server: PeekabooBridgeServer) async throws -> PeekabooBridgeResponse
+    {
+        let responseData = await server.decodeAndHandle(requestData, peer: nil)
+        return try JSONDecoder.peekabooBridgeDecoder().decode(PeekabooBridgeResponse.self, from: responseData)
+    }
+
     private static let clickRequest = PeekabooBridgeRequest.click(.init(
         target: .coordinates(CGPoint(x: 17, y: 29)),
         clickType: .single))
+
+    private static let clientIdentity = PeekabooBridgeClientIdentity(
+        bundleIdentifier: "dev.peekaboo.tests",
+        teamIdentifier: nil,
+        processIdentifier: getpid(),
+        hostname: nil)
 
     private static let legacyClickRequestData = Data(
         #"{"click":{"_0":{"clickType":"single","target":{"kind":"coordinates","x":17,"y":29}}}}"#.utf8)
@@ -507,5 +672,114 @@ struct PeekabooBridgeActionOutcomeProjectionTests {
         let mutationDispatched: Bool
         let retrySafe: Bool
         let requiresFreshObservation: Bool
+    }
+}
+
+private actor NegotiatedProjectionBridgePeerState {
+    private(set) var requests: [Data] = []
+
+    func record(_ request: Data) {
+        self.requests.append(request)
+    }
+}
+
+private final class NegotiatedProjectionBridgePeer: @unchecked Sendable {
+    let socketPath: String
+    private let listener: Int32
+    private let state = NegotiatedProjectionBridgePeerState()
+    private var task: Task<Void, Never>?
+
+    var requests: [Data] {
+        get async { await self.state.requests }
+    }
+
+    init(responses: [PeekabooBridgeResponse]) throws {
+        self.socketPath = "/tmp/pb-projection-negotiation-\(UUID().uuidString).sock"
+        self.listener = socket(AF_UNIX, SOCK_STREAM, 0)
+        guard self.listener >= 0 else {
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+        do {
+            var address = sockaddr_un()
+            address.sun_family = sa_family_t(AF_UNIX)
+            address.sun_len = UInt8(MemoryLayout.size(ofValue: address))
+            let copied = self.socketPath.withCString { source in
+                strlcpy(&address.sun_path.0, source, MemoryLayout.size(ofValue: address.sun_path))
+            }
+            guard copied < MemoryLayout.size(ofValue: address.sun_path) else {
+                throw POSIXError(.ENAMETOOLONG)
+            }
+            let length = socklen_t(MemoryLayout.size(ofValue: address))
+            let bindResult = withUnsafePointer(to: &address) { pointer in
+                Darwin.bind(self.listener, UnsafePointer<sockaddr>(OpaquePointer(pointer)), length)
+            }
+            guard bindResult == 0, listen(self.listener, Int32(responses.count)) == 0 else {
+                throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+            }
+        } catch {
+            Darwin.close(self.listener)
+            try? FileManager.default.removeItem(atPath: self.socketPath)
+            throw error
+        }
+
+        let listener = self.listener
+        let socketPath = self.socketPath
+        let state = self.state
+        self.task = Task.detached {
+            defer {
+                Darwin.close(listener)
+                try? FileManager.default.removeItem(atPath: socketPath)
+            }
+            for response in responses {
+                let client = accept(listener, nil, nil)
+                guard client >= 0 else { return }
+                let request = Self.readRequest(from: client)
+                await state.record(request)
+                if let data = try? JSONEncoder.peekabooBridgeEncoder().encode(response) {
+                    Self.write(data, to: client)
+                }
+                Darwin.close(client)
+            }
+        }
+    }
+
+    func waitUntilFinished() async {
+        await self.task?.value
+        self.task = nil
+    }
+
+    private nonisolated static func readRequest(from descriptor: Int32) -> Data {
+        var result = Data()
+        var buffer = [UInt8](repeating: 0, count: 4096)
+        while true {
+            let count = buffer.withUnsafeMutableBytes { bytes in
+                Darwin.read(descriptor, bytes.baseAddress, bytes.count)
+            }
+            if count > 0 {
+                result.append(contentsOf: buffer.prefix(count))
+                continue
+            }
+            if count < 0, errno == EINTR {
+                continue
+            }
+            return result
+        }
+    }
+
+    private nonisolated static func write(_ data: Data, to descriptor: Int32) {
+        data.withUnsafeBytes { bytes in
+            guard let baseAddress = bytes.baseAddress else { return }
+            var offset = 0
+            while offset < bytes.count {
+                let count = Darwin.write(descriptor, baseAddress.advanced(by: offset), bytes.count - offset)
+                if count > 0 {
+                    offset += count
+                } else if count < 0, errno == EINTR {
+                    continue
+                } else {
+                    return
+                }
+            }
+        }
     }
 }

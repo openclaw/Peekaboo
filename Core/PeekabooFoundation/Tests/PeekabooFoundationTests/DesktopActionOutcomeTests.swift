@@ -175,6 +175,31 @@ struct DesktopActionOutcomeTests {
             hint: "Observe before retrying")
         #expect(typedFailure.outcome.evidence == .operationStillRunning)
         #expect(typedFailure.outcome.effect == .unverifiable)
+
+        let routedFailure = typedFailure.routed(to: .bridge)
+        #expect(routedFailure.outcome.route == .bridge)
+        #expect(routedFailure.message == typedFailure.message)
+        #expect(routedFailure.hint == typedFailure.hint)
+        #expect(routedFailure.causeDescription == typedFailure.causeDescription)
+    }
+
+    @Test
+    func `rerouting preserves every validated outcome field except route`() throws {
+        let original = try DesktopActionOutcome.partial(
+            delivery: self.backgroundAX,
+            unitCount: self.positiveUnitCount(2))
+
+        let routed = original.routed(to: .bridge)
+
+        #expect(routed.route == .bridge)
+        #expect(routed.state == original.state)
+        #expect(routed.effect == original.effect)
+        #expect(routed.delivery == original.delivery)
+        #expect(routed.evidence == original.evidence)
+        #expect(routed.dispatchState == original.dispatchState)
+        #expect(routed.retrySafety == original.retrySafety)
+        #expect(routed.escalation == original.escalation)
+        #expect(routed.refusalReason == original.refusalReason)
     }
 
     @Test

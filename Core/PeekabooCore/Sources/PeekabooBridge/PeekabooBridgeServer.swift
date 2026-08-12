@@ -81,6 +81,9 @@ public final class PeekabooBridgeServer {
         self.allowedOperations = allowedOperations.subtracting([._appleScriptProbe])
         self.hostIdentity = hostIdentity
         var resolvedHostCapabilities = hostCapabilities
+        if supportedVersions.upperBound >= PeekabooBridgeConstants.desktopActionOutcomeProjectionVersion {
+            resolvedHostCapabilities.insert(PeekabooBridgeHostCapability.desktopActionOutcomeProjection)
+        }
         let registeredScreenCaptureKitOwnership = services.supportsScreenCaptureKitProcessOwnership &&
             (try? ScreenCaptureKitOwnerLease.registerCurrentProcessCapability()) != nil
         if hostIdentity?.processStartIdentity != nil {
@@ -143,12 +146,16 @@ public final class PeekabooBridgeServer {
 
     public func decodeAndHandle(_ requestData: Data, peer: PeekabooBridgePeer?) async -> Data {
         do {
+            try PeekabooBridgeRequestPreflight.validate(requestData)
             let request = try self.decoder.decode(PeekabooBridgeRequest.self, from: requestData)
+            if case let .projectedAction(payload) = request {
+                return await self.handleProjectedAction(payload, peer: peer)
+            }
             let response = try await self.route(request, peer: peer)
             return try self.encoder.encode(response)
         } catch let envelope as PeekabooBridgeErrorEnvelope {
             self.logger.error("bridge request failed: \(envelope.message, privacy: .public)")
-            return PeekabooBridgeResponse.encodeError(envelope, using: self.encoder)
+            return PeekabooBridgeResponse.encodeError(envelope.legacyCompatible, using: self.encoder)
         } catch is CancellationError {
             self.logger.debug("bridge request cancelled after its client disconnected")
             let envelope = PeekabooBridgeErrorEnvelope(
@@ -162,6 +169,53 @@ public final class PeekabooBridgeServer {
                 message: "Failed to decode request",
                 details: "\(error)")
             return PeekabooBridgeResponse.encodeError(envelope, using: self.encoder)
+        }
+    }
+
+    private func handleProjectedAction(
+        _ payload: PeekabooBridgeProjectedActionRequest,
+        peer: PeekabooBridgePeer?) async -> Data
+    {
+        do {
+            let request = try payload.validatedRequest()
+            let response = try await self.route(request, peer: peer)
+            return try self.encoder.encode(PeekabooBridgeResponse.projectedAction(.init(
+                response: response,
+                outcome: Self.actionOutcome(in: response))))
+        } catch let envelope as PeekabooBridgeErrorEnvelope {
+            self.logger.error("projected bridge request failed: \(envelope.message, privacy: .public)")
+            return self.encodeProjectedError(envelope)
+        } catch is CancellationError {
+            self.logger.debug("projected bridge request cancelled after its client disconnected")
+            return self.encodeProjectedError(PeekabooBridgeErrorEnvelope(
+                code: .timeout,
+                message: "Bridge request was cancelled"))
+        } catch {
+            self.logger.error("projected bridge request failed: \(error.localizedDescription, privacy: .public)")
+            return self.encodeProjectedError(PeekabooBridgeErrorEnvelope(
+                code: .internalError,
+                message: error.localizedDescription,
+                details: "\(error)"))
+        }
+    }
+
+    private func encodeProjectedError(_ envelope: PeekabooBridgeErrorEnvelope) -> Data {
+        let response = PeekabooBridgeResponse.projectedAction(.init(
+            response: .error(envelope),
+            outcome: envelope.actionOutcome))
+        guard let data = try? self.encoder.encode(response), !data.isEmpty else {
+            return PeekabooBridgeResponse.encodeError(envelope, using: self.encoder)
+        }
+        return data
+    }
+
+    private static func actionOutcome(
+        in response: PeekabooBridgeResponse) -> DesktopActionOutcome.Projection?
+    {
+        switch response {
+        case let .error(envelope): envelope.actionOutcome
+        case let .projectedAction(payload): payload.outcome
+        default: nil
         }
     }
 
@@ -244,6 +298,9 @@ public final class PeekabooBridgeServer {
         for error: any Error,
         operation: PeekabooBridgeOperation) -> PeekabooBridgeErrorEnvelope
     {
+        if let envelope = self.actionFailureEnvelope(for: error) {
+            return envelope
+        }
         if let error = error as? ApplicationLifecycleRefusalError {
             return .init(
                 code: .internalError,
@@ -271,13 +328,6 @@ public final class PeekabooBridgeServer {
            let envelope = bridgeErrorEnvelope(for: error, operation: operation)
         {
             return envelope
-        }
-        if let error = error as? InputDeliveryIndeterminateError {
-            return .init(
-                code: .internalError,
-                message: error.localizedDescription,
-                details: "\(error)",
-                operationMayHaveCompleted: error.operationMayHaveCompleted)
         }
         if let error = error as? DesktopObservationError {
             switch error {
@@ -347,6 +397,28 @@ public final class PeekabooBridgeServer {
         return .init(
             code: .internalError,
             message: userMessage.isEmpty ? "Bridge operation failed" : userMessage,
+            details: "\(error)")
+    }
+
+    private static func actionFailureEnvelope(for error: any Error) -> PeekabooBridgeErrorEnvelope? {
+        if let failure = error as? DesktopActionFailure {
+            return .init(
+                code: .internalError,
+                actionFailure: failure.routed(to: .bridge),
+                details: "\(error)")
+        }
+        guard let error = error as? InputDeliveryIndeterminateError else { return nil }
+        let unitCount = error.emittedUnitCount.flatMap { DesktopActionOutcome.DispatchUnitCount($0) }
+        let failure = DesktopActionFailure.indeterminate(
+            route: .bridge,
+            evidence: .completionUnknown,
+            unitCount: unitCount,
+            message: error.localizedDescription,
+            hint: "Observe the target before retrying this operation.",
+            causeDescription: error.causeDescription)
+        return .init(
+            code: .internalError,
+            actionFailure: failure,
             details: "\(error)")
     }
 

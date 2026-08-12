@@ -10,6 +10,7 @@ public actor PeekabooBridgeClient {
     let encoder: JSONEncoder
     let decoder: JSONDecoder
     let logger = Logger(subsystem: "boo.peekaboo.bridge", category: "client")
+    var actionProjectionEnabled = false
 
     public init(
         socketPath: String = PeekabooBridgeConstants.peekabooSocketPath,
@@ -33,6 +34,7 @@ public actor PeekabooBridgeClient {
         overallTimeoutSec: TimeInterval? = nil)
         async throws -> PeekabooBridgeHandshakeResponse
     {
+        self.actionProjectionEnabled = false
         let deadline: Date?
         if let overallTimeoutSec {
             guard overallTimeoutSec.isFinite, overallTimeoutSec > 0 else {
@@ -88,6 +90,10 @@ public actor PeekabooBridgeClient {
 
         switch response {
         case let .handshake(handshake):
+            self.actionProjectionEnabled =
+                handshake.negotiatedVersion >= PeekabooBridgeConstants.desktopActionOutcomeProjectionVersion &&
+                handshake.hostCapabilities?.contains(
+                    PeekabooBridgeHostCapability.desktopActionOutcomeProjection) == true
             return handshake
         case let .error(envelope):
             throw envelope

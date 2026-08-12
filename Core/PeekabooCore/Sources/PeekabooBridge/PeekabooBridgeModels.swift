@@ -299,6 +299,7 @@ public enum PeekabooBridgeHostCapability {
     public static let safeBackgroundApplicationLaunchNoOp = "safeBackgroundApplicationLaunchNoOp"
     public static let processGenerationPinnedApplicationActivation =
         "processGenerationPinnedApplicationActivation"
+    public static let desktopActionOutcomeProjection = "desktopActionOutcomeProjection"
 }
 
 public struct PeekabooBridgeHandshakeResponse: Codable, Sendable {

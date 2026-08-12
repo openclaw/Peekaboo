@@ -11,7 +11,7 @@ import Testing
 struct PermissionsToolSelectedHostTests {
     @Test
     func `permission provider remains additive at protocol 1_22`() {
-        #expect(PeekabooBridgeConstants.protocolVersion == .init(major: 1, minor: 22))
+        #expect(PeekabooBridgeConstants.protocolVersion == .init(major: 1, minor: 23))
     }
 
     private struct PermissionCase: Sendable, CustomTestStringConvertible {
