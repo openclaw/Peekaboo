@@ -1,4 +1,5 @@
 import MCP
+import PeekabooAutomationKit
 import Tachikoma
 import TachikomaMCP
 import Testing
@@ -196,6 +197,29 @@ struct MCPToolExecutionPolicyTests {
         #expect(MCPToolExecutionPolicy.unrestricted.rejection(
             toolName: "space",
             arguments: ToolArguments(raw: ["action": "move-window", "follow": true])) == nil)
+        #expect(MCPToolExecutionPolicy.backgroundOnly.systemSurfaceRejection(
+            toolName: "action",
+            applicationBundleIdentifier: "com.example.Dock",
+            applicationName: "Dock") == nil)
+        #expect(MCPToolExecutionPolicy.backgroundOnly.systemSurfaceRejection(
+            toolName: "action",
+            applicationBundleIdentifier: nil,
+            applicationName: "Dock")?.isError == true)
+        #expect(MCPToolExecutionPolicy.backgroundOnly.systemSurfaceRejection(
+            toolName: "action",
+            applicationBundleIdentifier: nil,
+            applicationName: "Passwords")?.isError == true)
+        for bundleIdentifier in [
+            "com.apple.controlcenter",
+            "com.apple.dock",
+            "com.apple.notificationcenterui",
+            "com.apple.systemuiserver",
+        ] {
+            #expect(MCPToolExecutionPolicy.backgroundOnly.systemSurfaceRejection(
+                toolName: "action",
+                applicationBundleIdentifier: bundleIdentifier,
+                applicationName: nil)?.isError == true)
+        }
     }
 
     @Test
@@ -216,6 +240,197 @@ struct MCPToolExecutionPolicyTests {
         let directResponse = try await directContext.execute(tool: shell, arguments: arguments)
         #expect(!directResponse.isError)
         #expect(await counter.value == 1)
+    }
+
+    @Test
+    @MainActor
+    func `background-only refuses generic AXPress when an exact Dock snapshot lacks its tool mirror`() async throws {
+        let snapshotID = "dock-policy-\(UUID().uuidString)"
+        let processIdentifier = getpid()
+        let processStartIdentity: UInt64 = 77
+        let bounds = CGRect(x: 0, y: 900, width: 1200, height: 100)
+        let windowIdentity = WindowMutationIdentity(
+            windowID: 700,
+            ownerProcessIdentifier: processIdentifier,
+            ownerProcessStartIdentity: processStartIdentity,
+            capturedBounds: bounds)
+        let windowContext = WindowContext(
+            applicationName: "Dock",
+            applicationBundleId: "com.apple.dock",
+            applicationProcessId: processIdentifier,
+            windowTitle: "Dock",
+            windowID: 700,
+            windowBounds: bounds,
+            windowMutationIdentity: windowIdentity)
+        let detectionResult = ElementDetectionResult(
+            snapshotId: snapshotID,
+            screenshotPath: "/tmp/dock-policy.png",
+            elements: DetectedElements(buttons: [
+                DetectedElement(
+                    id: "B1",
+                    type: .button,
+                    label: "Safari",
+                    bounds: CGRect(x: 20, y: 920, width: 64, height: 64)),
+            ]),
+            metadata: DetectionMetadata(
+                detectionTime: 0.01,
+                elementCount: 1,
+                method: "test",
+                windowContext: windowContext))
+        let snapshots = InMemorySnapshotManager(detectionResult: detectionResult)
+        let services = PeekabooServices(snapshotManager: snapshots)
+        let context = MCPToolContext(services: services, executionPolicy: .backgroundOnly)
+
+        let response = try await context.execute(
+            tool: ActionTool(context: context),
+            arguments: ToolArguments(raw: [
+                "on": "B1",
+                "action": "AXPress",
+                "snapshot": snapshotID,
+            ]))
+
+        #expect(response.isError)
+        guard case let .object(meta)? = response.meta else {
+            Issue.record("Missing structured Dock policy refusal metadata")
+            return
+        }
+        #expect(meta["error_code"] == .string(MCPToolExecutionPolicy.refusalErrorCode))
+        #expect(meta["effect"] == .string("refused"))
+        #expect(meta["execution_policy"] == .string("background_only"))
+        #expect(meta["mutation_dispatched"] == .bool(false))
+        #expect(meta["retry_safe"] == .bool(true))
+    }
+
+    @Test
+    @MainActor
+    func `background-only pins the authorized implicit snapshot into mutation dispatch`() async throws {
+        let snapshotID = "implicit-policy-\(UUID().uuidString)"
+        let processIdentifier = getpid()
+        let bounds = CGRect(x: 100, y: 100, width: 800, height: 600)
+        let identity = WindowMutationIdentity(
+            windowID: 701,
+            ownerProcessIdentifier: processIdentifier,
+            ownerProcessStartIdentity: 78,
+            capturedBounds: bounds)
+        let windowContext = WindowContext(
+            applicationName: "TextEdit",
+            applicationBundleId: "com.apple.TextEdit",
+            applicationProcessId: processIdentifier,
+            windowTitle: "Untitled",
+            windowID: 701,
+            windowBounds: bounds,
+            windowMutationIdentity: identity)
+        let detectionResult = ElementDetectionResult(
+            snapshotId: snapshotID,
+            screenshotPath: "/tmp/implicit-policy.png",
+            elements: DetectedElements(buttons: [
+                DetectedElement(
+                    id: "B1",
+                    type: .button,
+                    label: "Save",
+                    bounds: CGRect(x: 20, y: 20, width: 64, height: 24)),
+            ]),
+            metadata: DetectionMetadata(
+                detectionTime: 0.01,
+                elementCount: 1,
+                method: "test",
+                windowContext: windowContext))
+        let snapshots = InMemorySnapshotManager(detectionResult: detectionResult)
+        let services = PeekabooServices(snapshotManager: snapshots)
+        let context = MCPToolContext(services: services, executionPolicy: .backgroundOnly)
+        let toolSnapshot = await UISnapshotManager.shared.createSnapshot(id: snapshotID)
+        await toolSnapshot.setTargetMetadata(from: windowContext)
+        let capture = PolicySnapshotArgumentCapture()
+
+        let response = try await context.execute(
+            tool: PolicySnapshotProbeTool(capture: capture),
+            arguments: ToolArguments(raw: [
+                "on": "B1",
+                "action": "AXPress",
+            ]))
+        await UISnapshotManager.shared.removeSnapshot(id: snapshotID)
+
+        #expect(!response.isError)
+        #expect(await capture.snapshotID == snapshotID)
+    }
+
+    @Test
+    @MainActor
+    func `background-only rejects conflicting snapshot selectors before dispatch`() async throws {
+        let snapshotID = "selector-policy-\(UUID().uuidString)"
+        let processIdentifier = getpid()
+        let bounds = CGRect(x: 100, y: 100, width: 800, height: 600)
+        let identity = WindowMutationIdentity(
+            windowID: 702,
+            ownerProcessIdentifier: processIdentifier,
+            ownerProcessStartIdentity: 79,
+            capturedBounds: bounds)
+        let windowContext = WindowContext(
+            applicationName: "TextEdit",
+            applicationBundleId: "com.apple.TextEdit",
+            applicationProcessId: processIdentifier,
+            windowTitle: "Untitled",
+            windowID: 702,
+            windowBounds: bounds,
+            windowMutationIdentity: identity)
+        let detectionResult = ElementDetectionResult(
+            snapshotId: snapshotID,
+            screenshotPath: "/tmp/selector-policy.png",
+            elements: DetectedElements(buttons: [
+                DetectedElement(
+                    id: "B1",
+                    type: .button,
+                    label: "Save",
+                    bounds: CGRect(x: 20, y: 20, width: 64, height: 24)),
+            ]),
+            metadata: DetectionMetadata(
+                detectionTime: 0.01,
+                elementCount: 1,
+                method: "test",
+                windowContext: windowContext))
+        let snapshots = InMemorySnapshotManager(detectionResult: detectionResult)
+        let services = PeekabooServices(snapshotManager: snapshots)
+        let context = MCPToolContext(services: services, executionPolicy: .backgroundOnly)
+        let toolSnapshot = await UISnapshotManager.shared.createSnapshot(id: snapshotID)
+        await toolSnapshot.setTargetMetadata(from: windowContext)
+        let capture = PolicySnapshotArgumentCapture()
+
+        let response = try await context.execute(
+            tool: PolicySnapshotProbeTool(name: "click", capture: capture),
+            arguments: ToolArguments(raw: [
+                "coords": "120,120",
+                "snapshot": snapshotID,
+                "coordinate_reference": "unchecked-target",
+            ]))
+        let blankResponse = try await context.execute(
+            tool: PolicySnapshotProbeTool(name: "click", capture: capture),
+            arguments: ToolArguments(raw: [
+                "coords": "120,120",
+                "snapshot": "",
+                "coordinate_reference": snapshotID,
+            ]))
+        let malformedResponse = try await context.execute(
+            tool: PolicySnapshotProbeTool(name: "click", capture: capture),
+            arguments: ToolArguments(raw: [
+                "coords": "120,120",
+                "snapshot": 42,
+            ]))
+        let missingReceiptResponse = try await context.execute(
+            tool: PolicySnapshotProbeTool(name: "click", capture: capture),
+            arguments: ToolArguments(raw: ["coords": "120,120"]))
+        await UISnapshotManager.shared.removeSnapshot(id: snapshotID)
+
+        #expect(response.isError)
+        #expect(blankResponse.isError)
+        #expect(malformedResponse.isError)
+        #expect(missingReceiptResponse.isError)
+        #expect(await capture.snapshotID == nil)
+        guard case let .object(meta)? = response.meta else {
+            Issue.record("Missing selector-conflict refusal metadata")
+            return
+        }
+        #expect(meta["error_code"] == .string(MCPToolExecutionPolicy.refusalErrorCode))
+        #expect(meta["mutation_dispatched"] == .bool(false))
     }
 
     @Test
@@ -338,6 +553,16 @@ private actor PolicyInvocationCounter {
     }
 }
 
+private actor PolicySnapshotArgumentCapture {
+    private(set) var snapshotID: String?
+    private(set) var coordinateReference: String?
+
+    func record(snapshotID: String?, coordinateReference: String?) {
+        self.snapshotID = snapshotID
+        self.coordinateReference = coordinateReference
+    }
+}
+
 private actor PolicyCancellationCapture {
     struct Snapshot: Sendable {
         let cancelled: Bool
@@ -373,5 +598,37 @@ private struct PolicyProbeTool: MCPTool {
     func execute(arguments _: ToolArguments) async throws -> ToolResponse {
         await self.counter.record()
         return ToolResponse.text("invoked")
+    }
+}
+
+private struct PolicySnapshotProbeTool: MCPTool {
+    let name: String
+    let capture: PolicySnapshotArgumentCapture
+    let description = "Policy snapshot argument probe"
+
+    init(name: String = "action", capture: PolicySnapshotArgumentCapture) {
+        self.name = name
+        self.capture = capture
+    }
+
+    var inputSchema: Value {
+        SchemaBuilder.object(
+            properties: [
+                "on": SchemaBuilder.string(),
+                "action": SchemaBuilder.string(),
+                "coords": SchemaBuilder.string(),
+                "coordinate_reference": SchemaBuilder.string(),
+                "snapshot": SchemaBuilder.string(),
+            ],
+            required: [])
+    }
+
+    func execute(arguments: ToolArguments) async throws -> ToolResponse {
+        await self.capture.record(
+            snapshotID: arguments.getString("snapshot"),
+            coordinateReference: arguments.getString("coordinate_reference"))
+        return ToolResponse.text(
+            "captured",
+            meta: .object(["mutation_dispatched": .bool(false)]))
     }
 }

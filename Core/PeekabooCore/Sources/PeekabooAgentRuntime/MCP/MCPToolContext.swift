@@ -234,11 +234,22 @@ public struct MCPToolContext: @unchecked Sendable {
             throw error
         }
 
+        // Target authorization and leaf dispatch stay inside the same shared gate. Observation tools therefore cannot
+        // replace either snapshot store between the identity check and the exact pinned tool invocation.
+        let targetAuthorization = await self.backgroundTargetAuthorization(
+            toolName: tool.name,
+            arguments: arguments)
+        if let rejection = targetAuthorization.rejection {
+            await self.snapshotExecutionGate.release()
+            return rejection
+        }
+        let executionArguments = targetAuthorization.arguments
+
         let scope = MCPToolSnapshotMutationScope(
             toolName: tool.name,
             effect: effect,
             preservedSnapshotID: effect == .mutationProducingFreshObservation
-                ? arguments.getString("snapshot")
+                ? executionArguments.getString("snapshot")
                 : nil)
         var toolStarted = false
         do {
@@ -248,7 +259,7 @@ public struct MCPToolContext: @unchecked Sendable {
             let response = try await Self.$snapshotObservationStartedAt.withValue(
                 effect == .mutationProducingFreshObservation ? scope.startedAt : nil)
             {
-                try await tool.execute(arguments: arguments)
+                try await tool.execute(arguments: executionArguments)
             }
             try Task.checkCancellation()
             if Self.explicitlyNotDispatched(response) {
@@ -306,6 +317,151 @@ public struct MCPToolContext: @unchecked Sendable {
             await self.snapshotExecutionGate.release()
             throw error
         }
+    }
+
+    private struct BackgroundTargetAuthorization {
+        let arguments: ToolArguments
+        let rejection: ToolResponse?
+    }
+
+    private func backgroundTargetAuthorization(
+        toolName: String,
+        arguments: ToolArguments) async -> BackgroundTargetAuthorization
+    {
+        func permitted(_ arguments: ToolArguments) -> BackgroundTargetAuthorization {
+            BackgroundTargetAuthorization(arguments: arguments, rejection: nil)
+        }
+        func refused(_ response: ToolResponse?) -> BackgroundTargetAuthorization {
+            BackgroundTargetAuthorization(arguments: arguments, rejection: response)
+        }
+
+        guard self.executionPolicy == .backgroundOnly else { return permitted(arguments) }
+        guard ["action", "click", "set_value"].contains(toolName) else { return permitted(arguments) }
+        let snapshotSelector = Self.strictString(arguments, key: "snapshot")
+        let coordinateSelector = Self.strictString(arguments, key: "coordinate_reference")
+        if snapshotSelector.isInvalid {
+            return refused(self.executionPolicy.unresolvedTargetRejection(
+                toolName: toolName,
+                detail: "snapshot must be a nonempty string containing an exact observation ID"))
+        }
+        if coordinateSelector.isInvalid {
+            return refused(self.executionPolicy.unresolvedTargetRejection(
+                toolName: toolName,
+                detail: "coordinate_reference must be a nonempty string containing an exact observation ID"))
+        }
+        let snapshotID = snapshotSelector.value
+        let coordinateReference = coordinateSelector.value
+        if let snapshotID, let coordinateReference, snapshotID != coordinateReference {
+            return refused(self.executionPolicy.unresolvedTargetRejection(
+                toolName: toolName,
+                detail: "snapshot and coordinate_reference identify different targets"))
+        }
+        let requestedSnapshotID = snapshotID ?? coordinateReference
+        // ClickTool intentionally accepts either selector as the same capture-owned coordinate receipt. Its leaf
+        // revalidates the exact PID/window/generation/bounds and rejects points outside that captured window.
+        if toolName == "click", arguments.getValue(for: "coords") != nil, requestedSnapshotID == nil {
+            return refused(self.executionPolicy.unresolvedTargetRejection(
+                toolName: toolName,
+                detail: "background coordinates require an explicit exact snapshot or coordinate_reference"))
+        }
+        let mirroredSnapshot = await UISnapshotManager.shared.getSnapshot(id: requestedSnapshotID)
+        let effectiveSnapshotID = requestedSnapshotID ?? mirroredSnapshot?.id
+        guard let effectiveSnapshotID else {
+            return refused(self.executionPolicy.unresolvedTargetRejection(
+                toolName: toolName,
+                detail: "no current snapshot identifies the target"))
+        }
+        let detectionResult = try? await self.snapshots.getDetectionResult(snapshotId: effectiveSnapshotID)
+        guard let detectionResult,
+              detectionResult.snapshotId == effectiveSnapshotID,
+              let windowContext = detectionResult.metadata.windowContext
+        else {
+            return refused(self.executionPolicy.unresolvedTargetRejection(
+                toolName: toolName,
+                detail: "snapshot '\(effectiveSnapshotID)' has no authoritative application identity"))
+        }
+        let applicationBundleIdentifier = Self.nonEmpty(windowContext.applicationBundleId)
+        let applicationName = Self.nonEmpty(windowContext.applicationName)
+        guard applicationBundleIdentifier != nil || applicationName != nil else {
+            return refused(self.executionPolicy.unresolvedTargetRejection(
+                toolName: toolName,
+                detail: "snapshot '\(effectiveSnapshotID)' has no authoritative application name or bundle ID"))
+        }
+        if let rejection = self.executionPolicy.systemSurfaceRejection(
+            toolName: toolName,
+            applicationBundleIdentifier: applicationBundleIdentifier,
+            applicationName: applicationName)
+        {
+            return refused(rejection)
+        }
+        guard let mirroredSnapshot, mirroredSnapshot.id == effectiveSnapshotID else {
+            return refused(self.executionPolicy.unresolvedTargetRejection(
+                toolName: toolName,
+                detail: "snapshot '\(effectiveSnapshotID)' is absent from the tool snapshot store"))
+        }
+        guard Self.sameTarget(mirroredSnapshot, windowContext) else {
+            return refused(self.executionPolicy.unresolvedTargetRejection(
+                toolName: toolName,
+                detail: "the tool and automation snapshots disagree about target ownership"))
+        }
+        if requestedSnapshotID == nil {
+            let authoritativeLatestID = await self.snapshots.getMostRecentSnapshot()
+            guard authoritativeLatestID == effectiveSnapshotID else {
+                return refused(self.executionPolicy.unresolvedTargetRejection(
+                    toolName: toolName,
+                    detail: "the implicit tool and automation snapshots do not identify the same target"))
+            }
+        }
+        var pinnedArguments = arguments.rawDictionary
+        pinnedArguments["snapshot"] = effectiveSnapshotID
+        if coordinateReference != nil {
+            pinnedArguments["coordinate_reference"] = effectiveSnapshotID
+        }
+        return permitted(ToolArguments(raw: pinnedArguments))
+    }
+
+    private static func nonEmpty(_ value: String?) -> String? {
+        guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else { return nil }
+        return value
+    }
+
+    private struct StrictStringSelector {
+        let isInvalid: Bool
+        let value: String?
+    }
+
+    private static func strictString(_ arguments: ToolArguments, key: String) -> StrictStringSelector {
+        guard let raw = arguments.getValue(for: key) else {
+            return StrictStringSelector(isInvalid: false, value: nil)
+        }
+        guard case let .string(value) = raw, let value = Self.nonEmpty(value) else {
+            return StrictStringSelector(isInvalid: true, value: nil)
+        }
+        return StrictStringSelector(isInvalid: false, value: value)
+    }
+
+    private static func sameTarget(_ snapshot: UISnapshot, _ context: WindowContext) -> Bool {
+        guard let processIdentifier = context.applicationProcessId,
+              snapshot.applicationProcessId == processIdentifier,
+              let windowID = context.windowID,
+              snapshot.windowID == windowID,
+              let bounds = context.windowBounds,
+              snapshot.windowBounds == bounds,
+              let identity = context.windowMutationIdentity,
+              snapshot.windowMutationIdentity == identity,
+              identity.windowID == windowID,
+              identity.ownerProcessIdentifier == processIdentifier,
+              identity.capturedBounds == bounds
+        else {
+            return false
+        }
+        if let applicationName = Self.nonEmpty(context.applicationName),
+           let mirroredName = Self.nonEmpty(snapshot.applicationName),
+           applicationName.caseInsensitiveCompare(mirroredName) != .orderedSame
+        {
+            return false
+        }
+        return true
     }
 
     @MainActor

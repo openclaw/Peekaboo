@@ -23,11 +23,44 @@ public enum MCPToolExecutionPolicy: String, Codable, Sendable {
         case .foregroundAllowed:
             ForegroundAllowedAgentToolPolicy.refusalReason(toolName: toolName)
         }
-        guard let reason else {
+        return reason.map { self.refusal(toolName: toolName, reason: $0) }
+    }
+
+    func systemSurfaceRejection(
+        toolName: String,
+        applicationBundleIdentifier: String?,
+        applicationName: String?) -> ToolResponse?
+    {
+        guard self == .backgroundOnly else { return nil }
+        let normalizedBundleIdentifier = applicationBundleIdentifier?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        let normalizedApplicationName = applicationName?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        if let normalizedBundleIdentifier, !normalizedBundleIdentifier.isEmpty {
+            guard Self.sharedSystemUIBundleIdentifiers.contains(normalizedBundleIdentifier) else { return nil }
+        } else {
+            guard let normalizedApplicationName,
+                  Self.sharedSystemUIApplicationNames.contains(normalizedApplicationName)
+            else { return nil }
+        }
+        return self.refusal(
+            toolName: toolName,
+            reason: "the selected target is shared system UI and cannot be mutated in background-only mode")
+    }
+
+    func unresolvedTargetRejection(toolName: String, detail: String) -> ToolResponse? {
+        guard self == .backgroundOnly else {
             return nil
         }
+        return self.refusal(
+            toolName: toolName,
+            reason: "the selected mutation target could not be proven background-safe: \(detail)")
+    }
 
-        return ToolResponse.error(
+    private func refusal(toolName: String, reason: String) -> ToolResponse {
+        ToolResponse.error(
             "Agent session policy refused '\(toolName)' before dispatch because \(reason). " +
                 "Only a human can authorize a different Agent execution policy.",
             meta: .object([
@@ -38,6 +71,27 @@ public enum MCPToolExecutionPolicy: String, Codable, Sendable {
                 "retry_safe": .bool(true),
             ]))
     }
+
+    private static let sharedSystemUIBundleIdentifiers: Set<String> = [
+        "com.apple.controlcenter",
+        "com.apple.dock",
+        "com.apple.notificationcenterui",
+        "com.apple.passwords.menubarextra",
+        "com.apple.siri",
+        "com.apple.spotlight",
+        "com.apple.systemuiserver",
+    ]
+
+    private static let sharedSystemUIApplicationNames: Set<String> = [
+        "control center",
+        "dock",
+        "notification center",
+        "passwords",
+        "passwords menu bar extra",
+        "siri",
+        "spotlight",
+        "systemuiserver",
+    ]
 
     func rejection(toolName: String, agentArguments: [String: AnyAgentToolValue]) -> ToolResponse? {
         self.rejection(

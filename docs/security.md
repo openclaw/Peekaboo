@@ -39,8 +39,9 @@ Agent execution adds a stricter runtime boundary. New Agent sessions are immutab
 human starts that session with `peekaboo agent ... --allow-foreground`. The saved value is an immutable maximum, not a
 bearer credential: every resumed process invocation returns to background-only unless the human passes the flag again.
 The policy is checked centrally before lookup, turn-boundary bookkeeping, validation, or dispatch and cannot be changed
-by model output or writable session JSON alone. Foreground authorization does not authorize shell execution: normal
-Agent toolsets omit `shell`, and the execution boundary refuses it under both Agent policies. Direct standalone CLI and
+by model output or writable session JSON alone. Foreground authorization never exposes the Shell tool: normal Agent
+toolsets omit `shell`, and the execution boundary refuses it under both Agent policies. Foreground UI authority is not
+a process sandbox; a trusted prompt can operate terminal or scripting apps through their UI. Direct standalone CLI and
 MCP tools keep their existing explicit contracts. Background-only Agent sessions refuse raw `press`, persistent
 clipboard writes, browser setup/fronting, and Space switch/follow while retaining Space listing and unfollowed window
 placement.

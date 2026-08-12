@@ -33,9 +33,11 @@ public struct MCPAgentTool: MCPTool {
         - Background text delivery and native Accessibility actions
 
         MCP-started Agent sessions are always background-only. They refuse raw keyboard press, focus/activation,
-        shared-pointer/global input, foreground capture, persistent clipboard writes, Dock mutations, Space
-        switch/follow, browser setup/fronting, and shell execution before dispatch. Space listing and unfollowed window
-        placement remain available. Only the human-facing CLI can explicitly authorize foreground UI for a session.
+        shared-pointer/global input, foreground capture, persistent clipboard writes, shared system UI mutations, Space
+        switch/follow, browser setup/fronting, and Shell-tool access before dispatch. Space listing and unfollowed
+        window placement remain available. This UI authority boundary is not a process sandbox; trusted prompts can
+        operate terminal or scripting apps through their UI. Only the human-facing CLI can explicitly authorize
+        foreground UI for a session.
 
         Example tasks:
         - "Inspect the current page in an already-running Safari window"

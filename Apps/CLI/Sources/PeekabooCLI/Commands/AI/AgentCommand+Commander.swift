@@ -108,7 +108,7 @@ struct AgentRunSubcommand: RuntimeBackedCommand {
         abstract: "Run a one-shot automation task",
         discussion: """
         New sessions are background-only by default. `--allow-foreground` authorizes foreground/global UI for this
-        invocation and stores it only as the session's immutable maximum; it never enables shell execution.
+        invocation and stores it only as the session's immutable maximum; it never exposes the Shell tool.
         """
     )
 

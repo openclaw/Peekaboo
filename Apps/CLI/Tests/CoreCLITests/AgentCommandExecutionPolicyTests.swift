@@ -118,7 +118,7 @@ struct AgentCommandExecutionPolicyTests {
 
         #expect(rootHelp.contains("background-only"))
         #expect(runHelp.contains("immutable maximum"))
-        #expect(runHelp.contains("never enables shell execution"))
+        #expect(runHelp.contains("never exposes the Shell tool"))
         #expect(resumeHelp.contains("exact full ID"))
         #expect(resumeHelp.contains("wait for it to finish and retry"))
         #expect(resumeHelp.contains("Every resumed process invocation defaults to"))
