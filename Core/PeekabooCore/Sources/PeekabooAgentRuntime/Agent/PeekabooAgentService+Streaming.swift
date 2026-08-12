@@ -117,6 +117,15 @@ extension PeekabooAgentService {
         let allowSuccessfulToolBoundary: Bool
     }
 
+    private struct ToolResultCancellationContext {
+        let stepIndex: Int
+        let stepText: String
+        let toolCalls: [AgentToolCall]
+        let handlingContext: ToolHandlingContext
+        let emitToolStartEvents: Bool
+        let checkpoint: ((GenerationStep) -> Void)?
+    }
+
     struct StreamingLoopState {
         var messages: [ModelMessage]
         var content: String = ""
@@ -861,24 +870,17 @@ extension PeekabooAgentService {
                     eventHandler: context.eventHandler)
                 currentMessages.append(ModelMessage(role: .tool, content: [.toolResult(preflightResult)]))
                 toolResults.append(preflightResult)
-                do {
-                    try Task.checkCancellation()
-                } catch {
-                    await self.appendCancelledToolResults(
-                        toolCalls: toolCalls,
-                        startingAt: index + 1,
-                        activeToolCallId: nil,
-                        context: context,
-                        currentMessages: &currentMessages,
-                        toolResults: &toolResults,
-                        emitToolStartEvents: emitToolStartEvents)
-                    onCancellationCheckpoint?(GenerationStep(
+                try await self.checkCancellationAfterToolResult(
+                    nextIndex: index + 1,
+                    cancellationContext: ToolResultCancellationContext(
                         stepIndex: stepIndex,
-                        text: stepText,
+                        stepText: stepText,
                         toolCalls: toolCalls,
-                        toolResults: toolResults))
-                    throw CancellationError()
-                }
+                        handlingContext: context,
+                        emitToolStartEvents: emitToolStartEvents,
+                        checkpoint: onCancellationCheckpoint),
+                    currentMessages: &currentMessages,
+                    toolResults: &toolResults)
                 continue
             }
 
@@ -914,24 +916,17 @@ extension PeekabooAgentService {
             }
             toolResults.append(result)
 
-            do {
-                try Task.checkCancellation()
-            } catch {
-                await self.appendCancelledToolResults(
-                    toolCalls: toolCalls,
-                    startingAt: index + 1,
-                    activeToolCallId: nil,
-                    context: context,
-                    currentMessages: &currentMessages,
-                    toolResults: &toolResults,
-                    emitToolStartEvents: emitToolStartEvents)
-                onCancellationCheckpoint?(GenerationStep(
+            try await self.checkCancellationAfterToolResult(
+                nextIndex: index + 1,
+                cancellationContext: ToolResultCancellationContext(
                     stepIndex: stepIndex,
-                    text: stepText,
+                    stepText: stepText,
                     toolCalls: toolCalls,
-                    toolResults: toolResults))
-                throw CancellationError()
-            }
+                    handlingContext: context,
+                    emitToolStartEvents: emitToolStartEvents,
+                    checkpoint: onCancellationCheckpoint),
+                currentMessages: &currentMessages,
+                toolResults: &toolResults)
 
             if let boundarySignal = self.turnBoundarySignal(from: result) {
                 let remainingToolCalls = toolCalls.dropFirst(index + 1)
@@ -1288,6 +1283,32 @@ extension PeekabooAgentService {
     func turnBoundaryStopReason(from toolResult: AgentToolResult) -> String? {
         guard case let .stopAgent(reason)? = self.turnBoundarySignal(from: toolResult) else { return nil }
         return reason
+    }
+
+    private func checkCancellationAfterToolResult(
+        nextIndex: Int,
+        cancellationContext: ToolResultCancellationContext,
+        currentMessages: inout [ModelMessage],
+        toolResults: inout [AgentToolResult]) async throws
+    {
+        do {
+            try Task.checkCancellation()
+        } catch {
+            await self.appendCancelledToolResults(
+                toolCalls: cancellationContext.toolCalls,
+                startingAt: nextIndex,
+                activeToolCallId: nil,
+                context: cancellationContext.handlingContext,
+                currentMessages: &currentMessages,
+                toolResults: &toolResults,
+                emitToolStartEvents: cancellationContext.emitToolStartEvents)
+            cancellationContext.checkpoint?(GenerationStep(
+                stepIndex: cancellationContext.stepIndex,
+                text: cancellationContext.stepText,
+                toolCalls: cancellationContext.toolCalls,
+                toolResults: toolResults))
+            throw CancellationError()
+        }
     }
 
     private func logStepCompletion(
