@@ -1,0 +1,264 @@
+import MCP
+import Tachikoma
+import TachikomaMCP
+import Testing
+@testable import PeekabooAgentRuntime
+@testable import PeekabooCore
+
+@Suite(.serialized)
+struct MCPToolExecutionPolicyTests {
+    private struct PolicyCase {
+        let tool: String
+        let arguments: [String: Any]
+    }
+
+    @Test
+    func `background-only rejects every foreground activation and shared-desktop route`() {
+        let cases: [PolicyCase] = [
+            .init(tool: "click", arguments: ["foreground": true]),
+            .init(tool: "click", arguments: ["background": false]),
+            .init(tool: "type", arguments: ["foreground": true]),
+            .init(tool: "scroll", arguments: ["foreground": true]),
+            .init(tool: "press", arguments: ["foreground": true]),
+            .init(tool: "paste", arguments: ["foreground": true]),
+            .init(tool: "image", arguments: ["capture_focus": "foreground"]),
+            .init(tool: "capture", arguments: ["capture_focus": "auto"]),
+            .init(tool: "app", arguments: ["action": "launch", "foreground": true]),
+            .init(tool: "app", arguments: ["action": "focus"]),
+            .init(tool: "app", arguments: ["action": "switch"]),
+            .init(tool: "window", arguments: ["action": "close", "foreground": true]),
+            .init(tool: "window", arguments: ["action": "focus"]),
+            .init(tool: "menu", arguments: ["action": "click", "foreground": true]),
+            .init(tool: "dialog", arguments: ["action": "click", "foreground": true]),
+            .init(tool: "dialog", arguments: ["action": "input"]),
+            .init(tool: "dialog", arguments: ["action": "file"]),
+            .init(tool: "dialog", arguments: ["action": "dismiss", "force": true]),
+            .init(tool: "dock", arguments: ["action": "launch"]),
+            .init(tool: "dock", arguments: ["action": "right-click"]),
+            .init(tool: "dock", arguments: ["action": "hide"]),
+            .init(tool: "dock", arguments: ["action": "show"]),
+            .init(tool: "space", arguments: ["action": "switch"]),
+            .init(tool: "space", arguments: ["action": "move-window"]),
+            .init(tool: "browser", arguments: ["action": "select_page", "bring_to_front": true]),
+            .init(tool: "browser", arguments: ["action": "new_page", "background": false]),
+            .init(tool: "browser", arguments: [
+                "action": "call",
+                "mcp_tool": "select_page",
+                "mcp_args_json": "{}",
+            ]),
+            .init(tool: "browser", arguments: [
+                "action": "call",
+                "mcp_tool": "select_page",
+                "mcp_args_json": #"{"bringToFront":true}"#,
+            ]),
+            .init(tool: "browser", arguments: [
+                "action": "call",
+                "mcp_tool": "new_page",
+                "mcp_args_json": "{}",
+            ]),
+            .init(tool: "browser", arguments: [
+                "action": "call",
+                "mcp_tool": "new_page",
+                "mcp_args_json": #"{"background":false}"#,
+            ]),
+            .init(tool: "browser", arguments: ["action": "connect"]),
+            .init(tool: "clipboard", arguments: ["action": "set", "text": "replacement"]),
+            .init(tool: "clipboard", arguments: ["action": "clear"]),
+            .init(tool: "clipboard", arguments: ["action": "restore"]),
+            .init(tool: "action", arguments: ["action": "AXRaise"]),
+            .init(tool: "action", arguments: ["action": "AXShowMenu"]),
+            .init(tool: "drag", arguments: ["foreground": true]),
+            .init(tool: "move", arguments: ["foreground": true]),
+            .init(tool: "shell", arguments: ["command": "/usr/bin/osascript -e ignored"]),
+            .init(tool: "agent", arguments: [:]),
+            .init(tool: "future_desktop_tool", arguments: [:]),
+        ]
+
+        for item in cases {
+            let response = MCPToolExecutionPolicy.backgroundOnly.rejection(
+                toolName: item.tool,
+                arguments: ToolArguments(raw: item.arguments))
+            #expect(response?.isError == true, "Expected background-only refusal for \(item.tool) \(item.arguments)")
+            guard case let .object(meta)? = response?.meta else {
+                Issue.record("Missing structured refusal metadata for \(item.tool)")
+                continue
+            }
+            #expect(meta["effect"] == .string("refused"))
+            #expect(meta["mutation_dispatched"] == .bool(false))
+            #expect(meta["retry_safe"] == .bool(true))
+            #expect(meta["execution_policy"] == .string("background_only"))
+        }
+    }
+
+    @Test
+    func `background-only allows classified background and read-only routes`() {
+        let cases: [PolicyCase] = [
+            .init(tool: "see", arguments: [:]),
+            .init(tool: "inspect_ui", arguments: [:]),
+            .init(tool: "verify_state", arguments: [:]),
+            .init(tool: "click", arguments: ["foreground": false]),
+            .init(tool: "type", arguments: ["foreground": false]),
+            .init(tool: "action", arguments: ["action": "AXPress"]),
+            .init(tool: "set_value", arguments: [:]),
+            .init(tool: "image", arguments: ["capture_focus": "background"]),
+            .init(tool: "capture", arguments: ["capture_focus": "background"]),
+            .init(tool: "app", arguments: ["action": "launch", "foreground": false]),
+            .init(tool: "window", arguments: ["action": "set-bounds"]),
+            .init(tool: "menu", arguments: ["action": "click", "foreground": false]),
+            .init(tool: "dialog", arguments: ["action": "click", "foreground": false]),
+            .init(tool: "dock", arguments: ["action": "list"]),
+            .init(tool: "space", arguments: ["action": "list"]),
+            .init(tool: "browser", arguments: [
+                "action": "select_page",
+                "bring_to_front": false,
+            ]),
+            .init(tool: "browser", arguments: [
+                "action": "new_page",
+                "background": true,
+            ]),
+            .init(tool: "browser", arguments: [
+                "action": "call",
+                "mcp_tool": "select_page",
+                "mcp_args_json": #"{"bringToFront":false}"#,
+            ]),
+            .init(tool: "browser", arguments: [
+                "action": "call",
+                "mcp_tool": "new_page",
+                "mcp_args_json": #"{"background":true}"#,
+            ]),
+            .init(tool: "clipboard", arguments: ["action": "get"]),
+            .init(tool: "clipboard", arguments: ["action": "save"]),
+            .init(tool: "browser", arguments: ["action": "status"]),
+            .init(tool: "permissions", arguments: [:]),
+            .init(tool: "analyze", arguments: [:]),
+            .init(tool: "sleep", arguments: [:]),
+            .init(tool: "done", arguments: [:]),
+            .init(tool: "need_info", arguments: [:]),
+        ]
+
+        for item in cases {
+            #expect(
+                MCPToolExecutionPolicy.backgroundOnly.rejection(
+                    toolName: item.tool,
+                    arguments: ToolArguments(raw: item.arguments)) == nil,
+                "Unexpected background-only refusal for \(item.tool) \(item.arguments)")
+        }
+    }
+
+    @Test
+    func `foreground Agent policy still refuses shell nested and unknown tools`() {
+        for tool in ["shell", "agent", "future_desktop_tool"] {
+            let response = MCPToolExecutionPolicy.foregroundAllowed.rejection(
+                toolName: tool,
+                arguments: ToolArguments(raw: [:]))
+            #expect(response?.isError == true)
+            guard case let .object(meta)? = response?.meta else {
+                Issue.record("Missing structured refusal metadata for \(tool)")
+                continue
+            }
+            #expect(meta["mutation_dispatched"] == .bool(false))
+            #expect(meta["retry_safe"] == .bool(true))
+            #expect(meta["execution_policy"] == .string("foreground_allowed"))
+        }
+
+        #expect(MCPToolExecutionPolicy.foregroundAllowed.rejection(
+            toolName: "move",
+            arguments: ToolArguments(raw: ["foreground": true])) == nil)
+        #expect(MCPToolExecutionPolicy.unrestricted.rejection(
+            toolName: "shell",
+            arguments: ToolArguments(raw: [:])) == nil)
+    }
+
+    @Test
+    @MainActor
+    func `context refuses before argument validation mutation gates or tool invocation`() async throws {
+        let counter = PolicyInvocationCounter()
+        let shell = PolicyProbeTool(name: "shell", counter: counter)
+        let arguments = ToolArguments(raw: ["command": "/usr/bin/osascript -e ignored"])
+
+        for policy in [MCPToolExecutionPolicy.backgroundOnly, .foregroundAllowed] {
+            let context = MCPToolContext(services: PeekabooServices(), executionPolicy: policy)
+            let response = try await context.execute(tool: shell, arguments: arguments)
+            #expect(response.isError)
+            #expect(await counter.value == 0)
+        }
+
+        let directContext = MCPToolContext(services: PeekabooServices(), executionPolicy: .unrestricted)
+        let directResponse = try await directContext.execute(tool: shell, arguments: arguments)
+        #expect(!directResponse.isError)
+        #expect(await counter.value == 1)
+    }
+
+    @Test
+    @MainActor
+    func `Agent loop refuses policy violations before lookup and turn boundary`() async throws {
+        let counter = PolicyInvocationCounter()
+        let tools = ["see", "click"].map { name in
+            AgentTool(
+                name: name,
+                description: name,
+                parameters: AgentToolParameters(properties: [:], required: []),
+                execute: { _ in
+                    await counter.record()
+                    return AnyAgentToolValue(object: ["success": AnyAgentToolValue(bool: true)])
+                })
+        }
+        let service = try PeekabooAgentService(services: PeekabooServices())
+        let context = PeekabooAgentService.ToolHandlingContext(
+            model: .anthropic(.sonnet45),
+            tools: tools,
+            eventHandler: nil,
+            sessionId: "policy-loop",
+            executionPolicy: .backgroundOnly)
+        var messages: [ModelMessage] = []
+
+        let step = try await service.handleToolCalls(
+            stepText: "",
+            toolCalls: [
+                AgentToolCall(id: "see", name: "see", arguments: [:]),
+                AgentToolCall(id: "click", name: "click", arguments: [:]),
+                AgentToolCall(
+                    id: "foreground-click",
+                    name: "click",
+                    arguments: ["foreground": AnyAgentToolValue(bool: true)]),
+                AgentToolCall(id: "shell", name: "shell", arguments: [:]),
+                AgentToolCall(id: "unknown", name: "future_desktop_tool", arguments: [:]),
+            ],
+            context: context,
+            currentMessages: &messages,
+            stepIndex: 0)
+
+        #expect(await counter.value == 2)
+        for result in step.toolResults.suffix(3) {
+            #expect(result.isError)
+            #expect(result.result.objectValue?["effect"]?.stringValue == "refused")
+            #expect(result.result.objectValue?["mutation_dispatched"]?.boolValue == false)
+            #expect(result.result.objectValue?["retry_safe"]?.boolValue == true)
+            #expect(result.result.objectValue?["execution_policy"]?.stringValue == "background_only")
+            #expect(result.result.objectValue?["skipped"] == nil)
+        }
+    }
+}
+
+private actor PolicyInvocationCounter {
+    private(set) var value = 0
+
+    func record() {
+        self.value += 1
+    }
+}
+
+private struct PolicyProbeTool: MCPTool {
+    let name: String
+    let counter: PolicyInvocationCounter
+    let description = "Policy invocation probe"
+
+    var inputSchema: Value {
+        SchemaBuilder.object(properties: [:], required: [])
+    }
+
+    func execute(arguments _: ToolArguments) async throws -> ToolResponse {
+        await self.counter.record()
+        return ToolResponse.text("invoked")
+    }
+}

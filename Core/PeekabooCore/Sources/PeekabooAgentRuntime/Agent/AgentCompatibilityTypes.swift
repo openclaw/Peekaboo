@@ -122,6 +122,9 @@ public struct SessionSummary: Sendable, Codable {
     /// Brief description of the session
     public let summary: String?
 
+    /// Immutable maximum tool authority retained by the session.
+    public let toolExecutionPolicy: MCPToolExecutionPolicy
+
     public init(
         id: String,
         modelName: String,
@@ -129,7 +132,8 @@ public struct SessionSummary: Sendable, Codable {
         lastAccessedAt: Date,
         messageCount: Int,
         status: SessionStatus,
-        summary: String? = nil)
+        summary: String? = nil,
+        toolExecutionPolicy: MCPToolExecutionPolicy = .backgroundOnly)
     {
         self.id = id
         self.modelName = modelName
@@ -138,6 +142,7 @@ public struct SessionSummary: Sendable, Codable {
         self.messageCount = messageCount
         self.status = status
         self.summary = summary
+        self.toolExecutionPolicy = toolExecutionPolicy
     }
 }
 
@@ -166,6 +171,11 @@ public struct AgentSession: Sendable, Codable {
     /// Credential-free provider kind used to prevent namespace or protocol drift.
     public let modelProviderIdentity: String?
 
+    /// Immutable maximum tool authority for this resumable session.
+    ///
+    /// Older session files omit this field and are interpreted conservatively as background-only.
+    public let toolExecutionPolicy: MCPToolExecutionPolicy?
+
     /// Complete conversation history
     public let messages: [ModelMessage]
 
@@ -184,6 +194,7 @@ public struct AgentSession: Sendable, Codable {
         modelSelection: String? = nil,
         modelEndpointIdentity: String? = nil,
         modelProviderIdentity: String? = nil,
+        toolExecutionPolicy: MCPToolExecutionPolicy? = .backgroundOnly,
         messages: [ModelMessage],
         metadata: SessionMetadata,
         createdAt: Date,
@@ -194,10 +205,20 @@ public struct AgentSession: Sendable, Codable {
         self.modelSelection = modelSelection
         self.modelEndpointIdentity = modelEndpointIdentity
         self.modelProviderIdentity = modelProviderIdentity
+        self.toolExecutionPolicy = toolExecutionPolicy
         self.messages = messages
         self.metadata = metadata
         self.createdAt = createdAt
         self.updatedAt = updatedAt
+    }
+
+    public var effectiveToolExecutionPolicy: MCPToolExecutionPolicy {
+        switch self.toolExecutionPolicy {
+        case .foregroundAllowed:
+            .foregroundAllowed
+        case .backgroundOnly, .unrestricted, nil:
+            .backgroundOnly
+        }
     }
 }
 
@@ -296,7 +317,8 @@ public final class AgentSessionManager: @unchecked Sendable {
                         lastAccessedAt: session.updatedAt,
                         messageCount: session.messages.count,
                         status: self.sessionStatus(for: session, lastAccessedAt: session.updatedAt),
-                        summary: self.generateSessionSummary(from: session.messages))
+                        summary: self.generateSessionSummary(from: session.messages),
+                        toolExecutionPolicy: session.effectiveToolExecutionPolicy)
                 } catch {
                     return nil
                 }

@@ -28,9 +28,13 @@ public struct MCPAgentTool: MCPTool {
         The agent has access to all Peekaboo automation tools including:
         - Screen capture and analysis
         - UI element interaction (click, type, scroll)
-        - Application control (launch, quit, focus)
+        - Background application control (launch, quit, inspect)
         - Window management (move, resize, close)
-        - System interaction (keyboard chords, shell commands)
+        - Process-targeted keyboard chords and native Accessibility actions
+
+        MCP-started Agent sessions are always background-only. They refuse focus/activation,
+        shared-pointer/global input, foreground capture, browser fronting, and shell execution before dispatch.
+        Only the human-facing CLI can explicitly authorize foreground UI for a session.
 
         Example tasks:
         - "Open Safari and navigate to apple.com"
@@ -139,6 +143,7 @@ public struct MCPAgentTool: MCPTool {
                 "createdAt": .string(isoFormatter.string(from: session.createdAt)),
                 "updatedAt": .string(isoFormatter.string(from: session.lastAccessedAt)),
                 "messageCount": .string(String(session.messageCount)),
+                "toolExecutionPolicy": .string(session.toolExecutionPolicy.rawValue),
             ])
         }
 
@@ -166,6 +171,7 @@ public struct MCPAgentTool: MCPTool {
                 "Created: \(formatter.string(from: session.createdAt))",
                 "Updated: \(formatter.string(from: session.lastAccessedAt))",
                 "Message Count: \(session.messageCount)",
+                "Tool Policy: \(session.toolExecutionPolicy.rawValue)",
             ].joined(separator: "\n")
         }.joined(separator: "\n---\n")
     }

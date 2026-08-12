@@ -4,6 +4,7 @@
 //
 
 import Foundation
+import PeekabooFoundation
 import Tachikoma
 
 @available(macOS 14.0, *)
@@ -19,6 +20,7 @@ extension PeekabooAgentService {
         let executionStart: Date
         let metadata: SessionMetadata
         let modelIdentity: PersistedModelIdentity
+        let toolExecutionPolicy: MCPToolExecutionPolicy
         let provider: (any ModelProvider)?
     }
 
@@ -32,8 +34,14 @@ extension PeekabooAgentService {
         model: LanguageModel,
         label: String,
         logBehavior: SessionLogBehavior,
-        persistSession: Bool = true) async throws -> SessionContext
+        persistSession: Bool = true,
+        toolExecutionPolicy: MCPToolExecutionPolicy = .backgroundOnly) async throws -> SessionContext
     {
+        guard toolExecutionPolicy != .unrestricted else {
+            throw PeekabooError.invalidInput(
+                "Unrestricted MCP authority cannot be assigned to an Agent session. " +
+                    "Use foreground_allowed for explicit foreground UI without shell authority.")
+        }
         self.currentModel = model
         let startTime = Date()
         let sessionId = UUID().uuidString
@@ -51,6 +59,7 @@ extension PeekabooAgentService {
             modelSelection: modelIdentity.selection,
             modelEndpointIdentity: modelIdentity.endpointIdentity,
             modelProviderIdentity: modelIdentity.providerIdentity,
+            toolExecutionPolicy: toolExecutionPolicy,
             messages: messages,
             metadata: SessionMetadata(),
             createdAt: startTime,
@@ -78,6 +87,7 @@ extension PeekabooAgentService {
             executionStart: startTime,
             metadata: SessionMetadata(),
             modelIdentity: modelIdentity,
+            toolExecutionPolicy: toolExecutionPolicy,
             provider: provider)
     }
 
@@ -128,6 +138,7 @@ extension PeekabooAgentService {
             modelSelection: modelIdentity.selection,
             modelEndpointIdentity: modelIdentity.endpointIdentity,
             modelProviderIdentity: modelIdentity.providerIdentity,
+            toolExecutionPolicy: context.toolExecutionPolicy,
             messages: finalMessages.removingConsumedAgentToolImageContext(),
             metadata: updatedMetadata,
             createdAt: context.createdAt,
@@ -189,7 +200,8 @@ extension PeekabooAgentService {
         userMessage: String?,
         model: LanguageModel,
         provider: (any ModelProvider)? = nil,
-        modelIdentity: PersistedModelIdentity? = nil) -> SessionContext
+        modelIdentity: PersistedModelIdentity? = nil,
+        toolExecutionPolicy: MCPToolExecutionPolicy = .backgroundOnly) -> SessionContext
     {
         var updatedMessages = session.messages
         if let userMessage {
@@ -206,6 +218,7 @@ extension PeekabooAgentService {
             executionStart: Date(),
             metadata: session.metadata,
             modelIdentity: modelIdentity,
+            toolExecutionPolicy: toolExecutionPolicy,
             provider: provider)
     }
 }

@@ -102,6 +102,12 @@ struct AgentCommand: RuntimeBackedCommand {
     @Flag(name: .long, help: "Run without saving a resumable session")
     var noCache = false
 
+    @Flag(
+        name: .customLong("allow-foreground"),
+        help: "Authorize foreground/global UI for this run (new sessions persist it as an immutable maximum)"
+    )
+    var allowForeground = false
+
     @Flag(name: .long, help: "Enable audio input mode (record from microphone)")
     var audio = false
 
@@ -154,6 +160,14 @@ struct AgentCommand: RuntimeBackedCommand {
     var verbose: Bool {
         self.runtime?.configuration.verbose ?? self.runtimeOptions.verbose
     }
+
+    var newSessionToolExecutionPolicy: MCPToolExecutionPolicy {
+        self.allowForeground ? .foregroundAllowed : .backgroundOnly
+    }
+
+    var requestedResumeToolExecutionPolicy: MCPToolExecutionPolicy {
+        self.allowForeground ? .foregroundAllowed : .backgroundOnly
+    }
 }
 
 @available(macOS 14.0, *)
@@ -199,25 +213,7 @@ extension AgentCommand {
 
     @MainActor
     mutating func runInternal(runtime: CommandRuntime) async throws {
-        if self.isAgentDisabled() {
-            try self.failAgentCommand(
-                message: "Agent service not available because PEEKABOO_DISABLE_AGENT is set.",
-                code: .AGENT_ERROR
-            )
-        }
-
-        do {
-            try self.validateSessionOptions()
-        } catch {
-            try self.failAgentCommand(message: error.localizedDescription, code: .VALIDATION_ERROR)
-        }
-
-        let maxSteps: Int
-        do {
-            maxSteps = try self.validatedMaxStepCount()
-        } catch {
-            try self.failAgentCommand(message: error.localizedDescription, code: .VALIDATION_ERROR)
-        }
+        let maxSteps = try self.validateAgentRunPreflight()
 
         let services = runtime.services
 
@@ -379,6 +375,22 @@ extension AgentCommand {
     private func isAgentDisabled() -> Bool {
         let value = ProcessInfo.processInfo.environment["PEEKABOO_DISABLE_AGENT"]?.lowercased()
         return value == "1" || value == "true"
+    }
+
+    private func validateAgentRunPreflight() throws -> Int {
+        if self.isAgentDisabled() {
+            try self.failAgentCommand(
+                message: "Agent service not available because PEEKABOO_DISABLE_AGENT is set.",
+                code: .AGENT_ERROR
+            )
+        }
+
+        do {
+            try self.validateSessionOptions()
+            return try self.validatedMaxStepCount()
+        } catch {
+            try self.failAgentCommand(message: error.localizedDescription, code: .VALIDATION_ERROR)
+        }
     }
 
     private func configureLogging(suppressingMCPLogs: Bool) {

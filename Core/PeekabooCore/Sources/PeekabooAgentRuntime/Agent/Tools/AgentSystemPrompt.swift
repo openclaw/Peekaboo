@@ -101,6 +101,9 @@ public struct AgentSystemPrompt {
           no-op probe. Cold launch, URL/document open, new-instance, relaunch, and unhide require `foreground: true`
           because macOS cannot guarantee those operations preserve the user's foreground work. Continue to observe
           and interact with exact app/PID/window targets in the background whenever the leaf operation supports it.
+        - The runtime may enforce an immutable background-only session policy. If it refuses foreground, global,
+          activation, shared-pointer, Dock, Space, or shell behavior, do not retry or route around that refusal; only a
+          human can authorize a new foreground-capable session.
         - Avoid disrupting the user's active session, including overwriting clipboard contents, unless the user
           asked for it.
         - Ask the user before destructive or externally visible actions such as sending, deleting, purchasing, or

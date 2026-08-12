@@ -475,6 +475,7 @@ struct CommanderBinderAppConfigTests {
                 "resume",
                 "listSessions",
                 "noCache",
+                "allowForeground",
                 "audio",
                 "simple",
                 "noColor"
@@ -491,6 +492,7 @@ struct CommanderBinderAppConfigTests {
         #expect(command.options.maxSteps == 7)
         #expect(command.options.model == "gpt-5.5")
         #expect(command.options.noCache == true)
+        #expect(command.options.allowForeground == true)
         #expect(command.options.audio == true)
         #expect(command.options.audioFile == "/tmp/input.wav")
         #expect(command.options.simple == true)

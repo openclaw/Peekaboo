@@ -654,6 +654,51 @@ struct MCPSpecificToolTests {
     }
 
     @Test
+    func `MCP Agent advertises background-only authority without shell`() {
+        let description = makeTestTool(MCPAgentTool.init).description
+        #expect(description.contains("always background-only"))
+        #expect(description.contains("shell execution"))
+        #expect(!description.contains("shell commands"))
+        #expect(!description.contains("launch, quit, focus"))
+    }
+
+    @Test
+    func `MCP Agent session listings expose immutable policy`() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mcp-agent-policy-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let services = PeekabooServices()
+        let manager = try AgentSessionManager(sessionDirectory: directory)
+        let agent = try PeekabooAgentService(services: services, sessionManager: manager)
+        services.agent = agent
+        let now = Date()
+        try manager.saveSession(AgentSession(
+            id: "foreground-session",
+            modelName: "test-model",
+            toolExecutionPolicy: .foregroundAllowed,
+            messages: [.system("system"), .user("task")],
+            metadata: SessionMetadata(),
+            createdAt: now,
+            updatedAt: now))
+
+        let tool = MCPAgentTool(context: MCPToolContext(services: services))
+        let response = try await tool.execute(arguments: ToolArguments(raw: ["listSessions": true]))
+
+        #expect(!response.isError)
+        guard case let .text(text, _, _) = response.content.first,
+              case let .object(meta)? = response.meta,
+              case let .array(sessions)? = meta["sessions"],
+              case let .object(session)? = sessions.first
+        else {
+            Issue.record("Expected structured Agent session listing")
+            return
+        }
+        #expect(text.contains("Tool Policy: foreground_allowed"))
+        #expect(session["toolExecutionPolicy"] == .string("foreground_allowed"))
+    }
+
+    @Test
     func `MCP agent metadata exposes the bounded redacted execution trace`() throws {
         let call = AgentToolCall(
             id: "call-1",

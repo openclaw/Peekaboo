@@ -6,6 +6,7 @@ enum MCPToolResponseMetadataProjector {
     private static let safetyKeys: Set<String> = [
         "effect",
         "error_code",
+        "execution_policy",
         "mutation_dispatched",
         "requires_fresh_observation",
         "retry_safe",

@@ -13,11 +13,34 @@ import TachikomaMCP
 
 @available(macOS 14.0, *)
 extension PeekabooAgentService {
+    func makeToolPreflightResult(
+        for toolCall: AgentToolCall,
+        context: ToolHandlingContext) -> AgentToolResult?
+    {
+        if let refusal = context.executionPolicy.rejection(
+            toolName: toolCall.name,
+            agentArguments: toolCall.arguments)
+        {
+            return AgentToolResult(
+                toolCallId: toolCall.id,
+                result: AgentToolMCPBridge.convert(refusal).value,
+                isError: true)
+        }
+        guard context.tool(named: toolCall.name) == nil else { return nil }
+        return AgentToolResult(
+            toolCallId: toolCall.id,
+            result: AnyAgentToolValue(object: [
+                "error": AnyAgentToolValue(string: "Tool '\(toolCall.name)' is not available in this context"),
+            ]),
+            isError: true)
+    }
+
     func makeToolContext() -> MCPToolContext {
         MCPToolContext(
             services: self.services,
             snapshotMutationCoordinator: self.snapshotMutationCoordinator,
-            snapshotExecutionGate: self.snapshotExecutionGate)
+            snapshotExecutionGate: self.snapshotExecutionGate,
+            executionPolicy: Self.toolConstructionExecutionPolicy)
     }
 
     func makeAgentTool(

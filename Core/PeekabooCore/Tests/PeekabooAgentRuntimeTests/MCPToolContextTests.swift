@@ -1,3 +1,5 @@
+import Foundation
+import Tachikoma
 import Testing
 @testable import PeekabooAgentRuntime
 @testable import PeekabooCore
@@ -32,6 +34,49 @@ struct MCPToolContextTests {
             ObjectIdentifier(services.menu as AnyObject))
         #expect(ObjectIdentifier(context.automation as AnyObject) ==
             ObjectIdentifier(services.automation as AnyObject))
+        #expect(context.executionPolicy == .unrestricted)
+    }
+
+    @Test
+    @MainActor
+    func `Agent tool construction captures task-local immutable policy`() throws {
+        let agent = try PeekabooAgentService(services: PeekabooServices())
+
+        let background = PeekabooAgentService.$toolConstructionExecutionPolicy.withValue(.backgroundOnly) {
+            agent.makeToolContext()
+        }
+        let foreground = PeekabooAgentService.$toolConstructionExecutionPolicy.withValue(.foregroundAllowed) {
+            agent.makeToolContext()
+        }
+
+        #expect(background.executionPolicy == .backgroundOnly)
+        #expect(foreground.executionPolicy == .foregroundAllowed)
+        #expect(agent.makeToolContext().executionPolicy == .unrestricted)
+    }
+
+    @Test
+    @MainActor
+    func `Agent foreground opt-in cannot execute the real shell tool`() async throws {
+        let agent = try PeekabooAgentService(services: PeekabooServices())
+        let marker = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekaboo-agent-shell-policy-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: marker) }
+
+        for policy in [MCPToolExecutionPolicy.backgroundOnly, .foregroundAllowed] {
+            let tools = await agent.buildToolset(for: .anthropic(.sonnet45), executionPolicy: policy)
+            #expect(!tools.contains(where: { $0.name == "shell" }))
+            let shell = PeekabooAgentService.$toolConstructionExecutionPolicy.withValue(policy) {
+                agent.createShellTool()
+            }
+            let result = try await shell.execute(
+                AgentToolArguments(["command": "/usr/bin/touch \(marker.path)"]),
+                context: ToolExecutionContext())
+
+            #expect(result.objectValue?["success"]?.boolValue == false)
+            #expect(result.objectValue?["error_code"]?.stringValue == MCPToolExecutionPolicy.refusalErrorCode)
+            #expect(result.objectValue?["mutation_dispatched"]?.boolValue == false)
+            #expect(!FileManager.default.fileExists(atPath: marker.path))
+        }
     }
 
     @Test

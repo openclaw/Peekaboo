@@ -300,7 +300,7 @@ extension PeekabooAgentService {
     {
         let maxSteps = try AgentStepBudget.validate(maxSteps)
         _ = streamingDelegate
-        let tools = await self.buildToolset(for: model)
+        let tools = await self.buildToolset(for: model, executionPolicy: context.toolExecutionPolicy)
         self.logModelUsage(model, prefix: "Streaming ")
         guard let provider = context.provider else {
             throw PeekabooError.invalidInput("The session has no verified model provider; refusing to execute it.")
@@ -312,7 +312,8 @@ extension PeekabooAgentService {
             tools: tools,
             sessionId: context.id,
             eventHandler: eventHandler,
-            enhancementOptions: enhancementOptions)
+            enhancementOptions: enhancementOptions,
+            executionPolicy: context.toolExecutionPolicy)
 
         var latestCheckpoint = self.makeLoopOutcome(
             state: StreamingLoopState(messages: context.messages),
@@ -380,7 +381,7 @@ extension PeekabooAgentService {
         enhancementOptions: AgentEnhancementOptions? = nil) async throws -> AgentExecutionResult
     {
         let maxSteps = try AgentStepBudget.validate(maxSteps)
-        let tools = await self.buildToolset(for: model)
+        let tools = await self.buildToolset(for: model, executionPolicy: context.toolExecutionPolicy)
         self.logModelUsage(model, prefix: "")
         guard let provider = context.provider else {
             throw PeekabooError.invalidInput("The session has no verified model provider; refusing to execute it.")
@@ -392,7 +393,8 @@ extension PeekabooAgentService {
             tools: tools,
             sessionId: context.id,
             eventHandler: eventHandler,
-            enhancementOptions: enhancementOptions)
+            enhancementOptions: enhancementOptions,
+            executionPolicy: context.toolExecutionPolicy)
 
         var latestCheckpoint = self.makeLoopOutcome(
             state: StreamingLoopState(messages: context.messages),
@@ -465,7 +467,8 @@ extension PeekabooAgentService {
             sessionId: configuration.sessionId,
             imageContextID: imageContextID,
             initialMessages: initialMessages,
-            enhancementOptions: configuration.enhancementOptions)
+            enhancementOptions: configuration.enhancementOptions,
+            executionPolicy: configuration.executionPolicy)
         return try await self.withAgentToolImageLifecycle(
             executionID: imageContextID,
             imageStore: imageStore)

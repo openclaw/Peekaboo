@@ -165,7 +165,8 @@ extension AgentCommand {
                 queueMode: queueMode,
                 eventDelegate: streamingDelegate,
                 verbose: self.verbose,
-                persistSession: !self.noCache
+                persistSession: !self.noCache,
+                toolExecutionPolicy: self.newSessionToolExecutionPolicy
             )
             self.displayResult(result, delegate: outputDelegate)
             let duration = String(format: "%.2f", result.metadata.executionTime)

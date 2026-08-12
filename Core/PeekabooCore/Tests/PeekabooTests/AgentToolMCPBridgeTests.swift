@@ -419,6 +419,7 @@ struct AgentToolMCPBridgeTests {
                 selection: nil,
                 endpointIdentity: nil,
                 providerIdentity: nil),
+            toolExecutionPolicy: .backgroundOnly,
             provider: nil)
         try service.saveExecutionSession(
             context: context,

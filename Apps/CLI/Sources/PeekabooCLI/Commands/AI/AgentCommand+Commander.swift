@@ -30,6 +30,12 @@ struct AgentExecutionOptions: CommanderParsable {
     @Flag(name: .long, help: "Run without saving a resumable session")
     var noCache = false
 
+    @Flag(
+        name: .customLong("allow-foreground"),
+        help: "Authorize foreground/global UI for this run (new sessions persist it as an immutable maximum)"
+    )
+    var allowForeground = false
+
     @Flag(name: .long, help: "Enable audio input mode (record from microphone)")
     var audio = false
 
@@ -52,6 +58,7 @@ struct AgentExecutionOptions: CommanderParsable {
         self.queueMode = values.singleOption("queueMode")
         self.model = values.singleOption("model")
         self.noCache = values.flag("noCache")
+        self.allowForeground = values.flag("allowForeground")
         self.audio = values.flag("audio")
         self.audioFile = values.singleOption("audioFile")
         self.simple = values.flag("simple")
@@ -66,6 +73,7 @@ struct AgentExecutionOptions: CommanderParsable {
         command.queueMode = self.queueMode
         command.model = self.model
         command.noCache = self.noCache
+        command.allowForeground = self.allowForeground
         command.audio = self.audio
         command.audioFile = self.audioFile
         command.simple = self.simple

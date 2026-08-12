@@ -51,6 +51,10 @@ public final class PeekabooAgentService: AgentServiceProtocol {
     let logger = os.Logger(subsystem: "boo.peekaboo", category: "agent")
     var isVerbose: Bool = false
 
+    /// Construction-only propagation. Every built tool captures the resulting immutable context,
+    /// so concurrent sessions cannot change one another's authority after construction.
+    @TaskLocal static var toolConstructionExecutionPolicy: MCPToolExecutionPolicy = .unrestricted
+
     /// The default model used by this agent service
     public var defaultModel: String {
         self.defaultLanguageModel.description
@@ -278,7 +282,8 @@ public final class PeekabooAgentService: AgentServiceProtocol {
         eventDelegate: (any AgentEventDelegate)? = nil,
         verbose: Bool = false,
         enhancementOptions: AgentEnhancementOptions? = .default,
-        persistSession: Bool = true) async throws -> AgentExecutionResult
+        persistSession: Bool = true,
+        toolExecutionPolicy: MCPToolExecutionPolicy = .backgroundOnly) async throws -> AgentExecutionResult
     {
         let maxSteps = try AgentStepBudget.validate(maxSteps)
         // Store the verbose flag for this execution
@@ -343,7 +348,8 @@ public final class PeekabooAgentService: AgentServiceProtocol {
                     model: selectedModel,
                     label: "streaming",
                     logBehavior: .always,
-                    persistSession: persistSession)
+                    persistSession: persistSession,
+                    toolExecutionPolicy: toolExecutionPolicy)
 
                 let result = if selectedModel.supportsStreaming {
                     try await self.executeWithStreaming(
@@ -385,7 +391,8 @@ public final class PeekabooAgentService: AgentServiceProtocol {
                 model: selectedModel,
                 label: "(non-streaming)",
                 logBehavior: .verboseOnly,
-                persistSession: persistSession)
+                persistSession: persistSession,
+                toolExecutionPolicy: toolExecutionPolicy)
             return try await self.executeWithoutStreaming(
                 context: sessionContext,
                 model: selectedModel,
@@ -399,6 +406,7 @@ public final class PeekabooAgentService: AgentServiceProtocol {
         _ task: String,
         sessionId: String? = nil,
         model: LanguageModel? = nil,
+        toolExecutionPolicy: MCPToolExecutionPolicy = .backgroundOnly,
         streamHandler: @Sendable @escaping (String) async -> Void) async throws -> AgentExecutionResult
     {
         // Execute a task with streaming output
@@ -408,7 +416,8 @@ public final class PeekabooAgentService: AgentServiceProtocol {
                 task: task,
                 model: selectedModel,
                 label: "(non-streaming)",
-                logBehavior: .verboseOnly)
+                logBehavior: .verboseOnly,
+                toolExecutionPolicy: toolExecutionPolicy)
             let result = try await self.executeWithoutStreaming(
                 context: sessionContext,
                 model: selectedModel,
@@ -423,7 +432,8 @@ public final class PeekabooAgentService: AgentServiceProtocol {
             task: task,
             model: selectedModel,
             label: "streaming-api",
-            logBehavior: .always)
+            logBehavior: .always,
+            toolExecutionPolicy: toolExecutionPolicy)
         return try await self.executeWithStreaming(
             context: sessionContext,
             model: selectedModel,

@@ -26,6 +26,7 @@ public struct MCPToolContext: @unchecked Sendable {
     public let browser: any BrowserMCPClientProviding
     public let snapshotMutationCoordinator: (any MCPToolSnapshotMutationCoordinating)?
     public let snapshotExecutionGate: MCPToolSnapshotExecutionGate
+    public let executionPolicy: MCPToolExecutionPolicy
 
     @TaskLocal
     private static var taskOverride: MCPToolContext?
@@ -137,7 +138,8 @@ public struct MCPToolContext: @unchecked Sendable {
         browser: any BrowserMCPClientProviding,
         permissionsStatusProvider: (any PermissionsStatusProviding)? = nil,
         snapshotMutationCoordinator: (any MCPToolSnapshotMutationCoordinating)? = nil,
-        snapshotExecutionGate: MCPToolSnapshotExecutionGate? = nil)
+        snapshotExecutionGate: MCPToolSnapshotExecutionGate? = nil,
+        executionPolicy: MCPToolExecutionPolicy = .unrestricted)
     {
         self.automation = automation
         self.menu = menu
@@ -158,13 +160,15 @@ public struct MCPToolContext: @unchecked Sendable {
         self.snapshotExecutionGate = snapshotExecutionGate
             ?? (agent as? PeekabooAgentService)?.snapshotExecutionGate
             ?? MCPToolSnapshotExecutionGate()
+        self.executionPolicy = executionPolicy
     }
 
     @MainActor
     public init(
         services: any PeekabooServiceProviding,
         snapshotMutationCoordinator: (any MCPToolSnapshotMutationCoordinating)? = nil,
-        snapshotExecutionGate: MCPToolSnapshotExecutionGate? = nil)
+        snapshotExecutionGate: MCPToolSnapshotExecutionGate? = nil,
+        executionPolicy: MCPToolExecutionPolicy = .unrestricted)
     {
         let resolvedSnapshotExecutionGate = snapshotExecutionGate
             ?? (services.agent as? PeekabooAgentService)?.snapshotExecutionGate
@@ -186,7 +190,8 @@ public struct MCPToolContext: @unchecked Sendable {
             browser: services.browser,
             permissionsStatusProvider: services,
             snapshotMutationCoordinator: snapshotMutationCoordinator,
-            snapshotExecutionGate: resolvedSnapshotExecutionGate)
+            snapshotExecutionGate: resolvedSnapshotExecutionGate,
+            executionPolicy: executionPolicy)
     }
 
     @MainActor
@@ -194,6 +199,9 @@ public struct MCPToolContext: @unchecked Sendable {
         tool: any MCPTool,
         arguments: ToolArguments) async throws -> ToolResponse
     {
+        if let rejection = self.executionPolicy.rejection(toolName: tool.name, arguments: arguments) {
+            return rejection
+        }
         if let rejection = MCPToolArgumentValidator.rejection(tool: tool, arguments: arguments) {
             return rejection
         }

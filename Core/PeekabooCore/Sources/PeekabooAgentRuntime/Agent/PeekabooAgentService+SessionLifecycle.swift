@@ -24,7 +24,8 @@ extension PeekabooAgentService {
         queueMode: QueueMode = .oneAtATime,
         eventDelegate: (any AgentEventDelegate)? = nil,
         verbose: Bool = false,
-        enhancementOptions: AgentEnhancementOptions? = .default) async throws -> AgentExecutionResult
+        enhancementOptions: AgentEnhancementOptions? = .default,
+        requestedToolExecutionPolicy: MCPToolExecutionPolicy? = nil) async throws -> AgentExecutionResult
     {
         try await self.continueSessionInternal(
             sessionId: sessionId,
@@ -35,7 +36,8 @@ extension PeekabooAgentService {
             queueMode: queueMode,
             eventDelegate: eventDelegate,
             verbose: verbose,
-            enhancementOptions: enhancementOptions)
+            enhancementOptions: enhancementOptions,
+            requestedToolExecutionPolicy: requestedToolExecutionPolicy)
     }
 
     // swiftlint:disable:next function_parameter_count
@@ -48,7 +50,8 @@ extension PeekabooAgentService {
         queueMode: QueueMode,
         eventDelegate: (any AgentEventDelegate)?,
         verbose: Bool,
-        enhancementOptions: AgentEnhancementOptions?) async throws -> AgentExecutionResult
+        enhancementOptions: AgentEnhancementOptions?,
+        requestedToolExecutionPolicy: MCPToolExecutionPolicy?) async throws -> AgentExecutionResult
     {
         let maxSteps = try AgentStepBudget.validate(maxSteps)
         self.isVerbose = verbose
@@ -57,6 +60,9 @@ extension PeekabooAgentService {
         guard let existingSession = try await self.sessionManager.loadSession(id: sessionId) else {
             throw PeekabooError.sessionNotFound(sessionId)
         }
+        let executionPolicy = try Self.resolveToolExecutionPolicy(
+            for: existingSession,
+            requested: requestedToolExecutionPolicy)
         let taskDescription = userMessage ?? "Resume session \(sessionId)"
 
         if dryRun {
@@ -88,7 +94,8 @@ extension PeekabooAgentService {
             userMessage: userMessage,
             model: selectedModel,
             provider: resolvedModel.provider,
-            modelIdentity: resolvedModel.identity)
+            modelIdentity: resolvedModel.identity,
+            toolExecutionPolicy: executionPolicy)
 
         if let eventDelegate {
             let unsafeDelegate = UnsafeTransfer<any AgentEventDelegate>(eventDelegate)
@@ -158,7 +165,8 @@ extension PeekabooAgentService {
         model: LanguageModel? = nil,
         maxSteps: Int = 20,
         eventDelegate: (any AgentEventDelegate)? = nil,
-        enhancementOptions: AgentEnhancementOptions? = .default) async throws -> AgentExecutionResult
+        enhancementOptions: AgentEnhancementOptions? = .default,
+        requestedToolExecutionPolicy: MCPToolExecutionPolicy? = nil) async throws -> AgentExecutionResult
     {
         try await self.continueSessionInternal(
             sessionId: sessionId,
@@ -169,7 +177,26 @@ extension PeekabooAgentService {
             queueMode: .oneAtATime,
             eventDelegate: eventDelegate,
             verbose: self.isVerbose,
-            enhancementOptions: enhancementOptions)
+            enhancementOptions: enhancementOptions,
+            requestedToolExecutionPolicy: requestedToolExecutionPolicy)
+    }
+
+    static func resolveToolExecutionPolicy(
+        for session: AgentSession,
+        requested: MCPToolExecutionPolicy?) throws -> MCPToolExecutionPolicy
+    {
+        let storedMaximum = session.effectiveToolExecutionPolicy
+        let requestedInvocation = requested ?? .backgroundOnly
+        guard requestedInvocation != .unrestricted else {
+            throw PeekabooError.invalidInput("Agent sessions cannot request unrestricted tool execution authority.")
+        }
+        guard requestedInvocation != .foregroundAllowed || storedMaximum == .foregroundAllowed else {
+            throw PeekabooError.invalidInput(
+                "Session \(session.id) has immutable tool execution policy '\(storedMaximum.rawValue)' and cannot be " +
+                    "broadened while resuming. Start a new session with --allow-foreground when " +
+                    "foreground interaction is intentionally authorized.")
+        }
+        return requestedInvocation
     }
 
     // MARK: - Session Management

@@ -35,6 +35,14 @@ Peekaboo ships powerful automation tools (clicking, typing, shell, window manage
 
 Filters apply everywhere tools are surfaced: CLI `peekaboo tools`, the agent toolset, and the MCP server’s tool registry.
 
+Agent execution adds a stricter runtime boundary. New Agent sessions are immutable background-only sessions unless the
+human starts that session with `peekaboo agent ... --allow-foreground`. The saved value is an immutable maximum, not a
+bearer credential: every resumed process invocation returns to background-only unless the human passes the flag again.
+The policy is checked centrally before lookup, turn-boundary bookkeeping, validation, or dispatch and cannot be changed
+by model output or writable session JSON alone. Foreground authorization does not authorize shell execution: normal
+Agent toolsets omit `shell`, and the execution boundary refuses it under both Agent policies. Direct standalone CLI and
+MCP tools keep their existing explicit contracts.
+
 ## Desktop context injection (DESKTOP_STATE)
 
 When the agent streaming loop runs with context injection enabled, Peekaboo gathers lightweight desktop state (focused app/window title, cursor position, and **clipboard preview only when the `clipboard` tool is enabled**) and injects it as two messages:
@@ -47,7 +55,8 @@ If you disable the `clipboard` tool via allow/deny filters, the injected DESKTOP
 ## Risk by tool category
 
 - **Critical / high risk** – should usually be disabled in untrusted contexts  
-  - `shell`: can run arbitrary commands; disable unless you fully trust the model and prompts.
+  - `shell`: can run arbitrary commands. Normal Agent sessions omit and refuse it even with `--allow-foreground`; keep
+    it disabled in any separately embedded or custom toolset unless you fully trust the caller and prompts.
   - `dialog_click`, `dialog_input`: can confirm destructive dialogs.
 - **Requires AI network access** – these call out to the configured language/vision provider whenever used  
   - `image` (when passed `--analyze`/`question`) and MCP `image` tool.  

@@ -13,6 +13,7 @@ struct AgentSessionInfo: Codable {
     let created: Date
     let lastModified: Date
     let messageCount: Int
+    let toolExecutionPolicy: String
 }
 
 @available(macOS 14.0, *)
@@ -23,6 +24,7 @@ extension AgentCommand {
         let requestedModel: LanguageModel?
         let maxSteps: Int
         let queueMode: QueueMode
+        let requestedToolExecutionPolicy: MCPToolExecutionPolicy?
     }
 
     func validateSessionOptions() throws {
@@ -36,20 +38,24 @@ extension AgentCommand {
 
     func requireRequestedSession(_ agentService: PeekabooAgentService) async throws {
         if let sessionId = self.resumeSession {
-            guard try await agentService.getSessionInfo(sessionId: sessionId) != nil else {
+            guard let session = try await agentService.getSessionInfo(sessionId: sessionId) else {
                 try self.failAgentCommand(
                     message: "Session not found or expired: \(sessionId)",
                     code: .SESSION_NOT_FOUND
                 )
             }
+            try self.validateRequestedResumePolicy(session)
         } else if self.resume {
             let sessions = try await agentService.listSessions()
-            guard sessions.first != nil else {
+            guard let first = sessions.first else {
                 try self.failAgentCommand(
                     message: "No sessions found to resume",
                     code: .SESSION_NOT_FOUND,
                     hint: "Run 'peekaboo agent run \"<task>\"' to start a session."
                 )
+            }
+            if let session = try await agentService.getSessionInfo(sessionId: first.id) {
+                try self.validateRequestedResumePolicy(session)
             }
         }
     }
@@ -75,7 +81,8 @@ extension AgentCommand {
                     task: continuationTask,
                     requestedModel: requestedModel,
                     maxSteps: maxSteps,
-                    queueMode: queueMode
+                    queueMode: queueMode,
+                    requestedToolExecutionPolicy: self.requestedResumeToolExecutionPolicy
                 )
             )
             return true
@@ -100,7 +107,8 @@ extension AgentCommand {
                         task: continuationTask,
                         requestedModel: requestedModel,
                         maxSteps: maxSteps,
-                        queueMode: queueMode
+                        queueMode: queueMode,
+                        requestedToolExecutionPolicy: self.requestedResumeToolExecutionPolicy
                     )
                 )
             } else {
@@ -129,7 +137,8 @@ extension AgentCommand {
                 task: summary.summary ?? "Unknown task",
                 created: summary.createdAt,
                 lastModified: summary.lastAccessedAt,
-                messageCount: summary.messageCount
+                messageCount: summary.messageCount,
+                toolExecutionPolicy: summary.toolExecutionPolicy.rawValue
             )
         }
 
@@ -163,6 +172,7 @@ extension AgentCommand {
                 "createdAt": ISO8601DateFormatter().string(from: session.created),
                 "updatedAt": ISO8601DateFormatter().string(from: session.lastModified),
                 "messageCount": session.messageCount,
+                "toolExecutionPolicy": session.toolExecutionPolicy,
             ]
         }
         let response = ["success": true, "sessions": sessionData] as [String: Any]
@@ -213,6 +223,7 @@ extension AgentCommand {
         ].joined()
         print(sessionLine)
         print("   Messages: \(session.messageCount)")
+        print("   Tool policy: \(session.toolExecutionPolicy)")
         print("   Last activity: \(timeAgo)")
     }
 
@@ -241,7 +252,8 @@ extension AgentCommand {
                 maxSteps: request.maxSteps,
                 dryRun: self.dryRun,
                 queueMode: request.queueMode,
-                eventDelegate: streamingDelegate
+                eventDelegate: streamingDelegate,
+                requestedToolExecutionPolicy: request.requestedToolExecutionPolicy
             )
             self.displayResult(result, delegate: outputDelegate)
         } catch let error as PeekabooError {
@@ -261,5 +273,18 @@ extension AgentCommand {
             }
             throw ExitCode.failure
         }
+    }
+
+    private func validateRequestedResumePolicy(_ session: AgentSession) throws {
+        guard self.requestedResumeToolExecutionPolicy == .foregroundAllowed,
+              session.effectiveToolExecutionPolicy != .foregroundAllowed
+        else {
+            return
+        }
+        try self.failAgentCommand(
+            message: "Session \(session.id) is background-only and cannot be broadened while resuming.",
+            code: .VALIDATION_ERROR,
+            hint: "Start a new session with --allow-foreground when foreground interaction is intentionally authorized."
+        )
     }
 }

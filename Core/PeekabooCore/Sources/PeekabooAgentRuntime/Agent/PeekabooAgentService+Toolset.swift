@@ -8,13 +8,21 @@ import Tachikoma
 
 @available(macOS 14.0, *)
 extension PeekabooAgentService {
-    func buildToolset(for model: LanguageModel) async -> [AgentTool] {
-        let tools = self.createAgentTools()
+    func buildToolset(
+        for model: LanguageModel,
+        executionPolicy: MCPToolExecutionPolicy = .backgroundOnly) async -> [AgentTool]
+    {
+        let tools = Self.$toolConstructionExecutionPolicy.withValue(executionPolicy) {
+            self.createAgentTools()
+        }
+        let authorityFiltered = executionPolicy == .unrestricted
+            ? tools
+            : tools.filter { $0.name != "shell" }
 
         let filters = ToolFiltering.currentFilters()
         let filtered = ToolFiltering.applyInputStrategyAvailability(
             ToolFiltering.apply(
-                tools,
+                authorityFiltered,
                 filters: filters,
                 log: { [logger] message in
                     logger.notice("\(message, privacy: .public)")
