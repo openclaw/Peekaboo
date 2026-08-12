@@ -1,7 +1,7 @@
 import CoreGraphics
-import PeekabooAutomationKitTestSupport
 import Testing
 @testable import PeekabooAutomationKit
+@testable import PeekabooAutomationKitTestSupport
 
 struct WindowMovementTrackingProviderScopeTests {
     @Test
@@ -68,6 +68,100 @@ struct WindowMovementTrackingProviderScopeTests {
         await WindowMovementTrackingProviderScope.withProvider(nextProvider) {
             #expect(WindowMovementTracking.provider === nextProvider)
         }
+    }
+
+    @Test
+    @MainActor
+    func `Cancelled queued scope still acquires restores and releases in FIFO order`() async {
+        let initialProvider = await WindowMovementTrackingProviderScope.withExclusiveAccess {
+            WindowMovementTracking.provider
+        }
+        let holdingProvider = ProviderScopeWindowTracker(bounds: .zero)
+        let cancelledProvider = ProviderScopeWindowTracker(bounds: CGRect(x: 10, y: 10, width: 10, height: 10))
+        let finalProvider = ProviderScopeWindowTracker(bounds: CGRect(x: 20, y: 20, width: 20, height: 20))
+        let holderInstalled = AsyncTestLatch()
+        let releaseHolder = AsyncTestLatch()
+        let cancelledQueued = AsyncTestLatch()
+        let finalQueued = AsyncTestLatch()
+        var entryOrder: [String] = []
+
+        let holderTask = Task { @MainActor in
+            await WindowMovementTrackingProviderScope.withProvider(holdingProvider) {
+                await holderInstalled.open()
+                await releaseHolder.wait()
+            }
+        }
+        await holderInstalled.wait()
+
+        var cancelledTaskReachedScope = false
+        let cancelledTask = Task { @MainActor in
+            cancelledTaskReachedScope = true
+            await WindowMovementTrackingProviderScope.withProvider(
+                cancelledProvider,
+                queuedSignal: cancelledQueued)
+            {
+                #expect(Task.isCancelled)
+                #expect(WindowMovementTracking.provider === cancelledProvider)
+                entryOrder.append("cancelled")
+            }
+        }
+        #expect(await cancelledQueued.opensWithin(.seconds(1)))
+        #expect(cancelledTaskReachedScope)
+        cancelledTask.cancel()
+
+        var finalTaskReachedScope = false
+        let finalTask = Task { @MainActor in
+            finalTaskReachedScope = true
+            await WindowMovementTrackingProviderScope.withProvider(
+                finalProvider,
+                queuedSignal: finalQueued)
+            {
+                #expect(!Task.isCancelled)
+                #expect(WindowMovementTracking.provider === finalProvider)
+                entryOrder.append("final")
+            }
+        }
+        #expect(await finalQueued.opensWithin(.seconds(1)))
+        #expect(finalTaskReachedScope)
+
+        await releaseHolder.open()
+        await holderTask.value
+        await cancelledTask.value
+        await finalTask.value
+
+        #expect(entryOrder == ["cancelled", "final"])
+        let restoredProvider = await WindowMovementTrackingProviderScope.withExclusiveAccess {
+            WindowMovementTracking.provider
+        }
+        #expect(restoredProvider === initialProvider)
+    }
+
+    @Test
+    @MainActor
+    func `Provider scope diagnoses inherited reentrancy without leaking to detached tasks`() async {
+        let releaseDelayedChild = AsyncTestLatch()
+        let result = await WindowMovementTrackingProviderScope.withExclusiveAccess {
+            let sameTaskMessage = WindowMovementTrackingProviderScope.reentrancyViolationMessage()
+            let childTaskMessage = await Task {
+                WindowMovementTrackingProviderScope.reentrancyViolationMessage()
+            }.value
+            let delayedChildTask = Task {
+                await releaseDelayedChild.wait()
+                return WindowMovementTrackingProviderScope.reentrancyViolationMessage()
+            }
+            let detachedTaskMessage = await Task.detached {
+                WindowMovementTrackingProviderScope.reentrancyViolationMessage()
+            }.value
+            return (sameTaskMessage, childTaskMessage, delayedChildTask, detachedTaskMessage)
+        }
+        await releaseDelayedChild.open()
+        let delayedChildMessage = await result.2.value
+
+        #expect(result.0?.contains("cannot be nested") == true)
+        #expect(result.1 == result.0)
+        #expect(delayedChildMessage == result.0)
+        #expect(result.3 == nil)
+        #expect(WindowMovementTrackingProviderScope.reentrancyViolationMessage() == nil)
     }
 }
 
