@@ -8,9 +8,7 @@ extension ParsableCommand {
         } else {
             CommandSignature.describe(instance)
         }
-        let signature = declaredSignature
-            .flattened()
-            .withPeekabooRuntimeFlags()
+        let signature = declaredSignature.withPeekabooRuntimeFlags()
         let parser = CommandParser(signature: signature)
         let parsedValues = try parser.parse(arguments: arguments)
         return try CommanderCLIBinder.instantiateCommand(ofType: Self.self, parsedValues: parsedValues)

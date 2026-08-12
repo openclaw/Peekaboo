@@ -1,4 +1,5 @@
 import Foundation
+import Swiftdansi
 import Testing
 @testable import PeekabooCLI
 @testable import PeekabooCore
@@ -73,6 +74,19 @@ struct MenuCommandIntegrationTests {
         } else {
             Issue.record("Expected click to be recorded")
         }
+    }
+
+    @Test
+    func `menu JSON cleanup strips complete ANSI string controls`() {
+        let sevenBitControls = ["P", "X", "^", "_"]
+            .map { "\u{001B}\($0)metadata\u{001B}\\" }
+            .joined()
+        let eightBitControls = ["\u{0090}", "\u{0098}", "\u{009E}", "\u{009F}"]
+            .map { "\($0)metadata\u{009C}" }
+            .joined()
+        let output = "\u{001B}[32m✓\(sevenBitControls)\(eightBitControls){\"success\":true}\u{001B}[0m"
+
+        #expect(self.stripTestRunnerNoise(from: output) == #"{"success":true}"#)
     }
 
     // MARK: - Helpers
@@ -284,14 +298,8 @@ extension MenuCommandIntegrationTests {
     private func stripTestRunnerNoise(from output: String) -> String {
         let noisePrefixes: Set<Character> = ["􀟈", "􁁛", "􀢄", "􀙟", "✓", "⚠", "⌨", "📊", "⚙", "⏱", "✅"]
 
-        func stripANSICodes(_ input: String) -> String {
-            // Remove common ANSI escape sequences (colors, cursor moves).
-            let pattern = #"\u{001B}\[[0-9;?]*[A-Za-z]"#
-            return input.replacingOccurrences(of: pattern, with: "", options: .regularExpression)
-        }
-
         func trimmedNoise(_ line: Substring) -> String {
-            var cleaned = stripANSICodes(String(line))
+            var cleaned = stripANSI(String(line))
             while let first = cleaned.first, noisePrefixes.contains(first) {
                 cleaned.removeFirst()
             }

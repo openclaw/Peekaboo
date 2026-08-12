@@ -94,6 +94,7 @@ if includeAutomationTests {
                 .product(name: "PeekabooAgentRuntime", package: "PeekabooCore"),
                 .product(name: "PeekabooAutomation", package: "PeekabooCore"),
                 .product(name: "Subprocess", package: "swift-subprocess"),
+                .product(name: "Swiftdansi", package: "Swiftdansi"),
             ],
             path: "Tests/CLIAutomationTests",
             resources: [

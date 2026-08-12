@@ -22,16 +22,6 @@ public enum TerminalColor {
     public static let magenta = "\u{001B}[35m"
     public static let gray = "\u{001B}[90m"
     public static let italic = "\u{001B}[3m"
-
-    // Background colors
-    public static let bgBlue = "\u{001B}[44m"
-    public static let bgGreen = "\u{001B}[42m"
-    public static let bgYellow = "\u{001B}[43m"
-    public static let bgRed = "\u{001B}[41m"
-
-    // Cursor control
-    public static let clearLine = "\u{001B}[2K"
-    public static let moveToStart = "\r"
 }
 
 /// Update the terminal title using VibeTunnel or ANSI escape sequences

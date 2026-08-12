@@ -150,6 +150,29 @@ struct Phase3CommandParsingTests {
     }
 
     @Test
+    func `Click parser delegates nested option groups to Commander`() throws {
+        let command = try ClickCommand.parse([
+            "Submit",
+            "--snapshot", "snapshot-1",
+            "--window-id", "42",
+            "--foreground",
+            "--focus-timeout", "750",
+            "--focus-retry-count", "3",
+            "--json",
+            "--input-strategy", "actionOnly",
+        ])
+
+        #expect(command.query == "Submit")
+        #expect(command.snapshot == "snapshot-1")
+        #expect(command.target.windowId == 42)
+        #expect(command.focusOptions.foreground)
+        #expect(command.focusOptions.focusTimeoutDuration == .milliseconds(750))
+        #expect(command.focusOptions.focusRetryCount == 3)
+        #expect(command.jsonOutput)
+        #expect(command.runtimeOptions.inputStrategy == .actionOnly)
+    }
+
+    @Test
     func `Direct element actions focus and web press only with explicit foreground`() throws {
         let targetArguments = [
             ["--app", "TextEdit"],
