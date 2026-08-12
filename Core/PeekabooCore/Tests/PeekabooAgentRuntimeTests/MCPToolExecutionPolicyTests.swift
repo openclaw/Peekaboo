@@ -18,6 +18,8 @@ struct MCPToolExecutionPolicyTests {
         let cases: [PolicyCase] = [
             .init(tool: "click", arguments: ["foreground": true]),
             .init(tool: "click", arguments: ["background": false]),
+            .init(tool: "see", arguments: ["web_focus": true]),
+            .init(tool: "inspect_ui", arguments: ["web_focus": true]),
             .init(tool: "type", arguments: ["foreground": true]),
             .init(tool: "scroll", arguments: ["foreground": true]),
             .init(tool: "press", arguments: [:]),
@@ -69,6 +71,7 @@ struct MCPToolExecutionPolicyTests {
             .init(tool: "clipboard", arguments: ["action": "set", "text": "replacement"]),
             .init(tool: "clipboard", arguments: ["action": "clear"]),
             .init(tool: "clipboard", arguments: ["action": "restore"]),
+            .init(tool: "permissions", arguments: ["action": "request"]),
             .init(tool: "action", arguments: ["action": "AXRaise"]),
             .init(tool: "action", arguments: ["action": "AXShowMenu"]),
             .init(tool: "drag", arguments: ["foreground": true]),

@@ -855,6 +855,7 @@ enum MCPToolTestHelpers {
         permissionsStatusProvider: (any PermissionsStatusProviding)? = nil,
         snapshotMutationCoordinator: (any MCPToolSnapshotMutationCoordinating)? = nil,
         snapshotExecutionGate: MCPToolSnapshotExecutionGate = MCPToolSnapshotExecutionGate(),
+        executionPolicy: MCPToolExecutionPolicy = .unrestricted,
         exactWindowMetadataProvider: any ExactWindowMetadataProviding = SystemExactWindowMetadataProvider()) async
         -> MCPToolContext
     {
@@ -885,7 +886,8 @@ enum MCPToolTestHelpers {
                 browser: services.browser,
                 permissionsStatusProvider: permissionsStatusProvider,
                 snapshotMutationCoordinator: snapshotMutationCoordinator,
-                snapshotExecutionGate: snapshotExecutionGate)
+                snapshotExecutionGate: snapshotExecutionGate,
+                executionPolicy: executionPolicy)
         }
     }
 

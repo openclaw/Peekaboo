@@ -119,8 +119,16 @@ private enum BackgroundOnlyToolPolicy {
 
     static func violation(toolName: String, arguments: ToolArguments) -> Violation? {
         switch toolName {
-        case "see", "inspect_ui", "verify_state", "analyze", "permissions", "sleep", "set_value", "done", "need_info":
+        case "see", "inspect_ui":
+            arguments.getBool("web_focus") == true
+                ? .activation("web_focus=true can focus embedded foreground UI")
+                : nil
+        case "verify_state", "analyze", "sleep", "set_value", "done", "need_info":
             nil
+        case "permissions":
+            self.normalized(arguments.getString("action")) == "request"
+                ? .sharedDesktop("requesting permissions can present shared system UI")
+                : nil
         case "clipboard":
             self.clipboardViolation(arguments)
         case "click":

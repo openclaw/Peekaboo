@@ -9,6 +9,61 @@ import Testing
 @Suite(.serialized)
 struct MCPBackgroundPolicyExecutionTests {
     @Test
+    func `background-only refuses shared system UI through non-element mutation tools`() async throws {
+        let dock = ServiceApplicationInfo(
+            processIdentifier: 88,
+            processStartIdentity: 880,
+            bundleIdentifier: "com.apple.dock",
+            name: "Dock")
+        let textEdit = ServiceApplicationInfo(
+            processIdentifier: 89,
+            processStartIdentity: 890,
+            bundleIdentifier: "com.apple.TextEdit",
+            name: "TextEdit")
+        let applications = await MainActor.run { MockApplicationService(applications: [dock, textEdit]) }
+        let context = await MCPToolTestHelpers.makeContext(
+            applications: applications,
+            executionPolicy: .backgroundOnly)
+        let cases = [
+            (toolName: "app", action: "quit", selectorKey: "name"),
+            (toolName: "menu", action: "click", selectorKey: "app"),
+            (toolName: "window", action: "close", selectorKey: "app"),
+            (toolName: "dialog", action: "click", selectorKey: "app"),
+        ]
+
+        for item in cases {
+            let counter = BackgroundPolicyInvocationCounter()
+            let probe = BackgroundPolicyMutationProbe(name: item.toolName, counter: counter)
+            let response = try await context.execute(
+                tool: probe,
+                arguments: ToolArguments(raw: [
+                    "action": item.action,
+                    item.selectorKey: "Dock",
+                ]))
+
+            #expect(response.isError)
+            #expect(await counter.invocationCount == 0)
+            guard case let .object(meta)? = response.meta else {
+                Issue.record("Missing shared-system-UI refusal metadata for \(item.toolName)")
+                continue
+            }
+            #expect(meta["error_code"] == .string(MCPToolExecutionPolicy.refusalErrorCode))
+            #expect(meta["mutation_dispatched"] == .bool(false))
+        }
+
+        let regularCounter = BackgroundPolicyInvocationCounter()
+        let regularResponse = try await context.execute(
+            tool: BackgroundPolicyMutationProbe(name: "app", counter: regularCounter),
+            arguments: ToolArguments(raw: [
+                "action": "quit",
+                "name": "TextEdit",
+            ]))
+        #expect(!regularResponse.isError)
+        #expect(await regularCounter.invocationCount == 1)
+        #expect(await regularCounter.lastName == "PID:89")
+    }
+
+    @Test
     func `App tool lifecycle examples include required foreground consent`() async {
         let context = await MCPToolTestHelpers.makeContext()
         let description = AppTool(context: context).description
@@ -369,6 +424,37 @@ struct MCPBackgroundPolicyExecutionTests {
 
         #expect(response.isError)
         #expect(await MainActor.run { automation.targetedClickCalls.isEmpty })
+    }
+}
+
+private struct BackgroundPolicyMutationProbe: MCPTool {
+    let name: String
+    let counter: BackgroundPolicyInvocationCounter
+    let description = "Background policy mutation probe"
+
+    var inputSchema: Value {
+        SchemaBuilder.object(
+            properties: [
+                "action": SchemaBuilder.string(),
+                "app": SchemaBuilder.string(),
+                "name": SchemaBuilder.string(),
+            ],
+            required: ["action"])
+    }
+
+    func execute(arguments: ToolArguments) async throws -> ToolResponse {
+        await self.counter.record(arguments)
+        return ToolResponse.text("invoked")
+    }
+}
+
+private actor BackgroundPolicyInvocationCounter {
+    private(set) var invocationCount = 0
+    private(set) var lastName: String?
+
+    func record(_ arguments: ToolArguments) {
+        self.invocationCount += 1
+        self.lastName = arguments.getString("name")
     }
 }
 
