@@ -4,6 +4,35 @@ import PeekabooFoundation
 
 /// Canonical builders for Bridge protocol and transport tests.
 public enum BridgeTestFixtures {
+    /// One valid outcome for every canonical desktop-action state.
+    public static var canonicalActionOutcomes: [DesktopActionOutcome] {
+        let backgroundAccessibilityAction = DesktopActionOutcome.Delivery(
+            mechanism: .accessibilityAction,
+            mode: .background)
+        let backgroundTargetedEvents = DesktopActionOutcome.Delivery(
+            mechanism: .processTargetedEvents,
+            mode: .background)
+        let oneUnit = self.dispatchUnitCount(1)
+        let twoUnits = self.dispatchUnitCount(2)
+        let threeUnits = self.dispatchUnitCount(3)
+
+        return [
+            .confirmedChange(delivery: backgroundAccessibilityAction, unitCount: oneUnit),
+            .confirmedNoChange(),
+            .partial(delivery: backgroundAccessibilityAction, unitCount: twoUnits),
+            .dispatchedUnverified(
+                delivery: backgroundTargetedEvents,
+                evidence: .operationStillRunning,
+                unitCount: threeUnits),
+            .suspectedNoop(delivery: backgroundAccessibilityAction, unitCount: oneUnit),
+            .refused(reason: .permissionDenied),
+            .indeterminate(
+                delivery: backgroundTargetedEvents,
+                evidence: .responseLost,
+                unitCount: twoUnits),
+        ]
+    }
+
     /// Builds one internally coherent handshake while keeping protocol versions explicit at every call site.
     public static func handshake(
         negotiatedVersion: PeekabooBridgeProtocolVersion,
@@ -68,5 +97,12 @@ public enum BridgeTestFixtures {
             permission: permission,
             kind: kind,
             context: context))
+    }
+
+    private static func dispatchUnitCount(_ value: Int) -> DesktopActionOutcome.DispatchUnitCount {
+        guard let unitCount = DesktopActionOutcome.DispatchUnitCount(value) else {
+            preconditionFailure("Bridge fixture dispatch counts must be positive")
+        }
+        return unitCount
     }
 }
