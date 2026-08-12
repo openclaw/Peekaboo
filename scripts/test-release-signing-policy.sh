@@ -89,8 +89,20 @@ EOF
 cat >"$native_policy_test_dir/strings" <<'EOF'
 #!/usr/bin/env bash
 case "${NATIVE_ONLY_TEST_MODE:-safe}" in
-  safe) printf '%s\n' 'AES-GCM' ;;
-  dynamic) printf '%s\n' 'AESendMessage' ;;
+  safe)
+    printf '%s\n' \
+      'AES-GCM' \
+      'AEGtGG' \
+      'AESgA2fEtGGAbCyAAyAD_A8FtGGAbCyAAyAD_' \
+      'AppleScriptProbeCodingKeys' \
+      '_appleScriptStatus' \
+      '_appleScriptProbe' \
+      'AppleScript probing is no longer supported; current operations use native macOS APIs' \
+      'Avoid shell scripting or osascript pipelines during UI automation.'
+    ;;
+  dynamic-ae) printf '%s\n' 'AESendMessage' ;;
+  dynamic-ae-create) printf '%s\n' 'AECreateDesc' ;;
+  dynamic-osa) printf '%s\n' '_OSADoScript' ;;
   strings-fail) printf '%s\n' 'harmless output'; exit 87 ;;
 esac
 EOF
@@ -100,7 +112,7 @@ export NATIVE_ONLY_TEST_MODE=safe
 native_only_verify_macho \
   "$native_policy_test_dir/fixture" fixture \
   "$native_policy_test_dir/nm" "$native_policy_test_dir/strings"
-for policy_case in ae ae-send osa dynamic nm-fail strings-fail; do
+for policy_case in ae ae-send osa dynamic-ae dynamic-ae-create dynamic-osa nm-fail strings-fail; do
   export NATIVE_ONLY_TEST_MODE="$policy_case"
   if native_only_verify_macho \
     "$native_policy_test_dir/fixture" fixture \
