@@ -9,14 +9,14 @@ import Testing
 struct Phase3CommandParsingTests {
     @Test
     func `Press parses xdotool chords and sequences`() throws {
-        var command = try PressCommand.parse(["cmd+shift+t", "Return"])
+        var command = try PressCommand.parse(["--foreground", "cmd+shift+t", "Return"])
         let chords = try command.parsedChords()
 
         #expect(command.chords == ["cmd+shift+t", "Return"])
         #expect(chords.map(\.serviceKeys) == ["cmd,shift,t", "return"])
         try command.validate()
 
-        var extended = try PressCommand.parse(["forward_delete", "cmd+,", "Home"])
+        var extended = try PressCommand.parse(["--foreground", "forward_delete", "cmd+,", "Home"])
         #expect(try extended.parsedChords().map(\.serviceKeys) == ["forwarddelete", "cmd,comma", "home"])
         try extended.validate()
     }

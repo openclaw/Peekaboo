@@ -116,6 +116,8 @@ struct AgentSystemPromptTests {
 
         #expect(prompt.contains("predicates are structured JSON objects"))
         #expect(prompt.contains("never prose strings or AX expressions"))
+        #expect(prompt.contains("Raw keyboard shortcuts require explicit foreground consent"))
+        #expect(prompt.contains("`press` with xdotool-style chords such as `cmd+shift+t` and `foreground: true`"))
         #expect(prompt.contains("predicate schema and examples exactly"))
     }
 

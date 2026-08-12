@@ -21,7 +21,7 @@ public struct PasteTool: MCPTool {
 
         Use this when you want fewer steps than:
         - clipboard set
-        - press cmd+v
+        - foreground raw press cmd+v --foreground
         - clipboard restore
 
         Targeting:

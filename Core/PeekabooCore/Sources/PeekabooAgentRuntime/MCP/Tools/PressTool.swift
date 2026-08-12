@@ -14,11 +14,12 @@ public struct PressTool: MCPTool {
 
     public var description: String {
         """
-        Presses one or more keyboard chords. Use `keys` for an xdotool-style chord sequence such as
+        Presses one or more raw keyboard chords. Use `keys` for an xdotool-style chord sequence such as
         ["cmd+c", "Return"], or use `key` plus `modifiers` for a single chord. The two input shapes are
-        mutually exclusive. Background delivery requires app/pid targeting; set foreground=true for intentional
-        OS-global shortcuts or to focus a specific window first. app and pid are alternatives; provide at most one of
-        window_id, window_title, or window_index, and pair title/index with app or pid.
+        mutually exclusive. Raw chords cannot prove semantic intent or effect on a shared desktop and require
+        foreground=true. For certifiable background automation, use action, menu, window, app, or dialog with an
+        exact target. app and pid are alternatives; provide at most one of window_id, window_title, or window_index,
+        and pair title/index with app or pid.
         \(PeekabooMCPVersion.banner) using openai/gpt-5.6, anthropic/claude-opus-5
         """
     }
@@ -61,15 +62,15 @@ public struct PressTool: MCPTool {
                     default: 50),
                 "app": SchemaBuilder.string(description: "Optional target app name/bundle ID, or 'PID:<n>'."),
                 "pid": SchemaBuilder.integer(
-                    description: "Optional target process ID for background keyboard input.",
+                    description: "Optional process to focus before foreground raw input.",
                     minimum: 1),
-                "window_id": SchemaBuilder.integer(description: "Optional window ID; requires foreground=true."),
+                "window_id": SchemaBuilder.integer(description: "Optional window ID to focus before raw input."),
                 "window_title": SchemaBuilder
-                    .string(description: "Optional window title (substring match); requires foreground=true."),
+                    .string(description: "Optional window title (substring match) to focus before raw input."),
                 "window_index": SchemaBuilder
-                    .integer(description: "Optional window index (0-based); requires app/pid and foreground=true."),
+                    .integer(description: "Optional window index (0-based); requires app/pid."),
                 "foreground": SchemaBuilder.boolean(
-                    description: "Optional. Focus a target or intentionally send OS-global keyboard input.",
+                    description: "Required true. Focus a target or intentionally send OS-global raw keyboard input.",
                     default: false),
             ],
             required: [])
@@ -103,36 +104,18 @@ public struct PressTool: MCPTool {
                 windowTitle: arguments.getString("window_title"),
                 windowIndex: arguments.validatedInt("window_index"),
                 windowId: arguments.validatedInt("window_id"))
-            let resolvedWindowTitle = try await target.resolveWindowTitleIfNeeded(windows: self.context.windows)
-            let targetIdentity = foreground ? nil : try await target.requireBackgroundProcessIdentity(
-                applications: self.context.applications,
-                windows: self.context.windows)
-            let targetPID = targetIdentity?.processIdentifier
-
-            if targetPID == nil {
-                _ = try await target.focusIfRequested(windows: self.context.windows, onlyWhenTargeted: true)
+            guard foreground else {
+                return Self.foregroundConsentRefusal()
             }
+            let resolvedWindowTitle = try await target.resolveWindowTitleIfNeeded(windows: self.context.windows)
+            _ = try await target.focusIfRequested(windows: self.context.windows, onlyWhenTargeted: true)
 
             let startTime = Date()
             var completed = 0
             do {
                 for repetition in 0..<count {
                     for (index, chord) in chords.enumerated() {
-                        if let targetIdentity {
-                            guard let targeted = self.context.automation as? any TargetedHotkeyServiceProtocol,
-                                  targeted.supportsTargetedHotkeys,
-                                  targeted.supportsProcessGenerationPinnedHotkeys
-                            else {
-                                return ToolResponse
-                                    .error("This automation host does not support background keyboard input.")
-                            }
-                            try await targeted.hotkey(
-                                keys: chord.serviceKeys,
-                                holdDuration: hold,
-                                expectedProcessIdentity: targetIdentity)
-                        } else {
-                            try await self.context.automation.hotkey(keys: chord.serviceKeys, holdDuration: hold)
-                        }
+                        try await self.context.automation.hotkey(keys: chord.serviceKeys, holdDuration: hold)
                         completed += 1
                         let isLast = repetition == count - 1 && index == chords.count - 1
                         if delay > 0, !isLast {
@@ -156,16 +139,21 @@ public struct PressTool: MCPTool {
 
             let display = chords.map(\.displayValue)
             let elapsed = Date().timeIntervalSince(startTime)
-            let message = "\(AgentDisplayTokens.Status.success) Pressed \(display.joined(separator: " → ")) " +
-                "(\(completed) chord press\(completed == 1 ? "" : "es")) in \(String(format: "%.2f", elapsed))s"
+            let message = "\(AgentDisplayTokens.Status.success) Dispatched \(display.joined(separator: " → ")) " +
+                "(\(completed) raw chord\(completed == 1 ? "" : "s")); effect is unverifiable. " +
+                "Observe before continuing. Completed in \(String(format: "%.2f", elapsed))s"
             let meta: Value = .object([
                 "keys": .array(display.map(Value.string)),
                 "count": .int(count),
                 "delay": .int(delay),
                 "hold": .int(hold),
                 "total_presses": .int(completed),
-                "delivery_mode": .string(targetPID == nil ? "foreground" : "background"),
-                "target_pid": targetPID.map { .int(Int($0)) } ?? .null,
+                "delivery_mode": .string("foreground"),
+                "target_pid": .null,
+                "effect": .string("unverifiable"),
+                "mutation_dispatched": .bool(true),
+                "retry_safe": .bool(false),
+                "requires_fresh_observation": .bool(true),
                 "execution_time": .double(elapsed),
             ])
             let summary = ToolEventSummary(
@@ -210,5 +198,20 @@ public struct PressTool: MCPTool {
             throw KeyboardChordError.invalid("Provide keys or key+modifiers")
         }
         return try [KeyboardChord(parsing: (modifiers + [key]).joined(separator: "+"))]
+    }
+
+    private static func foregroundConsentRefusal() -> ToolResponse {
+        let outcome = RawPressPolicy.foregroundConsentRefusal
+        return ToolResponse.error(
+            RawPressPolicy.foregroundConsentRequiredMessage,
+            meta: .object([
+                "code": .string(RawPressPolicy.errorCode.rawValue),
+                "effect": .string(outcome.effect.rawValue),
+                "mutation_dispatched": .bool(outcome.dispatchState.mutationDispatched),
+                "retry_safe": .bool(outcome.retrySafety == .safe),
+                "escalation": .string(outcome.escalation.rawValue),
+                "refusal_reason": .string(outcome.refusalReason?.rawValue ?? "foreground_consent_required"),
+                "hint": .string(RawPressPolicy.foregroundConsentRequiredHint),
+            ]))
     }
 }

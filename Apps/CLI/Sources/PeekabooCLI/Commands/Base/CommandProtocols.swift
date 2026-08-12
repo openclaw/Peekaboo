@@ -4,6 +4,12 @@ import Foundation
 
 // MARK: - Runtime Command Protocol
 
+/// A command whose request-only safety checks can run before runtime-host selection.
+@MainActor
+protocol PreRuntimeValidatingCommand: ParsableCommand {
+    func validateBeforeRuntime() throws
+}
+
 /// Protocol for commands that accept runtime context injection.
 /// Commands conforming to this protocol receive a `CommandRuntime` instance
 /// containing logger, services, and configuration instead of accessing singletons.

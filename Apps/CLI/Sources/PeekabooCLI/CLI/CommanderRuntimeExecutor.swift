@@ -36,9 +36,11 @@ enum CommanderRuntimeExecutor {
             type: resolved.type,
             parsedValues: resolved.parsedValues
         )
-
         let isActionCommand = (command as? any ActionOutputFormattable)?.defaultEffect != nil
         try await ResultEnvelopeContext.$isActionCommand.withValue(isActionCommand) {
+            if let validatingCommand = command as? any PreRuntimeValidatingCommand {
+                try validatingCommand.validateBeforeRuntime()
+            }
             try await self.runCommand(command, resolved: resolved)
         }
     }

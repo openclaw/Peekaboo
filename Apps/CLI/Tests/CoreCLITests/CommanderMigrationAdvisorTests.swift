@@ -24,7 +24,7 @@ struct CommanderMigrationAdvisorTests {
         (["click", "--coords", "1,2"], "--at"),
         (["paste", "--restore-delay-ms", "100"], "--restore-delay"),
         (["capture", "video", "in.mov", "--every-ms", "500"], "--every"),
-        (["type", "hello", "--return"], "peekaboo press Return"),
+        (["type", "hello", "--return"], "peekaboo press Return --foreground"),
         (["agent", "--resume-session", "abc"], "peekaboo agent resume <session-id>"),
         (["clipboard", "--action", "get"], "clipboard get|set|clear|save|restore"),
     ])

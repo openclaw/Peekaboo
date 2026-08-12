@@ -65,10 +65,11 @@ Target an element by its accessible label, then send text to the same app:
 
 ```sh
 peekaboo click "Address and search bar" --app Safari
-peekaboo type "github.com/openclaw/Peekaboo" --app Safari && peekaboo press Return --app Safari
+peekaboo type "github.com/openclaw/Peekaboo" --app Safari
+peekaboo press Return --app Safari --foreground
 ```
 
-Targeted input uses background delivery when Peekaboo can resolve the process, so the app does not have to become frontmost. Add `--foreground` when an app only accepts input in its focused key window. See the [automation guide](docs/automation.md) for element IDs, coordinates, snapshots, waits, and input behavior.
+Targeted semantic and typed input uses background delivery when Peekaboo can resolve the process, so the app does not have to become frontmost. Raw `press` chords always require explicit `--foreground`; prefer a semantic action such as `menu click` in background workflows. See the [automation guide](docs/automation.md) for element IDs, coordinates, snapshots, waits, and input behavior.
 
 ## Agent and MCP
 

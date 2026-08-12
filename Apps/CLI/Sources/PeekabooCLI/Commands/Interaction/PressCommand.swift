@@ -6,7 +6,14 @@ import PeekabooFoundation
 /// Press keyboard chords or chord sequences.
 @available(macOS 14.0, *)
 @MainActor
-struct PressCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormattable, RuntimeOptionsConfigurable {
+struct PressCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormattable, PreRuntimeValidatingCommand,
+RuntimeOptionsConfigurable {
+    private static let foregroundConsentRequired = PreDispatchActionError(
+        message: RawPressPolicy.foregroundConsentRequiredMessage,
+        code: .INTERACTION_FAILED,
+        hint: RawPressPolicy.foregroundConsentRequiredHint
+    )
+
     @Argument(help: "One or more chords. Chord syntax matches xdotool key (cmd+shift+t).")
     var chords: [String]
 
@@ -76,17 +83,13 @@ struct PressCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
             )
             try await observation.validateIfExplicit(using: self.services.snapshots)
 
-            let targetIdentity = try await self.backgroundProcessIdentity(snapshotId: observation.snapshotId)
-            let targetPID = targetIdentity?.processIdentifier
             self.resolvedRuntime.beginInteractionMutation()
-            if targetPID == nil {
-                try await ensureFocused(
-                    snapshotId: observation.focusSnapshotId(for: self.target),
-                    target: self.target,
-                    options: self.focusOptions,
-                    services: self.services
-                )
-            }
+            try await ensureFocused(
+                snapshotId: observation.focusSnapshotId(for: self.target),
+                target: self.target,
+                options: self.focusOptions,
+                services: self.services
+            )
 
             let parsedChords = try self.parsedChords()
             var completedPresses = 0
@@ -95,20 +98,11 @@ struct PressCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
                 for repetition in 0..<self.count {
                     for (index, chord) in parsedChords.indexed() {
                         try Task.checkCancellation()
-                        if let targetIdentity {
-                            try await AutomationServiceBridge.hotkey(
-                                automation: self.services.automation,
-                                keys: chord.serviceKeys,
-                                holdDuration: self.hold.roundedMilliseconds,
-                                expectedProcessIdentity: targetIdentity
-                            )
-                        } else {
-                            try await AutomationServiceBridge.hotkey(
-                                automation: self.services.automation,
-                                keys: chord.serviceKeys,
-                                holdDuration: self.hold.roundedMilliseconds
-                            )
-                        }
+                        try await AutomationServiceBridge.hotkey(
+                            automation: self.services.automation,
+                            keys: chord.serviceKeys,
+                            holdDuration: self.hold.roundedMilliseconds
+                        )
                         completedPresses += 1
                         try Task.checkCancellation()
 
@@ -141,22 +135,20 @@ struct PressCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
                 keys: parsedChords.map(\.displayValue),
                 totalPresses: completedPresses,
                 count: self.count,
-                deliveryMode: targetPID == nil ? KeyboardDeliveryMode.foreground.rawValue :
-                    KeyboardDeliveryMode.background.rawValue,
-                targetPID: targetPID.map(Int.init),
+                deliveryMode: KeyboardDeliveryMode.foreground.rawValue,
+                targetPID: nil,
                 executionTime: Date().timeIntervalSince(startTime)
             )
 
-            output(pressResult) {
-                print("✅ Key press completed")
+            output(pressResult, effect: .unverifiable) {
+                print("✅ Key press dispatched")
                 print("🔑 Chords: \(parsedChords.map(\.displayValue).joined(separator: " → "))")
                 if self.count > 1 {
                     print("🔢 Repeated: \(self.count) times")
                 }
-                if let targetPID {
-                    print("🎯 Mode: background to PID \(targetPID)")
-                }
+                print("🎯 Mode: foreground")
                 print("📊 Total presses: \(completedPresses)")
+                print("⚠️  Effect: unverifiable; observe the target before continuing")
                 print("⏱️  Completed in \(String(format: "%.2f", Date().timeIntervalSince(startTime)))s")
             }
 
@@ -169,6 +161,10 @@ struct PressCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
     // Error handling is provided by ErrorHandlingCommand protocol
 
     mutating func validate() throws {
+        try self.validateBeforeRuntime()
+    }
+
+    func validateBeforeRuntime() throws {
         try self.target.validate()
         try KeyboardDeliverySupport.validateForegroundFlags(
             foreground: self.focusOptions.foreground,
@@ -178,6 +174,9 @@ struct PressCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
             throw ValidationError("--count must be greater than 0")
         }
         _ = try self.parsedChords()
+        guard self.focusOptions.foreground else {
+            throw Self.foregroundConsentRequired
+        }
     }
 
     func parsedChords() throws -> [KeyboardChord] {
@@ -188,18 +187,6 @@ struct PressCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
                 throw ValidationError(error.localizedDescription)
             }
         }
-    }
-
-    private func backgroundProcessIdentity(snapshotId: String?) async throws -> ApplicationProcessIdentity? {
-        guard !self.focusOptions.foreground else {
-            return nil
-        }
-
-        return try await KeyboardDeliverySupport.requireBackgroundProcessIdentity(
-            target: self.target,
-            snapshotId: snapshotId,
-            services: self.services
-        )
     }
 }
 
@@ -225,11 +212,15 @@ extension PressCommand: ParsableCommand {
                     The 'press' command sends keyboard chords in sequence.
                     Chord syntax matches xdotool key (cmd+shift+t).
 
+                    Raw chords cannot prove their semantic effect on a shared desktop and require
+                    explicit --foreground consent. Use action, menu, window, app, or dialog for
+                    certifiable background intent.
+
                     EXAMPLES:
-                      peekaboo press cmd+c --foreground
-                      peekaboo press Return --app TextEdit
+                      peekaboo press cmd+c --app TextEdit --foreground
+                      peekaboo press Return --app TextEdit --foreground
                       peekaboo press cmd+shift+4 --foreground
-                      peekaboo press ctrl+a Delete --app TextEdit
+                      peekaboo press ctrl+a Delete --app TextEdit --foreground
 
                     MODIFIERS:
                       cmd/command, shift, option/alt, ctrl/control, fn
@@ -238,15 +229,15 @@ extension PressCommand: ParsableCommand {
                       return, tab, escape, delete, arrows, f1-f12, letters, digits, space
 
                     SEQUENCES:
-                      Separate chords with spaces: peekaboo press ctrl+a Delete
+                      Separate chords with spaces: peekaboo press ctrl+a Delete --foreground
 
                     TIMING:
                       Use --delay to control timing between key presses (default: 100ms)
                       Use --hold to control how long each key is held (default: 50ms)
 
                     TARGETING:
-                      Background input requires --app, --pid, or a snapshot with process metadata.
-                      Use --foreground for intentional global input and for window selectors.
+                      --foreground is required. App, PID, snapshot, and window selectors identify
+                      what Peekaboo focuses before dispatch; they do not authorize raw background input.
                 """,
 
                 showHelpOnEmptyInvocation: true

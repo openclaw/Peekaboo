@@ -45,8 +45,9 @@ peekaboo type "open ~/Downloads\n" --app "Terminal"
 # Force foreground typing when an app ignores background keyboard events
 peekaboo type "status report ready" --app TextEdit --foreground
 
-# Clear the field, type a username, tab twice, then hit Return
-peekaboo type alice@example.com --app Safari --clear && peekaboo press Tab Tab Return --app Safari
+# Clear the field and type a username in the background, then explicitly focus for raw navigation keys
+peekaboo type alice@example.com --app Safari --clear
+peekaboo press Tab Tab Return --app Safari --foreground
 
 # Opt into human typing at 140 WPM
 peekaboo type "status report ready" --app TextEdit --wpm 140

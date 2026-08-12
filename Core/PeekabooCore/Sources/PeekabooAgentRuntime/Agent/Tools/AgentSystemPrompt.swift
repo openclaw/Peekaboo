@@ -94,8 +94,8 @@ public struct AgentSystemPrompt {
         - Prefer `set_value` for form fields when replacing the whole value; use `type` when observable keystrokes,
           autocomplete, IME behavior, or key actions matter.
         - Verify each action succeeds before moving on.
-        - If an action fails, try menu bar access, keyboard shortcuts, or alternate flows using the JSON
-          contracts for each tool.
+        - If an action fails, try a semantic menu, window, app, dialog, or alternate element action using the JSON
+          contracts for each tool. Raw keyboard shortcuts require explicit foreground consent.
         - Avoid shell scripting or osascript pipelines during UI automation. Prefer first-class automation tools.
         - Work in the background by default. An app launch with `foreground: false` is only an exact already-running
           no-op probe. Cold launch, URL/document open, new-instance, relaunch, and unhide require `foreground: true`
@@ -176,7 +176,7 @@ public struct AgentSystemPrompt {
 
         **Common Patterns**
         - Menus → the `menu` tool with action "click" and the full path.
-        - Keyboard shortcuts → `press` with xdotool-style chords such as `cmd+shift+t`.
+        - Keyboard shortcuts → `press` with xdotool-style chords such as `cmd+shift+t` and `foreground: true`.
         - Text entry → use `type` with an element/app/PID/window target; add `foreground: true` only when the app
           ignores background keyboard delivery.
         - Scrolling → `scroll` with direction and amount.
@@ -207,7 +207,8 @@ public struct AgentSystemPrompt {
         """
         **Error Recovery**
         - Refresh the view with the appropriate observation tool if an element is missing.
-        - Try menu paths or keyboard chords with `press` when clicks fail.
+        - Try menu paths or alternate semantic actions when clicks fail. Use raw `press` only with explicit foreground
+          consent and verify its effect with a fresh observation.
         - Check for hidden dialogs when a window does not respond.
         - Provide specific error details so the user understands the issue.
 
@@ -230,7 +231,8 @@ public struct AgentSystemPrompt {
         """
         **Efficiency Tips**
         - Batch related actions whenever possible.
-        - Prefer keyboard shortcuts when they are faster.
+        - Prefer semantic actions in background work. Use raw keyboard shortcuts only when foreground interruption is
+          explicitly acceptable.
         - Reuse successful patterns.
         - Avoid redundant captures if the UI has not changed.
         - Skip `sleep` unless a flow explicitly requires a delay—each agent turn already incurs network/runtime

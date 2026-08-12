@@ -16,7 +16,7 @@ scripts/test-background-computer-use.sh
 It builds the Playground fixture, signs it with the OpenClaw Foundation Developer ID, launches it without activation,
 and samples the app that is already frontmost as the per-row sentinel. It never activates Calculator or restores a
 stale foreground app after the run. It then exercises fresh, exact PID/window snapshots through
-`see` (including AX-only and screenshot-only modes), `capture live`, click by ID and query, `type`, `press`, `paste`,
+`see` (including AX-only and screenshot-only modes), `capture live`, click by ID and query, `type`, raw-press refusal, `paste`,
 `set-value`, `action`, and Accessibility-only targeted scroll. Stale snapshots and unsupported named AX actions must
 fail nonzero instead of falling back to foreground synthesis. Targeted scroll must report confirmed Accessibility
 delivery and produce an independent, PID-scoped Playground offset change.
@@ -27,9 +27,10 @@ does not infer the state of an unrelated sibling process from the quit result.
 Harness cleanup consumes each controlled PID and process-start identity directly from the launch/relaunch result and
 passes both values in one generation-pinned `app quit` request. A missing receipt for the essential Playground fixture
 aborts immediately; a missing lifecycle receipt records a failed/omitted catalog case. Cleanup never probes a bare
-post-launch PID to mint ownership or issues a separate unpinned quit that could hit a recycled process. Background
-keyboard requests with a window selector are refused. Process-only cases use the exact PID to isolate the target
-process and intentionally do not claim sibling-window isolation.
+post-launch PID to mint ownership or issues a separate unpinned quit that could hit a recycled process. Background raw
+`press` and keyboard requests with a window selector are refused. Process-only typed cases use the exact PID to isolate
+the target process and intentionally do not claim sibling-window isolation. Fixture windows open through background
+semantic menu actions rather than uncertified raw shortcuts.
 The harness invokes the current CLI directly; it does not use AppleScript or a command runner.
 
 Every background case starts only after the 10 ms monitor completes its first sample and publishes a sequence

@@ -37,9 +37,16 @@ extension PressCommand: CommanderSignatureProviding {
                     long: "snapshot"
                 ),
             ],
+            flags: [
+                .commandFlag(
+                    "focusBackground",
+                    help: "Deprecated compatibility flag; raw press still requires --foreground",
+                    long: "focus-background"
+                ),
+            ],
             optionGroups: [
                 InteractionTargetOptions.commanderSignature(),
-                FocusCommandOptions.commanderSignature(includeBackgroundDelivery: true),
+                FocusCommandOptions.commanderSignature(),
             ]
         )
     }

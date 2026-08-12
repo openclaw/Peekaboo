@@ -122,6 +122,15 @@ struct MCPKeyboardBackgroundToolTests {
         #expect(await MainActor.run { automation.lastHotkeyKeys } == "cmd,v")
         #expect(await MainActor.run { automation.targetedTypeActionsCalls.isEmpty })
         #expect(await MainActor.run { automation.targetedHotkeyCalls.isEmpty })
+        guard case let .object(hotkeyMeta) = hotkeyResponse.meta else {
+            Issue.record("Expected foreground press metadata")
+            return
+        }
+        #expect(hotkeyMeta["delivery_mode"] == .string("foreground"))
+        #expect(hotkeyMeta["effect"] == .string("unverifiable"))
+        #expect(hotkeyMeta["mutation_dispatched"] == .bool(true))
+        #expect(hotkeyMeta["retry_safe"] == .bool(false))
+        #expect(hotkeyMeta["requires_fresh_observation"] == .bool(true))
     }
 
     @Test
@@ -463,7 +472,7 @@ struct MCPKeyboardBackgroundToolTests {
     }
 
     @Test
-    func `Press tool uses targeted delivery when pid is supplied`() async throws {
+    func `Press tool refuses pid-targeted raw background delivery`() async throws {
         let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
         let applications = await MainActor.run {
             MockApplicationService(applications: [AutomationTestFixtures.application(
@@ -482,147 +491,25 @@ struct MCPKeyboardBackgroundToolTests {
             "pid": 222,
         ]))
 
-        #expect(response.isError == false)
+        #expect(response.isError)
         let calls = await MainActor.run { automation.targetedHotkeyCalls }
-        #expect(calls.count == 1)
-        #expect(calls.first?.keys == "cmd,l")
-        #expect(calls.first?.targetProcessIdentifier == 222)
-        #expect(calls.first?.expectedProcessIdentity == AutomationTestFixtures.processIdentity(
-            processIdentifier: 222,
-            processStartIdentity: 22))
+        #expect(calls.isEmpty)
         #expect(await MainActor.run { automation.lastHotkeyKeys } == nil)
         guard case let .object(meta) = response.meta else {
             Issue.record("Expected metadata")
             return
         }
-        #expect(meta["delivery_mode"] == .string("background"))
-        #expect(meta["target_pid"] == .int(222))
+        #expect(meta["code"] == .string("INTERACTION_FAILED"))
+        #expect(meta["effect"] == .string("refused"))
+        #expect(meta["mutation_dispatched"] == .bool(false))
+        #expect(meta["retry_safe"] == .bool(true))
+        #expect(meta["escalation"] == .string("correct_request"))
+        #expect(meta["refusal_reason"] == .string("foreground_consent_required"))
+        #expect(meta["hint"]?.description.contains("foreground=true") == true)
     }
 
     @Test
-    func `Press sequence reports process reuse after partial delivery as retry unsafe`() async throws {
-        let original = AutomationTestFixtures.processIdentity(processIdentifier: 223, processStartIdentity: 22)
-        let replacement = AutomationTestFixtures.processIdentity(processIdentifier: 223, processStartIdentity: 23)
-        var current = original
-        let automation = await MainActor.run {
-            let automation = MockAutomationService(accessibilityGranted: true)
-            automation.currentProcessIdentity = { _ in current }
-            automation.afterPinnedHotkey = { current = replacement }
-            return automation
-        }
-        let applications = await MainActor.run {
-            MockApplicationService(applications: [AutomationTestFixtures.application(
-                processIdentifier: original.processIdentifier,
-                processStartIdentity: original.processStartIdentity,
-                bundleIdentifier: "com.example.target",
-                name: "Target")])
-        }
-        let context = await MCPToolTestHelpers.makeContext(
-            automation: automation,
-            applications: applications)
-
-        let response = try await PressTool(context: context).execute(arguments: ToolArguments(raw: [
-            "keys": ["cmd+l", "cmd+k"],
-            "pid": 223,
-            "delay": 0,
-        ]))
-
-        #expect(response.isError)
-        #expect(await MainActor.run { automation.targetedHotkeyCalls.count } == 1)
-        guard case let .object(meta) = response.meta else {
-            Issue.record("Expected indeterminate metadata")
-            return
-        }
-        #expect(meta["mutation_dispatched"] == .bool(true))
-        #expect(meta["retry_safe"] == .bool(false))
-        #expect(meta["emitted_units"] == .int(1))
-    }
-
-    @Test
-    func `Press sequence includes prior chords in indeterminate emitted count`() async throws {
-        let identity = AutomationTestFixtures.processIdentity(processIdentifier: 224, processStartIdentity: 24)
-        let automation = await MainActor.run {
-            let automation = MockAutomationService(accessibilityGranted: true)
-            automation.pinnedHotkeyError = { keys in
-                guard keys == "cmd,k" else { return nil }
-                return InputDeliveryIndeterminateError(
-                    operation: .hotkey,
-                    emittedUnitCount: 1,
-                    causeDescription: "completion identity drift")
-            }
-            return automation
-        }
-        let applications = await MainActor.run {
-            MockApplicationService(applications: [AutomationTestFixtures.application(
-                processIdentifier: identity.processIdentifier,
-                processStartIdentity: identity.processStartIdentity,
-                bundleIdentifier: "com.example.target",
-                name: "Target")])
-        }
-        let context = await MCPToolTestHelpers.makeContext(
-            automation: automation,
-            applications: applications)
-
-        let response = try await PressTool(context: context).execute(arguments: ToolArguments(raw: [
-            "keys": ["cmd+l", "cmd+k"],
-            "pid": Int(identity.processIdentifier),
-            "delay": 0,
-        ]))
-
-        #expect(response.isError)
-        #expect(await MainActor.run { automation.targetedHotkeyCalls.count } == 2)
-        guard case let .object(meta) = response.meta else {
-            Issue.record("Expected indeterminate press metadata")
-            return
-        }
-        #expect(meta["mutation_dispatched"] == .bool(true))
-        #expect(meta["retry_safe"] == .bool(false))
-        #expect(meta["emitted_units"] == .int(2))
-    }
-
-    @Test
-    func `Press sequence preserves unknown count for indeterminate current chord`() async throws {
-        let identity = AutomationTestFixtures.processIdentity(processIdentifier: 225, processStartIdentity: 25)
-        let automation = await MainActor.run {
-            let automation = MockAutomationService(accessibilityGranted: true)
-            automation.pinnedHotkeyError = { keys in
-                guard keys == "cmd,k" else { return nil }
-                return InputDeliveryIndeterminateError(
-                    operation: .hotkey,
-                    causeDescription: "unknown current chord completion")
-            }
-            return automation
-        }
-        let applications = await MainActor.run {
-            MockApplicationService(applications: [AutomationTestFixtures.application(
-                processIdentifier: identity.processIdentifier,
-                processStartIdentity: identity.processStartIdentity,
-                bundleIdentifier: "com.example.target",
-                name: "Target")])
-        }
-        let context = await MCPToolTestHelpers.makeContext(
-            automation: automation,
-            applications: applications)
-
-        let response = try await PressTool(context: context).execute(arguments: ToolArguments(raw: [
-            "keys": ["cmd+l", "cmd+k"],
-            "pid": Int(identity.processIdentifier),
-            "delay": 0,
-        ]))
-
-        #expect(response.isError)
-        #expect(await MainActor.run { automation.targetedHotkeyCalls.count } == 2)
-        guard case let .object(meta) = response.meta else {
-            Issue.record("Expected indeterminate press metadata")
-            return
-        }
-        #expect(meta["mutation_dispatched"] == .bool(true))
-        #expect(meta["retry_safe"] == .bool(false))
-        #expect(meta["emitted_units"] == .null)
-    }
-
-    @Test
-    func `Type and press tools use targeted delivery when app process is known`() async throws {
+    func `Type uses targeted delivery while raw press refuses background app target`() async throws {
         let app = AutomationTestFixtures.application(
             processIdentifier: 333,
             processStartIdentity: 33,
@@ -646,7 +533,7 @@ struct MCPKeyboardBackgroundToolTests {
         ]))
 
         #expect(typeResponse.isError == false)
-        #expect(hotkeyResponse.isError == false)
+        #expect(hotkeyResponse.isError)
         let typeCalls = await MainActor.run { automation.targetedTypeActionsCalls }
         #expect(typeCalls.count == 1)
         #expect(typeCalls.first?.targetProcessIdentifier == 333)
@@ -654,11 +541,7 @@ struct MCPKeyboardBackgroundToolTests {
             processIdentifier: 333,
             processStartIdentity: 33))
         let hotkeyCalls = await MainActor.run { automation.targetedHotkeyCalls }
-        #expect(hotkeyCalls.count == 1)
-        #expect(hotkeyCalls.first?.targetProcessIdentifier == 333)
-        #expect(hotkeyCalls.first?.expectedProcessIdentity == AutomationTestFixtures.processIdentity(
-            processIdentifier: 333,
-            processStartIdentity: 33))
+        #expect(hotkeyCalls.isEmpty)
         #expect(await MainActor.run { automation.lastHotkeyKeys } == nil)
     }
 

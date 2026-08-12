@@ -25,7 +25,7 @@ bespoke ones. Full rationale: `docs/v4-cli-plan.md`.
 | `peekaboo list apps\|windows\|screens\|menubar\|permissions` | `app list`, `window list`, `screen list`, `menubar list`, `permissions` |
 | `peekaboo image …` | `see` (`--no-elements` for screenshot-only speed; `--format`, `--retina`, `--region`, `--mode multi` moved over) |
 | `peekaboo inspect-ui …` | `see --tree [--no-screenshot] [--depth N]` |
-| `peekaboo hotkey --keys cmd,c` | `press cmd+c` (xdotool `key` chord syntax) |
+| `peekaboo hotkey --keys cmd,c` | `press cmd+c --foreground` (xdotool `key` chord syntax; raw keys require foreground consent) |
 | `peekaboo swipe --from-coords a --to-coords b` | `drag --from x1,y1 --to x2,y2` (`--from`/`--to` accept element IDs or coordinates) |
 | `peekaboo perform-action AXPress --on B7` | `action AXPress --on B7` |
 | `peekaboo commander` | removed (internal diagnostics) |
@@ -75,7 +75,7 @@ bespoke ones. Full rationale: `docs/v4-cli-plan.md`.
 | `--id <el>` (click/move) | `--on <el>` |
 | `--idle-timeout-seconds` | `--idle-timeout` |
 | `--image-path` | `--file-path` |
-| `--keys` | positional xdotool chord syntax, for example `peekaboo press cmd+c` |
+| `--keys` | positional xdotool chord syntax, for example `peekaboo press cmd+c --foreground` |
 | `--label` | positional query text or `--on` |
 | `--max-depth` | `--depth` |
 | `--poll-interval-ms` | `--poll-interval` |
@@ -89,7 +89,7 @@ bespoke ones. Full rationale: `docs/v4-cli-plan.md`.
 | `--timeout-seconds N` | `--timeout N[s\|ms]` (bare = ms) |
 | `--to-coords` | `--to` |
 | `--wait-seconds` | `--wait` |
-| `type --return/--escape/--delete/--tab` | `type "text"` then `press Return` / `press Escape` / … |
+| `type --return/--escape/--delete/--tab` | `type "text"` then explicit-foreground `press Return --foreground` / `press Escape --foreground` / … |
 
 All duration flags accept `500`, `500ms`, or `2s`; bare numbers are milliseconds.
 Modifier lists are comma-separated: `--modifiers cmd,shift`.

@@ -51,7 +51,7 @@ struct LearnCommand {
         - Observe with `see`: add `--tree` for an AX text tree, `--no-screenshot` for AX-only output,
           or `--no-elements` for a fast screenshot-only capture.
         - Send standalone keys and xdotool-style chords with `press`, for example
-          `peekaboo press cmd+shift+t --app Safari`.
+          `peekaboo press cmd+shift+t --app Safari --foreground`.
         - Use `verify` instead of fixed sleeps to wait for stable window and element predicates.
         - Invoke accessibility actions with `action`; drag from elements or coordinates with
           `drag --from <id|x,y> --to <id|x,y>`.
@@ -141,13 +141,13 @@ struct LearnCommand {
         3. Verify each action before proceeding; use `verify` for exact predicates or `see` for fresh state.
         4. Inventory targets with `app list`, `window list`, and `screen list`;
            focus only when foreground delivery is required.
-        5. Recover from errors by trying alternative interactions (menus, keyboard chords).
+        5. Recover from errors with alternate semantic actions; use raw keyboard chords only with foreground consent.
         6. Common workflows:
            - Screenshot: `see --no-elements` with `--app`, `--window-id`, or `--mode screen`.
            - AX tree: `see --tree --no-screenshot` with an exact app/window target.
            - Typing: `click` the field, then `type --app ...` the text; add `--foreground` only if needed.
            - Menus: `menu click --path ...`.
-           - Keyboard shortcuts: `press cmd+shift+t` style chords.
+           - Keyboard shortcuts: explicit-foreground `press cmd+shift+t --foreground` style chords.
         """, to: &output)
     }
 

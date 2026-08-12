@@ -60,7 +60,7 @@ enum CommanderMigrationAdvisor {
         "--id": "--on",
         "--idle-timeout-seconds": "--idle-timeout",
         "--image-path": "--file-path",
-        "--keys": "positional xdotool chord syntax (for example, peekaboo press cmd+c)",
+        "--keys": "positional xdotool chord syntax (for example, peekaboo press cmd+c --foreground)",
         "--label": "positional query text or --on",
         "--max-depth": "--depth",
         "--poll-interval-ms": "--poll-interval",
@@ -141,7 +141,10 @@ enum CommanderMigrationAdvisor {
                 let option = Self.optionName(from: token)
                 if Self.removedTypeKeyReplacements.contains(option) {
                     let key = String(option.dropFirst(2)).capitalized
-                    return Self.removedOptionError(option: option, replacement: "peekaboo press \(key)")
+                    return Self.removedOptionError(
+                        option: option,
+                        replacement: "peekaboo press \(key) --foreground"
+                    )
                 }
             }
         }

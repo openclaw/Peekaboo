@@ -32,7 +32,7 @@ struct TargetedInteractionDefaultDeliveryTests {
     }
 
     @Test
-    func `no auto focus does not downgrade targeted keyboard delivery to global input`() async throws {
+    func `no auto focus preserves typed delivery while raw press still refuses`() async throws {
         let app = ServiceApplicationInfo(
             processIdentifier: 2468,
             processStartIdentity: 7,
@@ -49,17 +49,21 @@ struct TargetedInteractionDefaultDeliveryTests {
 
         for arguments in [
             ["type", "hello", "--app", "TextEdit", "--no-auto-focus"],
-            ["press", "return", "--app", "TextEdit", "--no-auto-focus"],
             ["paste", "--text", "hello", "--app", "TextEdit", "--no-auto-focus"],
         ] {
             let result = try await InProcessCommandRunner.run(arguments + ["--no-remote"], services: services)
             #expect(result.exitStatus == 0, "Expected targeted input to succeed: \(arguments)")
         }
+        let press = try await InProcessCommandRunner.run(
+            ["press", "return", "--app", "TextEdit", "--no-auto-focus", "--no-remote"],
+            services: services
+        )
+        #expect(press.exitStatus != 0)
+        #expect(press.combinedOutput.contains("require explicit foreground consent"))
 
         #expect(automation.targetedTypeActionsCalls.count == 2)
         #expect(automation.targetedTypeActionsCalls.allSatisfy { $0.targetProcessIdentifier == 2468 })
-        #expect(automation.targetedHotkeyCalls.count == 1)
-        #expect(automation.targetedHotkeyCalls.allSatisfy { $0.targetProcessIdentifier == 2468 })
+        #expect(automation.targetedHotkeyCalls.isEmpty)
         #expect(automation.hotkeyCalls.isEmpty)
         #expect(applications.activateCalls.isEmpty)
     }
@@ -126,13 +130,20 @@ struct TargetedInteractionDefaultDeliveryTests {
 
         for arguments in [
             ["type", "hello", "--app", "TextEdit", "--window-title", "Document"],
-            ["press", "return", "--app", "TextEdit", "--window-title", "Document"],
             ["paste", "--text", "hello", "--app", "TextEdit", "--window-title", "Document"],
         ] {
             let result = try await InProcessCommandRunner.run(arguments + ["--no-remote"], services: services)
             #expect(result.exitStatus != 0, "Expected unsafe window targeting to fail: \(arguments)")
             #expect(result.combinedOutput.contains("cannot safely target a specific window"))
         }
+        let press = try await InProcessCommandRunner.run(
+            [
+                "press", "return", "--app", "TextEdit", "--window-title", "Document", "--no-remote",
+            ],
+            services: services
+        )
+        #expect(press.exitStatus != 0)
+        #expect(press.combinedOutput.contains("require explicit foreground consent"))
 
         #expect(automation.targetedTypeActionsCalls.isEmpty)
         #expect(automation.targetedHotkeyCalls.isEmpty)
@@ -141,7 +152,7 @@ struct TargetedInteractionDefaultDeliveryTests {
     }
 
     @Test
-    func `snapshot process receipt keeps keyboard delivery pid routed without an element`() async throws {
+    func `snapshot process receipt keeps type pid routed while raw press refuses`() async throws {
         let app = ServiceApplicationInfo(
             processIdentifier: 2468,
             processStartIdentity: 7,
@@ -178,21 +189,21 @@ struct TargetedInteractionDefaultDeliveryTests {
             )
         )
 
-        for arguments in [
-            ["type", "hello", "--snapshot", snapshotId, "--no-auto-focus"],
-            ["press", "return", "--snapshot", snapshotId, "--no-auto-focus"],
-        ] {
-            let result = try await InProcessCommandRunner.run(
-                arguments + ["--no-remote"],
-                services: context.services
-            )
-            #expect(result.exitStatus == 0, "Expected snapshot-targeted input to succeed: \(arguments)")
-        }
+        let type = try await InProcessCommandRunner.run(
+            ["type", "hello", "--snapshot", snapshotId, "--no-auto-focus", "--no-remote"],
+            services: context.services
+        )
+        #expect(type.exitStatus == 0)
+        let press = try await InProcessCommandRunner.run(
+            ["press", "return", "--snapshot", snapshotId, "--no-auto-focus", "--no-remote"],
+            services: context.services
+        )
+        #expect(press.exitStatus != 0)
+        #expect(press.combinedOutput.contains("require explicit foreground consent"))
 
         #expect(context.automation.targetedTypeActionsCalls.count == 1)
         #expect(context.automation.targetedTypeActionsCalls.allSatisfy { $0.targetProcessIdentifier == 2468 })
-        #expect(context.automation.targetedHotkeyCalls.count == 1)
-        #expect(context.automation.targetedHotkeyCalls.first?.targetProcessIdentifier == 2468)
+        #expect(context.automation.targetedHotkeyCalls.isEmpty)
         #expect(context.automation.hotkeyCalls.isEmpty)
     }
 
@@ -269,17 +280,18 @@ struct TargetedInteractionDefaultDeliveryTests {
             )
         )
 
-        for arguments in [
-            ["type", "hello", "--snapshot", snapshotId, "--no-auto-focus"],
-            ["press", "return", "--snapshot", snapshotId, "--no-auto-focus"],
-        ] {
-            let result = try await InProcessCommandRunner.run(
-                arguments + ["--no-remote"],
-                services: context.services
-            )
-            #expect(result.exitStatus != 0)
-            #expect(result.combinedOutput.contains("no capture-time process-generation receipt"))
-        }
+        let type = try await InProcessCommandRunner.run(
+            ["type", "hello", "--snapshot", snapshotId, "--no-auto-focus", "--no-remote"],
+            services: context.services
+        )
+        #expect(type.exitStatus != 0)
+        #expect(type.combinedOutput.contains("no capture-time process-generation receipt"))
+        let press = try await InProcessCommandRunner.run(
+            ["press", "return", "--snapshot", snapshotId, "--no-auto-focus", "--no-remote"],
+            services: context.services
+        )
+        #expect(press.exitStatus != 0)
+        #expect(press.combinedOutput.contains("require explicit foreground consent"))
 
         #expect(context.automation.targetedTypeActionsCalls.isEmpty)
         #expect(context.automation.targetedHotkeyCalls.isEmpty)
@@ -313,7 +325,7 @@ struct TargetedInteractionDefaultDeliveryTests {
     }
 
     @Test
-    func `targeted interaction commands default to background delivery`() async throws {
+    func `targeted semantic commands default to background while raw press refuses`() async throws {
         let app = ServiceApplicationInfo(
             processIdentifier: 2468,
             processStartIdentity: 7,
@@ -344,7 +356,7 @@ struct TargetedInteractionDefaultDeliveryTests {
         )
 
         try await self.assertTypeDefaultsToBackground(services: services, automation: automation)
-        try await self.assertPressDefaultsToBackground(services: services, automation: automation)
+        try await self.assertPressDefaultsToRefusal(services: services, automation: automation)
         try await self.assertPasteDefaultsToBackground(services: services, automation: automation)
         try await self.assertClickDefaultsToBackground(
             services: services,
@@ -374,7 +386,7 @@ struct TargetedInteractionDefaultDeliveryTests {
         #expect(payload.data.targetPID == 2468)
     }
 
-    private func assertPressDefaultsToBackground(
+    private func assertPressDefaultsToRefusal(
         services: PeekabooServices,
         automation: StubAutomationService
     ) async throws {
@@ -383,16 +395,18 @@ struct TargetedInteractionDefaultDeliveryTests {
             services: services
         )
 
-        #expect(result.exitStatus == 0)
-        let call = try #require(automation.targetedHotkeyCalls.last)
-        #expect(call.targetProcessIdentifier == 2468)
-        #expect(call.keys == "return")
+        #expect(result.exitStatus != 0)
+        #expect(automation.hotkeyCalls.isEmpty)
+        #expect(automation.targetedHotkeyCalls.isEmpty)
         let payload = try ExternalCommandRunner.decodeJSONResponse(
             from: result,
-            as: CodableJSONResponse<PressResult>.self
+            as: JSONResponse.self
         )
-        #expect(payload.data.deliveryMode == "background")
-        #expect(payload.data.targetPID == 2468)
+        #expect(payload.success == false)
+        #expect(payload.effect == .refused)
+        #expect(payload.error?.code == "INTERACTION_FAILED")
+        #expect(payload.error?.retry_safe == true)
+        #expect(payload.error?.mutation_dispatched == false)
     }
 
     private func assertPasteDefaultsToBackground(

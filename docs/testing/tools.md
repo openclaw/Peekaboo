@@ -79,7 +79,7 @@ physical-pointer phase), use [Background computer-use validation](background-com
 | --- | --- | --- | --- | --- | --- |
 | `click` | Click Fixture window | `Click` | `peekaboo click "Single Click" --app boo.peekaboo.playground.debug --snapshot <id>` | Verified – Click Fixture E2E incl. double/right/context menu (2025-12-18) | `.artifacts/playground-tools/20251218-004335-click.log`, `.artifacts/playground-tools/20251218-004335-menu.log` |
 | `type` | Text Fixture window | `Text` + `Focus` | `peekaboo type "Hello Playground" --clear --snapshot <id>` | Verified – Text Fixture E2E + text-field focusing (2025-12-18) | `.artifacts/playground-tools/20251218-001923-text.log` |
-| `press` | Keyboard Fixture window and menu shortcuts | `Keyboard` & `Menu` | `peekaboo press cmd+1` | Covers bare keys, repeats, and xdotool-style chords | Historical keypress/hotkey logs remain valid evidence. |
+| `press` | Keyboard Fixture window and menu shortcuts | `Keyboard` & `Menu` | `peekaboo press cmd+1 --foreground` | Covers explicit-foreground bare keys, repeats, and xdotool-style chords | Historical keypress/hotkey logs remain valid evidence. |
 | `scroll` | Scroll Fixture window | `Scroll` | `peekaboo scroll --direction down --amount 8 --on vertical-scroll --snapshot <id>` | Verified – scroll offsets logged (2025-12-18) | `.artifacts/playground-tools/20251218-012323-scroll.log` |
 | `drag` | Drag Fixture and gesture area | `Drag` / `Gesture` | `peekaboo drag --from <id-or-x,y> --to <id-or-x,y> --snapshot <id>` | Covers element/coordinate endpoints and left/right buttons | Historical drag/swipe logs remain valid evidence. |
 | `move` | Click Fixture mouse probe | `Control` | `peekaboo move --on <elem> --snapshot <id> --smooth --foreground` | Verified – cursor movement emits deterministic probe logs (2025-12-17) | `.artifacts/playground-tools/20251217-153107-control.log` |
@@ -248,43 +248,43 @@ The following subsections spell out the concrete steps, required Playground surf
 - **Test cases**:
   1. Use a fresh `see`, then `click --on "$FIELD_ID" --snapshot "$SNAPSHOT_ID"` to select the basic field.
   2. Run `peekaboo type "Hello Playground" --clear --pid "$PLAYGROUND_PID"`, then type more text to verify appending.
-  3. Run `peekaboo press Tab --count 2 --pid "$PLAYGROUND_PID"` to reach the secure field.
+  3. Run `peekaboo press Tab --count 2 --pid "$PLAYGROUND_PID" --foreground` to reach the secure field.
   4. Unicode input (emoji) to ensure no crash.
 - **Verification**: Field contents update, log shows `[Text] Basic field changed` entries.
 - **2025-11-16 run**:
   - Logged `.artifacts/playground-tools/20251116-051202-text.log`.
   - Focused field via `peekaboo click "Focus Basic Field" --snapshot 263F8CD6-…` (snapshot from `.artifacts/playground-tools/20251116-051120-click-see.json`).
   - `peekaboo type "Hello Playground" --clear --snapshot 263F8CD6-…` updated the Basic Text Field (log shows “Basic text changed …”).
-  - `peekaboo press Tab --snapshot 263F8CD6-…` advanced focus to the Number field, followed by `peekaboo type "42" --snapshot 263F8CD6-…`.
+  - `peekaboo press Tab --snapshot 263F8CD6-… --foreground` advanced focus to the Number field, followed by `peekaboo type "42" --snapshot 263F8CD6-…`.
   - Validation error confirmed via `peekaboo type "bad" --profile warp` (proper error message).
   - Note: prefer `--app`, `--pid`, `--window-id`, or `--snapshot` so `type` can use background delivery; use helper buttons and `click` to set field focus when a view requires it. Legacy `--on` / `--query` flags no longer exist.
 
 #### `press`
 - **View**: KeyboardView “Key Press Detection” field (Keyboard tab).
 - **Test cases**:
-  1. `peekaboo press return --snapshot <id>` after focusing the detection text field.
-  2. `peekaboo press up --count 3 --snapshot <id>` to ensure repeated presses log individually.
+  1. `peekaboo press return --snapshot <id> --foreground` after focusing the detection text field.
+  2. `peekaboo press up --count 3 --snapshot <id> --foreground` to ensure repeated presses log individually.
   3. Invalid key handling (`peekaboo press foo`) should error.
 - **2025-11-16 verification**:
   - Switched to the Keyboard tab via `peekaboo press cmd+option+7 --foreground`, captured `.artifacts/playground-tools/20251116-090141-see-keyboardtab.{json,png}` (snapshot `C106D508-930C-4996-A4F4-A50E2E0BA91A`), and focused the “Press keys here…” field with the exact capture receipt (`click --window-id "$WINDOW_ID" --snapshot "$SNAPSHOT_ID" --at 760,300`).
-  - `peekaboo press return --snapshot C106D508-…` and `peekaboo press up --count 3 --snapshot C106D508-…` produced `[boo.peekaboo.playground:Keyboard] Key pressed: …` entries in `.artifacts/playground-tools/20251116-090455-keyboard.log`.
+  - Explicit-foreground `peekaboo press return --snapshot C106D508-… --foreground` and `peekaboo press up --count 3 --snapshot C106D508-… --foreground` produced `[boo.peekaboo.playground:Keyboard] Key pressed: …` entries in `.artifacts/playground-tools/20251116-090455-keyboard.log`.
   - `peekaboo press foo` reports `Unknown key: 'foo'. Run 'peekaboo press --help' for available keys.` confirming validation and documenting the negative path.
 
 #### `press` chord sequences
 - **View**: KeyboardView chord demo or main window (use `cmd+shift+l` to open the log viewer).
 - **Test cases**:
-  1. `peekaboo press cmd+shift+l --pid "$PLAYGROUND_PID"` should toggle the “Clear All Logs” command (log viewer clears entries).
-  2. `peekaboo press cmd+1 --pid "$PLAYGROUND_PID"` triggers the Test Menu action; watch `Menu` logs.
+  1. `peekaboo press cmd+shift+l --pid "$PLAYGROUND_PID" --foreground` should toggle the “Clear All Logs” command (log viewer clears entries).
+  2. `peekaboo press cmd+1 --pid "$PLAYGROUND_PID" --foreground` triggers the Test Menu action; watch `Menu` logs.
   3. Negative test: provide invalid chord order to ensure validation message.
 - **Verification**: Playground `Keyboard` log file shows the keystrokes fired.
 - **2025-11-16 run**:
   - The archived keyboard chord log contains entries for `L` and `1` corresponding to both combinations.
-  - `peekaboo press --key cmd+shift+l --snapshot 11227301-05DE-4540-8BE7-617F99A74156` clears logs via the shortcut.
-  - `peekaboo press --key cmd+1 --snapshot "$SNAPSHOT_ID"` switches Playground tabs.
+  - `peekaboo press --key cmd+shift+l --snapshot 11227301-05DE-4540-8BE7-617F99A74156 --foreground` clears logs via the shortcut.
+  - `peekaboo press --key cmd+1 --snapshot "$SNAPSHOT_ID" --foreground` switches Playground tabs.
   - `peekaboo press foo+bar --pid "$PLAYGROUND_PID"` correctly fails with an unknown-key error.
 
 #### `scroll`
-- **View**: ScrollTestingView vertical/horizontal sections (switch using `peekaboo press cmd+option+4 --pid "$PLAYGROUND_PID"` to trigger the Test Menu shortcut).
+- **View**: ScrollTestingView vertical/horizontal sections (switch using `peekaboo press cmd+option+4 --pid "$PLAYGROUND_PID" --foreground` to trigger the Test Menu shortcut).
 - **Test cases**:
   1. `peekaboo scroll --direction down --amount 6 --snapshot <id>` for vertical movement.
   2. `peekaboo scroll --direction right --amount 4 --smooth --snapshot <id>` for horizontal smooth scrolling.

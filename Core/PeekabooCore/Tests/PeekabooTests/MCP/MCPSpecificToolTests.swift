@@ -342,6 +342,15 @@ struct MCPSpecificToolTests {
         #expect(props["key"] != nil)
         #expect(props["modifiers"] != nil)
         #expect(props["hold"] != nil)
+        guard case let .object(foreground) = props["foreground"],
+              case let .string(description) = foreground["description"]
+        else {
+            Issue.record("Expected foreground schema description")
+            return
+        }
+        #expect(description.contains("Required true"))
+        #expect(tool.description.contains("Raw chords cannot prove semantic intent or effect"))
+        #expect(tool.description.contains("foreground=true"))
     }
 
     // MARK: - Drag Tool Tests

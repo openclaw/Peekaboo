@@ -34,6 +34,7 @@ struct PressCommandTests {
         let payloadData = try #require(self.output(from: result).data(using: .utf8))
         let payload = try JSONDecoder().decode(CodableJSONResponse<PressResult>.self, from: payloadData)
         #expect(payload.success)
+        #expect(payload.effect == .unverifiable)
         #expect(payload.data.keys == ["return"])
         #expect(payload.data.totalPresses == 1)
     }
@@ -90,141 +91,57 @@ struct PressCommandTests {
     }
 
     @Test
-    func `Background sequence pins one unchanged process generation`() async throws {
+    func `Background raw press refuses before dispatch with canonical metadata`() async throws {
         let identity = ApplicationProcessIdentity(processIdentifier: 4201, processStartIdentity: 71)
         let applications = await self.makeApplicationService(identity: identity)
-        let context = await self.makeContext(applications: applications) { automation, _ in
-            automation.currentHotkeyProcessIdentity = { processIdentifier in
-                applications.applications.first {
-                    $0.processIdentifier == processIdentifier
-                }?.processIdentity
-            }
-        }
+        let context = await self.makeContext(applications: applications)
 
         let result = try await self.runPress(
             arguments: ["a", "b", "--pid", "4201", "--delay", "0", "--json"],
             context: context
         )
 
-        #expect(result.exitStatus == 0)
-        let calls = await self.automationState(context) { $0.targetedHotkeyCalls }
-        #expect(calls.map(\.keys) == ["a", "b"])
-        #expect(calls.map(\.expectedProcessIdentity) == [identity, identity])
+        #expect(result.exitStatus != 0)
+        let payloadData = try #require(self.output(from: result).data(using: .utf8))
+        let payload = try JSONDecoder().decode(JSONResponse.self, from: payloadData)
+        #expect(payload.success == false)
+        #expect(payload.effect == .refused)
+        #expect(payload.error?.code == "INTERACTION_FAILED")
+        #expect(payload.error?.retry_safe == true)
+        #expect(payload.error?.mutation_dispatched == false)
+        #expect(payload.error?.hint?.contains("--foreground") == true)
+        #expect(!payload.debug_logs.contains(where: { $0.contains("Runtime host: remote") }))
+        #expect(!payload.debug_logs.contains(where: { $0.contains("onDemand") }))
+        #expect(await self.automationState(context) { $0.hotkeyCalls.isEmpty })
+        #expect(await self.automationState(context) { $0.targetedHotkeyCalls.isEmpty })
     }
 
     @Test
-    func `Background sequence stops indeterminate after PID is reused`() async throws {
-        let identity = ApplicationProcessIdentity(processIdentifier: 4202, processStartIdentity: 72)
-        let replacement = ApplicationProcessIdentity(processIdentifier: 4202, processStartIdentity: 73)
-        let applications = await self.makeApplicationService(identity: identity)
-        let context = await self.makeContext(applications: applications) { automation, _ in
-            automation.currentHotkeyProcessIdentity = { processIdentifier in
-                applications.applications.first {
-                    $0.processIdentifier == processIdentifier
-                }?.processIdentity
-            }
-            automation.afterPinnedHotkey = {
-                applications.applications = [Self.application(identity: replacement)]
-            }
-        }
-
+    func `Deprecated background alias remains accepted but cannot authorize raw press`() async throws {
+        let context = await self.makeContext()
         let result = try await self.runPress(
-            arguments: ["a", "b", "--pid", "4202", "--delay", "0"],
+            arguments: ["return", "--focus-background", "--json"],
             context: context
         )
 
         #expect(result.exitStatus != 0)
-        #expect(result.combinedOutput.contains("outcome is indeterminate"))
-        #expect(result.combinedOutput.contains("do not retry blindly"))
-        let calls = await self.automationState(context) { $0.targetedHotkeyCalls }
-        #expect(calls.map(\.keys) == ["a"])
-        #expect(calls.first?.expectedProcessIdentity == identity)
-    }
-
-    @Test
-    func `Background sequence stops indeterminate after target exits`() async throws {
-        let identity = ApplicationProcessIdentity(processIdentifier: 4203, processStartIdentity: 74)
-        let applications = await self.makeApplicationService(identity: identity)
-        let context = await self.makeContext(applications: applications) { automation, _ in
-            automation.currentHotkeyProcessIdentity = { processIdentifier in
-                applications.applications.first {
-                    $0.processIdentifier == processIdentifier
-                }?.processIdentity
-            }
-            automation.afterPinnedHotkey = {
-                applications.applications = []
-            }
-        }
-
-        let result = try await self.runPress(
-            arguments: ["a", "b", "--pid", "4203", "--delay", "0"],
-            context: context
-        )
-
-        #expect(result.exitStatus != 0)
-        #expect(result.combinedOutput.contains("outcome is indeterminate"))
-        let calls = await self.automationState(context) { $0.targetedHotkeyCalls }
-        #expect(calls.map(\.keys) == ["a"])
-    }
-
-    @Test
-    func `Snapshot window receipt rejects a replaced process before first chord`() async throws {
-        let captured = ApplicationProcessIdentity(processIdentifier: 4205, processStartIdentity: 76)
-        let replacement = ApplicationProcessIdentity(processIdentifier: 4205, processStartIdentity: 77)
-        let applications = await self.makeApplicationService(identity: replacement)
-        let context = await self.makeContext(applications: applications)
-        let snapshotId = "press-stale-process"
-        let detection = ElementDetectionResult(
-            snapshotId: snapshotId,
-            screenshotPath: "/tmp/press-stale-process.png",
-            elements: DetectedElements(),
-            metadata: DetectionMetadata(
-                detectionTime: 0,
-                elementCount: 0,
-                method: "stub",
-                windowContext: WindowContext(
-                    applicationName: "PressTarget",
-                    applicationBundleId: "com.example.press-target",
-                    applicationProcessId: captured.processIdentifier,
-                    windowID: 905,
-                    windowBounds: CGRect(x: 0, y: 0, width: 800, height: 600),
-                    windowMutationIdentity: WindowMutationIdentity(
-                        windowID: 905,
-                        ownerProcessIdentifier: captured.processIdentifier,
-                        ownerProcessStartIdentity: captured.processStartIdentity
-                    )
-                )
-            )
-        )
-        try await context.snapshots.storeDetectionResult(snapshotId: snapshotId, result: detection)
-
-        let result = try await self.runPress(
-            arguments: ["a", "--snapshot", snapshotId],
-            context: context
-        )
-
-        #expect(result.exitStatus != 0)
-        #expect(result.combinedOutput.contains("changed process generation"))
-        let calls = await self.automationState(context) { $0.targetedHotkeyCalls }
-        #expect(calls.isEmpty)
+        #expect(result.combinedOutput.contains("require explicit foreground consent"))
+        #expect(await self.automationState(context) { $0.hotkeyCalls.isEmpty })
+        #expect(await self.automationState(context) { $0.targetedHotkeyCalls.isEmpty })
     }
 
     @Test
     func `Cancellation during sequence delay never delivers a later chord`() async throws {
-        let identity = ApplicationProcessIdentity(processIdentifier: 4204, processStartIdentity: 75)
-        let applications = await self.makeApplicationService(identity: identity)
-        let context = await self.makeContext(applications: applications) { automation, _ in
-            automation.currentHotkeyProcessIdentity = { _ in identity }
-        }
+        let context = await self.makeContext()
         let command = Task {
             try await self.runPress(
-                arguments: ["a", "b", "--pid", "4204", "--delay", "5s"],
+                arguments: ["a", "b", "--foreground", "--delay", "5s"],
                 context: context
             )
         }
 
         for _ in 0..<100 {
-            let count = await self.automationState(context) { $0.targetedHotkeyCalls.count }
+            let count = await self.automationState(context) { $0.hotkeyCalls.count }
             if count == 1 {
                 break
             }
@@ -235,7 +152,7 @@ struct PressCommandTests {
 
         #expect(result.exitStatus != 0)
         #expect(result.combinedOutput.contains("outcome is indeterminate"))
-        let calls = await self.automationState(context) { $0.targetedHotkeyCalls }
+        let calls = await self.automationState(context) { $0.hotkeyCalls }
         #expect(calls.map(\.keys) == ["a"])
     }
 

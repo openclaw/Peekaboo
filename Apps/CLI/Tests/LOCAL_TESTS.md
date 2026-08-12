@@ -16,9 +16,9 @@ The `TestHost` directory contains a simple SwiftUI application that serves as a 
 - Logs test interactions
 
 The `TestFixtures/BackgroundHotkeyProbe` package is a focused AppKit process for
-background hotkey delivery. It logs `NSEvent` key events to JSONL so local tests
-can prove `peekaboo hotkey --focus-background --pid <pid>` reaches an inactive
-target app without changing the frontmost app.
+the internal process-targeted hotkey transport used by typed composite operations.
+Public raw `press` refuses background delivery and requires explicit foreground
+consent; the fixture must not be used to advertise raw PID-routed keys as certified intent.
 
 ## Running Local Tests
 

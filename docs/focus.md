@@ -83,7 +83,7 @@ By default, Peekaboo will:
 
 ## Focus Options
 
-Interaction commands that use foreground delivery support these focus-related options. `click`, `type`, `press`, and `paste` default to background delivery when Peekaboo can resolve a target process; pass `--foreground` when you want focus behavior. Targeted scroll is background Accessibility-only, while targetless/smooth scroll and all move/drag operations require explicit foreground mode.
+Interaction commands that use foreground delivery support these focus-related options. `click`, `type`, and `paste` default to background delivery when Peekaboo can resolve a target process. Raw `press` always requires `--foreground`. Targeted scroll is background Accessibility-only, while targetless/smooth scroll and all move/drag operations require explicit foreground mode.
 
 ### `--no-auto-focus`
 Disables automatic focus management (not recommended).
@@ -98,10 +98,10 @@ Use cases:
 - Testing or debugging focus issues
 
 ### `--focus-background`
-Uses command-supported background delivery instead of activating the target app. For input commands that can resolve a target process, this is now the default; the flag is a legacy alias where still exposed.
+Uses command-supported background delivery instead of activating the target app. For input commands that can resolve a target process, this is now the default; the flag is a legacy alias where still exposed. `press` retains the spelling for compatibility but refuses raw background chords and requires `--foreground`.
 
 ```bash
-peekaboo press cmd+l --app Safari
+peekaboo press cmd+l --app Safari --foreground
 peekaboo window list --app Safari --json
 peekaboo see --window-id "$WINDOW_ID" --no-elements --json
 peekaboo click --window-id "$WINDOW_ID" --snapshot "$SNAPSHOT_ID" --at 420,180
@@ -109,12 +109,11 @@ peekaboo type "hello" --app TextEdit
 ```
 
 Use cases:
-- Sending app shortcuts without stealing focus
 - Clicking app-local coordinates without activating the target app
 - Typing or pasting into a targeted app without activating it
 - Keeping a long-running foreground workflow uninterrupted
 
-Currently, keyboard commands use background delivery by default when `--app`, `--pid`, or supported snapshot process metadata identifies a live process. Window selectors require `--foreground`; process-targeted keyboard events cannot prove which window owns the process's focused element. Background click can preserve an exact window/element target.
+Currently, typed text and paste use background delivery when `--app`, `--pid`, or supported snapshot process metadata identifies a live process. Raw key chords cannot prove semantic intent or effect and are refused without `--foreground`. Background click can preserve an exact window/element target.
 
 Background delivery is a delivery mode, not a focus mode. It cannot be combined with foreground focus timeout, retry, or Space-switching flags. Background element/query/coordinate clicks and targeted scroll use Accessibility. Keyboard delivery and foreground synthetic pointer operations require Event Synthesizing; `peekaboo permissions request event-synthesizing` requests it for the selected bridge host by default, or for the local CLI with `--no-remote`.
 

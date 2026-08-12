@@ -63,7 +63,8 @@ Each element has `id`, `role`, `label`, `frame`, and `actions`. Pass an `id` to 
 
 ```bash
 peekaboo click "Address and search bar" --app Safari
-peekaboo type "github.com/openclaw/Peekaboo" --app Safari && peekaboo press Return --app Safari
+peekaboo type "github.com/openclaw/Peekaboo" --app Safari
+peekaboo press Return --app Safari --foreground
 ```
 
 Coordinate clicks need a fresh capture receipt and an exact target in the default background mode. First run
@@ -77,7 +78,7 @@ peekaboo click --window-id "$WINDOW_ID" --snapshot "$SNAPSHOT_ID" --at 480,120
 The point is relative to the captured window. Add `--global` for screen coordinates, or add `--foreground` only when
 the target app requires focused synthetic input. See [automation.md](automation.md) for the full input vocabulary.
 
-By default these targeted commands use background delivery: Safari can receive the click and text without becoming frontmost. If the target field ignores background input, rerun the same command with `--foreground` to focus the target first.
+Targeted click and type use background delivery by default, so Safari can receive them without becoming frontmost. Raw `press` requires explicit `--foreground`; prefer semantic actions for background confirmation when one exists.
 
 Targeted `scroll --on <id>` is also background-safe through Accessibility. Targetless/smooth scroll, `move`, and `drag` use the shared physical cursor and require explicit `--foreground`.
 

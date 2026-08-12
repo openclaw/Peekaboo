@@ -27,7 +27,7 @@ Process and window selectors are fail-closed. Choose either `--app` or `--pid`, 
 
 Peekaboo has two input delivery modes:
 
-- **Background** (default when a target process is known) posts process-targeted input without activating the app. Keyboard commands (`type`, `press`, and `paste`) require `--app`, `--pid`, or supported snapshot process metadata. A window selector cannot safely identify the focused element inside a multi-window process, so keyboard window targeting requires `--foreground`. Background click can retain its exact window/element target.
+- **Background** (default when a target process is known) uses exact semantic or typed delivery without activating the app. `type` and `paste` require `--app`, `--pid`, or supported snapshot process metadata. Public raw `press` refuses in background because a process receipt cannot certify chord intent or effect. Background click can retain its exact window/element target.
 - **Foreground** focuses the target first, then sends normal/global input to the active key window or mouse focus. Add `--foreground` when an app ignores background input, when a text field only accepts key-window input, or when you want focus/Space switching to be part of the action.
 
 Focus flags tune foreground focus behavior but do not silently change delivery mode. Add `--foreground` explicitly. `--no-auto-focus` also does not discard a background keyboard PID. Background element/query/coordinate clicks complete through Accessibility alone. Keyboard input and foreground synthetic pointer input require Event Synthesizing for the sender shown by `peekaboo permissions status`; request it with `peekaboo permissions request event-synthesizing`.
@@ -43,11 +43,11 @@ Observation follows the same background-first rule. `see` and `capture` do not f
 Examples:
 
 ```bash
-# Background: target Safari without activating it
-peekaboo press cmd+l --app Safari
-peekaboo type "github.com/openclaw/Peekaboo" --app Safari && peekaboo press Return --app Safari
+# Background: use semantic controls without activating Safari
+peekaboo click "Address and search bar" --app Safari
+peekaboo type "github.com/openclaw/Peekaboo" --app Safari
 
-# Foreground: activate/focus first for apps that require a key window
+# Foreground: raw chords require explicit consent
 peekaboo press cmd+l --app Safari --foreground --space-switch
 peekaboo type "github.com/openclaw/Peekaboo" --app Safari --foreground && peekaboo press Return --app Safari --foreground
 ```
@@ -58,7 +58,7 @@ peekaboo type "github.com/openclaw/Peekaboo" --app Safari --foreground && peekab
 | --- | --- |
 | [click](commands/click.md) | mouse clicks, double/triple, right/middle, hold |
 | [type](commands/type.md) | typing strings into targeted fields |
-| [press](commands/press.md) | individual keys and xdotool-style chords, including background apps |
+| [press](commands/press.md) | explicit-foreground individual keys and xdotool-style raw chords |
 | [scroll](commands/scroll.md) | background AX scrolling on a target, or explicit foreground wheel input |
 | [drag](commands/drag.md) | press, move, release — files, sliders, selections |
 | [move](commands/move.md) | warp the mouse without clicking |
@@ -95,9 +95,9 @@ peekaboo click "Reload" --app Safari
 
 ```bash
 peekaboo window focus --app "Notes"
-peekaboo press cmd+n
+peekaboo press cmd+n --foreground
 peekaboo type "Standup notes\n\n- Shipped Peekaboo docs\n- Reviewed PR #42\n"
-peekaboo press cmd+s
+peekaboo press cmd+s --foreground
 ```
 
 Three primitives, four lines. The agent does the same thing under the hood — it just plans the sequence for you.
@@ -107,7 +107,7 @@ Three primitives, four lines. The agent does the same thing under the hood — i
 - Always run [`peekaboo see`](commands/see.md) when an element is unreachable. The AX tree refreshes after focus changes; capture again if a click fails.
 - Use [focus](focus.md) and [application-resolving](application-resolving.md) for tricky cases (multiple windows, helper apps, processes that hide on activation).
 - Use `/bin/sleep` between shell-composed actions when a target genuinely needs settling time.
-- Prefer background click, keyboard targeting, and targeted AX scrolling for routine app-specific input.
+- Prefer background click, semantic text/value actions, menus, and targeted AX scrolling for routine app-specific input.
 - Add `--foreground` only when an app needs a focused key window, Space switch, or foreground mouse event.
 
 ## Going further

@@ -13,7 +13,7 @@ This directory contains the modular tool implementations for the Peekaboo agent.
 - **click** - Click elements or coordinates
 - **type** - Type text in fields or at cursor
 - **scroll** - Scroll in windows or elements
-- **hotkey** - Press keyboard shortcuts
+- **press** - Dispatch explicit-foreground raw keyboard shortcuts
 
 ### 🪟 Window Management (`WindowManagementTools.swift`)
 - **list_windows** - List all visible windows

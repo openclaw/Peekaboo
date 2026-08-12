@@ -231,7 +231,7 @@ certification_command_identity() {
     local root_command="${1:-}"
     shift || true
     case "$root_command" in
-        app|capture|window)
+        app|capture|menu|window)
             [[ -n "${1:-}" ]] || return 1
             printf '%s %s\n' "$root_command" "$1"
             ;;
@@ -406,6 +406,8 @@ if $SELF_TEST_ONLY; then
        [[ "$(certification_command_identity window maximize --window-id 42)" != "window maximize" ]] || \
        [[ "$(certification_command_identity window close --window-id 42)" != "window close" ]] || \
        [[ "$(certification_command_identity app quit --pid 42)" != "app quit" ]] || \
+       [[ "$(certification_command_identity menu click --pid 42 --path 'Fixtures > Open Text Fixture')" != \
+          "menu click" ]] || \
        [[ "$(certification_command_identity press return --pid 42)" != "press" ]] || \
        [[ "$(certification_command_identity window list --pid 42)" != "window list" ]] || \
        [[ "$(certification_command_identity see --pid 42)" != "see" ]] || \
@@ -1705,12 +1707,10 @@ if read_lifecycle_launch_receipt lifecycle-launch-quit "$LAST_RESULT"; then
 fi
 
 open_fixture() {
-    local key="$1"
-    local title="$2"
-    local slug="$3"
-    run_checked_case "press-open-$slug" unchanged success \
-        press "cmd+ctrl+$key" --pid "$PLAYGROUND_PID" || true
-    assert_background_delivery "press-open-$slug" "$LAST_RESULT" || true
+    local title="$1"
+    local slug="$2"
+    run_checked_case "menu-open-$slug" unchanged success \
+        menu click --pid "$PLAYGROUND_PID" --path "Fixtures > Open $title" || true
     run_checked_case "list-window-$slug" unchanged success \
         window list --pid "$PLAYGROUND_PID" || true
     OPENED_WINDOW_ID="$(window_id_from_result "$LAST_RESULT" "$title")"
@@ -1723,7 +1723,7 @@ open_fixture() {
 }
 
 OPENED_WINDOW_ID=""
-open_fixture 2 "Text Fixture" text
+open_fixture "Text Fixture" text
 TEXT_WINDOW_ID="$OPENED_WINDOW_ID"
 
 if [[ -z "$TEXT_WINDOW_ID" ]]; then
@@ -1790,9 +1790,9 @@ assert_result_contains refusal_guidance "$LAST_RESULT" "cannot safely target a s
 run_checked_case type-text unchanged success \
     type "$TYPE_TOKEN" --pid "$PLAYGROUND_PID" || true
 assert_background_delivery type-text "$LAST_RESULT" || true
-run_checked_case press-return unchanged success \
+run_checked_case press-background-refused unchanged failure \
     press return --pid "$PLAYGROUND_PID" || true
-assert_background_delivery press-return "$LAST_RESULT" || true
+assert_result_contains refusal_guidance "$LAST_RESULT" "require explicit foreground consent" || true
 run_checked_case paste-text allow-temporary success \
     paste "$PASTE_TOKEN" --pid "$PLAYGROUND_PID" || true
 assert_background_delivery paste-text "$LAST_RESULT" || true
@@ -1813,9 +1813,9 @@ run_checked_case see-text-after-set-value unchanged success \
 assert_case_artifacts see-text-after-set-value "$ARTIFACT_ROOT/text-after-set-value.png" || true
 assert_result_contains set_value_readback "$LAST_RESULT" "$SET_TOKEN" || true
 
-open_fixture 1 "Click Fixture" click
+open_fixture "Click Fixture" click
 CLICK_WINDOW_ID="$OPENED_WINDOW_ID"
-open_fixture 4 "Scroll Fixture" scroll
+open_fixture "Scroll Fixture" scroll
 SCROLL_WINDOW_ID="$OPENED_WINDOW_ID"
 if [[ -z "$CLICK_WINDOW_ID" || -z "$SCROLL_WINDOW_ID" ]]; then
     echo "The Playground click or scroll fixture window is unavailable." >&2
@@ -1916,8 +1916,6 @@ fi
 sleep 0.3
 capture_playground_log "$ARTIFACT_ROOT/playground.json"
 assert_playground_log type-text playground_log "$ARTIFACT_ROOT/playground.json" "$TYPE_TOKEN" || true
-assert_playground_log_line press-return submit_log "$ARTIFACT_ROOT/playground.json" \
-    "Submitted basic text field" "$TYPE_TOKEN" || true
 assert_playground_log paste-text playground_log "$ARTIFACT_ROOT/playground.json" "$PASTE_TOKEN" || true
 assert_playground_log set-value playground_log "$ARTIFACT_ROOT/playground.json" "$SET_TOKEN" || true
 
