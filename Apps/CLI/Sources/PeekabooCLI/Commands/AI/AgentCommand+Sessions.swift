@@ -13,6 +13,7 @@ struct AgentSessionInfo: Codable {
     let created: Date
     let lastModified: Date
     let messageCount: Int
+    let status: String
     let toolExecutionPolicy: String
 }
 
@@ -138,6 +139,7 @@ extension AgentCommand {
                 created: summary.createdAt,
                 lastModified: summary.lastAccessedAt,
                 messageCount: summary.messageCount,
+                status: summary.status.rawValue,
                 toolExecutionPolicy: summary.toolExecutionPolicy.rawValue
             )
         }
@@ -188,12 +190,8 @@ extension AgentCommand {
         ].joined()
         print(headerLine)
 
-        let dateFormatter = DateFormatter()
-        dateFormatter.dateStyle = .short
-        dateFormatter.timeStyle = .short
-
         for (index, session) in sessions.prefix(10).indexed() {
-            self.printSessionLine(index: index, session: session, dateFormatter: dateFormatter)
+            self.printSessionLine(index: index, session: session)
             if index < sessions.count - 1 {
                 print()
             }
@@ -214,17 +212,46 @@ extension AgentCommand {
         print(resumeHintLine)
     }
 
-    private func printSessionLine(index: Int, session: AgentSessionInfo, dateFormatter: DateFormatter) {
+    private func printSessionLine(index: Int, session: AgentSessionInfo) {
+        for line in self.sessionDisplayLines(index: index, session: session) {
+            print(line)
+        }
+    }
+
+    func sessionDisplayLines(index: Int, session: AgentSessionInfo) -> [String] {
         let timeAgo = formatTimeAgo(session.lastModified)
+        let task = Self.terminalSafeSessionTask(session.task)
         let sessionLine = [
             "\(TerminalColor.blue)\(index + 1).\(TerminalColor.reset)",
             " ",
-            "\(TerminalColor.bold)\(session.id.prefix(8))\(TerminalColor.reset)",
+            "\(TerminalColor.bold)\(task)\(TerminalColor.reset)",
         ].joined()
-        print(sessionLine)
-        print("   Messages: \(session.messageCount)")
-        print("   Tool policy: \(session.toolExecutionPolicy)")
-        print("   Last activity: \(timeAgo)")
+        let status = session.status == SessionStatus.active.rawValue
+            ? "active (saved/resumable; not a live-process signal)"
+            : session.status
+        return [
+            sessionLine,
+            "   ID: \(session.id)",
+            "   Status: \(status)",
+            "   Stored policy maximum: \(session.toolExecutionPolicy)",
+            "   Next resume default: background_only",
+            "   Messages: \(session.messageCount)",
+            "   Last activity: \(timeAgo)",
+        ]
+    }
+
+    private static func terminalSafeSessionTask(_ task: String) -> String {
+        let space = UnicodeScalar(32)!
+        let scalars = task.unicodeScalars.compactMap { scalar in
+            if CharacterSet.whitespacesAndNewlines.contains(scalar) {
+                return space
+            }
+            return CharacterSet.controlCharacters.contains(scalar) ? nil : scalar
+        }
+        let flattened = String(String.UnicodeScalarView(scalars))
+            .split(whereSeparator: \Character.isWhitespace)
+            .joined(separator: " ")
+        return flattened.isEmpty ? "Unknown task" : flattened
     }
 
     private func resumeAgentSession(

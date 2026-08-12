@@ -89,6 +89,7 @@ struct AgentRootCommand: ParsableCommand {
         discussion: """
         Run a one-shot task, resume a saved session, list sessions, or start interactive chat.
         `peekaboo agent \"task\"` is shorthand for `peekaboo agent run \"task\"`.
+        Agent UI authority is background-only unless the human passes `--allow-foreground` for that invocation.
         """,
         subcommands: [
             AgentRunSubcommand.self,
@@ -104,7 +105,11 @@ struct AgentRootCommand: ParsableCommand {
 struct AgentRunSubcommand: RuntimeBackedCommand {
     static let commandDescription = CommandDescription(
         commandName: "run",
-        abstract: "Run a one-shot automation task"
+        abstract: "Run a one-shot automation task",
+        discussion: """
+        New sessions are background-only by default. `--allow-foreground` authorizes foreground/global UI for this
+        invocation and stores it only as the session's immutable maximum; it never enables shell execution.
+        """
     )
 
     @Argument(help: "Natural-language task to perform")
@@ -127,7 +132,12 @@ struct AgentRunSubcommand: RuntimeBackedCommand {
 struct AgentResumeSubcommand: RuntimeBackedCommand {
     static let commandDescription = CommandDescription(
         commandName: "resume",
-        abstract: "Resume the most recent or a specified session"
+        abstract: "Resume the most recent or a specified session",
+        discussion: """
+        Copy the exact full ID from `peekaboo agent sessions`. Every resumed process invocation defaults to
+        background-only; pass `--allow-foreground` again only when the stored maximum permits it. Use one process per
+        session: if another run is using the session, wait for it to finish and retry the same full ID.
+        """
     )
 
     @Argument(help: "Session ID (defaults to the most recent session)")
@@ -154,7 +164,11 @@ struct AgentResumeSubcommand: RuntimeBackedCommand {
 struct AgentSessionsSubcommand: RuntimeBackedCommand {
     static let commandDescription = CommandDescription(
         commandName: "sessions",
-        abstract: "List saved agent sessions"
+        abstract: "List saved agent sessions",
+        discussion: """
+        Shows each full resumable ID, task, lifecycle status, and stored policy maximum. `active` means the saved
+        session is resumable; it does not mean a process is currently running or prove that the session is not busy.
+        """
     )
 
     @RuntimeStorage var runtime: CommandRuntime?

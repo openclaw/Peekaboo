@@ -13,8 +13,8 @@ read_when:
 | Command or flag | Description |
 | --- | --- |
 | `run [task]` | Run a task. `run` is the default, so `peekaboo agent "task"` remains valid. |
-| `resume [session-id]` | Resume the most recent session, or the specified session, in chat mode. |
-| `sessions` | Print cached sessions; accepts only the global `--json` output switch. |
+| `resume [session-id]` | Resume the most recent session, or the exact full session ID, in chat mode. |
+| `sessions` | Print cached sessions with full IDs, tasks, lifecycle status, and stored policy maximum; accepts only the global `--json` output switch. |
 | `chat [initial-prompt]` | Start the interactive chat loop. |
 | `--dry-run` | Validate and echo the task without calling a model, invoking tools, or creating a session. |
 | `--max-steps <n>` | Cap model turns to `1...100` (default: 100). One turn may contain multiple tool calls. |
@@ -27,6 +27,9 @@ read_when:
 ## Implementation notes
 - The command resolves output “modes” (`minimal`, `compact`, `enhanced`, `quiet`, `verbose`) using terminal detection heuristics; `--simple` and `--no-color` force minimal mode, while `--quiet` suppresses progress output entirely.
 - Session metadata lives inside `agentService` (PeekabooCore). `agent resume` grabs the most recent session, `agent sessions` prints the cached list, and `--no-cache` keeps a run in memory.
+- Copy the full ID printed by `agent sessions`; shortened prefixes are display hints, not valid resume identifiers. A status
+  of `active` means the saved session is resumable, not that a process is currently executing or that the session is
+  free for concurrent use. Use one process per session; if another run is using it, wait and retry the same full ID.
 - Every new Agent session is background-only by default. The runtime enforces that ceiling before tool validation or
   dispatch, including foreground aliases, shared-pointer tools, focus/activation, foreground capture, global
   Dock/Space/dialog fallbacks, and browser page fronting. Refusals report `effect: refused`,
@@ -109,6 +112,9 @@ peekaboo agent "Install the nightly build" --dry-run
 
 # Resume the most recent session
 peekaboo agent resume
+
+# Resume one exact session from the full ID printed by `agent sessions`
+peekaboo agent resume 12345678-1234-1234-1234-123456789abc
 
 # List cached sessions as JSON
 peekaboo agent sessions --json
