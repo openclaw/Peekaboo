@@ -80,6 +80,34 @@ struct MCPBackgroundPolicyExecutionTests {
     }
 
     @Test
+    func `background-only refuses cold application launch before dispatch`() async throws {
+        let applications = await MainActor.run { MockApplicationService() }
+        let context = await MCPToolTestHelpers.makeContext(
+            applications: applications,
+            executionPolicy: .backgroundOnly)
+
+        let response = try await context.execute(
+            tool: AppTool(context: context),
+            arguments: ToolArguments(raw: [
+                "action": "launch",
+                "name": "TextEdit",
+            ]))
+
+        #expect(response.isError)
+        #expect(await MainActor.run { applications.launchRequests.isEmpty })
+        guard case let .text(text, _, _)? = response.content.first,
+              case let .object(meta)? = response.meta
+        else {
+            Issue.record("Expected structured cold-launch policy refusal")
+            return
+        }
+        #expect(text.contains("cold launch requires explicit foreground consent"))
+        #expect(meta["error_code"] == .string(MCPToolExecutionPolicy.refusalErrorCode))
+        #expect(meta["mutation_dispatched"] == .bool(false))
+        #expect(meta["retry_safe"] == .bool(true))
+    }
+
+    @Test
     func `App tool lifecycle examples include required foreground consent`() async {
         let context = await MCPToolTestHelpers.makeContext()
         let description = AppTool(context: context).description

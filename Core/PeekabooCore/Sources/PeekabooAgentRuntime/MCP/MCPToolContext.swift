@@ -503,11 +503,19 @@ public struct MCPToolContext: @unchecked Sendable {
                 rejection: nil,
                 processIdentities: [processIdentity])
         } catch let error as BackgroundTargetResolutionError {
+            let detail = if toolName == "app",
+                            arguments.getString("action")?.lowercased() == "launch"
+            {
+                "background launch is limited to an exact already-running application readiness check; " +
+                    "cold launch requires explicit foreground consent: \(error.detail)"
+            } else {
+                error.detail
+            }
             return BackgroundTargetAuthorization(
                 arguments: arguments,
                 rejection: self.executionPolicy.unresolvedTargetRejection(
                     toolName: toolName,
-                    detail: error.detail))
+                    detail: detail))
         } catch {
             return BackgroundTargetAuthorization(
                 arguments: arguments,

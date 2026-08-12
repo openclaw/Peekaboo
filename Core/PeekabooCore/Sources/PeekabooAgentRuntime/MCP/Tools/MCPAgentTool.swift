@@ -28,7 +28,7 @@ public struct MCPAgentTool: MCPTool {
         The agent has access to all Peekaboo automation tools including:
         - Screen capture and analysis
         - UI element interaction (click, type, scroll)
-        - Background application control (launch, quit, inspect)
+        - Background application control (already-running launch readiness checks, quit, inspect)
         - Window management (move, resize, close)
         - Background text delivery and native Accessibility actions
 
