@@ -406,7 +406,7 @@ struct CLIRuntimeSmokeTests {
     }
 
     @Test
-    func `peekaboo agent hosted model override bypasses unavailable configured default`() async throws {
+    func `peekaboo agent dry run bypasses unavailable configured default and credentials`() async throws {
         guard Self.ensureLocalRuntimeAvailable() else { return }
 
         let tempDir = FileManager.default.temporaryDirectory
@@ -444,9 +444,95 @@ struct CLIRuntimeSmokeTests {
         ])
 
         #expect(result.status == .exited(0))
-        #expect(result.standardOutput.contains("\"success\" : true") || result.standardOutput
-            .contains("\"success\": true"))
-        #expect(result.standardOutput.contains("Dry run completed"))
+        #expect(result.standardError.isEmpty)
+        let response = try #require(
+            JSONSerialization.jsonObject(with: Data(result.standardOutput.utf8)) as? [String: Any]
+        )
+        let resultPayload = try #require(response["result"] as? [String: Any])
+        let metadata = try #require(resultPayload["metadata"] as? [String: Any])
+        #expect(response["success"] as? Bool == true)
+        #expect(resultPayload["dryRun"] as? Bool == true)
+        #expect(resultPayload["instruction"] as? String == "say hi")
+        #expect(resultPayload["modelExecution"] as? String == "skipped")
+        #expect((resultPayload["toolCalls"] as? [Any])?.isEmpty == true)
+        #expect(resultPayload["sessionId"] is NSNull)
+        #expect(metadata["toolCallCount"] as? Int == 0)
+        #expect(metadata["modelName"] as? String == "not_invoked")
+    }
+
+    @Test
+    func `peekaboo agent dry run is explicit for shorthand and run JSON`() async throws {
+        guard Self.ensureLocalRuntimeAvailable() else { return }
+
+        for prefix in [["agent"], ["agent", "run"]] {
+            let result = try await TestChildProcess.runPeekaboo(
+                prefix + ["  Inspect TextEdit  ", "--dry-run", "--json", "--no-remote"]
+            )
+            #expect(result.status == .exited(0))
+            #expect(result.standardError.isEmpty)
+
+            let response = try #require(
+                JSONSerialization.jsonObject(with: Data(result.standardOutput.utf8)) as? [String: Any]
+            )
+            let payload = try #require(response["result"] as? [String: Any])
+            let trace = try #require(payload["executionTrace"] as? [String: Any])
+            #expect(response["success"] as? Bool == true)
+            #expect(payload["dryRun"] as? Bool == true)
+            #expect(payload["instruction"] as? String == "Inspect TextEdit")
+            #expect(payload["modelExecution"] as? String == "skipped")
+            #expect((payload["toolCalls"] as? [Any])?.isEmpty == true)
+            #expect((trace["entries"] as? [Any])?.isEmpty == true)
+            #expect(trace["totalCallCount"] as? Int == 0)
+            #expect(payload["sessionId"] is NSNull)
+        }
+    }
+
+    @Test
+    func `peekaboo agent dry run is explicit for shorthand and run human output`() async throws {
+        guard Self.ensureLocalRuntimeAvailable() else { return }
+
+        for prefix in [["agent"], ["agent", "run"]] {
+            let result = try await TestChildProcess.runPeekaboo(
+                prefix + ["  Inspect TextEdit  ", "--dry-run", "--simple", "--no-remote"]
+            )
+            #expect(result.status == .exited(0))
+            #expect(result.standardError.isEmpty)
+            #expect(result.standardOutput == """
+            Dry run preview
+            Instruction: Inspect TextEdit
+            Model execution: skipped
+            Tool calls: 0
+            Session saved: no
+
+            """)
+        }
+    }
+
+    @Test
+    func `peekaboo taskless dry run is typed invalid usage`() async throws {
+        guard Self.ensureLocalRuntimeAvailable() else { return }
+
+        for prefix in [["agent"], ["agent", "run"]] {
+            let jsonResult = try await TestChildProcess.runPeekaboo(
+                prefix + ["--dry-run", "--json", "--no-remote"]
+            )
+            #expect(jsonResult.status == .exited(1))
+            #expect(jsonResult.standardError.isEmpty)
+            let response = try #require(
+                JSONSerialization.jsonObject(with: Data(jsonResult.standardOutput.utf8)) as? [String: Any]
+            )
+            let error = try #require(response["error"] as? [String: Any])
+            #expect(response["success"] as? Bool == false)
+            #expect(error["code"] as? String == "VALIDATION_ERROR")
+            #expect((error["message"] as? String)?.contains("Task argument is required for --dry-run.") == true)
+
+            let humanResult = try await TestChildProcess.runPeekaboo(
+                prefix + ["--dry-run", "--simple", "--no-remote"]
+            )
+            #expect(humanResult.status == .exited(1))
+            #expect(humanResult.standardOutput.isEmpty)
+            #expect(humanResult.standardError.contains("Task argument is required for --dry-run."))
+        }
     }
 
     @Test

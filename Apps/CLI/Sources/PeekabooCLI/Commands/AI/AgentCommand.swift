@@ -215,6 +215,11 @@ extension AgentCommand {
     mutating func runInternal(runtime: CommandRuntime) async throws {
         let maxSteps = try self.validateAgentRunPreflight()
 
+        if let instruction = self.newTaskDryRunInstruction {
+            self.displayDryRunPreview(instruction: instruction)
+            return
+        }
+
         let services = runtime.services
 
         let requestedModel: LanguageModel?
@@ -387,6 +392,7 @@ extension AgentCommand {
 
         do {
             try self.validateSessionOptions()
+            try self.validateDryRunRequest()
             return try self.validatedMaxStepCount()
         } catch {
             try self.failAgentCommand(message: error.localizedDescription, code: .VALIDATION_ERROR)
