@@ -42,7 +42,7 @@ fi
 
 echo -e "${CYAN}Building ${SCHEME} macOS app (${CONFIGURATION})...${NC}"
 
-# Sign debug builds with a development identity when one is available.
+# Sign builds with a development identity when one is available.
 # Ad-hoc/unsigned builds get a cdhash-pinned TCC identity, so every rebuild
 # resets Screen Recording/Accessibility grants and re-prompts. A team-anchored
 # signature keeps grants stable across rebuilds. Machines without a
@@ -61,11 +61,17 @@ if [ -z "${DEBUG_DEVELOPMENT_TEAM:-}" ]; then
 fi
 
 if [ -n "${DEBUG_DEVELOPMENT_TEAM:-}" ]; then
-    echo -e "${CYAN}Signing with ${DEBUG_CODE_SIGN_IDENTITY} (${DEBUG_DEVELOPMENT_TEAM}) for stable TCC grants${NC}"
+    if [[ "$DEBUG_CODE_SIGN_IDENTITY" == "Developer ID Application:"* ]]; then
+        BUILD_CODE_SIGN_STYLE=Manual
+    else
+        BUILD_CODE_SIGN_STYLE=Automatic
+    fi
+    echo -e \
+        "${CYAN}Signing with ${DEBUG_CODE_SIGN_IDENTITY} (${DEBUG_DEVELOPMENT_TEAM}) using ${BUILD_CODE_SIGN_STYLE} signing for stable TCC grants${NC}"
     SIGNING_SETTINGS=(
         CODE_SIGN_IDENTITY="$DEBUG_CODE_SIGN_IDENTITY"
         DEVELOPMENT_TEAM="$DEBUG_DEVELOPMENT_TEAM"
-        CODE_SIGN_STYLE=Automatic
+        CODE_SIGN_STYLE="$BUILD_CODE_SIGN_STYLE"
     )
 else
     echo -e "${CYAN}No development certificate found; building unsigned (TCC grants reset on each rebuild)${NC}"

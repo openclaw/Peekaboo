@@ -44,7 +44,8 @@ separate:
 pnpm app:install-companion -- --source-app /absolute/path/Peekaboo.app --healthcheck-cli /absolute/path/peekaboo
 ```
 
-You can also pass `--deployment` directly to `scripts/restart-peekaboo.sh`. Deployment mode requires the trusted signed artifact and current
+The `--` separates pnpm's script invocation from the installer options. You can also pass
+`--deployment` directly to `scripts/restart-peekaboo.sh` and omit that separator. Deployment mode requires the trusted signed artifact and current
 signed CLI, then retains the transactional signer/native-only/readiness/rollback gates described
 below.
 

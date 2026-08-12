@@ -765,9 +765,48 @@ help_output="$("${ROOT_DIR}/scripts/restart-peekaboo.sh" --help)"
 deployment_help_output="$("${ROOT_DIR}/scripts/restart-peekaboo.sh" --deployment --help)"
 [[ "${deployment_help_output}" == *'Usage: scripts/restart-peekaboo.sh --deployment'* ]] || \
   fail 'deployment help did not print strict installer usage'
+package_help_output="$(cd "${ROOT_DIR}" && pnpm --silent app:install-companion -- --help)"
+[[ "${package_help_output}" == *'Usage: scripts/restart-peekaboo.sh --deployment'* ]] || \
+  fail 'package installer did not forward options after the pnpm separator'
 if "${ROOT_DIR}/scripts/restart-peekaboo.sh" --dry-run >/dev/null 2>&1; then
   fail 'unknown arguments must fail instead of starting a build'
 fi
+
+# Developer ID is a manual-signing identity. Passing it alongside Automatic signing makes Xcode
+# reject the app and Swift-package resource targets before compilation.
+build_signing_dir="${TEST_DIR}/build-signing"
+mkdir -p "${build_signing_dir}/bin"
+cat >"${build_signing_dir}/bin/xcodebuild" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+mkdir -p "${DERIVED_DATA_PATH}"
+printf '%s\n' "$@" >"${PEEKABOO_TEST_XCODEBUILD_ARGS}"
+EOF
+chmod +x "${build_signing_dir}/bin/xcodebuild"
+env \
+  PATH="${build_signing_dir}/bin:/usr/bin:/bin" \
+  PEEKABOO_TEST_XCODEBUILD_ARGS="${build_signing_dir}/developer-id-args" \
+  CONFIGURATION=Release \
+  DERIVED_DATA_PATH="${build_signing_dir}/DerivedData" \
+  DEBUG_CODE_SIGN_IDENTITY='Developer ID Application: Test (TESTTEAM)' \
+  DEBUG_DEVELOPMENT_TEAM=TESTTEAM \
+  "${ROOT_DIR}/scripts/build-mac-debug.sh" >/dev/null
+grep -Fxq 'CODE_SIGN_STYLE=Manual' "${build_signing_dir}/developer-id-args" || \
+  fail 'Developer ID build did not request manual signing'
+if grep -Fxq 'CODE_SIGN_STYLE=Automatic' "${build_signing_dir}/developer-id-args"; then
+  fail 'Developer ID build still requested automatic signing'
+fi
+
+env \
+  PATH="${build_signing_dir}/bin:/usr/bin:/bin" \
+  PEEKABOO_TEST_XCODEBUILD_ARGS="${build_signing_dir}/development-args" \
+  CONFIGURATION=Debug \
+  DERIVED_DATA_PATH="${build_signing_dir}/DerivedData" \
+  DEBUG_CODE_SIGN_IDENTITY='Apple Development' \
+  DEBUG_DEVELOPMENT_TEAM=TESTTEAM \
+  "${ROOT_DIR}/scripts/build-mac-debug.sh" >/dev/null
+grep -Fxq 'CODE_SIGN_STYLE=Automatic' "${build_signing_dir}/development-args" || \
+  fail 'Apple Development build did not retain automatic signing'
 
 # The public package default delegates to the contributor Debug path without injecting any
 # Foundation or organization-owned signing identity.

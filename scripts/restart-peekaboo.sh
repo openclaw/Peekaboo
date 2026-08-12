@@ -1259,6 +1259,10 @@ rollback_install() {
 
 while (($# > 0)); do
   case "$1" in
+    --)
+      # pnpm forwards its explicit script separator to the command itself.
+      shift
+      ;;
     --source-app)
       [[ "$#" -ge 2 ]] || fail '--source-app requires a bundle path'
       [[ -z "${SOURCE_APP_BUNDLE}" ]] || fail '--source-app may be specified only once'
