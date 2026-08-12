@@ -7,6 +7,9 @@ NATIVE_ONLY_APPLE_EVENT_SOURCE_PATTERN='NSAppleScript|NSUserAppleScriptTask|OSAK
 # shellcheck disable=SC2016
 NATIVE_ONLY_APPLE_EVENT_IMPORT_PATTERN='(^|[[:space:]])_?(AE[A-Z][[:lower:]][[:alnum:]_]*|OSA[A-Z][[:lower:]][[:alnum:]_]*|OBJC_(CLASS|METACLASS)_\$_NSAppleScript)([^[:alnum:]_]|$)'
 NATIVE_ONLY_APPLE_EVENT_STRING_PATTERN='<key>NSAppleEventsUsageDescription</key>|NSAppleScript|NSUserAppleScriptTask|OSAKit\.framework|OSAScript|kOSAComponentType|/usr/bin/osascript'
+# Exact Swift compiler metadata observed in signed Release artifacts. Keep this closed: every entry
+# must be reproduced by an artifact fixture before it can bypass the dynamic API-name matcher.
+NATIVE_ONLY_COMPILER_METADATA_STRING_PATTERN='^(AESgtGG|AESgtGGGSgtGG)$'
 # `strings` also emits compiler metadata and symbol fragments. Match dynamic lookup names only when
 # the entire string has an API shape. Apple Event APIs have a multi-letter verb (apart from Is/Do),
 # while OSA names keep the original CamelCase boundary because the Release app has no OSA collision.
@@ -33,8 +36,13 @@ native_only_verify_macho() {
     printf 'Could not inspect %s embedded strings' "${label}"
     return 1
   fi
-  if grep -Eq "${NATIVE_ONLY_APPLE_EVENT_STRING_PATTERN}" <<<"${embedded_strings}" ||
-     grep -Eq "${NATIVE_ONLY_DYNAMIC_APPLE_EVENT_STRING_PATTERN}" <<<"${embedded_strings}"; then
+  if grep -Eq "${NATIVE_ONLY_APPLE_EVENT_STRING_PATTERN}" <<<"${embedded_strings}"; then
+    printf '%s embeds an AppleScript or Apple Events execution surface' "${label}"
+    return 1
+  fi
+  local inspected_strings
+  inspected_strings="$(grep -Ev "${NATIVE_ONLY_COMPILER_METADATA_STRING_PATTERN}" <<<"${embedded_strings}" || true)"
+  if grep -Eq "${NATIVE_ONLY_DYNAMIC_APPLE_EVENT_STRING_PATTERN}" <<<"${inspected_strings}"; then
     printf '%s embeds an AppleScript or Apple Events execution surface' "${label}"
     return 1
   fi

@@ -92,8 +92,12 @@ case "${NATIVE_ONLY_TEST_MODE:-safe}" in
   safe)
     printf '%s\n' \
       'AES-GCM' \
-      'AEGtGG' \
-      'AESgA2fEtGGAbCyAAyAD_A8FtGGAbCyAAyAD_' \
+      'AESgtGG' \
+      'AESgtGGGSgtGG' \
+      '_AEQo__AGQo_' \
+      '_AEQo__AGQo_t' \
+      '_AEQo__SSQo_' \
+      '_AEQo__SSQo_t' \
       'AppleScriptProbeCodingKeys' \
       '_appleScriptStatus' \
       '_appleScriptProbe' \
@@ -102,8 +106,13 @@ case "${NATIVE_ONLY_TEST_MODE:-safe}" in
     ;;
   dynamic-ae) printf '%s\n' 'AESendMessage' ;;
   dynamic-ae-create) printf '%s\n' 'AECreateDesc' ;;
+  dynamic-ae-get) printf '%s\n' 'AEGetDescData' ;;
+  dynamic-ae-install) printf '%s\n' 'AEInstallEventHandler' ;;
   dynamic-ae-make) printf '%s\n' 'AEMakeDesc' ;;
+  dynamic-compiler-near-miss) printf '%s\n' 'AESgtGGX' 'AESgtGGGSgtGGX' ;;
+  dynamic-osa-compile) printf '%s\n' 'OSACompile' ;;
   dynamic-osa) printf '%s\n' '_OSADoScript' ;;
+  dynamic-osa-execute) printf '%s\n' 'OSAExecute' ;;
   dynamic-osa-show) printf '%s\n' 'OSAShowScriptingComponent' ;;
   strings-fail) printf '%s\n' 'harmless output'; exit 87 ;;
 esac
@@ -115,7 +124,8 @@ native_only_verify_macho \
   "$native_policy_test_dir/fixture" fixture \
   "$native_policy_test_dir/nm" "$native_policy_test_dir/strings"
 for policy_case in \
-  ae ae-send osa dynamic-ae dynamic-ae-create dynamic-ae-make dynamic-osa dynamic-osa-show \
+  ae ae-send osa dynamic-ae dynamic-ae-create dynamic-ae-get dynamic-ae-install dynamic-ae-make \
+  dynamic-compiler-near-miss dynamic-osa dynamic-osa-compile dynamic-osa-execute dynamic-osa-show \
   nm-fail strings-fail; do
   export NATIVE_ONLY_TEST_MODE="$policy_case"
   if native_only_verify_macho \
