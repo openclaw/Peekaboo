@@ -71,8 +71,10 @@ private enum BackgroundOnlyToolPolicy {
             self.clipboardViolation(arguments)
         case "click":
             self.explicitForeground(arguments, inverseBackgroundKey: "background")
-        case "type", "scroll", "press", "paste":
+        case "type", "scroll", "paste":
             self.explicitForeground(arguments)
+        case "press":
+            self.rawPressViolation(arguments)
         case "action":
             self.actionViolation(arguments)
         case "image", "capture":
@@ -88,7 +90,7 @@ private enum BackgroundOnlyToolPolicy {
         case "dock":
             self.listOnlyViolation(arguments, surface: "Dock")
         case "space":
-            self.listOnlyViolation(arguments, surface: "Space")
+            self.spaceViolation(arguments)
         case "browser":
             self.browserViolation(arguments)
         case "drag", "move":
@@ -122,6 +124,11 @@ private enum BackgroundOnlyToolPolicy {
             return .activation("the requested Accessibility action can raise or expose foreground UI")
         }
         return nil
+    }
+
+    private static func rawPressViolation(_ arguments: ToolArguments) -> Violation {
+        self.explicitForeground(arguments) ?? .sharedDesktop(
+            "public raw press cannot prove background intent or effect and requires foreground consent")
     }
 
     private static func captureViolation(_ arguments: ToolArguments) -> Violation? {
@@ -197,6 +204,24 @@ private enum BackgroundOnlyToolPolicy {
         switch self.normalized(arguments.getString("action")) {
         case nil, "list": nil
         default: .sharedDesktop("the \(surface) action mutates shared desktop UI")
+        }
+    }
+
+    private static func spaceViolation(_ arguments: ToolArguments) -> Violation? {
+        if let foreground = self.explicitForeground(arguments) {
+            return foreground
+        }
+        switch self.normalized(arguments.getString("action")) {
+        case nil, "list":
+            return nil
+        case "movewindow":
+            return arguments.getBool("follow") == true
+                ? .activation("follow=true switches the visible Space after moving the window")
+                : nil
+        case "switch":
+            return .activation("switch changes the user's visible Space")
+        default:
+            return .unclassified
         }
     }
 

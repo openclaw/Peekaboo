@@ -19,6 +19,8 @@ struct MCPToolExecutionPolicyTests {
             .init(tool: "click", arguments: ["background": false]),
             .init(tool: "type", arguments: ["foreground": true]),
             .init(tool: "scroll", arguments: ["foreground": true]),
+            .init(tool: "press", arguments: [:]),
+            .init(tool: "press", arguments: ["foreground": false]),
             .init(tool: "press", arguments: ["foreground": true]),
             .init(tool: "paste", arguments: ["foreground": true]),
             .init(tool: "image", arguments: ["capture_focus": "foreground"]),
@@ -38,7 +40,8 @@ struct MCPToolExecutionPolicyTests {
             .init(tool: "dock", arguments: ["action": "hide"]),
             .init(tool: "dock", arguments: ["action": "show"]),
             .init(tool: "space", arguments: ["action": "switch"]),
-            .init(tool: "space", arguments: ["action": "move-window"]),
+            .init(tool: "space", arguments: ["action": "move-window", "follow": true]),
+            .init(tool: "space", arguments: ["action": "move-window", "foreground": true]),
             .init(tool: "browser", arguments: ["action": "select_page", "bring_to_front": true]),
             .init(tool: "browser", arguments: ["action": "new_page", "background": false]),
             .init(tool: "browser", arguments: [
@@ -108,6 +111,17 @@ struct MCPToolExecutionPolicyTests {
             .init(tool: "dialog", arguments: ["action": "click", "foreground": false]),
             .init(tool: "dock", arguments: ["action": "list"]),
             .init(tool: "space", arguments: ["action": "list"]),
+            .init(tool: "space", arguments: [
+                "action": "move-window",
+                "app": "Safari",
+                "to": 2,
+            ]),
+            .init(tool: "space", arguments: [
+                "action": "move-window",
+                "app": "TextEdit",
+                "to_current": true,
+                "follow": false,
+            ]),
             .init(tool: "browser", arguments: [
                 "action": "select_page",
                 "bring_to_front": false,
@@ -167,6 +181,15 @@ struct MCPToolExecutionPolicyTests {
         #expect(MCPToolExecutionPolicy.unrestricted.rejection(
             toolName: "shell",
             arguments: ToolArguments(raw: [:])) == nil)
+        #expect(MCPToolExecutionPolicy.unrestricted.rejection(
+            toolName: "press",
+            arguments: ToolArguments(raw: ["foreground": true])) == nil)
+        #expect(MCPToolExecutionPolicy.unrestricted.rejection(
+            toolName: "space",
+            arguments: ToolArguments(raw: ["action": "switch"])) == nil)
+        #expect(MCPToolExecutionPolicy.unrestricted.rejection(
+            toolName: "space",
+            arguments: ToolArguments(raw: ["action": "move-window", "follow": true])) == nil)
     }
 
     @Test

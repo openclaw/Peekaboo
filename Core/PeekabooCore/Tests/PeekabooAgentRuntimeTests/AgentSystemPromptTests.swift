@@ -146,4 +146,17 @@ struct AgentSystemPromptTests {
         #expect(!prompt.contains("capture and focus background apps"))
         #expect(!prompt.contains("`launch_app` tool"))
     }
+
+    @Test
+    func `generated prompt explains background Agent ceiling without overblocking Space placement`() {
+        guard #available(macOS 14.0, *) else { return }
+        let prompt = AgentSystemPrompt.generate()
+
+        #expect(prompt.contains("raw `press`"))
+        #expect(prompt.contains("persistent clipboard"))
+        #expect(prompt.contains("browser setup/fronting"))
+        #expect(prompt.contains("Space switch/follow"))
+        #expect(prompt.contains("Space list and unfollowed"))
+        #expect(prompt.contains("Do not retry or route around a policy refusal"))
+    }
 }

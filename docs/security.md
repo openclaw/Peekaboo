@@ -41,7 +41,9 @@ bearer credential: every resumed process invocation returns to background-only u
 The policy is checked centrally before lookup, turn-boundary bookkeeping, validation, or dispatch and cannot be changed
 by model output or writable session JSON alone. Foreground authorization does not authorize shell execution: normal
 Agent toolsets omit `shell`, and the execution boundary refuses it under both Agent policies. Direct standalone CLI and
-MCP tools keep their existing explicit contracts.
+MCP tools keep their existing explicit contracts. Background-only Agent sessions refuse raw `press`, persistent
+clipboard writes, browser setup/fronting, and Space switch/follow while retaining Space listing and unfollowed window
+placement.
 
 ## Desktop context injection (DESKTOP_STATE)
 

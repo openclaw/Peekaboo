@@ -657,8 +657,12 @@ struct MCPSpecificToolTests {
     func `MCP Agent advertises background-only authority without shell`() {
         let description = makeTestTool(MCPAgentTool.init).description
         #expect(description.contains("always background-only"))
+        #expect(description.contains("raw keyboard press"))
+        #expect(description.contains("Space listing and unfollowed"))
         #expect(description.contains("shell execution"))
         #expect(!description.contains("shell commands"))
+        #expect(!description.contains("Process-targeted keyboard chords"))
+        #expect(!description.contains("Open Safari and navigate"))
         #expect(!description.contains("launch, quit, focus"))
     }
 

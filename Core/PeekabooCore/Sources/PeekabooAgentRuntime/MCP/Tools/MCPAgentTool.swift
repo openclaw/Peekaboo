@@ -30,17 +30,18 @@ public struct MCPAgentTool: MCPTool {
         - UI element interaction (click, type, scroll)
         - Background application control (launch, quit, inspect)
         - Window management (move, resize, close)
-        - Process-targeted keyboard chords and native Accessibility actions
+        - Background text delivery and native Accessibility actions
 
-        MCP-started Agent sessions are always background-only. They refuse focus/activation,
-        shared-pointer/global input, foreground capture, browser fronting, and shell execution before dispatch.
-        Only the human-facing CLI can explicitly authorize foreground UI for a session.
+        MCP-started Agent sessions are always background-only. They refuse raw keyboard press, focus/activation,
+        shared-pointer/global input, foreground capture, persistent clipboard writes, Dock mutations, Space
+        switch/follow, browser setup/fronting, and shell execution before dispatch. Space listing and unfollowed window
+        placement remain available. Only the human-facing CLI can explicitly authorize foreground UI for a session.
 
         Example tasks:
-        - "Open Safari and navigate to apple.com"
+        - "Inspect the current page in an already-running Safari window"
         - "Take a screenshot of the current window and save it to Desktop"
         - "Find the login button and click it, then type my credentials"
-        - "Open TextEdit, write 'Hello World', and save the document"
+        - "In an already-running TextEdit document, write 'Hello World'"
 
         Requires a configured provider credential or local model runtime.
         \(PeekabooMCPVersion.banner)
