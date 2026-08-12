@@ -36,9 +36,9 @@ public struct MCPAgentTool: MCPTool {
         shared-pointer/global input, foreground capture, persistent clipboard writes, dialog/shared system UI
         mutations, Space switch/follow, browser setup/fronting, and Shell-tool access before dispatch. Dialog listing
         remains available. Space listing and unfollowed window placement remain available. This UI authority boundary
-        is not a process sandbox; trusted prompts can
-        operate terminal or scripting apps through their UI. Only the human-facing CLI can explicitly authorize
-        foreground UI for a session.
+        is not a process sandbox; trusted prompts can operate terminal or scripting apps through their UI. Only the
+        human-facing CLI can explicitly authorize foreground UI for a session. Background typing requires an exact
+        non-dialog snapshot/element; background paste is refused until dialog/sheet ownership is exact.
 
         Example tasks:
         - "Inspect the current page in an already-running Safari window"

@@ -39,6 +39,9 @@ read_when:
 - `--allow-foreground` is accepted only as human authority. A new session saves foreground permission as its immutable
   maximum, but every later process invocation defaults back to background-only and must pass the flag again. A
   background-only session cannot be broadened on resume, and editing session JSON cannot authorize foreground work.
+- Background-only Agent typing requires an exact non-dialog snapshot/element target. Paste is refused until its window
+  receipt can distinguish sheets as well as dialogs. Process-only typing and paste remain available to standalone
+  CLI/MCP callers but cannot prove that an Agent is not mutating process-focused modal UI.
 - Foreground permission never exposes the Shell tool. Normal Agent toolsets omit `shell`, and the execution boundary
   still refuses it after `--allow-foreground`. Foreground UI authority is not a process sandbox: a trusted prompt can
   operate terminal or scripting apps through their UI, so grant `--allow-foreground` only to trusted prompts. Use

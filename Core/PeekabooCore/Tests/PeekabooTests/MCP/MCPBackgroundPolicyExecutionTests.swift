@@ -62,6 +62,13 @@ struct MCPBackgroundPolicyExecutionTests {
         #expect(await regularCounter.invocationCount == 1)
         #expect(await regularCounter.lastName == "PID:89")
 
+        let pasteCounter = BackgroundPolicyInvocationCounter()
+        let pasteResponse = try await context.execute(
+            tool: BackgroundPolicyMutationProbe(name: "paste", counter: pasteCounter),
+            arguments: ToolArguments(raw: ["app": "TextEdit"]))
+        #expect(pasteResponse.isError)
+        #expect(await pasteCounter.invocationCount == 0)
+
         for toolName in ["app", "dialog", "space"] {
             let readCounter = BackgroundPolicyInvocationCounter()
             let readResponse = try await context.execute(
@@ -448,7 +455,7 @@ private struct BackgroundPolicyMutationProbe: MCPTool {
                 "app": SchemaBuilder.string(),
                 "name": SchemaBuilder.string(),
             ],
-            required: ["action"])
+            required: [])
     }
 
     func execute(arguments: ToolArguments) async throws -> ToolResponse {

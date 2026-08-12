@@ -184,8 +184,8 @@ public struct AgentSystemPrompt {
         **Common Patterns**
         - Menus → the `menu` tool with action "click" and the full path.
         - Keyboard shortcuts → `press` with xdotool-style chords such as `cmd+shift+t` and `foreground: true`.
-        - Text entry → use `type` with an element/app/PID/window target; add `foreground: true` only when the app
-          ignores background keyboard delivery.
+        - Text entry → use `type` with an exact non-dialog snapshot/element target. Background-only Agent sessions
+          cannot use app/PID-only typing because the process-focused control could be a dialog.
         - Scrolling → `scroll` with direction and amount.
         """
     }

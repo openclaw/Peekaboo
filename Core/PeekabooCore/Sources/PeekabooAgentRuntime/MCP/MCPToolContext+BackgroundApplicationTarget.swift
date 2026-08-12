@@ -22,7 +22,7 @@ extension MCPToolContext {
         switch toolName {
         case "app":
             BackgroundApplicationTargetSchema(stringKeys: ["name", "bundleId"], pidKeys: [], windowIDKeys: [])
-        case "dialog", "paste", "type":
+        case "dialog", "type":
             BackgroundApplicationTargetSchema(
                 stringKeys: ["app"],
                 pidKeys: ["pid"],
@@ -137,7 +137,7 @@ extension MCPToolContext {
         case "app":
             pinned["name"] = "PID:\(processIdentifier)"
             pinned.removeValue(forKey: "bundleId")
-        case "dialog", "paste", "type":
+        case "dialog", "type":
             pinned["pid"] = Int(processIdentifier)
             pinned.removeValue(forKey: "app")
         case "menu", "space", "window":

@@ -26,6 +26,7 @@ struct MCPToolExecutionPolicyTests {
             .init(tool: "press", arguments: ["foreground": false]),
             .init(tool: "press", arguments: ["foreground": true]),
             .init(tool: "paste", arguments: ["foreground": true]),
+            .init(tool: "paste", arguments: ["foreground": false, "window_id": 42]),
             .init(tool: "image", arguments: ["capture_focus": "foreground"]),
             .init(tool: "capture", arguments: ["capture_focus": "auto"]),
             .init(tool: "app", arguments: ["action": "launch", "foreground": true]),
@@ -431,6 +432,12 @@ struct MCPToolExecutionPolicyTests {
                 "snapshot": snapshotID,
                 "app": "TextEdit",
             ]))
+        let processTypeResponse = try await context.execute(
+            tool: PolicySnapshotProbeTool(name: "type", capture: capture),
+            arguments: ToolArguments(raw: [
+                "text": "hello",
+                "app": "TextEdit",
+            ]))
         try await snapshots.storeDetectionResult(
             snapshotId: snapshotID,
             result: ElementDetectionResult(
@@ -457,6 +464,7 @@ struct MCPToolExecutionPolicyTests {
         #expect(malformedResponse.isError)
         #expect(missingReceiptResponse.isError)
         #expect(mixedTypeResponse.isError)
+        #expect(processTypeResponse.isError)
         #expect(genericDialogResponse.isError)
         #expect(await capture.snapshotID == nil)
         guard case let .object(meta)? = response.meta else {

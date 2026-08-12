@@ -661,6 +661,7 @@ struct MCPSpecificToolTests {
         #expect(description.contains("Space listing and unfollowed"))
         #expect(description.contains("Shell-tool access"))
         #expect(description.contains("not a process sandbox"))
+        #expect(description.contains("background paste is refused"))
         #expect(!description.contains("shell commands"))
         #expect(!description.contains("Process-targeted keyboard chords"))
         #expect(!description.contains("Open Safari and navigate"))

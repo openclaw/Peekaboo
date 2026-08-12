@@ -133,7 +133,7 @@ private enum BackgroundOnlyToolPolicy {
             self.clipboardViolation(arguments)
         case "click":
             self.explicitForeground(arguments, inverseBackgroundKey: "background")
-        case "type", "scroll", "paste":
+        case "type", "scroll":
             self.explicitForeground(arguments)
         case "press":
             self.rawPressViolation(arguments)
@@ -155,8 +155,8 @@ private enum BackgroundOnlyToolPolicy {
             self.spaceViolation(arguments)
         case "browser":
             self.browserViolation(arguments)
-        case "drag", "move":
-            .sharedDesktop("it uses the shared physical pointer")
+        case "drag", "move", "paste":
+            self.sharedInputViolation(toolName: toolName)
         case "shell":
             .sharedDesktop("shell execution can bypass the Agent's background-only tool boundary")
         case "agent":
@@ -164,6 +164,13 @@ private enum BackgroundOnlyToolPolicy {
         default:
             .unclassified
         }
+    }
+
+    private static func sharedInputViolation(toolName: String) -> Violation {
+        if toolName == "paste" {
+            return .sharedDesktop("paste cannot yet prove that its focused window is not a dialog or sheet")
+        }
+        return .sharedDesktop("it uses the shared physical pointer")
     }
 
     private static func explicitForeground(

@@ -354,6 +354,13 @@ public struct MCPToolContext: @unchecked Sendable {
         guard usesSnapshotTarget else {
             // BrowserTool mutates DevTools page targets rather than macOS desktop targets. Its policy separately
             // requires background pages and forbids page fronting before dispatch.
+            if toolName == "type" {
+                return BackgroundTargetAuthorization(
+                    arguments: arguments,
+                    rejection: self.executionPolicy.unresolvedTargetRejection(
+                        toolName: toolName,
+                        detail: "background Agent typing requires an exact non-dialog snapshot or element target"))
+            }
             return await self.backgroundApplicationTargetAuthorization(
                 toolName: toolName,
                 arguments: arguments)

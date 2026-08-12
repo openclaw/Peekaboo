@@ -44,7 +44,9 @@ toolsets omit `shell`, and the execution boundary refuses it under both Agent po
 a process sandbox; a trusted prompt can operate terminal or scripting apps through their UI. Direct standalone CLI and
 MCP tools keep their existing explicit contracts. Background-only Agent sessions refuse raw `press`, persistent
 clipboard writes, dialog mutations, browser setup/fronting, and Space switch/follow while retaining dialog/Space
-listing and unfollowed window placement.
+listing and unfollowed window placement. Agent typing requires an exact non-dialog snapshot/element; Agent paste is
+refused until its ownership receipt can distinguish both dialogs and sheets. Process-only delivery cannot prove that
+the focused target is not modal UI.
 
 ## Desktop context injection (DESKTOP_STATE)
 
