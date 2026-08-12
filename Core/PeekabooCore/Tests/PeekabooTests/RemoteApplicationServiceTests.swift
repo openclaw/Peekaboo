@@ -543,9 +543,12 @@ struct RemoteApplicationServiceTests {
         do {
             try await hideTask.value
             Issue.record("Expected indeterminate bridge completion failure")
-        } catch let envelope as PeekabooBridgeErrorEnvelope {
-            #expect(envelope.code == .internalError)
-            #expect(envelope.operationMayHaveCompleted)
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.route == .bridge)
+            #expect(failure.outcome.state == .indeterminate)
+            #expect(failure.outcome.evidence == .completionUnknown)
+            #expect(failure.outcome.retrySafety == .unsafe)
+            #expect(failure.outcome.projection.requiresFreshObservation)
         }
 
         let hiddenIdentifiers = await MainActor.run { fallback.hiddenIdentifiers }

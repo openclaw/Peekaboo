@@ -1,5 +1,6 @@
 import PeekabooAutomationKit
 import PeekabooBridge
+import PeekabooFoundation
 
 /// Canonical builders for Bridge protocol and transport tests.
 public enum BridgeTestFixtures {
@@ -32,6 +33,7 @@ public enum BridgeTestFixtures {
             hostCapabilities: hostCapabilities)
     }
 
+    /// Builds the pre-canonical Bridge error shape for compatibility tests.
     public static func errorResponse(
         code: PeekabooBridgeErrorCode,
         message: String,
@@ -49,5 +51,22 @@ public enum BridgeTestFixtures {
             kind: kind,
             context: context,
             operationMayHaveCompleted: operationMayHaveCompleted))
+    }
+
+    public static func actionFailureResponse(
+        code: PeekabooBridgeErrorCode = .internalError,
+        failure: DesktopActionFailure,
+        details: String? = nil,
+        permission: PeekabooBridgePermissionKind? = nil,
+        kind: PeekabooBridgeErrorKind? = nil,
+        context: String? = nil) -> PeekabooBridgeResponse
+    {
+        .error(PeekabooBridgeErrorEnvelope(
+            code: code,
+            actionFailure: failure,
+            details: details,
+            permission: permission,
+            kind: kind,
+            context: context))
     }
 }

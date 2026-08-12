@@ -3,6 +3,7 @@ import Dispatch
 import Foundation
 import PeekabooAutomationKit
 import PeekabooCore
+import PeekabooFoundation
 import Testing
 @testable import PeekabooBridge
 
@@ -235,9 +236,10 @@ struct PeekabooBridgeCancellationTests {
         do {
             _ = try await queuedTask.value
             Issue.record("Expected the queued client request to time out")
-        } catch let error as PeekabooBridgeErrorEnvelope {
-            #expect(error.code == .timeout)
-            #expect(error.operationMayHaveCompleted)
+        } catch let failure as DesktopActionFailure {
+            Self.expectResponseLostFailure(failure)
+        } catch {
+            Issue.record("Expected response-lost failure, got \(error)")
         }
 
         observations.releaseFirstObservation()
@@ -313,9 +315,10 @@ struct PeekabooBridgeCancellationTests {
         do {
             _ = try await requestTask.value
             Issue.record("Expected the client request blocked on the watermark lock to time out")
-        } catch let error as PeekabooBridgeErrorEnvelope {
-            #expect(error.code == .timeout)
-            #expect(error.operationMayHaveCompleted)
+        } catch let failure as DesktopActionFailure {
+            Self.expectResponseLostFailure(failure)
+        } catch {
+            Issue.record("Expected response-lost failure, got \(error)")
         }
 
         let followUpClient = PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 1)
@@ -388,9 +391,10 @@ struct PeekabooBridgeCancellationTests {
         do {
             _ = try await firstTask.value
             Issue.record("Expected the first client to time out")
-        } catch let error as PeekabooBridgeErrorEnvelope {
-            #expect(error.code == .timeout)
-            #expect(error.operationMayHaveCompleted)
+        } catch let failure as DesktopActionFailure {
+            Self.expectResponseLostFailure(failure)
+        } catch {
+            Issue.record("Expected response-lost failure, got \(error)")
         }
 
         #expect(try await Self.waitForConnectionCount(0, host: host))
@@ -552,6 +556,14 @@ struct PeekabooBridgeCancellationTests {
             capture: DesktopCaptureOptions(focus: .background),
             detection: DesktopDetectionOptions(mode: .accessibility, allowWebFocusFallback: true),
             output: DesktopObservationOutputOptions(snapshotID: snapshotID))
+    }
+
+    private static func expectResponseLostFailure(_ failure: DesktopActionFailure) {
+        #expect(failure.outcome.route == .bridge)
+        #expect(failure.outcome.state == .indeterminate)
+        #expect(failure.outcome.evidence == .responseLost)
+        #expect(failure.outcome.retrySafety == .unsafe)
+        #expect(failure.outcome.projection.requiresFreshObservation)
     }
 
     private static func nonmutatingObservationRequest(snapshotID: String) -> DesktopObservationRequest {

@@ -422,6 +422,9 @@ public struct PeekabooBridgeErrorEnvelope: Codable, Sendable, LocalizedError {
     public let kind: PeekabooBridgeErrorKind?
     public let context: String?
     public let operationMayHaveCompleted: Bool
+    public let actionOutcome: DesktopActionOutcome.Projection?
+    public let actionFailureHint: String?
+    public let actionFailureCauseDescription: String?
 
     private enum CodingKeys: String, CodingKey {
         case code
@@ -431,6 +434,9 @@ public struct PeekabooBridgeErrorEnvelope: Codable, Sendable, LocalizedError {
         case kind
         case context
         case operationMayHaveCompleted
+        case actionOutcome
+        case actionFailureHint
+        case actionFailureCauseDescription
     }
 
     public init(
@@ -449,6 +455,29 @@ public struct PeekabooBridgeErrorEnvelope: Codable, Sendable, LocalizedError {
         self.kind = kind
         self.context = context
         self.operationMayHaveCompleted = operationMayHaveCompleted
+        self.actionOutcome = nil
+        self.actionFailureHint = nil
+        self.actionFailureCauseDescription = nil
+    }
+
+    public init(
+        code: PeekabooBridgeErrorCode,
+        actionFailure: DesktopActionFailure,
+        details: String? = nil,
+        permission: PeekabooBridgePermissionKind? = nil,
+        kind: PeekabooBridgeErrorKind? = nil,
+        context: String? = nil)
+    {
+        self.code = code
+        self.message = actionFailure.message
+        self.details = details
+        self.permission = permission
+        self.kind = kind
+        self.context = context
+        self.operationMayHaveCompleted = actionFailure.outcome.projection.mutationDispatched
+        self.actionOutcome = actionFailure.outcome.projection
+        self.actionFailureHint = actionFailure.hint
+        self.actionFailureCauseDescription = actionFailure.causeDescription
     }
 
     public init(from decoder: any Decoder) throws {
@@ -460,9 +489,44 @@ public struct PeekabooBridgeErrorEnvelope: Codable, Sendable, LocalizedError {
         self.context = try container.decodeIfPresent(String.self, forKey: .context)
         let rawKind = try container.decodeIfPresent(String.self, forKey: .kind)
         self.kind = rawKind.flatMap(PeekabooBridgeErrorKind.init(rawValue:))
-        self.operationMayHaveCompleted = try container.decodeIfPresent(
+        let encodedOperationMayHaveCompleted = try container.decodeIfPresent(
             Bool.self,
-            forKey: .operationMayHaveCompleted) ?? false
+            forKey: .operationMayHaveCompleted)
+        self.actionOutcome = try container.decodeIfPresent(
+            DesktopActionOutcome.Projection.self,
+            forKey: .actionOutcome)
+        self.actionFailureHint = try container.decodeIfPresent(String.self, forKey: .actionFailureHint)
+        self.actionFailureCauseDescription = try container.decodeIfPresent(
+            String.self,
+            forKey: .actionFailureCauseDescription)
+        if let actionOutcome = self.actionOutcome {
+            guard !actionOutcome.outcome.isConfirmed else {
+                throw DecodingError.dataCorruptedError(
+                    forKey: .actionOutcome,
+                    in: container,
+                    debugDescription: "A Bridge error envelope cannot carry a confirmed desktop action outcome")
+            }
+            let expected = actionOutcome.mutationDispatched
+            if let encodedOperationMayHaveCompleted,
+               encodedOperationMayHaveCompleted != expected
+            {
+                throw DecodingError.dataCorruptedError(
+                    forKey: .operationMayHaveCompleted,
+                    in: container,
+                    debugDescription: "Compatibility field contradicts the canonical desktop action outcome")
+            }
+            self.operationMayHaveCompleted = expected
+        } else {
+            guard self.actionFailureHint == nil,
+                  self.actionFailureCauseDescription == nil
+            else {
+                throw DecodingError.dataCorruptedError(
+                    forKey: .actionOutcome,
+                    in: container,
+                    debugDescription: "Desktop action failure context requires a canonical outcome")
+            }
+            self.operationMayHaveCompleted = encodedOperationMayHaveCompleted ?? false
+        }
     }
 
     public func encode(to encoder: any Encoder) throws {
@@ -476,6 +540,11 @@ public struct PeekabooBridgeErrorEnvelope: Codable, Sendable, LocalizedError {
         if self.operationMayHaveCompleted {
             try container.encode(true, forKey: .operationMayHaveCompleted)
         }
+        try container.encodeIfPresent(self.actionOutcome, forKey: .actionOutcome)
+        try container.encodeIfPresent(self.actionFailureHint, forKey: .actionFailureHint)
+        try container.encodeIfPresent(
+            self.actionFailureCauseDescription,
+            forKey: .actionFailureCauseDescription)
     }
 
     public var errorDescription: String? {
@@ -487,6 +556,15 @@ public struct PeekabooBridgeErrorEnvelope: Codable, Sendable, LocalizedError {
               context.hasPrefix(Self.standardizedErrorContextPrefix)
         else { return nil }
         return StandardErrorCode(rawValue: String(context.dropFirst(Self.standardizedErrorContextPrefix.count)))
+    }
+
+    public var desktopActionFailure: DesktopActionFailure? {
+        guard let actionOutcome else { return nil }
+        return DesktopActionFailure(
+            outcome: actionOutcome.outcome,
+            message: self.message,
+            hint: self.actionFailureHint,
+            causeDescription: self.actionFailureCauseDescription)
     }
 }
 
@@ -505,6 +583,12 @@ extension PeekabooBridgeErrorEnvelope: PendingSnapshotFailureDispositionProvidin
         default:
             false
         }
+    }
+}
+
+extension DesktopActionFailure: @retroactive PendingSnapshotFailureDispositionProviding {
+    public var mayCompleteSnapshotWorkAfterFailure: Bool {
+        self.outcome.dispatchState != .none
     }
 }
 

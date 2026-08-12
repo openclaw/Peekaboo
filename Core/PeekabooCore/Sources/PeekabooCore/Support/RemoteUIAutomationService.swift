@@ -160,8 +160,6 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
                 clickType: clickType,
                 snapshotId: snapshotId,
                 targetProcessIdentifier: targetProcessIdentifier)
-        } catch let envelope as PeekabooBridgeErrorEnvelope where envelope.operationMayHaveCompleted {
-            throw Self.inputDeliveryIndeterminateError(for: envelope, operation: .click)
         } catch let envelope as PeekabooBridgeErrorEnvelope {
             throw Self.automationError(for: envelope, snapshotId: snapshotId)
         }
@@ -183,8 +181,6 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
                 clickType: clickType,
                 snapshotId: snapshotId,
                 expectedProcessIdentity: expectedProcessIdentity)
-        } catch let envelope as PeekabooBridgeErrorEnvelope where envelope.operationMayHaveCompleted {
-            throw Self.inputDeliveryIndeterminateError(for: envelope, operation: .click)
         } catch let envelope as PeekabooBridgeErrorEnvelope {
             throw Self.automationError(for: envelope, snapshotId: snapshotId)
         }
@@ -215,8 +211,6 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
                 snapshotId: snapshotId,
                 expectedWindowIdentity: expectedWindowIdentity,
                 expectedWindowBounds: expectedWindowBounds)
-        } catch let envelope as PeekabooBridgeErrorEnvelope where envelope.operationMayHaveCompleted {
-            throw Self.inputDeliveryIndeterminateError(for: envelope, operation: .click)
         } catch let envelope as PeekabooBridgeErrorEnvelope {
             throw Self.automationError(for: envelope, snapshotId: snapshotId)
         }
@@ -270,9 +264,6 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
                 snapshotId: snapshotId,
                 expectedProcessIdentity: expectedProcessIdentity)
         } catch let envelope as PeekabooBridgeErrorEnvelope {
-            if envelope.operationMayHaveCompleted {
-                throw Self.inputDeliveryIndeterminateError(for: envelope, operation: .type)
-            }
             throw Self.automationError(for: envelope, snapshotId: snapshotId)
         }
     }
@@ -296,9 +287,6 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
                 snapshotId: snapshotId,
                 targetProcessIdentifier: targetProcessIdentifier)
         } catch let envelope as PeekabooBridgeErrorEnvelope {
-            if envelope.operationMayHaveCompleted {
-                throw Self.inputDeliveryIndeterminateError(for: envelope, operation: .type)
-            }
             throw Self.automationError(for: envelope, snapshotId: snapshotId)
         }
     }
@@ -332,9 +320,6 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
                 holdDuration: holdDuration,
                 targetProcessIdentifier: targetProcessIdentifier)
         } catch let envelope as PeekabooBridgeErrorEnvelope {
-            if envelope.operationMayHaveCompleted {
-                throw Self.inputDeliveryIndeterminateError(for: envelope, operation: .hotkey)
-            }
             switch envelope.code {
             case .permissionDenied:
                 throw Self.permissionDeniedError(for: envelope)
@@ -365,9 +350,6 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
                 holdDuration: holdDuration,
                 expectedProcessIdentity: expectedProcessIdentity)
         } catch let envelope as PeekabooBridgeErrorEnvelope {
-            if envelope.operationMayHaveCompleted {
-                throw Self.inputDeliveryIndeterminateError(for: envelope, operation: .hotkey)
-            }
             switch envelope.code {
             case .permissionDenied:
                 throw Self.permissionDeniedError(for: envelope)
@@ -409,16 +391,6 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
         default:
             envelope
         }
-    }
-
-    private static func inputDeliveryIndeterminateError(
-        for envelope: PeekabooBridgeErrorEnvelope,
-        operation: InputDeliveryIndeterminateError.Operation) -> InputDeliveryIndeterminateError
-    {
-        InputDeliveryIndeterminateError(
-            operation: operation,
-            emittedUnitCount: nil,
-            causeDescription: envelope.message)
     }
 
     private static func targetedHotkeyUnavailableError(
@@ -535,16 +507,12 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
                 self.exactWindowTargetedKeyboardUnavailableReason ??
                     "Atomic exact-window background typing is unavailable")
         }
-        do {
-            return try await self.client.typeActions(
-                actions,
-                cadence: cadence,
-                snapshotId: snapshotId,
-                expectedWindowIdentity: expectedWindowIdentity,
-                expectedWindowBounds: expectedWindowBounds)
-        } catch let envelope as PeekabooBridgeErrorEnvelope where envelope.operationMayHaveCompleted {
-            throw Self.inputDeliveryIndeterminateError(for: envelope, operation: .type)
-        }
+        return try await self.client.typeActions(
+            actions,
+            cadence: cadence,
+            snapshotId: snapshotId,
+            expectedWindowIdentity: expectedWindowIdentity,
+            expectedWindowBounds: expectedWindowBounds)
     }
 
     public func hotkey(
@@ -558,15 +526,11 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
                 self.exactWindowTargetedKeyboardUnavailableReason ??
                     "Atomic exact-window background hotkeys are unavailable")
         }
-        do {
-            try await self.client.hotkey(
-                keys: keys,
-                holdDuration: holdDuration,
-                expectedWindowIdentity: expectedWindowIdentity,
-                expectedWindowBounds: expectedWindowBounds)
-        } catch let envelope as PeekabooBridgeErrorEnvelope where envelope.operationMayHaveCompleted {
-            throw Self.inputDeliveryIndeterminateError(for: envelope, operation: .hotkey)
-        }
+        try await self.client.hotkey(
+            keys: keys,
+            holdDuration: holdDuration,
+            expectedWindowIdentity: expectedWindowIdentity,
+            expectedWindowBounds: expectedWindowBounds)
     }
 
     public func typeActions(
@@ -580,15 +544,11 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
                 self.exactWindowTargetedKeyboardUnavailableReason ??
                     "Atomic exact-window background typing is unavailable")
         }
-        do {
-            return try await self.client.typeActions(
-                actions,
-                cadence: cadence,
-                snapshotId: snapshotId,
-                target: target)
-        } catch let envelope as PeekabooBridgeErrorEnvelope where envelope.operationMayHaveCompleted {
-            throw Self.inputDeliveryIndeterminateError(for: envelope, operation: .type)
-        }
+        return try await self.client.typeActions(
+            actions,
+            cadence: cadence,
+            snapshotId: snapshotId,
+            target: target)
     }
 
     public func hotkey(
@@ -601,14 +561,10 @@ public class RemoteUIAutomationService: DetectElementsRequestTimeoutAdjusting, T
                 self.exactWindowTargetedKeyboardUnavailableReason ??
                     "Atomic exact-window background hotkeys are unavailable")
         }
-        do {
-            try await self.client.hotkey(
-                keys: keys,
-                holdDuration: holdDuration,
-                target: target)
-        } catch let envelope as PeekabooBridgeErrorEnvelope where envelope.operationMayHaveCompleted {
-            throw Self.inputDeliveryIndeterminateError(for: envelope, operation: .hotkey)
-        }
+        try await self.client.hotkey(
+            keys: keys,
+            holdDuration: holdDuration,
+            target: target)
     }
 
     public func findElement(matching criteria: UIElementSearchCriteria, in appName: String?) async throws

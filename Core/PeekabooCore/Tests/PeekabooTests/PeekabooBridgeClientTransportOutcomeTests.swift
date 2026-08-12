@@ -3,6 +3,7 @@ import Darwin
 import Foundation
 import PeekabooAutomationKit
 import PeekabooBridgeTestSupport
+import PeekabooFoundation
 import Testing
 @testable import PeekabooBridge
 @testable import PeekabooCore
@@ -17,11 +18,8 @@ struct PeekabooBridgeClientTransportOutcomeTests {
         do {
             try await client.sendExpectOK(Self.clickRequest)
             Issue.record("Expected the response read to time out")
-        } catch let error as PeekabooBridgeErrorEnvelope {
-            #expect(error.code == .timeout)
-            #expect(error.operationMayHaveCompleted)
-            #expect(error.message.contains("indeterminate"))
-            #expect(error.message.contains("do not retry"))
+        } catch let failure as DesktopActionFailure {
+            Self.expectResponseLostFailure(failure)
         }
         await peer.waitUntilFinished()
     }
@@ -73,11 +71,8 @@ struct PeekabooBridgeClientTransportOutcomeTests {
         do {
             try await client.sendExpectOK(Self.clickRequest)
             Issue.record("Expected response EOF")
-        } catch let error as PeekabooBridgeErrorEnvelope {
-            #expect(error.code == .internalError)
-            #expect(error.operationMayHaveCompleted)
-            #expect(error.message.contains("indeterminate"))
-            #expect(error.message.contains("do not retry"))
+        } catch let failure as DesktopActionFailure {
+            Self.expectResponseLostFailure(failure)
         }
         await peer.waitUntilFinished()
     }
@@ -105,11 +100,8 @@ struct PeekabooBridgeClientTransportOutcomeTests {
         do {
             try await client.sendExpectOK(Self.clickRequest)
             Issue.record("Expected response decoding failure")
-        } catch let error as PeekabooBridgeErrorEnvelope {
-            #expect(error.code == .decodingFailed)
-            #expect(error.operationMayHaveCompleted)
-            #expect(error.message.contains("indeterminate"))
-            #expect(error.message.contains("do not retry"))
+        } catch let failure as DesktopActionFailure {
+            Self.expectResponseLostFailure(failure)
         }
         await peer.waitUntilFinished()
     }
@@ -146,12 +138,128 @@ struct PeekabooBridgeClientTransportOutcomeTests {
                 snapshotId: nil,
                 targetProcessIdentifier: 42)
             Issue.record("Expected indeterminate targeted click delivery")
-        } catch let error as InputDeliveryIndeterminateError {
-            #expect(error.operation == .click)
-            #expect(error.operationMayHaveCompleted)
-            #expect(!error.retrySafe)
+        } catch let failure as DesktopActionFailure {
+            Self.expectResponseLostFailure(failure)
         }
         await peer.waitUntilFinished()
+    }
+
+    @Test
+    func `canonical action failures reconstruct exactly once in shared transport`() async throws {
+        let delivery = DesktopActionOutcome.Delivery(
+            mechanism: .accessibilityAction,
+            mode: .background)
+        let twoUnits = try #require(DesktopActionOutcome.DispatchUnitCount(2))
+        let failures = [
+            DesktopActionFailure.refused(
+                route: .bridge,
+                reason: .permissionDenied,
+                message: "Accessibility permission was refused",
+                hint: "Grant Accessibility permission.",
+                causeDescription: "AX is not trusted"),
+            DesktopActionFailure.dispatchedUnverified(
+                route: .bridge,
+                delivery: delivery,
+                evidence: .deliveryAccepted,
+                unitCount: twoUnits,
+                message: "Delivery was accepted but not verified",
+                hint: "Observe before retrying.",
+                causeDescription: "post-dispatch verification timed out"),
+            DesktopActionFailure.partial(
+                route: .bridge,
+                delivery: delivery,
+                unitCount: twoUnits,
+                message: "The action changed the target but cleanup failed",
+                hint: "Recover the remaining side effect.",
+                causeDescription: "cleanup receipt was unavailable"),
+            DesktopActionFailure.indeterminate(
+                route: .bridge,
+                delivery: delivery,
+                evidence: .completionUnknown,
+                unitCount: twoUnits,
+                message: "The final action state is unknown",
+                hint: "Observe before retrying.",
+                causeDescription: "the host lost its verification receipt"),
+        ]
+
+        for expected in failures {
+            let response = BridgeTestFixtures.actionFailureResponse(failure: expected)
+            let data = try JSONEncoder.peekabooBridgeEncoder().encode(response)
+            let peer = try ScriptedBridgePeer(behavior: .respond(data))
+            let client = PeekabooBridgeClient(socketPath: peer.socketPath, requestTimeoutSec: 1)
+
+            do {
+                try await client.sendExpectOK(Self.clickRequest)
+                Issue.record("Expected canonical desktop action failure")
+            } catch let actual as DesktopActionFailure {
+                #expect(actual == expected)
+            }
+            await peer.waitUntilFinished()
+        }
+    }
+
+    @Test
+    func `legacy may-have-completed response becomes completion-unknown`() async throws {
+        let response = BridgeTestFixtures.errorResponse(
+            code: .internalError,
+            message: "Legacy host could not verify completion",
+            details: "legacy detail",
+            operationMayHaveCompleted: true)
+        let data = try JSONEncoder.peekabooBridgeEncoder().encode(response)
+        let peer = try ScriptedBridgePeer(behavior: .respond(data))
+        let client = PeekabooBridgeClient(socketPath: peer.socketPath, requestTimeoutSec: 1)
+
+        do {
+            try await client.sendExpectOK(Self.clickRequest)
+            Issue.record("Expected conservative legacy desktop action failure")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.route == .bridge)
+            #expect(failure.outcome.state == .indeterminate)
+            #expect(failure.outcome.evidence == .completionUnknown)
+            #expect(failure.outcome.retrySafety == .unsafe)
+            #expect(failure.outcome.projection.requiresFreshObservation)
+            #expect(failure.message == "Legacy host could not verify completion")
+            #expect(failure.causeDescription == "legacy detail")
+        }
+        await peer.waitUntilFinished()
+    }
+
+    @Test
+    func `read-only request never reconstructs a desktop action failure`() async throws {
+        let failure = DesktopActionFailure.indeterminate(
+            route: .bridge,
+            evidence: .completionUnknown,
+            message: "Fixture action failure on a read-only request")
+        let response = BridgeTestFixtures.actionFailureResponse(failure: failure)
+        let data = try JSONEncoder.peekabooBridgeEncoder().encode(response)
+        let peer = try ScriptedBridgePeer(behavior: .respond(data))
+        let client = PeekabooBridgeClient(socketPath: peer.socketPath, requestTimeoutSec: 1)
+
+        let actual = try await client.send(.permissionsStatus)
+        guard case let .error(envelope) = actual else {
+            Issue.record("Expected the read-only request to retain its Bridge error envelope")
+            await peer.waitUntilFinished()
+            return
+        }
+        #expect(envelope.desktopActionFailure == failure)
+        await peer.waitUntilFinished()
+    }
+
+    @Test
+    func `error envelope rejects compatibility Boolean contradicting canonical outcome`() throws {
+        let failure = DesktopActionFailure.indeterminate(
+            route: .bridge,
+            evidence: .completionUnknown,
+            message: "Completion unknown")
+        let envelope = PeekabooBridgeErrorEnvelope(code: .internalError, actionFailure: failure)
+        let data = try JSONEncoder.peekabooBridgeEncoder().encode(envelope)
+        var object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        object["operationMayHaveCompleted"] = false
+        let forged = try JSONSerialization.data(withJSONObject: object)
+
+        #expect(throws: DecodingError.self) {
+            try JSONDecoder.peekabooBridgeDecoder().decode(PeekabooBridgeErrorEnvelope.self, from: forged)
+        }
     }
 
     @Test
@@ -168,6 +276,17 @@ struct PeekabooBridgeClientTransportOutcomeTests {
     private static let clickRequest = PeekabooBridgeRequest.click(.init(
         target: .coordinates(CGPoint(x: 10, y: 20)),
         clickType: .single))
+
+    private static func expectResponseLostFailure(_ failure: DesktopActionFailure) {
+        #expect(failure.outcome.route == .bridge)
+        #expect(failure.outcome.state == .indeterminate)
+        #expect(failure.outcome.evidence == .responseLost)
+        #expect(failure.outcome.retrySafety == .unsafe)
+        #expect(failure.outcome.projection.requiresFreshObservation)
+        #expect(failure.message.contains("indeterminate"))
+        #expect(failure.message.contains("do not retry"))
+        #expect(PendingSnapshotCleanupPolicy.shouldPreserveReservation(after: failure))
+    }
 }
 
 private final class ScriptedBridgePeer: @unchecked Sendable {

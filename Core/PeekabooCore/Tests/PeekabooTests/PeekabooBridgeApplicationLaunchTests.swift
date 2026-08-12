@@ -242,12 +242,17 @@ struct PeekabooBridgeApplicationLaunchTests {
         do {
             _ = try await clientTask.value
             Issue.record("Expected the disconnected client request to be cancelled")
-        } catch let error as PeekabooBridgeErrorEnvelope {
-            #expect(error.code == .internalError)
-            #expect(error.operationMayHaveCompleted)
-            #expect(error.message.contains("indeterminate"))
-            #expect(error.message.contains("do not retry"))
-            #expect(PendingSnapshotCleanupPolicy.shouldPreserveReservation(after: error))
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.route == .bridge)
+            #expect(failure.outcome.state == .indeterminate)
+            #expect(failure.outcome.evidence == .responseLost)
+            #expect(failure.outcome.retrySafety == .unsafe)
+            #expect(failure.outcome.projection.requiresFreshObservation)
+            #expect(failure.message.contains("indeterminate"))
+            #expect(failure.message.contains("do not retry"))
+            #expect(PendingSnapshotCleanupPolicy.shouldPreserveReservation(after: failure))
+        } catch {
+            Issue.record("Expected response-lost failure, got \(error)")
         }
         try await Self.waitForActiveConnectionCount(0, host: host)
 

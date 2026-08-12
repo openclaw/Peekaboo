@@ -96,6 +96,7 @@ let package = Package(
             dependencies: [
                 .target(name: "PeekabooBridge"),
                 .product(name: "PeekabooAutomationKit", package: "PeekabooAutomationKit"),
+                .product(name: "PeekabooFoundation", package: "PeekabooFoundation"),
             ],
             path: "Sources/PeekabooBridgeTestSupport",
             swiftSettings: approachableConcurrencySettings),

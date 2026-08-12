@@ -1526,7 +1526,7 @@ extension PeekabooBridgeTests {
     }
 
     @Test
-    func `remote targeted and exact input restore indeterminate delivery errors`() async throws {
+    func `remote targeted and exact input conservatively adapt legacy indeterminate delivery errors`() async throws {
         let socketPath = "/tmp/peekaboo-bridge-input-indeterminate-\(UUID().uuidString).sock"
         let targetedTypeSourceError = InputDeliveryIndeterminateError(
             operation: .type,
@@ -1596,10 +1596,8 @@ extension PeekabooBridgeTests {
                 expectedWindowIdentity: expectedWindowIdentity,
                 expectedWindowBounds: expectedWindowBounds)
             Issue.record("Expected exact click outcome to be indeterminate")
-        } catch let error as InputDeliveryIndeterminateError {
-            #expect(error.operation == .click)
-            #expect(error.emittedUnitCount == nil)
-            #expect(error.causeDescription == clickSourceError.localizedDescription)
+        } catch let failure as DesktopActionFailure {
+            Self.expectLegacyIndeterminateFailure(failure, source: clickSourceError)
         } catch {
             Issue.record("Expected exact click indeterminate error, got \(error)")
         }
@@ -1611,10 +1609,8 @@ extension PeekabooBridgeTests {
                 snapshotId: "snapshot",
                 targetProcessIdentifier: 4242)
             Issue.record("Expected targeted type outcome to be indeterminate")
-        } catch let error as InputDeliveryIndeterminateError {
-            #expect(error.operation == .type)
-            #expect(error.emittedUnitCount == nil)
-            #expect(error.causeDescription == targetedTypeSourceError.localizedDescription)
+        } catch let failure as DesktopActionFailure {
+            Self.expectLegacyIndeterminateFailure(failure, source: targetedTypeSourceError)
         } catch {
             Issue.record("Expected targeted type indeterminate error, got \(error)")
         }
@@ -1627,10 +1623,8 @@ extension PeekabooBridgeTests {
                 expectedWindowIdentity: expectedWindowIdentity,
                 expectedWindowBounds: expectedWindowBounds)
             Issue.record("Expected exact type outcome to be indeterminate")
-        } catch let error as InputDeliveryIndeterminateError {
-            #expect(error.operation == .type)
-            #expect(error.emittedUnitCount == nil)
-            #expect(error.causeDescription == exactTypeSourceError.localizedDescription)
+        } catch let failure as DesktopActionFailure {
+            Self.expectLegacyIndeterminateFailure(failure, source: exactTypeSourceError)
         } catch {
             Issue.record("Expected exact type indeterminate error, got \(error)")
         }
@@ -1638,10 +1632,8 @@ extension PeekabooBridgeTests {
         do {
             try await remote.hotkey(keys: "cmd,l", holdDuration: 50, targetProcessIdentifier: 4242)
             Issue.record("Expected targeted hotkey outcome to be indeterminate")
-        } catch let error as InputDeliveryIndeterminateError {
-            #expect(error.operation == .hotkey)
-            #expect(error.emittedUnitCount == nil)
-            #expect(error.causeDescription == targetedHotkeySourceError.localizedDescription)
+        } catch let failure as DesktopActionFailure {
+            Self.expectLegacyIndeterminateFailure(failure, source: targetedHotkeySourceError)
         } catch {
             Issue.record("Expected targeted hotkey indeterminate error, got \(error)")
         }
@@ -1653,13 +1645,24 @@ extension PeekabooBridgeTests {
                 expectedWindowIdentity: expectedWindowIdentity,
                 expectedWindowBounds: expectedWindowBounds)
             Issue.record("Expected exact hotkey outcome to be indeterminate")
-        } catch let error as InputDeliveryIndeterminateError {
-            #expect(error.operation == .hotkey)
-            #expect(error.emittedUnitCount == nil)
-            #expect(error.causeDescription == exactHotkeySourceError.localizedDescription)
+        } catch let failure as DesktopActionFailure {
+            Self.expectLegacyIndeterminateFailure(failure, source: exactHotkeySourceError)
         } catch {
             Issue.record("Expected exact hotkey indeterminate error, got \(error)")
         }
+    }
+
+    private static func expectLegacyIndeterminateFailure(
+        _ failure: DesktopActionFailure,
+        source: InputDeliveryIndeterminateError)
+    {
+        #expect(failure.outcome.route == .bridge)
+        #expect(failure.outcome.state == .indeterminate)
+        #expect(failure.outcome.evidence == .completionUnknown)
+        #expect(failure.outcome.dispatchState.unitCount == nil)
+        #expect(failure.outcome.retrySafety == .unsafe)
+        #expect(failure.outcome.projection.requiresFreshObservation)
+        #expect(failure.message == source.localizedDescription)
     }
 
     @Test
