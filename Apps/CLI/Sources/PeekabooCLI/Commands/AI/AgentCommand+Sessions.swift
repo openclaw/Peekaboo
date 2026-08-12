@@ -167,20 +167,23 @@ extension AgentCommand {
     }
 
     private func printSessionsJSON(_ sessions: [AgentSessionInfo]) {
-        let sessionData = sessions.map { session in
-            [
-                "id": session.id,
-                "task": session.task,
-                "createdAt": ISO8601DateFormatter().string(from: session.created),
-                "updatedAt": ISO8601DateFormatter().string(from: session.lastModified),
-                "messageCount": session.messageCount,
-                "toolExecutionPolicy": session.toolExecutionPolicy,
-            ]
-        }
+        let sessionData = sessions.map(self.sessionJSONObject)
         let response = ["success": true, "sessions": sessionData] as [String: Any]
         if let jsonData = try? JSONSerialization.data(withJSONObject: response, options: .prettyPrinted) {
             print(String(data: jsonData, encoding: .utf8) ?? "{}")
         }
+    }
+
+    func sessionJSONObject(_ session: AgentSessionInfo) -> [String: Any] {
+        [
+            "id": session.id,
+            "task": session.task,
+            "createdAt": ISO8601DateFormatter().string(from: session.created),
+            "updatedAt": ISO8601DateFormatter().string(from: session.lastModified),
+            "messageCount": session.messageCount,
+            "status": session.status,
+            "toolExecutionPolicy": session.toolExecutionPolicy,
+        ]
     }
 
     private func printSessionsList(_ sessions: [AgentSessionInfo]) {
@@ -226,9 +229,7 @@ extension AgentCommand {
             " ",
             "\(TerminalColor.bold)\(task)\(TerminalColor.reset)",
         ].joined()
-        let status = session.status == SessionStatus.active.rawValue
-            ? "active (saved/resumable; not a live-process signal)"
-            : session.status
+        let status = self.sessionStatusDescription(session.status)
         return [
             sessionLine,
             "   ID: \(session.id)",
@@ -238,6 +239,21 @@ extension AgentCommand {
             "   Messages: \(session.messageCount)",
             "   Last activity: \(timeAgo)",
         ]
+    }
+
+    private func sessionStatusDescription(_ status: String) -> String {
+        switch status {
+        case SessionStatus.active.rawValue:
+            "active (saved/resumable; not a live-process signal)"
+        case SessionStatus.completed.rawValue:
+            "completed (saved/resumable; last run finished)"
+        case SessionStatus.failed.rawValue:
+            "failed (saved/resumable; last run failed or was cancelled)"
+        case SessionStatus.expired.rawValue:
+            "expired (past the retention window)"
+        default:
+            status
+        }
     }
 
     private static func terminalSafeSessionTask(_ task: String) -> String {

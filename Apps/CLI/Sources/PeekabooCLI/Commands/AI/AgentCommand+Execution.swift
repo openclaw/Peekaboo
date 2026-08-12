@@ -32,7 +32,10 @@ extension AgentCommand {
     func displayDryRunPreview(instruction: String) {
         if self.jsonOutput {
             let response = self.makeDryRunJSONResponse(instruction: instruction)
-            if let jsonData = try? JSONSerialization.data(withJSONObject: response, options: .prettyPrinted) {
+            if let jsonData = try? JSONSerialization.data(
+                withJSONObject: response,
+                options: [.prettyPrinted, .sortedKeys]
+            ) {
                 print(String(data: jsonData, encoding: .utf8) ?? "{}")
             }
             return
@@ -54,7 +57,7 @@ extension AgentCommand {
     }
 
     func makeDryRunJSONResponse(instruction: String) -> [String: Any] {
-        let now = Date()
+        let now = Date(timeIntervalSince1970: 0)
         let result = AgentExecutionResult(
             content: "Dry run preview. No model or tools were invoked.",
             messages: [],

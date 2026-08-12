@@ -144,6 +144,8 @@ public struct MCPAgentTool: MCPTool {
                 "createdAt": .string(isoFormatter.string(from: session.createdAt)),
                 "updatedAt": .string(isoFormatter.string(from: session.lastAccessedAt)),
                 "messageCount": .string(String(session.messageCount)),
+                "status": .string(session.status.rawValue),
+                "task": .string(session.summary ?? ""),
                 "toolExecutionPolicy": .string(session.toolExecutionPolicy.rawValue),
             ])
         }
@@ -171,6 +173,8 @@ public struct MCPAgentTool: MCPTool {
                 "ID: \(session.id)",
                 "Created: \(formatter.string(from: session.createdAt))",
                 "Updated: \(formatter.string(from: session.lastAccessedAt))",
+                "Task: \(session.summary ?? "Unknown task")",
+                "Status: \(session.status.rawValue)",
                 "Message Count: \(session.messageCount)",
                 "Tool Policy: \(session.toolExecutionPolicy.rawValue)",
             ].joined(separator: "\n")

@@ -1,7 +1,9 @@
 import Foundation
 import PeekabooFoundation
+import Tachikoma
 import Testing
 @testable import PeekabooAgentRuntime
+@testable import PeekabooCore
 
 @Suite(.serialized)
 struct AgentSessionExecutionPolicyTests {
@@ -32,6 +34,28 @@ struct AgentSessionExecutionPolicyTests {
         let decoded = try JSONDecoder().decode(AgentSession.self, from: legacy)
         #expect(decoded.toolExecutionPolicy == nil)
         #expect(decoded.effectiveToolExecutionPolicy == .backgroundOnly)
+    }
+
+    @Test
+    func `legacy session summary without policy decodes as background-only`() throws {
+        let now = Date()
+        let encoded = try JSONEncoder().encode(SessionSummary(
+            id: "legacy-summary",
+            modelName: "test-model",
+            createdAt: now,
+            lastAccessedAt: now,
+            messageCount: 2,
+            status: .active,
+            summary: "task",
+            toolExecutionPolicy: .foregroundAllowed))
+        var object = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        object.removeValue(forKey: "toolExecutionPolicy")
+        let legacy = try JSONSerialization.data(withJSONObject: object)
+
+        let decoded = try JSONDecoder().decode(SessionSummary.self, from: legacy)
+        #expect(decoded.toolExecutionPolicy == .backgroundOnly)
+        #expect(decoded.id == "legacy-summary")
+        #expect(decoded.summary == "task")
     }
 
     @Test
@@ -80,6 +104,67 @@ struct AgentSessionExecutionPolicyTests {
         #expect(try PeekabooAgentService.resolveToolExecutionPolicy(
             for: forged,
             requested: nil) == .backgroundOnly)
+    }
+
+    @Test
+    @MainActor
+    func `background resume preserves stored foreground maximum`() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("agent-policy-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let manager = try AgentSessionManager(sessionDirectory: directory)
+        let service = try PeekabooAgentService(services: PeekabooServices(), sessionManager: manager)
+        let session = Self.session(id: "foreground-maximum", policy: .foregroundAllowed)
+        try manager.saveSession(session)
+
+        let context = service.makeContinuationContext(
+            from: session,
+            userMessage: "background turn",
+            model: .ollama(.llama33),
+            toolExecutionPolicy: .backgroundOnly)
+        try service.saveExecutionSession(
+            context: context,
+            model: .ollama(.llama33),
+            finalMessages: context.messages + [ModelMessage.assistant("done")],
+            endTime: Date(),
+            toolCallCount: 0,
+            usage: nil,
+            status: SessionStatus.completed.rawValue)
+
+        let loaded = try #require(try await manager.loadSession(id: session.id))
+        #expect(context.toolExecutionPolicy == .backgroundOnly)
+        #expect(context.storedToolExecutionPolicy == .foregroundAllowed)
+        #expect(loaded.effectiveToolExecutionPolicy == .foregroundAllowed)
+        #expect(try PeekabooAgentService.resolveToolExecutionPolicy(
+            for: loaded,
+            requested: .foregroundAllowed) == .foregroundAllowed)
+    }
+
+    @Test
+    @MainActor
+    func `session summary skips injected desktop state and preserves lifecycle`() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("agent-policy-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let manager = try AgentSessionManager(sessionDirectory: directory)
+        let now = Date()
+        let session = AgentSession(
+            id: "summary",
+            modelName: "test-model",
+            toolExecutionPolicy: .backgroundOnly,
+            messages: [
+                .system("system"),
+                .user("<DESKTOP_STATE nonce>\nDESKTOP_STATE | untrusted\n</DESKTOP_STATE nonce>"),
+                .user("Original exact task"),
+            ],
+            metadata: SessionMetadata(customData: ["status": SessionStatus.completed.rawValue]),
+            createdAt: now,
+            updatedAt: now)
+        try manager.saveSession(session)
+
+        let summary = try #require(manager.listSessions().first)
+        #expect(summary.summary == "Original exact task")
+        #expect(summary.status == .completed)
     }
 
     private static func session(id: String, policy: MCPToolExecutionPolicy) -> AgentSession {

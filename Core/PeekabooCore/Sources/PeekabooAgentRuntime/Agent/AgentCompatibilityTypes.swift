@@ -144,6 +144,43 @@ public struct SessionSummary: Sendable, Codable {
         self.summary = summary
         self.toolExecutionPolicy = toolExecutionPolicy
     }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case modelName
+        case createdAt
+        case lastAccessedAt
+        case messageCount
+        case status
+        case summary
+        case toolExecutionPolicy
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try container.decode(String.self, forKey: .id)
+        self.modelName = try container.decode(String.self, forKey: .modelName)
+        self.createdAt = try container.decode(Date.self, forKey: .createdAt)
+        self.lastAccessedAt = try container.decode(Date.self, forKey: .lastAccessedAt)
+        self.messageCount = try container.decode(Int.self, forKey: .messageCount)
+        self.status = try container.decode(SessionStatus.self, forKey: .status)
+        self.summary = try container.decodeIfPresent(String.self, forKey: .summary)
+        self.toolExecutionPolicy = try container.decodeIfPresent(
+            MCPToolExecutionPolicy.self,
+            forKey: .toolExecutionPolicy) ?? .backgroundOnly
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(self.id, forKey: .id)
+        try container.encode(self.modelName, forKey: .modelName)
+        try container.encode(self.createdAt, forKey: .createdAt)
+        try container.encode(self.lastAccessedAt, forKey: .lastAccessedAt)
+        try container.encode(self.messageCount, forKey: .messageCount)
+        try container.encode(self.status, forKey: .status)
+        try container.encodeIfPresent(self.summary, forKey: .summary)
+        try container.encode(self.toolExecutionPolicy, forKey: .toolExecutionPolicy)
+    }
 }
 
 /// Status of an agent session
@@ -431,7 +468,7 @@ public final class AgentSessionManager: @unchecked Sendable {
 
     private func generateSessionSummary(from messages: [ModelMessage]) -> String? {
         messages.firstNonNil { message in
-            guard message.role == .user else { return nil }
+            guard message.role == .user, !message.isDesktopContextDataMessage else { return nil }
             if case let .text(text) = message.content.first {
                 return String(text.prefix(100))
             }

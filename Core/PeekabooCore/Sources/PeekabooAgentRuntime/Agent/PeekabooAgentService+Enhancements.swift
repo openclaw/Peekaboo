@@ -392,6 +392,12 @@ extension [ModelMessage.ContentPart] {
     }
 }
 
+extension ModelMessage {
+    var isDesktopContextDataMessage: Bool {
+        self.role == .user && self.content.containsDesktopContextDataMarker
+    }
+}
+
 // MARK: - AgentToolArguments Extension
 
 extension AgentToolArguments {

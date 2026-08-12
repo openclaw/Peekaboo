@@ -465,11 +465,14 @@ struct CLIRuntimeSmokeTests {
         guard Self.ensureLocalRuntimeAvailable() else { return }
 
         for prefix in [["agent"], ["agent", "run"]] {
-            let result = try await TestChildProcess.runPeekaboo(
-                prefix + ["  Inspect TextEdit  ", "--dry-run", "--json", "--no-remote"]
-            )
+            let arguments = prefix + ["  Inspect TextEdit  ", "--dry-run", "--json", "--no-remote"]
+            let result = try await TestChildProcess.runPeekaboo(arguments)
+            let repeated = try await TestChildProcess.runPeekaboo(arguments)
             #expect(result.status == .exited(0))
             #expect(result.standardError.isEmpty)
+            #expect(repeated.status == .exited(0))
+            #expect(repeated.standardError.isEmpty)
+            #expect(result.standardOutput == repeated.standardOutput)
 
             let response = try #require(
                 JSONSerialization.jsonObject(with: Data(result.standardOutput.utf8)) as? [String: Any]

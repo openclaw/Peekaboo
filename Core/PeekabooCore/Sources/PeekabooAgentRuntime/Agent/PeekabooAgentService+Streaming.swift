@@ -861,7 +861,17 @@ extension PeekabooAgentService {
                     eventHandler: context.eventHandler)
                 currentMessages.append(ModelMessage(role: .tool, content: [.toolResult(preflightResult)]))
                 toolResults.append(preflightResult)
-                if index == toolCalls.count - 1, Task.isCancelled {
+                do {
+                    try Task.checkCancellation()
+                } catch {
+                    await self.appendCancelledToolResults(
+                        toolCalls: toolCalls,
+                        startingAt: index + 1,
+                        activeToolCallId: nil,
+                        context: context,
+                        currentMessages: &currentMessages,
+                        toolResults: &toolResults,
+                        emitToolStartEvents: emitToolStartEvents)
                     onCancellationCheckpoint?(GenerationStep(
                         stepIndex: stepIndex,
                         text: stepText,

@@ -699,6 +699,10 @@ struct MCPSpecificToolTests {
             return
         }
         #expect(text.contains("Tool Policy: foreground_allowed"))
+        #expect(text.contains("Task: task"))
+        #expect(text.contains("Status: active"))
+        #expect(session["task"] == .string("task"))
+        #expect(session["status"] == .string("active"))
         #expect(session["toolExecutionPolicy"] == .string("foreground_allowed"))
     }
 

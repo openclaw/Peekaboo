@@ -89,6 +89,24 @@ struct AgentCommandExecutionPolicyTests {
         #expect(output.contains("active (saved/resumable; not a live-process signal)"))
         #expect(output.contains("Stored policy maximum: foreground_allowed"))
         #expect(output.contains("Next resume default: background_only"))
+
+        let json = command.sessionJSONObject(session)
+        #expect(json["id"] as? String == session.id)
+        #expect(json["task"] as? String == session.task)
+        #expect(json["status"] as? String == SessionStatus.active.rawValue)
+        #expect(json["toolExecutionPolicy"] as? String == MCPToolExecutionPolicy.foregroundAllowed.rawValue)
+
+        let completed = AgentSessionInfo(
+            id: session.id,
+            task: session.task,
+            created: session.created,
+            lastModified: session.lastModified,
+            messageCount: session.messageCount,
+            status: SessionStatus.completed.rawValue,
+            toolExecutionPolicy: session.toolExecutionPolicy
+        )
+        let completedOutput = command.sessionDisplayLines(index: 0, session: completed).joined(separator: "\n")
+        #expect(completedOutput.contains("completed (saved/resumable; last run finished)"))
     }
 
     @Test

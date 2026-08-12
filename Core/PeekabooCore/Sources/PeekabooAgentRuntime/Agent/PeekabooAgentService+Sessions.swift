@@ -20,6 +20,7 @@ extension PeekabooAgentService {
         let executionStart: Date
         let metadata: SessionMetadata
         let modelIdentity: PersistedModelIdentity
+        let storedToolExecutionPolicy: MCPToolExecutionPolicy
         let toolExecutionPolicy: MCPToolExecutionPolicy
         let provider: (any ModelProvider)?
     }
@@ -87,6 +88,7 @@ extension PeekabooAgentService {
             executionStart: startTime,
             metadata: SessionMetadata(),
             modelIdentity: modelIdentity,
+            storedToolExecutionPolicy: toolExecutionPolicy,
             toolExecutionPolicy: toolExecutionPolicy,
             provider: provider)
     }
@@ -138,7 +140,7 @@ extension PeekabooAgentService {
             modelSelection: modelIdentity.selection,
             modelEndpointIdentity: modelIdentity.endpointIdentity,
             modelProviderIdentity: modelIdentity.providerIdentity,
-            toolExecutionPolicy: context.toolExecutionPolicy,
+            toolExecutionPolicy: context.storedToolExecutionPolicy,
             messages: finalMessages.removingConsumedAgentToolImageContext(),
             metadata: updatedMetadata,
             createdAt: context.createdAt,
@@ -218,6 +220,7 @@ extension PeekabooAgentService {
             executionStart: Date(),
             metadata: session.metadata,
             modelIdentity: modelIdentity,
+            storedToolExecutionPolicy: session.effectiveToolExecutionPolicy,
             toolExecutionPolicy: toolExecutionPolicy,
             provider: provider)
     }

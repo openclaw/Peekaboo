@@ -261,6 +261,67 @@ struct MCPToolExecutionPolicyTests {
             #expect(result.result.objectValue?["skipped"] == nil)
         }
     }
+
+    @Test
+    @MainActor
+    func `cancellation after policy refusal cancels every remaining call before execution`() async throws {
+        let counter = PolicyInvocationCounter()
+        let capture = PolicyCancellationCapture()
+        let service = try PeekabooAgentService(services: PeekabooServices())
+        let tools = [
+            AgentTool(
+                name: "see",
+                description: "see",
+                parameters: AgentToolParameters(properties: [:], required: []),
+                execute: { _ in
+                    await counter.record()
+                    return AnyAgentToolValue(object: ["success": AnyAgentToolValue(bool: true)])
+                }),
+        ]
+        let eventHandler = EventHandler { event in
+            if case let .toolCallCompleted(name, _) = event, name == "shell" {
+                withUnsafeCurrentTask { task in task?.cancel() }
+            }
+        }
+        let context = PeekabooAgentService.ToolHandlingContext(
+            model: .anthropic(.sonnet45),
+            tools: tools,
+            eventHandler: eventHandler,
+            sessionId: "policy-cancellation",
+            executionPolicy: .backgroundOnly)
+        let toolCalls = [
+            AgentToolCall(id: "policy-refusal", name: "shell", arguments: [:]),
+            AgentToolCall(id: "must-not-run", name: "see", arguments: [:]),
+        ]
+
+        let worker = Task { @MainActor in
+            var messages: [ModelMessage] = []
+            var checkpoint: GenerationStep?
+            do {
+                _ = try await service.handleToolCalls(
+                    stepText: "",
+                    toolCalls: toolCalls,
+                    context: context,
+                    currentMessages: &messages,
+                    stepIndex: 0,
+                    onCancellationCheckpoint: { checkpoint = $0 })
+                await capture.record(cancelled: false, checkpoint: checkpoint, messages: messages)
+            } catch {
+                await capture.record(
+                    cancelled: error is CancellationError,
+                    checkpoint: checkpoint,
+                    messages: messages)
+            }
+        }
+        await worker.value
+
+        let snapshot = await capture.snapshot()
+        #expect(snapshot.cancelled)
+        #expect(snapshot.toolCallIDs == ["policy-refusal", "must-not-run"])
+        #expect(snapshot.isError == [true, true])
+        #expect(snapshot.toolMessageCount == 2)
+        #expect(await counter.value == 0)
+    }
 }
 
 private actor PolicyInvocationCounter {
@@ -268,6 +329,29 @@ private actor PolicyInvocationCounter {
 
     func record() {
         self.value += 1
+    }
+}
+
+private actor PolicyCancellationCapture {
+    struct Snapshot: Sendable {
+        let cancelled: Bool
+        let toolCallIDs: [String]
+        let isError: [Bool]
+        let toolMessageCount: Int
+    }
+
+    private var stored = Snapshot(cancelled: false, toolCallIDs: [], isError: [], toolMessageCount: 0)
+
+    func record(cancelled: Bool, checkpoint: GenerationStep?, messages: [ModelMessage]) {
+        self.stored = Snapshot(
+            cancelled: cancelled,
+            toolCallIDs: checkpoint?.toolResults.map(\.toolCallId) ?? [],
+            isError: checkpoint?.toolResults.map(\.isError) ?? [],
+            toolMessageCount: messages.count(where: { $0.role == .tool }))
+    }
+
+    func snapshot() -> Snapshot {
+        self.stored
     }
 }
 
