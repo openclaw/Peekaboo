@@ -2,6 +2,7 @@ import Commander
 import CoreGraphics
 import Foundation
 import PeekabooAutomationKit
+import PeekabooAutomationKitTestSupport
 import PeekabooCore
 import PeekabooFoundation
 import Testing
@@ -999,32 +1000,31 @@ struct InteractionObservationContextTests {
         let tracker = CoreWindowTracker(
             bounds: CGRect(x: 30, y: 25, width: 300, height: 200)
         )
-        WindowMovementTracking.provider = tracker
-        defer { WindowMovementTracking.provider = nil }
+        try await WindowMovementTrackingProviderScope.withProvider(tracker) {
+            let point = try await InteractionTargetPointResolver.elementCenter(
+                elementId: "B1",
+                snapshotId: snapshotId,
+                snapshots: snapshots
+            )
 
-        let point = try await InteractionTargetPointResolver.elementCenter(
-            elementId: "B1",
-            snapshotId: snapshotId,
-            snapshots: snapshots
-        )
+            #expect(point == CGPoint(x: 120, y: 95))
 
-        #expect(point == CGPoint(x: 120, y: 95))
+            let resolution = try await InteractionTargetPointResolver.elementCenterResolution(
+                element: Self.buttonElement(id: "B1", label: "Save"),
+                elementId: "B1",
+                snapshotId: snapshotId,
+                snapshots: snapshots
+            )
 
-        let resolution = try await InteractionTargetPointResolver.elementCenterResolution(
-            element: Self.buttonElement(id: "B1", label: "Save"),
-            elementId: "B1",
-            snapshotId: snapshotId,
-            snapshots: snapshots
-        )
-
-        #expect(resolution.point == CGPoint(x: 70, y: 37))
-        #expect(resolution.diagnostics.source == "element")
-        #expect(resolution.diagnostics.elementId == "B1")
-        #expect(resolution.diagnostics.snapshotId == snapshotId)
-        #expect(resolution.diagnostics.original == InteractionPoint(CGPoint(x: 50, y: 32)))
-        #expect(resolution.diagnostics.resolved == InteractionPoint(CGPoint(x: 70, y: 37)))
-        #expect(resolution.diagnostics.windowAdjustment?.status == "adjusted")
-        #expect(resolution.diagnostics.windowAdjustment?.delta == InteractionPoint(CGPoint(x: 20, y: 5)))
+            #expect(resolution.point == CGPoint(x: 70, y: 37))
+            #expect(resolution.diagnostics.source == "element")
+            #expect(resolution.diagnostics.elementId == "B1")
+            #expect(resolution.diagnostics.snapshotId == snapshotId)
+            #expect(resolution.diagnostics.original == InteractionPoint(CGPoint(x: 50, y: 32)))
+            #expect(resolution.diagnostics.resolved == InteractionPoint(CGPoint(x: 70, y: 37)))
+            #expect(resolution.diagnostics.windowAdjustment?.status == "adjusted")
+            #expect(resolution.diagnostics.windowAdjustment?.delta == InteractionPoint(CGPoint(x: 20, y: 5)))
+        }
     }
 
     @Test

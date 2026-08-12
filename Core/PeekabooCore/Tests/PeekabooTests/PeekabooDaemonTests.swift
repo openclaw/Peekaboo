@@ -1,5 +1,6 @@
 import Foundation
 import PeekabooAutomationKit
+import PeekabooAutomationKitTestSupport
 import PeekabooBridge
 import Testing
 @testable import PeekabooCore
@@ -137,14 +138,16 @@ struct PeekabooDaemonTests {
 
     @Test
     func `embedded MCP shutdown completes tracker cleanup`() async throws {
-        let daemon = PeekabooDaemon(configuration: .embeddedMCP())
-        try await daemon.startChecked()
-        #expect(WindowMovementTracking.provider != nil)
+        try await WindowMovementTrackingProviderScope.withExclusiveAccess {
+            let daemon = PeekabooDaemon(configuration: .embeddedMCP())
+            try await daemon.startChecked()
+            #expect(WindowMovementTracking.provider != nil)
 
-        #expect(await daemon.requestStop())
-        await daemon.waitUntilStopped()
+            #expect(await daemon.requestStop())
+            await daemon.waitUntilStopped()
 
-        #expect(WindowMovementTracking.provider == nil)
+            #expect(WindowMovementTracking.provider == nil)
+        }
     }
 
     @Test

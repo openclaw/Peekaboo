@@ -1,38 +1,38 @@
 import CoreGraphics
 import Foundation
 import PeekabooAutomationKit
+import PeekabooAutomationKitTestSupport
 import Testing
 
 @Suite(.tags(.safe))
 struct WindowMovementTrackingTests {
     @Test
     @MainActor
-    func `Adjusts points when window moves`() {
+    func `Adjusts points when window moves`() async {
         let snapshot = UIAutomationSnapshot(
             windowBounds: CGRect(x: 100, y: 100, width: 200, height: 200),
             windowID: 42)
 
         let tracker = StubWindowTracker(bounds: CGRect(x: 140, y: 150, width: 200, height: 200))
-        WindowMovementTracking.provider = tracker
-        defer { WindowMovementTracking.provider = nil }
+        await WindowMovementTrackingProviderScope.withProvider(tracker) {
+            let original = CGPoint(x: 150, y: 150)
+            let result = WindowMovementTracking.adjustPoint(original, snapshot: snapshot)
 
-        let original = CGPoint(x: 150, y: 150)
-        let result = WindowMovementTracking.adjustPoint(original, snapshot: snapshot)
-
-        #expect(tracker.refreshCount == 0)
-        switch result {
-        case let .adjusted(point, delta):
-            #expect(delta.x == 40)
-            #expect(delta.y == 50)
-            #expect(point == CGPoint(x: 190, y: 200))
-        default:
-            Issue.record("Expected adjusted point, got \(result)")
+            #expect(tracker.refreshCount == 0)
+            switch result {
+            case let .adjusted(point, delta):
+                #expect(delta.x == 40)
+                #expect(delta.y == 50)
+                #expect(point == CGPoint(x: 190, y: 200))
+            default:
+                Issue.record("Expected adjusted point, got \(result)")
+            }
         }
     }
 
     @Test
     @MainActor
-    func `Refreshes exact window after provider cache miss`() {
+    func `Refreshes exact window after provider cache miss`() async {
         let snapshot = UIAutomationSnapshot(
             applicationProcessId: 321,
             windowBounds: CGRect(x: 100, y: 100, width: 200, height: 200),
@@ -41,23 +41,22 @@ struct WindowMovementTrackingTests {
             bounds: nil,
             refreshedBounds: CGRect(x: 140, y: 150, width: 200, height: 200),
             refreshedOwnerProcessIdentifier: 321)
-        WindowMovementTracking.provider = tracker
-        defer { WindowMovementTracking.provider = nil }
+        await WindowMovementTrackingProviderScope.withProvider(tracker) {
+            let result = WindowMovementTracking.adjustPoint(CGPoint(x: 150, y: 150), snapshot: snapshot)
 
-        let result = WindowMovementTracking.adjustPoint(CGPoint(x: 150, y: 150), snapshot: snapshot)
-
-        #expect(tracker.refreshedWindowIDs == [42])
-        guard case let .adjusted(point, delta) = result else {
-            Issue.record("Expected adjusted point after exact-window refresh, got \(result)")
-            return
+            #expect(tracker.refreshedWindowIDs == [42])
+            guard case let .adjusted(point, delta) = result else {
+                Issue.record("Expected adjusted point after exact-window refresh, got \(result)")
+                return
+            }
+            #expect(delta == CGPoint(x: 40, y: 50))
+            #expect(point == CGPoint(x: 190, y: 200))
         }
-        #expect(delta == CGPoint(x: 40, y: 50))
-        #expect(point == CGPoint(x: 190, y: 200))
     }
 
     @Test
     @MainActor
-    func `Returns stale when window resizes`() {
+    func `Returns stale when window resizes`() async {
         let snapshot = UIAutomationSnapshot(
             applicationName: "TextEdit",
             windowTitle: "Notes",
@@ -65,47 +64,45 @@ struct WindowMovementTrackingTests {
             windowID: 99)
 
         let tracker = StubWindowTracker(bounds: CGRect(x: 0, y: 0, width: 300, height: 200))
-        WindowMovementTracking.provider = tracker
-        defer { WindowMovementTracking.provider = nil }
-
-        let result = WindowMovementTracking.adjustPoint(CGPoint(x: 10, y: 10), snapshot: snapshot)
-        switch result {
-        case let .stale(message):
-            #expect(message.contains("changed size"))
-            #expect(message.contains("windowID: 99"))
-            #expect(message.contains("app: TextEdit"))
-            #expect(message.contains("title: Notes"))
-            #expect(message.contains("Previous bounds:"))
-            #expect(message.contains("current bounds:"))
-        default:
-            Issue.record("Expected stale result, got \(result)")
+        await WindowMovementTrackingProviderScope.withProvider(tracker) {
+            let result = WindowMovementTracking.adjustPoint(CGPoint(x: 10, y: 10), snapshot: snapshot)
+            switch result {
+            case let .stale(message):
+                #expect(message.contains("changed size"))
+                #expect(message.contains("windowID: 99"))
+                #expect(message.contains("app: TextEdit"))
+                #expect(message.contains("title: Notes"))
+                #expect(message.contains("Previous bounds:"))
+                #expect(message.contains("current bounds:"))
+            default:
+                Issue.record("Expected stale result, got \(result)")
+            }
         }
     }
 
     @Test
     @MainActor
-    func `Allows tiny window size jitter`() {
+    func `Allows tiny window size jitter`() async {
         let snapshot = UIAutomationSnapshot(
             windowBounds: CGRect(x: 100, y: 100, width: 200, height: 200),
             windowID: 98)
 
         let tracker = StubWindowTracker(bounds: CGRect(x: 110, y: 120, width: 203, height: 204))
-        WindowMovementTracking.provider = tracker
-        defer { WindowMovementTracking.provider = nil }
-
-        let result = WindowMovementTracking.adjustPoint(CGPoint(x: 150, y: 150), snapshot: snapshot)
-        switch result {
-        case let .adjusted(point, delta):
-            #expect(delta == CGPoint(x: 10, y: 20))
-            #expect(point == CGPoint(x: 160, y: 170))
-        default:
-            Issue.record("Expected adjusted point for tiny size jitter, got \(result)")
+        await WindowMovementTrackingProviderScope.withProvider(tracker) {
+            let result = WindowMovementTracking.adjustPoint(CGPoint(x: 150, y: 150), snapshot: snapshot)
+            switch result {
+            case let .adjusted(point, delta):
+                #expect(delta == CGPoint(x: 10, y: 20))
+                #expect(point == CGPoint(x: 160, y: 170))
+            default:
+                Issue.record("Expected adjusted point for tiny size jitter, got \(result)")
+            }
         }
     }
 
     @Test
     @MainActor
-    func `Returns stale when tracked window disappears`() {
+    func `Returns stale when tracked window disappears`() async {
         let snapshot = UIAutomationSnapshot(
             applicationBundleId: "com.apple.TextEdit",
             windowTitle: "Notes",
@@ -113,44 +110,42 @@ struct WindowMovementTrackingTests {
             windowID: 100)
 
         let tracker = StubWindowTracker(bounds: nil)
-        WindowMovementTracking.provider = tracker
-        defer { WindowMovementTracking.provider = nil }
-
-        let result = WindowMovementTracking.adjustPoint(CGPoint(x: 10, y: 10), snapshot: snapshot)
-        switch result {
-        case let .stale(message):
-            #expect(message.contains("no longer available"))
-            #expect(message.contains("windowID: 100"))
-            #expect(message.contains("bundle: com.apple.TextEdit"))
-            #expect(message.contains("title: Notes"))
-        default:
-            Issue.record("Expected stale result, got \(result)")
+        await WindowMovementTrackingProviderScope.withProvider(tracker) {
+            let result = WindowMovementTracking.adjustPoint(CGPoint(x: 10, y: 10), snapshot: snapshot)
+            switch result {
+            case let .stale(message):
+                #expect(message.contains("no longer available"))
+                #expect(message.contains("windowID: 100"))
+                #expect(message.contains("bundle: com.apple.TextEdit"))
+                #expect(message.contains("title: Notes"))
+            default:
+                Issue.record("Expected stale result, got \(result)")
+            }
         }
     }
 
     @Test
     @MainActor
-    func `Returns stale when window without snapshot bounds disappears`() {
+    func `Returns stale when window without snapshot bounds disappears`() async {
         let snapshot = UIAutomationSnapshot(
             applicationProcessId: 321,
             windowID: 100)
 
         let tracker = StubWindowTracker(bounds: nil)
-        WindowMovementTracking.provider = tracker
-        defer { WindowMovementTracking.provider = nil }
-
-        let result = WindowMovementTracking.adjustPoint(CGPoint(x: 10, y: 10), snapshot: snapshot)
-        guard case let .stale(message) = result else {
-            Issue.record("Expected stale result, got \(result)")
-            return
+        await WindowMovementTrackingProviderScope.withProvider(tracker) {
+            let result = WindowMovementTracking.adjustPoint(CGPoint(x: 10, y: 10), snapshot: snapshot)
+            guard case let .stale(message) = result else {
+                Issue.record("Expected stale result, got \(result)")
+                return
+            }
+            #expect(message.contains("no longer available"))
+            #expect(message.contains("windowID: 100"))
         }
-        #expect(message.contains("no longer available"))
-        #expect(message.contains("windowID: 100"))
     }
 
     @Test
     @MainActor
-    func `Returns stale when window ID belongs to another process`() {
+    func `Returns stale when window ID belongs to another process`() async {
         let snapshot = UIAutomationSnapshot(
             applicationProcessId: 321,
             windowID: 100)
@@ -158,16 +153,15 @@ struct WindowMovementTrackingTests {
         let tracker = StubWindowTracker(
             bounds: CGRect(x: 0, y: 0, width: 200, height: 200),
             ownerProcessIdentifier: 654)
-        WindowMovementTracking.provider = tracker
-        defer { WindowMovementTracking.provider = nil }
-
-        let result = WindowMovementTracking.adjustPoint(CGPoint(x: 10, y: 10), snapshot: snapshot)
-        guard case let .stale(message) = result else {
-            Issue.record("Expected stale result, got \(result)")
-            return
+        await WindowMovementTrackingProviderScope.withProvider(tracker) {
+            let result = WindowMovementTracking.adjustPoint(CGPoint(x: 10, y: 10), snapshot: snapshot)
+            guard case let .stale(message) = result else {
+                Issue.record("Expected stale result, got \(result)")
+                return
+            }
+            #expect(message.contains("now belongs to PID 654"))
+            #expect(message.contains("not PID 321"))
         }
-        #expect(message.contains("now belongs to PID 654"))
-        #expect(message.contains("not PID 321"))
     }
 
     @Test
@@ -179,15 +173,14 @@ struct WindowMovementTrackingTests {
         let snapshots = PointSnapshotManager(snapshot: snapshot)
 
         let tracker = StubWindowTracker(bounds: CGRect(x: 15, y: 35, width: 200, height: 200))
-        WindowMovementTracking.provider = tracker
-        defer { WindowMovementTracking.provider = nil }
+        try await WindowMovementTrackingProviderScope.withProvider(tracker) {
+            let adjusted = try await WindowMovementTracking.adjustPoint(
+                CGPoint(x: 50, y: 60),
+                snapshotId: "snapshot-id",
+                snapshots: snapshots)
 
-        let adjusted = try await WindowMovementTracking.adjustPoint(
-            CGPoint(x: 50, y: 60),
-            snapshotId: "snapshot-id",
-            snapshots: snapshots)
-
-        #expect(adjusted == CGPoint(x: 55, y: 75))
+            #expect(adjusted == CGPoint(x: 55, y: 75))
+        }
     }
 }
 

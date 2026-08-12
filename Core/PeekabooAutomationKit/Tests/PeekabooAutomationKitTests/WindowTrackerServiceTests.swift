@@ -1,11 +1,12 @@
 import CoreGraphics
+import PeekabooAutomationKitTestSupport
 import Testing
 @testable import PeekabooAutomationKit
 
 struct WindowTrackerServiceTests {
     @Test
     @MainActor
-    func `Movement tracking refreshes exact window on cache miss and preserves cache hits`() {
+    func `Movement tracking refreshes exact window on cache miss and preserves cache hits`() async {
         let windowID = CGWindowID(42)
         let bounds = CGRect(x: 40, y: 50, width: 300, height: 200)
         let source = WindowInfoSource(currentInfo: Self.windowInfo(
@@ -15,27 +16,26 @@ struct WindowTrackerServiceTests {
         let tracker = WindowTrackerService(
             configuration: WindowTrackerConfiguration(useAXNotifications: false),
             exactWindowIdentityProvider: { source.info(for: $0) })
-        let previousTracker = WindowMovementTracking.provider
-        WindowMovementTracking.provider = tracker
-        defer { WindowMovementTracking.provider = previousTracker }
-        let snapshot = UIAutomationSnapshot(
-            applicationProcessId: 111,
-            windowBounds: bounds,
-            windowID: windowID)
+        await WindowMovementTrackingProviderScope.withProvider(tracker) {
+            let snapshot = UIAutomationSnapshot(
+                applicationProcessId: 111,
+                windowBounds: bounds,
+                windowID: windowID)
 
-        let firstResult = WindowMovementTracking.adjustPoint(CGPoint(x: 80, y: 90), snapshot: snapshot)
-        source.currentInfo = nil
-        let secondResult = WindowMovementTracking.adjustPoint(CGPoint(x: 80, y: 90), snapshot: snapshot)
+            let firstResult = WindowMovementTracking.adjustPoint(CGPoint(x: 80, y: 90), snapshot: snapshot)
+            source.currentInfo = nil
+            let secondResult = WindowMovementTracking.adjustPoint(CGPoint(x: 80, y: 90), snapshot: snapshot)
 
-        guard case .unchanged = firstResult else {
-            Issue.record("Expected exact-window refresh to recover the cache miss, got \(firstResult)")
-            return
+            guard case .unchanged = firstResult else {
+                Issue.record("Expected exact-window refresh to recover the cache miss, got \(firstResult)")
+                return
+            }
+            guard case .unchanged = secondResult else {
+                Issue.record("Expected cached exact-window hit, got \(secondResult)")
+                return
+            }
+            #expect(source.requestedWindowIDs == [windowID])
         }
-        guard case .unchanged = secondResult else {
-            Issue.record("Expected cached exact-window hit, got \(secondResult)")
-            return
-        }
-        #expect(source.requestedWindowIDs == [windowID])
     }
 
     @Test

@@ -1,5 +1,6 @@
 import CoreGraphics
 import Foundation
+import PeekabooAutomationKitTestSupport
 import struct PeekabooFoundation.DesktopActionFailure
 import enum PeekabooFoundation.PeekabooError
 import Testing
@@ -190,69 +191,68 @@ struct ClickServiceExactWindowTests {
     func `Window-owned context menu targets remain pinnable`() async throws {
         let pid = getpid()
         let tracker = ExactWindowTracker()
-        let previousTracker = WindowMovementTracking.provider
-        WindowMovementTracking.provider = tracker
-        defer { WindowMovementTracking.provider = previousTracker }
-        let targets = [
-            DetectedElement(
-                id: "context-menu",
-                type: .menu,
-                label: "Context Menu",
-                bounds: CGRect(x: 10, y: 10, width: 40, height: 20),
-                attributes: ["role": "AXMenu"]),
-            DetectedElement(
-                id: "context-menu-item",
-                type: .menuItem,
-                label: "Open",
-                bounds: CGRect(x: 20, y: 30, width: 60, height: 20),
-                attributes: ["role": "AXMenuItem"]),
-        ]
+        try await WindowMovementTrackingProviderScope.withProvider(tracker) {
+            let targets = [
+                DetectedElement(
+                    id: "context-menu",
+                    type: .menu,
+                    label: "Context Menu",
+                    bounds: CGRect(x: 10, y: 10, width: 40, height: 20),
+                    attributes: ["role": "AXMenu"]),
+                DetectedElement(
+                    id: "context-menu-item",
+                    type: .menuItem,
+                    label: "Open",
+                    bounds: CGRect(x: 20, y: 30, width: 60, height: 20),
+                    attributes: ["role": "AXMenuItem"]),
+            ]
 
-        for target in targets {
-            let detectionResult = ElementDetectionResult(
-                snapshotId: "snapshot",
-                screenshotPath: "/tmp/shot.png",
-                elements: DetectedElements(menus: [target]),
-                metadata: DetectionMetadata(
-                    detectionTime: 0.01,
-                    elementCount: 1,
-                    method: "test",
-                    windowContext: WindowContext(
-                        applicationProcessId: pid,
-                        windowID: 42,
-                        windowBounds: CGRect(x: 0, y: 0, width: 100, height: 100),
-                        windowMutationIdentity: WindowMutationIdentity(
+            for target in targets {
+                let detectionResult = ElementDetectionResult(
+                    snapshotId: "snapshot",
+                    screenshotPath: "/tmp/shot.png",
+                    elements: DetectedElements(menus: [target]),
+                    metadata: DetectionMetadata(
+                        detectionTime: 0.01,
+                        elementCount: 1,
+                        method: "test",
+                        windowContext: WindowContext(
+                            applicationProcessId: pid,
                             windowID: 42,
-                            ownerProcessIdentifier: pid,
-                            ownerProcessStartIdentity: 1))))
-            let synthetic = ClickRecordingSyntheticInputDriver()
-            let service = ClickService(
-                snapshotManager: InMemorySnapshotManager(detectionResult: detectionResult),
-                inputPolicy: UIInputPolicy(defaultStrategy: .synthOnly),
-                syntheticInputDriver: synthetic,
-                exactWindowIdentityValidator: { _, _ in true })
+                            windowBounds: CGRect(x: 0, y: 0, width: 100, height: 100),
+                            windowMutationIdentity: WindowMutationIdentity(
+                                windowID: 42,
+                                ownerProcessIdentifier: pid,
+                                ownerProcessStartIdentity: 1))))
+                let synthetic = ClickRecordingSyntheticInputDriver()
+                let service = ClickService(
+                    snapshotManager: InMemorySnapshotManager(detectionResult: detectionResult),
+                    inputPolicy: UIInputPolicy(defaultStrategy: .synthOnly),
+                    syntheticInputDriver: synthetic,
+                    exactWindowIdentityValidator: { _, _ in true })
 
-            let result = try await service.click(
-                target: .elementId(target.id),
-                clickType: .single,
-                snapshotId: "snapshot",
-                targetProcessIdentifier: pid,
-                targetWindowID: 42,
-                expectedWindowIdentity: WindowMutationIdentity(
-                    windowID: 42,
-                    ownerProcessIdentifier: pid,
-                    ownerProcessStartIdentity: 1),
-                expectedWindowBounds: CGRect(x: 0, y: 0, width: 100, height: 100))
-
-            #expect(result.path == .synth)
-            #expect(synthetic.events == [
-                .targetedClick(
-                    point: CGPoint(x: target.bounds.midX, y: target.bounds.midY),
-                    button: .left,
-                    count: 1,
+                let result = try await service.click(
+                    target: .elementId(target.id),
+                    clickType: .single,
+                    snapshotId: "snapshot",
                     targetProcessIdentifier: pid,
-                    targetWindowID: 42),
-            ])
+                    targetWindowID: 42,
+                    expectedWindowIdentity: WindowMutationIdentity(
+                        windowID: 42,
+                        ownerProcessIdentifier: pid,
+                        ownerProcessStartIdentity: 1),
+                    expectedWindowBounds: CGRect(x: 0, y: 0, width: 100, height: 100))
+
+                #expect(result.path == .synth)
+                #expect(synthetic.events == [
+                    .targetedClick(
+                        point: CGPoint(x: target.bounds.midX, y: target.bounds.midY),
+                        button: .left,
+                        count: 1,
+                        targetProcessIdentifier: pid,
+                        targetWindowID: 42),
+                ])
+            }
         }
     }
 
