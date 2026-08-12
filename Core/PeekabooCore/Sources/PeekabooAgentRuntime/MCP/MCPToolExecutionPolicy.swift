@@ -135,7 +135,11 @@ private enum BackgroundOnlyToolPolicy {
         switch self.normalized(arguments.getString("capture_focus")) {
         case "auto", "foreground":
             .foregroundRequest("capture_focus can activate the capture target")
+        case nil, "background":
+            // Image and capture both resolve an omitted value to background before dispatch.
+            nil
         default:
+            // The leaf argument validator refuses unknown values before dispatch.
             nil
         }
     }
