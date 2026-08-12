@@ -14,6 +14,8 @@ NC='\033[0m' # No Color
 # Script directory and project root
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+# shellcheck source=scripts/native-only-policy.sh
+source "$SCRIPT_DIR/native-only-policy.sh"
 BUILD_DIR="$PROJECT_ROOT/build"
 RELEASE_DIR="${RELEASE_DIR:-$BUILD_DIR/release}"
 MAC_RELEASE_MANIFEST="${MAC_RELEASE_MANIFEST:-$PROJECT_ROOT/.mac-release.env}"
@@ -66,12 +68,11 @@ for forbidden in (
 verify_release_binary_apple_events_policy() {
     local binary_path="$1"
     local label="$2"
+    local policy_error
 
-    if strings "$binary_path" | grep -F 'NSAppleEventsUsageDescription' >/dev/null; then
-        fail "$label embeds NSAppleEventsUsageDescription"
-    fi
-    if nm -u "$binary_path" | grep -F 'NSAppleScript' >/dev/null; then
-        fail "$label imports NSAppleScript"
+    if ! policy_error="$(native_only_verify_macho \
+        "$binary_path" "$label" "${PEEKABOO_NM_BIN:-/usr/bin/nm}" "${PEEKABOO_STRINGS_BIN:-/usr/bin/strings}")"; then
+        fail "$policy_error"
     fi
 }
 

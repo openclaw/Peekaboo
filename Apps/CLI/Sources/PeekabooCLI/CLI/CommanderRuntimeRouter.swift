@@ -31,7 +31,7 @@ enum CommanderRuntimeRouter {
         let program = Program(descriptors: descriptors.map(\.metadata))
         let invocation: CommandInvocation
         do {
-            invocation = try program.resolve(argv: self.normalizedDefaultSubcommandArguments(argv))
+            invocation = try program.resolve(arguments: self.normalizedDefaultSubcommandArguments(trimmedArgs))
         } catch let error as CommanderProgramError {
             let shouldAdviseOptions = switch error {
             case .parsingError:

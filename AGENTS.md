@@ -2,13 +2,13 @@
 
 ## Start Here
 - Read `~/Projects/agent-scripts/{AGENTS.MD,TOOLS.MD}` before making changes (skip if missing).
-- This repo uses git submodules (`AXorcist/`, `Commander/`, `Tachikoma/`, `TauTUI/`); update them in their home repos first, then bump pointers here.
+- This repo uses git submodules (`AXorcist/`, `Commander/`, `Swiftdansi/`, `Tachikoma/`, `TauTUI/`); update them in their home repos first, then bump pointers here.
 
 ## Project Structure & Modules
 - `Apps/CLI` contains the SwiftPM package for the command-line tool; commands live under `Apps/CLI/Sources`, and unit/integration tests under `Apps/CLI/Tests`.
 - `Apps/Mac`, `Apps/PeekabooInspector`, and `Apps/Playground` host the macOS apps and related tooling; open `Apps/Peekaboo.xcworkspace` for Xcode work.
 - Shared logic sits in `Core/PeekabooCore` (automation, agent runtime, visualizer). Keep new utilities there rather than duplicating in apps.
-- Git submodules provide foundational pieces: `AXorcist/` (AX automation), `Commander/` (CLI parsing), `Tachikoma/` (AI providers/MCP), and `TauTUI/`. Update them upstream first, then bump the pointers here.
+- Git submodules provide foundational pieces: `AXorcist/` (AX automation), `Commander/` (CLI parsing), `Swiftdansi/` (ANSI parsing), `Tachikoma/` (AI providers/MCP), and `TauTUI/`. Update them upstream first, then bump the pointers here.
 - Documentation lives in `docs/`; assets and marketing material are in `assets/`.
 
 ## Build, Test, and Development Commands

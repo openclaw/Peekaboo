@@ -10,6 +10,9 @@ PLISTBUDDY_BIN="${PEEKABOO_PLISTBUDDY_BIN:-/usr/libexec/PlistBuddy}"
 REALPATH_BIN="${PEEKABOO_REALPATH_BIN:-$(command -v realpath || true)}"
 STRINGS_BIN="${PEEKABOO_STRINGS_BIN:-/usr/bin/strings}"
 
+# shellcheck source=scripts/native-only-policy.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/native-only-policy.sh"
+
 SOURCE_ROOT=""
 APP_BUNDLE=""
 
@@ -73,11 +76,8 @@ if [[ -n "${SOURCE_ROOT}" ]]; then
   for source_dir in Apps Core AXorcist/Sources; do
     [[ -d "${SOURCE_ROOT}/${source_dir}" ]] || continue
     while IFS= read -r -d '' source_path; do
-      if grep -Eq \
-        'NSAppleScript|NSUserAppleScriptTask|OSAKit|OSAScript|OSA(Compile|Execute|DoScript|LoadExecute|CompileExecute)|kOSAComponentType' \
-        "${source_path}" || \
-         grep -Fq '/usr/bin/osascript' "${source_path}"; then
-        fail "Production source retains an AppleScript execution surface: ${source_path#"${SOURCE_ROOT}/"}"
+      if grep -Eq "${NATIVE_ONLY_APPLE_EVENT_SOURCE_PATTERN}" "${source_path}"; then
+        fail "Production source retains an AppleScript or Apple Events execution surface: ${source_path#"${SOURCE_ROOT}/"}"
       fi
     done < <(
       find "${SOURCE_ROOT}/${source_dir}" \
@@ -155,20 +155,9 @@ if [[ -n "${APP_BUNDLE}" ]]; then
     file_description="$("${FILE_BIN}" -b "${candidate}" 2>/dev/null || true)"
     if grep -q 'Mach-O' <<<"${file_description}"; then
       mach_o_count=$((mach_o_count + 1))
-      undefined_symbols="$("${NM_BIN}" -u "${candidate}" 2>/dev/null || true)"
-      if grep -Eq \
-        'NSAppleScript|NSUserAppleScriptTask|OSAKit|OSAScript|_?OSA(Compile|Execute|DoScript|LoadExecute|CompileExecute)|kOSAComponentType' \
-        <<<"${undefined_symbols}"; then
-        fail "Mach-O imports an AppleScript execution API: ${candidate}"
-      fi
-      embedded_strings="$("${STRINGS_BIN}" "${candidate}" 2>/dev/null || true)"
-      if [[ "${embedded_strings}" == *'<key>NSAppleEventsUsageDescription</key>'* ]]; then
-        fail "Mach-O embeds the NSAppleEventsUsageDescription key: ${candidate}"
-      fi
-      if grep -Eq \
-        'NSAppleScript|NSUserAppleScriptTask|OSAKit\.framework|OSAScript|OSA(Compile|Execute|DoScript|LoadExecute|CompileExecute)|kOSAComponentType|/usr/bin/osascript' \
-        <<<"${embedded_strings}"; then
-        fail "Mach-O embeds an AppleScript execution surface: ${candidate}"
+      if ! policy_error="$(native_only_verify_macho \
+        "${candidate}" "Mach-O" "${NM_BIN}" "${STRINGS_BIN}")"; then
+        fail "${policy_error}: ${candidate}"
       fi
       candidate_entitlements="$("${CODESIGN_BIN}" -d --entitlements :- "${candidate}" 2>/dev/null || true)"
       if grep -Eq \
@@ -179,13 +168,10 @@ if [[ -n "${APP_BUNDLE}" ]]; then
     elif grep -qi 'AppleScript' <<<"${file_description}"; then
       fail "Payload contains compiled AppleScript data: ${candidate}"
     elif grep -Eqi 'text|script|JSON|XML|property list' <<<"${file_description}" && \
-         { grep -Eq \
-             'NSAppleScript|NSUserAppleScriptTask|OSAKit|OSAScript|OSA(Compile|Execute|DoScript|LoadExecute|CompileExecute)|kOSAComponentType' \
-             "${candidate}" 2>/dev/null || \
-           grep -Fq '/usr/bin/osascript' "${candidate}" 2>/dev/null || \
+         { grep -Eq "${NATIVE_ONLY_APPLE_EVENT_SOURCE_PATTERN}" "${candidate}" 2>/dev/null || \
            grep -Eq '(^|[^[:alnum:]_])osascript([^[:alnum:]_]|$)' "${candidate}" 2>/dev/null || \
            contains_applescript_source "${candidate}"; }; then
-      fail "Text payload retains an AppleScript execution surface: ${candidate}"
+      fail "Text payload retains an AppleScript or Apple Events execution surface: ${candidate}"
     fi
   done < <(find "${APP_BUNDLE}/Contents" -type f -print0)
   ((mach_o_count > 0)) || fail "No Mach-O payload found in ${APP_BUNDLE}"

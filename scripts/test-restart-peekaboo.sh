@@ -270,6 +270,13 @@ fi
 [[ ! -f "${state_dir}/apple-events-entitlement" ]] || touch "${bundle}/.apple-events-entitlement"
 [[ ! -f "${state_dir}/nsapplescript-import" ]] || touch "${bundle}/.nsapplescript-import"
 [[ ! -f "${state_dir}/osa-api-import" ]] || touch "${bundle}/.osa-api-import"
+[[ ! -f "${state_dir}/ae-create-desc-import" ]] || touch "${bundle}/.ae-create-desc-import"
+[[ ! -f "${state_dir}/ae-create-apple-event-import" ]] || touch "${bundle}/.ae-create-apple-event-import"
+[[ ! -f "${state_dir}/ae-send-message-import" ]] || touch "${bundle}/.ae-send-message-import"
+[[ ! -f "${state_dir}/ae-determine-permission-import" ]] || touch "${bundle}/.ae-determine-permission-import"
+[[ ! -f "${state_dir}/ae-dispose-desc-import" ]] || touch "${bundle}/.ae-dispose-desc-import"
+[[ ! -f "${state_dir}/nm-inspection-failure" ]] || touch "${bundle}/.nm-inspection-failure"
+[[ ! -f "${state_dir}/strings-inspection-failure" ]] || touch "${bundle}/.strings-inspection-failure"
 [[ ! -f "${state_dir}/apple-events-string" ]] || touch "${bundle}/.apple-events-string"
 [[ ! -f "${state_dir}/dynamic-applescript-string" ]] || touch "${bundle}/.dynamic-applescript-string"
 if [[ -f "${state_dir}/compiled-script-resource" ]]; then
@@ -460,10 +467,22 @@ cat >"${TEMPLATE_BIN}/nm" <<'EOF'
 set -euo pipefail
 candidate="${!#}"
 bundle="${candidate%%/Contents/*}"
-if [[ -f "${bundle}/.nsapplescript-import" ]]; then
+if [[ -f "${bundle}/.nm-inspection-failure" ]]; then
+  exit 86
+elif [[ -f "${bundle}/.nsapplescript-import" ]]; then
   printf '%s\n' '                 U _OBJC_CLASS_$_NSAppleScript'
 elif [[ -f "${bundle}/.osa-api-import" ]]; then
   printf '%s\n' '                 U _OSADoScript'
+elif [[ -f "${bundle}/.ae-create-desc-import" ]]; then
+  printf '%s\n' '                 U _AECreateDesc'
+elif [[ -f "${bundle}/.ae-create-apple-event-import" ]]; then
+  printf '%s\n' '                 U _AECreateAppleEvent'
+elif [[ -f "${bundle}/.ae-send-message-import" ]]; then
+  printf '%s\n' '                 U _AESendMessage'
+elif [[ -f "${bundle}/.ae-determine-permission-import" ]]; then
+  printf '%s\n' '                 U _AEDeterminePermissionToAutomateTarget'
+elif [[ -f "${bundle}/.ae-dispose-desc-import" ]]; then
+  printf '%s\n' '                 U _AEDisposeDesc'
 fi
 EOF
 
@@ -472,7 +491,10 @@ cat >"${TEMPLATE_BIN}/strings" <<'EOF'
 set -euo pipefail
 candidate="${!#}"
 bundle="${candidate%%/Contents/*}"
-if [[ -f "${bundle}/.apple-events-string" ]]; then
+if [[ -f "${bundle}/.strings-inspection-failure" ]]; then
+  printf '%s\n' 'harmless output before inspection failure'
+  exit 87
+elif [[ -f "${bundle}/.apple-events-string" ]]; then
   printf '%s\n' '<key>NSAppleEventsUsageDescription</key>'
 elif [[ -f "${bundle}/.dynamic-applescript-string" ]]; then
   printf '%s\n' '/usr/bin/osascript'
@@ -1246,6 +1268,19 @@ if run_restart "${source_policy_dir}"; then
 fi
 [[ ! -f "${source_policy_dir}/events" ]] || fail 'source policy refusal started a build'
 
+for apple_event_api in \
+  AECreateDesc AECreateAppleEvent AESendMessage AEDeterminePermissionToAutomateTarget AEDisposeDesc \
+  OSADoScript; do
+  source_policy_dir="$(new_case source-${apple_event_api}-refusal)"
+  printf '%s\n' "${apple_event_api}" >"${source_policy_dir}/source/Apps/Bad.swift"
+  /usr/bin/git -C "${source_policy_dir}/source" add Apps/Bad.swift
+  if run_restart "${source_policy_dir}"; then
+    fail "expected ${apple_event_api} source policy refusal"
+  fi
+  [[ ! -f "${source_policy_dir}/events" ]] || \
+    fail "${apple_event_api} source policy refusal started a build"
+done
+
 source_resource_dir="$(new_case source-resource-refusal)"
 touch "${source_resource_dir}/source/Apps/Action.scpt"
 if run_restart "${source_resource_dir}"; then
@@ -1256,7 +1291,9 @@ fi
 for policy_case in \
   apple-events-description nested-apple-events-description \
   apple-events-entitlement nsapplescript-import apple-events-string \
-  osa-api-import dynamic-applescript-string compiled-script-resource text-osascript-resource \
+  osa-api-import ae-create-desc-import ae-create-apple-event-import ae-send-message-import \
+  ae-determine-permission-import ae-dispose-desc-import nm-inspection-failure \
+  strings-inspection-failure dynamic-applescript-string compiled-script-resource text-osascript-resource \
   executable-script-resource raw-applescript-text raw-applescript-display prefixed-applescript-command; do
   policy_dir="$(new_case ${policy_case}-refusal)"
   policy_target="${policy_dir}/Applications/Peekaboo.app"

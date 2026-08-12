@@ -236,6 +236,27 @@ struct CommanderBinderProgramResolutionTests {
 
     @Test
     @MainActor
+    func `Runtime router treats full argv and argument tail equivalently`() throws {
+        let full = try CommanderRuntimeRouter.resolve(argv: [
+            "peekaboo",
+            "agent",
+            "list files",
+            "--dry-run",
+        ])
+        let tail = try CommanderRuntimeRouter.resolve(argv: [
+            "agent",
+            "list files",
+            "--dry-run",
+        ])
+
+        #expect(full.metadata.name == "run")
+        #expect(full.metadata.name == tail.metadata.name)
+        #expect(ObjectIdentifier(full.type) == ObjectIdentifier(tail.type))
+        #expect(full.parsedValues == tail.parsedValues)
+    }
+
+    @Test
+    @MainActor
     func `V4 command restructures resolve nested paths`() throws {
         let descriptors = CommanderRegistryBuilder.buildDescriptors()
         let program = Program(descriptors: descriptors.map(\.metadata))
