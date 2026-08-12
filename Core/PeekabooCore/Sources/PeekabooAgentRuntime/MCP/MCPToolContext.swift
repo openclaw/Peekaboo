@@ -439,149 +439,198 @@ public struct MCPToolContext: @unchecked Sendable {
         toolName: String,
         arguments: ToolArguments) async -> BackgroundTargetAuthorization
     {
-        let targetedToolNames: Set = ["app", "dialog", "menu", "paste", "space", "type", "window"]
-        guard targetedToolNames.contains(toolName) else {
+        guard let schema = Self.backgroundApplicationTargetSchema(toolName: toolName) else {
             return BackgroundTargetAuthorization(arguments: arguments, rejection: nil)
         }
 
-        // MCP window/space selectors encode a PID as app="PID:<n>"; unlike their CLI adapters they expose no pid key.
-        let stringKeys: [String] = switch toolName {
-        case "app": ["name", "bundleId"]
-        case "dialog", "menu", "paste", "space", "type", "window": ["app"]
-        default: []
-        }
-        let pidKeys: [String] = switch toolName {
-        case "dialog", "paste", "type": ["pid"]
-        default: []
-        }
-        let windowIDKeys: [String] = switch toolName {
-        case "dialog", "paste", "type", "window": ["window_id"]
-        default: []
-        }
-
-        var identifiers: [String] = []
-        for key in stringKeys {
-            let selector = Self.strictString(arguments, key: key)
-            if selector.isInvalid {
-                return BackgroundTargetAuthorization(
-                    arguments: arguments,
-                    rejection: self.executionPolicy.unresolvedTargetRejection(
-                        toolName: toolName,
-                        detail: "\(key) must be a nonempty application identifier"))
+        do {
+            var identifiers = try Self.applicationIdentifiers(arguments: arguments, schema: schema)
+            let windowProcessIdentities = try await self.windowProcessIdentities(
+                arguments: arguments,
+                keys: schema.windowIDKeys)
+            identifiers.append(contentsOf: windowProcessIdentities.map { "PID:\($0.processIdentifier)" })
+            guard !identifiers.isEmpty else {
+                throw BackgroundTargetResolutionError(
+                    "the mutation has no explicit application or exact-window owner")
             }
-            if let value = selector.value {
-                identifiers.append(value)
-            }
-        }
-        for key in pidKeys {
-            if let pid = arguments.getInt(key), pid > 0 {
-                identifiers.append("PID:\(pid)")
-            }
-        }
-
-        var windowProcessIdentities: [ApplicationProcessIdentity] = []
-        for key in windowIDKeys {
-            guard let windowID = arguments.getInt(key) else { continue }
-            do {
-                let windows = try await self.windows.listWindows(target: .windowId(windowID))
-                let owners = windows.compactMap { window -> ApplicationProcessIdentity? in
-                    guard let identity = window.mutationIdentity else { return nil }
-                    return ApplicationProcessIdentity(
-                        processIdentifier: identity.ownerProcessIdentifier,
-                        processStartIdentity: identity.ownerProcessStartIdentity)
+            let applications = try await self.resolveApplications(identifiers)
+            let processIdentity = try Self.validatedProcessIdentity(
+                applications: applications,
+                windowProcessIdentities: windowProcessIdentities)
+            for application in applications {
+                if let rejection = self.executionPolicy.systemSurfaceRejection(
+                    toolName: toolName,
+                    applicationBundleIdentifier: application.bundleIdentifier,
+                    applicationName: application.name)
+                {
+                    return BackgroundTargetAuthorization(arguments: arguments, rejection: rejection)
                 }
-                guard owners.count == windows.count,
-                      let owner = owners.first,
-                      owners.allSatisfy({ $0 == owner })
-                else {
-                    return BackgroundTargetAuthorization(
-                        arguments: arguments,
-                        rejection: self.executionPolicy.unresolvedTargetRejection(
-                            toolName: toolName,
-                            detail: "window_id does not identify one process-generation-pinned owner"))
-                }
-                windowProcessIdentities.append(owner)
-            } catch {
-                return BackgroundTargetAuthorization(
-                    arguments: arguments,
-                    rejection: self.executionPolicy.unresolvedTargetRejection(
-                        toolName: toolName,
-                        detail: "window_id owner could not be resolved before dispatch"))
             }
-        }
-        identifiers.append(contentsOf: windowProcessIdentities.map { "PID:\($0.processIdentifier)" })
-
-        guard !identifiers.isEmpty else {
+            return BackgroundTargetAuthorization(
+                arguments: Self.argumentsPinnedToProcess(
+                    arguments,
+                    toolName: toolName,
+                    processIdentifier: processIdentity.processIdentifier),
+                rejection: nil,
+                processIdentities: [processIdentity])
+        } catch let error as BackgroundTargetResolutionError {
             return BackgroundTargetAuthorization(
                 arguments: arguments,
                 rejection: self.executionPolicy.unresolvedTargetRejection(
                     toolName: toolName,
-                    detail: "the mutation has no explicit application or exact-window owner"))
-        }
-
-        var applications: [ServiceApplicationInfo] = []
-        do {
-            for identifier in identifiers {
-                try await applications.append(self.applications.findApplication(identifier: identifier))
-            }
+                    detail: error.detail))
         } catch {
             return BackgroundTargetAuthorization(
                 arguments: arguments,
                 rejection: self.executionPolicy.unresolvedTargetRejection(
                     toolName: toolName,
-                    detail: "the selected application owner could not be resolved before dispatch"))
+                    detail: "the selected target owner could not be validated before dispatch"))
         }
-        let processIdentifiers = Set(applications.map(\.processIdentifier))
-        guard processIdentifiers.count == 1 else {
-            return BackgroundTargetAuthorization(
-                arguments: arguments,
-                rejection: self.executionPolicy.unresolvedTargetRejection(
-                    toolName: toolName,
-                    detail: "the supplied application and window selectors identify different owners"))
+    }
+
+    private struct BackgroundApplicationTargetSchema {
+        let stringKeys: [String]
+        let pidKeys: [String]
+        let windowIDKeys: [String]
+    }
+
+    private struct BackgroundTargetResolutionError: Error {
+        let detail: String
+
+        init(_ detail: String) {
+            self.detail = detail
         }
-        let processIdentities = applications.compactMap { application -> ApplicationProcessIdentity? in
+    }
+
+    private static func backgroundApplicationTargetSchema(toolName: String) -> BackgroundApplicationTargetSchema? {
+        // MCP window/space selectors encode a PID as app="PID:<n>"; unlike their CLI adapters they expose no pid key.
+        switch toolName {
+        case "app":
+            BackgroundApplicationTargetSchema(stringKeys: ["name", "bundleId"], pidKeys: [], windowIDKeys: [])
+        case "dialog", "paste", "type":
+            BackgroundApplicationTargetSchema(
+                stringKeys: ["app"],
+                pidKeys: ["pid"],
+                windowIDKeys: ["window_id"])
+        case "window":
+            BackgroundApplicationTargetSchema(stringKeys: ["app"], pidKeys: [], windowIDKeys: ["window_id"])
+        case "menu", "space":
+            BackgroundApplicationTargetSchema(stringKeys: ["app"], pidKeys: [], windowIDKeys: [])
+        default:
+            nil
+        }
+    }
+
+    private static func applicationIdentifiers(
+        arguments: ToolArguments,
+        schema: BackgroundApplicationTargetSchema) throws -> [String]
+    {
+        var identifiers: [String] = []
+        for key in schema.stringKeys {
+            let selector = Self.strictString(arguments, key: key)
+            guard !selector.isInvalid else {
+                throw BackgroundTargetResolutionError("\(key) must be a nonempty application identifier")
+            }
+            if let value = selector.value {
+                identifiers.append(value)
+            }
+        }
+        for key in schema.pidKeys {
+            if let pid = arguments.getInt(key), pid > 0 {
+                identifiers.append("PID:\(pid)")
+            }
+        }
+        return identifiers
+    }
+
+    private func windowProcessIdentities(
+        arguments: ToolArguments,
+        keys: [String]) async throws -> [ApplicationProcessIdentity]
+    {
+        var identities: [ApplicationProcessIdentity] = []
+        for key in keys {
+            guard let windowID = arguments.getInt(key) else { continue }
+            let windows: [ServiceWindowInfo]
+            do {
+                windows = try await self.windows.listWindows(target: .windowId(windowID))
+            } catch {
+                throw BackgroundTargetResolutionError("window_id owner could not be resolved before dispatch")
+            }
+            let owners = windows.compactMap { window -> ApplicationProcessIdentity? in
+                guard let identity = window.mutationIdentity else { return nil }
+                return ApplicationProcessIdentity(
+                    processIdentifier: identity.ownerProcessIdentifier,
+                    processStartIdentity: identity.ownerProcessStartIdentity)
+            }
+            guard owners.count == windows.count,
+                  let owner = owners.first,
+                  owners.allSatisfy({ $0 == owner })
+            else {
+                throw BackgroundTargetResolutionError(
+                    "window_id does not identify one process-generation-pinned owner")
+            }
+            identities.append(owner)
+        }
+        return identities
+    }
+
+    private func resolveApplications(_ identifiers: [String]) async throws -> [ServiceApplicationInfo] {
+        do {
+            var resolved: [ServiceApplicationInfo] = []
+            for identifier in identifiers {
+                try await resolved.append(self.applications.findApplication(identifier: identifier))
+            }
+            return resolved
+        } catch {
+            throw BackgroundTargetResolutionError(
+                "the selected application owner could not be resolved before dispatch")
+        }
+    }
+
+    private static func validatedProcessIdentity(
+        applications: [ServiceApplicationInfo],
+        windowProcessIdentities: [ApplicationProcessIdentity]) throws -> ApplicationProcessIdentity
+    {
+        guard Set(applications.map(\.processIdentifier)).count == 1 else {
+            throw BackgroundTargetResolutionError(
+                "the supplied application and window selectors identify different owners")
+        }
+        let identities = applications.compactMap { application -> ApplicationProcessIdentity? in
             guard let processStartIdentity = application.processStartIdentity else { return nil }
             return ApplicationProcessIdentity(
                 processIdentifier: application.processIdentifier,
                 processStartIdentity: processStartIdentity)
         }
-        guard processIdentities.count == applications.count,
-              let processIdentity = processIdentities.first,
-              processIdentities.allSatisfy({ $0 == processIdentity }),
-              windowProcessIdentities.allSatisfy({ $0 == processIdentity })
+        guard identities.count == applications.count,
+              let identity = identities.first,
+              identities.allSatisfy({ $0 == identity }),
+              windowProcessIdentities.allSatisfy({ $0 == identity })
         else {
-            return BackgroundTargetAuthorization(
-                arguments: arguments,
-                rejection: self.executionPolicy.unresolvedTargetRejection(
-                    toolName: toolName,
-                    detail: "the selected owner has no stable process-generation receipt"))
+            throw BackgroundTargetResolutionError(
+                "the selected owner has no stable process-generation receipt")
         }
-        for application in applications {
-            if let rejection = self.executionPolicy.systemSurfaceRejection(
-                toolName: toolName,
-                applicationBundleIdentifier: application.bundleIdentifier,
-                applicationName: application.name)
-            {
-                return BackgroundTargetAuthorization(arguments: arguments, rejection: rejection)
-            }
-        }
-        var pinnedArguments = arguments.rawDictionary
+        return identity
+    }
+
+    private static func argumentsPinnedToProcess(
+        _ arguments: ToolArguments,
+        toolName: String,
+        processIdentifier: Int32) -> ToolArguments
+    {
+        var pinned = arguments.rawDictionary
         switch toolName {
         case "app":
-            pinnedArguments["name"] = "PID:\(processIdentity.processIdentifier)"
-            pinnedArguments.removeValue(forKey: "bundleId")
+            pinned["name"] = "PID:\(processIdentifier)"
+            pinned.removeValue(forKey: "bundleId")
         case "dialog", "paste", "type":
-            pinnedArguments["pid"] = Int(processIdentity.processIdentifier)
-            pinnedArguments.removeValue(forKey: "app")
+            pinned["pid"] = Int(processIdentifier)
+            pinned.removeValue(forKey: "app")
         case "menu", "space", "window":
-            pinnedArguments["app"] = "PID:\(processIdentity.processIdentifier)"
+            pinned["app"] = "PID:\(processIdentifier)"
         default:
             break
         }
-        return BackgroundTargetAuthorization(
-            arguments: ToolArguments(raw: pinnedArguments),
-            rejection: nil,
-            processIdentities: [processIdentity])
+        return ToolArguments(raw: pinned)
     }
 
     private func backgroundTargetRevalidation(
