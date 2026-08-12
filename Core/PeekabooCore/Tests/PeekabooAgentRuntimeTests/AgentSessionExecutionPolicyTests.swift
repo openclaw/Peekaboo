@@ -25,6 +25,23 @@ struct AgentSessionExecutionPolicyTests {
     }
 
     @Test
+    @MainActor
+    func `fresh non-directory-hinted session path saves on first attempt`() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("agent-policy-root-\(UUID().uuidString)", isDirectory: true)
+        let directory = root.appendingPathComponent("sessions", isDirectory: false)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let manager = try AgentSessionManager(sessionDirectory: directory)
+        let session = Self.session(id: UUID().uuidString, policy: .backgroundOnly)
+        try manager.saveSession(session)
+
+        let loaded = try #require(try await manager.loadSession(id: session.id))
+        #expect(loaded.id == session.id)
+        #expect(loaded.effectiveToolExecutionPolicy == .backgroundOnly)
+    }
+
+    @Test
     func `legacy session without policy decodes as background-only`() throws {
         let encoded = try JSONEncoder().encode(Self.session(id: "legacy", policy: .foregroundAllowed))
         var object = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])

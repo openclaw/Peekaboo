@@ -437,7 +437,7 @@ public final class AgentSessionManager: @unchecked Sendable {
         let sessionFile = self.sessionDirectory
             .appendingPathComponent(fileName, isDirectory: false)
             .standardizedFileURL
-        guard sessionFile.deletingLastPathComponent().standardizedFileURL == self.sessionDirectory,
+        guard sessionFile.deletingLastPathComponent().standardizedFileURL.path == self.sessionDirectory.path,
               sessionFile.lastPathComponent == fileName
         else {
             throw AgentSessionManagerError.invalidSessionID
