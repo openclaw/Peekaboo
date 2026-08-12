@@ -133,6 +133,10 @@ struct MCPToolExecutionPolicyTests {
                 "background": true,
             ]),
             .init(tool: "browser", arguments: [
+                "action": "new_page",
+                "url": "https://example.com",
+            ]),
+            .init(tool: "browser", arguments: [
                 "action": "call",
                 "mcp_tool": "select_page",
                 "mcp_args_json": #"{"bringToFront":false}"#,

@@ -240,6 +240,10 @@ private enum BackgroundOnlyToolPolicy {
         if action == "connect" {
             return .activation("connecting can surface Chrome's remote-debugging setup or permission UI")
         }
+        if action == "newpage" {
+            // The typed wrapper maps an omitted background value to true before delegating upstream.
+            return nil
+        }
         guard action == "call" else { return nil }
         guard let rawTool = self.normalized(arguments.getString("mcp_tool")) else { return nil }
 
