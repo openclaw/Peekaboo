@@ -5,6 +5,23 @@ import Foundation
 import os.log
 import PeekabooFoundation
 
+private func scrollPostDispatchFailure(
+    outcome: DesktopActionOutcome,
+    cause: any Error) -> DesktopActionFailure
+{
+    DesktopActionFailure(
+        outcome: outcome,
+        message: "Scroll was dispatched, but final target identity validation failed",
+        hint: "Observe the target before retrying this scroll.",
+        causeDescription: cause.localizedDescription) ?? .indeterminate(
+        delivery: outcome.delivery,
+        evidence: .completionUnknown,
+        unitCount: outcome.dispatchState.unitCount,
+        message: "Scroll completion is indeterminate after target identity drift",
+        hint: "Observe the target before retrying this scroll.",
+        causeDescription: cause.localizedDescription)
+}
+
 /// Service for handling scroll operations
 @MainActor
 public final class ScrollService {
@@ -15,6 +32,8 @@ public final class ScrollService {
     private let actionInputDriver: any ActionInputDriving
     private let syntheticInputDriver: any SyntheticInputDriving
     private let automationElementResolver: any AutomationElementResolving
+    private let exactWindowIdentityValidator: @Sendable (WindowMutationIdentity, CGRect) -> Bool
+    private let processStartIdentityProvider: @Sendable (pid_t) -> UInt64?
     private let desktopOperationExecutor: DesktopOperationExecutor
     private let operationFinalizer: @MainActor () -> Void
 
@@ -39,6 +58,10 @@ public final class ScrollService {
         actionInputDriver: any ActionInputDriving = ActionInputDriver(),
         syntheticInputDriver: any SyntheticInputDriving = SyntheticInputDriver(),
         automationElementResolver: any AutomationElementResolving = AutomationElementResolver(),
+        exactWindowIdentityValidator: @escaping @Sendable (WindowMutationIdentity, CGRect) -> Bool =
+            SystemIdentityResolver.validateWindowMutationIdentity,
+        processStartIdentityProvider: @escaping @Sendable (pid_t) -> UInt64? =
+            SystemIdentityResolver.processStartIdentity,
         desktopOperationExecutor: DesktopOperationExecutor = DesktopOperationExecutor(),
         operationFinalizer: @escaping @MainActor () -> Void = {})
     {
@@ -56,6 +79,8 @@ public final class ScrollService {
         self.actionInputDriver = actionInputDriver
         self.syntheticInputDriver = syntheticInputDriver
         self.automationElementResolver = automationElementResolver
+        self.exactWindowIdentityValidator = exactWindowIdentityValidator
+        self.processStartIdentityProvider = processStartIdentityProvider
         self.desktopOperationExecutor = desktopOperationExecutor
         self.operationFinalizer = operationFinalizer
     }
@@ -78,18 +103,54 @@ public final class ScrollService {
             "smooth: \(request.smooth)"
         self.logger.debug("\(description, privacy: .public)")
         var bundleIdentifier: String?
+        var preparedElement: AutomationElement?
         let strategy: UIInputStrategy = request.foreground ? .synthOnly : .actionOnly
+        let captureReceipt: DesktopOperationPlan.CaptureReceipt
+        if request.foreground {
+            captureReceipt = try DesktopOperationPlan.CaptureReceipt(snapshotID: request.snapshotId)
+        } else {
+            guard let snapshotID = request.snapshotId,
+                  request.target?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            else {
+                throw PeekabooError.snapshotStale(
+                    "background scroll requires a target from a fresh exact-window snapshot")
+            }
+            let detectionResult = try await self.snapshotManager.getDetectionResult(snapshotId: snapshotID)
+            captureReceipt = try DesktopOperationSnapshotReceiptValidator.captureReceipt(
+                snapshotID: snapshotID,
+                detectionResult: detectionResult,
+                requireExactWindow: true,
+                processStartIdentityProvider: self.processStartIdentityProvider,
+                exactWindowIdentityValidator: self.exactWindowIdentityValidator)
+        }
 
         do {
             let plan = try DesktopOperationPlan(
                 verb: .scroll,
                 selector: .element(request.target),
-                captureReceipt: DesktopOperationPlan.CaptureReceipt(
-                    snapshotID: request.snapshotId),
+                captureReceipt: captureReceipt,
                 deliveryIntent: request.foreground ? .foreground : .background,
                 strategy: strategy,
                 prepare: {
-                    bundleIdentifier = await self.bundleIdentifier(snapshotId: request.snapshotId)
+                    if request.foreground {
+                        bundleIdentifier = await self.bundleIdentifier(snapshotId: request.snapshotId)
+                    } else {
+                        guard let snapshotID = captureReceipt.snapshotID else {
+                            throw PeekabooError.snapshotStale("background scroll snapshot receipt was lost")
+                        }
+                        guard let detectionResult = try await self.snapshotManager.getDetectionResult(
+                            snapshotId: snapshotID)
+                        else {
+                            throw PeekabooError.snapshotStale("background scroll snapshot is no longer available")
+                        }
+                        try DesktopOperationSnapshotReceiptValidator.validate(
+                            detectionResult: detectionResult,
+                            receipt: captureReceipt,
+                            processStartIdentityProvider: self.processStartIdentityProvider,
+                            exactWindowIdentityValidator: self.exactWindowIdentityValidator)
+                        preparedElement = try self.resolveActionScrollElement(request, in: detectionResult)
+                        bundleIdentifier = captureReceipt.bundleIdentifier
+                    }
                     await lanePreparation()
                 },
                 routing: {
@@ -98,7 +159,25 @@ public final class ScrollService {
                         bundleIdentifier: bundleIdentifier)
                 },
                 action: DesktopOperationPlan.ActionRoute {
-                    try await self.performActionScroll(request, strategy: strategy)
+                    guard let preparedElement,
+                          let snapshotID = captureReceipt.snapshotID
+                    else {
+                        throw ActionInputError.unsupported(.missingElement)
+                    }
+                    guard let detectionResult = try await self.snapshotManager.getDetectionResult(
+                        snapshotId: snapshotID)
+                    else {
+                        throw PeekabooError.snapshotStale("background scroll snapshot is no longer available")
+                    }
+                    try DesktopOperationSnapshotReceiptValidator.validate(
+                        detectionResult: detectionResult,
+                        receipt: captureReceipt,
+                        processStartIdentityProvider: self.processStartIdentityProvider,
+                        exactWindowIdentityValidator: self.exactWindowIdentityValidator)
+                    return try self.actionInputDriver.tryScroll(
+                        element: preparedElement,
+                        direction: request.direction,
+                        pages: Self.actionScrollPages(amount: request.amount, strategy: strategy))
                 },
                 synthesis: DesktopOperationPlan.SynthesisRoute {
                     try await self.performSyntheticScroll(request)
@@ -107,6 +186,23 @@ public final class ScrollService {
                             mechanism: .globalEvents,
                             mode: .foreground),
                         evidence: .deliveryAccepted)
+                },
+                postvalidate: { result in
+                    guard !request.foreground, let snapshotID = captureReceipt.snapshotID else { return }
+                    do {
+                        guard let detectionResult = try await self.snapshotManager.getDetectionResult(
+                            snapshotId: snapshotID)
+                        else {
+                            throw PeekabooError.snapshotStale("background scroll snapshot is no longer available")
+                        }
+                        try DesktopOperationSnapshotReceiptValidator.validate(
+                            detectionResult: detectionResult,
+                            receipt: captureReceipt,
+                            processStartIdentityProvider: self.processStartIdentityProvider,
+                            exactWindowIdentityValidator: self.exactWindowIdentityValidator)
+                    } catch {
+                        throw scrollPostDispatchFailure(outcome: result.outcome, cause: error)
+                    }
                 },
                 success: laneCompletion,
                 finalize: self.operationFinalizer)
@@ -132,62 +228,30 @@ public final class ScrollService {
             "Retry with foreground enabled to allow synthetic wheel events."
     }
 
-    private func performActionScroll(
+    private func resolveActionScrollElement(
         _ request: ScrollRequest,
-        strategy: UIInputStrategy) async throws -> UIInputExecutionResult.Action
+        in detectionResult: ElementDetectionResult) throws -> AutomationElement
     {
-        let detectionResult: ElementDetectionResult?
-        if let snapshotId = request.snapshotId {
-            detectionResult = try await self.snapshotManager.getDetectionResult(snapshotId: snapshotId)
-            if detectionResult == nil {
-                throw ActionInputError.staleElement
-            }
-        } else {
-            detectionResult = nil
-        }
-
         guard let target = request.target?.trimmingCharacters(in: .whitespacesAndNewlines),
               !target.isEmpty
         else {
             throw ActionInputError.unsupported(.actionUnsupported)
         }
-        let pages = Self.actionScrollPages(amount: request.amount, strategy: strategy)
-
-        if let detectionResult {
-            if let detected = detectionResult.elements.findById(target) ??
-                Self.findDetectedElement(matching: target, in: detectionResult)
-            {
-                guard !detected.isOCRSemanticEvidence else {
-                    throw PeekabooError.invalidInput(OCRSemanticEvidencePolicy.interactionRefusalMessage)
-                }
-                guard let element = self.automationElementResolver.resolve(
-                    detectedElement: detected,
-                    windowContext: detectionResult.metadata.windowContext)
-                else {
-                    throw ActionInputError.unsupported(.missingElement)
-                }
-
-                return try self.actionInputDriver.tryScroll(
-                    element: element,
-                    direction: request.direction,
-                    pages: pages)
-            }
-
-            throw NotFoundError.element(target)
-        }
-
-        if let element = self.automationElementResolver.resolve(
-            query: target,
-            windowContext: nil,
-            requireTextInput: false)
+        if let detected = detectionResult.elements.findById(target) ??
+            Self.findDetectedElement(matching: target, in: detectionResult)
         {
-            return try self.actionInputDriver.tryScroll(
-                element: element,
-                direction: request.direction,
-                pages: pages)
+            guard !detected.isOCRSemanticEvidence else {
+                throw PeekabooError.invalidInput(OCRSemanticEvidencePolicy.interactionRefusalMessage)
+            }
+            guard let element = self.automationElementResolver.resolve(
+                detectedElement: detected,
+                windowContext: detectionResult.metadata.windowContext)
+            else {
+                throw ActionInputError.unsupported(.missingElement)
+            }
+            return element
         }
-
-        throw ActionInputError.unsupported(.missingElement)
+        throw NotFoundError.element(target)
     }
 
     nonisolated static func actionScrollPages(amount: Int, strategy: UIInputStrategy) -> Int {

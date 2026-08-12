@@ -143,7 +143,7 @@ struct SyntheticInputDriverTests {
                 snapshotId: nil))
             Issue.record("Expected background scroll to fail closed")
         } catch let error as PeekabooError {
-            #expect(error.localizedDescription.contains("foreground"))
+            #expect(error.localizedDescription.contains("target"))
         }
 
         #expect(synthetic.events.isEmpty)

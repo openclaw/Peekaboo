@@ -209,6 +209,8 @@ public final class UIAutomationService: TargetedHotkeyServiceProtocol, TargetedT
             actionInputDriver: actionInputDriver,
             syntheticInputDriver: syntheticInputDriver,
             automationElementResolver: automationElementResolver,
+            exactWindowIdentityValidator: exactWindowIdentityValidator,
+            processStartIdentityProvider: processStartIdentityProvider,
             desktopOperationExecutor: executor,
             operationFinalizer: operationFinalizer)
         if let hotkeyServiceFactory {

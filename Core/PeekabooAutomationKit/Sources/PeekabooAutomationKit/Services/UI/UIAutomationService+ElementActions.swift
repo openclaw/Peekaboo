@@ -234,74 +234,24 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
     private func elementMutationCaptureReceipt(snapshotId: String) async throws
         -> DesktopOperationPlan.CaptureReceipt
     {
-        guard let detectionResult = try? await self.snapshotManager.getDetectionResult(snapshotId: snapshotId) else {
-            return try DesktopOperationPlan.CaptureReceipt(snapshotID: snapshotId)
-        }
-        guard let context = detectionResult.metadata.windowContext,
-              let identity = context.windowMutationIdentity
-        else {
-            return try DesktopOperationPlan.CaptureReceipt(
-                snapshotID: snapshotId,
-                bundleIdentifier: detectionResult.metadata.windowContext?.applicationBundleId,
-                coordinateContext: detectionResult.metadata.captureCoordinateContext)
-        }
-        guard let bounds = context.windowBounds,
-              context.applicationProcessId == identity.ownerProcessIdentifier,
-              context.windowID == identity.windowID,
-              identity.capturedBounds == bounds,
-              self.processStartIdentityProvider(identity.ownerProcessIdentifier) ==
-              identity.ownerProcessStartIdentity,
-              self.exactWindowIdentityValidator(identity, bounds)
-        else {
-            throw PeekabooError.snapshotStale(
-                "target window owner, process generation, or bounds changed before element mutation")
-        }
-        let processIdentity = ApplicationProcessIdentity(
-            processIdentifier: identity.ownerProcessIdentifier,
-            processStartIdentity: identity.ownerProcessStartIdentity)
-        return try DesktopOperationPlan.CaptureReceipt(
+        let detectionResult = try? await self.snapshotManager.getDetectionResult(snapshotId: snapshotId)
+        return try DesktopOperationSnapshotReceiptValidator.captureReceipt(
             snapshotID: snapshotId,
-            bundleIdentifier: context.applicationBundleId,
-            processIdentifier: processIdentity.processIdentifier,
-            processIdentity: processIdentity,
-            exactWindow: DesktopOperationPlan.ExactWindowReceipt(identity: identity, bounds: bounds),
-            coordinateContext: detectionResult.metadata.captureCoordinateContext)
+            detectionResult: detectionResult,
+            requireExactWindow: false,
+            processStartIdentityProvider: self.processStartIdentityProvider,
+            exactWindowIdentityValidator: self.exactWindowIdentityValidator)
     }
 
     private func validateElementMutationTarget(
         _ context: WindowContext?,
         receipt: DesktopOperationPlan.CaptureReceipt) throws
     {
-        guard let expectedProcessIdentity = receipt.processIdentity,
-              let exactWindow = receipt.exactWindow
-        else {
-            return
-        }
-        let expectedWindowIdentity = exactWindow.identity
-        guard let context,
-              context.applicationProcessId == expectedProcessIdentity.processIdentifier,
-              context.windowID == expectedWindowIdentity.windowID,
-              context.windowBounds == exactWindow.bounds,
-              let resolvedWindowIdentity = context.windowMutationIdentity,
-              Self.sameElementMutationWindowIdentity(resolvedWindowIdentity, expectedWindowIdentity),
-              self.processStartIdentityProvider(expectedProcessIdentity.processIdentifier) ==
-              expectedProcessIdentity.processStartIdentity,
-              let bounds = expectedWindowIdentity.capturedBounds,
-              self.exactWindowIdentityValidator(expectedWindowIdentity, bounds)
-        else {
-            throw PeekabooError.snapshotStale(
-                "target window owner, process generation, or bounds changed before element mutation dispatch")
-        }
-    }
-
-    private nonisolated static func sameElementMutationWindowIdentity(
-        _ lhs: WindowMutationIdentity,
-        _ rhs: WindowMutationIdentity) -> Bool
-    {
-        lhs.windowID == rhs.windowID &&
-            lhs.ownerProcessIdentifier == rhs.ownerProcessIdentifier &&
-            lhs.ownerProcessStartIdentity == rhs.ownerProcessStartIdentity &&
-            lhs.capturedBounds == rhs.capturedBounds
+        try DesktopOperationSnapshotReceiptValidator.validate(
+            context: context,
+            receipt: receipt,
+            processStartIdentityProvider: self.processStartIdentityProvider,
+            exactWindowIdentityValidator: self.exactWindowIdentityValidator)
     }
 
     private static func isValidActionName(_ actionName: String) -> Bool {

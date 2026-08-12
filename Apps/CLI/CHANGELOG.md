@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Reject excess positional arguments unless a command declares a variadic tail, while preserving explicit multi-chord `press` sequences.
 - Isolate accessibility traversal state per search so repeated long-lived CLI/host lookups cannot skip elements seen earlier.
 - Redraw interactive agent chat after height-only terminal resizes so its main-screen viewport stays aligned.
+- Centralize native input target receipts, lane ownership, routing, outcomes, validation, feedback, and finalization, and require exact process-generation/window/bounds receipts for background scrolls before dispatch.
 - Keep AX-only `see --tree --no-screenshot` independent of capture backends and ScreenCaptureKit ownership while still requiring Accessibility on the selected execution host.
 - Reduce reusable-daemon window-tracker MainActor work by retaining only bounds and owner PID, avoiding unused per-window application and Accessibility metadata on every reconciliation pass.
 - Refresh AXorcist to dispatch native accessibility actions once with typed AX errors and route legacy `AXSetValue` requests through the `AXValue` attribute instead of action discovery.

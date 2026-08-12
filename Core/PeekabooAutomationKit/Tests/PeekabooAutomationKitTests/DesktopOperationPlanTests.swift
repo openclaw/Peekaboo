@@ -48,6 +48,33 @@ struct DesktopOperationPlanTests {
     }
 
     @Test
+    func `exact window receipt rejects mismatched captured bounds`() throws {
+        let identity = WindowMutationIdentity(
+            windowID: 42,
+            ownerProcessIdentifier: 321,
+            ownerProcessStartIdentity: 11,
+            capturedBounds: CGRect(x: 1, y: 2, width: 300, height: 200))
+
+        #expect(throws: (any Error).self) {
+            _ = try DesktopOperationPlan.ExactWindowReceipt(
+                identity: identity,
+                bounds: CGRect(x: 1, y: 2, width: 301, height: 200))
+        }
+    }
+
+    @Test
+    func `capture receipt rejects process and exact window owner mismatch`() throws {
+        let exact = try Self.exactWindowReceipt()
+        let foreignProcess = ApplicationProcessIdentity(processIdentifier: 322, processStartIdentity: 11)
+
+        #expect(throws: (any Error).self) {
+            _ = try DesktopOperationPlan.CaptureReceipt(
+                processIdentity: foreignProcess,
+                exactWindow: exact)
+        }
+    }
+
+    @Test
     func `lane scope is derived from intent and stable receipt`() throws {
         let process = ApplicationProcessIdentity(processIdentifier: 321, processStartIdentity: 11)
         let receipt = try DesktopOperationPlan.CaptureReceipt(processIdentity: process)

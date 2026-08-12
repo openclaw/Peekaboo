@@ -662,6 +662,48 @@ struct DesktopOperationExecutorTests {
     }
 
     @Test
+    func `targeted synthetic type keeps nested focus click in one lane and finalizes once`() async throws {
+        let root = Self.temporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let executor = DesktopOperationExecutor(
+            laneCoordinator: DesktopOperationLaneCoordinator(coordinationRootURL: root))
+        let target = DetectedElement(
+            id: "T1",
+            type: .textField,
+            label: "Input",
+            bounds: CGRect(x: 20, y: 30, width: 200, height: 30))
+        let detectionResult = ElementDetectionResult(
+            snapshotId: "snapshot",
+            screenshotPath: "/tmp/type-target.png",
+            elements: DetectedElements(textFields: [target]),
+            metadata: DetectionMetadata(detectionTime: 0, elementCount: 1, method: "test"))
+        let synthetic = ClickRecordingSyntheticInputDriver()
+        var finalizerCount = 0
+        let service = TypeService(
+            snapshotManager: InMemorySnapshotManager(detectionResult: detectionResult),
+            inputPolicy: UIInputPolicy(defaultStrategy: .synthOnly),
+            syntheticInputDriver: synthetic,
+            desktopOperationExecutor: executor,
+            operationFinalizer: { finalizerCount += 1 })
+
+        let summary = try await service.typeTrackingSecureInput(
+            text: "",
+            target: "T1",
+            clearExisting: false,
+            typingDelay: 0,
+            snapshotId: "snapshot")
+
+        #expect(summary.result.path == .synth)
+        #expect(finalizerCount == 1)
+        #expect(synthetic.events.contains { event in
+            if case .click = event {
+                return true
+            }
+            return false
+        })
+    }
+
+    @Test
     func `different process lanes overlap while identical process lanes serialize`() async throws {
         let root = Self.temporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
