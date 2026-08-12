@@ -252,6 +252,10 @@ public struct MCPToolContext: @unchecked Sendable {
         }
         let executionArguments = targetAuthorization.arguments
 
+        // All potentially suspending coordinator work completed before authorization. From this generation check to
+        // entering the leaf there is no suspension; app/window/type/paste leaves then retain their own dispatch
+        // receipt.
+
         let scope = MCPToolSnapshotMutationScope(
             toolName: tool.name,
             effect: effect,

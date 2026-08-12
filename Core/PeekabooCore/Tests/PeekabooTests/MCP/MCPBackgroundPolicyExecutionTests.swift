@@ -61,6 +61,15 @@ struct MCPBackgroundPolicyExecutionTests {
         #expect(!regularResponse.isError)
         #expect(await regularCounter.invocationCount == 1)
         #expect(await regularCounter.lastName == "PID:89")
+
+        for toolName in ["app", "dialog", "space"] {
+            let readCounter = BackgroundPolicyInvocationCounter()
+            let readResponse = try await context.execute(
+                tool: BackgroundPolicyMutationProbe(name: toolName, counter: readCounter),
+                arguments: ToolArguments(raw: ["action": "list"]))
+            #expect(!readResponse.isError)
+            #expect(await readCounter.invocationCount == 1)
+        }
     }
 
     @Test
