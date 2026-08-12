@@ -32,7 +32,7 @@ read_when:
   free for concurrent use. Use one process per session; if another run is using it, wait and retry the same full ID.
 - Every new Agent session is background-only by default. The runtime enforces that ceiling before tool validation or
   dispatch, including foreground aliases, shared-pointer tools, focus/activation, foreground capture, global
-  shared system UI mutations, Space switch/follow, dialog fallbacks, raw `press`, persistent clipboard writes,
+  shared system UI mutations, Space switch/follow, dialog mutations, raw `press`, persistent clipboard writes,
   browser setup, and
   browser page fronting. Space listing and unfollowed window moves remain available. Refusals report `effect: refused`,
   `mutation_dispatched: false`, and `retry_safe: true`.

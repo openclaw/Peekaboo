@@ -35,6 +35,8 @@ struct MCPToolExecutionPolicyTests {
             .init(tool: "window", arguments: ["action": "focus"]),
             .init(tool: "menu", arguments: ["action": "click", "foreground": true]),
             .init(tool: "dialog", arguments: ["action": "click", "foreground": true]),
+            .init(tool: "dialog", arguments: ["action": "click", "app": "TextEdit"]),
+            .init(tool: "dialog", arguments: ["action": "dismiss", "app": "TextEdit"]),
             .init(tool: "dialog", arguments: ["action": "input"]),
             .init(tool: "dialog", arguments: ["action": "file"]),
             .init(tool: "dialog", arguments: ["action": "dismiss", "force": true]),
@@ -114,7 +116,7 @@ struct MCPToolExecutionPolicyTests {
             .init(tool: "app", arguments: ["action": "launch", "foreground": false]),
             .init(tool: "window", arguments: ["action": "set-bounds"]),
             .init(tool: "menu", arguments: ["action": "click", "foreground": false]),
-            .init(tool: "dialog", arguments: ["action": "click", "foreground": false]),
+            .init(tool: "dialog", arguments: ["action": "list", "foreground": false]),
             .init(tool: "dock", arguments: ["action": "list"]),
             .init(tool: "space", arguments: ["action": "list"]),
             .init(tool: "space", arguments: [
@@ -421,12 +423,41 @@ struct MCPToolExecutionPolicyTests {
         let missingReceiptResponse = try await context.execute(
             tool: PolicySnapshotProbeTool(name: "click", capture: capture),
             arguments: ToolArguments(raw: ["coords": "120,120"]))
+        let mixedTypeResponse = try await context.execute(
+            tool: PolicySnapshotProbeTool(name: "type", capture: capture),
+            arguments: ToolArguments(raw: [
+                "text": "hello",
+                "on": "B1",
+                "snapshot": snapshotID,
+                "app": "TextEdit",
+            ]))
+        try await snapshots.storeDetectionResult(
+            snapshotId: snapshotID,
+            result: ElementDetectionResult(
+                snapshotId: snapshotID,
+                screenshotPath: "/tmp/selector-policy-dialog.png",
+                elements: detectionResult.elements,
+                metadata: DetectionMetadata(
+                    detectionTime: 0.01,
+                    elementCount: 1,
+                    method: "test",
+                    windowContext: windowContext,
+                    isDialog: true)))
+        let genericDialogResponse = try await context.execute(
+            tool: PolicySnapshotProbeTool(capture: capture),
+            arguments: ToolArguments(raw: [
+                "on": "B1",
+                "action": "AXPress",
+                "snapshot": snapshotID,
+            ]))
         await UISnapshotManager.shared.removeSnapshot(id: snapshotID)
 
         #expect(response.isError)
         #expect(blankResponse.isError)
         #expect(malformedResponse.isError)
         #expect(missingReceiptResponse.isError)
+        #expect(mixedTypeResponse.isError)
+        #expect(genericDialogResponse.isError)
         #expect(await capture.snapshotID == nil)
         guard case let .object(meta)? = response.meta else {
             Issue.record("Missing selector-conflict refusal metadata")
@@ -619,9 +650,15 @@ private struct PolicySnapshotProbeTool: MCPTool {
             properties: [
                 "on": SchemaBuilder.string(),
                 "action": SchemaBuilder.string(),
+                "app": SchemaBuilder.string(),
                 "coords": SchemaBuilder.string(),
                 "coordinate_reference": SchemaBuilder.string(),
+                "pid": SchemaBuilder.integer(),
                 "snapshot": SchemaBuilder.string(),
+                "text": SchemaBuilder.string(),
+                "window_id": SchemaBuilder.integer(),
+                "window_index": SchemaBuilder.integer(),
+                "window_title": SchemaBuilder.string(),
             ],
             required: [])
     }

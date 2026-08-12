@@ -253,14 +253,10 @@ private enum BackgroundOnlyToolPolicy {
             return foreground
         }
         switch self.normalized(arguments.getString("action")) {
-        case nil, "list", "click":
+        case nil, "list":
             return nil
-        case "dismiss":
-            return arguments.getBool("force") == true
-                ? .sharedDesktop("forced dialog dismissal sends global keyboard input")
-                : nil
-        case "input", "file":
-            return .sharedDesktop("the dialog action requires global keyboard or coordinate input")
+        case "click", "dismiss", "input", "file":
+            return .sharedDesktop("dialog mutation lacks an exact process-generation and window receipt")
         default:
             return .unclassified
         }
@@ -303,7 +299,8 @@ private enum BackgroundOnlyToolPolicy {
             return .activation("connecting can surface Chrome's remote-debugging setup or permission UI")
         }
         if action == "newpage" {
-            // The typed wrapper maps an omitted background value to true before delegating upstream.
+            // DevTools page targets are independent from macOS desktop focus. The typed wrapper maps an omitted
+            // background value to true before delegating upstream, so page mutation can overlap foreground work.
             return nil
         }
         guard action == "call" else { return nil }

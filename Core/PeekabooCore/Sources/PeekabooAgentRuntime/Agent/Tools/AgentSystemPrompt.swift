@@ -178,6 +178,8 @@ public struct AgentSystemPrompt {
         2. Use the `dialog` tool with action "click" for standard buttons.
         3. Use the `dialog` tool with action "input" for text fields.
         4. If dialog helpers fail, fall back to precise `click` commands.
+        5. Background-only Agent sessions can inspect dialogs but refuse dialog mutations until an exact
+           process-generation/window receipt is available; do not retry through a broader click route.
 
         **Common Patterns**
         - Menus → the `menu` tool with action "click" and the full path.
