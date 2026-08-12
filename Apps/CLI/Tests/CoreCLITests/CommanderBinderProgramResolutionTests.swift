@@ -88,19 +88,34 @@ struct CommanderBinderProgramResolutionTests {
     @Test
     @MainActor
     func `Press usage honestly marks repeated chords and explicit snapshots`() throws {
-        let descriptor = try #require(
-            CommanderRegistryBuilder.buildDescriptors().first { $0.metadata.name == "press" }
-        )
+        let descriptors = CommanderRegistryBuilder.buildDescriptors()
+        let descriptor = try #require(descriptors.first { $0.metadata.name == "press" })
         let usage = CommanderRuntimeRouter.buildUsageLine(
             path: ["press"],
             signature: descriptor.metadata.signature
         )
+        let invocation = try Program(descriptors: descriptors.map(\.metadata)).resolve(argv: [
+            "peekaboo", "press", "cmd+c", "Return", "--foreground",
+        ])
         let snapshotHelp = PressCommand.commanderSignature().options.first { $0.label == "snapshot" }?.help
         let typeSnapshotHelp = TypeCommand.commanderSignature().options.first { $0.label == "snapshot" }?.help
 
         #expect(usage.contains("[<chord> ...]"))
+        #expect(descriptor.metadata.signature.arguments.first?.parsing == .remaining)
+        #expect(invocation.parsedValues.positional == ["cmd+c", "Return"])
         #expect(snapshotHelp?.contains("no snapshot is inferred") == true)
         #expect(typeSnapshotHelp?.contains("no snapshot is inferred") == true)
+    }
+
+    @Test
+    @MainActor
+    func `Commander program rejects excess fixed positional arguments`() throws {
+        let descriptors = CommanderRegistryBuilder.buildDescriptors()
+        let program = Program(descriptors: descriptors.map(\.metadata))
+
+        #expect(throws: CommanderProgramError.parsingError(.unexpectedArgument("extra"))) {
+            _ = try program.resolve(argv: ["peekaboo", "type", "Hello", "extra", "--foreground"])
+        }
     }
 
     @Test

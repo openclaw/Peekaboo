@@ -14,7 +14,10 @@ RuntimeOptionsConfigurable {
         hint: RawPressPolicy.foregroundConsentRequiredHint
     )
 
-    @Argument(help: "One or more chords. Chord syntax matches xdotool key (cmd+shift+t).")
+    @Argument(
+        help: "One or more chords. Chord syntax matches xdotool key (cmd+shift+t).",
+        parsing: .remaining
+    )
     var chords: [String]
 
     @OptionGroup var target: InteractionTargetOptions

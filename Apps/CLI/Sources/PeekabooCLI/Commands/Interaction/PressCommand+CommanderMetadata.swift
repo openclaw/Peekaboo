@@ -7,7 +7,8 @@ extension PressCommand: CommanderSignatureProviding {
                 .make(
                     label: "chord...",
                     help: "One or more chords. Chord syntax matches xdotool key (cmd+shift+t).",
-                    isOptional: true
+                    isOptional: true,
+                    parsing: .remaining
                 ),
             ],
             options: [
