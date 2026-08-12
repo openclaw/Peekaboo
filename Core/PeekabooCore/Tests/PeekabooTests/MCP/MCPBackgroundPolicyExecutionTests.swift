@@ -9,6 +9,19 @@ import Testing
 @Suite(.serialized)
 struct MCPBackgroundPolicyExecutionTests {
     @Test
+    func `App tool lifecycle examples include required foreground consent`() async {
+        let context = await MCPToolTestHelpers.makeContext()
+        let description = AppTool(context: context).description
+        let newInstanceExample =
+            #"{ "action": "launch", "name": "TextEdit", "newInstance": true, "foreground": true }"#
+        let openExample =
+            #"{ "action": "open", "name": "Safari", "openTargets": ["https://example.com"], "foreground": true }"#
+
+        #expect(description.contains(newInstanceExample))
+        #expect(description.contains(openExample))
+    }
+
+    @Test
     func `App tool launch defaults to background`() async throws {
         let mockApps = await MainActor.run { MockApplicationService() }
         let context = await MCPToolTestHelpers.makeContext(applications: mockApps)

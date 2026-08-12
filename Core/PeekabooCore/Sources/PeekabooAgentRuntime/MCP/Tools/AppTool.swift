@@ -20,8 +20,8 @@ public struct AppTool: MCPTool {
 
         Always include the `action` field in your JSON payload. Examples:
         - { "action": "launch", "name": "Finder" }
-        - { "action": "launch", "name": "TextEdit", "newInstance": true, "waitForWindow": true }
-        - { "action": "open", "name": "Safari", "openTargets": ["https://example.com"] }
+        - { "action": "launch", "name": "TextEdit", "newInstance": true, "foreground": true }
+        - { "action": "open", "name": "Safari", "openTargets": ["https://example.com"], "foreground": true }
         - { "action": "launch", "name": "Calendar", "foreground": true }
         - { "action": "switch", "to": "Safari" }
         - { "action": "focus", "name": "Google Chrome" }
