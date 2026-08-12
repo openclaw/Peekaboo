@@ -209,13 +209,28 @@ final class PeekabooBridgeListenerReadiness: @unchecked Sendable {
     }
 }
 
-private enum PeekabooBridgeAcceptLoop {
+enum PeekabooBridgeAcceptLoop {
     typealias ClientHandler = @Sendable (Int32, PeekabooBridgeConnectionLiveness) async -> Void
+    typealias ConnectionAcceptor = @Sendable (Int32) async -> AcceptResult
+    typealias ConnectionRegistration = @Sendable (PeekabooBridgeConnectionLiveness) async -> Void
     typealias PreparedConnection = (fd: Int32, connection: PeekabooBridgeConnectionLiveness)
+
+    enum AcceptResult: Sendable {
+        case prepared(PreparedConnection)
+        case retry
+        case drained
+        case listenerClosed
+        case failure(Int32)
+    }
+
+    enum DrainOutcome: Equatable, Sendable {
+        case rearm
+        case stop
+    }
 
     private static let logger = Logger(subsystem: "boo.peekaboo.bridge", category: "host")
 
-    static func run(
+    fileprivate static func run(
         listenFD: Int32,
         readiness: PeekabooBridgeListenerReadiness,
         context: PeekabooBridgeClientContext,
@@ -224,51 +239,74 @@ private enum PeekabooBridgeAcceptLoop {
         defer { readiness.cancel() }
         for await _ in readiness.events {
             guard !Task.isCancelled else { return }
-            guard let connections = await self.drainConnections(listenFD: listenFD) else { return }
-            for (index, prepared) in connections.enumerated() {
-                guard !Task.isCancelled else {
-                    connections[index...].forEach { $0.connection.close() }
-                    return
-                }
-                await context.connectionTracker.begin(connection: prepared.connection)
-                Task.detached(priority: .userInitiated) {
-                    await clientHandler(prepared.fd, prepared.connection)
-                    prepared.connection.close()
-                    await context.connectionTracker.end(connection: prepared.connection)
-                }
-            }
+            let outcome = await self.drainConnections(
+                listenFD: listenFD,
+                acceptConnection: self.acceptConnection,
+                registerConnection: { connection in
+                    await context.connectionTracker.begin(connection: connection)
+                },
+                unregisterConnection: { connection in
+                    await context.connectionTracker.end(connection: connection)
+                },
+                clientHandler: clientHandler)
+            guard outcome == .rearm else { return }
             readiness.rearm()
         }
     }
 
-    private static func drainConnections(listenFD: Int32) async -> [PreparedConnection]? {
-        var connections: [PreparedConnection] = []
+    static func drainConnections(
+        listenFD: Int32,
+        acceptConnection: @escaping ConnectionAcceptor,
+        registerConnection: @escaping ConnectionRegistration,
+        unregisterConnection: @escaping ConnectionRegistration,
+        clientHandler: @escaping ClientHandler) async -> DrainOutcome
+    {
         while !Task.isCancelled {
-            var addr = sockaddr()
-            var len = socklen_t(MemoryLayout<sockaddr>.size)
-            let client = accept(listenFD, &addr, &len)
-            if client >= 0 {
-                if let prepared = self.prepareConnection(client) {
-                    connections.append(prepared)
+            switch await acceptConnection(listenFD) {
+            case let .prepared(prepared):
+                await registerConnection(prepared.connection)
+                guard !Task.isCancelled else {
+                    prepared.connection.close()
+                    await unregisterConnection(prepared.connection)
+                    return .stop
                 }
+                Task.detached(priority: .userInitiated) {
+                    await clientHandler(prepared.fd, prepared.connection)
+                    prepared.connection.close()
+                    await unregisterConnection(prepared.connection)
+                }
+            case .retry:
                 continue
+            case .drained:
+                return .rearm
+            case .listenerClosed:
+                return .stop
+            case let .failure(code):
+                self.logger.error("accept failed: \(code, privacy: .public)")
+                try? await Task.sleep(nanoseconds: 50_000_000)
+                return Task.isCancelled ? .stop : .rearm
             }
-            if errno == EINTR {
-                continue
-            }
-            if errno == EAGAIN || errno == EWOULDBLOCK {
-                return connections
-            }
-            if errno == EBADF || errno == EINVAL {
-                connections.forEach { $0.connection.close() }
-                return nil
-            }
-            self.logger.error("accept failed: \(errno, privacy: .public)")
-            try? await Task.sleep(nanoseconds: 50_000_000)
-            return connections
         }
-        connections.forEach { $0.connection.close() }
-        return nil
+        return .stop
+    }
+
+    private static func acceptConnection(_ listenFD: Int32) async -> AcceptResult {
+        var addr = sockaddr()
+        var len = socklen_t(MemoryLayout<sockaddr>.size)
+        let client = accept(listenFD, &addr, &len)
+        if client >= 0 {
+            return self.prepareConnection(client).map(AcceptResult.prepared) ?? .retry
+        }
+        if errno == EINTR {
+            return .retry
+        }
+        if errno == EAGAIN || errno == EWOULDBLOCK {
+            return .drained
+        }
+        if errno == EBADF || errno == EINVAL {
+            return .listenerClosed
+        }
+        return .failure(errno)
     }
 
     private static func prepareConnection(_ client: Int32) -> PreparedConnection? {

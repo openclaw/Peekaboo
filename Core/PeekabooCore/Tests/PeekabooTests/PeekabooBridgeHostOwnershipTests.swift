@@ -498,6 +498,108 @@ struct PeekabooBridgeHostOwnershipTests {
     }
 
     @Test
+    func `accept drain hands off each connection before reaching EAGAIN`() async throws {
+        var sockets = [Int32](repeating: -1, count: 2)
+        guard socketpair(AF_UNIX, SOCK_STREAM, 0, &sockets) == 0 else {
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+        let transportFD = sockets[0]
+        let peerFD = sockets[1]
+        defer { close(peerFD) }
+
+        let connection = try PeekabooBridgeConnectionLiveness(fd: transportFD)
+        defer { connection.close() }
+        let prepared = PeekabooBridgeAcceptLoop.PreparedConnection(transportFD, connection)
+        let state = BridgeAcceptLoopTestState()
+
+        let outcome = await PeekabooBridgeAcceptLoop.drainConnections(
+            listenFD: -1,
+            acceptConnection: { _ in
+                switch state.nextAcceptCall() {
+                case 1:
+                    return .prepared(prepared)
+                default:
+                    let started = await Self.waitUntil { state.handlerCallCount == 1 }
+                    state.recordHandlerStartedBeforeDrain(started)
+                    return .drained
+                }
+            },
+            registerConnection: { _ in
+                state.recordRegistration()
+            },
+            unregisterConnection: { _ in
+                state.recordUnregistration()
+            },
+            clientHandler: { fd, _ in
+                state.recordHandler(fd: fd)
+            })
+
+        #expect(outcome == .rearm)
+        #expect(state.handlerStartedBeforeDrain)
+        #expect(state.handlerDescriptors == [transportFD])
+        #expect(await Self.waitUntil { state.unregistrationCount == 1 })
+        #expect(state.registrationCount == 1)
+    }
+
+    @Test
+    func `cancellation after accept registration closes without dispatch or rearm`() async throws {
+        var sockets = [Int32](repeating: -1, count: 2)
+        guard socketpair(AF_UNIX, SOCK_STREAM, 0, &sockets) == 0 else {
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+        let transportFD = sockets[0]
+        let peerFD = sockets[1]
+        defer { close(peerFD) }
+        let probeFD = fcntl(transportFD, F_DUPFD_CLOEXEC, 0)
+        guard probeFD >= 0 else {
+            close(transportFD)
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+
+        let state = BridgeAcceptLoopTestState()
+        let connection = try PeekabooBridgeConnectionLiveness(
+            fd: transportFD,
+            probeFD: probeFD,
+            closeHandler: { fd in
+                state.recordClosedDescriptor(fd)
+                Darwin.close(fd)
+            })
+        defer { connection.close() }
+        let prepared = PeekabooBridgeAcceptLoop.PreparedConnection(transportFD, connection)
+
+        let drainTask = Task {
+            await PeekabooBridgeAcceptLoop.drainConnections(
+                listenFD: -1,
+                acceptConnection: { _ in
+                    state.recordAcceptCall()
+                    return .prepared(prepared)
+                },
+                registerConnection: { _ in
+                    state.recordRegistration()
+                    while !state.releaseRegistration {
+                        try? await Task.sleep(for: .milliseconds(1))
+                    }
+                },
+                unregisterConnection: { _ in
+                    state.recordUnregistration()
+                },
+                clientHandler: { fd, _ in
+                    state.recordHandler(fd: fd)
+                })
+        }
+
+        #expect(await Self.waitUntil { state.registrationCount == 1 })
+        drainTask.cancel()
+        state.allowRegistrationToReturn()
+        let outcome = await drainTask.value
+
+        #expect(outcome == .stop)
+        #expect(state.handlerCallCount == 0)
+        #expect(state.unregistrationCount == 1)
+        #expect(state.closedDescriptors.sorted() == [transportFD, probeFD].sorted())
+    }
+
+    @Test
     func `concurrent stop is idempotent and host can restart on the same path`() async throws {
         let socketPath = Self.socketPath()
         defer { Self.removeSocketArtifacts(socketPath) }
@@ -582,6 +684,20 @@ struct PeekabooBridgeHostOwnershipTests {
         }
     }
 
+    private static func waitUntil(
+        timeout: Duration = .seconds(1),
+        condition: @escaping @Sendable () -> Bool) async -> Bool
+    {
+        let deadline = ContinuousClock.now.advanced(by: timeout)
+        while ContinuousClock.now < deadline {
+            if condition() {
+                return true
+            }
+            try? await Task.sleep(for: .milliseconds(1))
+        }
+        return condition()
+    }
+
     private static func removeSocketArtifacts(_ socketPath: String) {
         unlink(socketPath)
         unlink("\(socketPath).lock")
@@ -639,5 +755,105 @@ struct PeekabooBridgeHostOwnershipTests {
         guard copied < capacity else { throw POSIXError(.ENAMETOOLONG) }
         address.sun_len = UInt8(MemoryLayout.size(ofValue: address))
         return address
+    }
+}
+
+private final class BridgeAcceptLoopTestState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var acceptCalls = 0
+    private var registrations = 0
+    private var unregistrations = 0
+    private var handlerFDs: [Int32] = []
+    private var closedFDs: [Int32] = []
+    private var handlerWasStartedBeforeDrain = false
+    private var mayReturnFromRegistration = false
+
+    func nextAcceptCall() -> Int {
+        self.lock.lock()
+        defer { self.lock.unlock() }
+        self.acceptCalls += 1
+        return self.acceptCalls
+    }
+
+    func recordAcceptCall() {
+        _ = self.nextAcceptCall()
+    }
+
+    func recordRegistration() {
+        self.lock.lock()
+        self.registrations += 1
+        self.lock.unlock()
+    }
+
+    func recordUnregistration() {
+        self.lock.lock()
+        self.unregistrations += 1
+        self.lock.unlock()
+    }
+
+    func recordHandler(fd: Int32) {
+        self.lock.lock()
+        self.handlerFDs.append(fd)
+        self.lock.unlock()
+    }
+
+    func recordHandlerStartedBeforeDrain(_ started: Bool) {
+        self.lock.lock()
+        self.handlerWasStartedBeforeDrain = started
+        self.lock.unlock()
+    }
+
+    func recordClosedDescriptor(_ fd: Int32) {
+        self.lock.lock()
+        self.closedFDs.append(fd)
+        self.lock.unlock()
+    }
+
+    func allowRegistrationToReturn() {
+        self.lock.lock()
+        self.mayReturnFromRegistration = true
+        self.lock.unlock()
+    }
+
+    var registrationCount: Int {
+        self.lock.lock()
+        defer { self.lock.unlock() }
+        return self.registrations
+    }
+
+    var unregistrationCount: Int {
+        self.lock.lock()
+        defer { self.lock.unlock() }
+        return self.unregistrations
+    }
+
+    var handlerCallCount: Int {
+        self.lock.lock()
+        defer { self.lock.unlock() }
+        return self.handlerFDs.count
+    }
+
+    var handlerDescriptors: [Int32] {
+        self.lock.lock()
+        defer { self.lock.unlock() }
+        return self.handlerFDs
+    }
+
+    var closedDescriptors: [Int32] {
+        self.lock.lock()
+        defer { self.lock.unlock() }
+        return self.closedFDs
+    }
+
+    var handlerStartedBeforeDrain: Bool {
+        self.lock.lock()
+        defer { self.lock.unlock() }
+        return self.handlerWasStartedBeforeDrain
+    }
+
+    var releaseRegistration: Bool {
+        self.lock.lock()
+        defer { self.lock.unlock() }
+        return self.mayReturnFromRegistration
     }
 }
