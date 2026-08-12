@@ -104,6 +104,7 @@ case "${NATIVE_ONLY_TEST_MODE:-safe}" in
   dynamic-ae-create) printf '%s\n' 'AECreateDesc' ;;
   dynamic-ae-make) printf '%s\n' 'AEMakeDesc' ;;
   dynamic-osa) printf '%s\n' '_OSADoScript' ;;
+  dynamic-osa-show) printf '%s\n' 'OSAShowScriptingComponent' ;;
   strings-fail) printf '%s\n' 'harmless output'; exit 87 ;;
 esac
 EOF
@@ -113,7 +114,9 @@ export NATIVE_ONLY_TEST_MODE=safe
 native_only_verify_macho \
   "$native_policy_test_dir/fixture" fixture \
   "$native_policy_test_dir/nm" "$native_policy_test_dir/strings"
-for policy_case in ae ae-send osa dynamic-ae dynamic-ae-create dynamic-ae-make dynamic-osa nm-fail strings-fail; do
+for policy_case in \
+  ae ae-send osa dynamic-ae dynamic-ae-create dynamic-ae-make dynamic-osa dynamic-osa-show \
+  nm-fail strings-fail; do
   export NATIVE_ONLY_TEST_MODE="$policy_case"
   if native_only_verify_macho \
     "$native_policy_test_dir/fixture" fixture \

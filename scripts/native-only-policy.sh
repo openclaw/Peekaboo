@@ -8,8 +8,9 @@ NATIVE_ONLY_APPLE_EVENT_SOURCE_PATTERN='NSAppleScript|NSUserAppleScriptTask|OSAK
 NATIVE_ONLY_APPLE_EVENT_IMPORT_PATTERN='(^|[[:space:]])_?(AE[A-Z][[:lower:]][[:alnum:]_]*|OSA[A-Z][[:lower:]][[:alnum:]_]*|OBJC_(CLASS|METACLASS)_\$_NSAppleScript)([^[:alnum:]_]|$)'
 NATIVE_ONLY_APPLE_EVENT_STRING_PATTERN='<key>NSAppleEventsUsageDescription</key>|NSAppleScript|NSUserAppleScriptTask|OSAKit\.framework|OSAScript|kOSAComponentType|/usr/bin/osascript'
 # `strings` also emits compiler metadata and symbol fragments. Match dynamic lookup names only when
-# the entire string has an Apple Event Manager or OSA API shape with a documented API verb.
-NATIVE_ONLY_DYNAMIC_APPLE_EVENT_STRING_PATTERN='^_?(AE(Build|Call|Check|Coerce|Compare|Count|Create|Decode|Delete|Desc|Determine|Dispose|Duplicate|Flatten|Get|Initialize|Install|Interact|Make|Manager|Object|Print|Process|Put|Remote|Remove|Replace|Reset|Resolve|Resume|Send|Set|Size|Stream|Suspend|Unflatten)[[:alnum:]_]*|OSA(Add|Available|Coerce|Compile|Component|Copy|Display|Dispose|Do|Execute|Generic|Get|Load|Make|Real|Remove|Script|Scripting|Set|Start|Stop|Store)[[:alnum:]_]*)$'
+# the entire string has an API shape. Apple Event APIs have a multi-letter verb (apart from Is/Do),
+# while OSA names keep the original CamelCase boundary because the Release app has no OSA collision.
+NATIVE_ONLY_DYNAMIC_APPLE_EVENT_STRING_PATTERN='^_?(AE([A-Z][[:lower:]]{2}[[:alnum:]_]*|(Is|Do)[A-Z][[:alnum:]_]*)|OSA[A-Z][[:lower:]][[:alnum:]_]*)$'
 
 native_only_verify_macho() {
   local binary_path="$1"
