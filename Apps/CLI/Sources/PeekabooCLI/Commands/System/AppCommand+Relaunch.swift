@@ -29,7 +29,7 @@ extension AppCommand {
         @Flag(help: "Wait until the app is ready after launch")
         var waitUntilReady = false
 
-        @Flag(help: "Bring the app to the foreground after relaunching")
+        @Flag(help: "Required explicit foreground consent for relaunch")
         var foreground = false
         @RuntimeStorage var runtime: CommandRuntime?
 
@@ -39,6 +39,12 @@ extension AppCommand {
             self.runtime = runtime
 
             do {
+                guard self.foreground else {
+                    throw ApplicationLifecycleRefusalError.backgroundLaunch(
+                        "Background app relaunch is refused before quit because terminating and launching " +
+                            "an app can interrupt the user."
+                    )
+                }
                 guard self.resolvedRuntime.applicationRelaunchAllowed else {
                     throw PeekabooError.serviceUnavailable(
                         "Relaunch requires a surviving daemon host; the selected bridge is unavailable or GUI-hosted"
@@ -63,7 +69,8 @@ extension AppCommand {
                 guard self.wait.seconds.isFinite, self.wait.seconds >= 0 else {
                     throw PeekabooError.invalidInput("Relaunch wait must be a finite, non-negative number of seconds")
                 }
-                let launchIdentifier = appInfo.bundleIdentifier == nil ? (appInfo.bundlePath ?? appInfo.name) : nil
+                let launchIdentifier = appInfo.bundlePath ?? (appInfo.bundleIdentifier == nil ? appInfo.name : nil)
+                let launchBundleIdentifier = appInfo.bundlePath == nil ? appInfo.bundleIdentifier : nil
                 self.resolvedRuntime.beginInteractionMutation()
                 let launchedApp = try await services.applications.relaunchApplication(
                     request: ApplicationRelaunchRequest(
@@ -71,7 +78,7 @@ extension AppCommand {
                         expectedTargetIdentity: originalProcessIdentity,
                         launchRequest: ApplicationLaunchRequest(
                             applicationIdentifier: launchIdentifier,
-                            applicationBundleIdentifier: appInfo.bundleIdentifier,
+                            applicationBundleIdentifier: launchBundleIdentifier,
                             activates: self.foreground,
                             waitUntilReady: self.waitUntilReady
                         ),

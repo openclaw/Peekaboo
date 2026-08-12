@@ -10,8 +10,13 @@ class StubApplicationService: ApplicationServiceProtocol {
         true
     }
 
+    var supportsProcessGenerationPinnedApplicationActivation: Bool {
+        true
+    }
+
     private(set) var relaunchRequests: [ApplicationRelaunchRequest] = []
     private(set) var quitRequests: [ApplicationQuitRequest] = []
+    private(set) var activationRequests: [ApplicationActivationRequest] = []
 
     private let app = ServiceApplicationInfo(
         processIdentifier: 123,
@@ -70,6 +75,10 @@ class StubApplicationService: ApplicationServiceProtocol {
     }
 
     func activateApplication(identifier _: String) async throws {}
+    func activateApplication(request: ApplicationActivationRequest) async throws {
+        self.activationRequests.append(request)
+    }
+
     func quitApplication(identifier _: String, force _: Bool) async throws -> Bool {
         true
     }

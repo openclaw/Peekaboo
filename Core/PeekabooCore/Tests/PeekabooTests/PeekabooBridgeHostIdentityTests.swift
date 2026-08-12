@@ -126,6 +126,8 @@ struct PeekabooBridgeHostIdentityTests {
             PeekabooBridgeHostCapability.desktopObservationCaptureEngine,
             PeekabooBridgeHostCapability.desktopObservationOCR,
             PeekabooBridgeHostCapability.hostGenerationIdentity,
+            PeekabooBridgeHostCapability.processGenerationPinnedApplicationActivation,
+            PeekabooBridgeHostCapability.safeBackgroundApplicationLaunchNoOp,
             PeekabooBridgeHostCapability.screenCaptureKitProcessOwnership,
         ])
     }

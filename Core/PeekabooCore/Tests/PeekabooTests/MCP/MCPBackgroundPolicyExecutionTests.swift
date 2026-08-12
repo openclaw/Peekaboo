@@ -1,6 +1,7 @@
 import CoreGraphics
 import MCP
 import PeekabooAutomationKit
+import PeekabooFoundation
 import TachikomaMCP
 import Testing
 @testable import PeekabooAgentRuntime
@@ -47,7 +48,85 @@ struct MCPBackgroundPolicyExecutionTests {
     }
 
     @Test
-    func `App tool exposes background new-instance launch`() async throws {
+    func `App lifecycle refusal publishes safe MCP dispatch metadata`() async throws {
+        let mockApps = await MainActor.run { MockApplicationService() }
+        let context = await MCPToolTestHelpers.makeContext(applications: mockApps)
+        let tool = AppTool(context: context)
+
+        let response = try await tool.execute(arguments: ToolArguments(raw: [
+            "action": "launch",
+            "name": "TextEdit",
+            "newInstance": true,
+        ]))
+
+        #expect(response.isError)
+        #expect(await MainActor.run { mockApps.launchRequests.isEmpty })
+        guard case let .object(meta) = response.meta else {
+            Issue.record("Expected lifecycle refusal metadata")
+            return
+        }
+        #expect(meta["effect"] == .string("refused"))
+        #expect(meta["error_code"] == .string("INTERACTION_FAILED"))
+        #expect(meta["mutation_dispatched"] == .bool(false))
+        #expect(meta["retry_safe"] == .bool(true))
+        #expect(meta["hint"] == .string("Retry with --foreground in the CLI or foreground=true in MCP."))
+    }
+
+    @Test
+    func `Background readiness failure publishes zero-dispatch MCP metadata`() async throws {
+        let mockApps = await MainActor.run {
+            ReadinessFailureApplicationService()
+        }
+        let context = await MCPToolTestHelpers.makeContext(applications: mockApps)
+
+        let response = try await AppTool(context: context).execute(arguments: ToolArguments(raw: [
+            "action": "launch",
+            "name": "TextEdit",
+            "waitForWindow": true,
+        ]))
+
+        #expect(response.isError)
+        guard case let .object(meta) = response.meta else {
+            Issue.record("Expected lifecycle failure metadata")
+            return
+        }
+        #expect(meta["effect"] == .string("unverifiable"))
+        #expect(meta["error_code"] == .string("TIMEOUT"))
+        #expect(meta["mutation_dispatched"] == .bool(false))
+        #expect(meta["retry_safe"] == .bool(true))
+        #expect(meta["hint"] == nil)
+    }
+
+    @Test(arguments: ["launch", "open", "relaunch", "unhide"])
+    func `Lifecycle actions reject conflicting name and bundle selectors before dispatch`(
+        _ action: String) async throws
+    {
+        let mockApps = await MainActor.run { MockApplicationService() }
+        let context = await MCPToolTestHelpers.makeContext(applications: mockApps)
+        var raw: [String: Any] = [
+            "action": action,
+            "name": "TextEdit",
+            "bundleId": "com.apple.Safari",
+            "foreground": true,
+        ]
+        if action == "open" {
+            raw["openTargets"] = ["https://example.com"]
+        }
+
+        let response = try await AppTool(context: context).execute(arguments: ToolArguments(raw: raw))
+
+        #expect(response.isError)
+        guard case let .text(text, _, _) = response.content.first else {
+            Issue.record("Expected selector validation error text")
+            return
+        }
+        #expect(text.contains("either 'name' or 'bundleId'"))
+        #expect(await MainActor.run { mockApps.launchRequests.isEmpty })
+        #expect(await MainActor.run { mockApps.relaunchRequests.isEmpty })
+    }
+
+    @Test
+    func `App tool exposes new-instance launch with foreground consent`() async throws {
         let mockApps = await MainActor.run { MockApplicationService() }
         let context = await MCPToolTestHelpers.makeContext(applications: mockApps)
         let tool = AppTool(context: context)
@@ -57,17 +136,18 @@ struct MCPBackgroundPolicyExecutionTests {
             "name": "TextEdit",
             "newInstance": true,
             "waitForWindow": true,
+            "foreground": true,
         ]))
 
         #expect(!response.isError)
         let request = try #require(await MainActor.run { mockApps.launchRequests.first })
         #expect(request.createsNewInstance)
         #expect(request.waitForWindow)
-        #expect(!request.activates)
+        #expect(request.activates)
     }
 
     @Test
-    func `App tool open sends URL to default handler in background`() async throws {
+    func `App tool open sends URL to default handler with foreground consent`() async throws {
         let mockApps = await MainActor.run { MockApplicationService() }
         let context = await MCPToolTestHelpers.makeContext(applications: mockApps)
         let tool = AppTool(context: context)
@@ -75,6 +155,7 @@ struct MCPBackgroundPolicyExecutionTests {
         let response = try await tool.execute(arguments: ToolArguments(raw: [
             "action": "open",
             "openTargets": ["https://example.com"],
+            "foreground": true,
         ]))
 
         #expect(response.isError == false)
@@ -82,11 +163,11 @@ struct MCPBackgroundPolicyExecutionTests {
         #expect(request.applicationIdentifier == nil)
         #expect(request.applicationBundleIdentifier == nil)
         #expect(request.openURLs.map(\.absoluteString) == ["https://example.com"])
-        #expect(request.activates == false)
+        #expect(request.activates)
     }
 
     @Test
-    func `App tool open resolves files and preserves strict bundle handler`() async throws {
+    func `Foreground app open resolves files and preserves strict bundle handler`() async throws {
         let mockApps = await MainActor.run { MockApplicationService() }
         let context = await MCPToolTestHelpers.makeContext(applications: mockApps)
         let tool = AppTool(context: context)
@@ -95,6 +176,7 @@ struct MCPBackgroundPolicyExecutionTests {
             "action": "open",
             "bundleId": "com.apple.TextEdit",
             "openTargets": ["notes.txt", "/tmp/report.txt"],
+            "foreground": true,
         ]))
 
         #expect(response.isError == false)
@@ -104,7 +186,7 @@ struct MCPBackgroundPolicyExecutionTests {
         #expect(request.openURLs[0].isFileURL)
         #expect(request.openURLs[0].path.hasSuffix("/notes.txt"))
         #expect(request.openURLs[1].path == "/tmp/report.txt")
-        #expect(request.activates == false)
+        #expect(request.activates)
     }
 
     @Test
@@ -274,5 +356,12 @@ struct MCPBackgroundPolicyExecutionTests {
 
         #expect(response.isError)
         #expect(await MainActor.run { automation.targetedClickCalls.isEmpty })
+    }
+}
+
+@MainActor
+private final class ReadinessFailureApplicationService: MockApplicationService {
+    override func launchApplication(request _: ApplicationLaunchRequest) async throws -> ServiceApplicationInfo {
+        throw ApplicationLifecycleReadOnlyFailureError(.timeout("Window readiness timed out"))
     }
 }

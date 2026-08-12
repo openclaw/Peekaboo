@@ -116,11 +116,37 @@ public struct ApplicationQuitRequest: Sendable, Codable, Equatable {
     }
 }
 
+public struct ApplicationActivationRequest: Sendable, Codable, Equatable {
+    public let identifier: String
+    public let expectedIdentity: ApplicationProcessIdentity?
+
+    public init(
+        identifier: String,
+        expectedIdentity: ApplicationProcessIdentity? = nil)
+    {
+        self.identifier = identifier
+        self.expectedIdentity = expectedIdentity
+    }
+
+    public init(application: ServiceApplicationInfo) throws {
+        guard let processIdentity = application.processIdentity else {
+            throw PeekabooError.serviceUnavailable(
+                "Application discovery did not return a process-generation identity for exact activation")
+        }
+        self.init(
+            identifier: "PID:\(application.processIdentifier)",
+            expectedIdentity: processIdentity)
+    }
+}
+
 /// Protocol defining application and window management operations
 @MainActor
 public protocol ApplicationServiceProtocol: Sendable {
     /// Whether this service implements the full `ApplicationLaunchRequest` contract.
     var supportsApplicationLaunchOptions: Bool { get }
+
+    /// Whether a non-activating launch is guaranteed to be an exact already-running read-only no-op.
+    var supportsSafeBackgroundApplicationLaunchNoOp: Bool { get }
 
     /// Whether launch requests can require a distinct process even when the app is already running.
     var supportsNewApplicationInstanceLaunch: Bool { get }
@@ -133,6 +159,9 @@ public protocol ApplicationServiceProtocol: Sendable {
 
     /// Whether quit requests can be pinned to an exact process generation.
     var supportsProcessGenerationPinnedApplicationQuit: Bool { get }
+
+    /// Whether activation requests can be pinned to an exact process generation.
+    var supportsProcessGenerationPinnedApplicationActivation: Bool { get }
 
     /// List all running applications
     /// - Returns: UnifiedToolOutput containing application information
@@ -175,6 +204,9 @@ public protocol ApplicationServiceProtocol: Sendable {
     /// - Parameter identifier: Application name or bundle ID
     func activateApplication(identifier: String) async throws
 
+    /// Activate only while the selected process still matches its discovery receipt.
+    func activateApplication(request: ApplicationActivationRequest) async throws
+
     /// Quit an application
     /// - Parameters:
     ///   - identifier: Application name or bundle ID
@@ -206,6 +238,10 @@ extension ApplicationServiceProtocol {
         false
     }
 
+    public var supportsSafeBackgroundApplicationLaunchNoOp: Bool {
+        false
+    }
+
     public var supportsNewApplicationInstanceLaunch: Bool {
         false
     }
@@ -220,6 +256,18 @@ extension ApplicationServiceProtocol {
 
     public var supportsProcessGenerationPinnedApplicationQuit: Bool {
         false
+    }
+
+    public var supportsProcessGenerationPinnedApplicationActivation: Bool {
+        false
+    }
+
+    public func activateApplication(request: ApplicationActivationRequest) async throws {
+        guard request.expectedIdentity == nil else {
+            throw PeekabooError.serviceUnavailable(
+                "This application service does not support process-generation-pinned activation")
+        }
+        try await self.activateApplication(identifier: request.identifier)
     }
 
     public func launchApplication(request: ApplicationLaunchRequest) async throws -> ServiceApplicationInfo {

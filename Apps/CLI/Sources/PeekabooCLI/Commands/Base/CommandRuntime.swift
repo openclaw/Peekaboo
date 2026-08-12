@@ -46,12 +46,14 @@ struct CommandRuntimeOptions {
     var requiresInspectAccessibilityTree = false
     var requiresBrowserMCP = false
     var requiresApplicationLaunchOptions = false
+    var requiresSafeBackgroundApplicationLaunchNoOp = false
     var requiresNewApplicationInstanceLaunch = false
     var requiresApplicationWindowReadiness = false
     var requiresApplicationRelaunch = false
     var requiresSurvivingApplicationHost = false
     /// Protocol 1.16 carries a process-generation receipt with application quit requests.
     var requiresProcessGenerationPinnedApplicationQuit = false
+    var requiresProcessGenerationPinnedApplicationActivation = false
     /// Protocol 1.19 carries a process-generation receipt with targeted hotkey requests.
     var requiresProcessGenerationPinnedHotkeys = false
     /// Protocol 1.22 carries a process-generation receipt with targeted typing requests.

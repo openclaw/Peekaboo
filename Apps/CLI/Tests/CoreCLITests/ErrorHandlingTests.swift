@@ -86,6 +86,43 @@ struct FocusErrorMappingTests {
     }
 
     @Test
+    func `application lifecycle refusals project identically locally and through Bridge`() throws {
+        let direct = ApplicationLifecycleRefusalError.backgroundLaunch("Cold launch refused")
+        let remote = PeekabooBridgeErrorEnvelope(
+            code: .internalError,
+            message: direct.userMessage,
+            context: direct.bridgeContext
+        )
+
+        #expect(applicationLaunchErrorCode(for: direct) == .INTERACTION_FAILED)
+        #expect(applicationLaunchErrorCode(for: remote) == .INTERACTION_FAILED)
+        #expect(errorCode(for: remote) == .INTERACTION_FAILED)
+        #expect(try #require(applicationLifecycleRefusalProjection(for: direct)).hint == direct.hint)
+        #expect(try #require(applicationLifecycleRefusalProjection(for: remote)).hint.contains("--foreground"))
+    }
+
+    @Test
+    func `read-only lifecycle failures preserve retry-safe zero-dispatch metadata`() throws {
+        let direct = ApplicationLifecycleReadOnlyFailureError(.timeout("Window readiness timed out"))
+        let remote = PeekabooBridgeErrorEnvelope(
+            code: .timeout,
+            message: direct.userMessage,
+            context: ApplicationLifecycleReadOnlyFailureError.bridgeContext
+        )
+
+        let directProjection = try #require(applicationLifecycleFailureProjection(for: direct))
+        let remoteProjection = try #require(applicationLifecycleFailureProjection(for: remote))
+        #expect(directProjection.effect == .unverifiable)
+        #expect(remoteProjection.effect == .unverifiable)
+        #expect(directProjection.metadata.retrySafe)
+        #expect(remoteProjection.metadata.retrySafe)
+        #expect(!directProjection.metadata.mutationDispatched)
+        #expect(!remoteProjection.metadata.mutationDispatched)
+        #expect(directProjection.metadata.errorCode == .timeout)
+        #expect(remoteProjection.metadata.errorCode == .timeout)
+    }
+
+    @Test
     func `bridge envelope details preserve bridge details and permission`() {
         let envelope = PeekabooBridgeErrorEnvelope(
             code: .internalError,

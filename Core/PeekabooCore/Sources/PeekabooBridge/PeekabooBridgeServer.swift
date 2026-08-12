@@ -98,6 +98,17 @@ public final class PeekabooBridgeServer {
                 resolvedHostCapabilities.insert(PeekabooBridgeHostCapability.screenCaptureKitProcessOwnership)
             }
         }
+        if self.allowedOperations.contains(.launchApplicationWithOptions),
+           services.applications.supportsSafeBackgroundApplicationLaunchNoOp
+        {
+            resolvedHostCapabilities.insert(PeekabooBridgeHostCapability.safeBackgroundApplicationLaunchNoOp)
+        }
+        if self.allowedOperations.contains(.activateApplication),
+           services.applications.supportsProcessGenerationPinnedApplicationActivation
+        {
+            resolvedHostCapabilities.insert(
+                PeekabooBridgeHostCapability.processGenerationPinnedApplicationActivation)
+        }
         self.hostCapabilities = resolvedHostCapabilities
         self.daemonControl = daemonControl
         self.desktopMutationWatermarkStore = desktopMutationWatermarkStore
@@ -233,6 +244,24 @@ public final class PeekabooBridgeServer {
         for error: any Error,
         operation: PeekabooBridgeOperation) -> PeekabooBridgeErrorEnvelope
     {
+        if let error = error as? ApplicationLifecycleRefusalError {
+            return .init(
+                code: .internalError,
+                message: error.userMessage,
+                details: error.hint,
+                context: error.bridgeContext)
+        }
+        if let error = error as? ApplicationLifecycleReadOnlyFailureError {
+            let base = self.bridgeErrorEnvelope(for: error.underlyingError, operation: operation)
+            return .init(
+                code: base?.code ?? .internalError,
+                message: error.userMessage,
+                details: base?.details,
+                permission: base?.permission,
+                kind: base?.kind,
+                context: ApplicationLifecycleReadOnlyFailureError.bridgeContext,
+                operationMayHaveCompleted: false)
+        }
         if let error = error as? PeekabooError,
            let envelope = bridgeErrorEnvelope(for: error, operation: operation)
         {

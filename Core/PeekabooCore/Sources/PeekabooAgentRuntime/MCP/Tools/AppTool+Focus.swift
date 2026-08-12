@@ -40,9 +40,9 @@ extension AppToolActions {
     }
 
     private func activateApplication(_ appInfo: ServiceApplicationInfo) async -> Bool {
-        let identifier = self.identifier(for: appInfo)
         do {
-            try await self.service.activateApplication(identifier: identifier)
+            try await self.service.activateApplication(
+                request: ApplicationActivationRequest(application: appInfo))
             return true
         } catch {
             self.logger.error("Failed to activate \(appInfo.name, privacy: .public): \(error, privacy: .public)")

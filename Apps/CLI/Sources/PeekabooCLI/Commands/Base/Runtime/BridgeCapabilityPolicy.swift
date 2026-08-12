@@ -62,6 +62,11 @@ enum BridgeCapabilityPolicy {
             return false
         }
 
+        if options.requiresSafeBackgroundApplicationLaunchNoOp,
+           !self.supportsSafeBackgroundApplicationLaunchNoOp(for: handshake) {
+            return false
+        }
+
         if options.requiresNewApplicationInstanceLaunch,
            !self.supportsNewApplicationInstanceLaunch(for: handshake) {
             return false
@@ -172,6 +177,10 @@ enum BridgeCapabilityPolicy {
         for handshake: PeekabooBridgeHandshakeResponse,
         options: CommandRuntimeOptions
     ) -> Bool {
+        if options.requiresProcessGenerationPinnedApplicationActivation,
+           !self.supportsProcessGenerationPinnedApplicationActivation(for: handshake) {
+            return false
+        }
         if options.requiresTargetedFocusedElement, !self.supportsTargetedFocusedElement(for: handshake) {
             return false
         }
@@ -315,6 +324,15 @@ enum BridgeCapabilityPolicy {
             handshake.supportedOperations.contains(.launchApplicationWithOptions)
     }
 
+    static func supportsSafeBackgroundApplicationLaunchNoOp(
+        for handshake: PeekabooBridgeHandshakeResponse
+    ) -> Bool {
+        self.supportsApplicationLaunchOptions(for: handshake) &&
+            handshake.hostCapabilities?.contains(
+                PeekabooBridgeHostCapability.safeBackgroundApplicationLaunchNoOp
+            ) == true
+    }
+
     static func supportsNewApplicationInstanceLaunch(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {
         handshake.negotiatedVersion >= PeekabooBridgeProtocolVersion(major: 1, minor: 13) &&
             handshake.supportedOperations.contains(.launchApplicationWithOptions)
@@ -335,6 +353,15 @@ enum BridgeCapabilityPolicy {
 
         let enabledOperations = handshake.enabledOperations ?? handshake.supportedOperations
         return enabledOperations.contains(.relaunchApplicationWithOptions)
+    }
+
+    static func supportsProcessGenerationPinnedApplicationActivation(
+        for handshake: PeekabooBridgeHandshakeResponse
+    ) -> Bool {
+        self.supportsOperation(.activateApplication, for: handshake) &&
+            handshake.hostCapabilities?.contains(
+                PeekabooBridgeHostCapability.processGenerationPinnedApplicationActivation
+            ) == true
     }
 
     static func supportsHostApplicationInventory(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {

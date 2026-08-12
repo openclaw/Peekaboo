@@ -8,21 +8,19 @@ struct CommanderBinderAppConfigTests {
     func `App launch binding`() throws {
         let parsed = ParsedValues(
             positional: ["Visual Studio Code"],
-            options: [
-                "bundleId": ["com.microsoft.VSCode"]
-            ],
-            flags: ["waitUntilReady", "waitForWindow", "newInstance"]
+            options: [:],
+            flags: ["waitUntilReady", "waitForWindow", "newInstance", "foreground"]
         )
         let command = try CommanderCLIBinder.instantiateCommand(
             ofType: AppCommand.LaunchSubcommand.self,
             parsedValues: parsed
         )
         #expect(command.app == "Visual Studio Code")
-        #expect(command.bundleId == "com.microsoft.VSCode")
+        #expect(command.bundleId == nil)
         #expect(command.waitUntilReady == true)
         #expect(command.newInstance == true)
         #expect(command.waitForWindow == true)
-        #expect(command.foreground == false)
+        #expect(command.foreground == true)
         #expect(command.noFocus == false)
     }
 
@@ -31,7 +29,7 @@ struct CommanderBinderAppConfigTests {
         let parsed = ParsedValues(
             positional: ["TextEdit"],
             options: [:],
-            flags: ["newInstance"]
+            flags: ["newInstance", "foreground"]
         )
 
         let options = try CommanderCLIBinder.makeRuntimeOptions(
@@ -56,6 +54,95 @@ struct CommanderBinderAppConfigTests {
     }
 
     @Test
+    func `Background app launch requires a host that proves read-only no-op semantics`() throws {
+        let background = try CommanderCLIBinder.makeRuntimeOptions(
+            from: ParsedValues(positional: ["Finder"], options: [:], flags: []),
+            commandType: AppCommand.LaunchSubcommand.self
+        )
+        let foreground = try CommanderCLIBinder.makeRuntimeOptions(
+            from: ParsedValues(positional: ["Finder"], options: [:], flags: ["foreground"]),
+            commandType: AppCommand.LaunchSubcommand.self
+        )
+
+        #expect(background.requiresSafeBackgroundApplicationLaunchNoOp)
+        #expect(!foreground.requiresSafeBackgroundApplicationLaunchNoOp)
+    }
+
+    @Test
+    func `Unsafe background lifecycle shapes refuse before runtime host resolution`() throws {
+        let parsedValues = [
+            ParsedValues(
+                positional: ["TextEdit"],
+                options: [:],
+                flags: ["newInstance"]
+            ),
+            ParsedValues(
+                positional: ["Safari"],
+                options: ["open": ["https://example.com"]],
+                flags: []
+            ),
+        ]
+
+        for parsed in parsedValues {
+            do {
+                _ = try CommanderCLIBinder.makeRuntimeOptions(
+                    from: parsed,
+                    commandType: AppCommand.LaunchSubcommand.self
+                )
+                Issue.record("Expected pre-runtime lifecycle refusal")
+            } catch let error as PreDispatchActionError {
+                #expect(error.envelopeCode == .INTERACTION_FAILED)
+                #expect(error.envelopeEffect == .refused)
+                #expect(error.envelopeRetrySafe == true)
+                #expect(error.envelopeMutationDispatched == false)
+                #expect(error.envelopeHint?.contains("--foreground") == true)
+            }
+        }
+
+        do {
+            _ = try CommanderCLIBinder.makeRuntimeOptions(
+                from: ParsedValues(positional: ["Calculator"], options: [:], flags: []),
+                commandType: AppCommand.RelaunchSubcommand.self
+            )
+            Issue.record("Expected pre-runtime relaunch refusal")
+        } catch let error as PreDispatchActionError {
+            #expect(error.envelopeCode == .INTERACTION_FAILED)
+            #expect(error.envelopeMutationDispatched == false)
+        }
+
+        do {
+            _ = try CommanderCLIBinder.makeRuntimeOptions(
+                from: ParsedValues(positional: ["Calculator"], options: [:], flags: []),
+                commandType: AppCommand.UnhideSubcommand.self
+            )
+            Issue.record("Expected pre-runtime unhide refusal")
+        } catch let error as PreDispatchActionError {
+            #expect(error.envelopeCode == .INTERACTION_FAILED)
+            #expect(error.envelopeHint?.contains("--activate") == true)
+            #expect(error.envelopeMutationDispatched == false)
+        }
+    }
+
+    @Test
+    func `Foreground app activation requires a generation-pinned host`() throws {
+        let unhide = try CommanderCLIBinder.makeRuntimeOptions(
+            from: ParsedValues(
+                positional: ["Calculator"],
+                options: [:],
+                flags: ["activate"]
+            ),
+            commandType: AppCommand.UnhideSubcommand.self
+        )
+        let focus = try CommanderCLIBinder.makeRuntimeOptions(
+            from: ParsedValues(positional: ["Calculator"], options: [:], flags: []),
+            commandType: AppCommand.FocusSubcommand.self
+        )
+
+        #expect(unhide.requiresProcessGenerationPinnedApplicationActivation)
+        #expect(focus.requiresProcessGenerationPinnedApplicationActivation)
+    }
+
+    @Test
     func `App launch binding with --no-focus`() throws {
         let parsed = ParsedValues(
             positional: ["Calendar"],
@@ -77,7 +164,7 @@ struct CommanderBinderAppConfigTests {
             options: [
                 "open": ["https://example.com", "~/Documents/report.pdf"]
             ],
-            flags: []
+            flags: ["foreground"]
         )
         let command = try CommanderCLIBinder.instantiateCommand(
             ofType: AppCommand.LaunchSubcommand.self,

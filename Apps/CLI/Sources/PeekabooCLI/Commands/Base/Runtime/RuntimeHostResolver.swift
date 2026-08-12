@@ -838,6 +838,8 @@ enum RuntimeHostResolver {
                 for: handshake
             ),
             supportsApplicationLaunchOptions: BridgeCapabilityPolicy.supportsApplicationLaunchOptions(for: handshake),
+            supportsSafeBackgroundApplicationLaunchNoOp:
+            BridgeCapabilityPolicy.supportsSafeBackgroundApplicationLaunchNoOp(for: handshake),
             supportsNewApplicationInstanceLaunch: BridgeCapabilityPolicy.supportsNewApplicationInstanceLaunch(
                 for: handshake
             ),
@@ -847,6 +849,8 @@ enum RuntimeHostResolver {
             supportsApplicationRelaunch: BridgeCapabilityPolicy.supportsApplicationRelaunch(for: handshake),
             supportsProcessGenerationPinnedApplicationQuit:
             BridgeCapabilityPolicy.supportsProcessGenerationPinnedApplicationQuit(for: handshake),
+            supportsProcessGenerationPinnedApplicationActivation:
+            BridgeCapabilityPolicy.supportsProcessGenerationPinnedApplicationActivation(for: handshake),
             allowLocalApplicationFallback: handshake.hostKind == .onDemand,
             desktopMutationWatermarkStore: DesktopMutationWatermarkStore()
         )

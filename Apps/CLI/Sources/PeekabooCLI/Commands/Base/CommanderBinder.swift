@@ -1,6 +1,7 @@
 import Commander
 import Foundation
 import PeekabooAutomationKit
+import PeekabooFoundation
 
 // MARK: - Binder
 
@@ -45,7 +46,10 @@ enum CommanderCLIBinder {
     ) throws -> CommandRuntimeOptions {
         var options = CommandRuntimeOptions()
         let commandValues = CommanderBindableValues(parsedValues: parsedValues)
+        try Self.validateApplicationLifecycleBeforeRuntimeResolution(commandType, values: commandValues)
         options.requiresApplicationLaunchOptions = Self.requiresApplicationLaunchOptions(commandType)
+        options.requiresSafeBackgroundApplicationLaunchNoOp =
+            commandType == AppCommand.LaunchSubcommand.self && !commandValues.flag("foreground")
         options.requiresNewApplicationInstanceLaunch = commandType == AppCommand.LaunchSubcommand.self &&
             commandValues.flag("newInstance")
         options.requiresApplicationWindowReadiness =
@@ -54,6 +58,10 @@ enum CommanderCLIBinder {
         options.requiresApplicationRelaunch = commandType == AppCommand.RelaunchSubcommand.self
         options.requiresSurvivingApplicationHost = commandType == AppCommand.QuitSubcommand.self
         options.requiresProcessGenerationPinnedApplicationQuit = commandType == AppCommand.QuitSubcommand.self
+        options.requiresProcessGenerationPinnedApplicationActivation =
+            commandType == AppCommand.FocusSubcommand.self ||
+            commandType == AppCommand.UnhideSubcommand.self ||
+            commandType == AppCommand.SwitchSubcommand.self
         options.requiresProcessGenerationPinnedHotkeys = commandType == PressCommand.self &&
             !commandValues.flag("foreground")
         let usesBackgroundInput = !commandValues.flag("foreground")
@@ -87,6 +95,8 @@ enum CommanderCLIBinder {
             !options.requiresExactWindowTargetedClicks
         let servesDynamicTools = Self.isAgentExecutionCommand(commandType) || commandType == MCPCommand.Serve.self
         if servesDynamicTools {
+            options.requiresSafeBackgroundApplicationLaunchNoOp = true
+            options.requiresProcessGenerationPinnedApplicationActivation = true
             options.requiresScreenCaptureKitOwnerCapability = true
             options.requiresProcessGenerationPinnedHotkeys = true
             options.requiresProcessGenerationPinnedTypeActions = true
@@ -227,6 +237,34 @@ enum CommanderCLIBinder {
     private static func requiresApplicationLaunchOptions(_ commandType: (any ParsableCommand.Type)?) -> Bool {
         commandType == AppCommand.LaunchSubcommand.self ||
             commandType == AppCommand.RelaunchSubcommand.self
+    }
+
+    private static func validateApplicationLifecycleBeforeRuntimeResolution(
+        _ commandType: (any ParsableCommand.Type)?,
+        values: CommanderBindableValues
+    ) throws {
+        if commandType == AppCommand.LaunchSubcommand.self, !values.flag("foreground") {
+            if values.flag("newInstance") {
+                throw applicationLifecyclePreDispatchError(.backgroundLaunch(
+                    "Background new-instance launch is refused before dispatch because a new app process can activate."
+                ))
+            }
+            if !values.optionValues("open").isEmpty {
+                throw applicationLifecyclePreDispatchError(.backgroundLaunch(
+                    "Background URL or document delivery is refused before dispatch because the target app " +
+                        "can activate."
+                ))
+            }
+        }
+        if commandType == AppCommand.RelaunchSubcommand.self, !values.flag("foreground") {
+            throw applicationLifecyclePreDispatchError(.backgroundLaunch(
+                "Background app relaunch is refused before quit because terminating and launching an app " +
+                    "can interrupt the user."
+            ))
+        }
+        if commandType == AppCommand.UnhideSubcommand.self, !values.flag("activate") {
+            throw applicationLifecyclePreDispatchError(.unhideRequiresForegroundConsent())
+        }
     }
 
     private static func requiresPinnedWindowMutations(_ commandType: (any ParsableCommand.Type)?) -> Bool {

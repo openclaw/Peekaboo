@@ -33,6 +33,9 @@ struct AppToolLifecyclePinningTests {
             request: Self.request(name: "PID:4071"))
 
         #expect(service.activationCalls == ["PID:4071"])
+        #expect(service.activationRequests.first?.expectedIdentity == ApplicationProcessIdentity(
+            processIdentifier: 4071,
+            processStartIdentity: 71))
     }
 
     @Test
@@ -159,20 +162,106 @@ struct AppToolLifecyclePinningTests {
         #expect(service.terminationCount == 0)
     }
 
+    @Test
+    @MainActor
+    func `unsafe background lifecycle actions refuse before MCP service dispatch`() async {
+        let service = LifecyclePinningApplicationService(applications: [
+            ServiceApplicationInfo(
+                processIdentifier: 4070,
+                processStartIdentity: 70,
+                bundleIdentifier: "com.apple.TextEdit",
+                name: "TextEdit"),
+        ])
+        let actions = AppToolActions(
+            service: service,
+            automation: MockAutomationService(accessibilityGranted: true),
+            logger: Logger(subsystem: "boo.peekaboo.tests", category: "AppToolLifecyclePinning"))
+        let cases: [(String, AppToolRequest)] = [
+            ("launch", Self.request(name: "TextEdit", newInstance: true)),
+            ("open", Self.request(name: "TextEdit", openTargets: ["https://example.com"])),
+            ("relaunch", Self.request(name: "TextEdit")),
+            ("unhide", Self.request(name: "TextEdit")),
+        ]
+
+        for (action, request) in cases {
+            await #expect(throws: ApplicationLifecycleRefusalError.self) {
+                _ = try await actions.perform(action: action, request: request)
+            }
+        }
+
+        #expect(service.findCalls.isEmpty)
+        #expect(service.launchRequests.isEmpty)
+        #expect(service.activationCalls.isEmpty)
+    }
+
+    @Test
+    @MainActor
+    func `MCP unhide foreground consent activates the exact selected process`() async throws {
+        let service = LifecyclePinningApplicationService(applications: [
+            ServiceApplicationInfo(
+                processIdentifier: 4070,
+                processStartIdentity: 70,
+                bundleIdentifier: "com.apple.TextEdit",
+                name: "TextEdit"),
+        ])
+        let actions = AppToolActions(
+            service: service,
+            automation: MockAutomationService(accessibilityGranted: true),
+            logger: Logger(subsystem: "boo.peekaboo.tests", category: "AppToolLifecyclePinning"))
+
+        _ = try await actions.perform(
+            action: "unhide",
+            request: Self.request(name: "TextEdit", foreground: true))
+
+        #expect(service.findCalls == ["TextEdit"])
+        #expect(service.activationCalls == ["PID:4070"])
+        #expect(service.activationRequests.first?.expectedIdentity == ApplicationProcessIdentity(
+            processIdentifier: 4070,
+            processStartIdentity: 70))
+    }
+
+    @Test
+    @MainActor
+    func `MCP relaunch foreground consent preserves the exact selected bundle path`() async throws {
+        let service = LifecyclePinningApplicationService(applications: [
+            ServiceApplicationInfo(
+                processIdentifier: 4070,
+                processStartIdentity: 70,
+                bundleIdentifier: "com.example.TextEditCopy",
+                name: "TextEdit Copy",
+                bundlePath: "/tmp/TextEdit Copy.app"),
+        ])
+        let actions = AppToolActions(
+            service: service,
+            automation: MockAutomationService(accessibilityGranted: true),
+            logger: Logger(subsystem: "boo.peekaboo.tests", category: "AppToolLifecyclePinning"))
+
+        _ = try await actions.perform(
+            action: "relaunch",
+            request: Self.request(name: "TextEdit Copy", foreground: true))
+
+        let request = try #require(service.relaunchRequests.first?.launchRequest)
+        #expect(request.applicationIdentifier == "/tmp/TextEdit Copy.app")
+        #expect(request.applicationBundleIdentifier == nil)
+    }
+
     private static func request(
         name: String? = nil,
+        foreground: Bool = false,
+        openTargets: [String] = [],
+        newInstance: Bool = false,
         all: Bool = false) -> AppToolRequest
     {
         AppToolRequest(
             name: name,
             bundleId: nil,
-            openTargets: [],
-            foreground: false,
+            openTargets: openTargets,
+            foreground: foreground,
             force: false,
             wait: 0,
             waitUntilReady: false,
             waitForWindow: false,
-            newInstance: false,
+            newInstance: newInstance,
             all: all,
             except: nil,
             switchTarget: nil,
@@ -183,10 +272,15 @@ struct AppToolLifecyclePinningTests {
 
 @MainActor
 private final class LifecyclePinningApplicationService: ApplicationServiceProtocol {
+    let supportsProcessGenerationPinnedApplicationActivation = true
     let applications: [ServiceApplicationInfo]
     private var currentProcessGenerations: [Int32: UInt64]
     private(set) var quitCalls: [ApplicationQuitRequest] = []
     private(set) var activationCalls: [String] = []
+    private(set) var activationRequests: [ApplicationActivationRequest] = []
+    private(set) var findCalls: [String] = []
+    private(set) var launchRequests: [ApplicationLaunchRequest] = []
+    private(set) var relaunchRequests: [ApplicationRelaunchRequest] = []
     private(set) var terminationCount = 0
 
     init(applications: [ServiceApplicationInfo]) {
@@ -208,6 +302,7 @@ private final class LifecyclePinningApplicationService: ApplicationServiceProtoc
     }
 
     func findApplication(identifier: String) async throws -> ServiceApplicationInfo {
+        self.findCalls.append(identifier)
         guard let match = self.applications.first(where: {
             identifier == $0.name || identifier == $0.bundleIdentifier ||
                 identifier == "PID:\($0.processIdentifier)"
@@ -252,8 +347,23 @@ private final class LifecyclePinningApplicationService: ApplicationServiceProtoc
         throw UnexpectedLifecycleCall()
     }
 
+    func launchApplication(request: ApplicationLaunchRequest) async throws -> ServiceApplicationInfo {
+        self.launchRequests.append(request)
+        throw UnexpectedLifecycleCall()
+    }
+
+    func relaunchApplication(request: ApplicationRelaunchRequest) async throws -> ServiceApplicationInfo {
+        self.relaunchRequests.append(request)
+        return try #require(self.applications.first)
+    }
+
     func activateApplication(identifier: String) async throws {
         self.activationCalls.append(identifier)
+    }
+
+    func activateApplication(request: ApplicationActivationRequest) async throws {
+        self.activationRequests.append(request)
+        self.activationCalls.append(request.identifier)
     }
 
     func hideApplication(identifier _: String) async throws {

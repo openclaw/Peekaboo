@@ -44,10 +44,12 @@ import PeekabooFoundation
 @MainActor
 public final class ApplicationService: ApplicationServiceProtocol {
     public let supportsApplicationLaunchOptions = true
+    public let supportsSafeBackgroundApplicationLaunchNoOp = true
     public let supportsNewApplicationInstanceLaunch = true
     public let supportsApplicationWindowReadiness = true
     public let supportsApplicationRelaunch = true
     public let supportsProcessGenerationPinnedApplicationQuit = true
+    public let supportsProcessGenerationPinnedApplicationActivation = true
 
     struct WindowServerActivationState: Equatable, Sendable {
         let targetHasVisibleWindow: Bool
@@ -61,6 +63,7 @@ public final class ApplicationService: ApplicationServiceProtocol {
     typealias DefaultApplicationOpenHandler = @MainActor (
         _ targetURL: URL,
         _ configuration: NSWorkspace.OpenConfiguration) async throws -> NSRunningApplication
+    typealias RunningApplicationsForURLProvider = @MainActor (_ applicationURL: URL) -> [NSRunningApplication]
     typealias RelaunchTargetResolver = @MainActor (_ identifier: String) async throws -> ServiceApplicationInfo
     typealias RelaunchQuitHandler = @MainActor (_ request: ApplicationQuitRequest) async throws -> Bool
     typealias RelaunchRunningHandler = @MainActor (_ identifier: String) async throws -> Bool
@@ -81,9 +84,6 @@ public final class ApplicationService: ApplicationServiceProtocol {
         _ processIdentifier: pid_t,
         _ processStartIdentity: UInt64?,
         _ timeoutSeconds: TimeInterval) async throws -> DetachedApplicationMetadata
-    typealias BackgroundActivationLeaseFactory = @MainActor (
-        _ activationGraceDuration: Duration,
-        _ restorationDependencies: BackgroundRestorationDependencies) -> BackgroundLaunchActivationLease
 
     let logger = Logger(subsystem: "boo.peekaboo.core", category: "ApplicationService")
     let windowIdentityService = WindowIdentityService()
@@ -91,6 +91,7 @@ public final class ApplicationService: ApplicationServiceProtocol {
     let feedbackClient: any AutomationFeedbackClient
     let applicationOpenHandler: ApplicationOpenHandler
     let defaultApplicationOpenHandler: DefaultApplicationOpenHandler
+    let runningApplicationsForURLProvider: RunningApplicationsForURLProvider
     let relaunchTargetResolver: RelaunchTargetResolver?
     let relaunchQuitHandler: RelaunchQuitHandler?
     let relaunchRunningHandler: RelaunchRunningHandler?
@@ -112,9 +113,6 @@ public final class ApplicationService: ApplicationServiceProtocol {
     let maximumConcurrentApplicationMetadataReads: Int
     let applicationReadinessTimeout: TimeInterval
     let applicationActivationTimeout: Duration
-    let backgroundLaunchActivationGraceDuration: Duration
-    let backgroundOpenActivationGraceDuration: Duration
-    let backgroundActivationLeaseFactory: BackgroundActivationLeaseFactory
     let operationLaneCoordinator: DesktopOperationLaneCoordinator
 
     /// Timeout for accessibility API calls to prevent hangs
@@ -160,6 +158,9 @@ public final class ApplicationService: ApplicationServiceProtocol {
         defaultApplicationOpenHandler: @escaping DefaultApplicationOpenHandler = { targetURL, configuration in
             try await NSWorkspace.shared.open(targetURL, configuration: configuration)
         },
+        runningApplicationsForURLProvider: @escaping RunningApplicationsForURLProvider = {
+            ApplicationService.runningApplicationCandidates(for: $0)
+        },
         relaunchTargetResolver: RelaunchTargetResolver? = nil,
         relaunchQuitHandler: RelaunchQuitHandler? = nil,
         relaunchRunningHandler: RelaunchRunningHandler? = nil,
@@ -200,14 +201,7 @@ public final class ApplicationService: ApplicationServiceProtocol {
         applicationInventoryOverallTimeout: TimeInterval = ApplicationService.applicationInventoryOverallTimeout,
         maximumConcurrentApplicationMetadataReads: Int = ApplicationService.maximumConcurrentApplicationMetadataReads,
         applicationReadinessTimeout: TimeInterval = 10,
-        applicationActivationTimeout: Duration = .seconds(2),
-        backgroundLaunchActivationGraceDuration: Duration = .milliseconds(500),
-        backgroundOpenActivationGraceDuration: Duration = .seconds(2),
-        backgroundActivationLeaseFactory: @escaping BackgroundActivationLeaseFactory = { duration, dependencies in
-            BackgroundLaunchActivationLease(
-                activationGraceDuration: duration,
-                restorationDependencies: dependencies)
-        })
+        applicationActivationTimeout: Duration = .seconds(2))
     {
         // Set global AX timeout to prevent hangs
         AXTimeoutConfiguration.setGlobalTimeout(Self.axTimeout)
@@ -216,6 +210,7 @@ public final class ApplicationService: ApplicationServiceProtocol {
         self.operationLaneCoordinator = operationLaneCoordinator
         self.applicationOpenHandler = applicationOpenHandler
         self.defaultApplicationOpenHandler = defaultApplicationOpenHandler
+        self.runningApplicationsForURLProvider = runningApplicationsForURLProvider
         self.relaunchTargetResolver = relaunchTargetResolver
         self.relaunchQuitHandler = relaunchQuitHandler
         self.relaunchRunningHandler = relaunchRunningHandler
@@ -237,9 +232,6 @@ public final class ApplicationService: ApplicationServiceProtocol {
         self.maximumConcurrentApplicationMetadataReads = max(1, maximumConcurrentApplicationMetadataReads)
         self.applicationReadinessTimeout = applicationReadinessTimeout
         self.applicationActivationTimeout = applicationActivationTimeout
-        self.backgroundLaunchActivationGraceDuration = backgroundLaunchActivationGraceDuration
-        self.backgroundOpenActivationGraceDuration = backgroundOpenActivationGraceDuration
-        self.backgroundActivationLeaseFactory = backgroundActivationLeaseFactory
 
         // Connect to visual feedback if available.
         let isMacApp = Bundle.main.bundleIdentifier?.hasPrefix("boo.peekaboo.mac") == true

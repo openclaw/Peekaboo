@@ -73,8 +73,4 @@ extension AppToolActions {
         }
         return String(token)
     }
-
-    func identifier(for app: ServiceApplicationInfo) -> String {
-        "PID:\(app.processIdentifier)"
-    }
 }

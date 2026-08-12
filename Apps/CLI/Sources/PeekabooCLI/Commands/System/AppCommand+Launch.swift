@@ -11,10 +11,11 @@ extension AppCommand {
     struct LaunchSubcommand: InjectedRuntimeBackedCommand {
         static let commandDescription = CommandDescription(
             commandName: "launch",
-            abstract: "Launch an application",
+            abstract: "Verify a running app or explicitly launch it in the foreground",
             discussion: """
-            Launches the target app, optionally waits for it to finish starting,
-            and can hand one or more documents/URLs to the app immediately.
+            Without --foreground, this command is a read-only exact no-op that succeeds only
+            when the selected app is already running. Cold launch, open targets, and new instances
+            require --foreground because macOS may activate the target.
 
             KEY OPTIONS:
               --bundle-id <id>       Launch by bundle identifier instead of name/path
@@ -22,15 +23,15 @@ extension AppCommand {
               --new-instance         Launch a distinct process even if the app is already running
               --wait-ready           Wait until LaunchServices reports startup complete
               --wait-for-window      Wait for a real AX or WindowServer window
-              --foreground           Bring the app to the foreground after launching
+              --foreground           Required for cold launch, open targets, or a new instance
 
             EXAMPLES:
               peekaboo app launch "Safari"
-              peekaboo app launch "Safari" --open https://example.com --open https://news.ycombinator.com
-              peekaboo app launch "Preview" --open ~/Desktop/report.pdf
-              peekaboo app launch "TextEdit" --new-instance --wait-ready
+              peekaboo app launch "Safari" --open https://example.com --foreground
+              peekaboo app launch "Preview" --open ~/Desktop/report.pdf --foreground
+              peekaboo app launch "TextEdit" --new-instance --wait-ready --foreground
               peekaboo app launch "Safari" --foreground
-              peekaboo app launch --bundle-id com.apple.Notes --wait-ready
+              peekaboo app launch --bundle-id com.apple.Notes --wait-ready --foreground
             """
         )
 
@@ -49,7 +50,7 @@ extension AppCommand {
         @Flag(help: "Launch a distinct process even if the app is already running")
         var newInstance = false
 
-        @Flag(help: "Bring the app to the foreground after launching")
+        @Flag(help: "Required for cold launch, open targets, or a new instance")
         var foreground = false
 
         @Flag(help: "Deprecated compatibility flag; background launch is now the default")
@@ -73,12 +74,21 @@ extension AppCommand {
             self.prepare(using: runtime)
             do {
                 try self.validateInputs()
+                self.logger.verbose(
+                    self.foreground
+                        ? "Launching application: \(self.requestedAppIdentifier)"
+                        : "Verifying already-running application: \(self.requestedAppIdentifier)"
+                )
                 if self.noFocus {
                     self.logger.warn("--no-focus is deprecated because app launch is background by default")
                 }
-                self.resolvedRuntime.beginInteractionMutation()
+                if self.foreground {
+                    self.resolvedRuntime.beginInteractionMutation()
+                }
                 let launchedApp = try await launchApplication()
-                await invalidateSnapshotsAfterLaunch()
+                if self.foreground {
+                    await self.invalidateSnapshotsAfterLaunch()
+                }
                 self.renderLaunchSuccess(app: launchedApp)
             } catch {
                 handleError(error, customCode: applicationLaunchErrorCode(for: error))
@@ -89,15 +99,30 @@ extension AppCommand {
         private mutating func prepare(using runtime: CommandRuntime) {
             self.runtime = runtime
             self.logger.setJsonOutputMode(self.jsonOutput)
-            self.logger.verbose("Launching application: \(self.requestedAppIdentifier)")
         }
 
         private func validateInputs() throws {
             guard self.app?.isEmpty == false || self.bundleId?.isEmpty == false else {
                 throw PeekabooError.invalidInput("Provide an application name/path or --bundle-id")
             }
+            guard !(self.app?.isEmpty == false && self.bundleId?.isEmpty == false) else {
+                throw PeekabooError.invalidInput(
+                    "Provide the application either positionally or with --bundle-id, not both"
+                )
+            }
             guard !(self.foreground && self.noFocus) else {
                 throw PeekabooError.invalidInput("--foreground cannot be combined with deprecated --no-focus")
+            }
+            if !self.foreground, self.newInstance {
+                throw ApplicationLifecycleRefusalError.backgroundLaunch(
+                    "Background new-instance launch is refused before dispatch because a new app process can activate."
+                )
+            }
+            if !self.foreground, !self.openTargets.isEmpty {
+                throw ApplicationLifecycleRefusalError.backgroundLaunch(
+                    "Background URL or document delivery is refused before dispatch because the target app " +
+                        "can activate."
+                )
             }
         }
 

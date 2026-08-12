@@ -38,7 +38,7 @@ struct AppCommandLaunchFlowTests {
     }
 
     @Test
-    func `Launch forwards new-instance without opting into foreground`() async throws {
+    func `Launch refuses new-instance without foreground before service dispatch`() async throws {
         let service = self.makeLaunchService(name: "TextEdit", bundleIdentifier: "com.apple.TextEdit")
         var command = AppCommand.LaunchSubcommand()
         command.app = "TextEdit"
@@ -46,35 +46,66 @@ struct AppCommandLaunchFlowTests {
         command.waitUntilReady = true
         command.waitForWindow = true
 
+        await #expect(throws: ExitCode.self) {
+            try await command.run(using: self.makeRuntime(applicationService: service))
+        }
+
+        #expect(service.launchRequests.isEmpty)
+    }
+
+    @Test
+    func `Launch forwards new-instance with foreground consent`() async throws {
+        let service = self.makeLaunchService(name: "TextEdit", bundleIdentifier: "com.apple.TextEdit")
+        var command = AppCommand.LaunchSubcommand()
+        command.app = "TextEdit"
+        command.newInstance = true
+        command.waitUntilReady = true
+        command.waitForWindow = true
+        command.foreground = true
+
         try await command.run(using: self.makeRuntime(applicationService: service))
 
         let request = try #require(service.launchRequests.first)
         #expect(request.createsNewInstance)
         #expect(request.waitUntilReady)
         #expect(request.waitForWindow)
-        #expect(!request.activates)
+        #expect(request.activates)
     }
 
     @Test
-    func `Launch with --open documents skips focus through runtime host`() async throws {
+    func `Launch refuses open targets without foreground before service dispatch`() async throws {
         let service = self.makeLaunchService(name: "Preview", bundleIdentifier: "com.apple.Preview")
 
         var command = AppCommand.LaunchSubcommand()
         command.app = "Preview"
         command.noFocus = true
         command.openTargets = ["~/Desktop/file1.pdf", "https://example.com"]
-        let runtime = self.makeRuntime(applicationService: service)
-        try await command.run(using: runtime)
+        await #expect(throws: ExitCode.self) {
+            try await command.run(using: self.makeRuntime(applicationService: service))
+        }
+
+        #expect(service.launchRequests.isEmpty)
+    }
+
+    @Test
+    func `Launch forwards open targets with foreground consent`() async throws {
+        let service = self.makeLaunchService(name: "Preview", bundleIdentifier: "com.apple.Preview")
+        var command = AppCommand.LaunchSubcommand()
+        command.app = "Preview"
+        command.openTargets = ["~/Desktop/file1.pdf", "https://example.com"]
+        command.foreground = true
+
+        try await command.run(using: self.makeRuntime(applicationService: service))
 
         let request = try #require(service.launchRequests.first)
-        #expect(!request.activates)
+        #expect(request.activates)
         #expect(request.openURLs.count == 2)
         #expect(request.openURLs[0].path.hasSuffix("/Desktop/file1.pdf"))
         #expect(request.openURLs[1].absoluteString == "https://example.com")
     }
 
     @Test
-    func `Launch without open preserves no focus and invalidates selected and discovered snapshots`() async throws {
+    func `Background no-op launch preserves selected and discovered snapshots`() async throws {
         let service = self.makeLaunchService(name: "Notes", bundleIdentifier: "com.apple.Notes")
         let snapshots = try await SnapshotInvalidationFixture.start()
         defer { Task { await snapshots.host.stop() } }
@@ -94,22 +125,23 @@ struct AppCommandLaunchFlowTests {
 
         let request = try #require(service.launchRequests.first)
         #expect(!request.activates)
-        #expect(await snapshots.selected.getMostRecentSnapshot() == nil)
-        #expect(await snapshots.discovered.getMostRecentSnapshot() == nil)
+        #expect(await snapshots.selected.getMostRecentSnapshot() != nil)
+        #expect(await snapshots.discovered.getMostRecentSnapshot() != nil)
     }
 
     @Test
-    func `Bundle identifier takes precedence over positional name`() async throws {
+    func `Launch rejects mixed positional and bundle identifier selectors`() async throws {
         let service = self.makeLaunchService(name: "Calculator", bundleIdentifier: "com.apple.calculator")
         var command = AppCommand.LaunchSubcommand()
         command.app = "Calculator"
         command.bundleId = "com.apple.calculator"
         command.noFocus = true
 
-        try await command.run(using: self.makeRuntime(applicationService: service))
+        await #expect(throws: ExitCode.self) {
+            try await command.run(using: self.makeRuntime(applicationService: service))
+        }
 
-        #expect(service.launchRequests.first?.applicationIdentifier == nil)
-        #expect(service.launchRequests.first?.applicationBundleIdentifier == "com.apple.calculator")
+        #expect(service.launchRequests.isEmpty)
     }
 
     @Test
@@ -141,6 +173,7 @@ struct AppCommandLaunchFlowTests {
     func `Switch to app activates through application service`() async throws {
         let application = ServiceApplicationInfo(
             processIdentifier: 42,
+            processStartIdentity: 1001,
             bundleIdentifier: "com.apple.finder",
             name: "Finder"
         )
@@ -154,7 +187,38 @@ struct AppCommandLaunchFlowTests {
         )
         try await command.run(using: runtime)
 
-        #expect(applicationService.activateCalls == ["Finder"])
+        #expect(applicationService.activateCalls == ["PID:42"])
+        #expect(applicationService.activationRequests.first?.expectedIdentity?.processIdentifier == 42)
+        #expect(applicationService.activationRequests.first?.expectedIdentity?.processStartIdentity == 1001)
+    }
+
+    @Test
+    func `Unhide without activate consent refuses before service lookup`() async {
+        let service = self.makeLaunchService(name: "Finder", bundleIdentifier: "com.apple.finder")
+        var command = AppCommand.UnhideSubcommand()
+        command.app = "Finder"
+
+        await #expect(throws: ExitCode.self) {
+            try await command.run(using: self.makeRuntime(applicationService: service))
+        }
+
+        #expect(service.findCalls.isEmpty)
+        #expect(service.activateCalls.isEmpty)
+    }
+
+    @Test
+    func `Unhide with activate consent uses exact foreground activation`() async throws {
+        let service = self.makeLaunchService(name: "Finder", bundleIdentifier: "com.apple.finder")
+        var command = AppCommand.UnhideSubcommand()
+        command.app = "Finder"
+        command.activate = true
+
+        try await command.run(using: self.makeRuntime(applicationService: service))
+
+        #expect(service.findCalls == ["Finder"])
+        #expect(service.activateCalls == ["PID:42"])
+        #expect(service.activationRequests.first?.expectedIdentity?.processIdentifier == 42)
+        #expect(service.activationRequests.first?.expectedIdentity?.processStartIdentity == 1001)
     }
 
     @Test
@@ -311,6 +375,7 @@ struct AppCommandLaunchFlowTests {
         var command = AppCommand.RelaunchSubcommand()
         command.app = "Example"
         command.wait = .milliseconds(0)
+        command.foreground = true
         let runtime = CommandRuntime(
             configuration: .init(verbose: false, jsonOutput: true, logLevel: nil),
             services: ServicesWithApplicationStub(applications: applicationService)
@@ -328,7 +393,47 @@ struct AppCommandLaunchFlowTests {
         let request = try #require(applicationService.launchRequests.first)
         #expect(request.applicationIdentifier == nil)
         #expect(request.applicationBundleIdentifier == "com.example.app")
-        #expect(!request.activates)
+        #expect(request.activates)
+    }
+
+    @Test
+    func `Relaunch without foreground refuses before service lookup`() async {
+        let application = ServiceApplicationInfo(
+            processIdentifier: 123,
+            processStartIdentity: 1001,
+            bundleIdentifier: "com.example.app",
+            name: "Example"
+        )
+        let applicationService = RecordingApplicationService(applications: [application])
+        var command = AppCommand.RelaunchSubcommand()
+        command.app = "Example"
+        command.wait = .milliseconds(0)
+
+        await #expect(throws: ExitCode.self) {
+            try await command.run(using: self.makeRuntime(applicationService: applicationService))
+        }
+
+        #expect(applicationService.findCalls.isEmpty)
+        #expect(applicationService.relaunchRequests.isEmpty)
+    }
+
+    @Test
+    func `Relaunch rejects mixed textual and PID selectors before service lookup`() async {
+        let applicationService = self.makeLaunchService(
+            name: "Example",
+            bundleIdentifier: "com.example.app"
+        )
+        var command = AppCommand.RelaunchSubcommand()
+        command.app = "Example"
+        command.pid = 456
+        command.foreground = true
+
+        await #expect(throws: ExitCode.self) {
+            try await command.run(using: self.makeRuntime(applicationService: applicationService))
+        }
+
+        #expect(applicationService.findCalls.isEmpty)
+        #expect(applicationService.relaunchRequests.isEmpty)
     }
 
     @Test
@@ -357,6 +462,31 @@ struct AppCommandLaunchFlowTests {
     }
 
     @Test
+    func `Relaunch prefers the selected exact bundle path over bundle lookup`() async throws {
+        let application = ServiceApplicationInfo(
+            processIdentifier: 123,
+            processStartIdentity: 1001,
+            bundleIdentifier: "com.example.app",
+            name: "Example",
+            bundlePath: "/tmp/Exact Example.app"
+        )
+        let applicationService = RecordingApplicationService(
+            applications: [application],
+            launchResponse: application
+        )
+        var command = AppCommand.RelaunchSubcommand()
+        command.app = "Example"
+        command.wait = .milliseconds(0)
+        command.foreground = true
+
+        try await command.run(using: self.makeRuntime(applicationService: applicationService))
+
+        let request = try #require(applicationService.relaunchRequests.first?.launchRequest)
+        #expect(request.applicationIdentifier == "/tmp/Exact Example.app")
+        #expect(request.applicationBundleIdentifier == nil)
+    }
+
+    @Test
     func `Relaunch rejects an unsafe host before lifecycle calls`() async throws {
         let application = ServiceApplicationInfo(
             processIdentifier: 123,
@@ -367,6 +497,7 @@ struct AppCommandLaunchFlowTests {
         var command = AppCommand.RelaunchSubcommand()
         command.app = "Peekaboo"
         command.wait = .milliseconds(0)
+        command.foreground = true
         let runtime = CommandRuntime(
             configuration: .init(verbose: false, jsonOutput: true, logLevel: nil),
             services: ServicesWithApplicationStub(applications: applicationService),
@@ -392,6 +523,7 @@ struct AppCommandLaunchFlowTests {
         var command = AppCommand.RelaunchSubcommand()
         command.app = "Peekaboo daemon"
         command.wait = .milliseconds(0)
+        command.foreground = true
         let runtime = CommandRuntime(
             configuration: .init(verbose: false, jsonOutput: true, logLevel: nil),
             services: ServicesWithApplicationStub(applications: applicationService),
@@ -409,6 +541,7 @@ struct AppCommandLaunchFlowTests {
     private func makeLaunchService(name: String, bundleIdentifier: String) -> RecordingApplicationService {
         let app = ServiceApplicationInfo(
             processIdentifier: 42,
+            processStartIdentity: 1001,
             bundleIdentifier: bundleIdentifier,
             name: name,
             isFinishedLaunching: true
@@ -672,11 +805,13 @@ private final class RecordingHotkeyAutomationService: MockAutomationService {
 private final class RecordingApplicationService: ApplicationServiceProtocol {
     let supportsApplicationLaunchOptions = true
     let supportsApplicationRelaunch = true
+    let supportsProcessGenerationPinnedApplicationActivation = true
 
     private let applications: [ServiceApplicationInfo]
     private let launchResponse: ServiceApplicationInfo?
     private var runningPIDs: Set<Int32>
     private(set) var activateCalls: [String] = []
+    private(set) var activationRequests: [ApplicationActivationRequest] = []
     private(set) var launchRequests: [ApplicationLaunchRequest] = []
     private(set) var relaunchRequests: [ApplicationRelaunchRequest] = []
     private(set) var quitCalls: [QuitCall] = []
@@ -723,6 +858,11 @@ private final class RecordingApplicationService: ApplicationServiceProtocol {
 
     func activateApplication(identifier: String) async throws {
         self.activateCalls.append(identifier)
+    }
+
+    func activateApplication(request: ApplicationActivationRequest) async throws {
+        self.activationRequests.append(request)
+        self.activateCalls.append(request.identifier)
     }
 
     func listWindows(

@@ -12,43 +12,49 @@ read_when:
 ## Subcommands
 | Name | Purpose | Key flags |
 | --- | --- | --- |
-| `launch` | Start an app by name/path/bundle ID in the background, optionally opening documents. | `--bundle-id`, `--open <path|url>` (repeatable), `--new-instance`, `--wait-ready`, `--wait-for-window`, `--foreground`. |
+| `launch` | Verify an exact running app in the background, or explicitly start/open it in the foreground. | `--bundle-id`, `--open <path|url>` (repeatable), `--new-instance`, `--wait-ready`, `--wait-for-window`, `--foreground`. |
 | `quit` | Quit one app or *all* regular apps (with optional exclusions). | Positional `<app>` or `--app`, `--pid`, `--expected-process-start-identity`, `--all`, `--except "Finder,Terminal"`, `--force`. |
-| `relaunch` | Quit + relaunch the same app in the background in one step. | Positional `<app>` or `--app`, or `--pid`; `--wait`, `--force`, `--wait-until-ready`, `--foreground`. |
-| `hide` / `unhide` | Toggle app visibility. | Positional `<app>` or `--app`, or `--pid`. |
+| `relaunch` | Quit + relaunch the same app with explicit foreground consent. | Positional `<app>` or `--app`, or `--pid`; `--wait`, `--force`, `--wait-until-ready`, `--foreground` (required). |
+| `hide` / `unhide` | Hide an app, or unhide and activate it with explicit consent. | Positional `<app>` or `--app`, or `--pid`; unhide requires `--activate`. |
 | `switch` | Activate a specific app or cycle Cmd+Tab style. | Positional `<app>` or `--to`, `--cycle`, `--verify` (only with an app target). |
 | `focus` | Activate and focus an app through the same service path as the MCP app tool. | Positional `<app>` or `--app`, or `--pid`. |
 | `list` | App-management view of running apps, filtering hidden/background apps by default. | `--include-hidden`, `--include-background`. |
 
 ## Implementation notes
-- Launch resolves explicit paths, bundle IDs, and friendly names on the selected runtime host. It stays in the background by default, including when `--open` passes documents or URLs. Add `--foreground` only when activation is intended. `--new-instance` uses LaunchServices to start a distinct process even when the app is already running; it does not activate either instance. The deprecated `--no-focus` flag remains a no-op compatibility alias for the background default.
-- `launch --wait-ready` preserves the launch-completion contract and works for windowless/accessory apps. Add `--wait-for-window` when the next step needs a real WindowServer window with an exact ID; it waits up to 10 seconds and fails honestly for an app that never creates one. Neither readiness probe activates or focuses the target. `relaunch` retains its single `--wait-until-ready` spelling.
-- Background launch holds the global desktop lane through LaunchServices, readiness, its 500 ms activation grace window, and bounded focus reconciliation. Opening a document or URL extends the grace window to two seconds to cover delayed handler self-activation. If the target's exact process generation becomes concretely frontmost despite `activates = false`, Peekaboo restores only the exact prior process generation and confirms it with the same Workspace/WindowServer activation contract used by `app focus`, retrying native then AX activation. A transient unknown frontmost app remains indeterminate until the deadline, while any concrete later third-party foreground is treated as the user's choice and is never overridden. Caller cancellation and launch/readiness errors remain the command's original outcome, but cannot release the lane while delayed activation work is still possible.
-- JSON launch output returns the launch-bound `process_start_identity` beside `pid`, plus the refreshed `window_count`, `window_ready`, and `window_ids`. Relaunch returns the same receipt as `new_pid` and `new_process_start_identity`. A current native host captures that process generation from the exact process selected by LaunchServices and refuses the result if the PID is recycled before return. Older runtime hosts decode compatibly but may omit the process identity; cleanup callers must fail closed instead of probing the returned PID to manufacture a new receipt. `window_identity` is `exact` when the window IDs came from WindowServer and `unknown` for an older runtime host that cannot provide that metadata.
+- Launch resolves explicit paths, bundle IDs, PID selectors, and friendly names on the selected runtime host. Without `--foreground`, it may only return an exact already-running app as a verified no-op; it never calls LaunchServices. Cold launch, `--open`, `--new-instance`, and relaunch refuse before dispatch because macOS does not provide a trustworthy nonactivation guarantee. These refusals report `INTERACTION_FAILED`, `effect: refused`, `retry_safe: true`, and `mutation_dispatched: false`, with explicit foreground guidance. Background launch also requires a host that advertises this exact no-op contract, so a rolling upgrade cannot delegate to an older host that would cold-launch. The deprecated `--no-focus` flag remains a no-op compatibility alias.
+- Background no-op `launch --wait-ready` and `--wait-for-window` retain the selected PID/process-generation receipt throughout their read-only waits. A readiness failure remains explicitly retry-safe with `mutation_dispatched: false`. A `PID:` selector stays pinned to that exact process generation for both the no-op and a plain foreground activation; it cannot be combined with `--open` or `--new-instance`. Foreground launch keeps the full existing LaunchServices behavior for path/name/bundle selectors: it can start windowless/accessory apps, deliver documents/URLs, create a distinct process, and wait up to 10 seconds for a real WindowServer window. `relaunch` retains its single `--wait-until-ready` spelling and requires `--foreground` before the target is resolved or quit.
+- JSON launch output returns the launch-bound `process_start_identity` beside `pid`, plus the refreshed `window_count`, `window_ready`, and `window_ids`. Relaunch returns the same receipt as `new_pid` and `new_process_start_identity`. A current native host captures that process generation from the exact process selected by LaunchServices and refuses the result if the PID is recycled before return. Older runtime hosts may omit the process identity for foreground launch, but background launch fails closed unless the host advertises the safe no-op contract; cleanup callers must never probe a returned PID to manufacture a new receipt. `window_identity` is `exact` when the window IDs came from WindowServer and `unknown` for an older runtime host that cannot provide that metadata.
 - Quit mode supports `--all` plus `--except`, automatically ignoring core system processes (`Finder`, `Dock`, `SystemUIServer`, `WindowServer`). Bulk quit targets only generation-pinned applications whose bounded metadata explicitly classifies them as regular; accessory, prohibited, and incomplete rows are never treated as regular by default. Controlled cleanup can pair `--pid` with `--expected-process-start-identity`; Peekaboo atomically rejects a recycled PID instead of terminating its replacement. When quits fail, the command prints hints about unsaved changes and suggests `--force`.
-- Hide/unhide uses `NSRunningApplication.hide()` / `.unhide()` and surfaces JSON output with per-app success data.
+- Hide remains background-capable. Unhide requires `--activate` before runtime-host resolution and carries the selected PID/process-generation receipt through verified activation because showing an application's windows can move them in front. Hosts that cannot enforce the receipt are rejected, and the legacy identifier-only Bridge unhide operation is refused.
 - `switch --cycle` synthesizes Cmd+Tab events using `CGEvent` so it behaves like the real keyboard shortcut; `switch --to` activates the exact PID resolved via AX.
 - App activation is successful only after the exact resolved PID reports active and Workspace-frontmost. When the
   target owns visible ordinary windows, the frontmost WindowServer window must also belong to that PID. Peekaboo
   first uses native application activation, then falls back to the application's AX frontmost attribute when macOS
   accepts the request without completing it. Multi-window apps activate all of their windows; use `window focus`
   when one specific window must become key.
+- CLI and MCP focus/switch/unhide operations never reduce a selected application to a bare PID or name before activation; the runtime host rechecks the original process-generation receipt immediately before and after native activation.
 - `switch --verify` performs an additional command-level confirmation after the shared verified activation path (not
   supported with `--cycle`).
-- Supplying both the positional app and its named flag is accepted only when the values match; conflicting values fail before dispatch.
-- `relaunch` sends the initially selected PID/process-generation receipt, quit, termination polling (up to 5 s), the requested delay, and launch as one daemon-held transaction, so even a short daemon idle timeout cannot strand the app closed. The host rejects PID reuse before quit. It refuses to relaunch its own daemon, launches via bundle ID or bundle path, stays backgrounded unless `--foreground` is set, can wait for `isFinishedLaunching`, and returns the new process generation for race-free follow-up cleanup.
+- Supply one selector shape. Launch rejects a positional app combined with `--bundle-id`; app lifecycle commands reject a textual `--app` combined with `--pid`. A redundant `--app PID:123 --pid 123` pair is accepted only when both PIDs match.
+- With `--foreground`, `relaunch` sends the initially selected PID/process-generation receipt, quit, termination polling (up to 5 s), the requested delay, and launch as one daemon-held transaction, so even a short daemon idle timeout cannot strand the app closed. The host rejects PID reuse before quit, refuses to relaunch its own daemon, launches via bundle ID or bundle path, can wait for `isFinishedLaunching`, and returns the new process generation for race-free follow-up cleanup.
 - `app list` filters hidden/background apps unless `--include-hidden` or `--include-background` is passed and emits its established `data.apps` payload. Inventory snapshots WindowServer once, then reads LaunchServices metadata on at most eight generation-scoped per-process lanes with a 250 ms per-process and one-second overall bound, so one wedged hidden app or a broader stall cannot hold the whole Bridge request. Repeated reads coalesce behind a still-blocked process generation instead of growing an expired queue. A timed-out or deadline-skipped row retains its exact PID/window IDs, carries `metadata_warnings`, and omits `is_hidden` rather than guessing; use both inclusive flags to retain rows whose hidden state and activation policy are unknown. Top-level `warnings` makes a partial result visible in JSON and text output. Each current native process generation is available as `process_start_identity` plus the lossless canonical string `process_start_identity_decimal`; shell/JSON-number consumers must use the decimal string for exact comparison and treat missing values from older hosts as unknown. The result's `schema_capabilities` array advertises `processStartIdentityDecimal` even when `apps` is empty, so installers can require the lossless receipt contract without inferring CLI capability from ambient processes.
 
 ## Examples
 ```bash
-# Launch Xcode with a project without interrupting the current app
-peekaboo app launch "Xcode" --open ~/Projects/Peekaboo.xcodeproj
+# Verify an already-running Xcode generation without dispatching a launch
+peekaboo app launch "Xcode" --wait-ready
 
-# Start an independent TextEdit process and wait for its first automatable window
-peekaboo app launch "TextEdit" --new-instance --wait-for-window
+# Open a project with explicit foreground consent
+peekaboo app launch "Xcode" --open ~/Projects/Peekaboo.xcodeproj --foreground
+
+# Start an independent TextEdit process with explicit foreground consent
+peekaboo app launch "TextEdit" --new-instance --wait-for-window --foreground
 
 # Explicitly activate Safari after launching it
 peekaboo app launch "Safari" --foreground
+
+# Unhide and activate one exact app
+peekaboo app unhide TextEdit --activate
 
 # Quit everything but Finder and Terminal
 peekaboo app quit --all --except "Finder,Terminal"

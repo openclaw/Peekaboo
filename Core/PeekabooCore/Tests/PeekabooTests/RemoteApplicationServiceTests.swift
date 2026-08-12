@@ -91,6 +91,50 @@ struct RemoteApplicationServiceTests {
     }
 
     @Test
+    func `old bridge rejects pinned activation before transport`() async throws {
+        let remote = await MainActor.run {
+            RemoteApplicationService(
+                client: PeekabooBridgeClient(
+                    socketPath: "/tmp/peekaboo-missing-\(UUID().uuidString).sock",
+                    requestTimeoutSec: 0.1),
+                supportsPinnedActivation: false)
+        }
+
+        do {
+            try await remote.activateApplication(request: ApplicationActivationRequest(
+                identifier: "PID:123",
+                expectedIdentity: ApplicationProcessIdentity(
+                    processIdentifier: 123,
+                    processStartIdentity: 456)))
+            Issue.record("Expected pinned-activation capability rejection")
+        } catch let envelope as PeekabooBridgeErrorEnvelope {
+            #expect(envelope.code == .operationNotSupported)
+            #expect(envelope.message.contains("process-generation-pinned activation"))
+        }
+    }
+
+    @Test
+    func `old bridge rejects background launch before transport`() async throws {
+        let remote = await MainActor.run {
+            RemoteApplicationService(
+                client: PeekabooBridgeClient(
+                    socketPath: "/tmp/peekaboo-missing-\(UUID().uuidString).sock",
+                    requestTimeoutSec: 0.1),
+                supportsLaunchOptions: true,
+                supportsSafeBackgroundLaunchNoOp: false)
+        }
+
+        do {
+            _ = try await remote.launchApplication(request: ApplicationLaunchRequest(
+                applicationIdentifier: "Finder"))
+            Issue.record("Expected background launch semantic capability rejection")
+        } catch let envelope as PeekabooBridgeErrorEnvelope {
+            #expect(envelope.code == .operationNotSupported)
+            #expect(envelope.message.contains("safe background launch semantics"))
+        }
+    }
+
+    @Test
     func `old bridge rejects legacy remote quit before transport`() async throws {
         let remote = await MainActor.run {
             RemoteApplicationService(

@@ -276,7 +276,7 @@ struct CommanderBinderTests {
 
     @Test
     func `Launch commands require a bridge host with launch options`() throws {
-        let parsed = ParsedValues(positional: [], options: [:], flags: [])
+        let parsed = ParsedValues(positional: [], options: [:], flags: ["foreground"])
         let commandTypes: [any ParsableCommand.Type] = [
             AppCommand.LaunchSubcommand.self,
             AppCommand.RelaunchSubcommand.self,
@@ -291,7 +291,7 @@ struct CommanderBinderTests {
 
     @Test
     func `Snapshot-mutating commands require implicit invalidation support`() throws {
-        let parsed = ParsedValues(positional: [], options: [:], flags: [])
+        let parsed = ParsedValues(positional: [], options: [:], flags: ["foreground", "activate"])
         let commandTypes: [any ParsableCommand.Type] = [
             AppCommand.LaunchSubcommand.self,
             AppCommand.RelaunchSubcommand.self,

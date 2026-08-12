@@ -104,6 +104,57 @@ struct RuntimeHostApplicationSelectionTests {
     }
 
     @Test
+    func `Background launch rejects hosts that do not advertise safe no-op semantics`() {
+        let operations: [PeekabooBridgeOperation] = [.launchApplicationWithOptions]
+        let safe = BridgeTestFixtures.handshake(
+            negotiatedVersion: PeekabooBridgeConstants.protocolVersion,
+            hostKind: .gui,
+            build: nil,
+            supportedOperations: operations,
+            enabledOperations: operations,
+            hostCapabilities: [PeekabooBridgeHostCapability.safeBackgroundApplicationLaunchNoOp]
+        )
+        let legacy = BridgeTestFixtures.handshake(
+            negotiatedVersion: PeekabooBridgeConstants.protocolVersion,
+            hostKind: .gui,
+            build: nil,
+            supportedOperations: operations,
+            enabledOperations: operations
+        )
+        var options = CommandRuntimeOptions()
+        options.requiresApplicationLaunchOptions = true
+        options.requiresSafeBackgroundApplicationLaunchNoOp = true
+
+        #expect(CommandRuntime.supportsRemoteRequirements(for: safe, options: options))
+        #expect(!CommandRuntime.supportsRemoteRequirements(for: legacy, options: options))
+    }
+
+    @Test
+    func `App activation rejects hosts that cannot enforce process generation`() {
+        let operations: [PeekabooBridgeOperation] = [.activateApplication]
+        let pinned = BridgeTestFixtures.handshake(
+            negotiatedVersion: PeekabooBridgeConstants.protocolVersion,
+            hostKind: .gui,
+            build: nil,
+            supportedOperations: operations,
+            enabledOperations: operations,
+            hostCapabilities: [PeekabooBridgeHostCapability.processGenerationPinnedApplicationActivation]
+        )
+        let legacy = BridgeTestFixtures.handshake(
+            negotiatedVersion: PeekabooBridgeConstants.protocolVersion,
+            hostKind: .gui,
+            build: nil,
+            supportedOperations: operations,
+            enabledOperations: operations
+        )
+        var options = CommandRuntimeOptions()
+        options.requiresProcessGenerationPinnedApplicationActivation = true
+
+        #expect(CommandRuntime.supportsRemoteRequirements(for: pinned, options: options))
+        #expect(!CommandRuntime.supportsRemoteRequirements(for: legacy, options: options))
+    }
+
+    @Test
     @MainActor
     func `Launch commands prefer GUI host before reusable daemon`() {
         var options = CommandRuntimeOptions()

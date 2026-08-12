@@ -46,6 +46,11 @@ struct PeekabooBridgeOperationRoutingTests {
             windowContext: nil)).mayMutateDesktop)
         #expect(PeekabooBridgeRequest.inspectAccessibilityTree(.init(
             windowContext: WindowContext(shouldFocusWebContent: true))).mayMutateDesktop)
+        #expect(!PeekabooBridgeRequest.launchApplicationWithOptions(.init(
+            applicationIdentifier: "Finder")).mayMutateDesktop)
+        #expect(PeekabooBridgeRequest.launchApplicationWithOptions(.init(
+            applicationIdentifier: "Finder",
+            activates: true)).mayMutateDesktop)
         #expect(!PeekabooBridgeRequest.dialogFindActive(.init(
             windowTitle: nil,
             appName: "Calculator")).mayMutateDesktop)

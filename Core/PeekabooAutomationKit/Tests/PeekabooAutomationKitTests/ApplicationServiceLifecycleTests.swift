@@ -51,6 +51,32 @@ struct ApplicationServiceLifecycleTests {
 
     @Test
     @MainActor
+    func `pinned activation rejects process generation drift before dispatch`() async throws {
+        let runningApplication = try self.runningApplication()
+        let processIdentifier = runningApplication.processIdentifier
+        let processStartIdentity = try #require(SystemIdentityResolver.processStartIdentity(processIdentifier))
+        var dispatchCount = 0
+        let service = ApplicationService(
+            applicationOpenHandler: { _, _, _ in runningApplication },
+            applicationActivationHandler: { _ in
+                dispatchCount += 1
+                return true
+            },
+            processStartIdentityProvider: { _ in processStartIdentity })
+
+        await #expect(throws: PeekabooError.self) {
+            try await service.activateApplication(request: ApplicationActivationRequest(
+                identifier: "PID:\(processIdentifier)",
+                expectedIdentity: ApplicationProcessIdentity(
+                    processIdentifier: processIdentifier,
+                    processStartIdentity: processStartIdentity + 1)))
+        }
+
+        #expect(dispatchCount == 0)
+    }
+
+    @Test
+    @MainActor
     func `application activation verification requires exact Workspace and visible window owners`() {
         #expect(ApplicationService.isVerifiedApplicationActivation(
             processIdentifier: 42,
@@ -346,14 +372,13 @@ struct ApplicationServiceLifecycleTests {
 
     @Test
     @MainActor
-    func `launch result retains the process generation selected by LaunchServices`() async throws {
+    func `background no-op returns the selected process generation`() async throws {
         let recorder = ApplicationOpenRecorder()
         var identities: [UInt64] = [70, 70, 70, 70]
         let service = ApplicationService(
             applicationOpenHandler: recorder.open,
-            processStartIdentityProvider: { _ in identities.removeFirst() },
-            backgroundLaunchActivationGraceDuration: .zero,
-            backgroundActivationLeaseFactory: self.isolatedBackgroundActivationLeaseFactory())
+            runningApplicationsForURLProvider: { _ in [recorder.runningApplication] },
+            processStartIdentityProvider: { _ in identities.removeFirst() })
 
         let application = try await service.launchApplication(request: ApplicationLaunchRequest(
             applicationIdentifier: "Finder"))
@@ -366,23 +391,60 @@ struct ApplicationServiceLifecycleTests {
 
     @Test
     @MainActor
-    func `launch result rejects PID reuse after LaunchServices selects the process`() async throws {
+    func `background no-op rejects PID reuse before returning its receipt`() async throws {
         let recorder = ApplicationOpenRecorder()
         var identities: [UInt64] = [70, 70, 71, 71]
         let service = ApplicationService(
             applicationOpenHandler: recorder.open,
-            processStartIdentityProvider: { _ in identities.removeFirst() },
-            backgroundLaunchActivationGraceDuration: .zero,
-            backgroundActivationLeaseFactory: self.isolatedBackgroundActivationLeaseFactory())
+            runningApplicationsForURLProvider: { _ in [recorder.runningApplication] },
+            processStartIdentityProvider: { _ in identities.removeFirst() })
 
         do {
             _ = try await service.launchApplication(request: ApplicationLaunchRequest(
                 applicationIdentifier: "Finder"))
             Issue.record("Expected launch receipt generation mismatch")
-        } catch let PeekabooError.commandFailed(message) {
-            #expect(message.contains("process generation changed"))
+        } catch let error as ApplicationLifecycleRefusalError {
+            #expect(error.userMessage.contains("process generation"))
         }
         #expect(identities.isEmpty)
+    }
+
+    @Test
+    @MainActor
+    func `PID candidate selection keeps the exact requested process generation`() throws {
+        let applications = try self.runningApplications(count: 2)
+        let target = applications[1]
+        let targetIdentity = ApplicationProcessIdentity(
+            processIdentifier: target.processIdentifier,
+            processStartIdentity: 900)
+        let service = ApplicationService(
+            applicationOpenHandler: ApplicationOpenRecorder().open,
+            processStartIdentityProvider: { processIdentifier in
+                processIdentifier == target.processIdentifier ? 900 : 800
+            })
+
+        let selected = service.selectRunningApplication(
+            applications,
+            requestedIdentity: targetIdentity)
+
+        #expect(selected?.processIdentifier == target.processIdentifier)
+    }
+
+    @Test
+    @MainActor
+    func `PID launch rejects open delivery before LaunchServices dispatch`() async throws {
+        let recorder = ApplicationOpenRecorder()
+        let service = ApplicationService(applicationOpenHandler: recorder.open)
+        let targetURL = try #require(URL(string: "https://example.com"))
+
+        await #expect(throws: PeekabooError.self) {
+            try await service.launchApplication(request: ApplicationLaunchRequest(
+                applicationIdentifier: "PID:\(recorder.runningApplication.processIdentifier)",
+                openURLs: [targetURL],
+                activates: true))
+        }
+
+        #expect(recorder.calls.isEmpty)
     }
 
     @Test
@@ -395,62 +457,89 @@ struct ApplicationServiceLifecycleTests {
 
     @Test
     @MainActor
-    func `launch dispatches a no-focus reopen for an already running application`() async throws {
+    func `background launch returns an exact already-running no-op without dispatch`() async throws {
         let recorder = ApplicationOpenRecorder()
-        let service = ApplicationService(applicationOpenHandler: recorder.open)
+        let service = ApplicationService(
+            applicationOpenHandler: recorder.open,
+            runningApplicationsForURLProvider: { _ in [recorder.runningApplication] })
 
         let application = try await service.launchApplication(request: ApplicationLaunchRequest(
             applicationIdentifier: "Finder",
             activates: false))
 
-        let call = try #require(recorder.calls.first)
-        #expect(recorder.calls.count == 1)
-        #expect(call.applicationURL.path == "/System/Library/CoreServices/Finder.app")
-        #expect(call.openURLs.isEmpty)
-        #expect(!call.activates)
-        #expect(!call.createsNewApplicationInstance)
-        #expect(call.allowsRunningApplicationSubstitution)
+        #expect(recorder.calls.isEmpty)
         #expect(application.processIdentifier == recorder.runningApplication.processIdentifier)
     }
 
     @Test
     @MainActor
-    func `default-handler URL open uses the same background configuration`() async throws {
+    func `unsafe background launch shapes refuse before every dispatch surface`() async throws {
+        let applicationRecorder = ApplicationOpenRecorder()
+        let defaultRecorder = DefaultApplicationOpenRecorder()
+        var runningInventoryReads = 0
+        let service = ApplicationService(
+            applicationOpenHandler: applicationRecorder.open,
+            defaultApplicationOpenHandler: defaultRecorder.open,
+            runningApplicationsForURLProvider: { _ in
+                runningInventoryReads += 1
+                return []
+            })
+        let target = try #require(URL(string: "https://example.com/background-refusal"))
+        let requests = [
+            ApplicationLaunchRequest(applicationIdentifier: "Finder"),
+            ApplicationLaunchRequest(applicationIdentifier: "Finder", openURLs: [target]),
+            ApplicationLaunchRequest(applicationIdentifier: "Finder", createsNewInstance: true),
+            ApplicationLaunchRequest(openURLs: [target]),
+        ]
+
+        for request in requests {
+            await #expect(throws: ApplicationLifecycleRefusalError.self) {
+                _ = try await service.launchApplication(request: request)
+            }
+        }
+
+        #expect(runningInventoryReads == 1)
+        #expect(applicationRecorder.calls.isEmpty)
+        #expect(defaultRecorder.calls.isEmpty)
+    }
+
+    @Test
+    @MainActor
+    func `foreground default-handler URL open preserves LaunchServices delivery`() async throws {
         let applicationRecorder = ApplicationOpenRecorder()
         let defaultRecorder = DefaultApplicationOpenRecorder()
         let service = ApplicationService(
             applicationOpenHandler: applicationRecorder.open,
-            defaultApplicationOpenHandler: defaultRecorder.open,
-            backgroundOpenActivationGraceDuration: .zero)
+            defaultApplicationOpenHandler: defaultRecorder.open)
         let target = try #require(URL(string: "https://example.com/fixture"))
 
         let application = try await service.launchApplication(request: ApplicationLaunchRequest(
             openURLs: [target],
-            activates: false))
+            activates: true))
 
         let call = try #require(defaultRecorder.calls.first)
         #expect(defaultRecorder.calls.count == 1)
         #expect(applicationRecorder.calls.isEmpty)
         #expect(call.targetURL == target)
-        #expect(!call.activates)
+        #expect(call.activates)
         #expect(application.processIdentifier == defaultRecorder.runningApplication.processIdentifier)
     }
 
     @Test
     @MainActor
-    func `new-instance launch remains background and configures LaunchServices`() async throws {
+    func `foreground new-instance launch configures LaunchServices`() async throws {
         let recorder = ApplicationOpenRecorder()
         let service = ApplicationService(applicationOpenHandler: recorder.open)
 
         _ = try await service.launchApplication(request: ApplicationLaunchRequest(
             applicationIdentifier: "Finder",
-            activates: false,
+            activates: true,
             createsNewInstance: true))
 
         let call = try #require(recorder.calls.first)
         #expect(call.createsNewApplicationInstance)
         #expect(!call.allowsRunningApplicationSubstitution)
-        #expect(!call.activates)
+        #expect(call.activates)
     }
 
     @Test
@@ -460,6 +549,7 @@ struct ApplicationServiceLifecycleTests {
         var readinessChecks = 0
         let service = ApplicationService(
             applicationOpenHandler: recorder.open,
+            runningApplicationsForURLProvider: { _ in [recorder.runningApplication] },
             applicationReadinessHandler: { _ in
                 readinessChecks += 1
                 return readinessChecks >= 2
@@ -470,7 +560,7 @@ struct ApplicationServiceLifecycleTests {
             waitForWindow: true))
 
         #expect(readinessChecks == 2)
-        #expect(recorder.calls.count == 1)
+        #expect(recorder.calls.isEmpty)
     }
 
     @Test
@@ -480,6 +570,7 @@ struct ApplicationServiceLifecycleTests {
         var windowReadinessChecks = 0
         let service = ApplicationService(
             applicationOpenHandler: recorder.open,
+            runningApplicationsForURLProvider: { _ in [recorder.runningApplication] },
             applicationReadinessHandler: { _ in
                 windowReadinessChecks += 1
                 return false
@@ -498,6 +589,7 @@ struct ApplicationServiceLifecycleTests {
         let recorder = ApplicationOpenRecorder()
         let service = ApplicationService(
             applicationOpenHandler: recorder.open,
+            runningApplicationsForURLProvider: { _ in [recorder.runningApplication] },
             applicationReadinessHandler: { _ in false },
             applicationReadinessTimeout: 0)
 
@@ -506,503 +598,19 @@ struct ApplicationServiceLifecycleTests {
                 applicationIdentifier: "Finder",
                 waitForWindow: true))
             Issue.record("Expected window readiness timeout")
-        } catch let PeekabooError.timeout(message) {
+        } catch let failure as ApplicationLifecycleReadOnlyFailureError {
+            guard case let .timeout(message) = failure.underlyingError else {
+                Issue.record("Expected wrapped timeout, got \(failure.underlyingError)")
+                return
+            }
             #expect(message.contains("automatable window"))
+            #expect(failure.applicationLifecycleFailureMetadata?.retrySafe == true)
+            #expect(failure.applicationLifecycleFailureMetadata?.mutationDispatched == false)
         }
     }
 }
 
 extension ApplicationServiceLifecycleTests {
-    @Test
-    @MainActor
-    func `background restoration confirms only an active exact candidate`() async throws {
-        let candidate = try self.runningApplication()
-        let probe = BackgroundRestorationProbe(frontmostProcessIdentifier: candidate.processIdentifier)
-        probe.activeProcessIdentifiers.insert(candidate.processIdentifier)
-        let lease = probe.makeLease(previousApplication: candidate)
-
-        #expect(lease.setTargetProcessIdentifier(self.syntheticTargetPID()))
-        let outcome = await lease.waitForReconciliation()
-
-        #expect(outcome == .candidateConfirmed(candidate.processIdentifier))
-        #expect(probe.nativeActivationRequests.isEmpty)
-        #expect(probe.accessibilityActivationRequests.isEmpty)
-    }
-
-    @Test
-    @MainActor
-    func `background restoration accepts user foreground without fighting it`() async throws {
-        let candidate = try self.runningApplication()
-        let targetPID = self.syntheticTargetPID()
-        let frontmostPIDs = [candidate.processIdentifier, targetPID + 1]
-
-        for frontmostPID in frontmostPIDs {
-            let probe = BackgroundRestorationProbe(frontmostProcessIdentifier: frontmostPID)
-            let lease = probe.makeLease(previousApplication: candidate)
-            #expect(lease.setTargetProcessIdentifier(targetPID))
-
-            #expect(await lease.waitForReconciliation() == .differentFrontmost(frontmostPID))
-            #expect(probe.nativeActivationRequests.isEmpty)
-            #expect(probe.accessibilityActivationRequests.isEmpty)
-        }
-    }
-
-    @Test
-    @MainActor
-    func `background restoration waits through transient nil without activating`() async throws {
-        let candidate = try self.runningApplication()
-        let targetPID = self.syntheticTargetPID()
-        let probe = BackgroundRestorationProbe(frontmostProcessIdentifier: nil)
-        probe.onConfirmationSleep = { callCount in
-            #expect(probe.nativeActivationRequests.isEmpty)
-            if callCount == 1 {
-                probe.frontmostProcessIdentifier = targetPID
-                probe.onNativeActivation = { application in
-                    probe.activeProcessIdentifiers.insert(application.processIdentifier)
-                    probe.frontmostProcessIdentifier = application.processIdentifier
-                }
-            }
-        }
-        let lease = probe.makeLease(previousApplication: candidate, confirmationTimeout: .milliseconds(250))
-
-        #expect(lease.setTargetProcessIdentifier(targetPID))
-
-        #expect(await lease.waitForReconciliation() == .candidateConfirmed(candidate.processIdentifier))
-        #expect(probe.nativeActivationRequests == [candidate.processIdentifier])
-    }
-
-    @Test
-    @MainActor
-    func `background restoration accepts a candidate selected during transient nil`() async throws {
-        let candidate = try self.runningApplication()
-        let probe = BackgroundRestorationProbe(frontmostProcessIdentifier: nil)
-        probe.onConfirmationSleep = { callCount in
-            if callCount == 1 {
-                probe.frontmostProcessIdentifier = candidate.processIdentifier
-                probe.activeProcessIdentifiers.insert(candidate.processIdentifier)
-            }
-        }
-        let lease = probe.makeLease(previousApplication: candidate, confirmationTimeout: .milliseconds(250))
-
-        #expect(lease.setTargetProcessIdentifier(self.syntheticTargetPID()))
-
-        #expect(await lease.waitForReconciliation() == .candidateConfirmed(candidate.processIdentifier))
-        #expect(probe.nativeActivationRequests.isEmpty)
-    }
-
-    @Test
-    @MainActor
-    func `background restoration treats persistent nil as non-target only at deadline`() async throws {
-        let candidate = try self.runningApplication()
-        let probe = BackgroundRestorationProbe(frontmostProcessIdentifier: nil)
-        let lease = probe.makeLease(previousApplication: candidate, confirmationTimeout: .milliseconds(250))
-
-        #expect(lease.setTargetProcessIdentifier(self.syntheticTargetPID()))
-
-        #expect(await lease.waitForReconciliation() == .targetNotFrontmost)
-        #expect(probe.confirmationSleepDurations == [.milliseconds(100), .milliseconds(100), .milliseconds(50)])
-        #expect(probe.nativeActivationRequests.isEmpty)
-        #expect(probe.accessibilityActivationRequests.isEmpty)
-    }
-
-    @Test
-    @MainActor
-    func `background restoration retries native then AX while target survives deadline`() async throws {
-        let candidate = try self.runningApplication()
-        let targetPID = self.syntheticTargetPID()
-        let probe = BackgroundRestorationProbe(frontmostProcessIdentifier: candidate.processIdentifier)
-        let lease = probe.makeLease(previousApplication: candidate, confirmationTimeout: .milliseconds(250))
-        probe.frontmostProcessIdentifier = targetPID
-
-        #expect(lease.setTargetProcessIdentifier(targetPID))
-        await #expect(throws: PeekabooError.self) {
-            try await lease.holdThroughInitialActivationWindow()
-        }
-
-        #expect(probe.nativeActivationRequests == Array(repeating: candidate.processIdentifier, count: 4))
-        #expect(probe.accessibilityActivationRequests == Array(repeating: candidate.processIdentifier, count: 2))
-        #expect(probe.confirmationSleepDurations == [.milliseconds(100), .milliseconds(100), .milliseconds(50)])
-    }
-
-    @Test
-    @MainActor
-    func `activation work reaching deadline does not add a stale confirmation sleep`() async throws {
-        let candidate = try self.runningApplication()
-        let targetPID = self.syntheticTargetPID()
-        let probe = BackgroundRestorationProbe(frontmostProcessIdentifier: candidate.processIdentifier)
-        let lease = probe.makeLease(previousApplication: candidate, confirmationTimeout: .milliseconds(100))
-        probe.frontmostProcessIdentifier = targetPID
-        probe.onNativeActivation = { _ in
-            probe.now = probe.now.advanced(by: .milliseconds(100))
-        }
-
-        #expect(lease.setTargetProcessIdentifier(targetPID))
-
-        #expect(await lease.waitForReconciliation() == .targetStillFrontmost)
-        #expect(probe.nativeActivationRequests == [candidate.processIdentifier, candidate.processIdentifier])
-        #expect(probe.accessibilityActivationRequests.isEmpty)
-        #expect(probe.confirmationSleepDurations.isEmpty)
-    }
-
-    @Test
-    @MainActor
-    func `post-native user foreground stops before AX or another native request`() async throws {
-        let candidate = try self.runningApplication()
-        let targetPID = self.syntheticTargetPID()
-
-        for candidateBecomesFrontmost in [true, false] {
-            let probe = BackgroundRestorationProbe(frontmostProcessIdentifier: candidate.processIdentifier)
-            let lease = probe.makeLease(previousApplication: candidate, confirmationTimeout: .milliseconds(250))
-            probe.frontmostProcessIdentifier = targetPID
-            probe.onNativeActivation = { application in
-                probe.frontmostProcessIdentifier = candidateBecomesFrontmost
-                    ? application.processIdentifier
-                    : targetPID + 1
-            }
-
-            #expect(lease.setTargetProcessIdentifier(targetPID))
-
-            let expectedPID = candidateBecomesFrontmost ? candidate.processIdentifier : targetPID + 1
-            #expect(await lease.waitForReconciliation() == .differentFrontmost(expectedPID))
-            #expect(probe.nativeActivationRequests == [candidate.processIdentifier])
-            #expect(probe.accessibilityActivationRequests.isEmpty)
-            #expect(probe.confirmationSleepDurations.isEmpty)
-        }
-    }
-
-    @Test
-    @MainActor
-    func `candidate PID reuse after native rejection stops before AX fallback`() async throws {
-        let candidate = try self.runningApplication()
-        let targetPID = self.syntheticTargetPID()
-        let probe = BackgroundRestorationProbe(frontmostProcessIdentifier: candidate.processIdentifier)
-        probe.processStartIdentities[candidate.processIdentifier] = 70
-        probe.processStartIdentities[targetPID] = 70
-        probe.nativeRequestAccepted = false
-        probe.onNativeActivation = { _ in
-            probe.processStartIdentities[candidate.processIdentifier] = 71
-        }
-        let lease = probe.makeLease(previousApplication: candidate, confirmationTimeout: .milliseconds(100))
-
-        #expect(lease.setTargetProcessIdentifier(targetPID))
-        probe.frontmostProcessIdentifier = targetPID
-
-        #expect(await lease.waitForReconciliation() == .targetStillFrontmost)
-        #expect(probe.nativeActivationRequests == [candidate.processIdentifier])
-        #expect(probe.accessibilityActivationRequests.isEmpty)
-        #expect(probe.confirmationSleepDurations == [.milliseconds(100)])
-    }
-
-    @Test
-    @MainActor
-    func `terminated restoration candidate fails boundedly without activation`() async throws {
-        let candidate = try self.runningApplication()
-        let targetPID = self.syntheticTargetPID()
-        let probe = BackgroundRestorationProbe(frontmostProcessIdentifier: candidate.processIdentifier)
-        probe.terminatedProcessIdentifiers.insert(candidate.processIdentifier)
-        let lease = probe.makeLease(previousApplication: candidate, confirmationTimeout: .milliseconds(150))
-        probe.frontmostProcessIdentifier = targetPID
-
-        #expect(lease.setTargetProcessIdentifier(targetPID))
-
-        #expect(await lease.waitForReconciliation() == .targetStillFrontmost)
-        #expect(probe.nativeActivationRequests.isEmpty)
-        #expect(probe.accessibilityActivationRequests.isEmpty)
-        #expect(probe.confirmationSleepDurations == [.milliseconds(100), .milliseconds(50)])
-    }
-
-    @Test
-    @MainActor
-    func `new candidate supersedes pending native fallback during confirmation`() async throws {
-        let applications = try self.runningApplications(count: 2)
-        let candidateA = applications[0]
-        let candidateB = applications[1]
-        let targetPID = self.syntheticTargetPID()
-        let probe = BackgroundRestorationProbe(frontmostProcessIdentifier: candidateA.processIdentifier)
-        let lease = probe.makeLease(previousApplication: candidateA, confirmationTimeout: .milliseconds(250))
-        probe.frontmostProcessIdentifier = targetPID
-        probe.onNativeActivation = { application in
-            guard application.processIdentifier == candidateA.processIdentifier else {
-                probe.activeProcessIdentifiers.insert(candidateB.processIdentifier)
-                probe.frontmostProcessIdentifier = candidateB.processIdentifier
-                return
-            }
-            Task { @MainActor in
-                lease.handleActivatedApplication(candidateB)
-                probe.frontmostProcessIdentifier = targetPID
-            }
-        }
-
-        #expect(lease.setTargetProcessIdentifier(targetPID))
-
-        #expect(await lease.waitForReconciliation() == .candidateConfirmed(candidateB.processIdentifier))
-        #expect(probe.nativeActivationRequests == [candidateA.processIdentifier, candidateB.processIdentifier])
-        #expect(probe.accessibilityActivationRequests.isEmpty)
-    }
-
-    @Test
-    @MainActor
-    func `anonymous activation clears stale candidate before and during confirmation`() async throws {
-        let candidate = try self.runningApplication()
-        let targetPID = self.syntheticTargetPID()
-
-        for supersedeBeforeTargetResolution in [true, false] {
-            let probe = BackgroundRestorationProbe(frontmostProcessIdentifier: candidate.processIdentifier)
-            let lease = probe.makeLease(previousApplication: candidate, confirmationTimeout: .milliseconds(150))
-            if supersedeBeforeTargetResolution {
-                lease.handleActivatedProcessIdentifier(targetPID + 1)
-            } else {
-                probe.onNativeActivation = { _ in
-                    Task { @MainActor in
-                        lease.handleActivatedProcessIdentifier(targetPID + 1)
-                    }
-                }
-            }
-            probe.frontmostProcessIdentifier = targetPID
-            #expect(lease.setTargetProcessIdentifier(targetPID))
-
-            #expect(await lease.waitForReconciliation() == .targetStillFrontmost)
-            let expectedNativeRequests = supersedeBeforeTargetResolution ? [] : [candidate.processIdentifier]
-            #expect(probe.nativeActivationRequests == expectedNativeRequests)
-            #expect(probe.accessibilityActivationRequests.isEmpty)
-        }
-    }
-
-    @Test
-    @MainActor
-    func `already-frontmost target is not treated as its own restoration candidate`() async throws {
-        let target = try self.runningApplication()
-        let probe = BackgroundRestorationProbe(frontmostProcessIdentifier: target.processIdentifier)
-        let lease = probe.makeLease(previousApplication: target, confirmationTimeout: .milliseconds(250))
-
-        #expect(lease.setTargetProcessIdentifier(target.processIdentifier))
-
-        #expect(await lease.waitForReconciliation() == .targetWasAlreadyFrontmost)
-        #expect(probe.nativeActivationRequests.isEmpty)
-        #expect(probe.accessibilityActivationRequests.isEmpty)
-        #expect(probe.confirmationSleepDurations.isEmpty)
-    }
-
-    @Test
-    @MainActor
-    func `initial target restores only a later user candidate after target steals back`() async throws {
-        let applications = try self.runningApplications(count: 2)
-        let target = applications[0]
-        let candidate = applications[1]
-        let probe = BackgroundRestorationProbe(frontmostProcessIdentifier: target.processIdentifier)
-        probe.onNativeActivation = { application in
-            probe.activeProcessIdentifiers.insert(application.processIdentifier)
-            probe.frontmostProcessIdentifier = application.processIdentifier
-        }
-        let lease = probe.makeLease(previousApplication: target, confirmationTimeout: .milliseconds(250))
-        lease.handleActivatedApplication(candidate)
-        lease.handleActivatedProcessIdentifier(target.processIdentifier)
-        probe.frontmostProcessIdentifier = target.processIdentifier
-
-        #expect(lease.setTargetProcessIdentifier(target.processIdentifier))
-
-        #expect(await lease.waitForReconciliation() == .candidateConfirmed(candidate.processIdentifier))
-        #expect(probe.nativeActivationRequests == [candidate.processIdentifier])
-        #expect(probe.accessibilityActivationRequests.isEmpty)
-    }
-
-    @Test
-    @MainActor
-    func `target receipt is one-shot and starts one reconciliation`() async throws {
-        let candidate = try self.runningApplication()
-        let firstTargetPID = self.syntheticTargetPID()
-        let probe = BackgroundRestorationProbe(frontmostProcessIdentifier: firstTargetPID + 1)
-        let lease = probe.makeLease(previousApplication: candidate, activationGraceDuration: .milliseconds(100))
-
-        #expect(lease.setTargetProcessIdentifier(firstTargetPID))
-        #expect(!lease.setTargetProcessIdentifier(firstTargetPID + 1))
-        lease.handleActivatedProcessIdentifier(firstTargetPID)
-        lease.handleActivatedProcessIdentifier(firstTargetPID)
-
-        #expect(await lease.waitForReconciliation() == .differentFrontmost(firstTargetPID + 1))
-        #expect(probe.graceSleepDurations == [.milliseconds(100)])
-        #expect(!lease.hasActiveReconciliation)
-    }
-
-    @Test
-    @MainActor
-    func `reused target PID stops restoration against the replacement generation`() async throws {
-        let candidate = try self.runningApplication()
-        let targetPID = self.syntheticTargetPID()
-        let probe = BackgroundRestorationProbe(frontmostProcessIdentifier: candidate.processIdentifier)
-        let lease = probe.makeLease(previousApplication: candidate, confirmationTimeout: .milliseconds(250))
-        probe.frontmostProcessIdentifier = targetPID
-
-        #expect(lease.setTargetProcessIdentifier(targetPID))
-        probe.processStartIdentity = 71
-
-        #expect(await lease.waitForReconciliation() == .targetNotFrontmost)
-        #expect(probe.nativeActivationRequests == [candidate.processIdentifier])
-        #expect(probe.accessibilityActivationRequests.isEmpty)
-        #expect(probe.confirmationSleepDurations.isEmpty)
-    }
-
-    @Test
-    @MainActor
-    func `reused candidate PID is never activated as the previous application`() async throws {
-        let candidate = try self.runningApplication()
-        let targetPID = self.syntheticTargetPID()
-        let probe = BackgroundRestorationProbe(frontmostProcessIdentifier: candidate.processIdentifier)
-        probe.processStartIdentities[candidate.processIdentifier] = 70
-        probe.processStartIdentities[targetPID] = 70
-        let lease = probe.makeLease(previousApplication: candidate, confirmationTimeout: .milliseconds(100))
-        probe.processStartIdentities[candidate.processIdentifier] = 71
-        probe.frontmostProcessIdentifier = targetPID
-
-        #expect(lease.setTargetProcessIdentifier(targetPID))
-
-        #expect(await lease.waitForReconciliation() == .targetStillFrontmost)
-        #expect(probe.nativeActivationRequests.isEmpty)
-        #expect(probe.accessibilityActivationRequests.isEmpty)
-    }
-
-    @Test
-    @MainActor
-    func `background restoration clamps invalid protection durations`() async throws {
-        let candidate = try self.runningApplication()
-        let targetPID = self.syntheticTargetPID()
-
-        let negativeProbe = BackgroundRestorationProbe(frontmostProcessIdentifier: candidate.processIdentifier)
-        let negativeLease = negativeProbe.makeLease(
-            previousApplication: candidate,
-            activationGraceDuration: .seconds(-1),
-            confirmationTimeout: .seconds(-1))
-        negativeProbe.frontmostProcessIdentifier = targetPID
-        #expect(negativeLease.setTargetProcessIdentifier(targetPID))
-        #expect(await negativeLease.waitForReconciliation() == .targetStillFrontmost)
-        #expect(negativeProbe.graceSleepDurations.isEmpty)
-        #expect(negativeProbe.confirmationSleepDurations.isEmpty)
-
-        let maximumProbe = BackgroundRestorationProbe(frontmostProcessIdentifier: targetPID + 1)
-        let maximumLease = maximumProbe.makeLease(
-            previousApplication: candidate,
-            activationGraceDuration: .seconds(60))
-        #expect(maximumLease.setTargetProcessIdentifier(targetPID))
-        #expect(await maximumLease.waitForReconciliation() == .differentFrontmost(targetPID + 1))
-        #expect(maximumProbe.graceSleepDurations == [.seconds(10)])
-    }
-
-    @Test
-    @MainActor
-    func `original readiness error wins over restoration failure`() async throws {
-        let applications = try self.runningApplications(count: 2)
-        let runningApplication = applications[0]
-        let previousApplication = applications[1]
-        let targetPID = runningApplication.processIdentifier
-        let now = ActivationInstantBox(ContinuousClock.now)
-        let frontmostPID = ActivationPIDBox(previousApplication.processIdentifier)
-        let dependencies = BackgroundRestorationDependencies(
-            applicationActivationHandler: { _ in true },
-            accessibilityActivationHandler: { _ in true },
-            applicationActiveProvider: { _ in false },
-            applicationTerminatedProvider: { _ in false },
-            frontmostProcessIdentifierProvider: { frontmostPID.value },
-            processStartIdentityProvider: { _ in 70 },
-            confirmationSleepHandler: { duration in now.value = now.value.advanced(by: duration) },
-            confirmationTimeout: .milliseconds(100))
-        let service = ApplicationService(
-            applicationOpenHandler: { _, _, _ in runningApplication },
-            applicationReadinessHandler: { _ in false },
-            processStartIdentityProvider: { _ in 70 },
-            applicationReadinessTimeout: 0,
-            backgroundLaunchActivationGraceDuration: .zero,
-            backgroundActivationLeaseFactory: { duration, _ in
-                let lease = BackgroundLaunchActivationLease(
-                    previousApplication: previousApplication,
-                    observeActivations: false,
-                    activationGraceDuration: duration,
-                    nowProvider: { now.value },
-                    restorationDependencies: dependencies)
-                frontmostPID.value = targetPID
-                return lease
-            })
-
-        do {
-            _ = try await service.launchApplication(request: ApplicationLaunchRequest(
-                applicationIdentifier: "Finder",
-                activates: false,
-                waitForWindow: true))
-            Issue.record("Expected the original readiness timeout")
-        } catch let PeekabooError.timeout(message) {
-            #expect(message.contains("automatable window"))
-        }
-    }
-
-    @Test
-    @MainActor
-    func `application launch maps every background restoration outcome`() async throws {
-        enum Scenario: CaseIterable {
-            case candidateConfirmed
-            case differentFrontmost
-            case targetWasAlreadyFrontmost
-            case targetNotFrontmost
-            case targetStillFrontmost
-        }
-
-        let applications = try self.runningApplications(count: 2)
-        let target = applications[0]
-        let candidate = applications[1]
-
-        for scenario in Scenario.allCases {
-            let initialFrontmostPID = scenario == .targetWasAlreadyFrontmost
-                ? target.processIdentifier
-                : candidate.processIdentifier
-            let probe = BackgroundRestorationProbe(frontmostProcessIdentifier: initialFrontmostPID)
-            if scenario == .candidateConfirmed {
-                probe.onNativeActivation = { application in
-                    probe.activeProcessIdentifiers.insert(application.processIdentifier)
-                    probe.frontmostProcessIdentifier = application.processIdentifier
-                }
-            }
-            let service = ApplicationService(
-                applicationOpenHandler: { _, _, _ in target },
-                processStartIdentityProvider: { _ in 70 },
-                backgroundLaunchActivationGraceDuration: .zero,
-                backgroundActivationLeaseFactory: { duration, _ in
-                    let lease = probe.makeLease(
-                        previousApplication: scenario == .targetWasAlreadyFrontmost ? target : candidate,
-                        activationGraceDuration: duration,
-                        confirmationTimeout: .milliseconds(100))
-                    switch scenario {
-                    case .candidateConfirmed, .targetStillFrontmost:
-                        probe.frontmostProcessIdentifier = target.processIdentifier
-                    case .differentFrontmost:
-                        probe.frontmostProcessIdentifier = target.processIdentifier + 10000
-                    case .targetNotFrontmost:
-                        probe.frontmostProcessIdentifier = nil
-                    case .targetWasAlreadyFrontmost:
-                        break
-                    }
-                    return lease
-                })
-
-            if scenario == .targetStillFrontmost {
-                await #expect(throws: PeekabooError.self) {
-                    _ = try await service.launchApplication(request: ApplicationLaunchRequest(
-                        applicationIdentifier: "Finder",
-                        activates: false))
-                }
-            } else {
-                let result = try await service.launchApplication(request: ApplicationLaunchRequest(
-                    applicationIdentifier: "Finder",
-                    activates: false))
-                #expect(result.processIdentifier == target.processIdentifier)
-            }
-
-            if scenario == .targetWasAlreadyFrontmost || scenario == .differentFrontmost ||
-                scenario == .targetNotFrontmost
-            {
-                #expect(probe.nativeActivationRequests.isEmpty)
-                #expect(probe.accessibilityActivationRequests.isEmpty)
-            }
-        }
-    }
-
     @Test
     @MainActor
     func `explicit application path disables running application substitution`() async throws {
@@ -1011,7 +619,7 @@ extension ApplicationServiceLifecycleTests {
 
         _ = try await service.launchApplication(request: ApplicationLaunchRequest(
             applicationIdentifier: "/System/Library/CoreServices/Finder.app",
-            activates: false))
+            activates: true))
 
         let call = try #require(recorder.calls.first)
         #expect(!call.allowsRunningApplicationSubstitution)
@@ -1025,7 +633,7 @@ extension ApplicationServiceLifecycleTests {
 
         _ = try await service.launchApplication(request: ApplicationLaunchRequest(
             applicationIdentifier: "com.apple.finder",
-            activates: false))
+            activates: true))
 
         let call = try #require(recorder.calls.first)
         #expect(call.allowsRunningApplicationSubstitution)
@@ -1106,7 +714,7 @@ extension ApplicationServiceLifecycleTests {
             relaunchQuitHandler: lifecycle.quit,
             relaunchRunningHandler: lifecycle.isRunning)
 
-        await #expect(throws: PeekabooError.self) {
+        await #expect(throws: ApplicationLifecycleRefusalError.self) {
             try await service.relaunchApplication(request: ApplicationRelaunchRequest(
                 targetIdentifier: "Example",
                 launchRequest: ApplicationLaunchRequest(),
@@ -1137,7 +745,7 @@ extension ApplicationServiceLifecycleTests {
                     processStartIdentity: 700),
                 launchRequest: ApplicationLaunchRequest(
                     applicationIdentifier: "Finder",
-                    activates: false),
+                    activates: true),
                 waitSeconds: 0))
         }
 
@@ -1165,7 +773,7 @@ extension ApplicationServiceLifecycleTests {
                 processStartIdentity: 700),
             launchRequest: ApplicationLaunchRequest(
                 applicationIdentifier: "Finder",
-                activates: false),
+                activates: true),
             waitSeconds: 0))
 
         #expect(lifecycle.resolvedIdentifiers == ["  Example  "])
@@ -1198,7 +806,7 @@ extension ApplicationServiceLifecycleTests {
                     processStartIdentity: 701),
                 launchRequest: ApplicationLaunchRequest(
                     applicationIdentifier: "Finder",
-                    activates: false),
+                    activates: true),
                 waitSeconds: 0))
         }
 
@@ -1220,111 +828,6 @@ extension ApplicationServiceLifecycleTests {
         try #require(applications.count >= count)
         return Array(applications.prefix(count))
     }
-
-    private func syntheticTargetPID() -> pid_t {
-        getpid() + 10000
-    }
-
-    private func isolatedBackgroundActivationLeaseFactory() -> ApplicationService.BackgroundActivationLeaseFactory {
-        { duration, _ in
-            BackgroundLaunchActivationLease(
-                observeActivations: false,
-                activationGraceDuration: duration,
-                restorationDependencies: BackgroundRestorationDependencies(
-                    applicationActivationHandler: { _ in true },
-                    accessibilityActivationHandler: { _ in true },
-                    applicationActiveProvider: { _ in false },
-                    applicationTerminatedProvider: { _ in false },
-                    frontmostProcessIdentifierProvider: { nil },
-                    processStartIdentityProvider: { _ in 70 },
-                    confirmationSleepHandler: { _ in },
-                    confirmationTimeout: .zero))
-        }
-    }
-}
-
-@MainActor
-private final class ActivationInstantBox {
-    var value: ContinuousClock.Instant
-
-    init(_ value: ContinuousClock.Instant) {
-        self.value = value
-    }
-}
-
-@MainActor
-private final class ActivationPIDBox {
-    var value: pid_t?
-
-    init(_ value: pid_t?) {
-        self.value = value
-    }
-}
-
-@MainActor
-private final class BackgroundRestorationProbe {
-    var now = ContinuousClock.now
-    var frontmostProcessIdentifier: pid_t?
-    var activeProcessIdentifiers: Set<pid_t> = []
-    var terminatedProcessIdentifiers: Set<pid_t> = []
-    var processStartIdentity: UInt64? = 70
-    var processStartIdentities: [pid_t: UInt64] = [:]
-    var nativeRequestAccepted = true
-    var onNativeActivation: ((NSRunningApplication) -> Void)?
-    var onAccessibilityActivation: ((pid_t) -> Void)?
-    var onConfirmationSleep: ((Int) -> Void)?
-    private(set) var nativeActivationRequests: [pid_t] = []
-    private(set) var accessibilityActivationRequests: [pid_t] = []
-    private(set) var graceSleepDurations: [Duration] = []
-    private(set) var confirmationSleepDurations: [Duration] = []
-
-    init(frontmostProcessIdentifier: pid_t?) {
-        self.frontmostProcessIdentifier = frontmostProcessIdentifier
-    }
-
-    func makeLease(
-        previousApplication: NSRunningApplication,
-        activationGraceDuration: Duration = .zero,
-        confirmationTimeout: Duration = .zero) -> BackgroundLaunchActivationLease
-    {
-        BackgroundLaunchActivationLease(
-            previousApplication: previousApplication,
-            observeActivations: false,
-            activationGraceDuration: activationGraceDuration,
-            nowProvider: { self.now },
-            sleepHandler: { duration in
-                self.graceSleepDurations.append(duration)
-                self.now = self.now.advanced(by: duration)
-            },
-            restorationDependencies: BackgroundRestorationDependencies(
-                applicationActivationHandler: { application in
-                    self.nativeActivationRequests.append(application.processIdentifier)
-                    self.onNativeActivation?(application)
-                    return self.nativeRequestAccepted
-                },
-                accessibilityActivationHandler: { processIdentifier in
-                    self.accessibilityActivationRequests.append(processIdentifier)
-                    self.onAccessibilityActivation?(processIdentifier)
-                    return true
-                },
-                applicationActiveProvider: { application in
-                    self.activeProcessIdentifiers.contains(application.processIdentifier)
-                },
-                applicationTerminatedProvider: { application in
-                    self.terminatedProcessIdentifiers.contains(application.processIdentifier)
-                },
-                frontmostProcessIdentifierProvider: { self.frontmostProcessIdentifier },
-                processStartIdentityProvider: { processIdentifier in
-                    self.processStartIdentities[processIdentifier] ?? self.processStartIdentity
-                },
-                confirmationSleepHandler: { duration in
-                    self.confirmationSleepDurations.append(duration)
-                    self.now = self.now.advanced(by: duration)
-                    self.onConfirmationSleep?(self.confirmationSleepDurations.count)
-                    await Task.yield()
-                },
-                confirmationTimeout: confirmationTimeout))
-    }
 }
 
 @MainActor
@@ -1338,9 +841,12 @@ private final class ApplicationOpenRecorder {
     }
 
     private(set) var calls: [Call] = []
-    let runningApplication = NSWorkspace.shared.runningApplications.first {
-        !$0.isTerminated && $0.isFinishedLaunching
-    } ?? NSRunningApplication.current
+    let runningApplication: NSRunningApplication
+
+    init() {
+        self.runningApplication = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.finder")
+            .first ?? NSWorkspace.shared.frontmostApplication ?? NSRunningApplication.current
+    }
 
     func open(
         applicationURL: URL,

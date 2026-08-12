@@ -382,9 +382,14 @@ public struct PeekabooBridgeWindowBoundsRequest: Codable, Sendable {
 
 public struct PeekabooBridgeAppIdentifierRequest: Codable, Sendable {
     public let identifier: String
+    public let expectedIdentity: ApplicationProcessIdentity?
 
-    public init(identifier: String) {
+    public init(
+        identifier: String,
+        expectedIdentity: ApplicationProcessIdentity? = nil)
+    {
         self.identifier = identifier
+        self.expectedIdentity = expectedIdentity
     }
 }
 

@@ -13,8 +13,8 @@ struct AppCommand: ParsableCommand {
         EXAMPLES:
           # Launch an application
           peekaboo app launch "Visual Studio Code"
-          peekaboo app launch --bundle-id com.microsoft.VSCode --wait-ready
-          peekaboo app launch "Safari" --open https://example.com --open ~/Desktop/notes.txt
+          peekaboo app launch --bundle-id com.microsoft.VSCode --wait-ready --foreground
+          peekaboo app launch "Safari" --open https://example.com --open ~/Desktop/notes.txt --foreground
           peekaboo app launch "Safari" --foreground
 
           # Quit applications
@@ -23,7 +23,7 @@ struct AppCommand: ParsableCommand {
 
           # Hide/show applications
           peekaboo app hide --app Slack
-          peekaboo app unhide --app Slack
+          peekaboo app unhide --app Slack --activate
 
           # Switch between applications
           peekaboo app switch --to Terminal
@@ -31,7 +31,7 @@ struct AppCommand: ParsableCommand {
 
           # Relaunch applications
           peekaboo app relaunch Safari --foreground
-          peekaboo app relaunch "Visual Studio Code" --wait 3s --wait-until-ready
+          peekaboo app relaunch "Visual Studio Code" --wait 3s --wait-until-ready --foreground
         """,
         subcommands: [
             LaunchSubcommand.self,
@@ -104,7 +104,7 @@ struct AppCommand: ParsableCommand {
     struct UnhideSubcommand: InjectedRuntimeBackedCommand {
         static let commandDescription = CommandDescription(
             commandName: "unhide",
-            abstract: "Show a hidden application"
+            abstract: "Unhide and activate an application with explicit foreground consent"
         )
 
         @Option(help: "Application to unhide")
@@ -113,29 +113,27 @@ struct AppCommand: ParsableCommand {
         @Option(name: .long, help: "Target application by process ID")
         var pid: Int32?
 
-        @Flag(help: "Bring to front after unhiding")
+        @Flag(help: "Required explicit foreground consent for unhide")
         var activate = false
         @RuntimeStorage var runtime: CommandRuntime?
 
-        /// Unhide the target application and optionally re-activate its main window.
+        /// Unhide and activate the target application's main window.
         @MainActor
 
         mutating func run(using runtime: CommandRuntime) async throws {
             self.runtime = runtime
 
             do {
+                guard self.activate else {
+                    throw ApplicationLifecycleRefusalError.unhideRequiresForegroundConsent()
+                }
                 let appIdentifier = try self.resolveApplicationIdentifier()
                 let appInfo = try await resolveApplication(appIdentifier, services: self.services)
 
                 self.resolvedRuntime.beginInteractionMutation()
-                try await self.services.applications.unhideApplication(identifier: appIdentifier)
-
-                // Activate if requested
-                if self.activate {
-                    try await self.services.applications.activateApplication(
-                        identifier: appInfo.bundleIdentifier ?? appInfo.name
-                    )
-                }
+                try await self.services.applications.activateApplication(
+                    request: ApplicationActivationRequest(application: appInfo)
+                )
 
                 struct UnhideResult: Codable {
                     let action: String
@@ -152,7 +150,7 @@ struct AppCommand: ParsableCommand {
                 )
 
                 output(data) {
-                    print("✓ Shown \(appInfo.name)")
+                    print("✓ Unhidden and activated \(appInfo.name)")
                 }
                 AutomationEventLogger.log(
                     .app,
@@ -220,7 +218,9 @@ struct AppCommand: ParsableCommand {
                 } else if let targetApp = to {
                     let appInfo = try await resolveApplication(targetApp, services: self.services)
                     self.resolvedRuntime.beginInteractionMutation()
-                    try await self.services.applications.activateApplication(identifier: appInfo.name)
+                    try await self.services.applications.activateApplication(
+                        request: ApplicationActivationRequest(application: appInfo)
+                    )
                     await InteractionObservationInvalidator.invalidateAfterMutation(
                         targets: self.resolvedRuntime.interactionMutationTargets,
                         logger: self.logger,
@@ -309,7 +309,7 @@ struct AppCommand: ParsableCommand {
                 let appInfo = try await resolveApplication(appIdentifier, services: self.services)
                 self.resolvedRuntime.beginInteractionMutation()
                 try await self.services.applications.activateApplication(
-                    identifier: "PID:\(appInfo.processIdentifier)"
+                    request: ApplicationActivationRequest(application: appInfo)
                 )
 
                 let result = [

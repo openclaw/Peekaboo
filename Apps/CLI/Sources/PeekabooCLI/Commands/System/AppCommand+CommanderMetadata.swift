@@ -41,7 +41,7 @@ extension AppCommand.LaunchSubcommand: CommanderSignatureProviding {
                 ),
                 .commandFlag(
                     "foreground",
-                    help: "Bring the app to the foreground after launching",
+                    help: "Required for cold launch, open targets, or a new instance",
                     long: "foreground"
                 ),
                 .commandFlag(
@@ -149,7 +149,7 @@ extension AppCommand.UnhideSubcommand: CommanderSignatureProviding {
             flags: [
                 .commandFlag(
                     "activate",
-                    help: "Bring to front after unhiding",
+                    help: "Required explicit foreground consent for unhide",
                     long: "activate"
                 ),
             ]
@@ -228,7 +228,7 @@ extension AppCommand.RelaunchSubcommand: CommanderSignatureProviding {
                 ),
                 .commandOption(
                     "wait",
-                    help: "Wait between quit and launch; bare values are milliseconds, or use ms/s suffixes",
+                    help: "Wait between quit and launch (default 2s; bare values are milliseconds)",
                     long: "wait"
                 ),
             ],
@@ -245,7 +245,7 @@ extension AppCommand.RelaunchSubcommand: CommanderSignatureProviding {
                 ),
                 .commandFlag(
                     "foreground",
-                    help: "Bring the app to the foreground after relaunching",
+                    help: "Required explicit foreground consent for relaunch",
                     long: "foreground"
                 ),
             ]

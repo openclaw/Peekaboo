@@ -151,9 +151,11 @@ func ensureFocused(
 
     guard let windowID = targetWindow else {
         if case let .bestWindow(applicationName, _) = targetRequest {
-            _ = try await services.applications.findApplication(identifier: applicationName)
+            let application = try await services.applications.findApplication(identifier: applicationName)
             try Task.checkCancellation()
-            try await services.applications.activateApplication(identifier: applicationName)
+            try await services.applications.activateApplication(
+                request: ApplicationActivationRequest(application: application)
+            )
             try Task.checkCancellation()
         }
         return

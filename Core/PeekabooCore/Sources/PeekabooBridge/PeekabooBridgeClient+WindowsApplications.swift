@@ -291,6 +291,12 @@ extension PeekabooBridgeClient {
         try await self.sendExpectOK(.activateApplication(PeekabooBridgeAppIdentifierRequest(identifier: identifier)))
     }
 
+    public func activateApplication(request: ApplicationActivationRequest) async throws {
+        try await self.sendExpectOK(.activateApplication(PeekabooBridgeAppIdentifierRequest(
+            identifier: request.identifier,
+            expectedIdentity: request.expectedIdentity)))
+    }
+
     public func quitApplication(
         identifier: String,
         force: Bool,

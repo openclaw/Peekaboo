@@ -1361,7 +1361,8 @@ final class MockScreenService: ScreenServiceProtocol {
 }
 
 @MainActor
-final class MockApplicationService: ApplicationServiceProtocol {
+class MockApplicationService: ApplicationServiceProtocol {
+    let supportsProcessGenerationPinnedApplicationActivation = true
     private(set) var applications: [ServiceApplicationInfo]
     private(set) var launchRequests: [ApplicationLaunchRequest] = []
     private(set) var relaunchRequests: [ApplicationRelaunchRequest] = []
@@ -1463,6 +1464,7 @@ final class MockApplicationService: ApplicationServiceProtocol {
     }
 
     func activateApplication(identifier _: String) async throws {}
+    func activateApplication(request _: ApplicationActivationRequest) async throws {}
 
     func quitApplication(identifier _: String, force _: Bool) async throws -> Bool {
         true

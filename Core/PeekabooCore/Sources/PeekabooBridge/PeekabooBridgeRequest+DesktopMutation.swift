@@ -249,6 +249,9 @@ extension PeekabooBridgeRequest {
         if case let .inspectAccessibilityTree(request) = self {
             return request.windowContext?.shouldFocusWebContent == true
         }
+        if case let .launchApplicationWithOptions(request) = self {
+            return request.activates
+        }
         return self.operation.mutatesDesktop
     }
 }

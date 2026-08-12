@@ -296,6 +296,9 @@ public enum PeekabooBridgeHostCapability {
     public static let desktopObservationOCR = "desktopObservationOCR"
     public static let desktopObservationCaptureEngine = "desktopObservationCaptureEngine"
     public static let screenCaptureKitProcessOwnership = "screenCaptureKitProcessOwnership"
+    public static let safeBackgroundApplicationLaunchNoOp = "safeBackgroundApplicationLaunchNoOp"
+    public static let processGenerationPinnedApplicationActivation =
+        "processGenerationPinnedApplicationActivation"
 }
 
 public struct PeekabooBridgeHandshakeResponse: Codable, Sendable {
@@ -502,5 +505,28 @@ extension PeekabooBridgeErrorEnvelope: PendingSnapshotFailureDispositionProvidin
         default:
             false
         }
+    }
+}
+
+extension PeekabooBridgeErrorEnvelope: ApplicationLifecycleRefusalMetadataProviding {
+    public var applicationLifecycleRefusalHint: String? {
+        ApplicationLifecycleRefusalError.hint(forBridgeContext: self.context)
+    }
+
+    public var applicationLifecycleFailureMetadata: ApplicationLifecycleFailureMetadata? {
+        if let hint = self.applicationLifecycleRefusalHint {
+            return ApplicationLifecycleFailureMetadata(
+                effect: "refused",
+                errorCode: .interactionFailed,
+                hint: hint,
+                retrySafe: true,
+                mutationDispatched: false)
+        }
+        guard self.context == ApplicationLifecycleReadOnlyFailureError.bridgeContext else { return nil }
+        return ApplicationLifecycleFailureMetadata(
+            effect: "unverifiable",
+            errorCode: self.code == .timeout ? .timeout : .unknownError,
+            retrySafe: true,
+            mutationDispatched: false)
     }
 }

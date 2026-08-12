@@ -47,7 +47,9 @@ struct CLIValueParserTests {
         let config = try ConfigCommand.StatusCommand.parse(["--timeout", "3s"])
         #expect(config.timeout.seconds == 3)
 
-        let relaunch = try AppCommand.RelaunchSubcommand.parse(["TextEdit", "--wait", "250ms"])
+        let relaunch = try AppCommand.RelaunchSubcommand.parse([
+            "TextEdit", "--wait", "250ms", "--foreground",
+        ])
         #expect(relaunch.wait.roundedMilliseconds == 250)
 
         let dialog = try DialogCommand.ListSubcommand.parse(["--timeout", "2s"])

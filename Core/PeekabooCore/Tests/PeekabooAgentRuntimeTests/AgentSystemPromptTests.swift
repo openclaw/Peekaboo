@@ -134,7 +134,9 @@ struct AgentSystemPromptTests {
         guard #available(macOS 14.0, *) else { return }
         let prompt = AgentSystemPrompt.generate()
 
-        #expect(prompt.contains(#""action": "launch", "name": "Safari", "foreground": false"#))
+        #expect(prompt.contains(#""action": "launch", "name": "Safari", "foreground": true"#))
+        #expect(prompt.contains("only an exact already-running"))
+        #expect(prompt.contains("relaunch, and unhide require `foreground: true`"))
         #expect(prompt.contains(#""action": "open", "name": "Safari""#))
         #expect(prompt.contains("`new_page` and `select_page` stay in the background by default"))
         #expect(prompt.contains("Observation never focuses the target by default"))

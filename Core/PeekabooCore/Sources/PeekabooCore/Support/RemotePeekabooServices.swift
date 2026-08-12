@@ -61,10 +61,12 @@ public final class RemotePeekabooServices: PeekabooServiceProviding {
         supportsExactWindowROIObservation: Bool = false,
         supportsImplicitLatestSnapshotInvalidation: Bool = false,
         supportsApplicationLaunchOptions: Bool = false,
+        supportsSafeBackgroundApplicationLaunchNoOp: Bool = false,
         supportsNewApplicationInstanceLaunch: Bool = false,
         supportsApplicationWindowReadiness: Bool = false,
         supportsApplicationRelaunch: Bool = false,
         supportsProcessGenerationPinnedApplicationQuit: Bool = false,
+        supportsProcessGenerationPinnedApplicationActivation: Bool = false,
         allowLocalApplicationFallback: Bool = false,
         desktopMutationWatermarkStore: DesktopMutationWatermarkStore? = nil)
     {
@@ -80,10 +82,12 @@ public final class RemotePeekabooServices: PeekabooServiceProviding {
             client: client,
             localFallback: allowLocalApplicationFallback ? ApplicationService() : nil,
             supportsLaunchOptions: supportsApplicationLaunchOptions,
+            supportsSafeBackgroundLaunchNoOp: supportsSafeBackgroundApplicationLaunchNoOp,
             supportsNewInstanceLaunch: supportsNewApplicationInstanceLaunch,
             supportsWindowReadiness: supportsApplicationWindowReadiness,
             supportsRelaunch: supportsApplicationRelaunch,
-            supportsPinnedQuit: supportsProcessGenerationPinnedApplicationQuit)
+            supportsPinnedQuit: supportsProcessGenerationPinnedApplicationQuit,
+            supportsPinnedActivation: supportsProcessGenerationPinnedApplicationActivation)
         self.automation = if supportsElementActions {
             RemoteElementActionUIAutomationService(
                 client: client,

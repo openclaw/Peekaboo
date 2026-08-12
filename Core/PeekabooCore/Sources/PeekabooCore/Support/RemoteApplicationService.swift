@@ -11,13 +11,19 @@ public final class RemoteApplicationService: ApplicationServiceProtocol {
     private let client: PeekabooBridgeClient
     private let localFallback: (any ApplicationServiceProtocol)?
     private let supportsLaunchOptions: Bool
+    private let supportsSafeBackgroundLaunchNoOp: Bool
     private let supportsNewInstanceLaunch: Bool
     private let supportsWindowReadiness: Bool
     private let supportsRelaunch: Bool
     private let supportsPinnedQuit: Bool
+    private let supportsPinnedActivation: Bool
 
     public var supportsApplicationLaunchOptions: Bool {
         self.supportsLaunchOptions
+    }
+
+    public var supportsSafeBackgroundApplicationLaunchNoOp: Bool {
+        self.supportsSafeBackgroundLaunchNoOp
     }
 
     public var supportsApplicationRelaunch: Bool {
@@ -36,22 +42,30 @@ public final class RemoteApplicationService: ApplicationServiceProtocol {
         self.supportsPinnedQuit
     }
 
+    public var supportsProcessGenerationPinnedApplicationActivation: Bool {
+        self.supportsPinnedActivation
+    }
+
     public init(
         client: PeekabooBridgeClient,
         localFallback: (any ApplicationServiceProtocol)? = nil,
         supportsLaunchOptions: Bool = false,
+        supportsSafeBackgroundLaunchNoOp: Bool = false,
         supportsNewInstanceLaunch: Bool = false,
         supportsWindowReadiness: Bool = false,
         supportsRelaunch: Bool = false,
-        supportsPinnedQuit: Bool = false)
+        supportsPinnedQuit: Bool = false,
+        supportsPinnedActivation: Bool = false)
     {
         self.client = client
         self.localFallback = localFallback
         self.supportsLaunchOptions = supportsLaunchOptions
+        self.supportsSafeBackgroundLaunchNoOp = supportsSafeBackgroundLaunchNoOp
         self.supportsNewInstanceLaunch = supportsNewInstanceLaunch
         self.supportsWindowReadiness = supportsWindowReadiness
         self.supportsRelaunch = supportsRelaunch
         self.supportsPinnedQuit = supportsPinnedQuit
+        self.supportsPinnedActivation = supportsPinnedActivation
     }
 
     public func listApplications() async throws -> UnifiedToolOutput<ServiceApplicationListData> {
@@ -106,6 +120,12 @@ public final class RemoteApplicationService: ApplicationServiceProtocol {
 
     public func launchApplication(request: ApplicationLaunchRequest) async throws -> ServiceApplicationInfo {
         try self.validateAdvancedLaunchOptions(request)
+        if !request.activates, !self.supportsSafeBackgroundLaunchNoOp {
+            throw PeekabooBridgeErrorEnvelope(
+                code: .operationNotSupported,
+                message: "The selected Peekaboo host cannot prove safe background launch semantics; " +
+                    "update or relaunch it")
+        }
         if self.supportsLaunchOptions {
             return try await self.client.launchApplication(request: request)
         }
@@ -158,6 +178,19 @@ public final class RemoteApplicationService: ApplicationServiceProtocol {
             try await self.client.activateApplication(identifier: identifier)
         } fallback: { fallback in
             try await fallback.activateApplication(identifier: identifier)
+        }
+    }
+
+    public func activateApplication(request: ApplicationActivationRequest) async throws {
+        guard request.expectedIdentity == nil || self.supportsPinnedActivation else {
+            throw PeekabooBridgeErrorEnvelope(
+                code: .operationNotSupported,
+                message: "The selected Peekaboo host does not support process-generation-pinned activation")
+        }
+        try await self.runWithLifecycleFallback {
+            try await self.client.activateApplication(request: request)
+        } fallback: { fallback in
+            try await fallback.activateApplication(request: request)
         }
     }
 

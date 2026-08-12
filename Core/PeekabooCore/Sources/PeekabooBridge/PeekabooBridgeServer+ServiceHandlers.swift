@@ -32,7 +32,9 @@ extension PeekabooBridgeServer {
             self.automationActivityObserver?(pid_t(app.processIdentifier))
             return .application(app)
         case let .activateApplication(payload):
-            try await self.services.applications.activateApplication(identifier: payload.identifier)
+            try await self.services.applications.activateApplication(request: ApplicationActivationRequest(
+                identifier: payload.identifier,
+                expectedIdentity: payload.expectedIdentity))
             await self.reportAutomationActivity(appIdentifier: payload.identifier)
             return .ok
         case let .quitApplication(payload):
@@ -53,9 +55,8 @@ extension PeekabooBridgeServer {
             try await self.services.applications.hideApplication(identifier: payload.identifier)
             await self.reportAutomationActivity(appIdentifier: payload.identifier)
             return .ok
-        case let .unhideApplication(payload):
-            try await self.services.applications.unhideApplication(identifier: payload.identifier)
-            return .ok
+        case .unhideApplication:
+            throw ApplicationLifecycleRefusalError.legacyBridgeUnhide()
         case let .hideOtherApplications(payload):
             try await self.services.applications.hideOtherApplications(identifier: payload.identifier)
             return .ok

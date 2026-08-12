@@ -80,9 +80,8 @@ extension ApplicationResolvable {
             }
         }
 
-        // Case 2: app is a name/bundle ID, pid is provided.
-        // We can't reliably cross-check names vs. PIDs without AppKit/main-thread inspection.
-        // Log the redundancy and prefer the textual identifier for readability.
-        return app
+        throw PeekabooError.invalidInput(
+            "Provide the application either with --app or --pid, not both"
+        )
     }
 }

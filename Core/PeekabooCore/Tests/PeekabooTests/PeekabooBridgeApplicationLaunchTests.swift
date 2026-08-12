@@ -1,8 +1,9 @@
+import AppKit
 import Foundation
-import PeekabooAutomationKit
 import PeekabooCore
 import PeekabooFoundation
 import Testing
+@testable import PeekabooAutomationKit
 @testable import PeekabooBridge
 
 struct PeekabooBridgeApplicationLaunchTests {
@@ -102,6 +103,65 @@ struct PeekabooBridgeApplicationLaunchTests {
     }
 
     @Test
+    func `current application service advertises safe background no-op semantics`() async throws {
+        let server = await MainActor.run {
+            PeekabooBridgeServer(
+                services: PeekabooServices(),
+                hostKind: .gui,
+                allowlistedTeams: [],
+                allowlistedBundles: [])
+        }
+        let request = PeekabooBridgeRequest.handshake(.init(
+            protocolVersion: PeekabooBridgeConstants.protocolVersion,
+            client: .init(
+                bundleIdentifier: "dev.peeka.cli",
+                teamIdentifier: "TEAMID",
+                processIdentifier: getpid(),
+                hostname: Host.current().name),
+            requestedHostKind: .gui))
+
+        let response = try await self.decode(server.decodeAndHandle(
+            JSONEncoder.peekabooBridgeEncoder().encode(request),
+            peer: nil))
+        guard case let .handshake(handshake) = response else {
+            Issue.record("Expected handshake response, got \(response)")
+            return
+        }
+
+        #expect(handshake.hostCapabilities?.contains(
+            PeekabooBridgeHostCapability.safeBackgroundApplicationLaunchNoOp) == true)
+    }
+
+    @Test
+    @MainActor
+    func `pinned activation receipt round trips through Bridge`() async throws {
+        let applications = StubApplicationService()
+        let server = PeekabooBridgeServer(
+            services: StubServices(applications: applications),
+            hostKind: .gui,
+            allowlistedTeams: [],
+            allowlistedBundles: [])
+        let expectedIdentity = ApplicationProcessIdentity(
+            processIdentifier: 123,
+            processStartIdentity: 456)
+        let request = PeekabooBridgeRequest.activateApplication(.init(
+            identifier: "PID:123",
+            expectedIdentity: expectedIdentity))
+
+        let response = try await self.decode(server.decodeAndHandle(
+            JSONEncoder.peekabooBridgeEncoder().encode(request),
+            peer: nil))
+
+        guard case .ok = response else {
+            Issue.record("Expected activation success, got \(response)")
+            return
+        }
+        #expect(applications.activationRequests == [ApplicationActivationRequest(
+            identifier: "PID:123",
+            expectedIdentity: expectedIdentity)])
+    }
+
+    @Test
     func `application launch options round trip through bridge host`() async throws {
         let applicationService = await MainActor.run { LaunchRecordingApplicationService() }
         let stub = await MainActor.run { StubServices(applications: applicationService) }
@@ -173,7 +233,9 @@ struct PeekabooBridgeApplicationLaunchTests {
         let client = PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 30)
         let clientTask = Task {
             try await client.launchApplication(
-                request: ApplicationLaunchRequest(applicationIdentifier: "com.example.Delayed"))
+                request: ApplicationLaunchRequest(
+                    applicationIdentifier: "com.example.Delayed",
+                    activates: true))
         }
         try await applicationService.waitUntilLaunchStarted()
         clientTask.cancel()
@@ -225,7 +287,9 @@ struct PeekabooBridgeApplicationLaunchTests {
                 allowlistedBundles: [],
                 desktopMutationWatermarkStore: store)
         }
-        let request = ApplicationLaunchRequest(applicationIdentifier: "com.example.Delayed")
+        let request = ApplicationLaunchRequest(
+            applicationIdentifier: "com.example.Delayed",
+            activates: true)
         let requestData = try JSONEncoder.peekabooBridgeEncoder().encode(
             PeekabooBridgeRequest.launchApplicationWithOptions(request))
         let responseTask = Task { await server.decodeAndHandle(requestData, peer: nil) }
@@ -265,18 +329,136 @@ struct PeekabooBridgeApplicationLaunchTests {
 
     @Test
     func `application launch preserves app not found errors`() async throws {
-        try await self.assertLaunchError(.appNotFound("Missing"), expectedCode: .notFound)
+        try await self.assertLaunchError(PeekabooError.appNotFound("Missing"), expectedCode: .notFound)
     }
 
     @Test
     func `application launch preserves timeout errors`() async throws {
-        try await self.assertLaunchError(.timeout("Launch timed out"), expectedCode: .timeout)
+        try await self.assertLaunchError(PeekabooError.timeout("Launch timed out"), expectedCode: .timeout)
+    }
+
+    @Test
+    func `background readiness timeout preserves zero-dispatch receipt`() async throws {
+        try await self.assertLaunchError(
+            ApplicationLifecycleReadOnlyFailureError(.timeout("Window readiness timed out")),
+            expectedCode: .timeout,
+            expectedContext: ApplicationLifecycleReadOnlyFailureError.bridgeContext)
+    }
+
+    @Test
+    @MainActor
+    func `background lifecycle requests refuse through Bridge before native dispatch`() async throws {
+        let coordinationRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekaboo-platform-truth-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: coordinationRoot) }
+        var applicationOpenCalls = 0
+        var defaultOpenCalls = 0
+        var runningInventoryReads = 0
+        var relaunchResolutionCalls = 0
+        var relaunchQuitCalls = 0
+        let applicationService = ApplicationService(
+            operationLaneCoordinator: DesktopOperationLaneCoordinator(coordinationRootURL: coordinationRoot),
+            applicationOpenHandler: { _, _, _ in
+                applicationOpenCalls += 1
+                return NSRunningApplication.current
+            },
+            defaultApplicationOpenHandler: { _, _ in
+                defaultOpenCalls += 1
+                return NSRunningApplication.current
+            },
+            runningApplicationsForURLProvider: { _ in
+                runningInventoryReads += 1
+                return []
+            },
+            relaunchTargetResolver: { _ in
+                relaunchResolutionCalls += 1
+                return ServiceApplicationInfo(
+                    processIdentifier: 4321,
+                    processStartIdentity: 77,
+                    bundleIdentifier: "com.example.Target",
+                    name: "Target")
+            },
+            relaunchQuitHandler: { _ in
+                relaunchQuitCalls += 1
+                return true
+            })
+        let server = PeekabooBridgeServer(
+            services: StubServices(applications: applicationService),
+            hostKind: .onDemand,
+            allowlistedTeams: [],
+            allowlistedBundles: [],
+            daemonControl: StubDaemonControl())
+        let target = try #require(URL(string: "https://example.com/bridge-refusal"))
+        let launchRequests: [PeekabooBridgeRequest] = [
+            .launchApplicationWithOptions(ApplicationLaunchRequest(applicationIdentifier: "Finder")),
+            .launchApplicationWithOptions(ApplicationLaunchRequest(
+                applicationIdentifier: "Finder",
+                openURLs: [target])),
+            .launchApplicationWithOptions(ApplicationLaunchRequest(
+                applicationIdentifier: "Finder",
+                createsNewInstance: true)),
+            .launchApplicationWithOptions(ApplicationLaunchRequest(openURLs: [target])),
+            .relaunchApplicationWithOptions(ApplicationRelaunchRequest(
+                targetIdentifier: "PID:4321",
+                expectedTargetIdentity: ApplicationProcessIdentity(
+                    processIdentifier: 4321,
+                    processStartIdentity: 77),
+                launchRequest: ApplicationLaunchRequest(applicationIdentifier: "Finder"),
+                waitSeconds: 0)),
+        ]
+
+        for request in launchRequests {
+            let responseData = try await server.decodeAndHandle(
+                JSONEncoder.peekabooBridgeEncoder().encode(request),
+                peer: nil)
+            guard case let .error(envelope) = try self.decode(responseData) else {
+                Issue.record("Expected Bridge refusal for \(request.operation.rawValue)")
+                continue
+            }
+            #expect(envelope.code == .internalError)
+            #expect(envelope.message.contains("refused before"))
+            #expect(envelope.context == ApplicationLifecycleRefusalError.backgroundLaunchContext)
+            #expect(!envelope.operationMayHaveCompleted)
+        }
+
+        #expect(runningInventoryReads == 1)
+        #expect(applicationOpenCalls == 0)
+        #expect(defaultOpenCalls == 0)
+        #expect(relaunchResolutionCalls == 0)
+        #expect(relaunchQuitCalls == 0)
+    }
+
+    @Test
+    @MainActor
+    func `legacy Bridge unhide refuses before application service dispatch`() async throws {
+        #expect(!PeekabooBridgeOperation.remoteDefaultAllowlist.contains(.unhideApplication))
+        let applicationService = UnhideRecordingApplicationService()
+        let server = PeekabooBridgeServer(
+            services: StubServices(applications: applicationService),
+            hostKind: .gui,
+            allowlistedTeams: [],
+            allowlistedBundles: [],
+            allowedOperations: PeekabooBridgeOperation.remoteDefaultAllowlist.union([.unhideApplication]))
+        let request = PeekabooBridgeRequest.unhideApplication(
+            PeekabooBridgeAppIdentifierRequest(identifier: "Finder"))
+
+        let responseData = try await server.decodeAndHandle(
+            JSONEncoder.peekabooBridgeEncoder().encode(request),
+            peer: nil)
+        guard case let .error(envelope) = try self.decode(responseData) else {
+            Issue.record("Expected legacy Bridge unhide refusal")
+            return
+        }
+        #expect(envelope.context == ApplicationLifecycleRefusalError.unhideContext)
+        #expect(!envelope.operationMayHaveCompleted)
+        #expect(applicationService.unhideCalls == 0)
     }
 
     @MainActor
     private func assertLaunchError(
-        _ error: PeekabooError,
-        expectedCode: PeekabooBridgeErrorCode) async throws
+        _ error: any Error,
+        expectedCode: PeekabooBridgeErrorCode,
+        expectedContext: String? = nil) async throws
     {
         let applicationService = LaunchRecordingApplicationService()
         applicationService.launchError = error
@@ -299,6 +481,10 @@ struct PeekabooBridgeApplicationLaunchTests {
         }
         #expect(envelope.code == expectedCode)
         #expect(!envelope.message.isEmpty)
+        if let expectedContext {
+            #expect(envelope.context == expectedContext)
+        }
+        #expect(!envelope.operationMayHaveCompleted)
     }
 
     private static func waitForStableWatermark(
@@ -333,7 +519,7 @@ struct PeekabooBridgeApplicationLaunchTests {
 @MainActor
 private final class LaunchRecordingApplicationService: StubApplicationService {
     private(set) var launchRequests: [ApplicationLaunchRequest] = []
-    var launchError: PeekabooError?
+    var launchError: (any Error)?
 
     override func launchApplication(request: ApplicationLaunchRequest) async throws -> ServiceApplicationInfo {
         if let launchError {
@@ -389,5 +575,14 @@ private final class BlockingLaunchApplicationService: StubApplicationService {
             }
             try await Task.sleep(for: .milliseconds(5))
         }
+    }
+}
+
+@MainActor
+private final class UnhideRecordingApplicationService: StubApplicationService {
+    private(set) var unhideCalls = 0
+
+    override func unhideApplication(identifier _: String) async throws {
+        self.unhideCalls += 1
     }
 }

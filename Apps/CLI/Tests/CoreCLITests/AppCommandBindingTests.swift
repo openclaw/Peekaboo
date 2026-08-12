@@ -27,7 +27,7 @@ struct AppCommandBindingTests {
 
     @Test
     func `hide accepts pid without app`() throws {
-        let parsed = ParsedValues(positional: [], options: ["pid": ["123"]], flags: [])
+        let parsed = ParsedValues(positional: [], options: ["pid": ["123"]], flags: ["foreground"])
         let command = try CommanderCLIBinder.instantiateCommand(
             ofType: AppCommand.HideSubcommand.self,
             parsedValues: parsed
@@ -50,7 +50,7 @@ struct AppCommandBindingTests {
 
     @Test
     func `relaunch accepts pid without app`() throws {
-        let parsed = ParsedValues(positional: [], options: ["pid": ["123"]], flags: [])
+        let parsed = ParsedValues(positional: [], options: ["pid": ["123"]], flags: ["foreground"])
         let command = try CommanderCLIBinder.instantiateCommand(
             ofType: AppCommand.RelaunchSubcommand.self,
             parsedValues: parsed

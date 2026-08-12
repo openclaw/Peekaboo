@@ -2,6 +2,7 @@ import Foundation
 import MCP
 import os.log
 import PeekabooAutomation
+import PeekabooFoundation
 import TachikomaMCP
 
 /// MCP tool for controlling applications (launch/quit/focus/etc.)
@@ -13,7 +14,9 @@ public struct AppTool: MCPTool {
 
     public var description: String {
         """
-        Control applications - launch/open in the background, quit, relaunch, focus, hide, unhide, switch, and list.
+        Control applications - verify an already-running app in the background, or explicitly launch/open/relaunch,
+        unhide, focus, switch, quit, hide, and list apps. Cold launch, open, new-instance, relaunch, and unhide require
+        foreground=true because macOS cannot guarantee those operations will preserve the user's foreground work.
 
         Always include the `action` field in your JSON payload. Examples:
         - { "action": "launch", "name": "Finder" }
@@ -40,7 +43,7 @@ public struct AppTool: MCPTool {
                     items: SchemaBuilder.string(),
                     description: "URL or file paths to open; required for open, optional for launch"),
                 "foreground": SchemaBuilder.boolean(
-                    description: "Activate the app after launch/open/relaunch (background is the default)",
+                    description: "Required for cold launch, open, new-instance, relaunch, and unhide",
                     default: false),
                 "force": SchemaBuilder.boolean(
                     description: "Force quit application",
@@ -104,6 +107,22 @@ public struct AppTool: MCPTool {
             return try await actions.perform(action: action, request: request)
         } catch {
             self.logger.error("App control execution failed: \(error, privacy: .public)")
+            if let lifecycleFailure = error as? any ApplicationLifecycleFailureMetadataProviding,
+               let metadata = lifecycleFailure.applicationLifecycleFailureMetadata
+            {
+                var meta: [String: Value] = [
+                    "effect": .string(metadata.effect),
+                    "error_code": .string(metadata.errorCode.rawValue),
+                    "mutation_dispatched": .bool(metadata.mutationDispatched),
+                    "retry_safe": .bool(metadata.retrySafe),
+                ]
+                if let hint = metadata.hint {
+                    meta["hint"] = .string(hint)
+                }
+                return ToolResponse.error(
+                    "Failed to \(action) application: \(error.localizedDescription)",
+                    meta: .object(meta))
+            }
             return ToolResponse.error("Failed to \(action) application: \(error.localizedDescription)")
         }
     }

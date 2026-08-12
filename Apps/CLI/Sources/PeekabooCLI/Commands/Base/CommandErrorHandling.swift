@@ -17,9 +17,15 @@ extension ErrorHandlingCommand {
     func handleError(_ error: any Error, customCode: ErrorCode? = nil) {
         if jsonOutput {
             let envelopeError = error as? any ResultEnvelopeError
+            let lifecycleRefusal = applicationLifecycleRefusalProjection(for: error)
+            let lifecycleFailure = applicationLifecycleFailureProjection(for: error)
             let errorCode = customCode ?? envelopeError?.envelopeCode ?? self.mapErrorToCode(error)
-            let failureReceipt = self.captureFailureReceipt(for: error) ??
-                self.readOnlyObservationFailureReceipt(for: error)
+            let failureReceipt = lifecycleFailure.map { failure in
+                CaptureFailureReceipt(
+                    retrySafe: failure.metadata.retrySafe,
+                    mutationDispatched: failure.metadata.mutationDispatched
+                )
+            } ?? self.captureFailureReceipt(for: error) ?? self.readOnlyObservationFailureReceipt(for: error)
             let logger: Logger = if let formattable = self as? any OutputFormattable {
                 formattable.outputLogger
             } else {
@@ -28,14 +34,16 @@ extension ErrorHandlingCommand {
             outputError(
                 message: errorMessage(for: error),
                 code: errorCode,
-                hint: envelopeError?.envelopeHint,
+                hint: envelopeError?.envelopeHint ?? lifecycleFailure?.metadata.hint,
                 details: errorDetails(for: error),
-                effect: failureReceipt?.mutationDispatched == true
-                    ? .partial
-                    : envelopeError?.envelopeEffect ??
-                    ((self as? any ActionOutputFormattable)?.defaultEffect == nil
-                        ? nil
-                        : defaultActionErrorEffect(errorCode)),
+                effect: lifecycleFailure?.effect
+                    ?? (lifecycleRefusal != nil ? .refused
+                        : failureReceipt?.mutationDispatched == true
+                        ? .partial
+                        : envelopeError?.envelopeEffect ??
+                        ((self as? any ActionOutputFormattable)?.defaultEffect == nil
+                            ? nil
+                            : defaultActionErrorEffect(errorCode))),
                 retrySafe: failureReceipt?.retrySafe ?? envelopeError?.envelopeRetrySafe,
                 mutationDispatched: failureReceipt?.mutationDispatched ?? envelopeError?.envelopeMutationDispatched,
                 logger: logger
@@ -76,6 +84,10 @@ extension ErrorHandlingCommand {
             errorCode(for: roiError)
         case let bridgeError as PeekabooBridgeErrorEnvelope:
             errorCode(for: bridgeError)
+        case is ApplicationLifecycleRefusalError:
+            .INTERACTION_FAILED
+        case let failure as ApplicationLifecycleReadOnlyFailureError:
+            self.mapPeekabooErrorToCode(failure.underlyingError)
         case let posixError as POSIXError:
             errorCode(for: posixError)
         case is ActionRefusalError:
@@ -306,12 +318,69 @@ func errorMessage(for error: any Error) -> String {
 }
 
 func applicationLaunchErrorCode(for error: any Error) -> ErrorCode? {
+    if applicationLifecycleRefusalProjection(for: error) != nil {
+        return .INTERACTION_FAILED
+    }
     guard let bridgeError = error as? PeekabooBridgeErrorEnvelope,
           bridgeError.code == .notFound
     else {
         return nil
     }
     return .APP_NOT_FOUND
+}
+
+struct ApplicationLifecycleRefusalProjection {
+    let hint: String
+}
+
+struct ApplicationLifecycleFailureProjection {
+    let metadata: ApplicationLifecycleFailureMetadata
+    let effect: ActionEffect
+}
+
+func applicationLifecycleFailureProjection(
+    for error: any Error
+) -> ApplicationLifecycleFailureProjection? {
+    guard let provider = error as? any ApplicationLifecycleFailureMetadataProviding,
+          let metadata = provider.applicationLifecycleFailureMetadata
+    else {
+        return nil
+    }
+    return ApplicationLifecycleFailureProjection(
+        metadata: metadata,
+        effect: ActionEffect(rawValue: metadata.effect) ?? .unverifiable
+    )
+}
+
+func applicationLifecycleRefusalProjection(
+    for error: any Error
+) -> ApplicationLifecycleRefusalProjection? {
+    if let refusal = error as? ApplicationLifecycleRefusalError {
+        return ApplicationLifecycleRefusalProjection(hint: refusal.hint)
+    }
+    guard let bridgeError = error as? PeekabooBridgeErrorEnvelope else { return nil }
+    return switch bridgeError.context {
+    case ApplicationLifecycleRefusalError.backgroundLaunchContext:
+        ApplicationLifecycleRefusalProjection(
+            hint: "Retry with --foreground in the CLI or foreground=true in MCP."
+        )
+    case ApplicationLifecycleRefusalError.unhideContext:
+        ApplicationLifecycleRefusalProjection(
+            hint: "Retry with --activate in the CLI or foreground=true in MCP."
+        )
+    default:
+        nil
+    }
+}
+
+func applicationLifecyclePreDispatchError(
+    _ error: ApplicationLifecycleRefusalError
+) -> PreDispatchActionError {
+    PreDispatchActionError(
+        message: error.userMessage,
+        code: .INTERACTION_FAILED,
+        hint: error.hint
+    )
 }
 
 func errorDetails(for error: any Error) -> String? {
@@ -351,6 +420,9 @@ func errorCode(for roiError: CaptureROIError) -> ErrorCode {
 }
 
 func errorCode(for bridgeError: PeekabooBridgeErrorEnvelope) -> ErrorCode {
+    if applicationLifecycleRefusalProjection(for: bridgeError) != nil {
+        return .INTERACTION_FAILED
+    }
     if bridgeError.standardizedErrorCode == .accessibilityIncomplete {
         return .ACCESSIBILITY_INCOMPLETE
     }

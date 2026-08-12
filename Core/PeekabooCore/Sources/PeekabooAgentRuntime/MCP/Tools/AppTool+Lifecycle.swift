@@ -8,6 +8,15 @@ import TachikomaMCP
 @MainActor
 extension AppToolActions {
     func handleLaunch(request: AppToolRequest) async throws -> ToolResponse {
+        try Self.validateExclusiveApplicationSelectors(request)
+        if !request.foreground, request.newInstance {
+            throw ApplicationLifecycleRefusalError.backgroundLaunch(
+                "Background new-instance launch is refused before dispatch because a new app process can activate.")
+        }
+        if !request.foreground, !request.openTargets.isEmpty {
+            throw ApplicationLifecycleRefusalError.backgroundLaunch(
+                "Background URL or document delivery is refused before dispatch because the target app can activate.")
+        }
         guard request.bundleId != nil || request.name != nil else {
             return ToolResponse.error("Must specify either 'name' or 'bundleId' for launch action")
         }
@@ -43,6 +52,11 @@ extension AppToolActions {
     }
 
     func handleOpen(request: AppToolRequest) async throws -> ToolResponse {
+        try Self.validateExclusiveApplicationSelectors(request)
+        guard request.foreground else {
+            throw ApplicationLifecycleRefusalError.backgroundLaunch(
+                "Background URL or document delivery is refused before dispatch because the target app can activate.")
+        }
         guard !request.openTargets.isEmpty else {
             return ToolResponse.error("Must specify at least one 'openTargets' URL or file path for open action")
         }
@@ -110,6 +124,12 @@ extension AppToolActions {
     }
 
     func handleRelaunch(request: AppToolRequest) async throws -> ToolResponse {
+        try Self.validateExclusiveApplicationSelectors(request)
+        guard request.foreground else {
+            throw ApplicationLifecycleRefusalError.backgroundLaunch(
+                "Background app relaunch is refused before quit because terminating and launching " +
+                    "an app can interrupt the user.")
+        }
         guard let identifier = request.name ?? request.bundleId else {
             return ToolResponse.error("Must specify 'name' (or 'bundleId') for relaunch action")
         }
@@ -120,13 +140,14 @@ extension AppToolActions {
                 "Application discovery did not return a process-generation identity for atomic relaunch")
         }
         let descriptor = "PID:\(appInfo.processIdentifier)"
-        let launchIdentifier = appInfo.bundleIdentifier == nil ? (appInfo.bundlePath ?? appInfo.name) : nil
+        let launchIdentifier = appInfo.bundlePath ?? (appInfo.bundleIdentifier == nil ? appInfo.name : nil)
+        let launchBundleIdentifier = appInfo.bundlePath == nil ? appInfo.bundleIdentifier : nil
         let refreshedInfo = try await self.service.relaunchApplication(request: ApplicationRelaunchRequest(
             targetIdentifier: descriptor,
             expectedTargetIdentity: originalProcessIdentity,
             launchRequest: ApplicationLaunchRequest(
                 applicationIdentifier: launchIdentifier,
-                applicationBundleIdentifier: appInfo.bundleIdentifier,
+                applicationBundleIdentifier: launchBundleIdentifier,
                 activates: request.foreground,
                 waitUntilReady: request.waitUntilReady,
                 waitForWindow: request.waitForWindow),
@@ -165,12 +186,16 @@ extension AppToolActions {
     }
 
     func handleUnhide(request: AppToolRequest) async throws -> ToolResponse {
+        try Self.validateExclusiveApplicationSelectors(request)
+        guard request.foreground else {
+            throw ApplicationLifecycleRefusalError.unhideRequiresForegroundConsent()
+        }
         guard let name = request.name else {
             return ToolResponse.error("Must specify 'name' for unhide action")
         }
         let app = try await self.service.findApplication(identifier: name)
-        try await self.service.unhideApplication(identifier: name)
-        let message = "\(AgentDisplayTokens.Status.success) Unhid \(app.name) "
+        try await self.service.activateApplication(request: ApplicationActivationRequest(application: app))
+        let message = "\(AgentDisplayTokens.Status.success) Unhid and activated \(app.name) "
             + "(PID: \(app.processIdentifier)) in \(self.executionTimeString(since: request.startTime))"
         return self.buildResponse(
             message: message,
@@ -291,5 +316,11 @@ extension AppToolActions {
             ? expanded
             : NSString(string: FileManager.default.currentDirectoryPath).appendingPathComponent(expanded)
         return URL(fileURLWithPath: path)
+    }
+
+    private static func validateExclusiveApplicationSelectors(_ request: AppToolRequest) throws {
+        guard request.name == nil || request.bundleId == nil else {
+            throw PeekabooError.invalidInput("Specify either 'name' or 'bundleId', not both")
+        }
     }
 }

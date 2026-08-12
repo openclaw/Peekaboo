@@ -120,7 +120,6 @@ extension PeekabooBridgeOperation {
         .activateApplication,
         .quitApplication,
         .hideApplication,
-        .unhideApplication,
         .hideOtherApplications,
         .showAllApplications,
         .listMenus,
