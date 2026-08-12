@@ -264,12 +264,14 @@ enum CommanderCLIBinder {
         _ commandType: (any ParsableCommand.Type)?,
         parsedValues: ParsedValues
     ) -> Bool {
-        if commandType == SeeCommand.self ||
-            self.isAgentExecutionCommand(commandType) ||
+        let values = CommanderBindableValues(parsedValues: parsedValues)
+        if commandType == SeeCommand.self {
+            return !values.flag("noScreenshot")
+        }
+        if self.isAgentExecutionCommand(commandType) ||
             commandType == MCPCommand.Serve.self {
             return true
         }
-        let values = CommanderBindableValues(parsedValues: parsedValues)
         if commandType == CaptureLiveCommand.self ||
             commandType == CaptureActionCommand.self {
             let focus = values.singleOption("captureFocus")?

@@ -1,3 +1,4 @@
+import Commander
 import Darwin
 import Foundation
 import PeekabooAutomation
@@ -92,6 +93,61 @@ struct ScreenCaptureKitOwnerRuntimeTests {
         #expect(resolution.selectedRemoteSocketPath == nil)
         #expect(claimCalls == 1)
         #expect(inspectCalls == 1)
+        #expect(localFactoryCalls == 1)
+    }
+
+    @Test
+    func `caller-local AX-only see skips ScreenCaptureKit ownership and old-host discovery`() async throws {
+        var options = try CommanderCLIBinder.makeRuntimeOptions(
+            from: ParsedValues(
+                positional: [],
+                options: [:],
+                flags: ["tree", "noScreenshot"]
+            ),
+            commandType: SeeCommand.self
+        )
+        options.preferRemote = false
+        options.remoteIsolationRequested = true
+        var claimCalls = 0
+        var inspectOwnerCalls = 0
+        var inspectSafetyCalls = 0
+        var localFactoryCalls = 0
+
+        let resolution = try await RuntimeHostResolver.resolveServices(
+            options: options,
+            environment: [:],
+            configurationInput: nil,
+            dependencies: .init(
+                makeLocalServices: { _ in
+                    localFactoryCalls += 1
+                    return PeekabooServices()
+                },
+                claimScreenCaptureKitOwner: {
+                    claimCalls += 1
+                    return Self.ownerReceipt()
+                },
+                inspectScreenCaptureKitOwner: {
+                    inspectOwnerCalls += 1
+                    return Self.ownerReceipt()
+                },
+                inspectScreenCaptureKitSafety: { _, _, _ in
+                    inspectSafetyCalls += 1
+                    return RuntimeHostResolver.ScreenCaptureKitOwnerUnawareHost(
+                        socketPath: "/tmp/old-host.sock",
+                        processIdentifier: 3131,
+                        processStartIdentity: 4141
+                    )
+                }
+            )
+        )
+
+        #expect(resolution.selectedRemoteSocketPath == nil)
+        #expect(!options.requiresDesktopObservation)
+        #expect(!options.requiresScreenCapturePermission)
+        #expect(!options.requiresSilentCapture)
+        #expect(claimCalls == 0)
+        #expect(inspectOwnerCalls == 0)
+        #expect(inspectSafetyCalls == 0)
         #expect(localFactoryCalls == 1)
     }
 
