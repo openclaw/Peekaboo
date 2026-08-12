@@ -312,6 +312,9 @@ func peekabooAutomationErrorCode(for error: PeekabooError) -> ErrorCode? {
 
 func errorMessage(for error: any Error) -> String {
     if let bridgeError = error as? PeekabooBridgeErrorEnvelope {
+        if bridgeError.permission == .appleScript {
+            return CaptureError.appleScriptPermissionDenied.errorDescription ?? bridgeError.message
+        }
         return bridgeError.message
     }
     return error.localizedDescription

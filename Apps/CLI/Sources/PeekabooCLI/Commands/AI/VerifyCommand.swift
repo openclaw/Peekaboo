@@ -8,10 +8,10 @@ import TachikomaMCP
 struct VerifyCommand: ErrorHandlingCommand, OutputFormattable, RuntimeBackedCommand {
     @OptionGroup var target: InteractionTargetOptions
     @Flag(help: "Require the target window to exist") var windowExists = false
-    @Option(help: "Require window bounds x,y,width,height[,tolerance]") var windowBounds: String?
+    @Option(help: "Expected window bounds x,y,width,height[,tolerance]") var windowBounds: String?
     @Option(help: "Element ID or role:label query") var on: String?
     @Flag(help: "Require the selected element to exist") var exists = false
-    @Option(help: "Require the selected element value to equal this text") var valueEquals: String?
+    @Option(help: "Expected selected-element value") var valueEquals: String?
     @Flag(help: "Require the selected element to be enabled") var enabled = false
     @Flag(help: "Require the selected element to be selected") var selected = false
     @Option(help: "Polling timeout (bare values are milliseconds; maximum 10s)")

@@ -74,6 +74,47 @@ struct CommandHelpRendererTests {
         #expect(!help.contains("dedicated Peekaboo daemon and fall back to local execution"))
         #expect(!help.contains("Peekaboo.app, Claude.app, and ClawdBot.app sockets are shown for diagnostics"))
     }
+
+    @Test
+    func `permission status help renders standard runtime flags once`() {
+        let help = PermissionsCommand.StatusSubcommand.helpMessage()
+
+        #expect(help.components(separatedBy: "--bridge-socket").count - 1 == 1)
+        #expect(help.components(separatedBy: "--no-remote").count - 1 == 1)
+        #expect(help.contains("--all-sources"))
+    }
+
+    @Test
+    func `click help makes the background coordinate receipt contract explicit`() {
+        let help = ClickCommand.helpMessage()
+
+        #expect(help.contains("Background coordinates require `--snapshot` from a fresh exact-window `see`"))
+        #expect(help.contains("background coordinates require an explicit fresh exact-window snapshot"))
+        #expect(help.contains("peekaboo see --window-id 12345 --no-elements --json"))
+        #expect(help.contains("peekaboo click --window-id 12345 --at 20,40 --snapshot SNAPSHOT_ID"))
+    }
+
+    @Test
+    func `interaction help distinguishes current and legacy targeting`() {
+        let typeHelp = TypeCommand.helpMessage()
+        let clickHelp = ClickCommand.helpMessage()
+        let legacyBackgroundDescription =
+            "Deprecated compatibility alias; targeted background delivery is already the default"
+
+        #expect(typeHelp.contains("Type text into a targeted app process or the foreground focus"))
+        #expect(!typeHelp.contains("Type text into an app or UI element"))
+        #expect(clickHelp.contains(legacyBackgroundDescription))
+    }
+
+    @Test
+    func `verify help labels optional predicate values as expected`() {
+        let help = VerifyCommand.helpMessage()
+
+        #expect(help.contains("Expected x,y,width,height[,tolerance]"))
+        #expect(help.contains("Expected element value"))
+        #expect(!help.contains("Required x,y,width,height"))
+        #expect(!help.contains("Required element value"))
+    }
 }
 
 private struct SampleHelpCommand: ParsableCommand {

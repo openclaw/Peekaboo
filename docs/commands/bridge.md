@@ -13,7 +13,7 @@ read_when:
 ## Subcommands
 | Name | Purpose |
 | --- | --- |
-| `status` (default) | Probes the configured socket paths, attempts a Bridge handshake, and reports which host would be selected (or if Peekaboo will fall back to local in-process execution). |
+| `status` (default) | Probes configured sockets and reports the selected reusable daemon, healthy Peekaboo.app GUI host, auto-start daemon plan, or final operation-dependent local fallback. |
 
 ## Notes
 - Normal automation routing reuses a healthy daemon, then tries a capable Peekaboo.app host before starting a daemon

@@ -65,6 +65,31 @@ struct FocusErrorMappingTests {
     }
 
     @Test
+    func `legacy AppleScript denial preserves its code but directs users to native hosts`() throws {
+        let envelope = PeekabooBridgeErrorEnvelope(
+            code: .permissionDenied,
+            message: "AppleScript permission is required for automation",
+            permission: .appleScript
+        )
+
+        #expect(errorCode(for: envelope) == .PERMISSION_ERROR_APPLESCRIPT)
+        let message = errorMessage(for: envelope)
+        #expect(message.contains("older Peekaboo component"))
+        #expect(message.contains("current native Peekaboo CLI and Bridge host"))
+        #expect(message.contains("do not grant Automation access"))
+        #expect(!message.contains("permission is required"))
+
+        let direct = try #require(CaptureError.appleScriptPermissionDenied.errorDescription)
+        #expect(direct == message)
+        #expect(CaptureError.appleScriptPermissionDenied.exitCode == 33)
+
+        let presentation = splitErrorHint(from: message)
+        #expect(presentation.message == "An older Peekaboo component requested AppleScript Automation permission.")
+        #expect(presentation.hint ==
+            "Use a current native Peekaboo CLI and Bridge host; do not grant Automation access.")
+    }
+
+    @Test
     func `bridge envelope message uses actionable bridge message`() {
         let envelope = PeekabooBridgeErrorEnvelope(
             code: .permissionDenied,

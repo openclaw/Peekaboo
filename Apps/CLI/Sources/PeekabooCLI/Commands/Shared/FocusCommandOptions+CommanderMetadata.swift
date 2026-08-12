@@ -36,7 +36,7 @@ extension FocusCommandOptions {
         if includeBackgroundDelivery {
             flags.append(.commandFlag(
                 "focusBackground",
-                help: "Send input to the target process without focusing it",
+                help: "Deprecated compatibility alias; targeted background delivery is already the default",
                 long: "focus-background"
             ))
         }

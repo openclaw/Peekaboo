@@ -4,9 +4,9 @@ extension VerifyCommand: CommanderSignatureProviding {
     static func commanderSignature() -> CommandSignature {
         CommandSignature(
             options: [
-                .commandOption("windowBounds", help: "Required x,y,width,height[,tolerance]", long: "window-bounds"),
+                .commandOption("windowBounds", help: "Expected x,y,width,height[,tolerance]", long: "window-bounds"),
                 .commandOption("on", help: "Element ID or role:label query", long: "on"),
-                .commandOption("valueEquals", help: "Required element value", long: "value-equals"),
+                .commandOption("valueEquals", help: "Expected element value", long: "value-equals"),
                 .commandOption(
                     "timeout",
                     help: "Polling timeout; bare values are milliseconds, or use ms/s suffixes",

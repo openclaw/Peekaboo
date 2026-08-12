@@ -281,7 +281,7 @@ extension TypeCommand: ParsableCommand {
         MainActorCommandDescription.describe {
             CommandDescription(
                 commandName: "type",
-                abstract: "Type text into an app or UI element",
+                abstract: "Type text into a targeted app process or the foreground focus",
                 discussion: """
                     The 'type' command sends keyboard input to a targeted app or snapshot
                     process. Background delivery is the default and requires a process target.

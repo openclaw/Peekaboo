@@ -48,8 +48,8 @@ public enum CaptureError: Error, LocalizedError, Sendable {
             return "Accessibility permission is required for some operations. " +
                 "Please grant it in System Settings > Privacy & Security > Accessibility."
         case .appleScriptPermissionDenied:
-            return "AppleScript permission is required for automation. " +
-                "Please grant it in System Settings > Privacy & Security > Automation."
+            return "An older Peekaboo component requested AppleScript Automation permission. " +
+                "Use a current native Peekaboo CLI and Bridge host; do not grant Automation access."
         case .invalidDisplayID:
             return "Invalid display ID provided."
         case let .captureCreationFailed(underlyingError):

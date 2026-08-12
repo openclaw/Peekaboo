@@ -9,6 +9,16 @@ extension ClickCommand: ParsableCommand {
             commandName: definition.commandName,
             abstract: definition.abstract,
             discussion: definition.discussion,
+            usageExamples: [
+                CommandUsageExample(
+                    command: "peekaboo see --window-id 12345 --no-elements --json",
+                    description: "Capture a fresh exact-window receipt and copy its snapshot ID."
+                ),
+                CommandUsageExample(
+                    command: "peekaboo click --window-id 12345 --at 20,40 --snapshot SNAPSHOT_ID",
+                    description: "Click window-relative coordinates in the background without moving the cursor."
+                ),
+            ],
             showHelpOnEmptyInvocation: true
         )
     }
@@ -48,7 +58,8 @@ extension ClickCommand: CommanderSignatureProviding {
             options: [
                 .commandOption(
                     "snapshot",
-                    help: "Snapshot ID, or 'latest' (uses latest if not specified)",
+                    help: "Snapshot ID; element/query clicks may use latest when omitted, but background " +
+                        "coordinates require an explicit fresh exact-window snapshot",
                     long: "snapshot"
                 ),
                 .commandOption(

@@ -65,6 +65,7 @@ public enum UIAutomationToolDefinitions {
         specific IDs from `see`, or coordinates. CLI coordinate
         clicks are target-window-relative when app/window target flags are supplied.
         Background delivery is the default; pass `--foreground` for focused foreground clicks.
+        Background coordinates require `--snapshot` from a fresh exact-window `see`.
         """,
         category: .ui,
         parameters: [

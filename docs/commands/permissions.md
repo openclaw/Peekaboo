@@ -18,6 +18,8 @@ foreground synthetic pointer input.
 Peekaboo's application, Dock, and UI operations use native macOS APIs. It does not probe, request, or require
 Automation (AppleScript) permission. The Bridge protocol still decodes the legacy field so mixed-version clients
 receive a structured compatibility result instead of failing the whole handshake.
+If an older Bridge host reports an AppleScript denial, update the CLI and Bridge host instead of granting Automation
+access; current hosts perform these operations natively.
 
 ## Subcommands
 | Name | Purpose |
