@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Reuse two-second, owner-host-local ScreenCaptureKit exact-window screenshot plans without caching pixels, revalidating process generation, window receipt, display topology, and scale around every capture while exposing miss/hit generation diagnostics.
 
 ### Fixed
+- Preserve integer-valued Agent tool data across Codable and Foundation JSON conversion instead of mistaking numeric `0` and `1` for booleans.
+- Reject duplicate command, subcommand, option, and flag definitions deterministically instead of trapping or silently selecting one, while keeping daemon `--bridge-socket` on the canonical runtime option.
+- Consolidate accessibility observer registration, exact element/process dispatch, stop, and deinitialization cleanup under one instance-owned registry.
 - Carry canonical desktop-action outcomes through capability-gated Bridge protocol 1.23 requests, preserving exact refused, partial, unverified, and indeterminate failures while older hosts remain conservative after a response is lost.
 - Project canonical desktop-action outcomes into MCP metadata, so partial failures retain recovery-side-effect semantics instead of incorrectly demanding a fresh observation.
 - Embed one canonical 40-hex source commit in clean stamped CLI and macOS app builds, expose it through `--version --json` and Bridge identity receipts, and leave raw unstamped builds explicitly `unknown`.
