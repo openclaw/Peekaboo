@@ -246,7 +246,7 @@ struct AgentToolMCPFailureSemanticsTests {
 
         #expect(AgentToolResultSemantics.isFailure(result))
         #expect(entry.disposition == .executedFailed)
-        #expect(entry.actionOutcome == outcome.projection)
+        #expect(entry.actionOutcome == nil)
         #expect(entry.mutationDispatch == .possiblyDispatched)
         #expect(summary["mutation_dispatched"] == nil)
         #expect(summary["requires_fresh_observation"] == nil)
@@ -310,6 +310,13 @@ struct AgentToolMCPFailureSemanticsTests {
         #expect(trace.entries.first?.mutationDispatch == .possiblyDispatched)
         #expect(trace.entries.first?.actionOutcome == nil)
         #expect(encoded.count < 1000)
+
+        let customCall = AgentToolCall(id: "nested-custom", name: "custom_outcome", arguments: [:])
+        let customResult = AgentToolResult.success(toolCallId: customCall.id, result: result.result)
+        let customEntry = try #require(
+            Self.execution(call: customCall, result: customResult).executionTrace().entries.first)
+        #expect(customEntry.disposition == .executedFailed)
+        #expect(customEntry.mutationDispatch == .possiblyDispatched)
     }
 
     @Test

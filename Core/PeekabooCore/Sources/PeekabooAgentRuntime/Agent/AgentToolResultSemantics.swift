@@ -56,6 +56,11 @@ enum AgentToolResultSemantics {
                 self.turnBoundary == .invalid
         }
 
+        var hasInvalidActionSafetyClaim: Bool {
+            ["mutation_dispatched", "requires_fresh_observation", "retry_safe"]
+                .contains { self.boolean($0) == .invalid }
+        }
+
         func boolean(_ key: String) -> ClaimResolution<Bool> {
             self.legacyBooleans[key] ?? .absent
         }

@@ -184,7 +184,9 @@ private enum AgentExecutionTraceBuilder {
             isError: result.map(AgentToolResultSemantics.isFailure),
             disposition: disposition,
             mutationDispatch: mutationDispatch,
-            actionOutcome: semanticClaims.actionOutcome.projection)
+            actionOutcome: semanticClaims.hasInvalidActionSafetyClaim
+                ? nil
+                : semanticClaims.actionOutcome.projection)
     }
 
     private static func isConsistentPreDispatchSkip(
@@ -214,7 +216,10 @@ private enum AgentExecutionTraceBuilder {
             return isMutatingCall ? .notDispatched : nil
         }
         if case .invalid = claims.boolean("mutation_dispatched") {
-            return isMutatingCall ? .possiblyDispatched : nil
+            if case .absent = claims.actionOutcome {
+                return isMutatingCall ? .possiblyDispatched : nil
+            }
+            return .possiblyDispatched
         }
         if case let .valid(actionOutcome) = claims.actionOutcome {
             return switch actionOutcome.dispatchState {
@@ -223,10 +228,10 @@ private enum AgentExecutionTraceBuilder {
             case .mayHaveDispatched: .possiblyDispatched
             }
         }
-        guard isMutatingCall else { return nil }
         if case .invalid = claims.actionOutcome {
             return .possiblyDispatched
         }
+        guard isMutatingCall else { return nil }
         if case .invalid = claims.boolean("skipped") {
             return .possiblyDispatched
         }
