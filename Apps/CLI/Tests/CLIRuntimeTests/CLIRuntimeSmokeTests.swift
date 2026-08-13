@@ -83,7 +83,7 @@ struct CLIRuntimeSmokeTests {
         let script = """
         #!/bin/sh
         case "$*" in
-          "rev-parse --short HEAD") echo "\(identity)-commit" ;;
+          "rev-parse HEAD") echo "\(identity)-commit" ;;
           "status --porcelain") exit 0 ;;
           "show -s --format=%ci HEAD") echo "2026-01-01 00:00:00 +0000" ;;
           "rev-parse --abbrev-ref HEAD") echo "\(identity)-branch" ;;
@@ -92,6 +92,28 @@ struct CLIRuntimeSmokeTests {
         """
         try Data(script.utf8).write(to: url, options: .atomic)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
+    }
+
+    @Test
+    func `version JSON exposes one explicit source commit`() async throws {
+        guard Self.ensureLocalRuntimeAvailable() else { return }
+        let result = try await TestChildProcess.runPeekaboo(["--version", "--json"])
+
+        #expect(result.status == .exited(0))
+        #expect(result.standardError.isEmpty)
+        let object = try #require(
+            JSONSerialization.jsonObject(with: Data(result.standardOutput.utf8)) as? [String: Any]
+        )
+        let data = try #require(object["data"] as? [String: Any])
+        let sourceCommit = try #require(data["sourceCommit"] as? String)
+        if ProcessInfo.processInfo.environment["PEEKABOO_CLI_BINARY"] == nil {
+            #expect(sourceCommit == "unknown")
+        } else {
+            #expect(sourceCommit == "unknown" || sourceCommit.range(
+                of: #"^[0-9a-f]{40}$"#,
+                options: .regularExpression
+            ) != nil)
+        }
     }
 
     @Test

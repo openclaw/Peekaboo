@@ -50,8 +50,11 @@ pnpm run build:swift:all   # universal release
 ```
 
 The output binary lives under `Apps/CLI/.build/...`. See [building.md](building.md) for signing and notarization.
-Raw SwiftPM/debug builds use stable `unknown` placeholders for Git and build-time metadata. Use the repository's
-stamped debug or release build scripts when `peekaboo --version` must include immutable commit and build-date provenance.
+Raw SwiftPM and manual unstamped Xcode builds use stable `unknown` placeholders for source and build-time metadata.
+Use the repository's stamped debug or release build scripts from a clean checkout when `peekaboo --version --json`
+must include immutable provenance; stamped builds refuse dirty or unverifiable source trees.
+`peekaboo --version --json` exposes the canonical 40-hex `sourceCommit`; background certification requires it and
+pins one exact Bridge socket for remote execution, requiring that host to advertise the same source commit.
 
 ## Verify
 

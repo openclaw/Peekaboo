@@ -34,11 +34,13 @@ struct PeekabooBridgeHostIdentityTests {
             bundleIdentifier: "boo.peekaboo.mac",
             bundleShortVersion: "4.0.0",
             bundleVersion: "400",
-            codeSignatureHash: "abcdef")
+            codeSignatureHash: "abcdef",
+            sourceCommit: "0123456789abcdef0123456789abcdef01234567")
 
         let data = try JSONEncoder.peekabooBridgeEncoder().encode(identity)
         let object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
         #expect(object["processStartIdentityDecimal"] as? String == String(generation))
+        #expect(object["sourceCommit"] as? String == "0123456789abcdef0123456789abcdef01234567")
         #expect(try JSONDecoder.peekabooBridgeDecoder().decode(
             PeekabooBridgeHostIdentity.self,
             from: data).processStartIdentityDecimal == String(generation))
@@ -62,6 +64,7 @@ struct PeekabooBridgeHostIdentityTests {
             from: data)
         #expect(identity.processStartIdentity == 9_876_543)
         #expect(identity.processStartIdentityDecimal == nil)
+        #expect(identity.sourceCommit == nil)
     }
 
     @Test
@@ -92,7 +95,8 @@ struct PeekabooBridgeHostIdentityTests {
             bundleIdentifier: "boo.peekaboo.mac",
             bundleShortVersion: "4.0.0",
             bundleVersion: "400",
-            codeSignatureHash: "abcdef")
+            codeSignatureHash: "abcdef",
+            sourceCommit: "0123456789abcdef0123456789abcdef01234567")
         let server = await MainActor.run {
             PeekabooBridgeServer(
                 services: PeekabooServices(),

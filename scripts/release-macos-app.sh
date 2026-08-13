@@ -5,10 +5,14 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ROOT="${ROOT:-$ROOT_DIR}"
-MAC_RELEASE_MANIFEST="${MAC_RELEASE_MANIFEST:-$ROOT_DIR/.mac-release.env}"
+ROOT="$(cd "$ROOT" && pwd)"
+# shellcheck source=scripts/source-provenance.sh
+source "$ROOT_DIR/scripts/source-provenance.sh"
+SOURCE_COMMIT="$(peekaboo_require_source_commit "$ROOT")"
+MAC_RELEASE_MANIFEST="${MAC_RELEASE_MANIFEST:-$ROOT/.mac-release.env}"
 MAC_RELEASE_MANIFEST_LOADED=false
 if [[ -f "$MAC_RELEASE_MANIFEST" ]]; then
-  pushd "$ROOT_DIR" >/dev/null
+  pushd "$ROOT" >/dev/null
   # shellcheck source=/Users/steipete/Projects/Peekaboo/.mac-release.env
   source "$MAC_RELEASE_MANIFEST"
   popd >/dev/null
@@ -17,7 +21,7 @@ fi
 MAC_RELEASE_HELPER_LOADED=false
 for candidate in \
   "${MAC_RELEASE_LIB:-}" \
-  "$ROOT_DIR/../agent-scripts/skills/release-mac-app/scripts/lib/mac_release.sh" \
+  "$ROOT/../agent-scripts/skills/release-mac-app/scripts/lib/mac_release.sh" \
   "$HOME/Projects/agent-scripts/skills/release-mac-app/scripts/lib/mac_release.sh"; do
   if [[ -n "$candidate" && -f "$candidate" ]]; then
     # shellcheck source=/Users/steipete/Projects/agent-scripts/skills/release-mac-app/scripts/lib/mac_release.sh
@@ -83,15 +87,15 @@ version_to_build_number() {
   printf '%d\n' $((((10#$major * 100 + 10#$minor) * 100 + 10#$patch) * 100 + 10#$suffix))
 }
 
-MARKETING_VERSION="${MARKETING_VERSION:-$(node -p "require('$ROOT_DIR/package.json').version")}"
+MARKETING_VERSION="${MARKETING_VERSION:-$(node -p "require('$ROOT/package.json').version")}"
 BUILD_NUMBER="${BUILD_NUMBER:-$(version_to_build_number "$MARKETING_VERSION")}"
 
-WORKSPACE="${WORKSPACE:-$ROOT_DIR/Apps/Peekaboo.xcworkspace}"
+WORKSPACE="${WORKSPACE:-$ROOT/Apps/Peekaboo.xcworkspace}"
 SCHEME="${SCHEME:-Peekaboo}"
 CONFIGURATION="${CONFIGURATION:-Release}"
 DESTINATION="${DESTINATION:-platform=macOS,arch=arm64}"
 DERIVED_DATA_PATH="${DERIVED_DATA_PATH:-/tmp/peekaboo-macos-app-release}"
-RELEASE_DIR="${RELEASE_DIR:-$ROOT_DIR/release}"
+RELEASE_DIR="${RELEASE_DIR:-$ROOT/release}"
 APP_NAME="${APP_NAME:-${MAC_RELEASE_APP_NAME:-Peekaboo}}"
 EXPECTED_SIGN_IDENTITY="Developer ID Application: OpenClaw Foundation (FWJYW4S8P8)"
 EXPECTED_TEAM_ID="FWJYW4S8P8"
@@ -99,11 +103,11 @@ EXPECTED_SIGN_REQUIREMENT="anchor apple generic and certificate leaf[subject.OU]
 SIGN_IDENTITY="${MAC_RELEASE_CODESIGN_IDENTITY:-${SIGN_IDENTITY:-$EXPECTED_SIGN_IDENTITY}}"
 NOTARYTOOL_PROFILE="${NOTARYTOOL_PROFILE:-${NOTARYTOOL_KEYCHAIN_PROFILE:-}}"
 APPCAST="${APPCAST:-${MAC_RELEASE_APPCAST:-appcast.xml}}"
-APPCAST_PATH="${APPCAST_PATH:-$ROOT_DIR/$APPCAST}"
+APPCAST_PATH="${APPCAST_PATH:-$ROOT/$APPCAST}"
 MINIMUM_SYSTEM_VERSION="${MINIMUM_SYSTEM_VERSION:-15.0}"
 REPOSITORY_SLUG="${REPOSITORY_SLUG:-${MAC_RELEASE_REPO:-openclaw/Peekaboo}}"
-ENTITLEMENTS_PATH="${ENTITLEMENTS_PATH:-$ROOT_DIR/Apps/Mac/Peekaboo/Peekaboo.entitlements}"
-DMG_BACKGROUND="${DMG_BACKGROUND:-$ROOT_DIR/assets/dmg-background.png}"
+ENTITLEMENTS_PATH="${ENTITLEMENTS_PATH:-$ROOT/Apps/Mac/Peekaboo/Peekaboo.entitlements}"
+DMG_BACKGROUND="${DMG_BACKGROUND:-$ROOT/assets/dmg-background.png}"
 
 VERSION="${VERSION:-$MARKETING_VERSION}"
 TAG="v${VERSION}"
@@ -296,6 +300,7 @@ bundle_executable_name() {
 
 verify_app_payload() {
   local app_path="$1"
+  local source_commit
   local executable_name
   executable_name="$(bundle_executable_name "$app_path")"
   local executable_path="$app_path/Contents/MacOS/$executable_name"
@@ -308,6 +313,15 @@ verify_app_payload() {
 
   file "$executable_path" | grep -q 'Mach-O' ||
     fail "Main executable is not a Mach-O binary: $executable_path"
+
+  source_commit="$(/usr/libexec/PlistBuddy -c 'Print :PeekabooSourceCommit' \
+    "$app_path/Contents/Info.plist" 2>/dev/null || true)"
+  peekaboo_verify_source_commit "$ROOT" "$SOURCE_COMMIT" ||
+    fail "Release root changed or became dirty while building: $ROOT"
+  peekaboo_is_exact_source_commit "$source_commit" ||
+    fail "App has no exact 40-hex source commit: $app_path"
+  [[ "$source_commit" == "$SOURCE_COMMIT" ]] ||
+    fail "App source commit does not match the release root: $app_path"
 
   "$ROOT_DIR/scripts/verify-native-only-app.sh" --app "$app_path"
 
@@ -432,6 +446,7 @@ else
     -quiet \
     MARKETING_VERSION="$VERSION" \
     CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
+    PEEKABOO_SOURCE_COMMIT="$SOURCE_COMMIT" \
     CODE_SIGNING_ALLOWED=NO \
     build
 fi

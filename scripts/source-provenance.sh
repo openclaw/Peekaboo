@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+
+peekaboo_is_exact_source_commit() {
+  [[ "${1:-}" =~ ^[0-9a-f]{40}$ ]]
+}
+
+peekaboo_source_commit_from_repo() {
+  local repository_root="${1:?repository root required}"
+  local commit
+  commit="$(git -C "$repository_root" rev-parse HEAD 2>/dev/null || true)"
+  if peekaboo_is_exact_source_commit "$commit"; then
+    printf '%s\n' "$commit"
+  else
+    printf '%s\n' unknown
+  fi
+}
+
+peekaboo_require_source_commit() {
+  local repository_root="${1:?repository root required}"
+  local commit
+  local checkout_status
+  commit="$(peekaboo_source_commit_from_repo "$repository_root")"
+  if ! peekaboo_is_exact_source_commit "$commit"; then
+    printf 'Unable to resolve an exact source commit from %s\n' "$repository_root" >&2
+    return 1
+  fi
+  if ! checkout_status="$(git -C "$repository_root" status \
+    --porcelain=v1 --untracked-files=all --ignore-submodules=none 2>/dev/null)"; then
+    printf 'Unable to verify checkout cleanliness: %s\n' "$repository_root" >&2
+    return 1
+  fi
+  if [[ -n "$checkout_status" ]]; then
+    printf 'Refusing to stamp a source commit for a dirty checkout: %s\n' "$repository_root" >&2
+    return 1
+  fi
+  printf '%s\n' "$commit"
+}
+
+peekaboo_verify_source_commit() {
+  local repository_root="${1:?repository root required}"
+  local expected_commit="${2:?expected source commit required}"
+  local current_commit
+  current_commit="$(peekaboo_require_source_commit "$repository_root")" || return 1
+  if [[ "$current_commit" != "$expected_commit" ]]; then
+    printf 'Source commit changed during the build: expected %s, found %s\n' \
+      "$expected_commit" "$current_commit" >&2
+    return 1
+  fi
+}
+
+peekaboo_short_source_commit() {
+  local commit="${1:-}"
+  if peekaboo_is_exact_source_commit "$commit"; then
+    printf '%.9s\n' "$commit"
+  else
+    printf '%s\n' unknown
+  fi
+}

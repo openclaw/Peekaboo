@@ -95,6 +95,100 @@ function matchesAllowedOutcome(outcome, observed) {
     && observed.error_code === outcome.error_code;
 }
 
+const exactSourceCommit = /^[0-9a-f]{40}$/;
+
+function isExactSourceCommit(value) {
+  return typeof value === "string" && value.length === 40 && exactSourceCommit.test(value);
+}
+
+function isExactRemoteHostReceipt(receipt) {
+  const keys = receipt && typeof receipt === "object" && !Array.isArray(receipt)
+    ? Object.keys(receipt).sort()
+    : [];
+  const expectedKeys = ["pid", "socketPath", "sourceCommit", "startIdentity"];
+  return keys.length === expectedKeys.length
+    && keys.every((key, index) => key === expectedKeys[index])
+    && Number.isSafeInteger(receipt.pid)
+    && receipt.pid > 0
+    && typeof receipt.startIdentity === "string"
+    && receipt.startIdentity.length > 0
+    && receipt.startIdentity[0] !== "0"
+    && [...receipt.startIdentity].every((character) => character >= "0" && character <= "9")
+    && typeof receipt.socketPath === "string"
+    && path.isAbsolute(receipt.socketPath)
+    && !["\0", "\r", "\n"].some((character) => receipt.socketPath.includes(character))
+    && isExactSourceCommit(receipt.sourceCommit);
+}
+
+function sameRemoteHostReceipt(left, right) {
+  return isExactRemoteHostReceipt(left)
+    && isExactRemoteHostReceipt(right)
+    && left.pid === right.pid
+    && left.startIdentity === right.startIdentity
+    && left.socketPath === right.socketPath
+    && left.sourceCommit === right.sourceCommit;
+}
+
+function validateProvenance(report, failures) {
+  const provenance = report?.provenance;
+  const keys = provenance && typeof provenance === "object" && !Array.isArray(provenance)
+    ? Object.keys(provenance).sort()
+    : [];
+  const expectedKeys = [
+    "cli_source_commit",
+    "event_producer_source",
+    "event_producer_source_commit",
+    "remote_host",
+  ];
+  if (keys.length !== expectedKeys.length
+      || keys.some((key, index) => key !== expectedKeys[index])) {
+    failures.push(failure(
+      "certification",
+      "provenance_schema",
+      "Provenance must be a closed CLI/event-producer source receipt",
+    ));
+    return;
+  }
+  if (!isExactSourceCommit(provenance.cli_source_commit)
+      || !isExactSourceCommit(provenance.event_producer_source_commit)) {
+    failures.push(failure(
+      "certification",
+      "source_commit",
+      "CLI and event-producer source commits must be canonical 40-hex values",
+    ));
+  }
+  if (!["local", "remote"].includes(provenance.event_producer_source)) {
+    failures.push(failure(
+      "certification",
+      "event_producer_source",
+      "Event-producer source must be local or remote",
+    ));
+  }
+  if (provenance.cli_source_commit !== provenance.event_producer_source_commit) {
+    failures.push(failure(
+      "certification",
+      "source_commit_mismatch",
+      "CLI and event-producer source commits differ",
+    ));
+  }
+  if (provenance.event_producer_source === "remote") {
+    if (!isExactRemoteHostReceipt(provenance.remote_host)
+        || provenance.remote_host.sourceCommit !== provenance.event_producer_source_commit) {
+      failures.push(failure(
+        "certification",
+        "remote_host_receipt",
+        "Remote certification requires one exact socket and process-generation source receipt",
+      ));
+    }
+  } else if (provenance.event_producer_source === "local" && provenance.remote_host !== null) {
+    failures.push(failure(
+      "certification",
+      "remote_host_receipt",
+      "Local certification must not claim a remote host receipt",
+    ));
+  }
+}
+
 export function validateCertification(catalog, report) {
   const failures = validateCatalog(catalog);
   if (failures.length > 0) {
@@ -110,6 +204,7 @@ export function validateCertification(catalog, report) {
   if (report?.probe_canary !== true) {
     failures.push(failure("certification", "canary", "Invariant probe self-test did not pass"));
   }
+  validateProvenance(report, failures);
 
   const observedCases = Array.isArray(report?.cases) ? report.cases : [];
   const catalogById = new Map(catalog.cases.map((entry) => [entry.id, entry]));
@@ -131,6 +226,24 @@ export function validateCertification(catalog, report) {
     if (!observed) {
       failures.push(failure(expected.id, "missing_case", `Required case '${expected.id}' is missing`));
       continue;
+    }
+    const provenance = report?.provenance;
+    const eventProducerMatches = provenance?.event_producer_source === "remote"
+      ? sameRemoteHostReceipt(observed.event_producer, provenance.remote_host)
+      : provenance?.event_producer_source === "local" && observed.event_producer === null;
+    if (!eventProducerMatches) {
+      failures.push(failure(
+        expected.id,
+        "event_producer_receipt",
+        "Case event producer does not match the certification provenance receipt",
+      ));
+    }
+    if (observed.event_producer_stable !== true) {
+      failures.push(failure(
+        expected.id,
+        "event_producer_stability",
+        "Case did not retain one event-producer generation across dispatch",
+      ));
     }
     for (const field of ["surface", "command", "phase"]) {
       if (observed[field] !== expected[field]) {
@@ -268,12 +381,24 @@ export function makePassingReport(catalog) {
       effect: selectedOutcome?.effect ?? entry.expected_effect ?? null,
       delivery_mode: entry.expected_delivery ?? null,
       error_code: selectedOutcome?.error_code ?? entry.expected_error_code ?? null,
+      event_producer: null,
+      event_producer_stable: true,
       invariants,
       evidence,
       oracles,
     };
   });
-  return { probe_canary: true, cases };
+  const sourceCommit = "0123456789abcdef0123456789abcdef01234567";
+  return {
+    probe_canary: true,
+    provenance: {
+      cli_source_commit: sourceCommit,
+      event_producer_source: "local",
+      event_producer_source_commit: sourceCommit,
+      remote_host: null,
+    },
+    cases,
+  };
 }
 
 function parseArguments(argv) {

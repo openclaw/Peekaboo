@@ -395,7 +395,7 @@ summary = {
     "environment": {
         "platform": platform.platform(),
         "python": platform.python_version(),
-        "git_commit": git_value(["rev-parse", "--short", "HEAD"]),
+        "git_commit": git_value(["rev-parse", "HEAD"]),
     },
 }
 

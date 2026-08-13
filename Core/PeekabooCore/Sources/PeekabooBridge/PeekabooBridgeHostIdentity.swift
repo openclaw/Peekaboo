@@ -1,6 +1,7 @@
 import Darwin
 import Foundation
 import PeekabooAutomationKit
+import PeekabooFoundation
 import Security
 
 extension PeekabooBridgeHostIdentity {
@@ -17,7 +18,8 @@ extension PeekabooBridgeHostIdentity {
             bundleIdentifier: bundle.bundleIdentifier,
             bundleShortVersion: info?["CFBundleShortVersionString"] as? String,
             bundleVersion: info?["CFBundleVersion"] as? String,
-            codeSignatureHash: Self.currentCodeSignatureHash())
+            codeSignatureHash: Self.currentCodeSignatureHash(),
+            sourceCommit: SourceProvenance.exactCommit(info?["PeekabooSourceCommit"] as? String))
     }
 
     private static func currentCodeSignatureHash() -> String? {

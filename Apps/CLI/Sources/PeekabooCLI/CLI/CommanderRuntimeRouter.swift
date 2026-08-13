@@ -142,7 +142,12 @@ enum CommanderRuntimeRouter {
     private static func handleVersionRequest(arguments: [String]) -> Bool {
         guard let first = arguments.first else { return false }
         guard self.isVersionToken(first) else { return false }
-        print(Version.fullVersion)
+        let jsonTokens = Set(["--json", "-j", "--json-output", "--jsonOutput"])
+        if arguments.dropFirst().contains(where: jsonTokens.contains) {
+            outputSuccessCodable(data: Version.metadata, logger: .shared)
+        } else {
+            print(Version.fullVersion)
+        }
         return true
     }
 

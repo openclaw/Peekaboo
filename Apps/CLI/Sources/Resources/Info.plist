@@ -22,5 +22,7 @@
 	<string>Peekaboo needs screen recording permission to capture screenshots and analyze window content.</string>
 	<key>PeekabooVersionDisplayString</key>
 	<string>Peekaboo 4.0.0</string>
+	<key>PeekabooSourceCommit</key>
+	<string>unknown</string>
 </dict>
 </plist>

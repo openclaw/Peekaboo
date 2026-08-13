@@ -268,6 +268,8 @@ public struct PeekabooBridgeHostIdentity: Codable, Sendable, Equatable {
     public let bundleShortVersion: String?
     public let bundleVersion: String?
     public let codeSignatureHash: String?
+    /// Canonical 40-hex source revision embedded by a stamped build.
+    public let sourceCommit: String?
 
     public init(
         processIdentifier: pid_t,
@@ -275,7 +277,8 @@ public struct PeekabooBridgeHostIdentity: Codable, Sendable, Equatable {
         bundleIdentifier: String?,
         bundleShortVersion: String?,
         bundleVersion: String?,
-        codeSignatureHash: String?)
+        codeSignatureHash: String?,
+        sourceCommit: String? = nil)
     {
         self.processIdentifier = processIdentifier
         self.processStartIdentity = processStartIdentity
@@ -284,6 +287,7 @@ public struct PeekabooBridgeHostIdentity: Codable, Sendable, Equatable {
         self.bundleShortVersion = bundleShortVersion
         self.bundleVersion = bundleVersion
         self.codeSignatureHash = codeSignatureHash
+        self.sourceCommit = sourceCommit
     }
 }
 

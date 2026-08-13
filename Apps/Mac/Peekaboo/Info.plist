@@ -50,6 +50,8 @@
 	</dict>
 	<key>NSScreenCaptureUsageDescription</key>
 	<string>Peekaboo needs screen recording permission to capture screenshots and analyze your screen content.</string>
+	<key>PeekabooSourceCommit</key>
+	<string>$(PEEKABOO_SOURCE_COMMIT)</string>
 	<key>SUEnableAutomaticChecks</key>
 	<true/>
 	<key>SUFeedURL</key>

@@ -1,4 +1,5 @@
 import Foundation
+import PeekabooFoundation
 
 /// Check if the CLI binary is stale compared to the current git state.
 /// Only runs in debug builds when git config 'peekaboo.check-build-staleness' is true.
@@ -118,9 +119,8 @@ private func findGitConfigPath(startingAt path: String) -> String? {
 
 /// Check if the embedded git commit differs from the current git commit
 private func checkGitCommitStaleness() {
-    // Get embedded commit from build (strip -dirty suffix if present). Raw SwiftPM
-    // builds intentionally omit provenance, so avoid spawning Git for them.
-    let embeddedCommit = Version.gitCommit.replacingOccurrences(of: "-dirty", with: "")
+    // Raw SwiftPM builds intentionally omit exact provenance, so avoid spawning Git for them.
+    let embeddedCommit = Version.sourceCommit
     guard shouldCheckGitCommitStaleness(embeddedCommit: embeddedCommit) else {
         return
     }
@@ -128,7 +128,7 @@ private func checkGitCommitStaleness() {
     // Get current git commit hash
     let gitProcess = Process()
     gitProcess.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-    gitProcess.arguments = ["rev-parse", "--short", "HEAD"]
+    gitProcess.arguments = ["rev-parse", "HEAD"]
 
     let gitPipe = Pipe()
     gitProcess.standardOutput = gitPipe
@@ -162,8 +162,7 @@ private func checkGitCommitStaleness() {
 }
 
 func shouldCheckGitCommitStaleness(embeddedCommit: String) -> Bool {
-    let commit = embeddedCommit.trimmingCharacters(in: .whitespacesAndNewlines)
-    return !commit.isEmpty && commit != "unknown"
+    SourceProvenance.exactCommit(embeddedCommit) != nil
 }
 
 /// Check if any tracked files have been modified after the build time

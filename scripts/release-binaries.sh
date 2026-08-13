@@ -16,6 +16,8 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 # shellcheck source=scripts/native-only-policy.sh
 source "$SCRIPT_DIR/native-only-policy.sh"
+# shellcheck source=scripts/source-provenance.sh
+source "$SCRIPT_DIR/source-provenance.sh"
 BUILD_DIR="$PROJECT_ROOT/build"
 RELEASE_DIR="${RELEASE_DIR:-$BUILD_DIR/release}"
 MAC_RELEASE_MANIFEST="${MAC_RELEASE_MANIFEST:-$PROJECT_ROOT/.mac-release.env}"
@@ -80,6 +82,8 @@ verify_binary_artifact() {
     local binary_path="$1"
     local label="$2"
     local version_output
+    local provenance_json
+    local source_commit
     local binary_size
     local lipo_output
     local authority
@@ -125,6 +129,13 @@ verify_binary_artifact() {
     if printf '%s\n' "$version_output" | grep -Fq 'unknown'; then
         fail "$label has incomplete version provenance: $version_output"
     fi
+    provenance_json=$("$binary_path" --version --json)
+    source_commit=$(PROVENANCE_JSON="$provenance_json" node -e '
+        const parsed = JSON.parse(process.env.PROVENANCE_JSON);
+        process.stdout.write(parsed?.data?.sourceCommit ?? "");
+    ')
+    peekaboo_is_exact_source_commit "$source_commit" ||
+        fail "$label has no exact source commit in version JSON"
 }
 
 notarize_cli_binary() {

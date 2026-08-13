@@ -776,6 +776,16 @@ fi
 # reject the app and Swift-package resource targets before compilation.
 build_signing_dir="${TEST_DIR}/build-signing"
 mkdir -p "${build_signing_dir}/bin"
+build_signing_source="${build_signing_dir}/source"
+mkdir -p "${build_signing_source}/scripts" "${build_signing_source}/Apps/Peekaboo.xcworkspace"
+: >"${build_signing_source}/Apps/Peekaboo.xcworkspace/contents.xcworkspacedata"
+cp "${ROOT_DIR}/scripts/build-mac-debug.sh" "${build_signing_source}/scripts/build-mac-debug.sh"
+cp "${ROOT_DIR}/scripts/source-provenance.sh" "${build_signing_source}/scripts/source-provenance.sh"
+git -C "${build_signing_source}" init -q
+git -C "${build_signing_source}" add scripts Apps
+git -C "${build_signing_source}" \
+  -c user.name=Peekaboo -c user.email=peekaboo@example.invalid \
+  commit -q -m fixture
 cat >"${build_signing_dir}/bin/xcodebuild" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -790,7 +800,7 @@ env \
   DERIVED_DATA_PATH="${build_signing_dir}/DerivedData" \
   DEBUG_CODE_SIGN_IDENTITY='Developer ID Application: Test (TESTTEAM)' \
   DEBUG_DEVELOPMENT_TEAM=TESTTEAM \
-  "${ROOT_DIR}/scripts/build-mac-debug.sh" >/dev/null
+  "${build_signing_source}/scripts/build-mac-debug.sh" >/dev/null
 grep -Fxq 'CODE_SIGN_STYLE=Manual' "${build_signing_dir}/developer-id-args" || \
   fail 'Developer ID build did not request manual signing'
 if grep -Fxq 'CODE_SIGN_STYLE=Automatic' "${build_signing_dir}/developer-id-args"; then
@@ -804,7 +814,7 @@ env \
   DERIVED_DATA_PATH="${build_signing_dir}/DerivedData" \
   DEBUG_CODE_SIGN_IDENTITY='Apple Development' \
   DEBUG_DEVELOPMENT_TEAM=TESTTEAM \
-  "${ROOT_DIR}/scripts/build-mac-debug.sh" >/dev/null
+  "${build_signing_source}/scripts/build-mac-debug.sh" >/dev/null
 grep -Fxq 'CODE_SIGN_STYLE=Automatic' "${build_signing_dir}/development-args" || \
   fail 'Apple Development build did not retain automatic signing'
 

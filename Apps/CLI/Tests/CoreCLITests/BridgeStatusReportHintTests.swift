@@ -108,7 +108,8 @@ struct BridgeStatusReportHintTests {
             bundleIdentifier: "boo.peekaboo.mac",
             bundleShortVersion: "4.0.0",
             bundleVersion: "400",
-            codeSignatureHash: "abcdef"
+            codeSignatureHash: "abcdef",
+            sourceCommit: "0123456789abcdef0123456789abcdef01234567"
         )
         let handshake = BridgeTestFixtures.handshake(
             negotiatedVersion: PeekabooBridgeProtocolVersion(major: 1, minor: 21),
@@ -129,6 +130,8 @@ struct BridgeStatusReportHintTests {
             JSONSerialization.jsonObject(with: JSONEncoder().encode(report)) as? [String: Any]
         )
         #expect((object["hostIdentity"] as? [String: Any])?["processIdentifier"] as? Int == 4242)
+        #expect((object["hostIdentity"] as? [String: Any])?["sourceCommit"] as? String ==
+            "0123456789abcdef0123456789abcdef01234567")
         #expect(object["hostCapabilities"] as? [String] == [PeekabooBridgeHostCapability.backgroundBridgeHost])
     }
 }

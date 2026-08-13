@@ -4,6 +4,11 @@ set -o pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+# shellcheck source=scripts/source-provenance.sh
+source "$PROJECT_ROOT/scripts/source-provenance.sh"
+if ! SOURCE_COMMIT="$(peekaboo_require_source_commit "$PROJECT_ROOT")"; then
+    exit 1
+fi
 
 # Colors for output
 RED='\033[0;31m'
@@ -92,12 +97,16 @@ xcodebuild \
     -destination "$DESTINATION" \
     build \
     ONLY_ACTIVE_ARCH=YES \
+    PEEKABOO_SOURCE_COMMIT="$SOURCE_COMMIT" \
     "${SIGNING_SETTINGS[@]}" \
     2>&1 | pipe_build_output
 
 BUILD_EXIT_CODE=${PIPESTATUS[0]}
 
 if [ $BUILD_EXIT_CODE -eq 0 ]; then
+    if ! peekaboo_verify_source_commit "$PROJECT_ROOT" "$SOURCE_COMMIT"; then
+        exit 1
+    fi
     echo -e "${GREEN}✅ Build successful${NC}"
     
     # Find and report the app location

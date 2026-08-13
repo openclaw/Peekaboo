@@ -31,6 +31,22 @@ function invariantByName(caseResult, name) {
   return entry;
 }
 
+function makeRemoteReport() {
+  const report = makePassingReport(catalog);
+  const receipt = {
+    pid: 4242,
+    startIdentity: "987654321",
+    socketPath: "/tmp/peekaboo-certification/bridge.sock",
+    sourceCommit: report.provenance.cli_source_commit,
+  };
+  report.provenance.event_producer_source = "remote";
+  report.provenance.remote_host = receipt;
+  for (const caseResult of report.cases) {
+    caseResult.event_producer = structuredClone(receipt);
+  }
+  return report;
+}
+
 test("passing report covers the complete 34-case catalog", () => {
   const report = makePassingReport(catalog);
   const result = validateCertification(catalog, report);
@@ -169,6 +185,41 @@ test("probe canary and invariant violations are unsuppressible", () => {
   assert.equal(result.success, false);
   assert.ok(rules(result).has("canary"));
   assert.ok(rules(result).has("violated_invariant"));
+});
+
+test("source provenance is exact closed and identical across the event producer", () => {
+  const missing = makePassingReport(catalog);
+  delete missing.provenance;
+  assert.ok(rules(validateCertification(catalog, missing)).has("provenance_schema"));
+
+  const malformed = makePassingReport(catalog);
+  malformed.provenance.cli_source_commit = "unknown";
+  assert.ok(rules(validateCertification(catalog, malformed)).has("source_commit"));
+
+  const terminated = makePassingReport(catalog);
+  terminated.provenance.cli_source_commit += "\n";
+  terminated.provenance.event_producer_source_commit += "\n";
+  assert.ok(rules(validateCertification(catalog, terminated)).has("source_commit"));
+
+  const mismatch = makePassingReport(catalog);
+  mismatch.provenance.event_producer_source = "remote";
+  mismatch.provenance.event_producer_source_commit =
+    "fedcba9876543210fedcba9876543210fedcba98";
+  assert.ok(rules(validateCertification(catalog, mismatch)).has("source_commit_mismatch"));
+
+  const receiptlessRemote = makePassingReport(catalog);
+  receiptlessRemote.provenance.event_producer_source = "remote";
+  assert.ok(rules(validateCertification(catalog, receiptlessRemote)).has("remote_host_receipt"));
+
+  const remote = makeRemoteReport();
+  assert.equal(validateCertification(catalog, remote).success, true);
+
+  caseById(remote, "see-text").event_producer.pid += 1;
+  assert.ok(rules(validateCertification(catalog, remote)).has("event_producer_receipt"));
+
+  const unstable = makeRemoteReport();
+  caseById(unstable, "see-text").event_producer_stable = false;
+  assert.ok(rules(validateCertification(catalog, unstable)).has("event_producer_stability"));
 });
 
 test("catalog invariants are required nonempty and unique", () => {

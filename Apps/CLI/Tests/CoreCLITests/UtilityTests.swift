@@ -110,6 +110,7 @@ struct UtilityTests {
             #expect(values == VersionMetadata.Values(
                 current: "Peekaboo 4.2.0-beta.1",
                 gitCommit: "unknown",
+                sourceCommit: "unknown",
                 gitCommitDate: "unknown",
                 gitBranch: "unknown",
                 buildDate: "unknown"
@@ -122,6 +123,7 @@ struct UtilityTests {
                 "CFBundleShortVersionString": "4.2.0",
                 "PeekabooVersionDisplayString": "Peekaboo 4.2.0",
                 "PeekabooGitCommit": "abc1234-dirty",
+                "PeekabooSourceCommit": "0123456789abcdef0123456789abcdef01234567",
                 "PeekabooGitCommitDate": "2026-08-10 12:34:56 -0700",
                 "PeekabooGitBranch": "release/4.2.0",
                 "PeekabooBuildDate": "2026-08-10T19:35:00Z",
@@ -130,6 +132,7 @@ struct UtilityTests {
             #expect(values == VersionMetadata.Values(
                 current: "Peekaboo 4.2.0",
                 gitCommit: "abc1234-dirty",
+                sourceCommit: "0123456789abcdef0123456789abcdef01234567",
                 gitCommitDate: "2026-08-10 12:34:56 -0700",
                 gitBranch: "release/4.2.0",
                 buildDate: "2026-08-10T19:35:00Z"
@@ -141,6 +144,7 @@ struct UtilityTests {
             let expected = VersionMetadata.Values(
                 current: "Peekaboo 0.0.0",
                 gitCommit: "unknown",
+                sourceCommit: "unknown",
                 gitCommitDate: "unknown",
                 gitBranch: "unknown",
                 buildDate: "unknown"
@@ -148,6 +152,20 @@ struct UtilityTests {
 
             #expect(VersionMetadata.resolve(infoDictionary: nil) == expected)
             #expect(VersionMetadata.resolve(infoDictionary: ["CFBundleShortVersionString": "   "]) == expected)
+        }
+
+        @Test(arguments: [
+            "abc1234",
+            "0123456789abcdef0123456789abcdef0123456g",
+            "0123456789abcdef0123456789abcdef01234567-dirty",
+        ])
+        func `Malformed embedded source commits stay unknown`(_ sourceCommit: String) {
+            let values = VersionMetadata.resolve(infoDictionary: [
+                "CFBundleShortVersionString": "4.2.0",
+                "PeekabooSourceCommit": sourceCommit,
+            ])
+
+            #expect(values.sourceCommit == "unknown")
         }
     }
 
@@ -194,13 +212,16 @@ struct UtilityTests {
     @Suite(.tags(.safe))
     struct BuildStalenessCheckerTests {
         @Test(arguments: ["", "   ", "unknown"])
-        func `Missing embedded commits skip Git staleness checks`(commit: String) {
+        func `Missing source commits skip Git staleness checks`(commit: String) {
             #expect(!shouldCheckGitCommitStaleness(embeddedCommit: commit))
         }
 
         @Test
-        func `Embedded commit enables Git staleness checks`() {
-            #expect(shouldCheckGitCommitStaleness(embeddedCommit: "abc1234"))
+        func `Only canonical source commits enable Git staleness checks`() {
+            #expect(shouldCheckGitCommitStaleness(
+                embeddedCommit: "0123456789abcdef0123456789abcdef01234567"
+            ))
+            #expect(!shouldCheckGitCommitStaleness(embeddedCommit: "abc1234"))
         }
 
         @Test

@@ -15,6 +15,7 @@ SKIP_PLAYGROUND_BUILD=false
 RUN_FOREGROUND_PHASE=false
 SELF_TEST_ONLY=false
 NO_REMOTE=false
+BRIDGE_SOCKET="${PEEKABOO_CERTIFICATION_BRIDGE_SOCKET:-${PEEKABOO_BRIDGE_SOCKET:-}}"
 
 usage() {
     cat <<'EOF'
@@ -31,6 +32,8 @@ Options:
   --skip-playground-build    Require --playground-app and skip xcodebuild
   --foreground-phase        Also run explicit physical-pointer tests
   --no-remote               Force the exact CLI process to use its local TCC grants
+  --bridge-socket PATH      Pin every remote command to one exact Bridge host
+                            (default: Peekaboo.app's bridge.sock)
   --sentinel-bundle-id ID   Require this app to already be frontmost (default: current app)
   --self-test               Compile and self-test the invariant probe only
   -h, --help                Show this help
@@ -63,6 +66,10 @@ while [[ $# -gt 0 ]]; do
             NO_REMOTE=true
             shift
             ;;
+        --bridge-socket)
+            BRIDGE_SOCKET="$2"
+            shift 2
+            ;;
         --sentinel-bundle-id)
             SENTINEL_BUNDLE_ID="$2"
             shift 2
@@ -82,6 +89,10 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+if ! $NO_REMOTE && [[ -z "$BRIDGE_SOCKET" ]]; then
+    BRIDGE_SOCKET="$HOME/Library/Application Support/Peekaboo/bridge.sock"
+fi
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
     echo "This harness requires macOS." >&2
@@ -605,8 +616,33 @@ pb() {
     if $NO_REMOTE; then
         "$PEEKABOO_BIN" "$@" --no-remote
     else
-        "$PEEKABOO_BIN" "$@"
+        "$PEEKABOO_BIN" "$@" --bridge-socket "$BRIDGE_SOCKET"
     fi
+}
+
+read_pinned_bridge_receipt() {
+    local status_file="${1:?Bridge status file required}"
+    jq -cer --arg socketPath "$BRIDGE_SOCKET" '
+        .data.selected |
+        select(.source == "remote") |
+        .handshake.hostIdentity as $identity |
+        select($identity != null) |
+        {
+            pid: $identity.processIdentifier,
+            startIdentity: (
+                $identity.processStartIdentityDecimal //
+                ($identity.processStartIdentity | tostring)
+            ),
+            socketPath: $socketPath,
+            sourceCommit: $identity.sourceCommit
+        } |
+        select(
+            (.pid | type) == "number" and .pid > 0 and
+            (.startIdentity | type) == "string" and test("^[0-9]+$") and
+            (.sourceCommit | type) == "string" and
+            (.sourceCommit | test("^[0-9a-f]{40}$"))
+        )
+    ' "$status_file"
 }
 
 if $NO_REMOTE; then
@@ -619,6 +655,15 @@ if $NO_REMOTE; then
 fi
 
 pb --version > "$ARTIFACT_ROOT/peekaboo-version.txt"
+pb --version --json > "$ARTIFACT_ROOT/peekaboo-provenance.json"
+PEEKABOO_SOURCE_COMMIT="$(jq -er '
+    select(.success == true) |
+    .data.sourceCommit |
+    select(type == "string" and test("^[0-9a-f]{40}$"))
+' "$ARTIFACT_ROOT/peekaboo-provenance.json")" || {
+    echo "Background certification requires a stamped CLI with one exact 40-hex source commit." >&2
+    exit 2
+}
 pb permissions status --json > "$ARTIFACT_ROOT/permissions.json"
 if ! jq -e '
     .success == true and
@@ -628,31 +673,23 @@ if ! jq -e '
     exit 2
 fi
 
+EVENT_PRODUCER_SOURCE=local
+EVENT_PRODUCER_SOURCE_COMMIT="$PEEKABOO_SOURCE_COMMIT"
 REMOTE_EVENT_PRODUCER_JSON=null
 if ! $NO_REMOTE; then
     pb bridge status --verbose --json > "$ARTIFACT_ROOT/bridge-event-producer.json"
-    SELECTED_BRIDGE_SOURCE="$(jq -r '.data.selected.source // empty' \
-        "$ARTIFACT_ROOT/bridge-event-producer.json")"
-    if [[ "$SELECTED_BRIDGE_SOURCE" == "remote" ]]; then
-        REMOTE_EVENT_PRODUCER_JSON="$(jq -cer '
-            .data.selected.handshake.hostIdentity as $identity |
-            select($identity != null) |
-            {
-                pid: $identity.processIdentifier,
-                startIdentity: (
-                    $identity.processStartIdentityDecimal //
-                    ($identity.processStartIdentity | tostring)
-                )
-            } |
-            select(
-                (.pid | type) == "number" and .pid > 0 and
-                (.startIdentity | type) == "string" and test("^[0-9]+$")
-            )
-        ' "$ARTIFACT_ROOT/bridge-event-producer.json")" || {
-            echo "Selected Bridge host lacks an exact event-producer process receipt." >&2
-            exit 2
-        }
+    REMOTE_EVENT_PRODUCER_JSON="$(read_pinned_bridge_receipt \
+        "$ARTIFACT_ROOT/bridge-event-producer.json")" || {
+        echo "Pinned Bridge host lacks an exact event-producer source receipt." >&2
+        exit 2
+    }
+    BRIDGE_SOURCE_COMMIT="$(jq -er '.sourceCommit' <<<"$REMOTE_EVENT_PRODUCER_JSON")"
+    if [[ "$BRIDGE_SOURCE_COMMIT" != "$PEEKABOO_SOURCE_COMMIT" ]]; then
+        echo "CLI and pinned Bridge host were built from different source commits." >&2
+        exit 2
     fi
+    EVENT_PRODUCER_SOURCE=remote
+    EVENT_PRODUCER_SOURCE_COMMIT="$BRIDGE_SOURCE_COMMIT"
 fi
 
 build_playground() {
@@ -751,12 +788,30 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
+"$PROBE_BIN" sample --output "$ARTIFACT_ROOT/sentinel.json"
+SENTINEL_PID="$(jq -r '.frontmostPID // empty' "$ARTIFACT_ROOT/sentinel.json")"
+SENTINEL_WINDOW_ID="$(jq -r '.frontmostWindowID // empty' "$ARTIFACT_ROOT/sentinel.json")"
+SENTINEL_OBSERVED_BUNDLE_ID="$(jq -r '.frontmostBundleIdentifier // empty' \
+    "$ARTIFACT_ROOT/sentinel.json")"
+if [[ -z "$SENTINEL_PID" || -z "$SENTINEL_WINDOW_ID" ]]; then
+    echo "A foreground sentinel window is required for background certification." >&2
+    exit 1
+fi
+if [[ "$SENTINEL_OBSERVED_BUNDLE_ID" == "$PLAYGROUND_BUNDLE_ID" ]]; then
+    echo "A non-Playground foreground sentinel window is required for certification." >&2
+    exit 1
+fi
+if [[ -n "$SENTINEL_BUNDLE_ID" && "$SENTINEL_OBSERVED_BUNDLE_ID" != "$SENTINEL_BUNDLE_ID" ]]; then
+    echo "Required sentinel $SENTINEL_BUNDLE_ID is not already frontmost; refusing to activate it." >&2
+    exit 1
+fi
+
 if "$PROBE_BIN" find-app --bundle-id "$PLAYGROUND_BUNDLE_ID" >/dev/null 2>&1; then
     pb app quit --app "$PLAYGROUND_BUNDLE_ID" --json \
         > "$ARTIFACT_ROOT/playground-quit-existing.json" || true
 fi
 
-pb app launch "$PLAYGROUND_APP" --wait-ready --json \
+pb app launch "$PLAYGROUND_APP" --wait-ready --foreground --json \
     > "$ARTIFACT_ROOT/playground-launch.json"
 if ! read_launch_process_receipt "$ARTIFACT_ROOT/playground-launch.json" || \
    ! refresh_playground_process_receipt \
@@ -769,18 +824,15 @@ if ! kill -0 "$PLAYGROUND_PID" 2>/dev/null; then
     exit 1
 fi
 
-"$PROBE_BIN" sample --output "$ARTIFACT_ROOT/sentinel.json"
-SENTINEL_PID="$(jq -r '.frontmostPID // empty' "$ARTIFACT_ROOT/sentinel.json")"
-SENTINEL_WINDOW_ID="$(jq -r '.frontmostWindowID // empty' "$ARTIFACT_ROOT/sentinel.json")"
-SENTINEL_OBSERVED_BUNDLE_ID="$(jq -r '.frontmostBundleIdentifier // empty' \
-    "$ARTIFACT_ROOT/sentinel.json")"
-if [[ -z "$SENTINEL_PID" || -z "$SENTINEL_WINDOW_ID" ]] || \
-   [[ "$SENTINEL_PID" == "$PLAYGROUND_PID" ]]; then
-    echo "A non-Playground foreground window is required for background certification." >&2
-    exit 1
-fi
-if [[ -n "$SENTINEL_BUNDLE_ID" && "$SENTINEL_OBSERVED_BUNDLE_ID" != "$SENTINEL_BUNDLE_ID" ]]; then
-    echo "Required sentinel $SENTINEL_BUNDLE_ID is not already frontmost; refusing to activate it." >&2
+pb window focus --pid "$SENTINEL_PID" --window-id "$SENTINEL_WINDOW_ID" --verify --json \
+    > "$ARTIFACT_ROOT/sentinel-restore.json"
+"$PROBE_BIN" sample --output "$ARTIFACT_ROOT/sentinel-restored.json"
+if ! jq -e \
+    --argjson pid "$SENTINEL_PID" \
+    --argjson windowID "$SENTINEL_WINDOW_ID" \
+    '.frontmostPID == $pid and .frontmostWindowID == $windowID' \
+    "$ARTIFACT_ROOT/sentinel-restored.json" >/dev/null; then
+    echo "Foreground fixture launch did not restore the exact sentinel window." >&2
     exit 1
 fi
 
@@ -900,6 +952,8 @@ run_case() {
     local exit_file="$case_dir/exit-code.txt"
     local summary="$case_dir/summary.json"
     local failed=false
+    local case_remote_receipt=null
+    local event_producer_stable=true
     local observed_command=""
     local observed_phase=""
     local monitor_progress=true
@@ -1073,6 +1127,34 @@ run_case() {
         return 1
     fi
 
+    if ! $NO_REMOTE; then
+        pb bridge status --verbose --json > "$case_dir/bridge-before.json"
+        case_remote_receipt="$(read_pinned_bridge_receipt "$case_dir/bridge-before.json")" || {
+            abort_current_monitor
+            if [[ -n "$stale_window_id" ]]; then
+                restore_stale_window_bounds \
+                    "$case_dir/bridge-attestation-restore" \
+                    "$stale_window_id" "$stale_pid" \
+                    "$stale_original_x" "$stale_original_y" \
+                    "$stale_original_width" "$stale_original_height" || true
+            fi
+            record_failure "$name could not attest the pinned Bridge host before dispatch"
+            return 1
+        }
+        if [[ "$case_remote_receipt" != "$REMOTE_EVENT_PRODUCER_JSON" ]]; then
+            abort_current_monitor
+            if [[ -n "$stale_window_id" ]]; then
+                restore_stale_window_bounds \
+                    "$case_dir/bridge-generation-restore" \
+                    "$stale_window_id" "$stale_pid" \
+                    "$stale_original_x" "$stale_original_y" \
+                    "$stale_original_width" "$stale_original_height" || true
+            fi
+            record_failure "$name observed a changed pinned Bridge generation before dispatch"
+            return 1
+        fi
+    fi
+
     local command_gate="$case_dir/command.ready"
     (
         while [[ ! -f "$command_gate" ]]; do
@@ -1081,7 +1163,7 @@ run_case() {
         if $NO_REMOTE; then
             exec "$PEEKABOO_BIN" "$@" --json --no-remote
         else
-            exec "$PEEKABOO_BIN" "$@" --json
+            exec "$PEEKABOO_BIN" "$@" --json --bridge-socket "$BRIDGE_SOCKET"
         fi
     ) > "$result" 2> "$stderr_file" &
     local command_pid=$!
@@ -1106,7 +1188,7 @@ run_case() {
         --argjson revision "$command_pid" \
         --argjson pid "$command_pid" \
         --arg startIdentity "$command_start_identity" \
-        --argjson remote "$REMOTE_EVENT_PRODUCER_JSON" '
+        --argjson remote "$case_remote_receipt" '
         {
             revision: $revision,
             producers: (
@@ -1175,6 +1257,17 @@ run_case() {
     printf '%s\n' complete > "$phase.tmp"
     mv "$phase.tmp" "$phase"
     printf '%s\n' "$command_exit" > "$exit_file"
+
+    if ! $NO_REMOTE; then
+        local post_command_receipt=""
+        if ! pb bridge status --verbose --json > "$case_dir/bridge-after.json" ||
+           ! post_command_receipt="$(read_pinned_bridge_receipt "$case_dir/bridge-after.json")" ||
+           [[ "$post_command_receipt" != "$case_remote_receipt" ]]; then
+            event_producer_stable=false
+            record_failure "$name could not retain one pinned Bridge generation across dispatch"
+            failed=true
+        fi
+    fi
 
     if [[ -n "$setup_window_id" ]]; then
         set +e
@@ -1318,6 +1411,8 @@ run_case() {
         --argjson nonmaximizedPrecondition "$nonmaximized_precondition" \
         --argjson snapshotWindowDrift "$snapshot_window_drift" \
         --argjson targetWindowRestored "$target_window_restored" \
+        --argjson eventProducer "$case_remote_receipt" \
+        --argjson eventProducerStable "$event_producer_stable" \
         '{
             id: $id,
             surface: $surface,
@@ -1329,6 +1424,8 @@ run_case() {
             effect: $effect,
             delivery_mode: $deliveryMode,
             error_code: $errorCode,
+            event_producer: $eventProducer,
+            event_producer_stable: $eventProducerStable,
             invariants: $invariants,
             evidence: {
                 result_contract: $resultContract,
@@ -1936,28 +2033,29 @@ if $RUN_FOREGROUND_PHASE; then
     pb move --at "$ORIGINAL_CURSOR" --foreground --json \
         > "$FOREGROUND_DIR/restore-cursor.json"
 
-    # Relaunching the controlled fixture resets any visual/scroll state from this explicit phase.
-    pb app relaunch --pid "$PLAYGROUND_PID" --wait-until-ready --json \
-        > "$FOREGROUND_DIR/reset-playground.json"
-    if ! read_launch_process_receipt "$FOREGROUND_DIR/reset-playground.json" || \
-       ! refresh_playground_process_receipt \
-           "$LAUNCH_RECEIPT_PID" "$LAUNCH_RECEIPT_PROCESS_START_IDENTITY"; then
-        echo "Playground relaunch did not return a process-generation receipt." >&2
-        exit 1
-    fi
-    if ! kill -0 "$PLAYGROUND_PID" 2>/dev/null; then
-        echo "Playground relaunch receipt names a process that is no longer running." >&2
-        exit 1
-    fi
-    pb app switch --to "PID:$SENTINEL_PID" --verify --json \
+    pb window focus --pid "$SENTINEL_PID" --window-id "$SENTINEL_WINDOW_ID" --verify --json \
         > "$FOREGROUND_DIR/restore-sentinel.json"
 fi
 
 OBSERVED_CERTIFICATION="$ARTIFACT_ROOT/certification-observed.json"
 CERTIFICATION_RESULT="$ARTIFACT_ROOT/certification.json"
 case_summaries=("$ARTIFACT_ROOT"/cases/*/summary.json)
-jq -s --slurpfile probe "$ARTIFACT_ROOT/probe-self-test.json" \
-    '{probe_canary: ($probe[0].success == true), cases: .}' \
+jq -s \
+    --slurpfile probe "$ARTIFACT_ROOT/probe-self-test.json" \
+    --arg cliSourceCommit "$PEEKABOO_SOURCE_COMMIT" \
+    --arg eventProducerSource "$EVENT_PRODUCER_SOURCE" \
+    --arg eventProducerSourceCommit "$EVENT_PRODUCER_SOURCE_COMMIT" \
+    --argjson remoteHost "$REMOTE_EVENT_PRODUCER_JSON" \
+    '{
+        probe_canary: ($probe[0].success == true),
+        provenance: {
+            cli_source_commit: $cliSourceCommit,
+            event_producer_source: $eventProducerSource,
+            event_producer_source_commit: $eventProducerSourceCommit,
+            remote_host: $remoteHost
+        },
+        cases: .
+    }' \
     "${case_summaries[@]}" > "$OBSERVED_CERTIFICATION"
 set +e
 node "$CERTIFICATION_REPORTER" \
@@ -1973,6 +2071,7 @@ fi
 CASE_COUNT="$(find "$ARTIFACT_ROOT/cases" -name summary.json -type f | wc -l | tr -d ' ')"
 jq -n \
     --arg peekaboo "$(head -n 1 "$ARTIFACT_ROOT/peekaboo-version.txt")" \
+    --arg sourceCommit "$PEEKABOO_SOURCE_COMMIT" \
     --arg playgroundBundle "$PLAYGROUND_BUNDLE_ID" \
     --argjson playgroundPID "$PLAYGROUND_PID" \
     --argjson sentinelPID "$SENTINEL_PID" \
@@ -1984,6 +2083,7 @@ jq -n \
     '{
         success: ($failures == 0),
         peekaboo: $peekaboo,
+        source_commit: $sourceCommit,
         playground: {bundle_id: $playgroundBundle, pid: $playgroundPID},
         sentinel: {pid: $sentinelPID, window_id: $sentinelWindowID},
         cases: $cases,

@@ -32,6 +32,12 @@ post-launch PID to mint ownership or issues a separate unpinned quit that could 
 the target process and intentionally do not claim sibling-window isolation. Fixture windows open through background
 semantic menu actions rather than uncertified raw shortcuts.
 The harness invokes the current CLI directly; it does not use AppleScript or a command runner.
+Certification requires a stamped CLI whose `--version --json` output contains one canonical 40-hex `sourceCommit`.
+Remote certification pins every command to one exact Bridge socket and requires its additive host-identity receipt to
+expose the same source commit. Raw SwiftPM and manual unstamped Xcode builds report `unknown` and are intentionally
+refused for certification. The validated certification report records both stamps and rejects missing or mismatched
+provenance when artifacts are replayed. Every monitored case brackets its command with exact socket, PID, and
+process-generation attestations; a restarted or rebound Bridge host invalidates that case.
 
 Every background case starts only after the 10 ms monitor completes its first sample and publishes a sequence
 heartbeat. After the command and its restoration checks finish, the case waits for that sequence to advance again; an

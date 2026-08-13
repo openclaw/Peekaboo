@@ -4,6 +4,8 @@ set -o pipefail
 
 PROJECT_ROOT=$(cd "$(dirname "$0")/.." && pwd)
 SWIFT_PROJECT_PATH="$PROJECT_ROOT/Apps/CLI"
+# shellcheck source=scripts/source-provenance.sh
+source "$PROJECT_ROOT/scripts/source-provenance.sh"
 FINAL_BINARY_NAME="peekaboo"
 FINAL_BINARY_PATH="$PROJECT_ROOT/$FINAL_BINARY_NAME"
 SIGN_IDENTITY="${MAC_RELEASE_CODESIGN_IDENTITY:-${SIGN_IDENTITY:-}}"
@@ -108,7 +110,8 @@ generate_info_plist() {
     set_plist_value "$output" "CFBundleShortVersionString" "$VERSION"
     set_plist_value "$output" "CFBundleVersion" "$VERSION"
     set_plist_value "$output" "PeekabooVersionDisplayString" "$display"
-    set_plist_value "$output" "PeekabooGitCommit" "$GIT_COMMIT$GIT_DIRTY"
+    set_plist_value "$output" "PeekabooGitCommit" "$GIT_COMMIT_SHORT$GIT_DIRTY"
+    set_plist_value "$output" "PeekabooSourceCommit" "$SOURCE_COMMIT"
     set_plist_value "$output" "PeekabooGitCommitDate" "$GIT_COMMIT_DATE"
     set_plist_value "$output" "PeekabooGitBranch" "$GIT_BRANCH"
     set_plist_value "$output" "PeekabooBuildDate" "$BUILD_DATE"
@@ -129,8 +132,10 @@ echo "📦 Reading version from version.json..."
 VERSION=$(node -p "require('$PROJECT_ROOT/version.json').version")
 echo "Version: $VERSION"
 
-# Get git information
-GIT_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+# Get git information. Keep the historical short value for human display while
+# certification consumes the separate immutable full source commit.
+SOURCE_COMMIT=$(peekaboo_require_source_commit "$PROJECT_ROOT")
+GIT_COMMIT_SHORT=$(peekaboo_short_source_commit "$SOURCE_COMMIT")
 GIT_COMMIT_DATE=$(git show -s --format=%ci HEAD 2>/dev/null || echo "unknown")
 GIT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
 GIT_DIRTY=$(git diff --quiet && git diff --cached --quiet || echo "-dirty")
@@ -157,6 +162,7 @@ echo "🏗️ Building for x86_64 (Intel)..."
 X86_64_BUILD_BINARY=$(bash "$PROJECT_ROOT/scripts/resolve-swift-binary-path.sh" \
     "$SWIFT_PROJECT_PATH" x86_64 release "$FINAL_BINARY_NAME")
 cp "$X86_64_BUILD_BINARY" "$X86_64_BINARY_TEMP"
+peekaboo_verify_source_commit "$PROJECT_ROOT" "$SOURCE_COMMIT"
 echo "✅ x86_64 build complete: $X86_64_BINARY_TEMP"
 
 echo "🔗 Creating universal binary..."
