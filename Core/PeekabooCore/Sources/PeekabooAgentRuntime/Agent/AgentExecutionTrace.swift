@@ -336,6 +336,12 @@ private enum AgentExecutionTraceSanitizer {
             suppressLegacyPresence: actionOutcome?.outcome.isConfirmed == true &&
                 result.failure == nil && !result.isError)
         guard var object = summary.objectValue else { return summary }
+        let retrySafetyDisputed = mutationDispatch == .possiblyDispatched ||
+            claims.boolean("mutation_dispatched") == .invalid ||
+            claims.boolean("skipped") == .invalid
+        if retrySafetyDisputed {
+            object.removeValue(forKey: "retry_safe")
+        }
         if let actionOutcome {
             if claims.boolean("mutation_dispatched") != .invalid {
                 object["mutation_dispatched"] = AnyAgentToolValue(bool: actionOutcome.mutationDispatched)
@@ -344,7 +350,7 @@ private enum AgentExecutionTraceSanitizer {
                 object["requires_fresh_observation"] = AnyAgentToolValue(
                     bool: actionOutcome.requiresFreshObservation)
             }
-            if claims.boolean("retry_safe") != .invalid {
+            if claims.boolean("retry_safe") != .invalid, !retrySafetyDisputed {
                 object["retry_safe"] = AnyAgentToolValue(bool: actionOutcome.retrySafe)
             }
         }

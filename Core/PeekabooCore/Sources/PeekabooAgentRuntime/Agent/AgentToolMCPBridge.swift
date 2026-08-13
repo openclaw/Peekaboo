@@ -531,7 +531,9 @@ enum AgentToolMCPBridge {
         case let .int(value):
             return AnyAgentToolValue(int: value)
         case let .double(value):
-            return AnyAgentToolValue(double: value)
+            return value.isFinite
+                ? AnyAgentToolValue(double: value)
+                : AnyAgentToolValue(string: "<omitted-non-finite-number>")
         case let .string(value):
             return AnyAgentToolValue(string: Self.boundedStructuredText(value, budget: &budget))
         case let .data(mimeType, data):

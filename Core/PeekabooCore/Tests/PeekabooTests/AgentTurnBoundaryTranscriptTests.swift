@@ -159,6 +159,23 @@ struct AgentTurnBoundaryTranscriptTests {
             ]))
         #expect(service.turnBoundarySignal(from: compatible) == .continueNextStep(
             reason: "Continue after observation"))
+
+        let malformedAfterContinue = AgentToolResult.success(
+            toolCallId: "malformed-after-continue",
+            result: AnyAgentToolValue(object: [
+                "turn_boundary": AnyAgentToolValue(object: [
+                    "reason": AnyAgentToolValue(string: "Missing disposition"),
+                ]),
+            ]))
+        let stopAfterContinue = AgentToolResult.success(
+            toolCallId: "stop-after-continue",
+            result: AnyAgentToolValue(object: [
+                "turn_boundary": stopBoundary,
+            ]))
+        #expect(service.turnBoundarySignal(from: [compatible, malformedAfterContinue]) == .stopAgent(
+            reason: PeekabooAgentService.invalidTurnBoundaryReason))
+        #expect(service.turnBoundarySignal(from: [compatible, stopAfterContinue]) == .stopAgent(
+            reason: "Stop after failure"))
     }
 
     @Test

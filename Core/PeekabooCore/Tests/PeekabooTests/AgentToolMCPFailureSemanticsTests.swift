@@ -188,7 +188,7 @@ struct AgentToolMCPFailureSemanticsTests {
         #expect(entry.mutationDispatch == .possiblyDispatched)
         #expect(summary["mutation_dispatched"]?.boolValue == true)
         #expect(summary["requires_fresh_observation"]?.boolValue == true)
-        #expect(summary["retry_safe"]?.boolValue == false)
+        #expect(summary["retry_safe"] == nil)
         #expect(summary["success"] == nil)
     }
 
@@ -382,6 +382,7 @@ struct AgentToolMCPFailureSemanticsTests {
         #expect(disputedCanonicalSkipEntry.actionOutcome == nil)
         #expect(disputedCanonicalSkipEntry.result?.objectValue?["skipped"] == nil)
         #expect(disputedCanonicalSkipEntry.result?.objectValue?["mutation_dispatched"] == nil)
+        #expect(disputedCanonicalSkipEntry.result?.objectValue?["retry_safe"] == nil)
     }
 
     @Test
@@ -415,8 +416,10 @@ struct AgentToolMCPFailureSemanticsTests {
             toolCallId: call.id,
             result: AnyAgentToolValue(object: [
                 "metadata": AnyAgentToolValue(object: [
+                    "mutation_dispatched": AnyAgentToolValue(bool: false),
                     "retry_safe": AnyAgentToolValue(bool: true),
                 ]),
+                "mutation_dispatched": AnyAgentToolValue(bool: false),
                 "retry_safe": AnyAgentToolValue(bool: true),
             ]))
         let compatibleClaims = AgentToolResultSemantics.normalizedClaims(from: compatible.result)
@@ -439,6 +442,21 @@ struct AgentToolMCPFailureSemanticsTests {
         #expect(errorClaims.errorPresence == .invalid)
         #expect(AgentToolResultSemantics.isFailure(conflictingErrorPresence))
         #expect(errorEntry.result?.objectValue?["error_present"] == nil)
+
+        let coupledConflict = AgentToolResult.success(
+            toolCallId: call.id,
+            result: AnyAgentToolValue(object: [
+                "meta": AnyAgentToolValue(object: [
+                    "mutation_dispatched": AnyAgentToolValue(bool: false),
+                    "retry_safe": AnyAgentToolValue(bool: true),
+                ]),
+                "mutation_dispatched": AnyAgentToolValue(bool: true),
+                "retry_safe": AnyAgentToolValue(bool: true),
+            ]))
+        let coupledEntry = try #require(
+            Self.execution(call: call, result: coupledConflict).executionTrace().entries.first)
+        #expect(coupledEntry.mutationDispatch == .possiblyDispatched)
+        #expect(coupledEntry.result?.objectValue?["retry_safe"] == nil)
     }
 
     @Test
@@ -562,6 +580,20 @@ struct AgentToolMCPFailureSemanticsTests {
         #expect(structured["a-first"] != nil)
         #expect(structured["b-second"]?.stringValue == "<omitted-text-budget>")
         #expect(structured["c-third"]?.stringValue == "<omitted-text-budget>")
+    }
+
+    @Test
+    func `Nonfinite structured failure numbers remain persistable`() throws {
+        for value in [Double.nan, Double.infinity, -Double.infinity] {
+            let response = ToolResponse(
+                content: [.text(text: "numeric failure", annotations: nil, _meta: nil)],
+                isError: true,
+                structuredContent: .double(value))
+            let failure = try #require(AgentToolMCPBridge.convert(response).failure)
+
+            #expect(failure.structuredValue?.stringValue == "<omitted-non-finite-number>")
+            _ = try JSONEncoder().encode(AgentToolResult(toolCallId: "numeric", failure: failure))
+        }
     }
 
     @Test

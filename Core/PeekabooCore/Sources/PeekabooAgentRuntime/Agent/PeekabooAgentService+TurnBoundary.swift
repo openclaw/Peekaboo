@@ -179,12 +179,20 @@ extension PeekabooAgentService {
     }
 
     func turnBoundarySignal(from toolResults: [AgentToolResult]) -> AgentTurnBoundarySignal? {
+        var continuation: AgentTurnBoundarySignal?
         for toolResult in toolResults {
-            if let signal = self.turnBoundarySignal(from: toolResult) {
-                return signal
+            switch self.turnBoundarySignal(from: toolResult) {
+            case let .stopAgent(reason):
+                return .stopAgent(reason: reason)
+            case let .continueNextStep(reason):
+                if continuation == nil {
+                    continuation = .continueNextStep(reason: reason)
+                }
+            case nil:
+                continue
             }
         }
-        return nil
+        return continuation
     }
 
     func turnBoundarySignal(from toolResult: AgentToolResult) -> AgentTurnBoundarySignal? {
