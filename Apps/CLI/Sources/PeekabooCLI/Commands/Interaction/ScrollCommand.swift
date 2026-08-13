@@ -8,7 +8,8 @@ import PeekabooFoundation
 /// Supports scrolling on specific elements or at the current mouse position.
 @available(macOS 14.0, *)
 @MainActor
-struct ScrollCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormattable, RuntimeBackedCommand {
+struct ScrollCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormattable, PreRuntimeValidatingCommand,
+RuntimeBackedCommand {
     @Option(help: "Scroll direction: up, down, left, or right")
     var direction: String
 
@@ -40,12 +41,7 @@ struct ScrollCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputForma
         self.logger.setJsonOutputMode(self.jsonOutput)
 
         do {
-            try self.target.validate()
-            try self.validateDeliveryMode()
-            // Parse direction
-            guard let scrollDirection = ScrollDirection(rawValue: direction.lowercased()) else {
-                throw ValidationError("Invalid direction. Use: up, down, left, or right")
-            }
+            let scrollDirection = try self.validatedScrollDirection()
 
             var observation = await InteractionObservationContext.resolve(
                 explicitSnapshot: self.snapshot,
@@ -183,6 +179,19 @@ struct ScrollCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputForma
             }
             return
         }
+    }
+
+    func validateBeforeRuntime() throws {
+        _ = try self.validatedScrollDirection()
+    }
+
+    private func validatedScrollDirection() throws -> ScrollDirection {
+        try self.target.validate()
+        try self.validateDeliveryMode()
+        guard let scrollDirection = ScrollDirection(rawValue: self.direction.lowercased()) else {
+            throw ValidationError("Invalid direction. Use: up, down, left, or right")
+        }
+        return scrollDirection
     }
 
     // Error handling is provided by ErrorHandlingCommand protocol

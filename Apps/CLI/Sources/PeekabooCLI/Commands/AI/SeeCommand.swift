@@ -1,3 +1,4 @@
+import AppKit
 import Commander
 import CoreGraphics
 import Foundation
@@ -7,7 +8,7 @@ import PeekabooFoundation
 
 /// Capture a screenshot and build an interactive UI map
 @available(macOS 14.0, *)
-struct SeeCommand: ApplicationResolvable, ErrorHandlingCommand, RuntimeBackedCommand {
+struct SeeCommand: ApplicationResolvable, ErrorHandlingCommand, PreRuntimeValidatingCommand, RuntimeBackedCommand {
     @Option(help: "Application name or bundle ID; mutually exclusive with --pid (also: menubar, frontmost)")
     var app: String?
 
@@ -146,7 +147,7 @@ struct SeeCommand: ApplicationResolvable, ErrorHandlingCommand, RuntimeBackedCom
         ])
 
         do {
-            try self.validateMergedOptions()
+            try self.validateBeforeRuntime()
             if let requiredHostFailure = runtime.requiredHostFailure {
                 throw PeekabooBridgeErrorEnvelope(
                     code: .operationNotSupported,
@@ -302,6 +303,24 @@ struct SeeCommand: ApplicationResolvable, ErrorHandlingCommand, RuntimeBackedCom
             for: resolvedMode,
             windowSelectorCount: windowSelectorCount
         )
+    }
+
+    func validateBeforeRuntime() throws {
+        try self.validateMergedOptions()
+        try self.validateExplicitLocalProcessTarget()
+    }
+
+    private func validateExplicitLocalProcessTarget() throws {
+        guard let processIdentifier = try self.resolveExplicitPIDObservationTarget() else { return }
+        guard processIdentifier > 0 else {
+            throw ValidationError("--pid must be greater than 0")
+        }
+        guard self.runtimeOptions.remoteIsolationRequested else { return }
+        guard let application = NSRunningApplication(processIdentifier: processIdentifier),
+              !application.isTerminated
+        else {
+            throw ValidationError("No running application found for --pid \(processIdentifier).")
+        }
     }
 
     private func validateCaptureEngineOption() throws {
