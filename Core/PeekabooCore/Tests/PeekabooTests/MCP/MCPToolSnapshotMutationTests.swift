@@ -203,6 +203,48 @@ struct MCPToolSnapshotMutationTests {
     }
 
     @Test
+    func `Pending invalidation retries against its originating snapshot owner`() async throws {
+        let coordinator = SequencedMutationCoordinator(results: [false, true])
+        let gate = MCPToolSnapshotExecutionGate()
+        let firstSnapshots = MCPToolUISnapshotStore(owner: MCPToolSnapshotOwner())
+        let secondSnapshots = MCPToolUISnapshotStore(owner: MCPToolSnapshotOwner())
+        await firstSnapshots.removeAllSnapshots()
+        await secondSnapshots.removeAllSnapshots()
+        let firstSnapshot = await firstSnapshots.createSnapshot(id: "session-a")
+        let secondSnapshot = await secondSnapshots.createSnapshot(id: "session-b")
+        let firstContext = await MCPToolTestHelpers.makeContext(
+            snapshotMutationCoordinator: coordinator,
+            snapshotExecutionGate: gate,
+            snapshotOwner: firstSnapshots.owner)
+        let secondContext = await MCPToolTestHelpers.makeContext(
+            snapshotMutationCoordinator: coordinator,
+            snapshotExecutionGate: gate,
+            snapshotOwner: secondSnapshots.owner)
+
+        let mutationResponse = try await firstContext.execute(
+            tool: StubMCPTool(name: "click"),
+            arguments: ToolArguments(raw: [:]))
+        #expect(!mutationResponse.isError)
+        #expect(Self.snapshotInvalidationStatus(mutationResponse) == "pending_retry")
+        #expect(await firstSnapshots.getSnapshot(id: nil) == nil)
+        #expect(await firstSnapshots.getSnapshot(id: firstSnapshot.id) === firstSnapshot)
+        #expect(await secondSnapshots.getSnapshot(id: nil) === secondSnapshot)
+
+        let observationResponse = try await secondContext.execute(
+            tool: StubMCPTool(name: "see"),
+            arguments: ToolArguments(raw: [:]))
+
+        #expect(!observationResponse.isError)
+        #expect(await firstSnapshots.getSnapshot(id: nil) == nil)
+        #expect(await firstSnapshots.getSnapshot(id: firstSnapshot.id) === firstSnapshot)
+        #expect(await secondSnapshots.getSnapshot(id: nil) === secondSnapshot)
+        #expect(coordinator.completions.map(\.succeeded) == [true, false])
+
+        await firstSnapshots.removeOwner()
+        await secondSnapshots.removeOwner()
+    }
+
+    @Test
     func `Original mutation error records pending cleanup without replacing the error`() async throws {
         let coordinator = RecordingMutationCoordinator(completionResult: false)
         let context = await MCPToolTestHelpers.makeContext(

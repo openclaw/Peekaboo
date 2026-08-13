@@ -223,16 +223,19 @@ public struct MCPToolContext: @unchecked Sendable {
         try await self.snapshotExecutionGate.acquire()
         do {
             try Task.checkCancellation()
-            if let pendingScope = await self.snapshotExecutionGate.pendingInvalidation() {
-                let retrySucceeded = await self.completeMutation(pendingScope, succeeded: false)
+            if let pending = await self.snapshotExecutionGate.pendingInvalidation() {
+                let retrySucceeded = await self.completeMutation(
+                    pending.scope,
+                    succeeded: false,
+                    uiSnapshots: MCPToolUISnapshotStore(owner: pending.owner))
                 try Task.checkCancellation()
                 guard retrySucceeded else {
                     await self.snapshotExecutionGate.release()
                     return Self.pendingInvalidationResponse(
-                        pendingScope: pendingScope,
+                        pendingScope: pending.scope,
                         blockedToolName: tool.name)
                 }
-                await self.snapshotExecutionGate.clearPendingInvalidation(id: pendingScope.id)
+                await self.snapshotExecutionGate.clearPendingInvalidation(id: pending.scope.id)
             }
         } catch {
             await self.snapshotExecutionGate.release()
@@ -303,13 +306,17 @@ public struct MCPToolContext: @unchecked Sendable {
                     let rollbackSucceeded = await self.completeMutation(completedScope, succeeded: false)
                     try Task.checkCancellation()
                     if !rollbackSucceeded {
-                        await self.snapshotExecutionGate.recordPendingInvalidation(completedScope)
+                        await self.snapshotExecutionGate.recordPendingInvalidation(
+                            completedScope,
+                            owner: self.uiSnapshots.owner)
                     }
                     await self.snapshotExecutionGate.release()
                     return ToolResponse.error("Failed to publish the refreshed UI snapshot")
                 }
 
-                await self.snapshotExecutionGate.recordPendingInvalidation(completedScope)
+                await self.snapshotExecutionGate.recordPendingInvalidation(
+                    completedScope,
+                    owner: self.uiSnapshots.owner)
                 if response.isError {
                     await self.snapshotExecutionGate.release()
                     return response
@@ -327,7 +334,9 @@ public struct MCPToolContext: @unchecked Sendable {
                 let failedScope = scope.completed(at: Date(), preserving: nil)
                 let cleanupSucceeded = await self.completeMutation(failedScope, succeeded: false)
                 if !cleanupSucceeded {
-                    await self.snapshotExecutionGate.recordPendingInvalidation(failedScope)
+                    await self.snapshotExecutionGate.recordPendingInvalidation(
+                        failedScope,
+                        owner: self.uiSnapshots.owner)
                 }
             }
             await self.snapshotExecutionGate.release()
@@ -627,7 +636,11 @@ public struct MCPToolContext: @unchecked Sendable {
     }
 
     @MainActor
-    private func completeMutation(_ scope: MCPToolSnapshotMutationScope, succeeded: Bool) async -> Bool {
+    private func completeMutation(
+        _ scope: MCPToolSnapshotMutationScope,
+        succeeded: Bool,
+        uiSnapshots: MCPToolUISnapshotStore? = nil) async -> Bool
+    {
         guard scope.effect != .freshObservation else { return true }
         let resolvedScope: MCPToolSnapshotMutationScope
         do {
@@ -660,7 +673,7 @@ public struct MCPToolContext: @unchecked Sendable {
             requestedCutoff,
             sharedWatermark ?? requestedCutoff)
         let preservedSnapshotID = effectiveSucceeded ? resolvedScope.preservedSnapshotID : nil
-        await self.uiSnapshots.invalidateImplicitLatestSnapshot(
+        await (uiSnapshots ?? self.uiSnapshots).invalidateImplicitLatestSnapshot(
             through: cutoff,
             preserving: preservedSnapshotID,
             preservedAt: preservedSnapshotID == nil ? nil : resolvedScope.completedAt)

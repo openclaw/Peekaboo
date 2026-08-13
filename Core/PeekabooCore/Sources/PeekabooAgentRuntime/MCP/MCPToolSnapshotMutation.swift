@@ -8,6 +8,11 @@ public enum MCPToolSnapshotEffect: Sendable, Equatable {
     case mutationProducingFreshObservation
 }
 
+struct MCPToolPendingSnapshotInvalidation: Sendable, Equatable {
+    let scope: MCPToolSnapshotMutationScope
+    let owner: MCPToolSnapshotOwner
+}
+
 public actor MCPToolSnapshotExecutionGate {
     private struct Waiter {
         let id: UUID
@@ -16,7 +21,7 @@ public actor MCPToolSnapshotExecutionGate {
 
     private var locked = false
     private var waiters: [Waiter] = []
-    private var pendingInvalidationScope: MCPToolSnapshotMutationScope?
+    private var pendingInvalidationRecord: MCPToolPendingSnapshotInvalidation?
 
     public init() {}
 
@@ -58,25 +63,28 @@ public actor MCPToolSnapshotExecutionGate {
         self.waiters.removeFirst().continuation.resume()
     }
 
-    func pendingInvalidation() -> MCPToolSnapshotMutationScope? {
-        self.pendingInvalidationScope
+    func pendingInvalidation() -> MCPToolPendingSnapshotInvalidation? {
+        self.pendingInvalidationRecord
     }
 
-    func recordPendingInvalidation(_ scope: MCPToolSnapshotMutationScope) {
-        guard let pendingInvalidationScope else {
-            self.pendingInvalidationScope = scope
+    func recordPendingInvalidation(
+        _ scope: MCPToolSnapshotMutationScope,
+        owner: MCPToolSnapshotOwner)
+    {
+        guard let pendingInvalidation = self.pendingInvalidationRecord else {
+            self.pendingInvalidationRecord = MCPToolPendingSnapshotInvalidation(scope: scope, owner: owner)
             return
         }
-        let pendingCutoff = pendingInvalidationScope.invalidationCutoff(succeeded: false)
+        let pendingCutoff = pendingInvalidation.scope.invalidationCutoff(succeeded: false)
         let newCutoff = scope.invalidationCutoff(succeeded: false)
         if newCutoff > pendingCutoff {
-            self.pendingInvalidationScope = scope
+            self.pendingInvalidationRecord = MCPToolPendingSnapshotInvalidation(scope: scope, owner: owner)
         }
     }
 
     func clearPendingInvalidation(id: UUID) {
-        guard self.pendingInvalidationScope?.id == id else { return }
-        self.pendingInvalidationScope = nil
+        guard self.pendingInvalidationRecord?.scope.id == id else { return }
+        self.pendingInvalidationRecord = nil
     }
 
     private func cancelWaiter(id: UUID) {
