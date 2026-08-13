@@ -386,6 +386,19 @@ enum BridgeCapabilityPolicy {
         return enabledOperations.contains(.invalidateImplicitLatestSnapshot)
     }
 
+    static func supportsSnapshotMutationLeases(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {
+        guard handshake.negotiatedVersion >= PeekabooBridgeConstants.snapshotMutationLeaseVersion,
+              handshake.supportedOperations.contains(.beginSnapshotMutation),
+              handshake.supportedOperations.contains(.finishSnapshotMutation)
+        else {
+            return false
+        }
+
+        let enabledOperations = handshake.enabledOperations ?? handshake.supportedOperations
+        return enabledOperations.contains(.beginSnapshotMutation) &&
+            enabledOperations.contains(.finishSnapshotMutation)
+    }
+
     static func supportsElementActions(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {
         handshake.negotiatedVersion >= PeekabooBridgeProtocolVersion(major: 1, minor: 3) &&
             handshake.supportedOperations.contains(.setValue) &&

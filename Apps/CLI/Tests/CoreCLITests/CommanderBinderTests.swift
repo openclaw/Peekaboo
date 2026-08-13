@@ -620,6 +620,41 @@ struct CommanderBinderTests {
     }
 
     @Test
+    func `Snapshot mutation leases require protocol and both enabled operations`() {
+        let operations: [PeekabooBridgeOperation] = [.beginSnapshotMutation, .finishSnapshotMutation]
+        let current = BridgeTestFixtures.handshake(
+            negotiatedVersion: PeekabooBridgeConstants.snapshotMutationLeaseVersion,
+            hostKind: .onDemand,
+            build: nil,
+            supportedOperations: operations
+        )
+        let stale = BridgeTestFixtures.handshake(
+            negotiatedVersion: .init(major: 1, minor: 23),
+            hostKind: .onDemand,
+            build: nil,
+            supportedOperations: operations
+        )
+        let missing = BridgeTestFixtures.handshake(
+            negotiatedVersion: PeekabooBridgeConstants.snapshotMutationLeaseVersion,
+            hostKind: .onDemand,
+            build: nil,
+            supportedOperations: [.beginSnapshotMutation]
+        )
+        let disabled = BridgeTestFixtures.handshake(
+            negotiatedVersion: PeekabooBridgeConstants.snapshotMutationLeaseVersion,
+            hostKind: .onDemand,
+            build: nil,
+            supportedOperations: operations,
+            enabledOperations: [.beginSnapshotMutation]
+        )
+
+        #expect(CommandRuntime.supportsSnapshotMutationLeases(for: current))
+        #expect(!CommandRuntime.supportsSnapshotMutationLeases(for: stale))
+        #expect(!CommandRuntime.supportsSnapshotMutationLeases(for: missing))
+        #expect(!CommandRuntime.supportsSnapshotMutationLeases(for: disabled))
+    }
+
+    @Test
     func `Background press requires process-generation-pinned Bridge hotkeys`() throws {
         let background = try CommanderCLIBinder.makeRuntimeOptions(
             from: ParsedValues(positional: ["a"], options: ["pid": ["42"]], flags: []),

@@ -845,6 +845,7 @@ enum RuntimeHostResolver {
             supportsImplicitLatestSnapshotInvalidation: BridgeCapabilityPolicy.supportsImplicitSnapshotInvalidation(
                 for: handshake
             ),
+            supportsSnapshotMutationLeases: BridgeCapabilityPolicy.supportsSnapshotMutationLeases(for: handshake),
             supportsApplicationLaunchOptions: BridgeCapabilityPolicy.supportsApplicationLaunchOptions(for: handshake),
             supportsSafeBackgroundApplicationLaunchNoOp:
             BridgeCapabilityPolicy.supportsSafeBackgroundApplicationLaunchNoOp(for: handshake),

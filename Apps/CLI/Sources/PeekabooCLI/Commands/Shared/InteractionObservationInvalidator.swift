@@ -405,6 +405,7 @@ enum InteractionObservationInvalidator {
         return RemoteSnapshotManager(
             client: client,
             supportsImplicitLatestSnapshotInvalidation: true,
+            supportsSnapshotMutationLeases: BridgeCapabilityPolicy.supportsSnapshotMutationLeases(for: handshake),
             desktopMutationWatermarkStore: DesktopMutationWatermarkStore()
         )
     }

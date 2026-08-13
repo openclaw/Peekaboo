@@ -9,7 +9,7 @@ import PeekabooFoundation
 public final class RemoteSnapshotManager: SnapshotManagerProtocol {
     public let copiesScreenshotArtifactsIntoStorage = true
     public let supportsImplicitLatestSnapshotInvalidation: Bool
-    public let supportsSnapshotMutationLeases = true
+    public let supportsSnapshotMutationLeases: Bool
 
     public var effectiveImplicitLatestInvalidationWatermark: Date? {
         self.desktopMutationWatermarkStore?.effectiveWatermark()
@@ -21,10 +21,12 @@ public final class RemoteSnapshotManager: SnapshotManagerProtocol {
     public init(
         client: PeekabooBridgeClient,
         supportsImplicitLatestSnapshotInvalidation: Bool = false,
+        supportsSnapshotMutationLeases: Bool = false,
         desktopMutationWatermarkStore: DesktopMutationWatermarkStore? = nil)
     {
         self.client = client
         self.supportsImplicitLatestSnapshotInvalidation = supportsImplicitLatestSnapshotInvalidation
+        self.supportsSnapshotMutationLeases = supportsSnapshotMutationLeases
         self.desktopMutationWatermarkStore = desktopMutationWatermarkStore
     }
 

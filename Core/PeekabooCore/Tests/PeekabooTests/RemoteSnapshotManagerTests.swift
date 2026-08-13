@@ -9,10 +9,15 @@ struct RemoteSnapshotManagerTests {
     @Test
     @MainActor
     func `remote snapshot storage owns copied screenshot artifacts`() {
-        let remote = RemoteSnapshotManager(
+        let legacy = RemoteSnapshotManager(
             client: PeekabooBridgeClient(socketPath: "/tmp/unused.sock", requestTimeoutSec: 1))
+        let current = RemoteSnapshotManager(
+            client: PeekabooBridgeClient(socketPath: "/tmp/unused.sock", requestTimeoutSec: 1),
+            supportsSnapshotMutationLeases: true)
 
-        #expect(remote.copiesScreenshotArtifactsIntoStorage)
+        #expect(legacy.copiesScreenshotArtifactsIntoStorage)
+        #expect(!legacy.supportsSnapshotMutationLeases)
+        #expect(current.supportsSnapshotMutationLeases)
     }
 
     @Test

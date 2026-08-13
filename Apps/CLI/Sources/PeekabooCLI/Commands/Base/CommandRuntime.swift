@@ -365,6 +365,10 @@ extension CommandRuntime {
         BridgeCapabilityPolicy.supportsImplicitSnapshotInvalidation(for: handshake)
     }
 
+    static func supportsSnapshotMutationLeases(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {
+        BridgeCapabilityPolicy.supportsSnapshotMutationLeases(for: handshake)
+    }
+
     static func supportsElementActions(for handshake: PeekabooBridgeHandshakeResponse) -> Bool {
         BridgeCapabilityPolicy.supportsElementActions(for: handshake)
     }
