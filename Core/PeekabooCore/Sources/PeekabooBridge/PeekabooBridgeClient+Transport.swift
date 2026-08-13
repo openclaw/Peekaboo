@@ -7,6 +7,13 @@ extension PeekabooBridgeClient {
         _ request: PeekabooBridgeRequest,
         timeoutSec: TimeInterval? = nil) async throws -> PeekabooBridgeResponse
     {
+        try await self.sendCarryingActionOutcome(request, timeoutSec: timeoutSec).response
+    }
+
+    func sendCarryingActionOutcome(
+        _ request: PeekabooBridgeRequest,
+        timeoutSec: TimeInterval? = nil) async throws -> PeekabooBridgeTransportReply
+    {
         let explicitlyProjected = if case .projectedAction = request {
             true
         } else {
@@ -84,10 +91,11 @@ extension PeekabooBridgeClient {
                 operation: op,
                 causeDescription: "Bridge response decoding failed: \(error)")
         }
-        let response = try Self.unwrapResponse(
+        let reply = try Self.unwrapResponse(
             wireResponse,
             expectsProjectedResponse: expectsProjectedResponse,
             request: request)
+        let response = reply.response
         if case let .error(envelope) = response,
            request.mayMutateDesktop
         {
@@ -101,13 +109,13 @@ extension PeekabooBridgeClient {
         let duration = Date().timeIntervalSince(start)
         self.logger.debug(
             "bridge \(op.rawValue, privacy: .public) completed in \(duration, format: .fixed(precision: 3))s")
-        return response
+        return reply
     }
 
     private nonisolated static func unwrapResponse(
         _ response: PeekabooBridgeResponse,
         expectsProjectedResponse: Bool,
-        request: PeekabooBridgeRequest) throws -> PeekabooBridgeResponse
+        request: PeekabooBridgeRequest) throws -> PeekabooBridgeTransportReply
     {
         if expectsProjectedResponse {
             guard case let .projectedAction(payload) = response else {
@@ -127,10 +135,14 @@ extension PeekabooBridgeClient {
                     operation: request.operation,
                     causeDescription: "Bridge action response and error envelope carried contradictory outcomes")
             }
-            return payload.response
+            return PeekabooBridgeTransportReply(
+                response: payload.response,
+                outcome: payload.outcome)
         }
 
-        guard case .projectedAction = response else { return response }
+        guard case .projectedAction = response else {
+            return PeekabooBridgeTransportReply(response: response, outcome: nil)
+        }
         if request.mayMutateDesktop {
             throw self.responseLostFailure(
                 operation: request.operation,
@@ -149,6 +161,21 @@ extension PeekabooBridgeClient {
         switch response {
         case .ok:
             return
+        case let .error(envelope):
+            throw envelope
+        default:
+            throw PeekabooBridgeErrorEnvelope(code: .invalidRequest, message: "Unexpected response for void request")
+        }
+    }
+
+    func sendExpectOKCarryingActionOutcome(
+        _ request: PeekabooBridgeRequest,
+        timeoutSec: TimeInterval? = nil) async throws -> DesktopActionOutcome?
+    {
+        let reply = try await self.sendCarryingActionOutcome(request, timeoutSec: timeoutSec)
+        switch reply.response {
+        case .ok:
+            return reply.outcome?.outcome
         case let .error(envelope):
             throw envelope
         default:
@@ -255,6 +282,11 @@ extension PeekabooBridgeClient {
             hint: "Observe the target before retrying this operation.",
             causeDescription: envelope.details)
     }
+}
+
+struct PeekabooBridgeTransportReply: Sendable {
+    let response: PeekabooBridgeResponse
+    let outcome: DesktopActionOutcome.Projection?
 }
 
 private struct PeekabooBridgeResponseReadFailure: Error {

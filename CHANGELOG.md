@@ -20,6 +20,7 @@
 - Consolidate accessibility observer registration, exact element/process dispatch, stop, and deinitialization cleanup under one instance-owned registry.
 - Carry canonical desktop-action outcomes through capability-gated Bridge protocol 1.23 requests, preserving exact refused, partial, unverified, and indeterminate failures while older hosts remain conservative after a response is lost.
 - Project canonical desktop-action outcomes into MCP metadata, so partial failures retain recovery-side-effect semantics instead of incorrectly demanding a fresh observation.
+- Preserve successful native outcomes for click, type, type-actions, scroll, hotkey, action, and set-value across projected Bridge requests without changing legacy response payloads.
 - Embed one canonical 40-hex source commit in clean stamped CLI and macOS app builds, expose it through JSON/Bridge identity receipts, and require matching per-case socket/process-generation provenance for background certification while leaving raw unstamped builds explicitly `unknown`.
 - Correct `peekaboo bridge --help` and Bridge docs to describe capability-aware reusable-daemon, Peekaboo.app, on-demand-daemon, and local-fallback routing.
 - Refuse public raw `press` chords before dispatch unless explicit foreground consent is present, keep semantic background alternatives discoverable, and report foreground delivery as unverifiable instead of claiming the intended effect completed.

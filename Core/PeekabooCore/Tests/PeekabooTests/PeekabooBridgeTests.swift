@@ -2090,6 +2090,9 @@ final class StubAutomationService: TargetedHotkeyServiceProtocol, TargetedTypeSe
     var exactTypeError: (any Error)?
     var exactHotkeyError: (any Error)?
     var targetedClickError: (any Error)?
+    var actionOutcome = DesktopActionOutcome.dispatchedUnverified(
+        delivery: .init(mechanism: .accessibilityAction, mode: .background),
+        evidence: .deliveryAccepted)
     var exactKeyboardDelayNanoseconds: UInt64 = 0
     var recordsExactKeyboardEvents = false
     private(set) var exactKeyboardEvents: [String] = []

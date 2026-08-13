@@ -8,48 +8,48 @@ extension PeekabooBridgeServer {
     func handleAuthorized(
         _ request: PeekabooBridgeRequest,
         peer: PeekabooBridgePeer?,
-        permissions: PermissionsStatus) async throws -> PeekabooBridgeResponse
+        permissions: PermissionsStatus) async throws -> PeekabooBridgeHandledResponse
     {
         switch request.operation {
         case .permissionsStatus, .requestPostEventPermission, .daemonStatus, .daemonStop:
-            try await self.handleCoreRequest(request, peer: peer, permissions: permissions)
+            return try await .init(response: self.handleCoreRequest(request, peer: peer, permissions: permissions))
         case .browserStatus, .browserConnect, .browserDisconnect, .browserExecute:
-            try await self.handleBrowserRequest(request)
+            return try await .init(response: self.handleBrowserRequest(request))
         case .captureScreen, .captureWindow, .captureFrontmost, .captureArea:
-            try await self.handleCaptureRequest(request)
+            return try await .init(response: self.handleCaptureRequest(request))
         case .desktopObservation:
-            try await self.handleDesktopObservationRequest(request)
+            return try await .init(response: self.handleDesktopObservationRequest(request))
         case .detectElements, .inspectAccessibilityTree, .getFocusedElement, .click, .type, .typeActions,
              .targetedTypeActions, .exactWindowTargetedTypeActions,
              .setValue, .performAction, .scroll, .targetedScroll, .hotkey, .targetedHotkey,
              .exactWindowTargetedHotkey, .targetedClick,
              .exactWindowTargetedClick, .swipe, .drag, .moveMouse, .waitForElement:
-            try await self.handleAutomationRequest(request)
+            return try await self.handleAutomationRequest(request)
         case .listWindows, .focusWindow, .moveWindow, .resizeWindow, .setWindowBounds, .closeWindow,
              .backgroundCloseWindow,
              .minimizeWindow, .restoreWindow, .maximizeWindow, .getFocusedWindow:
-            try await self.handleWindowRequest(request)
+            return try await .init(response: self.handleWindowRequest(request))
         case .listApplications, .findApplication, .getFrontmostApplication, .isApplicationRunning,
              .launchApplication, .launchApplicationWithOptions, .relaunchApplicationWithOptions,
              .activateApplication, .quitApplication,
              .hideApplication, .unhideApplication, .hideOtherApplications, .showAllApplications:
-            try await self.handleApplicationRequest(request)
+            return try await .init(response: self.handleApplicationRequest(request))
         case .listMenus, .listFrontmostMenus, .clickMenuItem, .clickMenuItemByName, .listMenuExtras,
              .clickMenuExtra, .menuExtraOpenMenuFrame, .listMenuBarItems, .clickMenuBarItemNamed,
              .clickMenuBarItemIndex:
-            try await self.handleMenuRequest(request)
+            return try await .init(response: self.handleMenuRequest(request))
         case .listDockItems, .launchDockItem, .rightClickDockItem, .hideDock, .showDock, .isDockHidden,
              .findDockItem:
-            try await self.handleDockRequest(request)
+            return try await .init(response: self.handleDockRequest(request))
         case .dialogFindActive, .dialogClickButton, .backgroundDialogClickButton, .dialogEnterText,
              .dialogHandleFile, .dialogDismiss,
              .dialogListElements:
-            try await self.handleDialogRequest(request)
+            return try await .init(response: self.handleDialogRequest(request))
         case .createSnapshot, .storeDetectionResult, .getDetectionResult, .storeScreenshot,
              .storeObservationSnapshot, .storeAnnotatedScreenshot, .listSnapshots, .getMostRecentSnapshot,
              .cleanSnapshot,
              .invalidateImplicitLatestSnapshot, .cleanSnapshotsOlderThan, .cleanAllSnapshots:
-            try await self.handleSnapshotRequest(request)
+            return try await .init(response: self.handleSnapshotRequest(request))
         case ._appleScriptProbe:
             throw PeekabooBridgeErrorEnvelope(
                 code: .operationNotSupported,
@@ -176,18 +176,20 @@ extension PeekabooBridgeServer {
         }
     }
 
-    private func handleAutomationRequest(_ request: PeekabooBridgeRequest) async throws -> PeekabooBridgeResponse {
+    private func handleAutomationRequest(
+        _ request: PeekabooBridgeRequest) async throws -> PeekabooBridgeHandledResponse
+    {
         switch request {
         case let .detectElements(payload):
             let result = try await self.services.automation.detectElements(
                 in: payload.imageData,
                 snapshotId: payload.snapshotId,
                 windowContext: payload.windowContext)
-            return .elementDetection(result)
+            return .init(response: .elementDetection(result))
         case let .inspectAccessibilityTree(payload):
             let result = try await self.services.automation.inspectAccessibilityTree(
                 windowContext: payload.windowContext)
-            return .elementDetection(result)
+            return .init(response: .elementDetection(result))
         case let .getFocusedElement(payload):
             guard let automation = self.services.automation as? any TargetedFocusedElementServiceProtocol else {
                 throw PeekabooBridgeErrorEnvelope(
@@ -196,61 +198,79 @@ extension PeekabooBridgeServer {
             }
             let focusedElement = await automation.getFocusedElement(
                 targetProcessIdentifier: pid_t(payload.targetProcessIdentifier))
-            return .focusedElement(focusedElement)
+            return .init(response: .focusedElement(focusedElement))
         case let .click(payload):
-            try await self.services.automation.click(
-                target: payload.target,
-                clickType: payload.clickType,
-                snapshotId: payload.snapshotId)
-            return .ok
+            return try await self.handleAutomationAction(
+                withOutcome: { service in
+                    try await service.clickWithOutcome(
+                        target: payload.target,
+                        clickType: payload.clickType,
+                        snapshotId: payload.snapshotId)
+                },
+                legacy: {
+                    try await self.services.automation.click(
+                        target: payload.target,
+                        clickType: payload.clickType,
+                        snapshotId: payload.snapshotId)
+                    return ()
+                },
+                response: { _ in .ok })
         case let .type(payload):
-            try await self.services.automation.type(
-                text: payload.text,
-                target: payload.target,
-                clearExisting: payload.clearExisting,
-                typingDelay: payload.typingDelay,
-                snapshotId: payload.snapshotId)
-            return .ok
+            return try await self.handleAutomationAction(
+                withOutcome: { service in
+                    try await service.typeWithOutcome(
+                        text: payload.text,
+                        target: payload.target,
+                        clearExisting: payload.clearExisting,
+                        typingDelay: payload.typingDelay,
+                        snapshotId: payload.snapshotId)
+                },
+                legacy: {
+                    try await self.services.automation.type(
+                        text: payload.text,
+                        target: payload.target,
+                        clearExisting: payload.clearExisting,
+                        typingDelay: payload.typingDelay,
+                        snapshotId: payload.snapshotId)
+                    return ()
+                },
+                response: { _ in .ok })
         case let .typeActions(payload):
-            let result = try await self.services.automation.typeActions(
-                payload.actions,
-                cadence: payload.cadence,
-                snapshotId: payload.snapshotId)
-            return .typeResult(result)
+            return try await self.handleAutomationAction(
+                withOutcome: { service in
+                    try await service.typeActionsWithOutcome(
+                        payload.actions,
+                        cadence: payload.cadence,
+                        snapshotId: payload.snapshotId)
+                },
+                legacy: {
+                    try await self.services.automation.typeActions(
+                        payload.actions,
+                        cadence: payload.cadence,
+                        snapshotId: payload.snapshotId)
+                },
+                response: PeekabooBridgeResponse.typeResult)
         case .targetedTypeActions, .exactWindowTargetedTypeActions, .targetedHotkey,
              .exactWindowTargetedHotkey, .targetedClick:
             return try await self.handleTargetedAutomationRequest(request)
-        case let .setValue(payload):
-            guard let automation = self.services.automation as? any ElementActionAutomationServiceProtocol else {
-                throw PeekabooBridgeErrorEnvelope(
-                    code: .operationNotSupported,
-                    message: "setValue is not supported by this bridge host")
-            }
-            let result = try await automation.setValue(
-                target: payload.target,
-                value: payload.value,
-                snapshotId: payload.snapshotId)
-            return .elementActionResult(result)
-        case let .performAction(payload):
-            guard let automation = self.services.automation as? any ElementActionAutomationServiceProtocol else {
-                throw PeekabooBridgeErrorEnvelope(
-                    code: .operationNotSupported,
-                    message: "performAction is not supported by this bridge host")
-            }
-            let result = try await automation.performAction(
-                target: payload.target,
-                actionName: payload.actionName,
-                snapshotId: payload.snapshotId)
-            return .elementActionResult(result)
+        case .setValue, .performAction:
+            return try await self.handleElementActionRequest(request)
         case let .scroll(payload):
-            try await self.services.automation.scroll(payload.request)
-            return .ok
+            return try await self.handleScroll(payload.request)
         case let .targetedScroll(payload):
-            try await self.services.automation.scroll(payload.request)
-            return .ok
+            return try await self.handleScroll(payload.request)
         case let .hotkey(payload):
-            try await self.services.automation.hotkey(keys: payload.keys, holdDuration: payload.holdDuration)
-            return .ok
+            return try await self.handleAutomationAction(
+                withOutcome: { service in
+                    try await service.hotkeyWithOutcome(keys: payload.keys, holdDuration: payload.holdDuration)
+                },
+                legacy: {
+                    try await self.services.automation.hotkey(
+                        keys: payload.keys,
+                        holdDuration: payload.holdDuration)
+                    return ()
+                },
+                response: { _ in .ok })
         case let .swipe(payload):
             try await self.services.automation.swipe(
                 from: payload.from,
@@ -258,30 +278,100 @@ extension PeekabooBridgeServer {
                 duration: payload.duration,
                 steps: payload.steps,
                 profile: payload.profile)
-            return .ok
+            return .init(response: .ok)
         case let .drag(payload):
             try await self.services.automation.drag(payload.automationRequest)
-            return .ok
+            return .init(response: .ok)
         case let .moveMouse(payload):
             try await self.services.automation.moveMouse(
                 to: payload.to,
                 duration: payload.duration,
                 steps: payload.steps,
                 profile: payload.profile)
-            return .ok
+            return .init(response: .ok)
         case let .waitForElement(payload):
             let result = try await self.services.automation.waitForElement(
                 target: payload.target,
                 timeout: payload.timeout,
                 snapshotId: payload.snapshotId)
-            return .waitResult(result)
+            return .init(response: .waitResult(result))
+        default:
+            throw Self.invalidRequest(for: request)
+        }
+    }
+
+    private func handleScroll(_ request: ScrollRequest) async throws -> PeekabooBridgeHandledResponse {
+        try await self.handleAutomationAction(
+            withOutcome: { service in
+                try await service.scrollWithOutcome(request)
+            },
+            legacy: {
+                try await self.services.automation.scroll(request)
+                return ()
+            },
+            response: { _ in .ok })
+    }
+
+    private func handleAutomationAction<Payload: Sendable>(
+        withOutcome: (any UIAutomationActionOutcomeProviding) async throws -> UIAutomationActionResult<Payload>,
+        legacy: () async throws -> Payload,
+        response: (Payload) -> PeekabooBridgeResponse) async throws -> PeekabooBridgeHandledResponse
+    {
+        guard let service = self.services.automation as? any UIAutomationActionOutcomeProviding else {
+            let payload = try await legacy()
+            return .init(response: response(payload))
+        }
+        let result = try await withOutcome(service)
+        return .init(response: response(result.payload), outcome: result.outcome)
+    }
+
+    private func handleElementActionRequest(_ request: PeekabooBridgeRequest) async throws
+        -> PeekabooBridgeHandledResponse
+    {
+        guard let automation = self.services.automation as? any ElementActionAutomationServiceProtocol else {
+            throw PeekabooBridgeErrorEnvelope(
+                code: .operationNotSupported,
+                message: "Element actions are not supported by this bridge host")
+        }
+
+        switch request {
+        case let .setValue(payload):
+            return try await self.handleAutomationAction(
+                withOutcome: { service in
+                    try await service.setValueWithOutcome(
+                        target: payload.target,
+                        value: payload.value,
+                        snapshotId: payload.snapshotId)
+                },
+                legacy: {
+                    try await automation.setValue(
+                        target: payload.target,
+                        value: payload.value,
+                        snapshotId: payload.snapshotId)
+                },
+                response: PeekabooBridgeResponse.elementActionResult)
+        case let .performAction(payload):
+            return try await self.handleAutomationAction(
+                withOutcome: { service in
+                    try await service.performActionWithOutcome(
+                        target: payload.target,
+                        actionName: payload.actionName,
+                        snapshotId: payload.snapshotId)
+                },
+                legacy: {
+                    try await automation.performAction(
+                        target: payload.target,
+                        actionName: payload.actionName,
+                        snapshotId: payload.snapshotId)
+                },
+                response: PeekabooBridgeResponse.elementActionResult)
         default:
             throw Self.invalidRequest(for: request)
         }
     }
 
     private func handleTargetedAutomationRequest(_ request: PeekabooBridgeRequest) async throws
-        -> PeekabooBridgeResponse
+        -> PeekabooBridgeHandledResponse
     {
         switch request {
         case let .targetedTypeActions(payload):
@@ -294,126 +384,210 @@ extension PeekabooBridgeServer {
                     message: "Background typing is not supported by this bridge host")
             }
 
-            return try await .typeResult(self.handleTargetedTypeActions(payload, service: targetedTypeService))
+            return try await self.handleTargetedTypeActions(payload, service: targetedTypeService)
         case let .exactWindowTargetedTypeActions(payload):
-            guard let service = self.services.automation as? any ExactWindowTargetedKeyboardServiceProtocol,
-                  service.supportsExactWindowTargetedKeyboard
-            else {
-                throw PeekabooBridgeErrorEnvelope(
-                    code: .operationNotSupported,
-                    message: "Atomic exact-window background typing is not supported by this bridge host")
-            }
-            self.automationActivityObserver?(pid_t(payload.expectedWindowIdentity.ownerProcessIdentifier))
-            let result = if let expectedFocusedElement = payload.expectedFocusedElement {
-                try await service.typeActions(
-                    payload.actions,
-                    cadence: payload.cadence,
-                    snapshotId: payload.snapshotId,
-                    target: ExactWindowKeyboardTarget(
-                        windowIdentity: payload.expectedWindowIdentity,
-                        windowBounds: payload.expectedWindowBounds,
-                        focusedElement: expectedFocusedElement))
-            } else {
-                try await service.typeActions(
-                    payload.actions,
-                    cadence: payload.cadence,
-                    snapshotId: payload.snapshotId,
-                    expectedWindowIdentity: payload.expectedWindowIdentity,
-                    expectedWindowBounds: payload.expectedWindowBounds)
-            }
-            return .typeResult(result)
+            return try await self.handleExactWindowTargetedTypeActions(payload)
         case let .targetedHotkey(payload):
             return try await self.handleTargetedHotkey(payload)
         case let .exactWindowTargetedHotkey(payload):
-            guard let service = self.services.automation as? any ExactWindowTargetedKeyboardServiceProtocol,
-                  service.supportsExactWindowTargetedKeyboard
-            else {
-                throw PeekabooBridgeErrorEnvelope(
-                    code: .operationNotSupported,
-                    message: "Atomic exact-window background hotkeys are not supported by this bridge host")
-            }
-            self.automationActivityObserver?(pid_t(payload.expectedWindowIdentity.ownerProcessIdentifier))
-            if let expectedFocusedElement = payload.expectedFocusedElement {
-                try await service.hotkey(
-                    keys: payload.keys,
-                    holdDuration: payload.holdDuration,
-                    target: ExactWindowKeyboardTarget(
-                        windowIdentity: payload.expectedWindowIdentity,
-                        windowBounds: payload.expectedWindowBounds,
-                        focusedElement: expectedFocusedElement))
-            } else {
-                try await service.hotkey(
-                    keys: payload.keys,
-                    holdDuration: payload.holdDuration,
-                    expectedWindowIdentity: payload.expectedWindowIdentity,
-                    expectedWindowBounds: payload.expectedWindowBounds)
-            }
-            return .ok
+            return try await self.handleExactWindowTargetedHotkey(payload)
         case let .targetedClick(payload):
-            guard
-                let targetedClickService = self.services.automation as? any TargetedClickServiceProtocol,
-                targetedClickService.supportsTargetedClicks
-            else {
-                throw PeekabooBridgeErrorEnvelope(
-                    code: .operationNotSupported,
-                    message: "Background clicks are not supported by this bridge host")
-            }
-
-            if case .coordinates = payload.target, payload.targetWindowID == nil {
-                throw PeekabooBridgeErrorEnvelope(
-                    code: .invalidRequest,
-                    message: "Background coordinate clicks require an exact capture-time window identity and bounds; " +
-                        "PID-only coordinates are refused")
-            }
-
-            if let targetWindowID = payload.targetWindowID {
-                guard payload.expectedProcessIdentity == nil else {
-                    throw PeekabooBridgeErrorEnvelope(
-                        code: .invalidRequest,
-                        message: "Exact-window clicks cannot also supply a process-only identity")
-                }
-                guard let exactWindowService = targetedClickService as? any ExactWindowTargetedClickServiceProtocol
-                else {
-                    throw PeekabooBridgeErrorEnvelope(
-                        code: .operationNotSupported,
-                        message: "Exact-window background clicks are not supported by this bridge host")
-                }
-                guard let expectedIdentity = payload.expectedWindowIdentity,
-                      let expectedBounds = payload.expectedWindowBounds,
-                      expectedIdentity.windowID == targetWindowID,
-                      expectedIdentity.ownerProcessIdentifier == payload.targetProcessIdentifier
-                else {
-                    throw PeekabooBridgeErrorEnvelope(
-                        code: .invalidRequest,
-                        message: "Exact-window click requires a matching process-generation identity and bounds")
-                }
-                self.automationActivityObserver?(pid_t(payload.targetProcessIdentifier))
-                try await exactWindowService.click(
-                    target: payload.target,
-                    clickType: payload.clickType,
-                    snapshotId: payload.snapshotId,
-                    expectedWindowIdentity: expectedIdentity,
-                    expectedWindowBounds: expectedBounds)
-            } else {
-                try await self.handleProcessTargetedClick(payload, service: targetedClickService)
-            }
-            return .ok
+            return try await self.handleTargetedClick(payload)
         default:
             throw Self.invalidRequest(for: request)
         }
     }
 
+    private func handleExactWindowTargetedTypeActions(
+        _ payload: PeekabooBridgeExactWindowTypeActionsRequest) async throws
+        -> PeekabooBridgeHandledResponse
+    {
+        guard let service = self.services.automation as? any ExactWindowTargetedKeyboardServiceProtocol,
+              service.supportsExactWindowTargetedKeyboard
+        else {
+            throw PeekabooBridgeErrorEnvelope(
+                code: .operationNotSupported,
+                message: "Atomic exact-window background typing is not supported by this bridge host")
+        }
+        self.automationActivityObserver?(pid_t(payload.expectedWindowIdentity.ownerProcessIdentifier))
+        if let outcomeService = self.services.automation as? any UIAutomationActionOutcomeProviding {
+            let result = if let expectedFocusedElement = payload.expectedFocusedElement {
+                try await outcomeService.typeActionsWithOutcome(
+                    payload.actions,
+                    cadence: payload.cadence,
+                    snapshotId: payload.snapshotId,
+                    target: ExactWindowKeyboardTarget(
+                        windowIdentity: payload.expectedWindowIdentity,
+                        windowBounds: payload.expectedWindowBounds,
+                        focusedElement: expectedFocusedElement))
+            } else {
+                try await outcomeService.typeActionsWithOutcome(
+                    payload.actions,
+                    cadence: payload.cadence,
+                    snapshotId: payload.snapshotId,
+                    expectedWindowIdentity: payload.expectedWindowIdentity,
+                    expectedWindowBounds: payload.expectedWindowBounds)
+            }
+            return .init(response: .typeResult(result.payload), outcome: result.outcome)
+        }
+        let result = if let expectedFocusedElement = payload.expectedFocusedElement {
+            try await service.typeActions(
+                payload.actions,
+                cadence: payload.cadence,
+                snapshotId: payload.snapshotId,
+                target: ExactWindowKeyboardTarget(
+                    windowIdentity: payload.expectedWindowIdentity,
+                    windowBounds: payload.expectedWindowBounds,
+                    focusedElement: expectedFocusedElement))
+        } else {
+            try await service.typeActions(
+                payload.actions,
+                cadence: payload.cadence,
+                snapshotId: payload.snapshotId,
+                expectedWindowIdentity: payload.expectedWindowIdentity,
+                expectedWindowBounds: payload.expectedWindowBounds)
+        }
+        return .init(response: .typeResult(result))
+    }
+
+    private func handleExactWindowTargetedHotkey(
+        _ payload: PeekabooBridgeExactWindowHotkeyRequest) async throws
+        -> PeekabooBridgeHandledResponse
+    {
+        guard let service = self.services.automation as? any ExactWindowTargetedKeyboardServiceProtocol,
+              service.supportsExactWindowTargetedKeyboard
+        else {
+            throw PeekabooBridgeErrorEnvelope(
+                code: .operationNotSupported,
+                message: "Atomic exact-window background hotkeys are not supported by this bridge host")
+        }
+        self.automationActivityObserver?(pid_t(payload.expectedWindowIdentity.ownerProcessIdentifier))
+        if let outcomeService = self.services.automation as? any UIAutomationActionOutcomeProviding {
+            let result = if let expectedFocusedElement = payload.expectedFocusedElement {
+                try await outcomeService.hotkeyWithOutcome(
+                    keys: payload.keys,
+                    holdDuration: payload.holdDuration,
+                    target: ExactWindowKeyboardTarget(
+                        windowIdentity: payload.expectedWindowIdentity,
+                        windowBounds: payload.expectedWindowBounds,
+                        focusedElement: expectedFocusedElement))
+            } else {
+                try await outcomeService.hotkeyWithOutcome(
+                    keys: payload.keys,
+                    holdDuration: payload.holdDuration,
+                    expectedWindowIdentity: payload.expectedWindowIdentity,
+                    expectedWindowBounds: payload.expectedWindowBounds)
+            }
+            return .init(response: .ok, outcome: result.outcome)
+        }
+        if let expectedFocusedElement = payload.expectedFocusedElement {
+            try await service.hotkey(
+                keys: payload.keys,
+                holdDuration: payload.holdDuration,
+                target: ExactWindowKeyboardTarget(
+                    windowIdentity: payload.expectedWindowIdentity,
+                    windowBounds: payload.expectedWindowBounds,
+                    focusedElement: expectedFocusedElement))
+        } else {
+            try await service.hotkey(
+                keys: payload.keys,
+                holdDuration: payload.holdDuration,
+                expectedWindowIdentity: payload.expectedWindowIdentity,
+                expectedWindowBounds: payload.expectedWindowBounds)
+        }
+        return .init(response: .ok)
+    }
+
+    private func handleTargetedClick(_ payload: PeekabooBridgeTargetedClickRequest) async throws
+        -> PeekabooBridgeHandledResponse
+    {
+        guard
+            let targetedClickService = self.services.automation as? any TargetedClickServiceProtocol,
+            targetedClickService.supportsTargetedClicks
+        else {
+            throw PeekabooBridgeErrorEnvelope(
+                code: .operationNotSupported,
+                message: "Background clicks are not supported by this bridge host")
+        }
+        if case .coordinates = payload.target, payload.targetWindowID == nil {
+            throw PeekabooBridgeErrorEnvelope(
+                code: .invalidRequest,
+                message: "Background coordinate clicks require an exact capture-time window identity and bounds; " +
+                    "PID-only coordinates are refused")
+        }
+        guard let targetWindowID = payload.targetWindowID else {
+            let outcome = try await self.handleProcessTargetedClick(payload, service: targetedClickService)
+            return .init(response: .ok, outcome: outcome)
+        }
+        return try await self.handleExactWindowTargetedClick(
+            payload,
+            targetWindowID: targetWindowID,
+            service: targetedClickService)
+    }
+
+    private func handleExactWindowTargetedClick(
+        _ payload: PeekabooBridgeTargetedClickRequest,
+        targetWindowID: Int,
+        service: any TargetedClickServiceProtocol) async throws -> PeekabooBridgeHandledResponse
+    {
+        guard payload.expectedProcessIdentity == nil else {
+            throw PeekabooBridgeErrorEnvelope(
+                code: .invalidRequest,
+                message: "Exact-window clicks cannot also supply a process-only identity")
+        }
+        guard let exactWindowService = service as? any ExactWindowTargetedClickServiceProtocol else {
+            throw PeekabooBridgeErrorEnvelope(
+                code: .operationNotSupported,
+                message: "Exact-window background clicks are not supported by this bridge host")
+        }
+        guard let expectedIdentity = payload.expectedWindowIdentity,
+              let expectedBounds = payload.expectedWindowBounds,
+              expectedIdentity.windowID == targetWindowID,
+              expectedIdentity.ownerProcessIdentifier == payload.targetProcessIdentifier
+        else {
+            throw PeekabooBridgeErrorEnvelope(
+                code: .invalidRequest,
+                message: "Exact-window click requires a matching process-generation identity and bounds")
+        }
+        self.automationActivityObserver?(pid_t(payload.targetProcessIdentifier))
+        guard let outcomeService = self.services.automation as? any UIAutomationActionOutcomeProviding else {
+            try await exactWindowService.click(
+                target: payload.target,
+                clickType: payload.clickType,
+                snapshotId: payload.snapshotId,
+                expectedWindowIdentity: expectedIdentity,
+                expectedWindowBounds: expectedBounds)
+            return .init(response: .ok)
+        }
+        let result = try await outcomeService.clickWithOutcome(
+            target: payload.target,
+            clickType: payload.clickType,
+            snapshotId: payload.snapshotId,
+            expectedWindowIdentity: expectedIdentity,
+            expectedWindowBounds: expectedBounds)
+        return .init(response: .ok, outcome: result.outcome)
+    }
+
     private func handleTargetedTypeActions(
         _ payload: PeekabooBridgeTargetedTypeActionsRequest,
-        service: any TargetedTypeServiceProtocol) async throws -> TypeResult
+        service: any TargetedTypeServiceProtocol) async throws -> PeekabooBridgeHandledResponse
     {
         self.automationActivityObserver?(pid_t(payload.targetProcessIdentifier))
         guard let expectedIdentity = payload.expectedProcessIdentity else {
-            return try await service.typeActions(
+            if let outcomeService = self.services.automation as? any UIAutomationActionOutcomeProviding {
+                let result = try await outcomeService.typeActionsWithOutcome(
+                    payload.actions,
+                    cadence: payload.cadence,
+                    snapshotId: payload.snapshotId,
+                    targetProcessIdentifier: pid_t(payload.targetProcessIdentifier))
+                return .init(response: .typeResult(result.payload), outcome: result.outcome)
+            }
+            let result = try await service.typeActions(
                 payload.actions,
                 cadence: payload.cadence,
                 snapshotId: payload.snapshotId,
                 targetProcessIdentifier: pid_t(payload.targetProcessIdentifier))
+            return .init(response: .typeResult(result))
         }
         guard expectedIdentity.processIdentifier == payload.targetProcessIdentifier else {
             throw PeekabooBridgeErrorEnvelope(
@@ -425,25 +599,42 @@ extension PeekabooBridgeServer {
                 code: .operationNotSupported,
                 message: "Process-generation-pinned background typing is not supported by this bridge host")
         }
-        return try await service.typeActions(
+        if let outcomeService = self.services.automation as? any UIAutomationActionOutcomeProviding {
+            let result = try await outcomeService.typeActionsWithOutcome(
+                payload.actions,
+                cadence: payload.cadence,
+                snapshotId: payload.snapshotId,
+                expectedProcessIdentity: expectedIdentity)
+            return .init(response: .typeResult(result.payload), outcome: result.outcome)
+        }
+        let result = try await service.typeActions(
             payload.actions,
             cadence: payload.cadence,
             snapshotId: payload.snapshotId,
             expectedProcessIdentity: expectedIdentity)
+        return .init(response: .typeResult(result))
     }
 
     private func handleProcessTargetedClick(
         _ payload: PeekabooBridgeTargetedClickRequest,
-        service: any TargetedClickServiceProtocol) async throws
+        service: any TargetedClickServiceProtocol) async throws -> DesktopActionOutcome?
     {
         self.automationActivityObserver?(pid_t(payload.targetProcessIdentifier))
         guard let expectedIdentity = payload.expectedProcessIdentity else {
+            if let outcomeService = self.services.automation as? any UIAutomationActionOutcomeProviding {
+                let result = try await outcomeService.clickWithOutcome(
+                    target: payload.target,
+                    clickType: payload.clickType,
+                    snapshotId: payload.snapshotId,
+                    targetProcessIdentifier: pid_t(payload.targetProcessIdentifier))
+                return result.outcome
+            }
             try await service.click(
                 target: payload.target,
                 clickType: payload.clickType,
                 snapshotId: payload.snapshotId,
                 targetProcessIdentifier: pid_t(payload.targetProcessIdentifier))
-            return
+            return nil
         }
         guard expectedIdentity.processIdentifier == payload.targetProcessIdentifier else {
             throw PeekabooBridgeErrorEnvelope(
@@ -455,15 +646,24 @@ extension PeekabooBridgeServer {
                 code: .operationNotSupported,
                 message: "Process-generation-pinned background clicks are not supported by this bridge host")
         }
+        if let outcomeService = self.services.automation as? any UIAutomationActionOutcomeProviding {
+            let result = try await outcomeService.clickWithOutcome(
+                target: payload.target,
+                clickType: payload.clickType,
+                snapshotId: payload.snapshotId,
+                expectedProcessIdentity: expectedIdentity)
+            return result.outcome
+        }
         try await service.click(
             target: payload.target,
             clickType: payload.clickType,
             snapshotId: payload.snapshotId,
             expectedProcessIdentity: expectedIdentity)
+        return nil
     }
 
     private func handleTargetedHotkey(
-        _ payload: PeekabooBridgeTargetedHotkeyRequest) async throws -> PeekabooBridgeResponse
+        _ payload: PeekabooBridgeTargetedHotkeyRequest) async throws -> PeekabooBridgeHandledResponse
     {
         guard
             let service = self.services.automation as? any TargetedHotkeyServiceProtocol,
@@ -486,17 +686,31 @@ extension PeekabooBridgeServer {
                     code: .operationNotSupported,
                     message: "Process-generation-pinned background hotkeys are not supported by this bridge host")
             }
+            if let outcomeService = self.services.automation as? any UIAutomationActionOutcomeProviding {
+                let result = try await outcomeService.hotkeyWithOutcome(
+                    keys: payload.keys,
+                    holdDuration: payload.holdDuration,
+                    expectedProcessIdentity: expectedIdentity)
+                return .init(response: .ok, outcome: result.outcome)
+            }
             try await service.hotkey(
                 keys: payload.keys,
                 holdDuration: payload.holdDuration,
                 expectedProcessIdentity: expectedIdentity)
         } else {
+            if let outcomeService = self.services.automation as? any UIAutomationActionOutcomeProviding {
+                let result = try await outcomeService.hotkeyWithOutcome(
+                    keys: payload.keys,
+                    holdDuration: payload.holdDuration,
+                    targetProcessIdentifier: pid_t(payload.targetProcessIdentifier))
+                return .init(response: .ok, outcome: result.outcome)
+            }
             try await service.hotkey(
                 keys: payload.keys,
                 holdDuration: payload.holdDuration,
                 targetProcessIdentifier: pid_t(payload.targetProcessIdentifier))
         }
-        return .ok
+        return .init(response: .ok)
     }
 
     private func handleWindowRequest(_ request: PeekabooBridgeRequest) async throws -> PeekabooBridgeResponse {

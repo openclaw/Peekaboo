@@ -151,8 +151,8 @@ public final class PeekabooBridgeServer {
             if case let .projectedAction(payload) = request {
                 return await self.handleProjectedAction(payload, peer: peer)
             }
-            let response = try await self.route(request, peer: peer)
-            return try self.encoder.encode(response)
+            let handled = try await self.route(request, peer: peer)
+            return try self.encoder.encode(handled.response)
         } catch let envelope as PeekabooBridgeErrorEnvelope {
             self.logger.error("bridge request failed: \(envelope.message, privacy: .public)")
             return PeekabooBridgeResponse.encodeError(envelope.legacyCompatible, using: self.encoder)
@@ -178,10 +178,10 @@ public final class PeekabooBridgeServer {
     {
         do {
             let request = try payload.validatedRequest()
-            let response = try await self.route(request, peer: peer)
+            let handled = try await self.route(request, peer: peer)
             return try self.encoder.encode(PeekabooBridgeResponse.projectedAction(.init(
-                response: response,
-                outcome: Self.actionOutcome(in: response))))
+                response: handled.response,
+                outcome: handled.outcome?.routed(to: .bridge).projection)))
         } catch let envelope as PeekabooBridgeErrorEnvelope {
             self.logger.error("projected bridge request failed: \(envelope.message, privacy: .public)")
             return self.encodeProjectedError(envelope)
@@ -209,19 +209,9 @@ public final class PeekabooBridgeServer {
         return data
     }
 
-    private static func actionOutcome(
-        in response: PeekabooBridgeResponse) -> DesktopActionOutcome.Projection?
-    {
-        switch response {
-        case let .error(envelope): envelope.actionOutcome
-        case let .projectedAction(payload): payload.outcome
-        default: nil
-        }
-    }
-
     private func route(
         _ request: PeekabooBridgeRequest,
-        peer: PeekabooBridgePeer?) async throws -> PeekabooBridgeResponse
+        peer: PeekabooBridgePeer?) async throws -> PeekabooBridgeHandledResponse
     {
         try self.validatePeerAuthorization(peer)
         try PeekabooBridgeRequestContext.checkRequestIsActive()
@@ -556,7 +546,7 @@ public final class PeekabooBridgeServer {
     private func handleAuthorizedWithDesktopMutationBarrier(
         _ request: PeekabooBridgeRequest,
         peer: PeekabooBridgePeer?,
-        permissions: PermissionsStatus) async throws -> PeekabooBridgeResponse
+        permissions: PermissionsStatus) async throws -> PeekabooBridgeHandledResponse
     {
         let nativeLeafOwnsLane = request.nativeLeafOwnsDesktopOperationLane &&
             self.services.ownsDesktopOperationLane(for: request.operation)
@@ -592,7 +582,7 @@ public final class PeekabooBridgeServer {
     private func handleAuthorizedWithOwnedDesktopOperationLane(
         _ request: PeekabooBridgeRequest,
         peer: PeekabooBridgePeer?,
-        permissions: PermissionsStatus) async throws -> PeekabooBridgeResponse
+        permissions: PermissionsStatus) async throws -> PeekabooBridgeHandledResponse
     {
         guard request.mayMutateDesktop else {
             return try await self.handleAuthorized(request, peer: peer, permissions: permissions)
@@ -631,7 +621,7 @@ public final class PeekabooBridgeServer {
             throw error
         }
 
-        let response: PeekabooBridgeResponse?
+        let response: PeekabooBridgeHandledResponse?
         let operationError: (any Error)?
         do {
             response = try await self.handleAuthorized(request, peer: peer, permissions: permissions)
@@ -641,12 +631,12 @@ public final class PeekabooBridgeServer {
             operationError = error
         }
 
-        let completedResponse: PeekabooBridgeResponse?
+        let completedLegacyResponse: PeekabooBridgeResponse?
         do {
-            completedResponse = try await self.completeDesktopMutation(
+            completedLegacyResponse = try await self.completeDesktopMutation(
                 mutation,
                 request: request,
-                response: response,
+                response: response?.response,
                 store: desktopMutationWatermarkStore)
         } catch {
             throw error
@@ -655,12 +645,12 @@ public final class PeekabooBridgeServer {
         if let operationError {
             throw operationError
         }
-        guard let completedResponse = completedResponse ?? response else {
+        guard let response else {
             throw PeekabooBridgeErrorEnvelope(
                 code: .internalError,
                 message: "Desktop operation returned neither a response nor an error")
         }
-        return completedResponse
+        return completedLegacyResponse.map(response.replacingResponse) ?? response
     }
 
     private func validatePinnedWindowMutation(_ request: PeekabooBridgeRequest) throws {

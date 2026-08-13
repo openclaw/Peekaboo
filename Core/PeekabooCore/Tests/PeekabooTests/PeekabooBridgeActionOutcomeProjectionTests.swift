@@ -6,6 +6,7 @@ import PeekabooBridgeTestSupport
 import PeekabooFoundation
 import Testing
 @testable import PeekabooBridge
+@testable import PeekabooCore
 
 struct PeekabooBridgeActionOutcomeProjectionTests {
     @Test
@@ -193,6 +194,121 @@ struct PeekabooBridgeActionOutcomeProjectionTests {
         #expect(projectedError.message == failure.message)
         #expect(projectedError.actionFailureHint == failure.hint)
         #expect(projectedError.actionFailureCauseDescription == failure.causeDescription)
+    }
+
+    @Test
+    @MainActor
+    func `current server preserves every successful canonical outcome behind legacy responses`() async throws {
+        let services = StubServices()
+        let server = PeekabooBridgeServer(
+            services: services,
+            allowlistedTeams: [],
+            allowlistedBundles: [],
+            hostIdentity: nil,
+            permissionStatusEvaluator: { _ in Self.grantedPermissions })
+
+        for outcome in BridgeTestFixtures.canonicalActionOutcomes {
+            services.automationStub.actionOutcome = outcome
+            let legacy = try await Self.send(Self.clickRequest, to: server)
+            guard case .ok = legacy else {
+                Issue.record("Expected unchanged legacy click response for \(outcome.state.rawValue)")
+                continue
+            }
+
+            let projected = try await Self.send(
+                .projectedAction(.init(request: Self.clickRequest)),
+                to: server)
+            guard case let .projectedAction(payload) = projected,
+                  case .ok = payload.response
+            else {
+                Issue.record("Expected projected click response for \(outcome.state.rawValue)")
+                continue
+            }
+            #expect(payload.outcome == outcome.routed(to: .bridge).projection)
+        }
+    }
+
+    @Test
+    @MainActor
+    func `all backed automation families retain their native success outcome`() async throws {
+        let services = StubServices()
+        let server = PeekabooBridgeServer(
+            services: services,
+            allowlistedTeams: [],
+            allowlistedBundles: [],
+            hostIdentity: nil)
+        let expected = DesktopActionOutcome.confirmedChange(
+            delivery: .init(mechanism: .accessibilityAction, mode: .background))
+        services.automationStub.actionOutcome = expected
+        let requests: [PeekabooBridgeRequest] = [
+            Self.clickRequest,
+            .type(.init(
+                text: "x",
+                target: nil,
+                clearExisting: false,
+                typingDelay: 0,
+                snapshotId: nil)),
+            .typeActions(.init(
+                actions: [.text("x")],
+                cadence: .fixed(milliseconds: 0),
+                snapshotId: nil)),
+            .scroll(.init(request: .init(
+                direction: .down,
+                amount: 1,
+                foreground: true))),
+            .hotkey(.init(keys: "cmd,a", holdDuration: 0)),
+            .setValue(.init(target: "B1", value: .string("x"), snapshotId: "snapshot")),
+            .performAction(.init(target: "B1", actionName: "AXPress", snapshotId: "snapshot")),
+        ]
+
+        for request in requests {
+            let handled = try await server.handleAuthorized(
+                request,
+                peer: nil,
+                permissions: Self.grantedPermissions)
+            #expect(handled.outcome == expected, "Missing native outcome for \(request.operation.rawValue)")
+        }
+    }
+
+    @Test
+    func `remote automation preserves current outcomes and legacy absence`() async throws {
+        let currentOutcome = DesktopActionOutcome.confirmedChange(
+            route: .bridge,
+            delivery: .init(mechanism: .accessibilityAction, mode: .background))
+        let currentHandshake = BridgeTestFixtures.handshake(
+            negotiatedVersion: PeekabooBridgeConstants.protocolVersion,
+            supportedOperations: [.click],
+            hostCapabilities: [PeekabooBridgeHostCapability.desktopActionOutcomeProjection])
+        let currentPeer = try NegotiatedProjectionBridgePeer(responses: [
+            .handshake(currentHandshake),
+            .projectedAction(.init(response: .ok, outcome: currentOutcome.projection)),
+        ])
+        let currentClient = PeekabooBridgeClient(socketPath: currentPeer.socketPath, requestTimeoutSec: 1)
+        _ = try await currentClient.handshake(client: Self.clientIdentity)
+        let currentRemote = await MainActor.run { RemoteUIAutomationService(client: currentClient) }
+        let currentResult = try await currentRemote.clickWithOutcome(
+            target: .coordinates(.zero),
+            clickType: .single,
+            snapshotId: nil)
+        #expect(currentResult.outcome == currentOutcome)
+        await currentPeer.waitUntilFinished()
+
+        let previousHandshake = BridgeTestFixtures.handshake(
+            negotiatedVersion: .init(major: 1, minor: 22),
+            supportedOperations: [.click])
+        let previousPeer = try NegotiatedProjectionBridgePeer(responses: [
+            .handshake(previousHandshake),
+            .ok,
+        ])
+        let previousClient = PeekabooBridgeClient(socketPath: previousPeer.socketPath, requestTimeoutSec: 1)
+        _ = try await previousClient.handshake(client: Self.clientIdentity)
+        let previousRemote = await MainActor.run { RemoteUIAutomationService(client: previousClient) }
+        let previousResult = try await previousRemote.clickWithOutcome(
+            target: .coordinates(.zero),
+            clickType: .single,
+            snapshotId: nil)
+        #expect(previousResult.outcome == nil)
+        await previousPeer.waitUntilFinished()
     }
 
     @Test
@@ -554,6 +670,11 @@ struct PeekabooBridgeActionOutcomeProjectionTests {
         processIdentifier: getpid(),
         hostname: nil)
 
+    private static let grantedPermissions = PermissionsStatus(
+        screenRecording: true,
+        accessibility: true,
+        postEvent: true)
+
     private static let legacyClickRequestData = Data(
         #"{"click":{"_0":{"clickType":"single","target":{"kind":"coordinates","x":17,"y":29}}}}"#.utf8)
 
@@ -672,6 +793,222 @@ struct PeekabooBridgeActionOutcomeProjectionTests {
         let mutationDispatched: Bool
         let retrySafe: Bool
         let requiresFreshObservation: Bool
+    }
+}
+
+extension StubAutomationService: UIAutomationActionOutcomeProviding {
+    func clickWithOutcome(
+        target: ClickTarget,
+        clickType: ClickType,
+        snapshotId: String?) async throws -> UIAutomationActionResult<Void>
+    {
+        try await self.click(target: target, clickType: clickType, snapshotId: snapshotId)
+        return self.actionResult(())
+    }
+
+    func clickWithOutcome(
+        target: ClickTarget,
+        clickType: ClickType,
+        snapshotId: String?,
+        targetProcessIdentifier: pid_t) async throws -> UIAutomationActionResult<Void>
+    {
+        try await self.click(
+            target: target,
+            clickType: clickType,
+            snapshotId: snapshotId,
+            targetProcessIdentifier: targetProcessIdentifier)
+        return self.actionResult(())
+    }
+
+    func clickWithOutcome(
+        target: ClickTarget,
+        clickType: ClickType,
+        snapshotId: String?,
+        expectedProcessIdentity: ApplicationProcessIdentity) async throws -> UIAutomationActionResult<Void>
+    {
+        try await self.click(
+            target: target,
+            clickType: clickType,
+            snapshotId: snapshotId,
+            expectedProcessIdentity: expectedProcessIdentity)
+        return self.actionResult(())
+    }
+
+    func clickWithOutcome(
+        target: ClickTarget,
+        clickType: ClickType,
+        snapshotId: String?,
+        expectedWindowIdentity: WindowMutationIdentity,
+        expectedWindowBounds: CGRect) async throws -> UIAutomationActionResult<Void>
+    {
+        try await self.click(
+            target: target,
+            clickType: clickType,
+            snapshotId: snapshotId,
+            expectedWindowIdentity: expectedWindowIdentity,
+            expectedWindowBounds: expectedWindowBounds)
+        return self.actionResult(())
+    }
+
+    func typeWithOutcome(
+        text: String,
+        target: String?,
+        clearExisting: Bool,
+        typingDelay: Int,
+        snapshotId: String?) async throws -> UIAutomationActionResult<Void>
+    {
+        try await self.type(
+            text: text,
+            target: target,
+            clearExisting: clearExisting,
+            typingDelay: typingDelay,
+            snapshotId: snapshotId)
+        return self.actionResult(())
+    }
+
+    func typeActionsWithOutcome(
+        _ actions: [TypeAction],
+        cadence: TypingCadence,
+        snapshotId: String?) async throws -> UIAutomationActionResult<TypeResult>
+    {
+        try await self.actionResult(self.typeActions(actions, cadence: cadence, snapshotId: snapshotId))
+    }
+
+    func typeActionsWithOutcome(
+        _ actions: [TypeAction],
+        cadence: TypingCadence,
+        snapshotId: String?,
+        targetProcessIdentifier: pid_t) async throws -> UIAutomationActionResult<TypeResult>
+    {
+        try await self.actionResult(self.typeActions(
+            actions,
+            cadence: cadence,
+            snapshotId: snapshotId,
+            targetProcessIdentifier: targetProcessIdentifier))
+    }
+
+    func typeActionsWithOutcome(
+        _ actions: [TypeAction],
+        cadence: TypingCadence,
+        snapshotId: String?,
+        expectedProcessIdentity: ApplicationProcessIdentity) async throws -> UIAutomationActionResult<TypeResult>
+    {
+        try await self.actionResult(self.typeActions(
+            actions,
+            cadence: cadence,
+            snapshotId: snapshotId,
+            expectedProcessIdentity: expectedProcessIdentity))
+    }
+
+    func typeActionsWithOutcome(
+        _ actions: [TypeAction],
+        cadence: TypingCadence,
+        snapshotId: String?,
+        expectedWindowIdentity: WindowMutationIdentity,
+        expectedWindowBounds: CGRect) async throws -> UIAutomationActionResult<TypeResult>
+    {
+        try await self.actionResult(self.typeActions(
+            actions,
+            cadence: cadence,
+            snapshotId: snapshotId,
+            expectedWindowIdentity: expectedWindowIdentity,
+            expectedWindowBounds: expectedWindowBounds))
+    }
+
+    func typeActionsWithOutcome(
+        _ actions: [TypeAction],
+        cadence: TypingCadence,
+        snapshotId: String?,
+        target: ExactWindowKeyboardTarget) async throws -> UIAutomationActionResult<TypeResult>
+    {
+        try await self.actionResult(self.typeActions(
+            actions,
+            cadence: cadence,
+            snapshotId: snapshotId,
+            target: target))
+    }
+
+    func scrollWithOutcome(_ request: ScrollRequest) async throws -> UIAutomationActionResult<Void> {
+        try await self.scroll(request)
+        return self.actionResult(())
+    }
+
+    func hotkeyWithOutcome(
+        keys: String,
+        holdDuration: Int) async throws -> UIAutomationActionResult<Void>
+    {
+        try await self.hotkey(keys: keys, holdDuration: holdDuration)
+        return self.actionResult(())
+    }
+
+    func hotkeyWithOutcome(
+        keys: String,
+        holdDuration: Int,
+        targetProcessIdentifier: pid_t) async throws -> UIAutomationActionResult<Void>
+    {
+        try await self.hotkey(
+            keys: keys,
+            holdDuration: holdDuration,
+            targetProcessIdentifier: targetProcessIdentifier)
+        return self.actionResult(())
+    }
+
+    func hotkeyWithOutcome(
+        keys: String,
+        holdDuration: Int,
+        expectedProcessIdentity: ApplicationProcessIdentity) async throws -> UIAutomationActionResult<Void>
+    {
+        try await self.hotkey(
+            keys: keys,
+            holdDuration: holdDuration,
+            expectedProcessIdentity: expectedProcessIdentity)
+        return self.actionResult(())
+    }
+
+    func hotkeyWithOutcome(
+        keys: String,
+        holdDuration: Int,
+        expectedWindowIdentity: WindowMutationIdentity,
+        expectedWindowBounds: CGRect) async throws -> UIAutomationActionResult<Void>
+    {
+        try await self.hotkey(
+            keys: keys,
+            holdDuration: holdDuration,
+            expectedWindowIdentity: expectedWindowIdentity,
+            expectedWindowBounds: expectedWindowBounds)
+        return self.actionResult(())
+    }
+
+    func hotkeyWithOutcome(
+        keys: String,
+        holdDuration: Int,
+        target: ExactWindowKeyboardTarget) async throws -> UIAutomationActionResult<Void>
+    {
+        try await self.hotkey(keys: keys, holdDuration: holdDuration, target: target)
+        return self.actionResult(())
+    }
+
+    func setValueWithOutcome(
+        target: String,
+        value: UIElementValue,
+        snapshotId: String?) async throws -> UIAutomationActionResult<ElementActionResult>
+    {
+        try await self.actionResult(self.setValue(target: target, value: value, snapshotId: snapshotId))
+    }
+
+    func performActionWithOutcome(
+        target: String,
+        actionName: String,
+        snapshotId: String?) async throws -> UIAutomationActionResult<ElementActionResult>
+    {
+        try await self.actionResult(self.performAction(
+            target: target,
+            actionName: actionName,
+            snapshotId: snapshotId))
+    }
+
+    private func actionResult<Payload: Sendable>(_ payload: Payload) -> UIAutomationActionResult<Payload> {
+        UIAutomationActionResult(payload: payload, outcome: self.actionOutcome)
     }
 }
 
