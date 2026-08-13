@@ -21,9 +21,21 @@ extension PeekabooAgentService {
             toolName: toolCall.name,
             agentArguments: toolCall.arguments)
         {
+            let bridged = AgentToolMCPBridge.convert(refusal)
+            if let failure = bridged.failure {
+                var metadata = failure.metadata?.objectValue ?? [:]
+                metadata["skipped"] = AnyAgentToolValue(bool: true)
+                return AgentToolResult(
+                    toolCallId: toolCall.id,
+                    failure: AgentToolExecutionFailure(
+                        message: failure.message,
+                        content: failure.content,
+                        structuredValue: failure.structuredValue,
+                        metadata: AnyAgentToolValue(object: metadata)))
+            }
             return AgentToolResult(
                 toolCallId: toolCall.id,
-                result: AgentToolMCPBridge.convert(refusal).value,
+                result: bridged.value,
                 isError: true)
         }
         guard context.tool(named: toolCall.name) == nil else { return nil }
@@ -60,7 +72,7 @@ extension PeekabooAgentService {
                 let response = try await context.execute(
                     tool: tool,
                     arguments: makeToolArguments(from: arguments))
-                return await convertToolResponseToAgentToolResultAsync(
+                return try await convertToolResponseToAgentToolExecutionValueAsync(
                     response,
                     executionContext: executionContext)
             })

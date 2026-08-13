@@ -1137,14 +1137,26 @@ extension PeekabooAgentService {
             if self.isAgentCancellation(error) {
                 throw CancellationError()
             }
-            var errorValue = AnyAgentToolValue(string: error.localizedDescription)
-            if case let .continueNextStep(reason) = boundaryDecision {
-                errorValue = self.addTurnBoundarySignal(.continueNextStep(reason: reason), to: errorValue)
+            let errorResult: AgentToolResult
+            if let failure = error as? AgentToolExecutionFailure {
+                let decoratedFailure: AgentToolExecutionFailure = if case let .continueNextStep(reason) =
+                    boundaryDecision
+                {
+                    self.addTurnBoundarySignal(.continueNextStep(reason: reason), to: failure)
+                } else {
+                    failure
+                }
+                errorResult = AgentToolResult(toolCallId: toolCall.id, failure: decoratedFailure)
+            } else {
+                var errorValue = AnyAgentToolValue(string: error.localizedDescription)
+                if case let .continueNextStep(reason) = boundaryDecision {
+                    errorValue = self.addTurnBoundarySignal(.continueNextStep(reason: reason), to: errorValue)
+                }
+                errorResult = AgentToolResult(
+                    toolCallId: toolCall.id,
+                    result: errorValue,
+                    isError: true)
             }
-            let errorResult = AgentToolResult(
-                toolCallId: toolCall.id,
-                result: errorValue,
-                isError: true)
             await self.sendToolCompletionEvent(
                 name: toolCall.name,
                 payload: self.toolErrorPayload(from: error),
@@ -1223,6 +1235,20 @@ extension PeekabooAgentService {
         }
     }
 
+    private func addTurnBoundarySignal(
+        _ signal: AgentTurnBoundarySignal,
+        to failure: AgentToolExecutionFailure) -> AgentToolExecutionFailure
+    {
+        let metadata = self.addTurnBoundarySignal(
+            signal,
+            to: failure.metadata ?? AnyAgentToolValue(object: [:]))
+        return AgentToolExecutionFailure(
+            message: failure.message,
+            content: failure.content,
+            structuredValue: failure.structuredValue,
+            metadata: metadata)
+    }
+
     private func turnBoundaryValue(_ signal: AgentTurnBoundarySignal) -> AnyAgentToolValue {
         var payload = [
             "reason": AnyAgentToolValue(string: signal.reason),
@@ -1238,51 +1264,6 @@ extension PeekabooAgentService {
             payload["disposition"] = AnyAgentToolValue(string: "stop_agent")
         }
         return AnyAgentToolValue(object: payload)
-    }
-
-    func turnBoundarySignal(from toolResults: [AgentToolResult]) -> AgentTurnBoundarySignal? {
-        for toolResult in toolResults {
-            if let signal = self.turnBoundarySignal(from: toolResult) {
-                return signal
-            }
-        }
-        return nil
-    }
-
-    func turnBoundarySignal(from toolResult: AgentToolResult) -> AgentTurnBoundarySignal? {
-        guard let json = try? toolResult.result.toJSON(),
-              let payload = json as? [String: Any],
-              let boundary = payload["turn_boundary"] as? [String: Any],
-              let reason = boundary["reason"] as? String
-        else {
-            return nil
-        }
-
-        if boundary["continue_next_step"] as? Bool == true ||
-            boundary["disposition"] as? String == "continue_next_step"
-        {
-            return .continueNextStep(reason: reason)
-        }
-        if boundary["stop_agent"] as? Bool == true ||
-            boundary["disposition"] as? String == "stop_agent"
-        {
-            return .stopAgent(reason: reason)
-        }
-        // Legacy persisted results only had stop_after_current_step and were terminal.
-        if boundary["stop_after_current_step"] as? Bool == true {
-            return .stopAgent(reason: reason)
-        }
-        return nil
-    }
-
-    func turnBoundaryStopReason(from toolResults: [AgentToolResult]) -> String? {
-        guard case let .stopAgent(reason)? = self.turnBoundarySignal(from: toolResults) else { return nil }
-        return reason
-    }
-
-    func turnBoundaryStopReason(from toolResult: AgentToolResult) -> String? {
-        guard case let .stopAgent(reason)? = self.turnBoundarySignal(from: toolResult) else { return nil }
-        return reason
     }
 
     private func checkCancellationAfterToolResult(

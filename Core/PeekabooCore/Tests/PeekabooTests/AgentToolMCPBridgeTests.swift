@@ -89,15 +89,16 @@ struct AgentToolMCPBridgeTests {
             stepIndex: 0)
         let toolResult = try #require(step.toolResults.first)
         let payload = try #require(toolResult.result.objectValue)
-        let boundary = try #require(payload["turn_boundary"]?.objectValue)
+        let failure = try #require(toolResult.failure)
+        let metadata = try #require(payload["metadata"]?.objectValue)
+        let boundary = try #require(metadata["turn_boundary"]?.objectValue)
 
-        #expect(payload["success"]?.boolValue == false)
         #expect(payload["error"]?.stringValue == "Capture-owned coordinate reference is stale")
-        #expect(payload["mutation_dispatched"]?.boolValue == false)
-        #expect(payload["retry_safe"]?.boolValue == true)
-        #expect(payload["private_payload"] == nil)
+        #expect(metadata["mutation_dispatched"]?.boolValue == false)
+        #expect(metadata["retry_safe"]?.boolValue == true)
+        #expect(metadata["private_payload"] == nil)
         #expect(boundary["disposition"]?.stringValue == "continue_next_step")
-        #expect(PeekabooAgentService.resultEncodesToolFailure(toolResult.result))
+        #expect(failure.message == "Capture-owned coordinate reference is stale")
         #expect(toolResult.isError)
 
         let result = AgentExecutionResult(
@@ -114,7 +115,6 @@ struct AgentToolMCPBridgeTests {
 
         #expect(traceEntry.disposition == .executedFailed)
         #expect(traceEntry.isError == true)
-        #expect(traceSummary["success"]?.boolValue == false)
         #expect(traceSummary["error_present"]?.boolValue == true)
         #expect(traceSummary["mutation_dispatched"]?.boolValue == false)
         #expect(traceSummary["retry_safe"]?.boolValue == true)
@@ -174,7 +174,7 @@ struct AgentToolMCPBridgeTests {
         #expect(traceEntry.mutationDispatch == .possiblyDispatched)
         #expect(traceEntry.result?.objectValue?["mutation_dispatched"] == nil)
         #expect(traceEntry.result?.objectValue?["mutation_dispatch"]?.stringValue == "possibly_dispatched")
-        #expect(traceEntry.result?.objectValue?["retry_safe"]?.boolValue == false)
+        #expect(traceEntry.result?.objectValue?["retry_safe"] == nil)
     }
 
     @Test

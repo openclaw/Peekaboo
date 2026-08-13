@@ -30,6 +30,14 @@ extension ToolArguments {
 struct AgentToolMCPBridgeResult: Sendable {
     let value: AnyAgentToolValue
     let images: [ModelMessage.ContentPart.ImageContent]
+    let failure: AgentToolExecutionFailure?
+
+    func executionValue() throws -> AnyAgentToolValue {
+        if let failure {
+            throw failure
+        }
+        return self.value
+    }
 }
 
 enum AgentToolMCPBridge {
@@ -44,8 +52,13 @@ enum AgentToolMCPBridge {
     static let maxSourcePixelCount = 64 * 1024 * 1024
     static let maxSourceTotalPixelCount = 128 * 1024 * 1024
 
+    private static let maxErrorContentItems = 64
     private static let maxSourceImageBytes = 24 * 1024 * 1024
-    private static let maxTextCharacters = 100_000
+    private static let maxTextBytes = 100_000
+    private static let maxStructuredDepth = 8
+    private static let maxStructuredItems = 128
+    private static let maxStructuredNodes = 2048
+    private static let maxStructuredTextBytes = 200_000
 
     static func convert(
         _ response: ToolResponse,
@@ -126,20 +139,50 @@ enum AgentToolMCPBridge {
                 from: response,
                 contentValue: value,
                 receiptValue: valueWithReceipt),
-            images: images)
+            images: images,
+            failure: nil)
     }
 
     private static func convertErrorResponse(_ response: ToolResponse) -> AgentToolMCPBridgeResult {
-        let messages = response.content.compactMap(Self.errorText)
-        let message = messages.isEmpty ? "Tool execution failed" : messages.joined(separator: "\n")
+        var content = response.content.prefix(Self.maxErrorContentItems).map { item in
+            switch item {
+            case .image:
+                Self.omittedContent(type: "image", reason: "error response image omitted from transcript")
+            default:
+                Self.convertNonImageContent(
+                    item,
+                    screenshotAttachmentDescription: nil,
+                    hasUndeliveredImage: false)
+            }
+        }
+        if response.content.count > Self.maxErrorContentItems {
+            content.append(Self.omittedContent(
+                type: "content",
+                reason: "error response item limit reached; " +
+                    "\(response.content.count - Self.maxErrorContentItems) item(s) omitted"))
+        }
+
+        let message = Self.errorMessage(from: response.content.prefix(Self.maxErrorContentItems))
+        let metadataFields = MCPToolResponseMetadataProjector.agentFields(from: response.meta)
+        let metadata = metadataFields.isEmpty
+            ? nil
+            : Self.agentValue(.object(metadataFields))
+        let structuredValue = response.structuredContent.map(Self.agentValue)
         var payload: [String: AnyAgentToolValue] = [
             "error": AnyAgentToolValue(string: message),
             "success": AnyAgentToolValue(bool: false),
         ]
-        for (key, value) in MCPToolResponseMetadataProjector.agentFields(from: response.meta) {
-            payload[key] = TypedValueBridge.anyAgentValue(from: value)
+        for (key, value) in metadata?.objectValue ?? [:] {
+            payload[key] = value
         }
-        return AgentToolMCPBridgeResult(value: AnyAgentToolValue(object: payload), images: [])
+        return AgentToolMCPBridgeResult(
+            value: AnyAgentToolValue(object: payload),
+            images: [],
+            failure: AgentToolExecutionFailure(
+                message: message,
+                content: content,
+                structuredValue: structuredValue,
+                metadata: metadata))
     }
 
     private static func attachingResponseMetadata(
@@ -234,12 +277,48 @@ enum AgentToolMCPBridge {
     private static func errorText(_ content: MCP.Tool.Content) -> String? {
         switch content {
         case let .text(text, _, _):
-            Self.boundedText(text)
+            text
         case let .resource(resource, _, _) where resource.text != nil:
-            resource.text.map(Self.boundedText)
+            resource.text
         default:
             nil
         }
+    }
+
+    private static func errorMessage(from content: ArraySlice<MCP.Tool.Content>) -> String {
+        var message = ""
+        var foundMessage = false
+        var remainingBytes = Self.maxTextBytes
+        var truncated = false
+
+        for item in content {
+            guard let text = Self.errorText(item), !text.isEmpty else { continue }
+            if foundMessage {
+                guard remainingBytes > 0 else {
+                    truncated = true
+                    break
+                }
+                message.append("\n")
+                remainingBytes -= 1
+            }
+            foundMessage = true
+
+            let textBytes = text.utf8.count
+            guard textBytes > remainingBytes else {
+                message.append(text)
+                remainingBytes -= textBytes
+                continue
+            }
+            message.append(Self.utf8Prefix(text, maximumBytes: remainingBytes))
+            truncated = true
+            break
+        }
+
+        guard foundMessage else { return "Tool execution failed" }
+        if truncated {
+            message += "\n[Content truncated by Peekaboo agent safety limit]"
+        }
+        return message
     }
 
     private static func makeModelImage(
@@ -348,8 +427,9 @@ enum AgentToolMCPBridge {
     }
 
     private static func boundedText(_ text: String) -> String {
-        guard text.count > self.maxTextCharacters else { return text }
-        return String(text.prefix(self.maxTextCharacters)) + "\n[Content truncated by Peekaboo agent safety limit]"
+        guard text.utf8.count > self.maxTextBytes else { return text }
+        return self.utf8Prefix(text, maximumBytes: self.maxTextBytes) +
+            "\n[Content truncated by Peekaboo agent safety limit]"
     }
 
     private static func redactScreenshotPath(in text: String, attachmentDescription: String) -> String {
@@ -418,29 +498,118 @@ enum AgentToolMCPBridge {
         ])
     }
 
+    private struct StructuredValueBudget {
+        var remainingNodes = AgentToolMCPBridge.maxStructuredNodes
+        var remainingTextBytes = AgentToolMCPBridge.maxStructuredTextBytes
+    }
+
     private static func agentValue(_ value: Value) -> AnyAgentToolValue {
+        var budget = StructuredValueBudget()
+        return self.agentValue(value, depth: 0, budget: &budget)
+    }
+
+    private static func agentValue(
+        _ value: Value,
+        depth: Int,
+        budget: inout StructuredValueBudget) -> AnyAgentToolValue
+    {
+        guard budget.remainingNodes > 0 else {
+            return AnyAgentToolValue(string: "<omitted-node-budget>")
+        }
+        budget.remainingNodes -= 1
+        guard depth <= self.maxStructuredDepth else {
+            return AnyAgentToolValue(string: "<omitted-depth>")
+        }
+
         switch value {
         case .null:
-            AnyAgentToolValue(null: ())
+            return AnyAgentToolValue(null: ())
         case let .bool(value):
-            AnyAgentToolValue(bool: value)
+            return AnyAgentToolValue(bool: value)
         case let .int(value):
-            AnyAgentToolValue(int: value)
+            return AnyAgentToolValue(int: value)
         case let .double(value):
-            AnyAgentToolValue(double: value)
+            return AnyAgentToolValue(double: value)
         case let .string(value):
-            AnyAgentToolValue(string: value)
+            return AnyAgentToolValue(string: Self.boundedStructuredText(value, budget: &budget))
         case let .data(mimeType, data):
-            AnyAgentToolValue(object: [
+            return AnyAgentToolValue(object: [
                 "data_omitted": AnyAgentToolValue(bool: true),
-                "mime_type": AnyAgentToolValue(string: mimeType ?? "application/octet-stream"),
+                "mime_type": AnyAgentToolValue(string: Self.boundedStructuredText(
+                    mimeType ?? "application/octet-stream",
+                    budget: &budget)),
                 "byte_count": AnyAgentToolValue(int: data.count),
             ])
         case let .array(values):
-            AnyAgentToolValue(array: values.map(Self.agentValue))
+            var converted = values.prefix(Self.maxStructuredItems).map {
+                Self.agentValue($0, depth: depth + 1, budget: &budget)
+            }
+            if values.count > Self.maxStructuredItems {
+                converted.append(AnyAgentToolValue(object: [
+                    "items_omitted": AnyAgentToolValue(int: values.count - Self.maxStructuredItems),
+                ]))
+            }
+            return AnyAgentToolValue(array: converted)
         case let .object(values):
-            AnyAgentToolValue(object: values.mapValues(Self.agentValue))
+            var converted: [String: AnyAgentToolValue] = [:]
+            for key in Self.boundedSortedKeys(values.keys) {
+                guard let item = values[key] else { continue }
+                converted[Self.boundedStructuredText(key, budget: &budget)] = Self.agentValue(
+                    item,
+                    depth: depth + 1,
+                    budget: &budget)
+            }
+            if values.count > Self.maxStructuredItems {
+                converted["__peekaboo_omitted_fields"] = AnyAgentToolValue(
+                    int: values.count - Self.maxStructuredItems)
+            }
+            return AnyAgentToolValue(object: converted)
         }
+    }
+
+    private static func boundedSortedKeys(
+        _ keys: Dictionary<String, Value>.Keys) -> [String]
+    {
+        var selected: [String] = []
+        selected.reserveCapacity(Self.maxStructuredItems)
+        for key in keys {
+            let index = selected.firstIndex(where: { key < $0 }) ?? selected.endIndex
+            if selected.count < Self.maxStructuredItems {
+                selected.insert(key, at: index)
+            } else if index < selected.endIndex {
+                selected.insert(key, at: index)
+                selected.removeLast()
+            }
+        }
+        return selected
+    }
+
+    private static func boundedStructuredText(
+        _ value: String,
+        budget: inout StructuredValueBudget) -> String
+    {
+        guard budget.remainingTextBytes > 0 else {
+            return "<omitted-text-budget>"
+        }
+        let byteCount = value.utf8.count
+        guard byteCount > budget.remainingTextBytes else {
+            budget.remainingTextBytes -= byteCount
+            return value
+        }
+        let retained = Self.utf8Prefix(value, maximumBytes: budget.remainingTextBytes)
+        budget.remainingTextBytes = 0
+        return retained + "\n[Content truncated by Peekaboo agent safety limit]"
+    }
+
+    private static func utf8Prefix(_ value: String, maximumBytes: Int) -> String {
+        var bytes = Array(value.utf8.prefix(maximumBytes))
+        while !bytes.isEmpty {
+            if let value = String(bytes: bytes, encoding: .utf8) {
+                return value
+            }
+            bytes.removeLast()
+        }
+        return ""
     }
 }
 
@@ -605,6 +774,30 @@ func convertToolResponseToAgentToolResultAsync(
     executionContext: ToolExecutionContext,
     imageStore: AgentToolMCPImageStore = .shared) async -> AnyAgentToolValue
 {
+    let result = await prepareToolResponseForAgentExecution(
+        response,
+        executionContext: executionContext,
+        imageStore: imageStore)
+    return result.value
+}
+
+func convertToolResponseToAgentToolExecutionValueAsync(
+    _ response: ToolResponse,
+    executionContext: ToolExecutionContext,
+    imageStore: AgentToolMCPImageStore = .shared) async throws -> AnyAgentToolValue
+{
+    let result = await prepareToolResponseForAgentExecution(
+        response,
+        executionContext: executionContext,
+        imageStore: imageStore)
+    return try result.executionValue()
+}
+
+private func prepareToolResponseForAgentExecution(
+    _ response: ToolResponse,
+    executionContext: ToolExecutionContext,
+    imageStore: AgentToolMCPImageStore) async -> AgentToolMCPBridgeResult
+{
     let toolCallID = executionContext.metadata["toolCallId"]
     let executionID = executionContext.metadata["imageContextId"]
     let allowsModelImages = executionContext.metadata["supportsVision"] != "false" &&
@@ -629,10 +822,10 @@ func convertToolResponseToAgentToolResultAsync(
             return AgentToolMCPBridge.convert(
                 response,
                 allowsModelImages: false,
-                imageOmissionReason: reason).value
+                imageOmissionReason: reason)
         }
     }
-    return result.value
+    return result
 }
 
 func makeToolArguments(from arguments: AgentToolArguments) -> ToolArguments {

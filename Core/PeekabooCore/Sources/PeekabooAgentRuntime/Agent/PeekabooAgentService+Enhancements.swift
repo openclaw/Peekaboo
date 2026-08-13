@@ -237,25 +237,7 @@ extension PeekabooAgentService {
     }
 
     static func resultEncodesToolFailure(_ result: AnyAgentToolValue) -> Bool {
-        if let string = result.stringValue {
-            return string.hasPrefix("Error:")
-        }
-
-        guard let payload = try? result.toJSON() as? [String: Any] else {
-            return false
-        }
-
-        if payload["success"] as? Bool == false {
-            return true
-        }
-        guard let error = payload["error"] else { return false }
-        if error is NSNull {
-            return false
-        }
-        if let message = error as? String {
-            return !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        }
-        return true
+        AgentToolResultSemantics.valueEncodesFailure(result)
     }
 
     private static func parsePoint(_ value: String) -> CGPoint? {

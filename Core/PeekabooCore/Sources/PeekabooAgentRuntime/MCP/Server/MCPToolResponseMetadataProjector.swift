@@ -1,9 +1,10 @@
+import Foundation
 import MCP
 import PeekabooFoundation
 import TachikomaMCP
 
 enum MCPToolResponseMetadataProjector {
-    private static let actionOutcomeKeys: Set<String> = [
+    static let actionOutcomeKeys: Set<String> = [
         "delivery_mechanism",
         "delivery_mode",
         "dispatch_state",
@@ -13,6 +14,19 @@ enum MCPToolResponseMetadataProjector {
         "evidence",
         "mutation_dispatched",
         "refusal_reason",
+        "requires_fresh_observation",
+        "retry_safe",
+        "retry_safety",
+        "route",
+        "state",
+    ]
+
+    static let requiredActionOutcomeKeys: Set<String> = [
+        "dispatch_state",
+        "effect",
+        "escalation",
+        "evidence",
+        "mutation_dispatched",
         "requires_fresh_observation",
         "retry_safe",
         "retry_safety",
@@ -140,6 +154,47 @@ enum MCPToolResponseMetadataProjector {
 
     private enum ProjectionError: Error {
         case expectedObject
+    }
+
+    enum ActionOutcomeResolution {
+        case absent
+        case valid(DesktopActionOutcome.Projection)
+        case invalid
+
+        var projection: DesktopActionOutcome.Projection? {
+            guard case let .valid(projection) = self else { return nil }
+            return projection
+        }
+    }
+
+    static func actionOutcomeResolution(from value: Value?) -> ActionOutcomeResolution {
+        guard case let .object(fields)? = value else {
+            return .absent
+        }
+        let outcomeFields = fields.filter { Self.actionOutcomeKeys.contains($0.key) }
+        guard Self.requiredActionOutcomeKeys.isSubset(of: Set(outcomeFields.keys)) else {
+            return .absent
+        }
+        guard outcomeFields.values.allSatisfy(Self.isBoundedActionOutcomeField),
+              let object = try? Value.object(outcomeFields).toAnyAgentToolValue().toJSON(),
+              JSONSerialization.isValidJSONObject(object),
+              let data = try? JSONSerialization.data(withJSONObject: object),
+              let projection = try? JSONDecoder().decode(DesktopActionOutcome.Projection.self, from: data)
+        else {
+            return .invalid
+        }
+        return .valid(projection)
+    }
+
+    private static func isBoundedActionOutcomeField(_ value: Value) -> Bool {
+        switch value {
+        case .null, .bool, .int:
+            true
+        case let .string(value):
+            value.utf8.count <= 128
+        case .array, .data, .double, .object:
+            false
+        }
     }
 
     private static func message(for failure: DesktopActionFailure) -> String {

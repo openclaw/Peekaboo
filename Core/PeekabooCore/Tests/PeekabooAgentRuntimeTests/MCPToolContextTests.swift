@@ -87,13 +87,16 @@ struct MCPToolContextTests {
             let shell = PeekabooAgentService.$toolConstructionExecutionPolicy.withValue(policy) {
                 agent.createShellTool()
             }
-            let result = try await shell.execute(
-                AgentToolArguments(["command": "/usr/bin/touch \(marker.path)"]),
-                context: ToolExecutionContext())
-
-            #expect(result.objectValue?["success"]?.boolValue == false)
-            #expect(result.objectValue?["error_code"]?.stringValue == MCPToolExecutionPolicy.refusalErrorCode)
-            #expect(result.objectValue?["mutation_dispatched"]?.boolValue == false)
+            do {
+                _ = try await shell.execute(
+                    AgentToolArguments(["command": "/usr/bin/touch \(marker.path)"]),
+                    context: ToolExecutionContext())
+                Issue.record("Expected the Agent shell policy to throw a typed failure")
+            } catch let failure as AgentToolExecutionFailure {
+                let metadata = try #require(failure.metadata?.objectValue)
+                #expect(metadata["error_code"]?.stringValue == MCPToolExecutionPolicy.refusalErrorCode)
+                #expect(metadata["mutation_dispatched"]?.boolValue == false)
+            }
             #expect(!FileManager.default.fileExists(atPath: marker.path))
         }
     }

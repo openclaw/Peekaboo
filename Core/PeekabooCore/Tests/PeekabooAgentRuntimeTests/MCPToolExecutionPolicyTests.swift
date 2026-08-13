@@ -547,11 +547,12 @@ struct MCPToolExecutionPolicyTests {
         #expect(await counter.value == 2)
         for result in step.toolResults.suffix(3) {
             #expect(result.isError)
-            #expect(result.result.objectValue?["effect"]?.stringValue == "refused")
-            #expect(result.result.objectValue?["mutation_dispatched"]?.boolValue == false)
-            #expect(result.result.objectValue?["retry_safe"]?.boolValue == true)
-            #expect(result.result.objectValue?["execution_policy"]?.stringValue == "background_only")
-            #expect(result.result.objectValue?["skipped"] == nil)
+            let metadata = try #require(result.failure?.metadata?.objectValue)
+            #expect(metadata["effect"]?.stringValue == "refused")
+            #expect(metadata["mutation_dispatched"]?.boolValue == false)
+            #expect(metadata["retry_safe"]?.boolValue == true)
+            #expect(metadata["execution_policy"]?.stringValue == "background_only")
+            #expect(metadata["skipped"]?.boolValue == true)
         }
     }
 

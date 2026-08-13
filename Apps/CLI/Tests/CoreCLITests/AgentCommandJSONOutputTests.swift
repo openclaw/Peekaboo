@@ -89,7 +89,7 @@ struct AgentCommandJSONOutputTests {
         #expect(entries[0]["mutationDispatch"] as? String == "possibly_dispatched")
         #expect(resultSummary["mutation_dispatched"] == nil)
         #expect(resultSummary["mutation_dispatch"] as? String == "possibly_dispatched")
-        #expect(resultSummary["retry_safe"] as? Bool == false)
+        #expect(resultSummary["retry_safe"] == nil)
         #expect(resultSummary["payload_omitted"] as? Bool == true)
         #expect(trace["totalCallCount"] as? Int == 1)
         #expect(trace["truncated"] as? Bool == false)
