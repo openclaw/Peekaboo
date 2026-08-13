@@ -152,10 +152,21 @@ extension UIAutomationService {
      * - Note: Visual feedback is automatically shown if visualizer is connected
      */
     public func click(target: ClickTarget, clickType: ClickType, snapshotId: String?) async throws {
+        _ = try await self.clickWithOutcome(
+            target: target,
+            clickType: clickType,
+            snapshotId: snapshotId)
+    }
+
+    public func clickWithOutcome(
+        target: ClickTarget,
+        clickType: ClickType,
+        snapshotId: String?) async throws -> UIAutomationActionResult<Void>
+    {
         self.logger.debug("Delegating click to ClickService")
         var fallbackPoint: CGPoint?
         var visualizerTarget: VisualizerTargetWindow?
-        _ = try await self.normalizingSnapshotErrors {
+        let result = try await self.normalizingSnapshotErrors {
             try await self.clickService.clickWithLanePreparation(
                 target: target,
                 clickType: clickType,
@@ -175,6 +186,7 @@ extension UIAutomationService {
                         visualizerTarget: visualizerTarget)
                 })
         }
+        return UIAutomationActionResult(payload: (), outcome: result.outcome)
     }
 
     public func click(
@@ -182,6 +194,19 @@ extension UIAutomationService {
         clickType: ClickType,
         snapshotId: String?,
         targetProcessIdentifier: pid_t) async throws
+    {
+        _ = try await self.clickWithOutcome(
+            target: target,
+            clickType: clickType,
+            snapshotId: snapshotId,
+            targetProcessIdentifier: targetProcessIdentifier)
+    }
+
+    public func clickWithOutcome(
+        target: ClickTarget,
+        clickType: ClickType,
+        snapshotId: String?,
+        targetProcessIdentifier: pid_t) async throws -> UIAutomationActionResult<Void>
     {
         self.logger.debug("Delegating background click to ClickService")
         let result = try await self.normalizingSnapshotErrors {
@@ -198,6 +223,8 @@ extension UIAutomationService {
             clickType: clickType,
             snapshotId: snapshotId,
             targetProcessIdentifier: targetProcessIdentifier)
+
+        return UIAutomationActionResult(payload: (), outcome: result.outcome)
     }
 
     public func click(
@@ -205,6 +232,19 @@ extension UIAutomationService {
         clickType: ClickType,
         snapshotId: String?,
         expectedProcessIdentity: ApplicationProcessIdentity) async throws
+    {
+        _ = try await self.clickWithOutcome(
+            target: target,
+            clickType: clickType,
+            snapshotId: snapshotId,
+            expectedProcessIdentity: expectedProcessIdentity)
+    }
+
+    public func clickWithOutcome(
+        target: ClickTarget,
+        clickType: ClickType,
+        snapshotId: String?,
+        expectedProcessIdentity: ApplicationProcessIdentity) async throws -> UIAutomationActionResult<Void>
     {
         self.logger.debug("Delegating generation-pinned background click to ClickService")
         let result = try await self.normalizingSnapshotErrors {
@@ -222,6 +262,8 @@ extension UIAutomationService {
             clickType: clickType,
             snapshotId: snapshotId,
             targetProcessIdentifier: expectedProcessIdentity.processIdentifier)
+
+        return UIAutomationActionResult(payload: (), outcome: result.outcome)
     }
 
     public func click(
@@ -230,6 +272,21 @@ extension UIAutomationService {
         snapshotId: String?,
         expectedWindowIdentity: WindowMutationIdentity,
         expectedWindowBounds: CGRect) async throws
+    {
+        _ = try await self.clickWithOutcome(
+            target: target,
+            clickType: clickType,
+            snapshotId: snapshotId,
+            expectedWindowIdentity: expectedWindowIdentity,
+            expectedWindowBounds: expectedWindowBounds)
+    }
+
+    public func clickWithOutcome(
+        target: ClickTarget,
+        clickType: ClickType,
+        snapshotId: String?,
+        expectedWindowIdentity: WindowMutationIdentity,
+        expectedWindowBounds: CGRect) async throws -> UIAutomationActionResult<Void>
     {
         let processIdentity = ApplicationProcessIdentity(
             processIdentifier: expectedWindowIdentity.ownerProcessIdentifier,
@@ -253,6 +310,8 @@ extension UIAutomationService {
             clickType: clickType,
             snapshotId: snapshotId,
             targetProcessIdentifier: expectedWindowIdentity.ownerProcessIdentifier)
+
+        return UIAutomationActionResult(payload: (), outcome: result.outcome)
     }
 
     /// Background delivery must remain invisible to the foreground user. Visualizer windows are

@@ -82,9 +82,24 @@ extension UIAutomationService {
         typingDelay: Int,
         snapshotId: String?) async throws
     {
+        _ = try await self.typeWithOutcome(
+            text: text,
+            target: target,
+            clearExisting: clearExisting,
+            typingDelay: typingDelay,
+            snapshotId: snapshotId)
+    }
+
+    public func typeWithOutcome(
+        text: String,
+        target: String?,
+        clearExisting: Bool,
+        typingDelay: Int,
+        snapshotId: String?) async throws -> UIAutomationActionResult<Void>
+    {
         self.logger.debug("Delegating type to TypeService")
         var visualizerTarget: VisualizerTargetWindow?
-        _ = try await self.normalizingSnapshotErrors {
+        let summary = try await self.normalizingSnapshotErrors {
             try await self.typeService.typeTrackingSecureInput(
                 text: text,
                 target: target,
@@ -102,12 +117,24 @@ extension UIAutomationService {
                         visualizerTarget: visualizerTarget)
                 })
         }
+        return UIAutomationActionResult(payload: (), outcome: summary.result.outcome)
     }
 
     public func typeActions(
         _ actions: [TypeAction],
         cadence: TypingCadence,
         snapshotId: String?) async throws -> TypeResult
+    {
+        try await self.typeActionsWithOutcome(
+            actions,
+            cadence: cadence,
+            snapshotId: snapshotId).payload
+    }
+
+    public func typeActionsWithOutcome(
+        _ actions: [TypeAction],
+        cadence: TypingCadence,
+        snapshotId: String?) async throws -> UIAutomationActionResult<TypeResult>
     {
         self.logger.debug("Delegating typeActions to TypeService")
         var visualizerTarget: VisualizerTargetWindow?
@@ -128,7 +155,9 @@ extension UIAutomationService {
                         visualizerTarget: visualizerTarget)
                 })
         }
-        return summary.result
+        return UIAutomationActionResult(
+            payload: summary.result,
+            outcome: summary.executionResult.outcome)
     }
 
     public func typeActions(
@@ -137,6 +166,21 @@ extension UIAutomationService {
         snapshotId: String?,
         expectedWindowIdentity: WindowMutationIdentity,
         expectedWindowBounds: CGRect) async throws -> TypeResult
+    {
+        try await self.typeActionsWithOutcome(
+            actions,
+            cadence: cadence,
+            snapshotId: snapshotId,
+            expectedWindowIdentity: expectedWindowIdentity,
+            expectedWindowBounds: expectedWindowBounds).payload
+    }
+
+    public func typeActionsWithOutcome(
+        _ actions: [TypeAction],
+        cadence: TypingCadence,
+        snapshotId: String?,
+        expectedWindowIdentity: WindowMutationIdentity,
+        expectedWindowBounds: CGRect) async throws -> UIAutomationActionResult<TypeResult>
     {
         let processIdentity = ApplicationProcessIdentity(
             processIdentifier: expectedWindowIdentity.ownerProcessIdentifier,
@@ -155,7 +199,9 @@ extension UIAutomationService {
                 deliveryValidator: validator,
                 expectedProcessIdentity: processIdentity)
         }
-        return summary.result
+        return UIAutomationActionResult(
+            payload: summary.result,
+            outcome: summary.executionResult.outcome)
     }
 
     public func typeActions(
@@ -163,6 +209,19 @@ extension UIAutomationService {
         cadence: TypingCadence,
         snapshotId: String?,
         target: ExactWindowKeyboardTarget) async throws -> TypeResult
+    {
+        try await self.typeActionsWithOutcome(
+            actions,
+            cadence: cadence,
+            snapshotId: snapshotId,
+            target: target).payload
+    }
+
+    public func typeActionsWithOutcome(
+        _ actions: [TypeAction],
+        cadence: TypingCadence,
+        snapshotId: String?,
+        target: ExactWindowKeyboardTarget) async throws -> UIAutomationActionResult<TypeResult>
     {
         let processIdentity = ApplicationProcessIdentity(
             processIdentifier: target.windowIdentity.ownerProcessIdentifier,
@@ -182,7 +241,9 @@ extension UIAutomationService {
                 deliveryValidator: validator,
                 expectedProcessIdentity: processIdentity)
         }
-        return summary.result
+        return UIAutomationActionResult(
+            payload: summary.result,
+            outcome: summary.executionResult.outcome)
     }
 
     public func typeActions(
@@ -190,6 +251,19 @@ extension UIAutomationService {
         cadence: TypingCadence,
         snapshotId: String?,
         targetProcessIdentifier: pid_t) async throws -> TypeResult
+    {
+        try await self.typeActionsWithOutcome(
+            actions,
+            cadence: cadence,
+            snapshotId: snapshotId,
+            targetProcessIdentifier: targetProcessIdentifier).payload
+    }
+
+    public func typeActionsWithOutcome(
+        _ actions: [TypeAction],
+        cadence: TypingCadence,
+        snapshotId: String?,
+        targetProcessIdentifier: pid_t) async throws -> UIAutomationActionResult<TypeResult>
     {
         self.logger.debug("Delegating targeted typeActions to TypeService")
         let summary = try await self.normalizingSnapshotErrors {
@@ -204,7 +278,9 @@ extension UIAutomationService {
             cadence: cadence,
             typedIntoSecureField: summary.typedIntoSecureField,
             targetProcessIdentifier: targetProcessIdentifier)
-        return summary.result
+        return UIAutomationActionResult(
+            payload: summary.result,
+            outcome: summary.executionResult.outcome)
     }
 
     public func typeActions(
@@ -212,6 +288,19 @@ extension UIAutomationService {
         cadence: TypingCadence,
         snapshotId: String?,
         expectedProcessIdentity: ApplicationProcessIdentity) async throws -> TypeResult
+    {
+        try await self.typeActionsWithOutcome(
+            actions,
+            cadence: cadence,
+            snapshotId: snapshotId,
+            expectedProcessIdentity: expectedProcessIdentity).payload
+    }
+
+    public func typeActionsWithOutcome(
+        _ actions: [TypeAction],
+        cadence: TypingCadence,
+        snapshotId: String?,
+        expectedProcessIdentity: ApplicationProcessIdentity) async throws -> UIAutomationActionResult<TypeResult>
     {
         let validator: @MainActor @Sendable () async throws -> Void = {
             guard self.processStartIdentityProvider(expectedProcessIdentity.processIdentifier) ==
@@ -230,7 +319,9 @@ extension UIAutomationService {
                 deliveryValidator: validator,
                 expectedProcessIdentity: expectedProcessIdentity)
         }
-        return summary.result
+        return UIAutomationActionResult(
+            payload: summary.result,
+            outcome: summary.executionResult.outcome)
     }
 
     // MARK: - Typing Visualization Helpers

@@ -13,6 +13,17 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
         value: UIElementValue,
         snapshotId: String?) async throws -> ElementActionResult
     {
+        try await self.setValueWithOutcome(
+            target: target,
+            value: value,
+            snapshotId: snapshotId).payload
+    }
+
+    public func setValueWithOutcome(
+        target: String,
+        value: UIElementValue,
+        snapshotId: String?) async throws -> UIAutomationActionResult<ElementActionResult>
+    {
         let requiredSnapshotId = try Self.requireElementActionSnapshotID(snapshotId)
         let captureReceipt = try await self.elementMutationCaptureReceipt(snapshotId: requiredSnapshotId)
         var resolved: ResolvedElementMutationTarget?
@@ -30,8 +41,7 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
                 let target = try await self.resolveActionTarget(target, snapshotId: requiredSnapshotId)
                 try self.validateElementMutationTarget(target.windowContext, receipt: captureReceipt)
                 resolved = target
-                oldValue = self.safeValueDescription(target.element.value)
-                    ?? target.element.selectedValue.map(String.init)
+                oldValue = self.elementMutationValueReader(target.element)
             },
             routing: {
                 let bundleIdentifier = resolved?.bundleIdentifier ?? captureReceipt.bundleIdentifier
@@ -60,8 +70,7 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
                 guard let resolved else {
                     throw PeekabooError.operationError(message: "Element mutation target was not prepared")
                 }
-                newValue = self.safeValueDescription(resolved.element.value)
-                    ?? resolved.element.selectedValue.map(String.init)
+                newValue = self.elementMutationValueReader(resolved.element)
                 guard newValue != nil else {
                     throw DesktopActionFailure.indeterminate(
                         delivery: result.outcome.delivery,
@@ -80,18 +89,31 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
             throw PeekabooError.operationError(message: "Element value result was not captured")
         }
 
-        return ElementActionResult(
-            target: resolved.description,
-            actionName: result.actionName,
-            anchorPoint: result.anchorPoint,
-            oldValue: oldValue,
-            newValue: newValue)
+        return UIAutomationActionResult(
+            payload: ElementActionResult(
+                target: resolved.description,
+                actionName: result.actionName,
+                anchorPoint: result.anchorPoint,
+                oldValue: oldValue,
+                newValue: newValue),
+            outcome: result.outcome)
     }
 
     public func performAction(
         target: String,
         actionName: String,
         snapshotId: String?) async throws -> ElementActionResult
+    {
+        try await self.performActionWithOutcome(
+            target: target,
+            actionName: actionName,
+            snapshotId: snapshotId).payload
+    }
+
+    public func performActionWithOutcome(
+        target: String,
+        actionName: String,
+        snapshotId: String?) async throws -> UIAutomationActionResult<ElementActionResult>
     {
         let requiredSnapshotId = try Self.requireElementActionSnapshotID(snapshotId)
         let captureReceipt = try await self.elementMutationCaptureReceipt(snapshotId: requiredSnapshotId)
@@ -147,10 +169,12 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
             throw PeekabooError.operationError(message: "Element action target was not prepared")
         }
 
-        return ElementActionResult(
-            target: resolved.description,
-            actionName: result.actionName,
-            anchorPoint: result.anchorPoint)
+        return UIAutomationActionResult(
+            payload: ElementActionResult(
+                target: resolved.description,
+                actionName: result.actionName,
+                anchorPoint: result.anchorPoint),
+            outcome: result.outcome)
     }
 
     private func resolveActionTarget(_ target: String, snapshotId: String) async throws
@@ -275,7 +299,7 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
         "Cannot set value on \(target): \(reason)"
     }
 
-    private func safeValueDescription(_ value: Any?) -> String? {
+    static func safeValueDescription(_ value: Any?) -> String? {
         switch value {
         case let value as String:
             value

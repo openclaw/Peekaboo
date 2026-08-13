@@ -147,6 +147,111 @@ extension UIAutomationServiceProtocol {
     }
 }
 
+/// Additive capability for callers that need the canonical result of a successful automation action.
+///
+/// Existing protocol methods remain the compatibility surface. A caller can opt into this capability
+/// without requiring older or transport-backed automation services to fabricate outcome evidence.
+@MainActor
+public protocol UIAutomationActionOutcomeProviding: UIAutomationServiceProtocol {
+    func clickWithOutcome(
+        target: ClickTarget,
+        clickType: ClickType,
+        snapshotId: String?) async throws -> UIAutomationActionResult<Void>
+
+    func clickWithOutcome(
+        target: ClickTarget,
+        clickType: ClickType,
+        snapshotId: String?,
+        targetProcessIdentifier: pid_t) async throws -> UIAutomationActionResult<Void>
+
+    func clickWithOutcome(
+        target: ClickTarget,
+        clickType: ClickType,
+        snapshotId: String?,
+        expectedProcessIdentity: ApplicationProcessIdentity) async throws -> UIAutomationActionResult<Void>
+
+    func clickWithOutcome(
+        target: ClickTarget,
+        clickType: ClickType,
+        snapshotId: String?,
+        expectedWindowIdentity: WindowMutationIdentity,
+        expectedWindowBounds: CGRect) async throws -> UIAutomationActionResult<Void>
+
+    func typeWithOutcome(
+        text: String,
+        target: String?,
+        clearExisting: Bool,
+        typingDelay: Int,
+        snapshotId: String?) async throws -> UIAutomationActionResult<Void>
+
+    func typeActionsWithOutcome(
+        _ actions: [TypeAction],
+        cadence: TypingCadence,
+        snapshotId: String?) async throws -> UIAutomationActionResult<TypeResult>
+
+    func typeActionsWithOutcome(
+        _ actions: [TypeAction],
+        cadence: TypingCadence,
+        snapshotId: String?,
+        targetProcessIdentifier: pid_t) async throws -> UIAutomationActionResult<TypeResult>
+
+    func typeActionsWithOutcome(
+        _ actions: [TypeAction],
+        cadence: TypingCadence,
+        snapshotId: String?,
+        expectedProcessIdentity: ApplicationProcessIdentity) async throws -> UIAutomationActionResult<TypeResult>
+
+    func typeActionsWithOutcome(
+        _ actions: [TypeAction],
+        cadence: TypingCadence,
+        snapshotId: String?,
+        expectedWindowIdentity: WindowMutationIdentity,
+        expectedWindowBounds: CGRect) async throws -> UIAutomationActionResult<TypeResult>
+
+    func typeActionsWithOutcome(
+        _ actions: [TypeAction],
+        cadence: TypingCadence,
+        snapshotId: String?,
+        target: ExactWindowKeyboardTarget) async throws -> UIAutomationActionResult<TypeResult>
+
+    func scrollWithOutcome(_ request: ScrollRequest) async throws -> UIAutomationActionResult<Void>
+
+    func hotkeyWithOutcome(
+        keys: String,
+        holdDuration: Int) async throws -> UIAutomationActionResult<Void>
+
+    func hotkeyWithOutcome(
+        keys: String,
+        holdDuration: Int,
+        targetProcessIdentifier: pid_t) async throws -> UIAutomationActionResult<Void>
+
+    func hotkeyWithOutcome(
+        keys: String,
+        holdDuration: Int,
+        expectedProcessIdentity: ApplicationProcessIdentity) async throws -> UIAutomationActionResult<Void>
+
+    func hotkeyWithOutcome(
+        keys: String,
+        holdDuration: Int,
+        expectedWindowIdentity: WindowMutationIdentity,
+        expectedWindowBounds: CGRect) async throws -> UIAutomationActionResult<Void>
+
+    func hotkeyWithOutcome(
+        keys: String,
+        holdDuration: Int,
+        target: ExactWindowKeyboardTarget) async throws -> UIAutomationActionResult<Void>
+
+    func setValueWithOutcome(
+        target: String,
+        value: UIElementValue,
+        snapshotId: String?) async throws -> UIAutomationActionResult<ElementActionResult>
+
+    func performActionWithOutcome(
+        target: String,
+        actionName: String,
+        snapshotId: String?) async throws -> UIAutomationActionResult<ElementActionResult>
+}
+
 /// Optional capability for querying the focused element of a specific background application.
 /// A system-wide focus query reports the user's foreground app and is not a valid substitute.
 @MainActor

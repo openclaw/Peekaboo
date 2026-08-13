@@ -47,7 +47,7 @@ struct HotkeyServiceFactoryContext {
 @MainActor
 public final class UIAutomationService: TargetedHotkeyServiceProtocol, TargetedTypeServiceProtocol,
     ExactWindowTargetedClickServiceProtocol, TargetedFocusedElementServiceProtocol,
-    ExactWindowTargetedKeyboardServiceProtocol
+    ExactWindowTargetedKeyboardServiceProtocol, UIAutomationActionOutcomeProviding
 {
     public let supportsProcessGenerationPinnedHotkeys = true
     public let supportsProcessGenerationPinnedTypeActions = true
@@ -71,6 +71,7 @@ public final class UIAutomationService: TargetedHotkeyServiceProtocol, TargetedT
     let actionInputDriver: any ActionInputDriving
     let syntheticInputDriver: any SyntheticInputDriving
     let automationElementResolver: any AutomationElementResolving
+    let elementMutationValueReader: @MainActor @Sendable (AutomationElement) -> String?
     let exactWindowFocusReader: @Sendable (pid_t) -> ExactWindowFocusSnapshot?
     let exactWindowIdentityValidator: @Sendable (WindowMutationIdentity, CGRect) -> Bool
     let processStartIdentityProvider: @Sendable (pid_t) -> UInt64?
@@ -147,6 +148,7 @@ public final class UIAutomationService: TargetedHotkeyServiceProtocol, TargetedT
         actionInputDriver: any ActionInputDriving,
         syntheticInputDriver: any SyntheticInputDriving = SyntheticInputDriver(),
         automationElementResolver: any AutomationElementResolving,
+        elementMutationValueReader: (@MainActor @Sendable (AutomationElement) -> String?)? = nil,
         hotkeyServiceFactory: ((HotkeyServiceFactoryContext) -> HotkeyService)? = nil,
         feedbackClient: any AutomationFeedbackClient = NoopAutomationFeedbackClient(),
         exactWindowFocusReader: @escaping @Sendable (pid_t) -> ExactWindowFocusSnapshot? =
@@ -169,6 +171,10 @@ public final class UIAutomationService: TargetedHotkeyServiceProtocol, TargetedT
         self.actionInputDriver = actionInputDriver
         self.syntheticInputDriver = syntheticInputDriver
         self.automationElementResolver = automationElementResolver
+        self.elementMutationValueReader = elementMutationValueReader ?? { element in
+            Self.safeValueDescription(element.value)
+                ?? element.selectedValue.map(String.init)
+        }
         self.feedbackClient = feedbackClient
         self.exactWindowFocusReader = exactWindowFocusReader
         self.exactWindowIdentityValidator = exactWindowIdentityValidator

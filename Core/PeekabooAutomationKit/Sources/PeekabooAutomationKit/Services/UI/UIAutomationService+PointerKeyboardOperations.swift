@@ -19,9 +19,13 @@ extension UIAutomationService {
      * ```
      */
     public func scroll(_ request: ScrollRequest) async throws {
+        _ = try await self.scrollWithOutcome(request)
+    }
+
+    public func scrollWithOutcome(_ request: ScrollRequest) async throws -> UIAutomationActionResult<Void> {
         self.logger.debug("Delegating scroll to ScrollService")
         var visualizerTarget: VisualizerTargetWindow?
-        _ = try await self.normalizingSnapshotErrors {
+        let result = try await self.normalizingSnapshotErrors {
             try await self.scrollService.scrollWithLanePreparation(
                 request,
                 lanePreparation: {
@@ -34,6 +38,7 @@ extension UIAutomationService {
                         visualizerTarget: visualizerTarget)
                 })
         }
+        return UIAutomationActionResult(payload: (), outcome: result.outcome)
     }
 
     /// Background scrolls are AX actions scoped to a snapshot element and never emit foreground feedback.
@@ -82,9 +87,16 @@ extension UIAutomationService {
      * ```
      */
     public func hotkey(keys: String, holdDuration: Int) async throws {
+        _ = try await self.hotkeyWithOutcome(keys: keys, holdDuration: holdDuration)
+    }
+
+    public func hotkeyWithOutcome(
+        keys: String,
+        holdDuration: Int) async throws -> UIAutomationActionResult<Void>
+    {
         self.logger.debug("Delegating hotkey to HotkeyService")
         var visualizerTarget: VisualizerTargetWindow?
-        _ = try await self.hotkeyService.hotkeyWithLanePreparation(
+        let result = try await self.hotkeyService.hotkeyWithLanePreparation(
             keys: keys,
             holdDuration: holdDuration,
             lanePreparation: {
@@ -96,22 +108,46 @@ extension UIAutomationService {
                     targetProcessIdentifier: nil,
                     visualizerTarget: visualizerTarget)
             })
+        return UIAutomationActionResult(payload: (), outcome: result.outcome)
     }
 
     public func hotkey(keys: String, holdDuration: Int, targetProcessIdentifier: pid_t) async throws {
+        _ = try await self.hotkeyWithOutcome(
+            keys: keys,
+            holdDuration: holdDuration,
+            targetProcessIdentifier: targetProcessIdentifier)
+    }
+
+    public func hotkeyWithOutcome(
+        keys: String,
+        holdDuration: Int,
+        targetProcessIdentifier: pid_t) async throws -> UIAutomationActionResult<Void>
+    {
         self.logger.debug("Delegating targeted hotkey to HotkeyService")
-        _ = try await self.hotkeyService.hotkey(
+        let result = try await self.hotkeyService.hotkey(
             keys: keys,
             holdDuration: holdDuration,
             targetProcessIdentifier: targetProcessIdentifier)
 
         await self.visualizeHotkey(keys: keys, targetProcessIdentifier: targetProcessIdentifier)
+        return UIAutomationActionResult(payload: (), outcome: result.outcome)
     }
 
     public func hotkey(
         keys: String,
         holdDuration: Int,
         expectedProcessIdentity: ApplicationProcessIdentity) async throws
+    {
+        _ = try await self.hotkeyWithOutcome(
+            keys: keys,
+            holdDuration: holdDuration,
+            expectedProcessIdentity: expectedProcessIdentity)
+    }
+
+    public func hotkeyWithOutcome(
+        keys: String,
+        holdDuration: Int,
+        expectedProcessIdentity: ApplicationProcessIdentity) async throws -> UIAutomationActionResult<Void>
     {
         let validator: @MainActor @Sendable () async throws -> Void = {
             guard self.processStartIdentityProvider(expectedProcessIdentity.processIdentifier) ==
@@ -121,12 +157,13 @@ extension UIAutomationService {
                     "Background hotkey target process exited or changed process generation")
             }
         }
-        _ = try await self.hotkeyService.hotkey(
+        let result = try await self.hotkeyService.hotkey(
             keys: keys,
             holdDuration: holdDuration,
             targetProcessIdentifier: expectedProcessIdentity.processIdentifier,
             deliveryValidator: validator,
             expectedProcessIdentity: expectedProcessIdentity)
+        return UIAutomationActionResult(payload: (), outcome: result.outcome)
     }
 
     public func hotkey(
@@ -134,6 +171,19 @@ extension UIAutomationService {
         holdDuration: Int,
         expectedWindowIdentity: WindowMutationIdentity,
         expectedWindowBounds: CGRect) async throws
+    {
+        _ = try await self.hotkeyWithOutcome(
+            keys: keys,
+            holdDuration: holdDuration,
+            expectedWindowIdentity: expectedWindowIdentity,
+            expectedWindowBounds: expectedWindowBounds)
+    }
+
+    public func hotkeyWithOutcome(
+        keys: String,
+        holdDuration: Int,
+        expectedWindowIdentity: WindowMutationIdentity,
+        expectedWindowBounds: CGRect) async throws -> UIAutomationActionResult<Void>
     {
         let processIdentity = ApplicationProcessIdentity(
             processIdentifier: expectedWindowIdentity.ownerProcessIdentifier,
@@ -143,18 +193,30 @@ extension UIAutomationService {
                 expectedWindowIdentity: expectedWindowIdentity,
                 expectedWindowBounds: expectedWindowBounds)
         }
-        _ = try await self.hotkeyService.hotkey(
+        let result = try await self.hotkeyService.hotkey(
             keys: keys,
             holdDuration: holdDuration,
             targetProcessIdentifier: expectedWindowIdentity.ownerProcessIdentifier,
             deliveryValidator: validator,
             expectedProcessIdentity: processIdentity)
+        return UIAutomationActionResult(payload: (), outcome: result.outcome)
     }
 
     public func hotkey(
         keys: String,
         holdDuration: Int,
         target: ExactWindowKeyboardTarget) async throws
+    {
+        _ = try await self.hotkeyWithOutcome(
+            keys: keys,
+            holdDuration: holdDuration,
+            target: target)
+    }
+
+    public func hotkeyWithOutcome(
+        keys: String,
+        holdDuration: Int,
+        target: ExactWindowKeyboardTarget) async throws -> UIAutomationActionResult<Void>
     {
         let processIdentity = ApplicationProcessIdentity(
             processIdentifier: target.windowIdentity.ownerProcessIdentifier,
@@ -165,12 +227,13 @@ extension UIAutomationService {
                 expectedWindowBounds: target.windowBounds,
                 expectedFocusedElement: target.focusedElement)
         }
-        _ = try await self.hotkeyService.hotkey(
+        let result = try await self.hotkeyService.hotkey(
             keys: keys,
             holdDuration: holdDuration,
             targetProcessIdentifier: target.windowIdentity.ownerProcessIdentifier,
             deliveryValidator: validator,
             expectedProcessIdentity: processIdentity)
+        return UIAutomationActionResult(payload: (), outcome: result.outcome)
     }
 
     /// PID-routed hotkeys are background operations and never emit foreground feedback.

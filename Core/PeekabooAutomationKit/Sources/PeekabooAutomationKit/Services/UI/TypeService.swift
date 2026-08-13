@@ -15,6 +15,12 @@ public final class TypeService {
 
     struct TypeActionExecutionSummary {
         let result: TypeResult
+        let executionResult: UIInputExecutionResult
+        let typedIntoSecureField: Bool
+    }
+
+    private struct TypeActionPayloadSummary {
+        let result: TypeResult
         let typedIntoSecureField: Bool
     }
 
@@ -303,6 +309,7 @@ public final class TypeService {
         laneCompletion: @escaping @MainActor (TypeActionExecutionSummary) async -> Void = { _ in }) async throws
         -> TypeActionExecutionSummary
     {
+        var payloadSummary: TypeActionPayloadSummary?
         var summary: TypeActionExecutionSummary?
         let foreground = targetProcessIdentifier == nil
         let plan = try DesktopOperationPlan(
@@ -317,7 +324,7 @@ public final class TypeService {
             prepare: { await lanePreparation() },
             action: nil,
             synthesis: DesktopOperationPlan.SynthesisRoute {
-                summary = try await self.performSyntheticTypeActions(
+                payloadSummary = try await self.performSyntheticTypeActions(
                     actions,
                     cadence: cadence,
                     snapshotId: snapshotId,
@@ -329,11 +336,16 @@ public final class TypeService {
                         mode: targetProcessIdentifier == nil ? .foreground : .background),
                     evidence: .deliveryAccepted)
             },
-            success: { _ in
-                guard let summary else {
+            success: { executionResult in
+                guard let payloadSummary else {
                     return
                 }
-                await laneCompletion(summary)
+                let completedSummary = TypeActionExecutionSummary(
+                    result: payloadSummary.result,
+                    executionResult: executionResult,
+                    typedIntoSecureField: payloadSummary.typedIntoSecureField)
+                summary = completedSummary
+                await laneCompletion(completedSummary)
             },
             finalize: self.operationFinalizer)
         _ = try await self.desktopOperationExecutor.execute(plan)
@@ -350,7 +362,7 @@ public final class TypeService {
         snapshotId _: String?,
         targetProcessIdentifier: pid_t?,
         deliveryValidator: (@MainActor @Sendable () async throws -> Void)?) async throws
-        -> TypeActionExecutionSummary
+        -> TypeActionPayloadSummary
     {
         var totalChars = 0
         var keyPresses = 0
@@ -441,7 +453,7 @@ public final class TypeService {
                 emittedUnitCount: emittedUnitCount)
         }
 
-        return TypeActionExecutionSummary(
+        return TypeActionPayloadSummary(
             result: TypeResult(
                 totalCharacters: totalChars,
                 keyPresses: keyPresses),

@@ -237,6 +237,20 @@ public struct TypeResult: Sendable, Codable {
     }
 }
 
+/// Payload returned by an automation action together with its canonical execution outcome.
+///
+/// The outcome is optional so capability implementations backed by an older transport can preserve
+/// their payload without inventing execution evidence. Local automation always supplies it.
+public struct UIAutomationActionResult<Payload: Sendable>: Sendable {
+    public let payload: Payload
+    public let outcome: DesktopActionOutcome?
+
+    public init(payload: Payload, outcome: DesktopActionOutcome?) {
+        self.payload = payload
+        self.outcome = outcome
+    }
+}
+
 /// Value payload for direct accessibility value mutation.
 public enum UIElementValue: Sendable, Codable, Equatable {
     case bool(Bool)

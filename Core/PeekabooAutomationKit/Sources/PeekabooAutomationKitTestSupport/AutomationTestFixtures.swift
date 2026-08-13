@@ -5,6 +5,38 @@ import PeekabooFoundation
 
 /// Canonical deterministic builders for automation tests.
 public enum AutomationTestFixtures {
+    /// One valid outcome for every canonical desktop-action state.
+    public static var canonicalActionOutcomes: [DesktopActionOutcome] {
+        let backgroundAccessibilityAction = DesktopActionOutcome.Delivery(
+            mechanism: .accessibilityAction,
+            mode: .background)
+        let backgroundTargetedEvents = DesktopActionOutcome.Delivery(
+            mechanism: .processTargetedEvents,
+            mode: .background)
+
+        return [
+            .confirmedChange(
+                delivery: backgroundAccessibilityAction,
+                unitCount: self.dispatchUnitCount(1)),
+            .confirmedNoChange(),
+            .partial(
+                delivery: backgroundAccessibilityAction,
+                unitCount: self.dispatchUnitCount(2)),
+            .dispatchedUnverified(
+                delivery: backgroundTargetedEvents,
+                evidence: .operationStillRunning,
+                unitCount: self.dispatchUnitCount(3)),
+            .suspectedNoop(
+                delivery: backgroundAccessibilityAction,
+                unitCount: self.dispatchUnitCount(1)),
+            .refused(reason: .permissionDenied),
+            .indeterminate(
+                delivery: backgroundTargetedEvents,
+                evidence: .responseLost,
+                unitCount: self.dispatchUnitCount(2)),
+        ]
+    }
+
     public static func uiActionReceipt(
         outcome: DesktopActionOutcome = .dispatchedUnverified(
             delivery: DesktopActionOutcome.Delivery(
@@ -219,5 +251,12 @@ public enum AutomationTestFixtures {
             windowBounds: window.bounds,
             windowMutationIdentity: window.mutationIdentity,
             windowID: CGWindowID(window.windowID))
+    }
+
+    private static func dispatchUnitCount(_ value: Int) -> DesktopActionOutcome.DispatchUnitCount {
+        guard let unitCount = DesktopActionOutcome.DispatchUnitCount(value) else {
+            preconditionFailure("Automation fixture dispatch counts must be positive")
+        }
+        return unitCount
     }
 }
