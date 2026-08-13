@@ -42,7 +42,7 @@ If LaunchServices cannot resolve `Playground` by name, also set `PEEKABOO_PLAYGR
 
 `RUN_AUTOMATION_READ=true` and `RUN_AUTOMATION_ACTIONS=true` select the reusable automation suites used by `test:automation:read` and `test:automation:actions`. `RUN_LOCAL_TESTS=true` enables tests that require locally built companion fixtures or an interactive Aqua session. Do not introduce one-off per-test environment flags; route new tests through these shared selectors.
 
-Clipboard mutation is never part of the default or `test:safe` suites. The live clipboard smoke test requires `PEEKABOO_INCLUDE_CLIPBOARD_TESTS=true` and must only be enabled with fresh authorization to read, replace, and restore the ambient clipboard.
+Clipboard mutation is never part of the default or `test:safe` suites. The safe runner explicitly overrides inherited clipboard opt-ins. The live clipboard smoke test requires `PEEKABOO_INCLUDE_CLIPBOARD_TESTS=true` on a direct Swift test invocation and must only be enabled with fresh authorization to read, replace, and restore the ambient clipboard.
 
 ## Test Categories
 
