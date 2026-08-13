@@ -333,6 +333,8 @@ RuntimeOptionsConfigurable {
                 services: self.services,
                 requiresExplicitExactWindow: true
             )
+        } catch is CancellationError {
+            throw CancellationError()
         } catch {
             throw self.preDispatchActionError(for: error, reason: .targetUnavailable)
         }
@@ -368,6 +370,8 @@ RuntimeOptionsConfigurable {
         do {
             let pinnedTarget = try await target.pinningCurrentFocusedElement(using: self.services.automation)
             return PressDeliveryPlan(target: pinnedTarget, foregroundSetupMayHaveMutated: false)
+        } catch is CancellationError {
+            throw CancellationError()
         } catch {
             throw self.preDispatchActionError(for: error, reason: .targetUnavailable)
         }

@@ -179,6 +179,23 @@ struct PressCommandTests {
     }
 
     @Test
+    func `Background target resolution cancellation is not projected as a target refusal`() async throws {
+        let context = await self.makeContext(windows: CancellingPressWindowService())
+
+        let result = try await self.runPress(
+            arguments: ["return", "--window-id", "901", "--json"],
+            context: context
+        )
+
+        #expect(result.exitStatus != 0)
+        let payload = try JSONDecoder().decode(JSONResponse.self, from: Data(result.stdout.utf8))
+        #expect(payload.outcome == nil)
+        #expect(payload.error?.code != ErrorCode.SNAPSHOT_STALE.rawValue)
+        #expect(await self.automationState(context) { $0.hotkeyCalls.isEmpty })
+        #expect(await self.automationState(context) { $0.targetedHotkeyCalls.isEmpty })
+    }
+
+    @Test
     func `Deprecated background alias remains accepted but cannot authorize raw press`() async throws {
         let context = await self.makeContext()
         let result = try await self.runPress(
@@ -305,6 +322,24 @@ struct PressCommandTests {
         await MainActor.run {
             operation(context.automation)
         }
+    }
+}
+
+private actor CancellingPressWindowService: WindowManagementServiceProtocol {
+    func closeWindow(target _: WindowTarget) async throws {}
+    func minimizeWindow(target _: WindowTarget) async throws {}
+    func maximizeWindow(target _: WindowTarget) async throws {}
+    func moveWindow(target _: WindowTarget, to _: CGPoint) async throws {}
+    func resizeWindow(target _: WindowTarget, to _: CGSize) async throws {}
+    func setWindowBounds(target _: WindowTarget, bounds _: CGRect) async throws {}
+    func focusWindow(target _: WindowTarget) async throws {}
+
+    func listWindows(target _: WindowTarget) async throws -> [ServiceWindowInfo] {
+        throw CancellationError()
+    }
+
+    func getFocusedWindow() async throws -> ServiceWindowInfo? {
+        nil
     }
 }
 #endif

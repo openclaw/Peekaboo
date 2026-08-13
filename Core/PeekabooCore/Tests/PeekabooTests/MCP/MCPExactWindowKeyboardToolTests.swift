@@ -42,6 +42,22 @@ struct MCPExactWindowKeyboardToolTests {
     }
 
     @Test
+    func `Press target resolution cancellation is not projected as a target refusal`() async throws {
+        let fixture = await Self.makeFixture(
+            focusedWindowID: 42,
+            cancelWindowListing: true)
+        let response = try await PressTool(context: fixture.context).execute(arguments: ToolArguments(raw: [
+            "window_id": 42,
+            "keys": ["cmd+l"],
+        ]))
+
+        #expect(response.isError)
+        #expect(response.meta == nil)
+        #expect(await MainActor.run { fixture.automation.exactHotkeyCalls.isEmpty })
+        #expect(await MainActor.run { fixture.automation.lastHotkeyKeys } == nil)
+    }
+
+    @Test
     func `Type app target upgrades one eligible window and refuses ambiguity`() async throws {
         let one = await Self.makeFixture(focusedWindowID: 42)
         let success = try await TypeTool(context: one.context).execute(arguments: ToolArguments(raw: [
@@ -95,6 +111,7 @@ struct MCPExactWindowKeyboardToolTests {
         focusedWindowID: Int?,
         windows: [ServiceWindowInfo] = [Self.keyboardWindow(id: 42, index: 0)],
         backgroundOnly: Bool = false,
+        cancelWindowListing: Bool = false,
         snapshots: (any SnapshotManagerProtocol)? = nil) async
         -> (context: MCPToolContext, automation: ExactKeyboardAutomationService)
     {
@@ -118,7 +135,9 @@ struct MCPExactWindowKeyboardToolTests {
         let context = await MCPToolTestHelpers.makeContext(
             automation: automation,
             applications: applications,
-            windows: ExactKeyboardWindowService(windows: windows),
+            windows: ExactKeyboardWindowService(
+                windows: windows,
+                cancelWindowListing: cancelWindowListing),
             snapshots: snapshots,
             snapshotOwner: Self.uiSnapshots.owner,
             executionPolicy: backgroundOnly ? .backgroundOnly : .unrestricted)
@@ -243,9 +262,11 @@ private final class ExactKeyboardAutomationService: MockAutomationService,
 
 private actor ExactKeyboardWindowService: WindowManagementServiceProtocol {
     let windows: [ServiceWindowInfo]
+    let cancelWindowListing: Bool
 
-    init(windows: [ServiceWindowInfo]) {
+    init(windows: [ServiceWindowInfo], cancelWindowListing: Bool = false) {
         self.windows = windows
+        self.cancelWindowListing = cancelWindowListing
     }
 
     func closeWindow(target _: WindowTarget) async throws {}
@@ -257,7 +278,10 @@ private actor ExactKeyboardWindowService: WindowManagementServiceProtocol {
     func focusWindow(target _: WindowTarget) async throws {}
 
     func listWindows(target: WindowTarget) async throws -> [ServiceWindowInfo] {
-        switch target {
+        if self.cancelWindowListing {
+            throw CancellationError()
+        }
+        return switch target {
         case let .windowId(windowID): self.windows.filter { $0.windowID == windowID }
         case let .title(title), let .applicationAndTitle(_, title):
             self.windows.filter { $0.title.localizedCaseInsensitiveContains(title) }

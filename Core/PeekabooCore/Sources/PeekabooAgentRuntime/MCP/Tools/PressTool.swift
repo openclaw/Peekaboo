@@ -370,6 +370,8 @@ public struct PressTool: MCPTool {
                 windows: self.context.windows,
                 snapshotExactWindow: snapshotExactWindow,
                 requiresExplicitExactWindow: true)
+        } catch is CancellationError {
+            throw CancellationError()
         } catch let error as MCPInteractionTargetError {
             throw error
         } catch {
@@ -400,6 +402,8 @@ public struct PressTool: MCPTool {
             let deliveryTarget = try await plannedTarget.pinningCurrentFocusedElement(
                 using: self.context.automation)
             return PressDeliveryPlan(target: deliveryTarget, targetFocusCompleted: false)
+        } catch is CancellationError {
+            throw CancellationError()
         } catch {
             throw PressToolValidationError(
                 message: error.localizedDescription,
