@@ -96,6 +96,17 @@ struct AgentToolMCPFailureSemanticsTests {
         let identical = AgentToolResult.success(
             toolCallId: "identical",
             result: AnyAgentToolValue(object: identicalPayload))
+        var malformedRoot = try #require(confirmedValue.objectValue)
+        malformedRoot["effect"] = AnyAgentToolValue(string: "refused")
+        malformedRoot["meta"] = AnyAgentToolValue(object: [
+            "mutation_dispatched": AnyAgentToolValue(bool: false),
+            "requires_fresh_observation": AnyAgentToolValue(bool: false),
+            "retry_safe": AnyAgentToolValue(bool: true),
+        ])
+        malformedRoot["metadata"] = confirmedValue
+        let malformedThenValid = AgentToolResult.success(
+            toolCallId: "malformed-then-valid",
+            result: AnyAgentToolValue(object: malformedRoot))
         let conflictCall = AgentToolCall(id: "conflict", name: "click", arguments: [:])
         let conflictEntry = try #require(
             Self.execution(call: conflictCall, result: conflict).executionTrace().entries.first)
@@ -107,10 +118,21 @@ struct AgentToolMCPFailureSemanticsTests {
         #expect(conflictEntry.result?.objectValue?["retry_safe"] == nil)
         #expect(!AgentToolResultSemantics.isFailure(identical))
         #expect(AgentToolResultSemantics.actionOutcome(from: identical) == confirmed.projection)
+
+        let malformedEntry = try #require(Self.execution(
+            call: AgentToolCall(id: "malformed-then-valid", name: "click", arguments: [:]),
+            result: malformedThenValid).executionTrace().entries.first)
+        let malformedSummary = try #require(malformedEntry.result?.objectValue)
+        #expect(AgentToolResultSemantics.isFailure(malformedThenValid))
+        #expect(malformedEntry.actionOutcome == nil)
+        #expect(malformedEntry.mutationDispatch == .possiblyDispatched)
+        #expect(malformedSummary["mutation_dispatched"] == nil)
+        #expect(malformedSummary["requires_fresh_observation"] == nil)
+        #expect(malformedSummary["retry_safe"] == nil)
     }
 
     @Test
-    func `Outcome inspection ignores deeply nested unrelated payloads`() throws {
+    func `Outcome inspection ignores deeply nested and wide unrelated payloads`() throws {
         var unrelated = AnyAgentToolValue(string: "private leaf")
         for _ in 0..<512 {
             unrelated = AnyAgentToolValue(object: ["next": unrelated])
@@ -129,6 +151,18 @@ struct AgentToolMCPFailureSemanticsTests {
         #expect(AgentToolResultSemantics.actionOutcome(from: result) == nil)
         #expect(trace.entries.first?.disposition == .executedSucceeded)
         #expect(encoded.count < 1000)
+
+        var wide = Dictionary(uniqueKeysWithValues: (0..<10000).map { index in
+            ("unrelated-\(index)-" + String(repeating: "x", count: 128), AnyAgentToolValue(bool: true))
+        })
+        wide["state"] = AnyAgentToolValue(string: "ready")
+        let wideResult = AgentToolResult.success(
+            toolCallId: call.id,
+            result: AnyAgentToolValue(object: wide))
+        let wideTrace = Self.execution(call: call, result: wideResult).executionTrace()
+        #expect(!AgentToolResultSemantics.isFailure(wideResult))
+        #expect(wideTrace.entries.first?.disposition == .executedSucceeded)
+        #expect(try JSONEncoder().encode(wideTrace).count < 1000)
     }
 
     @Test
@@ -169,6 +203,9 @@ struct AgentToolMCPFailureSemanticsTests {
             result: AnyAgentToolValue(object: [
                 "error": AnyAgentToolValue(string: "stale wrapper error"),
                 "metadata": Self.value(outcome.projection),
+                "mutation_dispatched": AnyAgentToolValue(bool: false),
+                "requires_fresh_observation": AnyAgentToolValue(bool: true),
+                "retry_safe": AnyAgentToolValue(bool: true),
                 "success": AnyAgentToolValue(bool: false),
             ]))
         let entry = try #require(Self.execution(call: call, result: result).executionTrace().entries.first)
@@ -178,8 +215,42 @@ struct AgentToolMCPFailureSemanticsTests {
         #expect(entry.disposition == .executedSucceeded)
         #expect(entry.actionOutcome == outcome.projection)
         #expect(entry.mutationDispatch == .dispatched)
+        #expect(summary["mutation_dispatched"]?.boolValue == true)
+        #expect(summary["requires_fresh_observation"]?.boolValue == false)
+        #expect(summary["retry_safe"]?.boolValue == false)
         #expect(summary["error_present"] == nil)
         #expect(summary["success"] == nil)
+    }
+
+    @Test
+    func `Conflicting legacy wrappers make canonical derived claims conservative`() throws {
+        let outcome = DesktopActionOutcome.confirmedChange(delivery: .init(
+            mechanism: .accessibilityAction,
+            mode: .background))
+        let call = AgentToolCall(id: "legacy-wrapper-conflict", name: "click", arguments: [:])
+        let result = try AgentToolResult.success(
+            toolCallId: call.id,
+            result: AnyAgentToolValue(object: [
+                "meta": AnyAgentToolValue(object: [
+                    "mutation_dispatched": AnyAgentToolValue(bool: true),
+                    "requires_fresh_observation": AnyAgentToolValue(bool: false),
+                    "retry_safe": AnyAgentToolValue(bool: false),
+                ]),
+                "metadata": Self.value(outcome.projection),
+                "mutation_dispatched": AnyAgentToolValue(bool: false),
+                "requires_fresh_observation": AnyAgentToolValue(bool: true),
+                "retry_safe": AnyAgentToolValue(bool: true),
+            ]))
+        let entry = try #require(Self.execution(call: call, result: result).executionTrace().entries.first)
+        let summary = try #require(entry.result?.objectValue)
+
+        #expect(AgentToolResultSemantics.isFailure(result))
+        #expect(entry.disposition == .executedFailed)
+        #expect(entry.actionOutcome == outcome.projection)
+        #expect(entry.mutationDispatch == .possiblyDispatched)
+        #expect(summary["mutation_dispatched"] == nil)
+        #expect(summary["requires_fresh_observation"] == nil)
+        #expect(summary["retry_safe"] == nil)
     }
 
     @Test
@@ -402,21 +473,49 @@ struct AgentToolMCPFailureSemanticsTests {
     }
 
     @Test
-    func `Wide structured failure uses bounded deterministic key selection`() throws {
-        let fields = Dictionary(uniqueKeysWithValues: (0..<10000).map { index in
+    func `Structured failure key selection bounds input width keys and output`() throws {
+        let boundedFields = Dictionary(uniqueKeysWithValues: (0..<1000).map { index in
             (String(format: "key-%05d", index), Value.string("value"))
         })
-        let response = ToolResponse(
+        let boundedResponse = ToolResponse(
             content: [.text(text: "wide failure", annotations: nil, _meta: nil)],
             isError: true,
-            structuredContent: .object(fields))
-        let structured = try #require(AgentToolMCPBridge.convert(response).failure?.structuredValue?.objectValue)
+            structuredContent: .object(boundedFields))
+        let bounded = try #require(
+            AgentToolMCPBridge.convert(boundedResponse).failure?.structuredValue?.objectValue)
 
-        #expect(structured.count == 129)
-        #expect(structured["key-00000"]?.stringValue == "value")
-        #expect(structured["key-00127"]?.stringValue == "value")
-        #expect(structured["key-09999"] == nil)
-        #expect(structured["__peekaboo_omitted_fields"]?.intValue == 9872)
+        #expect(bounded.count == 129)
+        #expect(bounded["key-00000"]?.stringValue == "value")
+        #expect(bounded["key-00127"]?.stringValue == "value")
+        #expect(bounded["key-00999"] == nil)
+        #expect(bounded["__peekaboo_omitted_fields"]?.intValue == 872)
+
+        let oversizedFields = Dictionary(uniqueKeysWithValues: (0..<10000).map { index in
+            (String(format: "key-%05d", index), Value.string("value"))
+        })
+        let oversizedResponse = ToolResponse(
+            content: [.text(text: "oversized failure", annotations: nil, _meta: nil)],
+            isError: true,
+            structuredContent: .object(oversizedFields))
+        let oversized = try #require(
+            AgentToolMCPBridge.convert(oversizedResponse).failure?.structuredValue?.objectValue)
+
+        #expect(oversized.count == 2)
+        #expect(oversized["__peekaboo_omission_reason"]?.stringValue == "object_field_limit")
+        #expect(oversized["__peekaboo_omitted_fields"]?.intValue == 10000)
+
+        let collidingPrefix = String(repeating: "x", count: 512)
+        let collidingFields = Dictionary(uniqueKeysWithValues: (0..<512).map { index in
+            (collidingPrefix + String(format: "%04d", index), Value.string("value"))
+        })
+        let collidingResponse = ToolResponse(
+            content: [.text(text: "colliding failure", annotations: nil, _meta: nil)],
+            isError: true,
+            structuredContent: .object(collidingFields))
+        let colliding = try #require(
+            AgentToolMCPBridge.convert(collidingResponse).failure?.structuredValue?.objectValue)
+        #expect(colliding.count == 1)
+        #expect(colliding["__peekaboo_omitted_fields"]?.intValue == 512)
     }
 
     @Test

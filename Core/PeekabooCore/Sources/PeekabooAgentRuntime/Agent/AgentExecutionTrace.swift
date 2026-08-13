@@ -213,6 +213,9 @@ private enum AgentExecutionTraceBuilder {
         if disposition == .skippedBeforeDispatch {
             return isMutatingCall ? .notDispatched : nil
         }
+        if case .invalid = claims.boolean("mutation_dispatched") {
+            return isMutatingCall ? .possiblyDispatched : nil
+        }
         if case let .valid(actionOutcome) = claims.actionOutcome {
             return switch actionOutcome.dispatchState {
             case .none: .notDispatched
@@ -328,10 +331,16 @@ private enum AgentExecutionTraceSanitizer {
                 result.failure == nil && !result.isError)
         guard var object = summary.objectValue else { return summary }
         if let actionOutcome {
-            object["mutation_dispatched"] = AnyAgentToolValue(bool: actionOutcome.mutationDispatched)
-            object["requires_fresh_observation"] = AnyAgentToolValue(
-                bool: actionOutcome.requiresFreshObservation)
-            object["retry_safe"] = AnyAgentToolValue(bool: actionOutcome.retrySafe)
+            if claims.boolean("mutation_dispatched") != .invalid {
+                object["mutation_dispatched"] = AnyAgentToolValue(bool: actionOutcome.mutationDispatched)
+            }
+            if claims.boolean("requires_fresh_observation") != .invalid {
+                object["requires_fresh_observation"] = AnyAgentToolValue(
+                    bool: actionOutcome.requiresFreshObservation)
+            }
+            if claims.boolean("retry_safe") != .invalid {
+                object["retry_safe"] = AnyAgentToolValue(bool: actionOutcome.retrySafe)
+            }
         }
         if let mutationDispatch {
             object["mutation_dispatch"] = AnyAgentToolValue(string: mutationDispatch.rawValue)
@@ -416,12 +425,10 @@ private enum AgentExecutionTraceSanitizer {
             to: &summary)
         if case let .valid(boundary) = claims.turnBoundary {
             var boundarySummary: [String: AnyAgentToolValue] = [:]
-            if let disposition = boundary.disposition {
-                boundarySummary["disposition"] = AnyAgentToolValue(string: disposition.rawValue)
-                boundarySummary["stop_after_current_step"] = AnyAgentToolValue(bool: true)
-                if disposition == .continueNextStep {
-                    boundarySummary["continue_next_step"] = AnyAgentToolValue(bool: true)
-                }
+            boundarySummary["disposition"] = AnyAgentToolValue(string: boundary.disposition.rawValue)
+            boundarySummary["stop_after_current_step"] = AnyAgentToolValue(bool: true)
+            if boundary.disposition == .continueNextStep {
+                boundarySummary["continue_next_step"] = AnyAgentToolValue(bool: true)
             }
             if !boundarySummary.isEmpty {
                 summary["turn_boundary"] = AnyAgentToolValue(object: boundarySummary)
@@ -429,7 +436,7 @@ private enum AgentExecutionTraceSanitizer {
         }
 
         let copiedKeys = Set(publicBooleanFields + ["error", "reason", "turn_boundary"])
-        if !Set(object.keys).isSubset(of: copiedKeys) {
+        if object.count > copiedKeys.count || object.keys.contains(where: { !copiedKeys.contains($0) }) {
             summary["payload_omitted"] = AnyAgentToolValue(bool: true)
         }
         return AnyAgentToolValue(object: summary)

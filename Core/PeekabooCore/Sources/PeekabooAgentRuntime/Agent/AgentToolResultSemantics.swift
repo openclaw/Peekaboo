@@ -19,8 +19,13 @@ enum AgentToolResultSemantics {
             case stopAgent = "stop_agent"
         }
 
-        let disposition: Disposition?
-        let reason: String?
+        let disposition: Disposition
+        let reason: String
+    }
+
+    private struct CanonicalOutcomeClaims {
+        let resolution: MCPToolResponseMetadataProjector.ActionOutcomeResolution
+        let carrierIndexes: Set<Int>
     }
 
     struct NormalizedClaims {
@@ -118,11 +123,18 @@ enum AgentToolResultSemantics {
     static func normalizedClaims(from value: AnyAgentToolValue) -> NormalizedClaims {
         let containers = self.semanticContainers(from: value)
         guard !containers.isEmpty else { return .empty }
+        let canonicalOutcome = self.canonicalOutcomeClaims(in: containers)
         let legacyBooleans = Dictionary(uniqueKeysWithValues: self.legacyBooleanKeys.map { key in
-            (key, self.booleanResolution(for: key, in: containers))
+            let excludedIndexes = MCPToolResponseMetadataProjector.actionOutcomeKeys.contains(key)
+                ? canonicalOutcome.carrierIndexes
+                : []
+            return (key, self.booleanResolution(
+                for: key,
+                in: containers,
+                excluding: excludedIndexes))
         })
         return NormalizedClaims(
-            actionOutcome: self.actionOutcomeResolution(in: containers),
+            actionOutcome: canonicalOutcome.resolution,
             legacyBooleans: legacyBooleans,
             errorPresence: self.presenceResolution(for: "error", in: containers),
             reasonPresence: self.presenceResolution(for: "reason", in: containers),
@@ -140,22 +152,25 @@ enum AgentToolResultSemantics {
         ].compactMap(\.self)
     }
 
-    private static func actionOutcomeResolution(
-        in containers: [[String: AnyAgentToolValue]])
-        -> MCPToolResponseMetadataProjector.ActionOutcomeResolution
+    private static func canonicalOutcomeClaims(
+        in containers: [[String: AnyAgentToolValue]]) -> CanonicalOutcomeClaims
     {
+        var carrierIndexes: Set<Int> = []
         var resolvedProjection: DesktopActionOutcome.Projection?
-        for container in containers {
-            let outcomeFields = container.filter {
-                MCPToolResponseMetadataProjector.actionOutcomeKeys.contains($0.key)
-            }
-            guard MCPToolResponseMetadataProjector.requiredActionOutcomeKeys
-                .isSubset(of: Set(outcomeFields.keys))
+        var invalid = false
+        for (index, container) in containers.enumerated() {
+            let outcomeFields = Dictionary(uniqueKeysWithValues: MCPToolResponseMetadataProjector
+                .actionOutcomeKeys.compactMap { key in
+                    container[key].map { (key, $0) }
+                })
+            guard MCPToolResponseMetadataProjector.requiredActionOutcomeKeys.isSubset(of: Set(outcomeFields.keys))
             else {
                 continue
             }
+            carrierIndexes.insert(index)
             guard let convertedFields = self.convertedOutcomeFields(outcomeFields) else {
-                return .invalid
+                invalid = true
+                continue
             }
             let resolution = MCPToolResponseMetadataProjector.actionOutcomeResolution(
                 from: .object(convertedFields))
@@ -163,22 +178,31 @@ enum AgentToolResultSemantics {
             case .absent:
                 continue
             case .invalid:
-                return .invalid
+                invalid = true
             case let .valid(projection):
                 if let resolvedProjection, resolvedProjection != projection {
-                    return .invalid
+                    invalid = true
+                } else {
+                    resolvedProjection = projection
                 }
-                resolvedProjection = projection
             }
         }
-        return resolvedProjection.map(MCPToolResponseMetadataProjector.ActionOutcomeResolution.valid) ?? .absent
+        if invalid {
+            return CanonicalOutcomeClaims(resolution: .invalid, carrierIndexes: carrierIndexes)
+        }
+        let resolution = resolvedProjection.map(MCPToolResponseMetadataProjector.ActionOutcomeResolution.valid) ??
+            .absent
+        return CanonicalOutcomeClaims(resolution: resolution, carrierIndexes: carrierIndexes)
     }
 
     private static func booleanResolution(
         for key: String,
-        in containers: [[String: AnyAgentToolValue]]) -> ClaimResolution<Bool>
+        in containers: [[String: AnyAgentToolValue]],
+        excluding excludedIndexes: Set<Int>) -> ClaimResolution<Bool>
     {
-        let claims = containers.compactMap { $0[key] }
+        let claims = containers.enumerated().compactMap { index, container in
+            excludedIndexes.contains(index) ? nil : container[key]
+        }
         guard !claims.isEmpty else { return .absent }
         let values = claims.compactMap(\.boolValue)
         guard values.count == claims.count, Set(values).count == 1, let value = values.first else {
@@ -285,6 +309,7 @@ enum AgentToolResultSemantics {
         } else {
             nil
         }
+        guard let normalizedDisposition, let reason else { return nil }
         return TurnBoundaryProjection(
             disposition: normalizedDisposition,
             reason: reason)

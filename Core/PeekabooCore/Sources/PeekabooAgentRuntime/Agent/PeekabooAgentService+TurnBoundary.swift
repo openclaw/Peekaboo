@@ -190,18 +190,13 @@ extension PeekabooAgentService {
     func turnBoundarySignal(from toolResult: AgentToolResult) -> AgentTurnBoundarySignal? {
         switch AgentToolResultSemantics.normalizedClaims(from: toolResult.result).turnBoundary {
         case .absent:
-            return nil
+            nil
         case .invalid:
-            return .stopAgent(reason: Self.invalidTurnBoundaryReason)
+            .stopAgent(reason: Self.invalidTurnBoundaryReason)
         case let .valid(boundary):
-            guard let disposition = boundary.disposition,
-                  let reason = boundary.reason
-            else {
-                return nil
-            }
-            return switch disposition {
-            case .continueNextStep: .continueNextStep(reason: reason)
-            case .stopAgent: .stopAgent(reason: reason)
+            switch boundary.disposition {
+            case .continueNextStep: .continueNextStep(reason: boundary.reason)
+            case .stopAgent: .stopAgent(reason: boundary.reason)
             }
         }
     }

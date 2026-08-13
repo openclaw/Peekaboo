@@ -121,6 +121,27 @@ struct AgentTurnBoundaryTranscriptTests {
                 reason: "Skipped click; call `see` successfully before another UI action."))
         }
 
+        let malformedSingleBoundaries: [(String, AnyAgentToolValue)] = [
+            ("empty", AnyAgentToolValue(object: [:])),
+            ("reason-only", AnyAgentToolValue(object: [
+                "reason": AnyAgentToolValue(string: "No disposition"),
+            ])),
+            ("false-flags", AnyAgentToolValue(object: [
+                "continue_next_step": AnyAgentToolValue(bool: false),
+                "reason": AnyAgentToolValue(string: "No positive disposition"),
+                "stop_after_current_step": AnyAgentToolValue(bool: false),
+                "stop_agent": AnyAgentToolValue(bool: false),
+            ])),
+        ]
+        for (name, boundary) in malformedSingleBoundaries {
+            let result = AgentToolResult.success(
+                toolCallId: name,
+                result: AnyAgentToolValue(object: ["turn_boundary": boundary]))
+            #expect(AgentToolResultSemantics.normalizedClaims(from: result.result).turnBoundary == .invalid)
+            #expect(service.turnBoundarySignal(from: result) == .stopAgent(
+                reason: PeekabooAgentService.invalidTurnBoundaryReason))
+        }
+
         let compatible = AgentToolResult.success(
             toolCallId: "compatible-boundary",
             result: AnyAgentToolValue(object: [

@@ -56,7 +56,9 @@ enum AgentToolMCPBridge {
     private static let maxSourceImageBytes = 24 * 1024 * 1024
     private static let maxTextBytes = 100_000
     private static let maxStructuredDepth = 8
+    private static let maxStructuredInputItems = 1024
     private static let maxStructuredItems = 128
+    private static let maxStructuredKeyBytes = 256
     private static let maxStructuredNodes = 2048
     private static let maxStructuredTextBytes = 200_000
 
@@ -551,37 +553,44 @@ enum AgentToolMCPBridge {
             }
             return AnyAgentToolValue(array: converted)
         case let .object(values):
+            guard values.count <= Self.maxStructuredInputItems else {
+                return AnyAgentToolValue(object: [
+                    "__peekaboo_omission_reason": AnyAgentToolValue(string: "object_field_limit"),
+                    "__peekaboo_omitted_fields": AnyAgentToolValue(int: values.count),
+                ])
+            }
             var converted: [String: AnyAgentToolValue] = [:]
-            for key in Self.boundedSortedKeys(values.keys) {
-                guard let item = values[key] else { continue }
+            for (key, item) in Self.boundedSortedEntries(values) {
                 converted[Self.boundedStructuredText(key, budget: &budget)] = Self.agentValue(
                     item,
                     depth: depth + 1,
                     budget: &budget)
             }
-            if values.count > Self.maxStructuredItems {
+            if values.count > converted.count {
                 converted["__peekaboo_omitted_fields"] = AnyAgentToolValue(
-                    int: values.count - Self.maxStructuredItems)
+                    int: values.count - converted.count)
             }
             return AnyAgentToolValue(object: converted)
         }
     }
 
-    private static func boundedSortedKeys(
-        _ keys: Dictionary<String, Value>.Keys) -> [String]
+    private static func boundedSortedEntries(
+        _ values: [String: Value]) -> [(String, Value)]
     {
-        var selected: [String] = []
-        selected.reserveCapacity(Self.maxStructuredItems)
-        for key in keys {
-            let index = selected.firstIndex(where: { key < $0 }) ?? selected.endIndex
-            if selected.count < Self.maxStructuredItems {
-                selected.insert(key, at: index)
-            } else if index < selected.endIndex {
-                selected.insert(key, at: index)
-                selected.removeLast()
+        var candidates: [String: Value] = [:]
+        var collisions: Set<String> = []
+        candidates.reserveCapacity(min(values.count, Self.maxStructuredItems))
+        for (key, value) in values {
+            let boundedKey = Self.utf8Prefix(key, maximumBytes: Self.maxStructuredKeyBytes)
+            if candidates.removeValue(forKey: boundedKey) != nil || collisions.contains(boundedKey) {
+                collisions.insert(boundedKey)
+            } else {
+                candidates[boundedKey] = value
             }
         }
-        return selected
+        return candidates.keys.sorted().prefix(Self.maxStructuredItems).compactMap { key in
+            candidates[key].map { (key, $0) }
+        }
     }
 
     private static func boundedStructuredText(
@@ -591,7 +600,7 @@ enum AgentToolMCPBridge {
         guard budget.remainingTextBytes > 0 else {
             return "<omitted-text-budget>"
         }
-        let byteCount = value.utf8.count
+        let byteCount = value.utf8.prefix(budget.remainingTextBytes + 1).count
         guard byteCount > budget.remainingTextBytes else {
             budget.remainingTextBytes -= byteCount
             return value
