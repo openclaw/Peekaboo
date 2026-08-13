@@ -2,6 +2,7 @@ import Foundation
 import PeekabooAutomationKit
 import PeekabooBridge
 import PeekabooCore
+import PeekabooFoundation
 import Testing
 
 struct RemoteSnapshotManagerTests {
@@ -56,6 +57,58 @@ struct RemoteSnapshotManagerTests {
         #expect(PeekabooBridgeOperation.compatible(
             operations,
             with: .init(major: 1, minor: 9)) == operations)
+    }
+
+    @Test
+    func `snapshot mutation leases are advertised from protocol 1_24`() {
+        let operations: Set<PeekabooBridgeOperation> = [.beginSnapshotMutation, .finishSnapshotMutation]
+
+        #expect(PeekabooBridgeOperation.compatible(
+            operations,
+            with: .init(major: 1, minor: 23)).isEmpty)
+        #expect(PeekabooBridgeOperation.compatible(
+            operations,
+            with: .init(major: 1, minor: 24)) == operations)
+    }
+
+    @Test
+    @MainActor
+    func `bridge mutation lease blocks reuse without deleting snapshot evidence`() async throws {
+        let snapshots = InMemorySnapshotManager()
+        let snapshotId = try await snapshots.createSnapshot()
+        try await snapshots.storeDetectionResult(
+            snapshotId: snapshotId,
+            result: ElementDetectionResult(
+                snapshotId: snapshotId,
+                screenshotPath: "/tmp/\(snapshotId).png",
+                elements: DetectedElements(),
+                metadata: DetectionMetadata(detectionTime: 0, elementCount: 0, method: "test")))
+        let server = PeekabooBridgeServer(
+            services: PeekabooServices(snapshotManager: snapshots),
+            hostKind: .gui,
+            allowlistedTeams: [],
+            allowlistedBundles: [])
+        let socketPath = "/tmp/peekaboo-snapshot-lease-\(UUID().uuidString).sock"
+        let host = PeekabooBridgeHost(
+            socketPath: socketPath,
+            server: server,
+            allowedTeamIDs: [],
+            requestTimeoutSec: 2)
+        try await host.startChecked()
+        defer { Task { await host.stop() } }
+        let remote = RemoteSnapshotManager(
+            client: PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: 2))
+
+        let lease = try await remote.beginSnapshotMutation(snapshotId: snapshotId)
+        try await remote.finishSnapshotMutation(lease, requiresFreshObservation: true)
+
+        #expect(try await remote.getDetectionResult(snapshotId: snapshotId) != nil)
+        do {
+            _ = try await remote.beginSnapshotMutation(snapshotId: snapshotId)
+            Issue.record("Expected Bridge to refuse a consumed snapshot")
+        } catch let PeekabooError.snapshotStale(message) {
+            #expect(message.contains("fresh observation"))
+        }
     }
 
     @Test

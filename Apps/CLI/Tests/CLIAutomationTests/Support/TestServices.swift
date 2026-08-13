@@ -737,6 +737,7 @@ final class StubApplicationService: ApplicationServiceProtocol {
 
 final class StubSnapshotManager: SnapshotManagerProtocol, @unchecked Sendable {
     let supportsImplicitLatestSnapshotInvalidation = true
+    let supportsSnapshotMutationLeases = true
     var copiesScreenshotArtifactsIntoStorage = false
     var effectiveImplicitLatestInvalidationWatermark: Date?
     private(set) var detectionResults: [String: ElementDetectionResult] = [:]
@@ -750,6 +751,8 @@ final class StubSnapshotManager: SnapshotManagerProtocol, @unchecked Sendable {
     var preservingInvalidationDelay: Duration?
     private(set) var invalidationCutoffs: [Date] = []
     private var pendingSnapshotIDs: Set<String> = []
+    private var mutationLeases: [String: SnapshotMutationLease] = [:]
+    private var snapshotsRequiringFreshObservation: Set<String> = []
     private(set) var exposedPendingSnapshotDuringWrite = false
     struct ScreenshotRecord {
         let path: String
@@ -854,6 +857,37 @@ final class StubSnapshotManager: SnapshotManagerProtocol, @unchecked Sendable {
         self.mostRecentSnapshotId
     }
 
+    func beginSnapshotMutation(snapshotId: String) async throws -> SnapshotMutationLease {
+        guard self.snapshotInfos[snapshotId] != nil else {
+            throw SnapshotError.snapshotNotFound
+        }
+        guard self.mutationLeases[snapshotId] == nil,
+              !self.snapshotsRequiringFreshObservation.contains(snapshotId)
+        else {
+            throw PeekabooError.snapshotStale(
+                "Snapshot '\(snapshotId)' already drove a mutation whose result requires a fresh observation. " +
+                    "Run 'peekaboo see' again before another mutation. " +
+                    "Read-only snapshot inspection is still available."
+            )
+        }
+        let lease = SnapshotMutationLease(snapshotId: snapshotId)
+        self.mutationLeases[snapshotId] = lease
+        return lease
+    }
+
+    func finishSnapshotMutation(
+        _ lease: SnapshotMutationLease,
+        requiresFreshObservation: Bool
+    ) async throws {
+        guard self.mutationLeases[lease.snapshotId] == lease else {
+            throw SnapshotError.storageError("Mutation lease changed before completion")
+        }
+        self.mutationLeases.removeValue(forKey: lease.snapshotId)
+        if requiresFreshObservation {
+            self.snapshotsRequiringFreshObservation.insert(lease.snapshotId)
+        }
+    }
+
     func invalidateImplicitLatestSnapshot(through cutoff: Date) async throws -> String? {
         try await self.invalidateImplicitLatestSnapshot(
             through: cutoff,
@@ -904,6 +938,8 @@ final class StubSnapshotManager: SnapshotManagerProtocol, @unchecked Sendable {
         self.snapshotInfos.removeValue(forKey: snapshotId)
         self.storedElements.removeValue(forKey: snapshotId)
         self.pendingSnapshotIDs.remove(snapshotId)
+        self.mutationLeases.removeValue(forKey: snapshotId)
+        self.snapshotsRequiringFreshObservation.remove(snapshotId)
         if self.mostRecentSnapshotId == snapshotId {
             self.mostRecentSnapshotId = nil
         }
@@ -928,6 +964,8 @@ final class StubSnapshotManager: SnapshotManagerProtocol, @unchecked Sendable {
         self.snapshotInfos.removeAll()
         self.storedElements.removeAll()
         self.pendingSnapshotIDs.removeAll()
+        self.mutationLeases.removeAll()
+        self.snapshotsRequiringFreshObservation.removeAll()
         self.mostRecentSnapshotId = nil
         return count
     }

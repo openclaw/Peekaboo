@@ -10,6 +10,7 @@ import PeekabooFoundation
 @MainActor
 public final class InMemorySnapshotManager: SnapshotManagerProtocol {
     public let supportsImplicitLatestSnapshotInvalidation = true
+    public let supportsSnapshotMutationLeases = true
     public var copiesScreenshotArtifactsIntoStorage: Bool {
         self.options.copyArtifactsOnStore
     }
@@ -64,12 +65,24 @@ public final class InMemorySnapshotManager: SnapshotManagerProtocol {
         let preservedAt: Date
     }
 
+    enum MutationLeaseState {
+        case pending(SnapshotMutationLease)
+        case requiresFreshObservation(SnapshotMutationLease)
+
+        var lease: SnapshotMutationLease {
+            switch self {
+            case let .pending(lease), let .requiresFreshObservation(lease): lease
+            }
+        }
+    }
+
     private let logger = Logger(subsystem: "boo.peekaboo.core", category: "InMemorySnapshotManager")
     let options: Options
     let desktopMutationWatermarkStore: DesktopMutationWatermarkStore?
     var entries: [String: Entry] = [:]
     var implicitLatestInvalidatedAt: Date?
     var implicitLatestPreservation: ImplicitLatestPreservation?
+    var mutationLeases: [String: MutationLeaseState] = [:]
 
     public init(
         detectionResult: ElementDetectionResult? = nil,

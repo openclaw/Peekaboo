@@ -161,6 +161,10 @@ struct PeekabooBridgeCapabilityTests {
         #expect(handshake.enabledOperations?.contains(.invalidateImplicitLatestSnapshot) != true)
         #expect(!handshake.supportedOperations.contains(.storeObservationSnapshot))
         #expect(handshake.enabledOperations?.contains(.storeObservationSnapshot) != true)
+        #expect(!handshake.supportedOperations.contains(.beginSnapshotMutation))
+        #expect(!handshake.supportedOperations.contains(.finishSnapshotMutation))
+        #expect(handshake.enabledOperations?.contains(.beginSnapshotMutation) != true)
+        #expect(handshake.enabledOperations?.contains(.finishSnapshotMutation) != true)
 
         await #expect(throws: SnapshotError.self) {
             try await snapshots.storeObservationSnapshot(SnapshotObservationPublicationRequest(

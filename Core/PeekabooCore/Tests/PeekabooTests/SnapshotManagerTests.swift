@@ -1,5 +1,6 @@
 import CoreGraphics
 import Foundation
+import PeekabooFoundation
 import Testing
 @testable import PeekabooAgentRuntime
 @testable import PeekabooAutomation
@@ -238,6 +239,47 @@ struct SnapshotManagerTests {
         #expect(!snapshots.contains { $0.id == snapshot1 })
         #expect(!snapshots.contains { $0.id == snapshot2 })
         #expect(!snapshots.contains { $0.id == snapshot3 })
+    }
+
+    @Test
+    func `Mutation lease requiring observation blocks mutation but preserves reads`() async throws {
+        let manager = SnapshotManager()
+        let snapshotId = try await manager.createSnapshot()
+        let lease = try await manager.beginSnapshotMutation(snapshotId: snapshotId)
+        #expect(try await manager.getUIAutomationSnapshot(snapshotId: snapshotId) != nil)
+
+        try await manager.finishSnapshotMutation(lease, requiresFreshObservation: true)
+        try await manager.finishSnapshotMutation(lease, requiresFreshObservation: false)
+
+        // Consumption is mutation-specific: diagnostics and other read-only users retain evidence.
+        #expect(try await manager.getUIAutomationSnapshot(snapshotId: snapshotId) != nil)
+        do {
+            _ = try await manager.beginSnapshotMutation(snapshotId: snapshotId)
+            Issue.record("Expected consumed snapshot to refuse a second mutation")
+        } catch let PeekabooError.snapshotStale(message) {
+            #expect(message.contains("fresh observation"))
+        }
+        try await manager.cleanSnapshot(snapshotId: snapshotId)
+    }
+
+    @Test
+    func `Confirmed mutation lease releases snapshot and pending lease blocks overlap`() async throws {
+        let manager = InMemorySnapshotManager()
+        let snapshotId = try await manager.createSnapshot()
+        let firstLease = try await manager.beginSnapshotMutation(snapshotId: snapshotId)
+
+        await #expect(throws: PeekabooError.self) {
+            _ = try await manager.beginSnapshotMutation(snapshotId: snapshotId)
+        }
+
+        try await manager.finishSnapshotMutation(firstLease, requiresFreshObservation: false)
+        let secondLease = try await manager.beginSnapshotMutation(snapshotId: snapshotId)
+        #expect(secondLease != firstLease)
+        try await manager.finishSnapshotMutation(secondLease, requiresFreshObservation: true)
+        try await manager.finishSnapshotMutation(secondLease, requiresFreshObservation: false)
+        await #expect(throws: PeekabooError.self) {
+            _ = try await manager.beginSnapshotMutation(snapshotId: snapshotId)
+        }
     }
 
     private static func verifyAccessibilityMetadataRoundTrip(

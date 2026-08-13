@@ -48,7 +48,8 @@ extension PeekabooBridgeServer {
         case .createSnapshot, .storeDetectionResult, .getDetectionResult, .storeScreenshot,
              .storeObservationSnapshot, .storeAnnotatedScreenshot, .listSnapshots, .getMostRecentSnapshot,
              .cleanSnapshot,
-             .invalidateImplicitLatestSnapshot, .cleanSnapshotsOlderThan, .cleanAllSnapshots:
+             .invalidateImplicitLatestSnapshot, .beginSnapshotMutation, .finishSnapshotMutation,
+             .cleanSnapshotsOlderThan, .cleanAllSnapshots:
             return try await .init(response: self.handleSnapshotRequest(request))
         case ._appleScriptProbe:
             throw PeekabooBridgeErrorEnvelope(

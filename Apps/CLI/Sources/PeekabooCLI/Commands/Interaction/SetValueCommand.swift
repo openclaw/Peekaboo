@@ -210,11 +210,18 @@ enum ElementActionCommandExecutor {
                     services: services
                 )
             }
-            let actionResult = try await operation(
-                services.automation,
-                prepared.target,
-                prepared.value,
-                actionSnapshotId
+            let actionResult = try await SnapshotMutationCoordinator.perform(
+                snapshotId: actionSnapshotId,
+                snapshots: services.snapshots,
+                operation: {
+                    try await operation(
+                        services.automation,
+                        prepared.target,
+                        prepared.value,
+                        actionSnapshotId
+                    )
+                },
+                outcome: { $0.outcome }
             )
             await InteractionObservationInvalidator.invalidateAfterMutation(
                 targets: runtime.interactionMutationTargets,

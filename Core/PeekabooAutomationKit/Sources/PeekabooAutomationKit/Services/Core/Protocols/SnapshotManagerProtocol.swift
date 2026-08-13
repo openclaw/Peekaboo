@@ -1,5 +1,17 @@
 import CoreGraphics
 import Foundation
+import PeekabooFoundation
+
+/// Durable, single-use claim acquired immediately before a snapshot-backed UI mutation.
+public struct SnapshotMutationLease: Codable, Equatable, Sendable {
+    public let snapshotId: String
+    public let token: UUID
+
+    public init(snapshotId: String, token: UUID = UUID()) {
+        self.snapshotId = snapshotId
+        self.token = token
+    }
+}
 
 public struct SnapshotScreenshotRequest: Sendable, Equatable {
     public let snapshotId: String
@@ -65,6 +77,9 @@ public protocol SnapshotManagerProtocol: Sendable {
 
     /// Whether this manager can replace a complete observation snapshot as one transaction.
     var supportsAtomicObservationSnapshotPublication: Bool { get }
+
+    /// Whether this manager atomically blocks replay of snapshot-backed mutations.
+    var supportsSnapshotMutationLeases: Bool { get }
 
     /// Effective desktop-wide cutoff applied to implicit latest-snapshot lookup.
     /// Managers without a shared watermark can rely on the default `nil` implementation.
@@ -166,6 +181,21 @@ public protocol SnapshotManagerProtocol: Sendable {
     /// - Parameter snapshotId: Snapshot identifier
     /// - Returns: UI automation snapshot if found
     func getUIAutomationSnapshot(snapshotId: String) async throws -> UIAutomationSnapshot?
+
+    /// Atomically reserve a snapshot for one mutation.
+    ///
+    /// Read-only snapshot APIs remain available while a lease exists. A second mutation must fail
+    /// until the first lease is resolved, and a lease resolved as requiring observation remains
+    /// permanently unavailable for mutation.
+    func beginSnapshotMutation(snapshotId: String) async throws -> SnapshotMutationLease
+
+    /// Resolve a mutation lease from the canonical action outcome.
+    ///
+    /// When `requiresFreshObservation` is true, the snapshot remains readable but cannot drive
+    /// another mutation. Otherwise the lease is released for compatible confirmed/no-op flows.
+    func finishSnapshotMutation(
+        _ lease: SnapshotMutationLease,
+        requiresFreshObservation: Bool) async throws
 }
 
 extension SnapshotManagerProtocol {
@@ -178,6 +208,10 @@ extension SnapshotManagerProtocol {
     }
 
     public var supportsAtomicObservationSnapshotPublication: Bool {
+        false
+    }
+
+    public var supportsSnapshotMutationLeases: Bool {
         false
     }
 
@@ -223,6 +257,22 @@ extension SnapshotManagerProtocol {
 
     public func invalidateImplicitLatestSnapshot() async throws -> String? {
         try await self.invalidateImplicitLatestSnapshot(through: Date())
+    }
+
+    public func beginSnapshotMutation(snapshotId: String) async throws -> SnapshotMutationLease {
+        _ = snapshotId
+        throw SnapshotError.storageError(
+            "This snapshot manager does not support fail-closed mutation leases")
+    }
+
+    public func finishSnapshotMutation(
+        _ lease: SnapshotMutationLease,
+        requiresFreshObservation: Bool) async throws
+    {
+        _ = lease
+        _ = requiresFreshObservation
+        throw SnapshotError.storageError(
+            "This snapshot manager does not support fail-closed mutation leases")
     }
 }
 

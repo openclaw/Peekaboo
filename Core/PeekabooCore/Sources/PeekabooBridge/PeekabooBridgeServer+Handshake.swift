@@ -148,6 +148,10 @@ extension PeekabooBridgeServer {
         if !self.services.snapshots.supportsImplicitLatestSnapshotInvalidation {
             operations.remove(.invalidateImplicitLatestSnapshot)
         }
+        if !self.services.snapshots.supportsSnapshotMutationLeases {
+            operations.remove(.beginSnapshotMutation)
+            operations.remove(.finishSnapshotMutation)
+        }
         if !self.services.snapshots.supportsAtomicObservationSnapshotPublication {
             operations.remove(.storeObservationSnapshot)
         }

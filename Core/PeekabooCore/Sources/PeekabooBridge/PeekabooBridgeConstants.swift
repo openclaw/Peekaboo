@@ -28,7 +28,11 @@ public enum PeekabooBridgeConstants {
     }
 
     /// Current protocol version supported by this build.
-    public static let protocolVersion = PeekabooBridgeProtocolVersion(major: 1, minor: 23)
+    public static let protocolVersion = PeekabooBridgeProtocolVersion(major: 1, minor: 24)
+
+    /// First protocol with host-owned, fail-closed leases for snapshot-backed mutations.
+    public static let snapshotMutationLeaseVersion =
+        PeekabooBridgeProtocolVersion(major: 1, minor: 24)
 
     /// First protocol with explicit per-request canonical desktop-action outcome carriage.
     public static let desktopActionOutcomeProjectionVersion =

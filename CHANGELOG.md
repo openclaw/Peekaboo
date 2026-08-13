@@ -18,6 +18,7 @@
 ### Fixed
 - Make explicit Bridge socket overrides fail closed when unavailable instead of reporting a successful local fallback.
 - Validate `see` selectors, explicit caller-local PIDs, and `scroll` directions before runtime-host and ScreenCaptureKit ownership preflight so request errors cannot be masked by ambient capture state.
+- Consume explicit snapshots for further mutations when a canonical action outcome requires fresh observation or is unavailable, refusing duplicate click/action/set-value/scroll dispatch before it reaches the app while preserving read-only snapshot evidence.
 - Report canonical refused, retry-safe, not-dispatched outcomes for pre-dispatch CLI and MCP action validation without attaching desktop semantics to read-only errors or overwriting dispatched receipts.
 - Preserve integer-valued Agent tool data across Codable and Foundation JSON conversion instead of mistaking numeric `0` and `1` for booleans.
 - Carry verified outcomes for receipt-pinned background window close, minimize, restore, maximize, move, resize, and set-bounds through Bridge protocol 1.23 while older hosts remain conservative.

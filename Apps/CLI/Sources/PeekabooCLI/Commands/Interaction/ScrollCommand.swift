@@ -86,9 +86,16 @@ RuntimeBackedCommand {
                 snapshotId: observation.snapshotId,
                 foreground: self.focusOptions.foreground
             )
-            let actionResult = try await AutomationServiceBridge.scroll(
-                automation: self.services.automation,
-                request: scrollRequest
+            let actionResult = try await SnapshotMutationCoordinator.perform(
+                snapshotId: observation.snapshotId,
+                snapshots: self.services.snapshots,
+                operation: {
+                    try await AutomationServiceBridge.scroll(
+                        automation: self.services.automation,
+                        request: scrollRequest
+                    )
+                },
+                outcome: { $0.outcome }
             )
             await InteractionObservationInvalidator.invalidateAfterMutation(
                 targets: self.resolvedRuntime.interactionMutationTargets,

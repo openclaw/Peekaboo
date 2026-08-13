@@ -96,6 +96,8 @@ public enum PeekabooBridgeRequest: Codable, Sendable {
     case listSnapshots
     case getMostRecentSnapshot(PeekabooBridgeGetMostRecentSnapshotRequest)
     case invalidateImplicitLatestSnapshot(PeekabooBridgeInvalidateImplicitLatestSnapshotRequest)
+    case beginSnapshotMutation(PeekabooBridgeBeginSnapshotMutationRequest)
+    case finishSnapshotMutation(PeekabooBridgeFinishSnapshotMutationRequest)
     case cleanSnapshot(PeekabooBridgeCleanSnapshotRequest)
     case cleanSnapshotsOlderThan(PeekabooBridgeCleanSnapshotsOlderRequest)
     case cleanAllSnapshots
@@ -199,6 +201,8 @@ extension PeekabooBridgeRequest {
         case .listSnapshots: .listSnapshots
         case .getMostRecentSnapshot: .getMostRecentSnapshot
         case .invalidateImplicitLatestSnapshot: .invalidateImplicitLatestSnapshot
+        case .beginSnapshotMutation: .beginSnapshotMutation
+        case .finishSnapshotMutation: .finishSnapshotMutation
         case .cleanSnapshot: .cleanSnapshot
         case .cleanSnapshotsOlderThan: .cleanSnapshotsOlderThan
         case .cleanAllSnapshots: .cleanAllSnapshots
@@ -238,6 +242,7 @@ public enum PeekabooBridgeResponse: Codable, Sendable {
     case dialogElements(DialogElements)
     case dialogResult(DialogActionResult)
     case snapshotId(String)
+    case snapshotMutationLease(SnapshotMutationLease)
     case snapshots([SnapshotInfo])
     case detection(ElementDetectionResult)
     case int(Int)

@@ -24,6 +24,7 @@ read_when:
 
 ## Implementation notes
 - If you pass `--on` without a snapshot, the command automatically looks up `services.snapshots.getMostRecentSnapshot()` so you rarely need to wire IDs manually.
+- If a canonical scroll result requires fresh observation, or no canonical outcome is available, the used snapshot remains readable but cannot drive another mutation. Re-run `peekaboo see`; replaying the old ID returns `SNAPSHOT_STALE` before dispatch.
 - Background scrolling is Accessibility-only. Peekaboo first invokes a directional scroll action, then falls back to a settable descendant `AXScrollBar` used by standard AppKit scroll areas. If neither native path is available, it fails with guidance to retry in foreground rather than silently moving the cursor or scrolling another app.
 - Foreground mode verifies focus when a target exists, then uses synthetic wheel events. Focus failure aborts before pointer dispatch.
 - JSON output reports target diagnostics for element scrolls and the current pointer position for explicit foreground targetless scrolls.

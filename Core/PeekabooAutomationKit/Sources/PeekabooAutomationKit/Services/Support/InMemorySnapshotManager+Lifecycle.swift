@@ -205,6 +205,7 @@ extension InMemorySnapshotManager {
     }
 
     public func cleanSnapshot(snapshotId: String) async throws {
+        self.mutationLeases.removeValue(forKey: snapshotId)
         self.removeEntry(forSnapshotId: snapshotId)
     }
 
@@ -229,6 +230,7 @@ extension InMemorySnapshotManager {
             }
         }
         self.entries.removeAll()
+        self.mutationLeases.removeAll()
         self.implicitLatestInvalidatedAt = nil
         self.implicitLatestPreservation = nil
         return count

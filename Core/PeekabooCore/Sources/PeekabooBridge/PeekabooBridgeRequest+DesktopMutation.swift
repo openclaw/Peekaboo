@@ -354,6 +354,8 @@ extension PeekabooBridgeOperation {
              .listSnapshots,
              .getMostRecentSnapshot,
              .invalidateImplicitLatestSnapshot,
+             .beginSnapshotMutation,
+             .finishSnapshotMutation,
              .cleanSnapshot,
              .cleanSnapshotsOlderThan,
              .cleanAllSnapshots,

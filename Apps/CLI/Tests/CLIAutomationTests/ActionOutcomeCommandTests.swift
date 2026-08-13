@@ -75,6 +75,86 @@ struct ActionOutcomeCommandTests {
     }
 
     @Test
+    func `explicit snapshot refuses a second mutation after observe before retry outcome`() async throws {
+        let automation = OutcomeStubAutomationService()
+        automation.actionOutcome = .dispatchedUnverified(
+            delivery: .init(mechanism: .accessibilityAction, mode: .background),
+            evidence: .deliveryAccepted
+        )
+        let snapshots = StubSnapshotManager()
+        let application = ServiceApplicationInfo(
+            processIdentifier: 12345,
+            processStartIdentity: 7,
+            bundleIdentifier: "com.example.fixture",
+            name: "Fixture",
+            activationPolicy: .regular
+        )
+        let services = TestServicesFactory.makePeekabooServices(
+            applications: StubApplicationService(applications: [application]),
+            snapshots: snapshots,
+            automation: automation
+        )
+        let snapshotID = try await Self.storeExactWindowElementSnapshot(in: snapshots)
+        let arguments = [
+            "click", "--on", "elem_3", "--snapshot", snapshotID,
+            "--no-remote", "--json",
+        ]
+
+        let first = try await InProcessCommandRunner.run(arguments, services: services)
+        let firstObject = try Self.jsonObject(first.stdout)
+        let firstOutcome = try #require(firstObject["outcome"] as? [String: Any])
+        #expect(first.exitStatus == 0)
+        #expect(firstOutcome["requires_fresh_observation"] as? Bool == true)
+        #expect(firstOutcome["retry_safe"] as? Bool == false)
+        #expect(automation.targetedClickCalls.count == 1)
+
+        let second = try await InProcessCommandRunner.run(arguments, services: services)
+        let secondObject = try Self.jsonObject(second.stdout)
+        let secondOutcome = try #require(secondObject["outcome"] as? [String: Any])
+        let secondError = try #require(secondObject["error"] as? [String: Any])
+        #expect(second.exitStatus == 1)
+        #expect(secondError["code"] as? String == ErrorCode.SNAPSHOT_STALE.rawValue)
+        #expect(secondOutcome["state"] as? String == "refused")
+        #expect(secondOutcome["mutation_dispatched"] as? Bool == false)
+        #expect(automation.targetedClickCalls.count == 1)
+        #expect(second.combinedOutput.contains("fresh observation"))
+
+        // The snapshot remains evidence: only another mutation is refused.
+        #expect(try await snapshots.getDetectionResult(snapshotId: snapshotID) != nil)
+    }
+
+    @Test
+    func `missing canonical outcome conservatively consumes snapshot for mutation`() async throws {
+        let snapshots = StubSnapshotManager()
+        let snapshotID = try await Self.storeElementSnapshot(in: snapshots)
+        var dispatchCount = 0
+
+        _ = try await SnapshotMutationCoordinator.perform(
+            snapshotId: snapshotID,
+            snapshots: snapshots,
+            operation: {
+                dispatchCount += 1
+                return ()
+            },
+            outcome: { _ in nil }
+        )
+
+        await #expect(throws: PreDispatchActionError.self) {
+            _ = try await SnapshotMutationCoordinator.perform(
+                snapshotId: snapshotID,
+                snapshots: snapshots,
+                operation: {
+                    dispatchCount += 1
+                    return ()
+                },
+                outcome: { _ in nil }
+            )
+        }
+        #expect(dispatchCount == 1)
+        #expect(try await snapshots.getDetectionResult(snapshotId: snapshotID) != nil)
+    }
+
+    @Test
     func `confirmed single press human output does not contradict its receipt`() async throws {
         let context = Self.makeContext()
         context.automation.actionOutcome = .confirmedChange(
@@ -344,6 +424,47 @@ struct ActionOutcomeCommandTests {
                     detectionTime: 0,
                     elementCount: 1,
                     method: "fixture"
+                )
+            )
+        )
+        return snapshotID
+    }
+
+    private static func storeExactWindowElementSnapshot(in snapshots: StubSnapshotManager) async throws -> String {
+        let snapshotID = try await snapshots.createSnapshot()
+        let bounds = CGRect(x: 100, y: 100, width: 500, height: 400)
+        let element = DetectedElement(
+            id: "elem_3",
+            type: .button,
+            label: "Fixture",
+            bounds: CGRect(x: 120, y: 140, width: 100, height: 40),
+            isEnabled: true,
+            attributes: ["role": "AXButton"]
+        )
+        try await snapshots.storeDetectionResult(
+            snapshotId: snapshotID,
+            result: ElementDetectionResult(
+                snapshotId: snapshotID,
+                screenshotPath: "/tmp/fixture.png",
+                elements: DetectedElements(buttons: [element]),
+                metadata: DetectionMetadata(
+                    detectionTime: 0,
+                    elementCount: 1,
+                    method: "fixture",
+                    windowContext: WindowContext(
+                        applicationName: "Fixture",
+                        applicationBundleId: "com.example.fixture",
+                        applicationProcessId: 12345,
+                        windowTitle: "Fixture Window",
+                        windowID: 42,
+                        windowBounds: bounds,
+                        windowMutationIdentity: WindowMutationIdentity(
+                            windowID: 42,
+                            ownerProcessIdentifier: 12345,
+                            ownerProcessStartIdentity: 7,
+                            capturedBounds: bounds
+                        )
+                    )
                 )
             )
         )

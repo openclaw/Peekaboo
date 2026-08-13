@@ -21,6 +21,7 @@ extension InMemorySnapshotManager {
 
     func removeEntry(forSnapshotId snapshotId: String) {
         guard let entry = self.entries.removeValue(forKey: snapshotId) else { return }
+        self.mutationLeases.removeValue(forKey: snapshotId)
         if self.implicitLatestPreservation?.snapshotId == snapshotId {
             self.implicitLatestPreservation = nil
         }

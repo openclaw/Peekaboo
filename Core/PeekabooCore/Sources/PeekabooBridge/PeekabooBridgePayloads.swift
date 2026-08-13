@@ -642,6 +642,24 @@ public struct PeekabooBridgeInvalidateImplicitLatestSnapshotRequest: Codable, Se
     }
 }
 
+public struct PeekabooBridgeBeginSnapshotMutationRequest: Codable, Sendable {
+    public let snapshotId: String
+
+    public init(snapshotId: String) {
+        self.snapshotId = snapshotId
+    }
+}
+
+public struct PeekabooBridgeFinishSnapshotMutationRequest: Codable, Sendable {
+    public let lease: SnapshotMutationLease
+    public let requiresFreshObservation: Bool
+
+    public init(lease: SnapshotMutationLease, requiresFreshObservation: Bool) {
+        self.lease = lease
+        self.requiresFreshObservation = requiresFreshObservation
+    }
+}
+
 public struct PeekabooBridgeCleanSnapshotRequest: Codable, Sendable {
     public let snapshotId: String
 }

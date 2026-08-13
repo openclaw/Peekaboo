@@ -690,17 +690,24 @@ struct ClickCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
                 snapshotId: snapshotId
             )
         }
-        self.resolvedRuntime.beginInteractionMutation()
-        return try await self.performClick(
-            clickTarget,
-            clickType: clickType,
-            context: ClickDispatchContext(
-                snapshotId: snapshotId,
-                resolvedElement: resolvedElement,
-                coordinateResolution: coordinateResolution,
-                explicitWindowResolution: explicitWindowResolution,
-                backgroundProcessIdentity: backgroundProcessIdentity
-            )
+        return try await SnapshotMutationCoordinator.perform(
+            snapshotId: snapshotId,
+            snapshots: self.services.snapshots,
+            operation: {
+                self.resolvedRuntime.beginInteractionMutation()
+                return try await self.performClick(
+                    clickTarget,
+                    clickType: clickType,
+                    context: ClickDispatchContext(
+                        snapshotId: snapshotId,
+                        resolvedElement: resolvedElement,
+                        coordinateResolution: coordinateResolution,
+                        explicitWindowResolution: explicitWindowResolution,
+                        backgroundProcessIdentity: backgroundProcessIdentity
+                    )
+                )
+            },
+            outcome: { $0 }
         )
     }
 

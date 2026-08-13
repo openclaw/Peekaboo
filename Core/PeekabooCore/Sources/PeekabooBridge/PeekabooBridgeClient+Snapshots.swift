@@ -106,6 +106,27 @@ extension PeekabooBridgeClient {
         }
     }
 
+    public func beginSnapshotMutation(snapshotId: String) async throws -> SnapshotMutationLease {
+        let response = try await self.send(.beginSnapshotMutation(.init(snapshotId: snapshotId)))
+        switch response {
+        case let .snapshotMutationLease(lease): return lease
+        case let .error(envelope): throw envelope
+        default:
+            throw PeekabooBridgeErrorEnvelope(
+                code: .invalidRequest,
+                message: "Unexpected beginSnapshotMutation response")
+        }
+    }
+
+    public func finishSnapshotMutation(
+        _ lease: SnapshotMutationLease,
+        requiresFreshObservation: Bool) async throws
+    {
+        try await self.sendExpectOK(.finishSnapshotMutation(.init(
+            lease: lease,
+            requiresFreshObservation: requiresFreshObservation)))
+    }
+
     public func cleanSnapshot(snapshotId: String) async throws {
         try await self.sendExpectOK(.cleanSnapshot(.init(snapshotId: snapshotId)))
     }

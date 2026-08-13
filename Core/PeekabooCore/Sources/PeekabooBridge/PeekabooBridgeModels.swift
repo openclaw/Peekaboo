@@ -137,6 +137,8 @@ public enum PeekabooBridgeOperation: String, Codable, Sendable, CaseIterable, Ha
     case listSnapshots
     case getMostRecentSnapshot
     case invalidateImplicitLatestSnapshot
+    case beginSnapshotMutation
+    case finishSnapshotMutation
     case cleanSnapshot
     case cleanSnapshotsOlderThan
     case cleanAllSnapshots
@@ -214,6 +216,10 @@ public enum PeekabooBridgeOperation: String, Codable, Sendable, CaseIterable, Ha
         }
         if version < PeekabooBridgeConstants.atomicObservationSnapshotPublicationVersion {
             compatible.remove(.storeObservationSnapshot)
+        }
+        if version < PeekabooBridgeConstants.snapshotMutationLeaseVersion {
+            compatible.remove(.beginSnapshotMutation)
+            compatible.remove(.finishSnapshotMutation)
         }
         return compatible
     }

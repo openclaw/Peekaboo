@@ -9,6 +9,7 @@ import PeekabooFoundation
 public final class RemoteSnapshotManager: SnapshotManagerProtocol {
     public let copiesScreenshotArtifactsIntoStorage = true
     public let supportsImplicitLatestSnapshotInvalidation: Bool
+    public let supportsSnapshotMutationLeases = true
 
     public var effectiveImplicitLatestInvalidationWatermark: Date? {
         self.desktopMutationWatermarkStore?.effectiveWatermark()
@@ -67,6 +68,41 @@ public final class RemoteSnapshotManager: SnapshotManagerProtocol {
             through: cutoff,
             preserving: snapshotId,
             preservedAt: snapshotId == nil ? nil : Date())
+    }
+
+    public func beginSnapshotMutation(snapshotId: String) async throws -> SnapshotMutationLease {
+        do {
+            return try await self.client.beginSnapshotMutation(snapshotId: snapshotId)
+        } catch let envelope as PeekabooBridgeErrorEnvelope where envelope.kind == .snapshotStale {
+            throw PeekabooError.snapshotStale(envelope.context ?? envelope.message)
+        } catch let envelope as PeekabooBridgeErrorEnvelope
+            where envelope.code == .operationNotSupported
+            || envelope.code == .invalidRequest
+            || envelope.code == .decodingFailed
+        {
+            throw PeekabooBridgeErrorEnvelope(
+                code: .operationNotSupported,
+                message: "Bridge host lacks fail-closed snapshot mutation leases; update or relaunch Peekaboo")
+        }
+    }
+
+    public func finishSnapshotMutation(
+        _ lease: SnapshotMutationLease,
+        requiresFreshObservation: Bool) async throws
+    {
+        do {
+            try await self.client.finishSnapshotMutation(
+                lease,
+                requiresFreshObservation: requiresFreshObservation)
+        } catch let envelope as PeekabooBridgeErrorEnvelope
+            where envelope.code == .operationNotSupported
+            || envelope.code == .invalidRequest
+            || envelope.code == .decodingFailed
+        {
+            throw PeekabooBridgeErrorEnvelope(
+                code: .operationNotSupported,
+                message: "Bridge host lacks fail-closed snapshot mutation leases; update or relaunch Peekaboo")
+        }
     }
 
     public func invalidateImplicitLatestSnapshot(

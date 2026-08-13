@@ -246,6 +246,14 @@ extension PeekabooBridgeServer {
                 return .snapshotId(id)
             }
             return .ok
+        case let .beginSnapshotMutation(payload):
+            let lease = try await self.services.snapshots.beginSnapshotMutation(snapshotId: payload.snapshotId)
+            return .snapshotMutationLease(lease)
+        case let .finishSnapshotMutation(payload):
+            try await self.services.snapshots.finishSnapshotMutation(
+                payload.lease,
+                requiresFreshObservation: payload.requiresFreshObservation)
+            return .ok
         case let .cleanSnapshot(payload):
             try await self.services.snapshots.cleanSnapshot(snapshotId: payload.snapshotId)
             return .ok

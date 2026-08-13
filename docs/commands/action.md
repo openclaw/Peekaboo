@@ -23,3 +23,7 @@ Every action resolves through a current UI snapshot. Pass `--snapshot` explicitl
 snapshot, or supply app/PID/window target flags so Peekaboo captures a fresh targeted snapshot before dispatch. If no
 snapshot can be established, the command refuses rather than searching the user's frontmost app. Exact-window snapshots
 also pin the process generation, window identity, and bounds; drift before dispatch is refused.
+
+When JSON reports `requires_fresh_observation: true`, or the host cannot return a canonical outcome, that snapshot
+remains readable for diagnostics but cannot drive another mutation. Run `peekaboo see` again and use its new snapshot
+ID; replaying the old ID is refused before dispatch.
