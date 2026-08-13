@@ -175,6 +175,10 @@ enum CommanderCLIBinder {
             options.preferRemote = false
             options.autoStartDaemon = false
         }
+        if commandType == BridgeCommand.StatusSubcommand.self {
+            options.autoStartDaemon = false
+            options.permitsExplicitSocketDiagnosticFallback = true
+        }
         if Self.requiresCallerLocalRuntime(commandType, parsedValues: parsedValues) {
             options.preferRemote = false
         } else if Self.prefersLocalRuntime(commandType), !values.flag("no-remote"),

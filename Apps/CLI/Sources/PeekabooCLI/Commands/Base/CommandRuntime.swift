@@ -41,6 +41,9 @@ struct CommandRuntimeOptions {
     var preferRemote = true
     var remoteIsolationRequested = false
     var autoStartDaemon = true
+    /// Bridge status must run locally after probing an unavailable explicit socket so it can report the exact
+    /// handshake failure. No operation-bearing command may use this diagnostic-only escape hatch.
+    var permitsExplicitSocketDiagnosticFallback = false
     var bridgeSocketPath: String?
     var requiresElementActions = false
     var requiresInspectAccessibilityTree = false

@@ -21,6 +21,8 @@ read_when:
   discovery order is documented in `docs/bridge-host.md`.
 - `--no-remote` (or `PEEKABOO_NO_REMOTE`) skips remote probing and forces local execution.
 - `--bridge-socket <path>` (or `PEEKABOO_BRIDGE_SOCKET`) overrides host discovery and probes only that socket.
+  The override is strict: an unavailable or incompatible host fails non-zero instead of silently using the local
+  runtime. Pass `--no-remote` explicitly when caller-local execution is intended.
 - Status probes run concurrently and give each candidate one second to complete its read-only diagnostic handshake. A `timeout` entry means that host missed the diagnostic deadline; other candidates are still reported and normal runtime selection order is unchanged.
 - Hosts validate callers by code signature TeamID. If the host rejects the client (`unauthorizedClient`), install a signed Peekaboo CLI build or enable the debug-only escape hatch on the host.
 - If `bridge status` reports `internalError` / “Bridge host returned no response”, the probed host likely closed the socket without replying (older host builds). Hosts built from `main` after 2025-12-18 return a structured `unauthorizedClient` error instead, which is much easier to debug.

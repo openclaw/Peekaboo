@@ -319,6 +319,12 @@ enum RuntimeHostResolver {
             return await self.finalizeExactBuildScopedResolution(resolved, candidatePlan: candidatePlan)
         }
 
+        if let explicitSocket, !options.permitsExplicitSocketDiagnosticFallback {
+            throw BridgeExplicitSocketUnavailableError(
+                socketPath: NSString(string: explicitSocket).standardizingPath
+            )
+        }
+
         if !prefersExactBuildScopedHost,
            DaemonLaunchPolicy.shouldAutoStartDaemon(options: options, environment: context.environment) {
             let rejectedDefaultSocketOccupant =

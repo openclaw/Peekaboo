@@ -115,6 +115,21 @@ struct BridgeDiagnostics {
             }
         }
 
+        if let explicitSocket = candidatePlan.explicitSocket, selected == nil {
+            let standardizedSocket = NSString(string: explicitSocket).standardizingPath
+            let candidateFailure = results.first { candidate in
+                NSString(string: candidate.socketPath).standardizingPath == standardizedSocket
+            }.flatMap { candidate -> BridgeCandidateErrorReport? in
+                guard case let .failure(error) = candidate.result else { return nil }
+                return error
+            }
+            throw BridgeExplicitSocketUnavailableError(
+                socketPath: standardizedSocket,
+                failureMessage: candidateFailure?.message,
+                failureHint: candidateFailure?.hint
+            )
+        }
+
         return BridgeStatusReport(
             remoteSkipped: false,
             remoteSkipReason: nil,
