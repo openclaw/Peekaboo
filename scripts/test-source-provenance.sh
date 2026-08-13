@@ -99,7 +99,11 @@ rg -Fq 'sourceCommit' "$ROOT_DIR/scripts/test-background-computer-use.sh"
 rg -Fq 'source_commit' "$ROOT_DIR/scripts/test-background-computer-use.sh"
 rg -Fq 'bridge-before.json' "$ROOT_DIR/scripts/test-background-computer-use.sh"
 rg -Fq 'bridge-after.json' "$ROOT_DIR/scripts/test-background-computer-use.sh"
+rg -Fq '.socketPath == $socketPath' "$ROOT_DIR/scripts/test-background-computer-use.sh"
+rg -Fq 'requested_bridge_socket' "$ROOT_DIR/scripts/test-background-computer-use.sh"
 rg -Fq 'event_producer_stable' "$ROOT_DIR/scripts/test-background-computer-use.sh"
+rg -Fq -- '--bridge-socket "$ARTIFACT_ROOT/explicit-bridge.sock"' \
+  "$ROOT_DIR/scripts/test-background-certification.sh"
 rg -Fq 'exec "$PEEKABOO_BIN" "$@" --json --no-remote' \
   "$ROOT_DIR/scripts/test-background-computer-use.sh"
 rg -Fq 'exec "$PEEKABOO_BIN" "$@" --json --bridge-socket "$BRIDGE_SOCKET"' \

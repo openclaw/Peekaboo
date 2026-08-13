@@ -40,6 +40,7 @@ function makeRemoteReport() {
     sourceCommit: report.provenance.cli_source_commit,
   };
   report.provenance.event_producer_source = "remote";
+  report.provenance.requested_bridge_socket = receipt.socketPath;
   report.provenance.remote_host = receipt;
   for (const caseResult of report.cases) {
     caseResult.event_producer = structuredClone(receipt);
@@ -213,6 +214,10 @@ test("source provenance is exact closed and identical across the event producer"
 
   const remote = makeRemoteReport();
   assert.equal(validateCertification(catalog, remote).success, true);
+
+  const rerouted = makeRemoteReport();
+  rerouted.provenance.requested_bridge_socket = "/tmp/different-bridge.sock";
+  assert.ok(rules(validateCertification(catalog, rerouted)).has("bridge_socket_mismatch"));
 
   caseById(remote, "see-text").event_producer.pid += 1;
   assert.ok(rules(validateCertification(catalog, remote)).has("event_producer_receipt"));

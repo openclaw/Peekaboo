@@ -101,6 +101,12 @@ function isExactSourceCommit(value) {
   return typeof value === "string" && value.length === 40 && exactSourceCommit.test(value);
 }
 
+function isExactSocketPath(value) {
+  return typeof value === "string"
+    && path.isAbsolute(value)
+    && !["\0", "\r", "\n"].some((character) => value.includes(character));
+}
+
 function isExactRemoteHostReceipt(receipt) {
   const keys = receipt && typeof receipt === "object" && !Array.isArray(receipt)
     ? Object.keys(receipt).sort()
@@ -114,9 +120,7 @@ function isExactRemoteHostReceipt(receipt) {
     && receipt.startIdentity.length > 0
     && receipt.startIdentity[0] !== "0"
     && [...receipt.startIdentity].every((character) => character >= "0" && character <= "9")
-    && typeof receipt.socketPath === "string"
-    && path.isAbsolute(receipt.socketPath)
-    && !["\0", "\r", "\n"].some((character) => receipt.socketPath.includes(character))
+    && isExactSocketPath(receipt.socketPath)
     && isExactSourceCommit(receipt.sourceCommit);
 }
 
@@ -139,6 +143,7 @@ function validateProvenance(report, failures) {
     "event_producer_source",
     "event_producer_source_commit",
     "remote_host",
+    "requested_bridge_socket",
   ];
   if (keys.length !== expectedKeys.length
       || keys.some((key, index) => key !== expectedKeys[index])) {
@@ -180,7 +185,16 @@ function validateProvenance(report, failures) {
         "Remote certification requires one exact socket and process-generation source receipt",
       ));
     }
-  } else if (provenance.event_producer_source === "local" && provenance.remote_host !== null) {
+    if (!isExactSocketPath(provenance.requested_bridge_socket)
+        || provenance.remote_host?.socketPath !== provenance.requested_bridge_socket) {
+      failures.push(failure(
+        "certification",
+        "bridge_socket_mismatch",
+        "Remote host receipt does not match the exact requested Bridge socket",
+      ));
+    }
+  } else if (provenance.event_producer_source === "local"
+      && (provenance.remote_host !== null || provenance.requested_bridge_socket !== null)) {
     failures.push(failure(
       "certification",
       "remote_host_receipt",
@@ -395,6 +409,7 @@ export function makePassingReport(catalog) {
       cli_source_commit: sourceCommit,
       event_producer_source: "local",
       event_producer_source_commit: sourceCommit,
+      requested_bridge_socket: null,
       remote_host: null,
     },
     cases,

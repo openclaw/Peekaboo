@@ -402,6 +402,33 @@ contamination_retry_allowed() {
     ' "$CERTIFICATION_CATALOG" >/dev/null
 }
 
+read_pinned_bridge_receipt() {
+    local status_file="${1:?Bridge status file required}"
+    jq -cer --arg socketPath "$BRIDGE_SOCKET" '
+        .data.selected |
+        select(.source == "remote" and .socketPath == $socketPath) |
+        . as $selected |
+        .handshake.hostIdentity as $identity |
+        select($identity != null) |
+        {
+            pid: $identity.processIdentifier,
+            startIdentity: (
+                $identity.processStartIdentityDecimal //
+                ($identity.processStartIdentity | tostring)
+            ),
+            socketPath: $selected.socketPath,
+            sourceCommit: $identity.sourceCommit
+        } |
+        select(
+            (.pid | type) == "number" and .pid > 0 and
+            (.startIdentity | type) == "string" and
+            (.startIdentity | test("^[0-9]+$")) and
+            (.sourceCommit | type) == "string" and
+            (.sourceCommit | test("^[0-9a-f]{40}$"))
+        )
+    ' "$status_file"
+}
+
 if $SELF_TEST_ONLY; then
     "$PROBE_BIN" process-identity --pid "$$" \
         --output "$ARTIFACT_ROOT/probe-process-identity.json"
@@ -411,6 +438,29 @@ if $SELF_TEST_ONLY; then
     same_process_generation 7 7
     if same_process_generation 7 8 || same_process_generation "" 7; then
         echo "Process-generation cleanup guard self-test failed." >&2
+        exit 1
+    fi
+    BRIDGE_RECEIPT_SELF_TEST="$ARTIFACT_ROOT/bridge-receipt-self-test.json"
+    jq -n \
+        --arg socketPath "$BRIDGE_SOCKET" \
+        '{
+            data: {selected: {
+                source: "remote",
+                socketPath: $socketPath,
+                handshake: {hostIdentity: {
+                    processIdentifier: 4242,
+                    processStartIdentityDecimal: "987654321",
+                    sourceCommit: "0123456789abcdef0123456789abcdef01234567"
+                }}
+            }}
+        }' > "$BRIDGE_RECEIPT_SELF_TEST"
+    read_pinned_bridge_receipt "$BRIDGE_RECEIPT_SELF_TEST" >/dev/null
+    jq --arg mismatchedSocket "${BRIDGE_SOCKET}.rerouted" \
+        '.data.selected.socketPath = $mismatchedSocket' \
+        "$BRIDGE_RECEIPT_SELF_TEST" > "$BRIDGE_RECEIPT_SELF_TEST.tmp"
+    mv "$BRIDGE_RECEIPT_SELF_TEST.tmp" "$BRIDGE_RECEIPT_SELF_TEST"
+    if read_pinned_bridge_receipt "$BRIDGE_RECEIPT_SELF_TEST" >/dev/null 2>&1; then
+        echo "Pinned Bridge receipt accepted a rerouted socket." >&2
         exit 1
     fi
     if [[ "$(certification_command_identity app launch TextEdit)" != "app launch" ]] || \
@@ -618,31 +668,6 @@ pb() {
     else
         "$PEEKABOO_BIN" "$@" --bridge-socket "$BRIDGE_SOCKET"
     fi
-}
-
-read_pinned_bridge_receipt() {
-    local status_file="${1:?Bridge status file required}"
-    jq -cer --arg socketPath "$BRIDGE_SOCKET" '
-        .data.selected |
-        select(.source == "remote") |
-        .handshake.hostIdentity as $identity |
-        select($identity != null) |
-        {
-            pid: $identity.processIdentifier,
-            startIdentity: (
-                $identity.processStartIdentityDecimal //
-                ($identity.processStartIdentity | tostring)
-            ),
-            socketPath: $socketPath,
-            sourceCommit: $identity.sourceCommit
-        } |
-        select(
-            (.pid | type) == "number" and .pid > 0 and
-            (.startIdentity | type) == "string" and test("^[0-9]+$") and
-            (.sourceCommit | type) == "string" and
-            (.sourceCommit | test("^[0-9a-f]{40}$"))
-        )
-    ' "$status_file"
 }
 
 if $NO_REMOTE; then
@@ -2045,6 +2070,7 @@ jq -s \
     --arg cliSourceCommit "$PEEKABOO_SOURCE_COMMIT" \
     --arg eventProducerSource "$EVENT_PRODUCER_SOURCE" \
     --arg eventProducerSourceCommit "$EVENT_PRODUCER_SOURCE_COMMIT" \
+    --arg requestedBridgeSocket "$BRIDGE_SOCKET" \
     --argjson remoteHost "$REMOTE_EVENT_PRODUCER_JSON" \
     '{
         probe_canary: ($probe[0].success == true),
@@ -2052,6 +2078,9 @@ jq -s \
             cli_source_commit: $cliSourceCommit,
             event_producer_source: $eventProducerSource,
             event_producer_source_commit: $eventProducerSourceCommit,
+            requested_bridge_socket: (
+                if $eventProducerSource == "remote" then $requestedBridgeSocket else null end
+            ),
             remote_host: $remoteHost
         },
         cases: .

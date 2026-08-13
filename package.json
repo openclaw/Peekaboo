@@ -27,7 +27,7 @@
     "test:safe": "pnpm run test:ambient-state-policy && scripts/test-source-provenance.sh && scripts/test-release-signing-policy.sh && scripts/test-swift-runtime-libraries.sh && scripts/test-create-release-dmg.sh && scripts/test-restart-peekaboo.sh && node scripts/test-update-appcast-entry.mjs && node --no-warnings scripts/test-chrome-devtools-mcp-contract.mjs && pnpm run test:release-preflight && pnpm run test:background-certification && swift test --package-path Core/PeekabooFoundation && PEEKABOO_INCLUDE_AMBIENT_STATE_TESTS=false swift test --package-path Apps/CLI -Xswiftc -DPEEKABOO_SKIP_AUTOMATION --no-parallel",
     "test:ambient-state-policy": "node --test tests/ambient-state-test-policy.test.mjs",
     "test:release-preflight": "node --test tests/release-preflight-contract.test.mjs",
-    "test:background-certification": "node --test tests/background-computer-use-report.test.mjs",
+    "test:background-certification": "scripts/test-background-certification.sh",
     "test:automation": "PEEKABOO_INCLUDE_AUTOMATION_TESTS=true swift test --package-path Apps/CLI --no-parallel",
     "test:automation:read": "RUN_AUTOMATION_READ=true PEEKABOO_INCLUDE_AUTOMATION_TESTS=true swift test --package-path Apps/CLI --no-parallel",
     "test:automation:input": "PEEKABOO_INCLUDE_AUTOMATION_TESTS=true PEEKABOO_RUN_INPUT_AUTOMATION_TESTS=true swift test --package-path Core/PeekabooCore --no-parallel",
