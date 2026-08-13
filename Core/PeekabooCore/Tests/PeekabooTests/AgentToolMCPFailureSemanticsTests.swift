@@ -183,6 +183,40 @@ struct AgentToolMCPFailureSemanticsTests {
     }
 
     @Test
+    func `Explicit failure carriers retain presence beside a confirmed outcome`() throws {
+        let outcome = DesktopActionOutcome.confirmedChange(delivery: .init(
+            mechanism: .accessibilityAction,
+            mode: .background))
+        let metadata = try Self.value(outcome.projection)
+        let call = AgentToolCall(id: "explicit-failure", name: "click", arguments: [:])
+        let flagged = AgentToolResult(
+            toolCallId: call.id,
+            result: AnyAgentToolValue(object: [
+                "error": AnyAgentToolValue(string: "explicit MCP failure"),
+                "metadata": metadata,
+                "reason": AnyAgentToolValue(string: "provider rejected completion"),
+            ]),
+            isError: true)
+        let typed = AgentToolResult(
+            toolCallId: call.id,
+            failure: AgentToolExecutionFailure(
+                message: "typed execution failure",
+                metadata: metadata))
+
+        for (index, result) in [flagged, typed].enumerated() {
+            let entry = try #require(Self.execution(call: call, result: result).executionTrace().entries.first)
+            let summary = try #require(entry.result?.objectValue)
+
+            #expect(entry.disposition == .executedFailed)
+            #expect(entry.isError == true)
+            #expect(entry.actionOutcome == outcome.projection)
+            #expect(entry.mutationDispatch == .dispatched)
+            #expect(summary["error_present"]?.boolValue == true)
+            #expect(summary["reason_present"]?.boolValue == (index == 0 ? true : nil))
+        }
+    }
+
+    @Test
     func `Container-valued canonical fields fail before recursive conversion`() throws {
         var nested = AnyAgentToolValue(string: "private canonical leaf")
         for _ in 0..<512 {
@@ -223,10 +257,18 @@ struct AgentToolMCPFailureSemanticsTests {
         let invalid = AgentToolResult.success(
             toolCallId: call.id,
             result: AnyAgentToolValue(object: invalidFields))
+        let legacyConflict = AgentToolResult.success(
+            toolCallId: call.id,
+            result: AnyAgentToolValue(object: [
+                "mutation_dispatched": AnyAgentToolValue(bool: true),
+                "skipped": AnyAgentToolValue(bool: true),
+            ]))
         let dispatchedEntry = try #require(
             Self.execution(call: call, result: dispatched).executionTrace().entries.first)
         let invalidEntry = try #require(
             Self.execution(call: call, result: invalid).executionTrace().entries.first)
+        let legacyConflictEntry = try #require(
+            Self.execution(call: call, result: legacyConflict).executionTrace().entries.first)
 
         #expect(dispatchedEntry.disposition == .executedSucceeded)
         #expect(dispatchedEntry.mutationDispatch == .dispatched)
@@ -238,6 +280,11 @@ struct AgentToolMCPFailureSemanticsTests {
         #expect(invalidEntry.actionOutcome == nil)
         #expect(invalidEntry.result?.objectValue?["skipped"] == nil)
         #expect(invalidEntry.result?.objectValue?["mutation_dispatched"] == nil)
+        #expect(legacyConflictEntry.disposition == .executedSucceeded)
+        #expect(legacyConflictEntry.mutationDispatch == .possiblyDispatched)
+        #expect(legacyConflictEntry.actionOutcome == nil)
+        #expect(legacyConflictEntry.result?.objectValue?["skipped"]?.boolValue == true)
+        #expect(legacyConflictEntry.result?.objectValue?["mutation_dispatched"]?.boolValue == true)
     }
 
     @Test

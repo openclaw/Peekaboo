@@ -182,7 +182,7 @@ private enum AgentExecutionTraceBuilder {
             arguments: AgentExecutionTraceSanitizer.arguments(call.arguments, toolName: call.name),
             result: result.map {
                 AgentExecutionTraceSanitizer.resultSummary(
-                    $0.result,
+                    $0,
                     mutationDispatch: mutationDispatch,
                     actionOutcome: resolvedActionOutcome,
                     suppressRawOutcomeClaims: suppressRawOutcomeClaims,
@@ -199,12 +199,14 @@ private enum AgentExecutionTraceBuilder {
         resolution: MCPToolResponseMetadataProjector.ActionOutcomeResolution) -> Bool
     {
         let resultObject = result.result.objectValue
-        let skipped = resultObject?["skipped"]?.boolValue == true ||
-            resultObject?["metadata"]?.objectValue?["skipped"]?.boolValue == true
-        guard skipped else { return false }
+        guard self.hasSkippedMarker(resultObject) else { return false }
 
         return switch resolution {
-        case .absent: true
+        case .absent:
+            switch self.legacyMutationDispatchResolution(from: resultObject) {
+            case .absent, .notDispatched: true
+            case .dispatched, .invalid: false
+            }
         case let .valid(projection): projection.dispatchState == .none
         case .invalid: false
         }
@@ -232,12 +234,44 @@ private enum AgentExecutionTraceBuilder {
             return .possiblyDispatched
         }
         let resultObject = result?.result.objectValue
-        let dispatched = resultObject?["mutation_dispatched"]?.boolValue ??
-            resultObject?["metadata"]?.objectValue?["mutation_dispatched"]?.boolValue
-        if let dispatched {
-            return dispatched ? .dispatched : .notDispatched
+        switch self.legacyMutationDispatchResolution(from: resultObject) {
+        case .absent:
+            return .possiblyDispatched
+        case .notDispatched:
+            return .notDispatched
+        case .dispatched:
+            return self.hasSkippedMarker(resultObject) ? .possiblyDispatched : .dispatched
+        case .invalid:
+            return .possiblyDispatched
         }
-        return .possiblyDispatched
+    }
+
+    private enum LegacyMutationDispatchResolution {
+        case absent
+        case notDispatched
+        case dispatched
+        case invalid
+    }
+
+    private static func legacyMutationDispatchResolution(
+        from resultObject: [String: AnyAgentToolValue]?) -> LegacyMutationDispatchResolution
+    {
+        guard let resultObject else { return .absent }
+        let claims = [
+            resultObject["mutation_dispatched"],
+            resultObject["metadata"]?.objectValue?["mutation_dispatched"],
+        ].compactMap(\.self)
+        guard !claims.isEmpty else { return .absent }
+        let values = claims.compactMap(\.boolValue)
+        guard values.count == claims.count, Set(values).count == 1, let dispatched = values.first else {
+            return .invalid
+        }
+        return dispatched ? .dispatched : .notDispatched
+    }
+
+    private static func hasSkippedMarker(_ resultObject: [String: AnyAgentToolValue]?) -> Bool {
+        resultObject?["skipped"]?.boolValue == true ||
+            resultObject?["metadata"]?.objectValue?["skipped"]?.boolValue == true
     }
 
     private static func isMutatingToolCall(_ call: AgentToolCall) -> Bool {
@@ -311,16 +345,17 @@ private enum AgentExecutionTraceSanitizer {
     }
 
     static func resultSummary(
-        _ result: AnyAgentToolValue,
+        _ result: AgentToolResult,
         mutationDispatch: AgentMutationDispatchState?,
         actionOutcome: DesktopActionOutcome.Projection?,
         suppressRawOutcomeClaims: Bool,
         skippedBeforeDispatch: Bool) -> AnyAgentToolValue
     {
         let summary = self.baseResultSummary(
-            result,
+            result.result,
             suppressRawOutcomeClaims: suppressRawOutcomeClaims,
-            suppressLegacyPresence: actionOutcome?.outcome.isConfirmed == true)
+            suppressLegacyPresence: actionOutcome?.outcome.isConfirmed == true &&
+                result.failure == nil && !result.isError)
         guard var object = summary.objectValue else { return summary }
         if let actionOutcome {
             object["mutation_dispatched"] = AnyAgentToolValue(bool: actionOutcome.mutationDispatched)
