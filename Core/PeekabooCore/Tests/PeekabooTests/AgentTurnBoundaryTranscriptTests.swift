@@ -74,6 +74,73 @@ struct AgentTurnBoundaryTranscriptTests {
     }
 
     @Test
+    func `turn boundary conflict matrix stops conservatively while compatible forms agree`() throws {
+        let service = try PeekabooAgentService(services: PeekabooServices())
+        let continueBoundary = AnyAgentToolValue(object: [
+            "continue_next_step": AnyAgentToolValue(bool: true),
+            "disposition": AnyAgentToolValue(string: "continue_next_step"),
+            "reason": AnyAgentToolValue(string: "Continue after observation"),
+            "stop_after_current_step": AnyAgentToolValue(bool: true),
+        ])
+        let stopBoundary = AnyAgentToolValue(object: [
+            "disposition": AnyAgentToolValue(string: "stop_agent"),
+            "reason": AnyAgentToolValue(string: "Stop after failure"),
+            "stop_after_current_step": AnyAgentToolValue(bool: true),
+            "stop_agent": AnyAgentToolValue(bool: true),
+        ])
+        let conflictingCases: [(String, AnyAgentToolValue, AnyAgentToolValue)] = [
+            ("continue-then-stop", continueBoundary, stopBoundary),
+            ("stop-then-continue", stopBoundary, continueBoundary),
+            (
+                "reason-disagreement",
+                continueBoundary,
+                AnyAgentToolValue(object: [
+                    "continue_next_step": AnyAgentToolValue(bool: true),
+                    "reason": AnyAgentToolValue(string: "Different continuation reason"),
+                ])),
+            ("malformed-nested", continueBoundary, AnyAgentToolValue(string: "not an object")),
+        ]
+
+        for (name, rootBoundary, nestedBoundary) in conflictingCases {
+            let result = AgentToolResult.success(
+                toolCallId: name,
+                result: AnyAgentToolValue(object: [
+                    "metadata": AnyAgentToolValue(object: ["turn_boundary": nestedBoundary]),
+                    "turn_boundary": rootBoundary,
+                ]))
+            let claims = AgentToolResultSemantics.normalizedClaims(from: result.result)
+            let restored = PeekabooAgentService.restoredTurnBoundary(from: [
+                ModelMessage(role: .tool, content: [.toolResult(result)]),
+            ])
+
+            #expect(claims.turnBoundary == .invalid, "Expected conflict for \(name)")
+            #expect(AgentToolResultSemantics.isFailure(result))
+            #expect(service.turnBoundarySignal(from: result) == .stopAgent(
+                reason: PeekabooAgentService.invalidTurnBoundaryReason))
+            #expect(restored.record(toolName: "click") == .skipUntilPerception(
+                reason: "Skipped click; call `see` successfully before another UI action."))
+        }
+
+        let compatible = AgentToolResult.success(
+            toolCallId: "compatible-boundary",
+            result: AnyAgentToolValue(object: [
+                "metadata": AnyAgentToolValue(object: [
+                    "turn_boundary": AnyAgentToolValue(object: [
+                        "continue_next_step": AnyAgentToolValue(bool: true),
+                        "reason": AnyAgentToolValue(string: "Continue after observation"),
+                    ]),
+                ]),
+                "turn_boundary": AnyAgentToolValue(object: [
+                    "disposition": AnyAgentToolValue(string: "continue_next_step"),
+                    "reason": AnyAgentToolValue(string: "Continue after observation"),
+                    "stop_after_current_step": AnyAgentToolValue(bool: true),
+                ]),
+            ]))
+        #expect(service.turnBoundarySignal(from: compatible) == .continueNextStep(
+            reason: "Continue after observation"))
+    }
+
+    @Test
     func `unavailable advertised tool calls still receive tool results`() async throws {
         let service = try PeekabooAgentService(services: PeekabooServices())
         var messages: [ModelMessage] = []

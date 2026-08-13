@@ -5,14 +5,80 @@ import Tachikoma
 
 /// Peekaboo-owned interpretation of Tachikoma's generic Agent tool-result carrier.
 enum AgentToolResultSemantics {
+    private static let legacyErrorPrefix = Array("Error:".utf8)
+
+    enum ClaimResolution<Value: Equatable>: Equatable {
+        case absent
+        case valid(Value)
+        case invalid
+    }
+
+    struct TurnBoundaryProjection: Equatable {
+        enum Disposition: String, Equatable {
+            case continueNextStep = "continue_next_step"
+            case stopAgent = "stop_agent"
+        }
+
+        let disposition: Disposition?
+        let reason: String?
+    }
+
+    struct NormalizedClaims {
+        static var empty: NormalizedClaims {
+            NormalizedClaims(
+                actionOutcome: .absent,
+                legacyBooleans: [:],
+                errorPresence: .absent,
+                reasonPresence: .absent,
+                turnBoundary: .absent)
+        }
+
+        let actionOutcome: MCPToolResponseMetadataProjector.ActionOutcomeResolution
+        let legacyBooleans: [String: ClaimResolution<Bool>]
+        let errorPresence: ClaimResolution<Bool>
+        let reasonPresence: ClaimResolution<Bool>
+        let turnBoundary: ClaimResolution<TurnBoundaryProjection>
+
+        var hasInvalidClaim: Bool {
+            if case .invalid = self.actionOutcome {
+                return true
+            }
+            if self.legacyBooleans.values.contains(.invalid) {
+                return true
+            }
+            return self.errorPresence == .invalid ||
+                self.reasonPresence == .invalid ||
+                self.turnBoundary == .invalid
+        }
+
+        func boolean(_ key: String) -> ClaimResolution<Bool> {
+            self.legacyBooleans[key] ?? .absent
+        }
+    }
+
+    static let legacyBooleanKeys = [
+        "cancelled",
+        "completion_evidence_required",
+        "mutation_dispatched",
+        "perception_required",
+        "requires_fresh_observation",
+        "retry_safe",
+        "skipped",
+        "success",
+    ]
+
     static func isFailure(_ result: AgentToolResult) -> Bool {
         result.failure != nil || result.isError || self.valueEncodesFailure(result.result)
     }
 
     static func valueEncodesFailure(_ value: AnyAgentToolValue) -> Bool {
-        switch self.actionOutcomeResolution(from: value) {
+        let claims = self.normalizedClaims(from: value)
+        if claims.hasInvalidClaim {
+            return true
+        }
+        return switch claims.actionOutcome {
         case .absent:
-            self.legacyValueEncodesFailure(value)
+            self.legacyValueEncodesFailure(value, claims: claims)
         case let .valid(projection):
             !projection.outcome.isConfirmed
         case .invalid:
@@ -20,20 +86,23 @@ enum AgentToolResultSemantics {
         }
     }
 
-    static func legacyValueEncodesFailure(_ value: AnyAgentToolValue) -> Bool {
+    private static func legacyValueEncodesFailure(
+        _ value: AnyAgentToolValue,
+        claims: NormalizedClaims) -> Bool
+    {
         if let string = value.stringValue {
-            return string.hasPrefix("Error:")
+            return string.utf8.starts(with: self.legacyErrorPrefix)
         }
 
-        guard let payload = value.objectValue else { return false }
-        if payload["success"]?.boolValue == false {
+        switch claims.boolean("success") {
+        case .invalid:
             return true
+        case let .valid(success) where !success:
+            return true
+        case .absent, .valid:
+            break
         }
-        guard let error = payload["error"], !error.isNull else { return false }
-        if let message = error.stringValue {
-            return !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        }
-        return true
+        return claims.errorPresence == .valid(true) || claims.errorPresence == .invalid
     }
 
     static func actionOutcome(from result: AgentToolResult) -> DesktopActionOutcome.Projection? {
@@ -43,14 +112,40 @@ enum AgentToolResultSemantics {
     static func actionOutcomeResolution(
         from value: AnyAgentToolValue) -> MCPToolResponseMetadataProjector.ActionOutcomeResolution
     {
-        guard let payload = value.objectValue else { return .absent }
-        let containers = [
+        self.normalizedClaims(from: value).actionOutcome
+    }
+
+    static func normalizedClaims(from value: AnyAgentToolValue) -> NormalizedClaims {
+        let containers = self.semanticContainers(from: value)
+        guard !containers.isEmpty else { return .empty }
+        let legacyBooleans = Dictionary(uniqueKeysWithValues: self.legacyBooleanKeys.map { key in
+            (key, self.booleanResolution(for: key, in: containers))
+        })
+        return NormalizedClaims(
+            actionOutcome: self.actionOutcomeResolution(in: containers),
+            legacyBooleans: legacyBooleans,
+            errorPresence: self.presenceResolution(for: "error", in: containers),
+            reasonPresence: self.presenceResolution(for: "reason", in: containers),
+            turnBoundary: self.turnBoundaryResolution(in: containers))
+    }
+
+    private static func semanticContainers(
+        from value: AnyAgentToolValue) -> [[String: AnyAgentToolValue]]
+    {
+        guard let payload = value.objectValue else { return [] }
+        return [
             payload,
             payload["metadata"]?.objectValue,
             payload["meta"]?.objectValue,
-        ]
+        ].compactMap(\.self)
+    }
+
+    private static func actionOutcomeResolution(
+        in containers: [[String: AnyAgentToolValue]])
+        -> MCPToolResponseMetadataProjector.ActionOutcomeResolution
+    {
         var resolvedProjection: DesktopActionOutcome.Projection?
-        for container in containers.compactMap(\.self) {
+        for container in containers {
             let outcomeFields = container.filter {
                 MCPToolResponseMetadataProjector.actionOutcomeKeys.contains($0.key)
             }
@@ -79,6 +174,122 @@ enum AgentToolResultSemantics {
         return resolvedProjection.map(MCPToolResponseMetadataProjector.ActionOutcomeResolution.valid) ?? .absent
     }
 
+    private static func booleanResolution(
+        for key: String,
+        in containers: [[String: AnyAgentToolValue]]) -> ClaimResolution<Bool>
+    {
+        let claims = containers.compactMap { $0[key] }
+        guard !claims.isEmpty else { return .absent }
+        let values = claims.compactMap(\.boolValue)
+        guard values.count == claims.count, Set(values).count == 1, let value = values.first else {
+            return .invalid
+        }
+        return .valid(value)
+    }
+
+    private static func presenceResolution(
+        for key: String,
+        in containers: [[String: AnyAgentToolValue]]) -> ClaimResolution<Bool>
+    {
+        let claims = containers.compactMap { $0[key] }
+        guard !claims.isEmpty else { return .absent }
+        let values = claims.map { value in
+            guard !value.isNull else { return false }
+            guard let string = value.stringValue else { return true }
+            guard self.isWithinUTF8Limit(string, maximum: 4096) else { return true }
+            return !string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        guard Set(values).count == 1, let value = values.first else { return .invalid }
+        return .valid(value)
+    }
+
+    private static func turnBoundaryResolution(
+        in containers: [[String: AnyAgentToolValue]]) -> ClaimResolution<TurnBoundaryProjection>
+    {
+        let claims = containers.compactMap { $0["turn_boundary"] }
+        guard !claims.isEmpty else { return .absent }
+        var projections: [TurnBoundaryProjection] = []
+        projections.reserveCapacity(claims.count)
+        for claim in claims {
+            guard let object = claim.objectValue,
+                  let projection = self.turnBoundaryProjection(from: object)
+            else {
+                return .invalid
+            }
+            projections.append(projection)
+        }
+        guard let projection = projections.first,
+              projections.dropFirst().allSatisfy({ $0 == projection })
+        else {
+            return .invalid
+        }
+        return .valid(projection)
+    }
+
+    private static func turnBoundaryProjection(
+        from object: [String: AnyAgentToolValue]) -> TurnBoundaryProjection?
+    {
+        let booleanKeys = ["continue_next_step", "stop_agent", "stop_after_current_step"]
+        var booleans: [String: Bool] = [:]
+        for key in booleanKeys {
+            guard let claim = object[key] else { continue }
+            guard let value = claim.boolValue else { return nil }
+            booleans[key] = value
+        }
+
+        let disposition: TurnBoundaryProjection.Disposition?
+        if let claim = object["disposition"] {
+            guard let value = claim.stringValue,
+                  self.isWithinUTF8Limit(value, maximum: 32),
+                  let parsed = TurnBoundaryProjection.Disposition(rawValue: value)
+            else {
+                return nil
+            }
+            disposition = parsed
+        } else {
+            disposition = nil
+        }
+
+        let reason: String?
+        if let claim = object["reason"] {
+            guard let value = claim.stringValue,
+                  self.isWithinUTF8Limit(value, maximum: 4096),
+                  !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            else {
+                return nil
+            }
+            reason = value
+        } else {
+            reason = nil
+        }
+
+        let continueNextStep = booleans["continue_next_step"]
+        let stopAgent = booleans["stop_agent"]
+        let stopAfterCurrentStep = booleans["stop_after_current_step"]
+        let continues = disposition == .continueNextStep || continueNextStep == true
+        let stops = disposition == .stopAgent || stopAgent == true ||
+            (stopAfterCurrentStep == true && !continues)
+        guard !(continues && stops),
+              !(disposition == .continueNextStep && continueNextStep == false),
+              !(disposition == .stopAgent && stopAgent == false),
+              !((continues || stops) && stopAfterCurrentStep == false),
+              !(continues || stops) || reason != nil
+        else {
+            return nil
+        }
+
+        let normalizedDisposition: TurnBoundaryProjection.Disposition? = if continues {
+            .continueNextStep
+        } else if stops {
+            .stopAgent
+        } else {
+            nil
+        }
+        return TurnBoundaryProjection(
+            disposition: normalizedDisposition,
+            reason: reason)
+    }
+
     private static func convertedOutcomeFields(
         _ fields: [String: AnyAgentToolValue]) -> [String: Value]?
     {
@@ -101,9 +312,13 @@ enum AgentToolResultSemantics {
         if let int = value.intValue {
             return .int(int)
         }
-        if let string = value.stringValue, string.utf8.count <= 128 {
+        if let string = value.stringValue, self.isWithinUTF8Limit(string, maximum: 128) {
             return .string(string)
         }
         return nil
+    }
+
+    private static func isWithinUTF8Limit(_ value: String, maximum: Int) -> Bool {
+        value.utf8.prefix(maximum + 1).count <= maximum
     }
 }

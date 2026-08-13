@@ -288,6 +288,106 @@ struct AgentToolMCPFailureSemanticsTests {
     }
 
     @Test
+    func `Legacy semantic claim matrix rejects duplicate disagreement`() throws {
+        let call = AgentToolCall(id: "legacy-conflict", name: "click", arguments: [:])
+
+        for key in AgentToolResultSemantics.legacyBooleanKeys {
+            let result = AgentToolResult.success(
+                toolCallId: call.id,
+                result: AnyAgentToolValue(object: [
+                    key: AnyAgentToolValue(bool: true),
+                    "metadata": AnyAgentToolValue(object: [
+                        key: AnyAgentToolValue(bool: false),
+                    ]),
+                ]))
+            let claims = AgentToolResultSemantics.normalizedClaims(from: result.result)
+            let entry = try #require(Self.execution(call: call, result: result).executionTrace().entries.first)
+            let summary = try #require(entry.result?.objectValue)
+
+            #expect(claims.boolean(key) == .invalid, "Expected conflict for \(key)")
+            #expect(AgentToolResultSemantics.isFailure(result))
+            #expect(entry.disposition == .executedFailed)
+            #expect(summary[key] == nil, "Trace published disputed \(key)")
+            #expect(entry.mutationDispatch == .possiblyDispatched)
+            if key == "skipped" {
+                #expect(entry.disposition != .skippedBeforeDispatch)
+            }
+        }
+
+        let compatible = AgentToolResult.success(
+            toolCallId: call.id,
+            result: AnyAgentToolValue(object: [
+                "metadata": AnyAgentToolValue(object: [
+                    "retry_safe": AnyAgentToolValue(bool: true),
+                ]),
+                "retry_safe": AnyAgentToolValue(bool: true),
+            ]))
+        let compatibleClaims = AgentToolResultSemantics.normalizedClaims(from: compatible.result)
+        let compatibleEntry = try #require(
+            Self.execution(call: call, result: compatible).executionTrace().entries.first)
+        #expect(compatibleClaims.boolean("retry_safe") == .valid(true))
+        #expect(compatibleEntry.result?.objectValue?["retry_safe"]?.boolValue == true)
+
+        let conflictingErrorPresence = AgentToolResult.success(
+            toolCallId: call.id,
+            result: AnyAgentToolValue(object: [
+                "error": AnyAgentToolValue(null: ()),
+                "metadata": AnyAgentToolValue(object: [
+                    "error": AnyAgentToolValue(string: "nested failure"),
+                ]),
+            ]))
+        let errorClaims = AgentToolResultSemantics.normalizedClaims(from: conflictingErrorPresence.result)
+        let errorEntry = try #require(
+            Self.execution(call: call, result: conflictingErrorPresence).executionTrace().entries.first)
+        #expect(errorClaims.errorPresence == .invalid)
+        #expect(AgentToolResultSemantics.isFailure(conflictingErrorPresence))
+        #expect(errorEntry.result?.objectValue?["error_present"] == nil)
+    }
+
+    @Test
+    func `Oversized semantic strings resolve conservatively before trimming`() throws {
+        let oversizedWhitespace = String(repeating: " ", count: 250_000)
+        let call = AgentToolCall(id: "oversized-presence", name: "click", arguments: [:])
+        let presenceResult = AgentToolResult.success(
+            toolCallId: call.id,
+            result: AnyAgentToolValue(object: [
+                "error": AnyAgentToolValue(string: oversizedWhitespace),
+                "reason": AnyAgentToolValue(string: oversizedWhitespace),
+            ]))
+        let presenceClaims = AgentToolResultSemantics.normalizedClaims(from: presenceResult.result)
+        let presenceTrace = try #require(
+            Self.execution(call: call, result: presenceResult).executionTrace().entries.first)
+        let presenceSummary = try #require(presenceTrace.result?.objectValue)
+
+        #expect(presenceClaims.errorPresence == .valid(true))
+        #expect(presenceClaims.reasonPresence == .valid(true))
+        #expect(AgentToolResultSemantics.isFailure(presenceResult))
+        #expect(presenceSummary["error_present"]?.boolValue == true)
+        #expect(presenceSummary["reason_present"]?.boolValue == true)
+        #expect(try JSONEncoder().encode(presenceTrace).count < 1000)
+
+        let boundaryResult = AgentToolResult.success(
+            toolCallId: "oversized-boundary",
+            result: AnyAgentToolValue(object: [
+                "turn_boundary": AnyAgentToolValue(object: [
+                    "continue_next_step": AnyAgentToolValue(bool: true),
+                    "reason": AnyAgentToolValue(string: oversizedWhitespace),
+                ]),
+            ]))
+        let service = try PeekabooAgentService(services: PeekabooServices())
+        #expect(AgentToolResultSemantics.normalizedClaims(from: boundaryResult.result).turnBoundary == .invalid)
+        #expect(AgentToolResultSemantics.isFailure(boundaryResult))
+        #expect(service.turnBoundarySignal(from: boundaryResult) == .stopAgent(
+            reason: PeekabooAgentService.invalidTurnBoundaryReason))
+
+        let oversizedCombiningPrefix = "E" + String(repeating: "\u{0301}", count: 250_000) + "rror:"
+        #expect(!AgentToolResultSemantics.valueEncodesFailure(
+            AnyAgentToolValue(string: oversizedCombiningPrefix)))
+        #expect(AgentToolResultSemantics.valueEncodesFailure(
+            AnyAgentToolValue(string: "Error: bounded legacy failure")))
+    }
+
+    @Test
     func `Multipart MCP error message is bounded before concatenation`() throws {
         let oversized = String(repeating: "x", count: 200_000)
         let content = Array(repeating: MCP.Tool.Content.text(
