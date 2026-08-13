@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Wake Bridge hosts on kernel listener readiness instead of polling `accept` every 25 ms, draining queued clients per notification while preserving bounded, descriptor-safe shutdown.
 
 ### Fixed
+- Report canonical refused, retry-safe, not-dispatched outcomes for pre-dispatch CLI and MCP action validation without attaching desktop semantics to read-only errors or overwriting dispatched receipts.
 - Preserve integer-valued Agent tool data across Codable and Foundation JSON conversion instead of mistaking numeric `0` and `1` for booleans.
 - Carry verified outcomes for receipt-pinned background window close, minimize, restore, maximize, move, resize, and set-bounds through Bridge protocol 1.23 while older hosts remain conservative.
 - Bind each discovered Agent tool to its exact provider and registry generation, recover unchanged bindings after transient discovery failures while refusing ambiguous or stale ownership, and preserve boolean/integer MCP arguments through one typed conversion path.
