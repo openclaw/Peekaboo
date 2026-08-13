@@ -324,6 +324,7 @@ struct AgentToolMCPFailureSemanticsTests {
         let confirmed = DesktopActionOutcome.confirmedChange(delivery: .init(
             mechanism: .accessibilityAction,
             mode: .background))
+        let refused = DesktopActionOutcome.refused(reason: .permissionDenied)
         var dispatchedFields = try #require(try Self.value(confirmed.projection).objectValue)
         dispatchedFields["skipped"] = AnyAgentToolValue(bool: true)
         var invalidFields = dispatchedFields
@@ -341,12 +342,25 @@ struct AgentToolMCPFailureSemanticsTests {
                 "mutation_dispatched": AnyAgentToolValue(bool: true),
                 "skipped": AnyAgentToolValue(bool: true),
             ]))
+        let disputedCanonicalSkip = try AgentToolResult.success(
+            toolCallId: call.id,
+            result: AnyAgentToolValue(object: [
+                "meta": AnyAgentToolValue(object: [
+                    "mutation_dispatched": AnyAgentToolValue(bool: true),
+                    "skipped": AnyAgentToolValue(bool: true),
+                ]),
+                "metadata": Self.value(refused.projection),
+                "mutation_dispatched": AnyAgentToolValue(bool: false),
+                "skipped": AnyAgentToolValue(bool: true),
+            ]))
         let dispatchedEntry = try #require(
             Self.execution(call: call, result: dispatched).executionTrace().entries.first)
         let invalidEntry = try #require(
             Self.execution(call: call, result: invalid).executionTrace().entries.first)
         let legacyConflictEntry = try #require(
             Self.execution(call: call, result: legacyConflict).executionTrace().entries.first)
+        let disputedCanonicalSkipEntry = try #require(
+            Self.execution(call: call, result: disputedCanonicalSkip).executionTrace().entries.first)
 
         #expect(dispatchedEntry.disposition == .executedSucceeded)
         #expect(dispatchedEntry.mutationDispatch == .dispatched)
@@ -363,6 +377,11 @@ struct AgentToolMCPFailureSemanticsTests {
         #expect(legacyConflictEntry.actionOutcome == nil)
         #expect(legacyConflictEntry.result?.objectValue?["skipped"]?.boolValue == true)
         #expect(legacyConflictEntry.result?.objectValue?["mutation_dispatched"]?.boolValue == true)
+        #expect(disputedCanonicalSkipEntry.disposition == .executedFailed)
+        #expect(disputedCanonicalSkipEntry.mutationDispatch == .possiblyDispatched)
+        #expect(disputedCanonicalSkipEntry.actionOutcome == nil)
+        #expect(disputedCanonicalSkipEntry.result?.objectValue?["skipped"] == nil)
+        #expect(disputedCanonicalSkipEntry.result?.objectValue?["mutation_dispatched"] == nil)
     }
 
     @Test

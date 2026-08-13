@@ -194,6 +194,7 @@ private enum AgentExecutionTraceBuilder {
         claims: AgentToolResultSemantics.NormalizedClaims) -> Bool
     {
         guard claims.boolean("skipped") == .valid(true) else { return false }
+        guard claims.boolean("mutation_dispatched") != .invalid else { return false }
 
         return switch claims.actionOutcome {
         case .absent:
