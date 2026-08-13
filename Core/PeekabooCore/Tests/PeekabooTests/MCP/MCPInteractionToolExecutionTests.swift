@@ -16,7 +16,7 @@ extension MCPToolExecutionTests {
     @Test
     func `App tool missing action`() async throws {
         let mockApps = await MainActor.run { MockApplicationService() }
-        let context = await MCPToolTestHelpers.makeContext(applications: mockApps)
+        let context = await MCPToolTestHelpers.makeLegacyContext(applications: mockApps)
         let tool = AppTool(context: context)
         let args = ToolArguments(raw: ["target": "Finder"])
 
@@ -27,7 +27,7 @@ extension MCPToolExecutionTests {
     @Test
     func `App tool switch cycle uses automation service`() async throws {
         let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
-        let context = await MCPToolTestHelpers.makeContext(automation: automation)
+        let context = await MCPToolTestHelpers.makeLegacyContext(automation: automation)
         let tool = AppTool(context: context)
 
         let response = try await tool.execute(arguments: ToolArguments(raw: [
@@ -43,7 +43,7 @@ extension MCPToolExecutionTests {
     @Test
     func `Click tool preserves element target for automation service`() async throws {
         let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
-        let context = await MCPToolTestHelpers.makeContext(automation: automation)
+        let context = await MCPToolTestHelpers.makeLegacyContext(automation: automation)
         let snapshot = await UISnapshotManager.shared.createSnapshot()
         let snapshotId = await snapshot.id
         await snapshot.setScreenshot(
@@ -102,7 +102,7 @@ extension MCPToolExecutionTests {
     @Test
     func `Click tool forwards latest snapshot id when snapshot argument is omitted`() async throws {
         let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
-        let context = await MCPToolTestHelpers.makeContext(automation: automation)
+        let context = await MCPToolTestHelpers.makeLegacyContext(automation: automation)
         let snapshot = await UISnapshotManager.shared.createSnapshot()
         let snapshotId = await snapshot.id
         await snapshot.setScreenshot(
@@ -158,7 +158,7 @@ extension MCPToolExecutionTests {
             }
             return automation
         }
-        let context = await MCPToolTestHelpers.makeContext(automation: automation)
+        let context = await MCPToolTestHelpers.makeLegacyContext(automation: automation)
         let snapshot = await UISnapshotManager.shared.createSnapshot()
         let snapshotId = await snapshot.id
         await snapshot.setScreenshot(
@@ -222,7 +222,7 @@ extension MCPToolExecutionTests {
             automation.pinnedClickError = { _ in failure }
             return automation
         }
-        let context = await MCPToolTestHelpers.makeContext(automation: automation)
+        let context = await MCPToolTestHelpers.makeLegacyContext(automation: automation)
         let snapshot = await UISnapshotManager.shared.createSnapshot()
         let snapshotId = await snapshot.id
         await snapshot.setScreenshot(
@@ -288,7 +288,7 @@ extension MCPToolExecutionTests {
     func `Click tool refuses empty or conflicting target shapes before dispatch or invalidation`() async throws {
         await UISnapshotManager.shared.removeAllSnapshots()
         let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
-        let context = await MCPToolTestHelpers.makeContext(automation: automation)
+        let context = await MCPToolTestHelpers.makeLegacyContext(automation: automation)
         let snapshot = await UISnapshotManager.shared.createSnapshot()
         let snapshotId = await snapshot.id
         let invalidArguments: [[String: Any]] = [
@@ -319,7 +319,7 @@ extension MCPToolExecutionTests {
     @Test
     func `Click tool preserves resolved query element target for automation service`() async throws {
         let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
-        let context = await MCPToolTestHelpers.makeContext(automation: automation)
+        let context = await MCPToolTestHelpers.makeLegacyContext(automation: automation)
         let snapshot = await UISnapshotManager.shared.createSnapshot()
         let snapshotId = await snapshot.id
         await snapshot.setScreenshot(
@@ -382,7 +382,7 @@ extension MCPToolExecutionTests {
     @Test
     func `Click tool reports explicit background pid for element target`() async throws {
         let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
-        let context = await MCPToolTestHelpers.makeContext(automation: automation)
+        let context = await MCPToolTestHelpers.makeLegacyContext(automation: automation)
         let snapshot = await UISnapshotManager.shared.createSnapshot()
         let snapshotId = await snapshot.id
         await snapshot.setScreenshot(
@@ -430,7 +430,7 @@ extension MCPToolExecutionTests {
     @Test
     func `Click tool rejects an explicit PID that contradicts the snapshot receipt`() async throws {
         let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
-        let context = await MCPToolTestHelpers.makeContext(automation: automation)
+        let context = await MCPToolTestHelpers.makeLegacyContext(automation: automation)
         let snapshot = await UISnapshotManager.shared.createSnapshot()
         let snapshotId = await snapshot.id
         await snapshot.setScreenshot(
@@ -484,7 +484,7 @@ extension MCPToolExecutionTests {
                 bundleIdentifier: "com.example.snapshot",
                 name: "SnapshotApp")])
         }
-        let context = await MCPToolTestHelpers.makeContext(
+        let context = await MCPToolTestHelpers.makeLegacyContext(
             automation: automation,
             applications: applications)
         let snapshot = await UISnapshotManager.shared.createSnapshot()
@@ -521,7 +521,7 @@ extension MCPToolExecutionTests {
     @Test
     func `Click tool does not invent a routed double click outcome for a legacy service`() async throws {
         let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
-        let context = await MCPToolTestHelpers.makeContext(automation: automation)
+        let context = await MCPToolTestHelpers.makeLegacyContext(automation: automation)
         let snapshot = await UISnapshotManager.shared.createSnapshot()
         let snapshotId = await snapshot.id
         await snapshot.setScreenshot(
@@ -576,7 +576,7 @@ extension MCPToolExecutionTests {
     func `snapshot independent coordinate click invalidates implicit latest`() async throws {
         await UISnapshotManager.shared.removeAllSnapshots()
         let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
-        let context = await MCPToolTestHelpers.makeContext(automation: automation)
+        let context = await MCPToolTestHelpers.makeLegacyContext(automation: automation)
         let snapshot = await UISnapshotManager.shared.createSnapshot()
         let snapshotId = await snapshot.id
 
@@ -599,7 +599,7 @@ extension MCPToolExecutionTests {
     func `Click tool invalidates implicit latest while preserving explicit snapshot history`() async throws {
         await UISnapshotManager.shared.removeAllSnapshots()
         let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
-        let context = await MCPToolTestHelpers.makeContext(automation: automation)
+        let context = await MCPToolTestHelpers.makeLegacyContext(automation: automation)
         let explicitSnapshot = await Self.makeCoordinateSnapshot()
         let explicitSnapshotId = await explicitSnapshot.id
         let latestSnapshot = await UISnapshotManager.shared.createSnapshot()
@@ -629,7 +629,7 @@ extension MCPToolExecutionTests {
     func `foreground global coordinates remain snapshot-free`() async throws {
         await UISnapshotManager.shared.removeAllSnapshots()
         let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
-        let context = await MCPToolTestHelpers.makeContext(automation: automation)
+        let context = await MCPToolTestHelpers.makeLegacyContext(automation: automation)
 
         let response = try await ClickTool(context: context).execute(arguments: ToolArguments(raw: [
             "coords": "40,50",
@@ -649,7 +649,7 @@ extension MCPToolExecutionTests {
     func `referenced foreground global coordinates validate context before using raw points`() async throws {
         await UISnapshotManager.shared.removeAllSnapshots()
         let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
-        let context = await MCPToolTestHelpers.makeContext(automation: automation)
+        let context = await MCPToolTestHelpers.makeLegacyContext(automation: automation)
         let snapshot = await Self.makeCoordinateSnapshot()
         let snapshotID = await snapshot.id
 
@@ -679,7 +679,7 @@ extension MCPToolExecutionTests {
             title: capturedWindow.title,
             bounds: capturedWindow.bounds.offsetBy(dx: 10, dy: 0),
             mutationIdentity: capturedWindow.mutationIdentity)
-        let movedContext = await MCPToolTestHelpers.makeContext(
+        let movedContext = await MCPToolTestHelpers.makeLegacyContext(
             automation: automation,
             windows: PointerPolicyWindowService(window: movedWindow))
         let moved = try await ClickTool(context: movedContext).execute(arguments: ToolArguments(raw: [
@@ -699,7 +699,7 @@ extension MCPToolExecutionTests {
                 ownerProcessIdentifier: 111,
                 ownerProcessStartIdentity: 8,
                 capturedBounds: reusedCapturedWindow.bounds))
-        let reusedContext = await MCPToolTestHelpers.makeContext(
+        let reusedContext = await MCPToolTestHelpers.makeLegacyContext(
             automation: automation,
             windows: PointerPolicyWindowService(window: reusedWindow))
         let reused = try await ClickTool(context: reusedContext).execute(arguments: ToolArguments(raw: [
@@ -725,7 +725,7 @@ extension MCPToolExecutionTests {
         await UISnapshotManager.shared.removeAllSnapshots()
         let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
         let (snapshot, window) = await Self.makeExactCoordinateSnapshot()
-        let context = await MCPToolTestHelpers.makeContext(
+        let context = await MCPToolTestHelpers.makeLegacyContext(
             automation: automation,
             windows: PointerPolicyWindowService(window: window))
         let snapshotId = await snapshot.id
@@ -752,7 +752,7 @@ extension MCPToolExecutionTests {
         await UISnapshotManager.shared.removeAllSnapshots()
         let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
         let (snapshot, window) = await Self.makeROICoordinateSnapshot()
-        let context = await MCPToolTestHelpers.makeContext(
+        let context = await MCPToolTestHelpers.makeLegacyContext(
             automation: automation,
             windows: PointerPolicyWindowService(window: window))
         let snapshotID = await snapshot.id
@@ -784,7 +784,7 @@ extension MCPToolExecutionTests {
             title: movedCapture.title,
             bounds: movedCapture.bounds.offsetBy(dx: 10, dy: 0),
             mutationIdentity: movedCapture.mutationIdentity)
-        let movedContext = await MCPToolTestHelpers.makeContext(
+        let movedContext = await MCPToolTestHelpers.makeLegacyContext(
             automation: automation,
             windows: PointerPolicyWindowService(window: movedWindow))
         let moved = try await ClickTool(context: movedContext).execute(arguments: ToolArguments(raw: [
@@ -801,7 +801,7 @@ extension MCPToolExecutionTests {
                 origin: resizedCapture.bounds.origin,
                 size: CGSize(width: resizedCapture.bounds.width - 1, height: resizedCapture.bounds.height)),
             mutationIdentity: resizedCapture.mutationIdentity)
-        let resizedContext = await MCPToolTestHelpers.makeContext(
+        let resizedContext = await MCPToolTestHelpers.makeLegacyContext(
             automation: automation,
             windows: PointerPolicyWindowService(window: resizedWindow))
         let resized = try await ClickTool(context: resizedContext).execute(arguments: ToolArguments(raw: [
@@ -821,7 +821,7 @@ extension MCPToolExecutionTests {
                 ownerProcessIdentifier: reusedIdentity.ownerProcessIdentifier,
                 ownerProcessStartIdentity: reusedIdentity.ownerProcessStartIdentity + 1,
                 capturedBounds: reusedIdentity.capturedBounds))
-        let reusedContext = await MCPToolTestHelpers.makeContext(
+        let reusedContext = await MCPToolTestHelpers.makeLegacyContext(
             automation: automation,
             windows: PointerPolicyWindowService(window: reusedWindow))
         let reused = try await ClickTool(context: reusedContext).execute(arguments: ToolArguments(raw: [
@@ -840,7 +840,7 @@ extension MCPToolExecutionTests {
     func `Click tool maps referenced normalized coordinates`() async throws {
         await UISnapshotManager.shared.removeAllSnapshots()
         let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
-        let context = await MCPToolTestHelpers.makeContext(automation: automation)
+        let context = await MCPToolTestHelpers.makeLegacyContext(automation: automation)
         let snapshot = await Self.makeCoordinateSnapshot()
         let snapshotId = await snapshot.id
 
@@ -867,7 +867,7 @@ extension MCPToolExecutionTests {
         let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
         let applications = await MainActor.run { MockApplicationService() }
         let windows = EmptyRecordingWindowService()
-        let context = await MCPToolTestHelpers.makeContext(
+        let context = await MCPToolTestHelpers.makeLegacyContext(
             automation: automation,
             applications: applications,
             windows: windows)
@@ -925,7 +925,7 @@ extension MCPToolExecutionTests {
     @Test
     func `Type tool preserves element target when focusing before typing`() async throws {
         let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
-        let context = await MCPToolTestHelpers.makeContext(automation: automation)
+        let context = await MCPToolTestHelpers.makeLegacyContext(automation: automation)
         let snapshot = await UISnapshotManager.shared.createSnapshot()
         let snapshotId = await snapshot.id
         await snapshot.setUIElements([
@@ -967,7 +967,7 @@ extension MCPToolExecutionTests {
     func `snapshot independent foreground type invalidates implicit latest`() async throws {
         await UISnapshotManager.shared.removeAllSnapshots()
         let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
-        let context = await MCPToolTestHelpers.makeContext(automation: automation)
+        let context = await MCPToolTestHelpers.makeLegacyContext(automation: automation)
         let snapshot = await UISnapshotManager.shared.createSnapshot()
         let snapshotId = await snapshot.id
 
@@ -992,7 +992,7 @@ extension MCPToolExecutionTests {
     func `Type tool invalidates implicit latest while preserving explicit snapshot history`() async throws {
         await UISnapshotManager.shared.removeAllSnapshots()
         let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
-        let context = await MCPToolTestHelpers.makeContext(automation: automation)
+        let context = await MCPToolTestHelpers.makeLegacyContext(automation: automation)
         let explicitSnapshot = await UISnapshotManager.shared.createSnapshot()
         let explicitSnapshotId = await explicitSnapshot.id
         let latestSnapshot = await UISnapshotManager.shared.createSnapshot()
@@ -1022,7 +1022,7 @@ extension MCPToolExecutionTests {
     func `snapshot independent pointer scroll invalidates implicit latest`() async throws {
         await UISnapshotManager.shared.removeAllSnapshots()
         let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
-        let context = await MCPToolTestHelpers.makeContext(automation: automation)
+        let context = await MCPToolTestHelpers.makeLegacyContext(automation: automation)
         let snapshot = await UISnapshotManager.shared.createSnapshot()
         let snapshotId = await snapshot.id
 
@@ -1047,7 +1047,7 @@ extension MCPToolExecutionTests {
     func `Scroll tool invalidates implicit latest while preserving explicit snapshot history`() async throws {
         await UISnapshotManager.shared.removeAllSnapshots()
         let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
-        let context = await MCPToolTestHelpers.makeContext(automation: automation)
+        let context = await MCPToolTestHelpers.makeLegacyContext(automation: automation)
         let explicitSnapshot = await UISnapshotManager.shared.createSnapshot()
         let explicitSnapshotId = await explicitSnapshot.id
         let latestSnapshot = await UISnapshotManager.shared.createSnapshot()
@@ -1090,7 +1090,7 @@ extension MCPToolExecutionTests {
                     displayID: 1),
             ])
         }
-        let context = await MCPToolTestHelpers.makeContext(automation: automation, screens: screens)
+        let context = await MCPToolTestHelpers.makeLegacyContext(automation: automation, screens: screens)
         let tool = MoveTool(context: context)
 
         let response = try await tool.execute(arguments: ToolArguments(raw: [

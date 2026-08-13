@@ -56,7 +56,7 @@ struct MCPToolExecutionTests {
     @Test
     func `Image tool returns MCP error response when screen recording is missing`() async throws {
         let screenCapture = await MainActor.run { MockScreenCaptureService(screenRecordingGranted: false) }
-        let context = await MCPToolTestHelpers.makeContext(screenCapture: screenCapture)
+        let context = await MCPToolTestHelpers.makeLegacyContext(screenCapture: screenCapture)
         let tool = ImageTool(context: context)
 
         let response = try await tool.execute(arguments: ToolArguments(raw: [
@@ -88,7 +88,7 @@ struct MCPToolExecutionTests {
             ])
         }
         let screenCapture = await MainActor.run { MockScreenCaptureService(screenRecordingGranted: true) }
-        let context = await MCPToolTestHelpers.makeContext(
+        let context = await MCPToolTestHelpers.makeLegacyContext(
             screenCapture: screenCapture,
             applications: applications)
         let tool = ImageTool(context: context)
@@ -123,7 +123,7 @@ struct MCPToolExecutionTests {
             displayID: 1)
         let screenCapture = await MainActor.run { MockScreenCaptureService(screenRecordingGranted: true) }
         let screens = await MainActor.run { MockScreenService(screens: [screen]) }
-        let context = await MCPToolTestHelpers.makeContext(screenCapture: screenCapture, screens: screens)
+        let context = await MCPToolTestHelpers.makeLegacyContext(screenCapture: screenCapture, screens: screens)
         let tool = ImageTool(context: context)
 
         let response = try await tool.execute(arguments: ToolArguments(raw: [
@@ -139,7 +139,7 @@ struct MCPToolExecutionTests {
     @Test
     func `Image tool native scale reaches observation capture`() async throws {
         let screenCapture = await MainActor.run { MockScreenCaptureService(screenRecordingGranted: true) }
-        let context = await MCPToolTestHelpers.makeContext(screenCapture: screenCapture)
+        let context = await MCPToolTestHelpers.makeLegacyContext(screenCapture: screenCapture)
         let tool = ImageTool(context: context)
 
         let response = try await tool.execute(arguments: ToolArguments(raw: [
@@ -156,7 +156,7 @@ struct MCPToolExecutionTests {
         let screenCapture = await MainActor.run {
             MockScreenCaptureService(screenRecordingGranted: true, imageData: Data())
         }
-        let context = await MCPToolTestHelpers.makeContext(screenCapture: screenCapture)
+        let context = await MCPToolTestHelpers.makeLegacyContext(screenCapture: screenCapture)
         let tool = ImageTool(context: context)
         let outputPath = FileManager.default.temporaryDirectory
             .appendingPathComponent("peekaboo-mcp-empty-image-\(UUID().uuidString).png")
@@ -182,7 +182,7 @@ struct MCPToolExecutionTests {
         let screenCapture = await MainActor.run {
             MockScreenCaptureService(screenRecordingGranted: true, imageData: highResPNG)
         }
-        let context = await MCPToolTestHelpers.makeContext(screenCapture: screenCapture)
+        let context = await MCPToolTestHelpers.makeLegacyContext(screenCapture: screenCapture)
         let tool = ImageTool(context: context)
 
         let response = try await tool.execute(arguments: ToolArguments(raw: [
@@ -228,7 +228,7 @@ struct MCPToolExecutionTests {
                 imageData: highResPNG,
                 metadata: captureMetadata)
         }
-        let context = await MCPToolTestHelpers.makeContext(screenCapture: screenCapture)
+        let context = await MCPToolTestHelpers.makeLegacyContext(screenCapture: screenCapture)
         let tool = ImageTool(context: context)
 
         let response = try await tool.execute(arguments: ToolArguments(raw: [
@@ -261,7 +261,7 @@ struct MCPToolExecutionTests {
         let screenCapture = await MainActor.run {
             MockScreenCaptureService(screenRecordingGranted: true, imageData: highResPNG)
         }
-        let context = await MCPToolTestHelpers.makeContext(screenCapture: screenCapture)
+        let context = await MCPToolTestHelpers.makeLegacyContext(screenCapture: screenCapture)
         let tool = ImageTool(context: context)
         let outputPath = FileManager.default.temporaryDirectory
             .appendingPathComponent("peekaboo-mcp-downscaled-\(UUID().uuidString).png")
@@ -283,7 +283,7 @@ struct MCPToolExecutionTests {
     @Test
     func `Image tool downscales saved fallback when capture data is empty`() async throws {
         let highResPNG = Self.makePNGData(width: 3000, height: 2000)
-        let context = await MCPToolTestHelpers.makeContext()
+        let context = await MCPToolTestHelpers.makeLegacyContext()
         let tool = ImageTool(context: context)
         let outputPath = FileManager.default.temporaryDirectory
             .appendingPathComponent("peekaboo-mcp-downscaled-fallback-\(UUID().uuidString).png")
@@ -313,7 +313,7 @@ struct MCPToolExecutionTests {
     @Test
     func `Image tool rejects nonpositive max_dimension`() async throws {
         let screenCapture = await MainActor.run { MockScreenCaptureService(screenRecordingGranted: true) }
-        let context = await MCPToolTestHelpers.makeContext(screenCapture: screenCapture)
+        let context = await MCPToolTestHelpers.makeLegacyContext(screenCapture: screenCapture)
         let tool = ImageTool(context: context)
 
         await #expect(throws: PeekabooError.self) {
@@ -346,7 +346,7 @@ struct MCPToolExecutionTests {
             activationPolicy: .prohibited,
             metadataWarnings: ["filtered prohibited warning"])
         let applications = await MainActor.run { MockApplicationService(applications: [app, prohibited]) }
-        let context = await MCPToolTestHelpers.makeContext(applications: applications)
+        let context = await MCPToolTestHelpers.makeLegacyContext(applications: applications)
 
         let response = try await AppTool(context: context).execute(arguments: ToolArguments(raw: [
             "action": "list",
@@ -391,7 +391,7 @@ struct MCPToolExecutionTests {
                 applications: [app],
                 windowsByIdentifier: ["Finder": [window]])
         }
-        let context = await MCPToolTestHelpers.makeContext(applications: applications)
+        let context = await MCPToolTestHelpers.makeLegacyContext(applications: applications)
         let response = try await WindowTool(context: context).execute(arguments: ToolArguments(raw: [
             "action": "list",
             "app": "Finder",
@@ -438,7 +438,7 @@ struct MCPToolExecutionTests {
                 detectionResult: detectionResult)
         }
         let screenCapture = await MainActor.run { MockScreenCaptureService(screenRecordingGranted: true) }
-        let context = await MCPToolTestHelpers.makeContext(
+        let context = await MCPToolTestHelpers.makeLegacyContext(
             automation: automation,
             screenCapture: screenCapture)
         let tool = SeeTool(context: context)
@@ -482,7 +482,7 @@ struct MCPToolExecutionTests {
                 detectionError: POSIXError(.ETIMEDOUT))
         }
         let snapshots = await MainActor.run { InMemorySnapshotManager() }
-        let context = await MCPToolTestHelpers.makeContext(
+        let context = await MCPToolTestHelpers.makeLegacyContext(
             automation: automation,
             snapshots: snapshots)
         let tool = SeeTool(context: context)
@@ -522,7 +522,7 @@ struct MCPToolExecutionTests {
             ])
         }
         let screenCapture = await MainActor.run { MockScreenCaptureService(screenRecordingGranted: true) }
-        let context = await MCPToolTestHelpers.makeContext(
+        let context = await MCPToolTestHelpers.makeLegacyContext(
             automation: automation,
             screenCapture: screenCapture,
             applications: applications)
@@ -563,7 +563,7 @@ struct MCPToolExecutionTests {
             ])
         }
         let screenCapture = await MainActor.run { MockScreenCaptureService(screenRecordingGranted: true) }
-        let context = await MCPToolTestHelpers.makeContext(
+        let context = await MCPToolTestHelpers.makeLegacyContext(
             automation: automation,
             screenCapture: screenCapture,
             applications: applications)
@@ -717,7 +717,7 @@ struct MCPToolExecutionTests {
     func `element action tools refuse without an active snapshot before automation dispatch`() async throws {
         await UISnapshotManager.shared.removeAllSnapshots()
         let automation = await MainActor.run { MockElementActionAutomationService(accessibilityGranted: true) }
-        let context = await MCPToolTestHelpers.makeContext(automation: automation)
+        let context = await MCPToolTestHelpers.makeLegacyContext(automation: automation)
 
         let actionResponse = try await ActionTool(context: context).execute(arguments: ToolArguments(raw: [
             "on": "B1",
@@ -746,7 +746,7 @@ struct MCPToolExecutionTests {
     @Test
     func `set_value tool calls element action service`() async throws {
         let automation = await MainActor.run { MockElementActionAutomationService(accessibilityGranted: true) }
-        let context = await MCPToolTestHelpers.makeContext(automation: automation)
+        let context = await MCPToolTestHelpers.makeLegacyContext(automation: automation)
         let tool = SetValueTool(context: context)
         let snapshot = await UISnapshotManager.shared.createSnapshot()
         let snapshotId = await snapshot.id
@@ -773,7 +773,7 @@ struct MCPToolExecutionTests {
     @Test
     func `set_value tool forwards latest snapshot id when snapshot argument is omitted`() async throws {
         let automation = await MainActor.run { MockElementActionAutomationService(accessibilityGranted: true) }
-        let context = await MCPToolTestHelpers.makeContext(automation: automation)
+        let context = await MCPToolTestHelpers.makeLegacyContext(automation: automation)
         let tool = SetValueTool(context: context)
         let snapshot = await UISnapshotManager.shared.createSnapshot()
         let snapshotId = await snapshot.id
@@ -797,7 +797,7 @@ struct MCPToolExecutionTests {
     @Test
     func `action tool validates request shape`() async throws {
         let automation = await MainActor.run { MockElementActionAutomationService(accessibilityGranted: true) }
-        let context = await MCPToolTestHelpers.makeContext(automation: automation)
+        let context = await MCPToolTestHelpers.makeLegacyContext(automation: automation)
         let tool = ActionTool(context: context)
         let snapshot = await UISnapshotManager.shared.createSnapshot()
         let snapshotId = await snapshot.id
