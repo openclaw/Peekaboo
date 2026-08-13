@@ -29,7 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Project canonical desktop-action outcomes into MCP metadata, so partial failures retain recovery-side-effect semantics instead of incorrectly demanding a fresh observation.
 - Preserve successful native outcomes for click, type, type-actions, scroll, hotkey, action, and set-value across projected Bridge requests, and expose the validated canonical projection in CLI JSON and human output without changing legacy response payloads.
 - Embed one canonical 40-hex source commit in clean stamped CLI and macOS app builds, expose it through `--version --json` and Bridge identity receipts, and leave raw unstamped builds explicitly `unknown`.
-- Project canonical desktop-action outcomes into MCP metadata for click, type, scroll, press, action, and set-value successes and failures, preserving exact partial recovery and observation-before-retry semantics without inventing receipts for legacy hosts.
+- Project canonical desktop-action outcomes into MCP metadata for click, type, scroll, press, action, and set-value successes and failures, preserving exact partial recovery and observation-before-retry semantics without inventing receipts for legacy hosts or collapsing composite setup focus into a no-change leaf.
 - Correct `peekaboo bridge --help` and Bridge docs to describe capability-aware reusable-daemon, Peekaboo.app, on-demand-daemon, and local-fallback routing.
 - Refuse public raw `press` chords before dispatch unless `--foreground` is explicit, with canonical retry-safe refusal metadata and honest unverifiable foreground results.
 - Reject excess positional arguments unless a command declares a variadic tail, while preserving explicit multi-chord `press` sequences.

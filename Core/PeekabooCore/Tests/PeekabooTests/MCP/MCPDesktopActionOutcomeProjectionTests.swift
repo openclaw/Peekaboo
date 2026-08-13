@@ -269,6 +269,65 @@ struct MCPDesktopActionOutcomeProjectionTests {
         #expect(meta["invalidated_snapshot"] != nil)
         #expect(await context.uiSnapshots.getSnapshot(id: nil) == nil)
     }
+
+    @Test
+    @MainActor
+    func `scroll setup focus invalidates despite a no change leaf`() async throws {
+        let automation = StubAutomationService()
+        automation.actionOutcome = .confirmedNoChange()
+        let context = await MCPToolTestHelpers.makeContext(
+            automation: automation,
+            windows: EmptyRecordingWindowService())
+        await context.uiSnapshots.removeOwner()
+        let snapshotID = await Self.makeTextFieldSnapshot(uiSnapshots: context.uiSnapshots)
+
+        let response = try await ScrollTool(context: context).execute(arguments: ToolArguments(raw: [
+            "direction": "down",
+            "on": "T1",
+            "snapshot": snapshotID,
+            "foreground": true,
+        ]))
+
+        #expect(!response.isError)
+        let meta = try #require(response.meta?.objectValue)
+        #expect(meta["state"] == nil)
+        #expect(meta["effect"] == .string("unverifiable"))
+        #expect(meta["mutation_dispatched"] == .bool(true))
+        #expect(meta["retry_safe"] == .bool(false))
+        #expect(meta["requires_fresh_observation"] == .bool(true))
+        #expect(meta["delivery_mode"] == nil)
+        #expect(meta["invalidated_snapshot"] == .string(snapshotID))
+        #expect(await context.uiSnapshots.getSnapshot(id: nil) == nil)
+    }
+
+    @Test
+    @MainActor
+    func `scroll setup focus makes a refused leaf indeterminate`() async throws {
+        let automation = StubAutomationService()
+        automation.actionOutcome = .refused(reason: .permissionDenied)
+        let context = await MCPToolTestHelpers.makeContext(
+            automation: automation,
+            windows: EmptyRecordingWindowService())
+        await context.uiSnapshots.removeOwner()
+        let snapshotID = await Self.makeTextFieldSnapshot(uiSnapshots: context.uiSnapshots)
+
+        let response = try await ScrollTool(context: context).execute(arguments: ToolArguments(raw: [
+            "direction": "down",
+            "on": "T1",
+            "snapshot": snapshotID,
+            "foreground": true,
+        ]))
+
+        #expect(response.isError)
+        let meta = try #require(response.meta?.objectValue)
+        #expect(meta["state"] == .string("indeterminate"))
+        #expect(meta["mutation_dispatched"] == .bool(true))
+        #expect(meta["retry_safe"] == .bool(false))
+        #expect(meta["requires_fresh_observation"] == .bool(true))
+        #expect(meta["dispatched_unit_count"] == .int(1))
+        #expect(meta["invalidated_snapshot"] == .string(snapshotID))
+        #expect(await context.uiSnapshots.getSnapshot(id: nil) == nil)
+    }
 }
 
 extension MCPDesktopActionOutcomeProjectionTests {
@@ -809,10 +868,21 @@ extension MCPDesktopActionOutcomeProjectionTests {
         ]))
 
         #expect(!response.isError)
+        guard case let .text(text, _, _) = response.content.first else {
+            Issue.record("Expected text response")
+            return
+        }
         let meta = try #require(response.meta?.objectValue)
+        let summary = try #require(meta["summary"]?.objectValue)
         #expect(meta["state"] == .string("confirmed_change"))
         #expect(meta["mutation_dispatched"] == .bool(true))
         #expect(meta["characters_typed"] == .double(0))
+        #expect(text.contains("Confirmed no typing change"))
+        #expect(!text.contains("Typed:"))
+        #expect(!text.contains("Chars: 5"))
+        #expect(summary["action"] == .string("Type (confirmed no change)"))
+        #expect(summary["element_value"] == nil)
+        #expect(summary["notes"] == .string("Confirmed no typing change"))
     }
 
     @Test

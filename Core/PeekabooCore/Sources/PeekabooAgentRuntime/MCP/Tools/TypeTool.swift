@@ -251,13 +251,13 @@ public struct TypeTool: MCPTool {
             snapshotID: effectiveSnapshotId,
             mutationDispatched: mutationDispatched)
         let executionTime = Date().timeIntervalSince(startTime)
+        let typingDispatched = typeActionResult.outcome?.dispatchState.mutationDispatched ?? true
+        let charactersTyped = typingDispatched ? typeActionResult.payload.totalCharacters : 0
         let message = self.buildSummary(
             request: request,
             executionTime: executionTime,
-            result: typeActionResult.payload)
-        let charactersTyped = typeActionResult.outcome?.dispatchState.mutationDispatched == false
-            ? 0
-            : typeActionResult.payload.totalCharacters
+            result: typeActionResult.payload,
+            typingDispatched: typingDispatched)
         var baseMetaDict: [String: Value] = [
             "execution_time": .double(executionTime),
             "characters_typed": .double(Double(charactersTyped)),
@@ -276,7 +276,8 @@ public struct TypeTool: MCPTool {
         }
         let summary = self.buildEventSummary(
             request: request,
-            targetContext: targetContext)
+            targetContext: targetContext,
+            typingDispatched: typingDispatched)
         let mergedMeta = try ToolEventSummary.merge(
             summary: summary,
             into: MCPToolResponseMetadataProjector.metadata(

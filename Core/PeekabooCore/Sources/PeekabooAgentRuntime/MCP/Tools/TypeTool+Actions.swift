@@ -5,17 +5,18 @@ import PeekabooFoundation
 extension TypeTool {
     func buildEventSummary(
         request: TypeRequest,
-        targetContext: TargetElementContext?) -> ToolEventSummary
+        targetContext: TargetElementContext?,
+        typingDispatched: Bool) -> ToolEventSummary
     {
-        let truncatedInput = self.truncatedText(request.text)
+        let truncatedInput = typingDispatched ? self.truncatedText(request.text) : nil
         return ToolEventSummary(
             targetApp: targetContext?.snapshot.applicationName ?? request.target.appIdentifier,
             windowTitle: targetContext?.snapshot.windowTitle,
             elementRole: targetContext?.element.summaryRole,
             elementLabel: targetContext?.element.summaryLabel,
             elementValue: truncatedInput,
-            actionDescription: self.describeAction(for: request),
-            notes: truncatedInput)
+            actionDescription: typingDispatched ? self.describeAction(for: request) : "Type (confirmed no change)",
+            notes: typingDispatched ? truncatedInput : "Confirmed no typing change")
     }
 
     func buildActions(for request: TypeRequest) throws -> [TypeAction] {
@@ -39,8 +40,14 @@ extension TypeTool {
     func buildSummary(
         request: TypeRequest,
         executionTime: TimeInterval,
-        result: TypeResult) -> String
+        result: TypeResult,
+        typingDispatched: Bool) -> String
     {
+        let duration = String(format: "%.2f", executionTime) + "s"
+        guard typingDispatched else {
+            return "\(AgentDisplayTokens.Status.success) Confirmed no typing change in \(duration)"
+        }
+
         var actions: [String] = []
 
         if request.clearField {
@@ -70,7 +77,6 @@ extension TypeTool {
         let specialKeys = max(result.keyPresses - result.totalCharacters, 0)
         actions.append("Special keys: \(specialKeys)")
 
-        let duration = String(format: "%.2f", executionTime) + "s"
         let summary = actions.isEmpty ? "Performed no actions" : actions.joined(separator: ", ")
         return "\(AgentDisplayTokens.Status.success) \(summary) in \(duration)"
     }
