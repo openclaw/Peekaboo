@@ -545,6 +545,26 @@ struct AgentToolMCPFailureSemanticsTests {
     }
 
     @Test
+    func `Structured keys remain distinct after the value text budget is exhausted`() throws {
+        let oversized = String(repeating: "x", count: 250_000)
+        let response = ToolResponse(
+            content: [.text(text: "text budget failure", annotations: nil, _meta: nil)],
+            isError: true,
+            structuredContent: .object([
+                "a-first": .string(oversized),
+                "b-second": .string("second"),
+                "c-third": .string("third"),
+            ]))
+        let structured = try #require(
+            AgentToolMCPBridge.convert(response).failure?.structuredValue?.objectValue)
+
+        #expect(structured.count == 3)
+        #expect(structured["a-first"] != nil)
+        #expect(structured["b-second"]?.stringValue == "<omitted-text-budget>")
+        #expect(structured["c-third"]?.stringValue == "<omitted-text-budget>")
+    }
+
+    @Test
     func `Nonconfirmed MCP success cannot become a successful terminal observation`() async throws {
         let outcome = DesktopActionOutcome.refused(reason: .permissionDenied)
         let response = try ToolResponse.text("incorrect success", meta: Value(outcome.projection))

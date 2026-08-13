@@ -561,7 +561,7 @@ enum AgentToolMCPBridge {
             }
             var converted: [String: AnyAgentToolValue] = [:]
             for (key, item) in Self.boundedSortedEntries(values) {
-                converted[Self.boundedStructuredText(key, budget: &budget)] = Self.agentValue(
+                converted[key] = Self.agentValue(
                     item,
                     depth: depth + 1,
                     budget: &budget)
