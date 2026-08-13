@@ -565,15 +565,17 @@ struct PeekabooBridgeActionOutcomeProjectionTests {
     }
 
     @Test
-    func `projection capability is introduced at protocol 1 23`() {
-        let expectedVersion = PeekabooBridgeProtocolVersion(major: 1, minor: 24)
+    func `current protocol 1 24 preserves projection capability introduced at 1 23`() {
+        let currentVersion = PeekabooBridgeProtocolVersion(major: 1, minor: 24)
+        let projectionVersion = PeekabooBridgeProtocolVersion(major: 1, minor: 23)
 
-        #expect(PeekabooBridgeConstants.protocolVersion == expectedVersion)
-        #expect(PeekabooBridgeConstants.supportedProtocolRange.upperBound == expectedVersion)
+        #expect(PeekabooBridgeConstants.protocolVersion == currentVersion)
+        #expect(PeekabooBridgeConstants.supportedProtocolRange.upperBound == currentVersion)
+        #expect(PeekabooBridgeConstants.desktopActionOutcomeProjectionVersion == projectionVersion)
         #expect(PeekabooBridgeHostCapability.desktopActionOutcomeProjection == "desktopActionOutcomeProjection")
 
         let handshake = BridgeTestFixtures.handshake(
-            negotiatedVersion: expectedVersion,
+            negotiatedVersion: currentVersion,
             supportedOperations: [.click],
             hostCapabilities: [PeekabooBridgeHostCapability.desktopActionOutcomeProjection])
         #expect(handshake.hostCapabilities == ["desktopActionOutcomeProjection"])

@@ -82,7 +82,7 @@ struct ActionOutcomeCommandTests {
             evidence: .deliveryAccepted
         )
         let snapshots = StubSnapshotManager()
-        let application = ServiceApplicationInfo(
+        let application = AutomationTestFixtures.application(
             processIdentifier: 12345,
             processStartIdentity: 7,
             bundleIdentifier: "com.example.fixture",
@@ -433,7 +433,24 @@ struct ActionOutcomeCommandTests {
     private static func storeExactWindowElementSnapshot(in snapshots: StubSnapshotManager) async throws -> String {
         let snapshotID = try await snapshots.createSnapshot()
         let bounds = CGRect(x: 100, y: 100, width: 500, height: 400)
-        let element = DetectedElement(
+        let processIdentity = AutomationTestFixtures.processIdentity(
+            processIdentifier: 12345,
+            processStartIdentity: 7
+        )
+        let application = AutomationTestFixtures.application(
+            processIdentifier: processIdentity.processIdentifier,
+            processStartIdentity: processIdentity.processStartIdentity,
+            bundleIdentifier: "com.example.fixture",
+            name: "Fixture",
+            activationPolicy: .regular
+        )
+        let window = AutomationTestFixtures.window(
+            windowID: 42,
+            title: "Fixture Window",
+            bounds: bounds,
+            processIdentity: processIdentity
+        )
+        let element = AutomationTestFixtures.detectedElement(
             id: "elem_3",
             type: .button,
             label: "Fixture",
@@ -443,28 +460,13 @@ struct ActionOutcomeCommandTests {
         )
         try await snapshots.storeDetectionResult(
             snapshotId: snapshotID,
-            result: ElementDetectionResult(
-                snapshotId: snapshotID,
+            result: AutomationTestFixtures.detectionResult(
+                snapshotID: snapshotID,
                 screenshotPath: "/tmp/fixture.png",
                 elements: DetectedElements(buttons: [element]),
-                metadata: DetectionMetadata(
-                    detectionTime: 0,
-                    elementCount: 1,
-                    method: "fixture",
-                    windowContext: WindowContext(
-                        applicationName: "Fixture",
-                        applicationBundleId: "com.example.fixture",
-                        applicationProcessId: 12345,
-                        windowTitle: "Fixture Window",
-                        windowID: 42,
-                        windowBounds: bounds,
-                        windowMutationIdentity: WindowMutationIdentity(
-                            windowID: 42,
-                            ownerProcessIdentifier: 12345,
-                            ownerProcessStartIdentity: 7,
-                            capturedBounds: bounds
-                        )
-                    )
+                windowContext: AutomationTestFixtures.windowContext(
+                    application: application,
+                    window: window
                 )
             )
         )
