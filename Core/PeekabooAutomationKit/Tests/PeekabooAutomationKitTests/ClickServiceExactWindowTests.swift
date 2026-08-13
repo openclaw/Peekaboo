@@ -78,6 +78,109 @@ struct ClickServiceExactWindowTests {
 
     @Test
     @MainActor
+    func `Exact click rejects mismatched process generation before delivery`() async {
+        let bounds = CGRect(x: 0, y: 0, width: 100, height: 100)
+        let identity = WindowMutationIdentity(
+            windowID: 42,
+            ownerProcessIdentifier: getpid(),
+            ownerProcessStartIdentity: 72,
+            capturedBounds: bounds)
+        let synthetic = ClickRecordingSyntheticInputDriver()
+        let service = ClickService(
+            snapshotManager: InMemorySnapshotManager(),
+            inputPolicy: UIInputPolicy(defaultStrategy: .synthOnly),
+            syntheticInputDriver: synthetic,
+            exactWindowIdentityValidator: { _, _ in true },
+            processStartIdentityProvider: { _ in 71 })
+
+        do {
+            _ = try await service.click(
+                target: .coordinates(CGPoint(x: 10, y: 20)),
+                clickType: .single,
+                snapshotId: nil,
+                targetProcessIdentifier: getpid(),
+                expectedProcessIdentity: ApplicationProcessIdentity(
+                    processIdentifier: getpid(),
+                    processStartIdentity: 71),
+                targetWindowID: 42,
+                expectedWindowIdentity: identity,
+                expectedWindowBounds: bounds)
+            Issue.record("Expected mismatched process-generation receipts to fail")
+        } catch let PeekabooError.snapshotStale(reason) {
+            #expect(reason.contains("different process generations"))
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+        #expect(synthetic.events.isEmpty)
+    }
+
+    @Test
+    @MainActor
+    func `Exact click rejects mismatched window identifier before delivery`() async {
+        let bounds = CGRect(x: 0, y: 0, width: 100, height: 100)
+        let identity = WindowMutationIdentity(
+            windowID: 41,
+            ownerProcessIdentifier: getpid(),
+            ownerProcessStartIdentity: 71,
+            capturedBounds: bounds)
+        let synthetic = ClickRecordingSyntheticInputDriver()
+        let service = ClickService(
+            snapshotManager: InMemorySnapshotManager(),
+            inputPolicy: UIInputPolicy(defaultStrategy: .synthOnly),
+            syntheticInputDriver: synthetic)
+
+        do {
+            _ = try await service.click(
+                target: .coordinates(CGPoint(x: 10, y: 20)),
+                clickType: .single,
+                snapshotId: nil,
+                targetProcessIdentifier: getpid(),
+                targetWindowID: 42,
+                expectedWindowIdentity: identity,
+                expectedWindowBounds: bounds)
+            Issue.record("Expected the window identifier mismatch to fail")
+        } catch let PeekabooError.snapshotStale(reason) {
+            #expect(reason.contains("capture-time process-generation receipt"))
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+        #expect(synthetic.events.isEmpty)
+    }
+
+    @Test
+    @MainActor
+    func `Exact click rejects mismatched captured bounds before delivery`() async {
+        let identity = WindowMutationIdentity(
+            windowID: 42,
+            ownerProcessIdentifier: getpid(),
+            ownerProcessStartIdentity: 71,
+            capturedBounds: CGRect(x: 0, y: 0, width: 100, height: 100))
+        let synthetic = ClickRecordingSyntheticInputDriver()
+        let service = ClickService(
+            snapshotManager: InMemorySnapshotManager(),
+            inputPolicy: UIInputPolicy(defaultStrategy: .synthOnly),
+            syntheticInputDriver: synthetic)
+
+        do {
+            _ = try await service.click(
+                target: .coordinates(CGPoint(x: 10, y: 20)),
+                clickType: .single,
+                snapshotId: nil,
+                targetProcessIdentifier: getpid(),
+                targetWindowID: 42,
+                expectedWindowIdentity: identity,
+                expectedWindowBounds: CGRect(x: 0, y: 0, width: 101, height: 100))
+            Issue.record("Expected the captured bounds mismatch to fail")
+        } catch let PeekabooError.snapshotStale(reason) {
+            #expect(reason.contains("bounds do not match"))
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+        #expect(synthetic.events.isEmpty)
+    }
+
+    @Test
+    @MainActor
     func `Exact window identifier must fit CGWindowID`() async {
         let synthetic = ClickRecordingSyntheticInputDriver()
         let service = ClickService(
