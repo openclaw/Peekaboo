@@ -8,7 +8,7 @@ ROOT="${ROOT:-$ROOT_DIR}"
 ROOT="$(cd "$ROOT" && pwd)"
 # shellcheck source=scripts/source-provenance.sh
 source "$ROOT/scripts/source-provenance.sh"
-SOURCE_COMMIT="$(peekaboo_require_source_commit "$ROOT")"
+SOURCE_COMMIT=""
 MAC_RELEASE_MANIFEST="${MAC_RELEASE_MANIFEST:-$ROOT/.mac-release.env}"
 MAC_RELEASE_MANIFEST_LOADED=false
 if [[ -f "$MAC_RELEASE_MANIFEST" ]]; then
@@ -228,6 +228,10 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+if [[ -z "$VERIFY_ONLY_ZIP" ]]; then
+  SOURCE_COMMIT="$(peekaboo_require_source_commit "$ROOT")"
+fi
+
 if [[ "$DRY_RUN" == true ]]; then
   NOTARIZE=false
   UPDATE_APPCAST=false
@@ -300,6 +304,7 @@ bundle_executable_name() {
 
 verify_app_payload() {
   local app_path="$1"
+  local provenance_status=0
   local source_commit
   local executable_name
   executable_name="$(bundle_executable_name "$app_path")"
@@ -316,12 +321,16 @@ verify_app_payload() {
 
   source_commit="$(/usr/libexec/PlistBuddy -c 'Print :PeekabooSourceCommit' \
     "$app_path/Contents/Info.plist" 2>/dev/null || true)"
-  peekaboo_verify_source_commit "$ROOT" "$SOURCE_COMMIT" ||
-    fail "Release root changed or became dirty while building: $ROOT"
-  peekaboo_is_exact_source_commit "$source_commit" ||
-    fail "App has no exact 40-hex source commit: $app_path"
-  [[ "$source_commit" == "$SOURCE_COMMIT" ]] ||
-    fail "App source commit does not match the release root: $app_path"
+  peekaboo_validate_artifact_source_commit "$ROOT" "$source_commit" "$SOURCE_COMMIT" ||
+    provenance_status=$?
+  case "$provenance_status" in
+    0) ;;
+    2) fail "App has no exact 40-hex source commit: $app_path" ;;
+    3) fail "Release expected source commit is invalid: $SOURCE_COMMIT" ;;
+    4) fail "Release root changed or became dirty while building: $ROOT" ;;
+    5) fail "App source commit does not match the release root: $app_path" ;;
+    *) fail "App source provenance validation failed: $app_path" ;;
+  esac
 
   "$ROOT_DIR/scripts/verify-native-only-app.sh" --app "$app_path"
 

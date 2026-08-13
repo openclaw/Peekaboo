@@ -70,6 +70,20 @@ peekaboo_verify_source_commit() {
   fi
 }
 
+# Validates an embedded artifact stamp independently for verify-only workflows,
+# or against the still-clean build checkout when an expected commit is supplied.
+peekaboo_validate_artifact_source_commit() {
+  local repository_root="${1:?repository root required}"
+  local artifact_commit="${2:-}"
+  local expected_commit="${3:-}"
+
+  peekaboo_is_exact_source_commit "$artifact_commit" || return 2
+  [[ -z "$expected_commit" ]] && return 0
+  peekaboo_is_exact_source_commit "$expected_commit" || return 3
+  peekaboo_verify_source_commit "$repository_root" "$expected_commit" || return 4
+  [[ "$artifact_commit" == "$expected_commit" ]] || return 5
+}
+
 peekaboo_source_dirty_suffix() {
   local repository_root="${1:?repository root required}"
   local checkout_status

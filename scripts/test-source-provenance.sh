@@ -21,11 +21,27 @@ git -C "$PROVENANCE_TEST_REPOSITORY" \
   -c user.name=Peekaboo -c user.email=peekaboo@example.invalid \
   commit -q --allow-empty -m initial
 TEST_COMMIT="$(git -C "$PROVENANCE_TEST_REPOSITORY" rev-parse HEAD)"
+HISTORICAL_COMMIT=0123456789abcdef0123456789abcdef01234567
 [[ "$(peekaboo_require_source_commit "$PROVENANCE_TEST_REPOSITORY")" == "$TEST_COMMIT" ]]
 [[ "$(peekaboo_debug_source_commit "$PROVENANCE_TEST_REPOSITORY")" == "$TEST_COMMIT" ]]
 [[ -z "$(peekaboo_source_dirty_suffix "$PROVENANCE_TEST_REPOSITORY")" ]]
 [[ "$(PEEKABOO_REQUIRE_SOURCE_PROVENANCE=1 \
   peekaboo_debug_source_commit "$PROVENANCE_TEST_REPOSITORY")" == "$TEST_COMMIT" ]]
+peekaboo_validate_artifact_source_commit "$PROVENANCE_TEST_REPOSITORY" "$TEST_COMMIT" "$TEST_COMMIT"
+peekaboo_validate_artifact_source_commit "$PROVENANCE_TEST_REPOSITORY" "$HISTORICAL_COMMIT" ""
+if peekaboo_validate_artifact_source_commit \
+  "$PROVENANCE_TEST_REPOSITORY" "$HISTORICAL_COMMIT" "$TEST_COMMIT"; then
+  echo "current-checkout validation unexpectedly accepted a historical artifact" >&2
+  exit 1
+else
+  [[ "$?" -eq 5 ]]
+fi
+if peekaboo_validate_artifact_source_commit "$PROVENANCE_TEST_REPOSITORY" unknown ""; then
+  echo "verify-only validation unexpectedly accepted an unstamped artifact" >&2
+  exit 1
+else
+  [[ "$?" -eq 2 ]]
+fi
 mv "$PROVENANCE_TEST_REPOSITORY/.git/index" "$PROVENANCE_TEST_REPOSITORY/.git/index.saved"
 mkdir "$PROVENANCE_TEST_REPOSITORY/.git/index"
 if peekaboo_require_source_commit "$PROVENANCE_TEST_REPOSITORY" >/dev/null 2>&1; then
@@ -53,6 +69,14 @@ if PEEKABOO_REQUIRE_SOURCE_PROVENANCE=1 \
   exit 1
 fi
 [[ "$(peekaboo_source_dirty_suffix "$PROVENANCE_TEST_REPOSITORY")" == -dirty ]]
+peekaboo_validate_artifact_source_commit "$PROVENANCE_TEST_REPOSITORY" "$HISTORICAL_COMMIT" ""
+if peekaboo_validate_artifact_source_commit \
+  "$PROVENANCE_TEST_REPOSITORY" "$TEST_COMMIT" "$TEST_COMMIT" >/dev/null 2>&1; then
+  echo "current-checkout validation unexpectedly accepted a dirty repository" >&2
+  exit 1
+else
+  [[ "$?" -eq 4 ]]
+fi
 rm -rf "$PROVENANCE_TEST_REPOSITORY"
 
 for malformed in \
@@ -93,6 +117,9 @@ rg -Fq 'PEEKABOO_SOURCE_COMMIT="$SOURCE_COMMIT"' "$ROOT_DIR/scripts/release-maco
 rg -Fq 'source "$ROOT/scripts/source-provenance.sh"' "$ROOT_DIR/scripts/release-macos-app.sh"
 rg -Fq 'SOURCE_COMMIT="$(peekaboo_require_source_commit "$ROOT")"' \
   "$ROOT_DIR/scripts/release-macos-app.sh"
+rg -Fq 'SOURCE_COMMIT=""' "$ROOT_DIR/scripts/release-macos-app.sh"
+rg -Fq 'if [[ -z "$VERIFY_ONLY_ZIP" ]]; then' "$ROOT_DIR/scripts/release-macos-app.sh"
+rg -Fq 'peekaboo_validate_artifact_source_commit' "$ROOT_DIR/scripts/release-macos-app.sh"
 rg -Fq 'App has no exact 40-hex source commit' "$ROOT_DIR/scripts/release-macos-app.sh"
 rg -Fq 'App source commit does not match the release root' "$ROOT_DIR/scripts/release-macos-app.sh"
 rg -Fq 'sourceCommit' "$ROOT_DIR/scripts/test-background-computer-use.sh"
