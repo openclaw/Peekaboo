@@ -162,7 +162,7 @@ public struct ClickTool: MCPTool {
                 deliveryMode: request.deliveryMode,
                 targetProcessIdentity: effectiveTargetProcessIdentity)
 
-            let invalidatedSnapshotId = await UISnapshotManager.shared
+            let invalidatedSnapshotId = await self.context.uiSnapshots
                 .invalidateActiveSnapshot(id: resolution.snapshotIdToInvalidate)
             let executionTime = Date().timeIntervalSince(startTime)
             return self.buildResponse(
@@ -174,13 +174,13 @@ public struct ClickTool: MCPTool {
         } catch let error as ClickToolError {
             return Self.preDispatchErrorResponse(error)
         } catch let failure as DesktopActionFailure {
-            let invalidatedSnapshotId = await UISnapshotManager.shared
+            let invalidatedSnapshotId = await self.context.uiSnapshots
                 .invalidateActiveSnapshot(id: snapshotIdToInvalidate)
             return try MCPToolResponseMetadataProjector.errorResponse(
                 for: failure,
                 invalidatedSnapshotID: invalidatedSnapshotId)
         } catch let error as InputDeliveryIndeterminateError {
-            let invalidatedSnapshotId = await UISnapshotManager.shared
+            let invalidatedSnapshotId = await self.context.uiSnapshots
                 .invalidateActiveSnapshot(id: snapshotIdToInvalidate)
             var meta: [String: Value] = [
                 "mutation_dispatched": .bool(true),
@@ -202,7 +202,7 @@ public struct ClickTool: MCPTool {
     // MARK: - Private Helpers
 
     private func getSnapshot(id: String?) async -> UISnapshot? {
-        await UISnapshotManager.shared.getSnapshot(id: id)
+        await self.context.uiSnapshots.getSnapshot(id: id)
     }
 
     private func resolveClickTarget(for request: ClickRequest) async throws -> ClickResolution {

@@ -35,6 +35,18 @@ struct PeekabooMCPServerTests {
     }
 
     @Test
+    func `each direct MCP server owns one isolated snapshot namespace`() async throws {
+        let first = try await makeServer()
+        let second = try await makeServer()
+        let firstOwner = await first.snapshotOwnerForTesting()
+        let secondOwner = await second.snapshotOwnerForTesting()
+
+        #expect(firstOwner != .legacyProcess)
+        #expect(secondOwner != .legacyProcess)
+        #expect(firstOwner != secondOwner)
+    }
+
+    @Test
     func `server preserves tool response metadata on the MCP wire result`() throws {
         let response = ToolResponse.text(
             "Captured image",

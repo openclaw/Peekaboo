@@ -11,6 +11,8 @@ import UniformTypeIdentifiers
 
 @Suite(.serialized)
 struct PasteToolTransactionGateTests {
+    private static let uiSnapshots = MCPToolUISnapshotStore(owner: MCPToolSnapshotOwner())
+
     @Test
     func `MCP paste re-resolves its process after shared-lock contention`() async throws {
         let heldFD = try self.holdPasteTransactionLock()
@@ -29,7 +31,8 @@ struct PasteToolTransactionGateTests {
         let context = await MCPToolTestHelpers.makeContext(
             automation: automation,
             applications: applications,
-            clipboard: clipboard)
+            clipboard: clipboard,
+            snapshotOwner: Self.uiSnapshots.owner)
 
         let command = Task { @MainActor in
             try await PasteTool(context: context).execute(arguments: ToolArguments(raw: [
@@ -84,7 +87,8 @@ struct PasteToolTransactionGateTests {
         let context = await MCPToolTestHelpers.makeContext(
             automation: automation,
             applications: applications,
-            clipboard: clipboard)
+            clipboard: clipboard,
+            snapshotOwner: Self.uiSnapshots.owner)
 
         let response = try await PasteTool(context: context).execute(arguments: ToolArguments(raw: [
             "app": "Editor",
@@ -129,7 +133,8 @@ struct PasteToolTransactionGateTests {
             let context = await MCPToolTestHelpers.makeContext(
                 automation: automation,
                 applications: applications,
-                clipboard: clipboard)
+                clipboard: clipboard,
+                snapshotOwner: Self.uiSnapshots.owner)
 
             let response = try await PasteTool(context: context).execute(arguments: ToolArguments(raw: [
                 "app": application.name,
@@ -159,7 +164,8 @@ struct PasteToolTransactionGateTests {
         let context = await MCPToolTestHelpers.makeContext(
             automation: automation,
             applications: applications,
-            clipboard: clipboard)
+            clipboard: clipboard,
+            snapshotOwner: Self.uiSnapshots.owner)
 
         let response = try await PasteTool(context: context).execute(arguments: ToolArguments(raw: [
             "app": "Editor",
@@ -186,7 +192,10 @@ struct PasteToolTransactionGateTests {
             service.getError = ClipboardServiceError.writeFailed("simulated current read failure")
             return service
         }
-        let context = await MCPToolTestHelpers.makeContext(automation: automation, clipboard: clipboard)
+        let context = await MCPToolTestHelpers.makeContext(
+            automation: automation,
+            clipboard: clipboard,
+            snapshotOwner: Self.uiSnapshots.owner)
 
         let response = try await PasteTool(context: context).execute(arguments: ToolArguments(raw: [
             "foreground": true,
@@ -219,7 +228,8 @@ struct PasteToolTransactionGateTests {
         let context = await MCPToolTestHelpers.makeContext(
             automation: automation,
             applications: applications,
-            clipboard: clipboard)
+            clipboard: clipboard,
+            snapshotOwner: Self.uiSnapshots.owner)
         let command = Task { @MainActor in
             try await PasteTool(context: context).execute(arguments: ToolArguments(raw: [
                 "app": "Editor",
@@ -256,7 +266,8 @@ struct PasteToolTransactionGateTests {
         let context = await MCPToolTestHelpers.makeContext(
             automation: automation,
             applications: applications,
-            clipboard: clipboard)
+            clipboard: clipboard,
+            snapshotOwner: Self.uiSnapshots.owner)
         let command = Task { @MainActor in
             try await PasteTool(context: context).execute(arguments: ToolArguments(raw: [
                 "app": "Editor",
@@ -288,7 +299,8 @@ struct PasteToolTransactionGateTests {
         let context = await MCPToolTestHelpers.makeContext(
             automation: automation,
             applications: applications,
-            clipboard: clipboard)
+            clipboard: clipboard,
+            snapshotOwner: Self.uiSnapshots.owner)
 
         let response = try await PasteTool(context: context).execute(arguments: ToolArguments(raw: [
             "app": "Editor",
@@ -321,7 +333,8 @@ struct PasteToolTransactionGateTests {
         let context = await MCPToolTestHelpers.makeContext(
             automation: automation,
             applications: applications,
-            clipboard: clipboard)
+            clipboard: clipboard,
+            snapshotOwner: Self.uiSnapshots.owner)
 
         let response = try await PasteTool(context: context).execute(arguments: ToolArguments(raw: [
             "app": "Editor",
@@ -349,7 +362,8 @@ struct PasteToolTransactionGateTests {
         let context = await MCPToolTestHelpers.makeContext(
             automation: automation,
             applications: applications,
-            clipboard: clipboard)
+            clipboard: clipboard,
+            snapshotOwner: Self.uiSnapshots.owner)
 
         let command = Task { @MainActor in
             try await PasteTool(context: context).execute(arguments: ToolArguments(raw: [
@@ -399,7 +413,8 @@ struct PasteToolTransactionGateTests {
         let context = await MCPToolTestHelpers.makeContext(
             automation: automation,
             windows: windows,
-            clipboard: clipboard)
+            clipboard: clipboard,
+            snapshotOwner: Self.uiSnapshots.owner)
         let command = Task { @MainActor in
             try await PasteTool(context: context).execute(arguments: ToolArguments(raw: [
                 "app": "Editor",
@@ -464,7 +479,8 @@ struct PasteToolTransactionGateTests {
             automation: automation,
             applications: applications,
             windows: windows,
-            clipboard: clipboard)
+            clipboard: clipboard,
+            snapshotOwner: Self.uiSnapshots.owner)
         let command = Task { @MainActor in
             try await PasteTool(context: context).execute(arguments: ToolArguments(raw: [
                 "pid": Int(processIdentifier),
@@ -506,7 +522,8 @@ struct PasteToolTransactionGateTests {
         let context = await MCPToolTestHelpers.makeContext(
             automation: automation,
             applications: applications,
-            clipboard: clipboard)
+            clipboard: clipboard,
+            snapshotOwner: Self.uiSnapshots.owner)
         let command = Task { @MainActor in
             try await PasteTool(context: context).execute(arguments: ToolArguments(raw: [
                 "app": "Editor",
@@ -550,7 +567,8 @@ struct PasteToolTransactionGateTests {
         let context = await MCPToolTestHelpers.makeContext(
             automation: automation,
             applications: applications,
-            clipboard: clipboard)
+            clipboard: clipboard,
+            snapshotOwner: Self.uiSnapshots.owner)
 
         let response = try await PasteTool(context: context).execute(arguments: ToolArguments(raw: [
             "app": "Editor",
@@ -578,7 +596,10 @@ struct PasteToolTransactionGateTests {
     func `Current clipboard foreground paste can report successful dispatch`() async throws {
         let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
         let clipboard = await MainActor.run { TransactionGateClipboardService() }
-        let context = await MCPToolTestHelpers.makeContext(automation: automation, clipboard: clipboard)
+        let context = await MCPToolTestHelpers.makeContext(
+            automation: automation,
+            clipboard: clipboard,
+            snapshotOwner: Self.uiSnapshots.owner)
 
         let response = try await PasteTool(context: context).execute(arguments: ToolArguments(raw: [
             "foreground": true,
@@ -604,7 +625,10 @@ struct PasteToolTransactionGateTests {
             SignalingAutomationService(accessibilityGranted: true, delivered: delivered)
         }
         let clipboard = await MainActor.run { TransactionGateClipboardService() }
-        let context = await MCPToolTestHelpers.makeContext(automation: automation, clipboard: clipboard)
+        let context = await MCPToolTestHelpers.makeContext(
+            automation: automation,
+            clipboard: clipboard,
+            snapshotOwner: Self.uiSnapshots.owner)
         let command = Task { @MainActor in
             try await PasteTool(context: context).execute(arguments: ToolArguments(raw: [
                 "foreground": true,
@@ -625,8 +649,8 @@ struct PasteToolTransactionGateTests {
 
     @Test
     func `MCP mutation wrapper invalidates snapshots for unverified paste outcomes`() async throws {
-        await UISnapshotManager.shared.removeAllSnapshots()
-        _ = await UISnapshotManager.shared.createSnapshot()
+        await Self.uiSnapshots.removeAllSnapshots()
+        _ = await Self.uiSnapshots.createSnapshot()
         let app = Self.editorApplication()
         let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
         let applications = await MainActor.run { MockApplicationService(applications: [app]) }
@@ -634,7 +658,8 @@ struct PasteToolTransactionGateTests {
         let context = await MCPToolTestHelpers.makeContext(
             automation: automation,
             applications: applications,
-            clipboard: clipboard)
+            clipboard: clipboard,
+            snapshotOwner: Self.uiSnapshots.owner)
         let arguments = ToolArguments(raw: [
             "app": "Editor",
             "restore_delay_ms": 0,
@@ -645,7 +670,7 @@ struct PasteToolTransactionGateTests {
             arguments: arguments)
 
         #expect(response.isError)
-        #expect(await UISnapshotManager.shared.getSnapshot(id: nil) == nil)
+        #expect(await Self.uiSnapshots.getSnapshot(id: nil) == nil)
     }
 
     @Test
@@ -658,7 +683,10 @@ struct PasteToolTransactionGateTests {
                 errorAfterDelivery: ExpectedPasteToolDispatchError.afterPosting)
         }
         let clipboard = await MainActor.run { TransactionGateClipboardService() }
-        let context = await MCPToolTestHelpers.makeContext(automation: automation, clipboard: clipboard)
+        let context = await MCPToolTestHelpers.makeContext(
+            automation: automation,
+            clipboard: clipboard,
+            snapshotOwner: Self.uiSnapshots.owner)
 
         let response = try await PasteTool(context: context).execute(arguments: ToolArguments(raw: [
             "foreground": true,

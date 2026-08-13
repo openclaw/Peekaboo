@@ -75,7 +75,7 @@ public struct TypeTool: MCPTool {
         } catch let error as MCPInteractionTargetError {
             return ToolResponse.error(error.localizedDescription)
         } catch let error as InputDeliveryIndeterminateError {
-            let invalidatedSnapshotId = await UISnapshotManager.shared
+            let invalidatedSnapshotId = await self.context.uiSnapshots
                 .invalidateActiveSnapshot(id: mutationTracker.snapshotId)
             var meta: [String: Value] = [
                 "mutation_dispatched": .bool(true),
@@ -98,7 +98,7 @@ public struct TypeTool: MCPTool {
     // MARK: - Private Helpers
 
     private func getSnapshot(id: String?) async -> UISnapshot? {
-        await UISnapshotManager.shared.getSnapshot(id: id)
+        await self.context.uiSnapshots.getSnapshot(id: id)
     }
 
     private func parseRequest(arguments: ToolArguments) throws -> TypeRequest {
@@ -209,7 +209,7 @@ public struct TypeTool: MCPTool {
                 causeDescription: error.localizedDescription)
         }
 
-        let invalidatedSnapshotId = await UISnapshotManager.shared.invalidateActiveSnapshot(id: effectiveSnapshotId)
+        let invalidatedSnapshotId = await self.context.uiSnapshots.invalidateActiveSnapshot(id: effectiveSnapshotId)
         let executionTime = Date().timeIntervalSince(startTime)
         let message = self.buildSummary(
             request: request,

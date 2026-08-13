@@ -31,7 +31,10 @@ public actor PeekabooMCPServer {
     public init() async throws {
         self.logger = os.Logger(subsystem: "boo.peekaboo.mcp", category: "server")
         self.toolRegistry = await MCPToolRegistry()
-        self.toolContext = try await MainActor.run { try MCPToolContext.makeDefaultIfConfigured() }
+        self.toolContext = try await MainActor.run {
+            try MCPToolContext.makeDefaultIfConfigured()
+                .replacingSnapshotOwner(with: MCPToolSnapshotOwner())
+        }
         self.server = Self.makeServer(name: PeekabooMCPVersion.serverName, version: PeekabooMCPVersion.current)
 
         await self.setupHandlers()
@@ -41,7 +44,7 @@ public actor PeekabooMCPServer {
     public init(toolContext: MCPToolContext) async throws {
         self.logger = os.Logger(subsystem: "boo.peekaboo.mcp", category: "server")
         self.toolRegistry = await MCPToolRegistry()
-        self.toolContext = toolContext
+        self.toolContext = toolContext.replacingSnapshotOwner(with: MCPToolSnapshotOwner())
         self.server = Self.makeServer(name: PeekabooMCPVersion.serverName, version: PeekabooMCPVersion.current)
 
         await self.setupHandlers()
@@ -183,12 +186,17 @@ public actor PeekabooMCPServer {
         self.toolContext.snapshotExecutionGate
     }
 
+    func snapshotOwnerForTesting() -> MCPToolSnapshotOwner {
+        self.toolContext.uiSnapshots.owner
+    }
+
     func startForTesting(transport: any Transport) async throws {
         try await self.server.start(transport: transport)
     }
 
     func stopForTesting() async {
         await self.server.stop()
+        await self.toolContext.releaseSnapshotOwner()
     }
 
     public func serve(transport: TransportType, port: Int = 8080) async throws {
@@ -209,10 +217,16 @@ public actor PeekabooMCPServer {
             throw MCPError.notImplemented("SSE server transport not yet implemented")
         }
 
-        try await self.server.start(transport: serverTransport)
+        do {
+            try await self.server.start(transport: serverTransport)
 
-        // Keep the server running
-        await self.server.waitUntilCompleted()
+            // Keep the server running
+            await self.server.waitUntilCompleted()
+            await self.toolContext.releaseSnapshotOwner()
+        } catch {
+            await self.toolContext.releaseSnapshotOwner()
+            throw error
+        }
     }
 }
 

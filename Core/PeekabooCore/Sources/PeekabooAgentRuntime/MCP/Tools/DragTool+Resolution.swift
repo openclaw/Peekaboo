@@ -86,6 +86,6 @@ extension DragTool {
     }
 
     func getSnapshot(id: String?) async -> UISnapshot? {
-        await UISnapshotManager.shared.getSnapshot(id: id)
+        await self.context.uiSnapshots.getSnapshot(id: id)
     }
 }

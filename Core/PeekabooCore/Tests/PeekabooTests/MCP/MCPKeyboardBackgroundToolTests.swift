@@ -10,6 +10,8 @@ import UniformTypeIdentifiers
 
 @Suite(.serialized)
 struct MCPKeyboardBackgroundToolTests {
+    private static let uiSnapshots = MCPToolUISnapshotStore(owner: MCPToolSnapshotOwner())
+
     @Test
     func `Press tool accepts both deliberate schema shapes`() throws {
         let sequence = try PressTool.parseChords(arguments: ToolArguments(raw: [
@@ -40,7 +42,8 @@ struct MCPKeyboardBackgroundToolTests {
         let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
         let context = await MCPToolTestHelpers.makeContext(
             automation: automation,
-            clipboard: MockClipboardService())
+            clipboard: MockClipboardService(),
+            snapshotOwner: Self.uiSnapshots.owner)
 
         let typeResponse = try await TypeTool(context: context).execute(arguments: ToolArguments(raw: [
             "text": "hello",
@@ -69,7 +72,8 @@ struct MCPKeyboardBackgroundToolTests {
         let context = await MCPToolTestHelpers.makeContext(
             automation: automation,
             applications: applications,
-            clipboard: MockClipboardService())
+            clipboard: MockClipboardService(),
+            snapshotOwner: Self.uiSnapshots.owner)
 
         let typeResponse = try await TypeTool(context: context).execute(arguments: ToolArguments(raw: [
             "app": "Missing",
@@ -99,7 +103,8 @@ struct MCPKeyboardBackgroundToolTests {
         let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
         let context = await MCPToolTestHelpers.makeContext(
             automation: automation,
-            clipboard: MockClipboardService())
+            clipboard: MockClipboardService(),
+            snapshotOwner: Self.uiSnapshots.owner)
 
         let typeResponse = try await TypeTool(context: context).execute(arguments: ToolArguments(raw: [
             "text": "hello",
@@ -135,7 +140,7 @@ struct MCPKeyboardBackgroundToolTests {
 
     @Test
     func `Type tool uses snapshot process without requiring an element`() async throws {
-        await UISnapshotManager.shared.removeAllSnapshots()
+        await Self.uiSnapshots.removeAllSnapshots()
         let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
         let applications = await MainActor.run {
             MockApplicationService(applications: [AutomationTestFixtures.application(
@@ -146,8 +151,9 @@ struct MCPKeyboardBackgroundToolTests {
         }
         let context = await MCPToolTestHelpers.makeContext(
             automation: automation,
-            applications: applications)
-        let snapshot = await UISnapshotManager.shared.createSnapshot()
+            applications: applications,
+            snapshotOwner: Self.uiSnapshots.owner)
+        let snapshot = await Self.uiSnapshots.createSnapshot()
         let snapshotId = await snapshot.id
         await snapshot.setScreenshot(
             path: "/tmp/screenshot.png",
@@ -178,10 +184,12 @@ struct MCPKeyboardBackgroundToolTests {
 
     @Test
     func `Snapshot without process metadata fails instead of typing globally`() async throws {
-        await UISnapshotManager.shared.removeAllSnapshots()
+        await Self.uiSnapshots.removeAllSnapshots()
         let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
-        let context = await MCPToolTestHelpers.makeContext(automation: automation)
-        let snapshot = await UISnapshotManager.shared.createSnapshot()
+        let context = await MCPToolTestHelpers.makeContext(
+            automation: automation,
+            snapshotOwner: Self.uiSnapshots.owner)
+        let snapshot = await Self.uiSnapshots.createSnapshot()
         let snapshotId = await snapshot.id
 
         let response = try await TypeTool(context: context).execute(arguments: ToolArguments(raw: [
@@ -196,7 +204,7 @@ struct MCPKeyboardBackgroundToolTests {
 
     @Test
     func `Snapshot PID without capture generation fails instead of targeting reused process`() async throws {
-        await UISnapshotManager.shared.removeAllSnapshots()
+        await Self.uiSnapshots.removeAllSnapshots()
         let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
         let applications = await MainActor.run {
             MockApplicationService(applications: [AutomationTestFixtures.application(
@@ -207,8 +215,9 @@ struct MCPKeyboardBackgroundToolTests {
         }
         let context = await MCPToolTestHelpers.makeContext(
             automation: automation,
-            applications: applications)
-        let snapshot = await UISnapshotManager.shared.createSnapshot()
+            applications: applications,
+            snapshotOwner: Self.uiSnapshots.owner)
+        let snapshot = await Self.uiSnapshots.createSnapshot()
         let snapshotId = await snapshot.id
         await snapshot.setTargetMetadata(from: WindowContext(
             applicationName: "SnapshotApp",
@@ -227,7 +236,7 @@ struct MCPKeyboardBackgroundToolTests {
 
     @Test
     func `Explicit app cannot authorize receiptless element snapshot`() async throws {
-        await UISnapshotManager.shared.removeAllSnapshots()
+        await Self.uiSnapshots.removeAllSnapshots()
         let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
         let applications = await MainActor.run {
             MockApplicationService(applications: [AutomationTestFixtures.application(
@@ -238,8 +247,9 @@ struct MCPKeyboardBackgroundToolTests {
         }
         let context = await MCPToolTestHelpers.makeContext(
             automation: automation,
-            applications: applications)
-        let snapshot = await UISnapshotManager.shared.createSnapshot()
+            applications: applications,
+            snapshotOwner: Self.uiSnapshots.owner)
+        let snapshot = await Self.uiSnapshots.createSnapshot()
         let snapshotId = await snapshot.id
         await snapshot.setUIElements([
             AutomationTestFixtures.storedElement(
@@ -276,7 +286,8 @@ struct MCPKeyboardBackgroundToolTests {
         let context = await MCPToolTestHelpers.makeContext(
             automation: automation,
             applications: applications,
-            clipboard: MockClipboardService())
+            clipboard: MockClipboardService(),
+            snapshotOwner: Self.uiSnapshots.owner)
 
         let typeResponse = try await TypeTool(context: context).execute(arguments: ToolArguments(raw: [
             "app": "Editor",
@@ -316,8 +327,9 @@ struct MCPKeyboardBackgroundToolTests {
         }
         let context = await MCPToolTestHelpers.makeContext(
             automation: automation,
-            applications: applications)
-        let snapshot = await UISnapshotManager.shared.createSnapshot()
+            applications: applications,
+            snapshotOwner: Self.uiSnapshots.owner)
+        let snapshot = await Self.uiSnapshots.createSnapshot()
         let snapshotId = await snapshot.id
         await snapshot.setScreenshot(
             path: "/tmp/screenshot.png",
@@ -376,7 +388,7 @@ struct MCPKeyboardBackgroundToolTests {
 
     @Test
     func `Type tool reports failure after background focus click as retry unsafe`() async throws {
-        await UISnapshotManager.shared.removeAllSnapshots()
+        await Self.uiSnapshots.removeAllSnapshots()
         let automation = await MainActor.run {
             let automation = MockAutomationService(accessibilityGranted: true)
             automation.pinnedTypeError = { _ in
@@ -384,8 +396,10 @@ struct MCPKeyboardBackgroundToolTests {
             }
             return automation
         }
-        let context = await MCPToolTestHelpers.makeContext(automation: automation)
-        let snapshot = await UISnapshotManager.shared.createSnapshot()
+        let context = await MCPToolTestHelpers.makeContext(
+            automation: automation,
+            snapshotOwner: Self.uiSnapshots.owner)
+        let snapshot = await Self.uiSnapshots.createSnapshot()
         let snapshotId = await snapshot.id
         await snapshot.setScreenshot(
             path: "/tmp/screenshot.png",
@@ -430,13 +444,13 @@ struct MCPKeyboardBackgroundToolTests {
         #expect(meta["retry_safe"] == .bool(false))
         #expect(meta["characters_typed"] == .null)
         #expect(meta["invalidated_snapshot"] == .string(snapshotId))
-        #expect(await UISnapshotManager.shared.getSnapshot(id: snapshotId) != nil)
-        #expect(await UISnapshotManager.shared.getSnapshot(id: nil) == nil)
+        #expect(await Self.uiSnapshots.getSnapshot(id: snapshotId) != nil)
+        #expect(await Self.uiSnapshots.getSnapshot(id: nil) == nil)
     }
 
     @Test
     func `Type tool does not count an indeterminate focus click as typed characters`() async throws {
-        await UISnapshotManager.shared.removeAllSnapshots()
+        await Self.uiSnapshots.removeAllSnapshots()
         let automation = await MainActor.run {
             let automation = MockAutomationService(accessibilityGranted: true)
             automation.pinnedClickError = { _ in
@@ -447,7 +461,9 @@ struct MCPKeyboardBackgroundToolTests {
             }
             return automation
         }
-        let context = await MCPToolTestHelpers.makeContext(automation: automation)
+        let context = await MCPToolTestHelpers.makeContext(
+            automation: automation,
+            snapshotOwner: Self.uiSnapshots.owner)
         let snapshotId = await self.makeTypingSnapshot(
             processIdentifier: 114,
             processStartIdentity: 14)
@@ -483,7 +499,8 @@ struct MCPKeyboardBackgroundToolTests {
         }
         let context = await MCPToolTestHelpers.makeContext(
             automation: automation,
-            applications: applications)
+            applications: applications,
+            snapshotOwner: Self.uiSnapshots.owner)
         let tool = PressTool(context: context)
 
         let response = try await tool.execute(arguments: ToolArguments(raw: [
@@ -521,7 +538,8 @@ struct MCPKeyboardBackgroundToolTests {
         }
         let context = await MCPToolTestHelpers.makeContext(
             automation: automation,
-            applications: applications)
+            applications: applications,
+            snapshotOwner: Self.uiSnapshots.owner)
 
         let typeResponse = try await TypeTool(context: context).execute(arguments: ToolArguments(raw: [
             "app": "Editor",
@@ -566,7 +584,8 @@ struct MCPKeyboardBackgroundToolTests {
         let context = await MCPToolTestHelpers.makeContext(
             automation: automation,
             applications: applications,
-            clipboard: clipboard)
+            clipboard: clipboard,
+            snapshotOwner: Self.uiSnapshots.owner)
         let tool = PasteTool(context: context)
 
         let response = try await tool.execute(arguments: ToolArguments(raw: [
@@ -606,7 +625,8 @@ struct MCPKeyboardBackgroundToolTests {
         let context = await MCPToolTestHelpers.makeContext(
             automation: automation,
             applications: applications,
-            clipboard: clipboard)
+            clipboard: clipboard,
+            snapshotOwner: Self.uiSnapshots.owner)
 
         let response = try await PasteTool(context: context).execute(arguments: ToolArguments(raw: [
             "app": "Editor",
@@ -646,7 +666,8 @@ struct MCPKeyboardBackgroundToolTests {
         let context = await MCPToolTestHelpers.makeContext(
             automation: automation,
             applications: applications,
-            clipboard: clipboard)
+            clipboard: clipboard,
+            snapshotOwner: Self.uiSnapshots.owner)
         let tool = PasteTool(context: context)
 
         let response = try await tool.execute(arguments: ToolArguments(raw: [
@@ -678,7 +699,7 @@ struct MCPKeyboardBackgroundToolTests {
         processIdentifier: pid_t,
         processStartIdentity: UInt64) async -> String
     {
-        let snapshot = await UISnapshotManager.shared.createSnapshot()
+        let snapshot = await Self.uiSnapshots.createSnapshot()
         let snapshotId = await snapshot.id
         await snapshot.setScreenshot(
             path: "/tmp/screenshot.png",

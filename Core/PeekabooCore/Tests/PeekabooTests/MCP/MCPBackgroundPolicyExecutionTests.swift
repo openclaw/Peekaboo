@@ -8,6 +8,8 @@ import Testing
 
 @Suite(.serialized)
 struct MCPBackgroundPolicyExecutionTests {
+    private static let uiSnapshots = MCPToolUISnapshotStore(owner: MCPToolSnapshotOwner())
+
     @Test
     func `background-only refuses shared system UI through non-element mutation tools`() async throws {
         let dock = ServiceApplicationInfo(
@@ -23,6 +25,7 @@ struct MCPBackgroundPolicyExecutionTests {
         let applications = await MainActor.run { MockApplicationService(applications: [dock, textEdit]) }
         let context = await MCPToolTestHelpers.makeContext(
             applications: applications,
+            snapshotOwner: Self.uiSnapshots.owner,
             executionPolicy: .backgroundOnly)
         let cases = [
             (toolName: "app", action: "quit", selectorKey: "name"),
@@ -84,6 +87,7 @@ struct MCPBackgroundPolicyExecutionTests {
         let applications = await MainActor.run { MockApplicationService() }
         let context = await MCPToolTestHelpers.makeContext(
             applications: applications,
+            snapshotOwner: Self.uiSnapshots.owner,
             executionPolicy: .backgroundOnly)
 
         let response = try await context.execute(
@@ -109,7 +113,7 @@ struct MCPBackgroundPolicyExecutionTests {
 
     @Test
     func `App tool lifecycle examples include required foreground consent`() async {
-        let context = await MCPToolTestHelpers.makeContext()
+        let context = await MCPToolTestHelpers.makeContext(snapshotOwner: Self.uiSnapshots.owner)
         let description = AppTool(context: context).description
         let newInstanceExample =
             #"{ "action": "launch", "name": "TextEdit", "newInstance": true, "foreground": true }"#
@@ -123,7 +127,9 @@ struct MCPBackgroundPolicyExecutionTests {
     @Test
     func `App tool launch defaults to background`() async throws {
         let mockApps = await MainActor.run { MockApplicationService() }
-        let context = await MCPToolTestHelpers.makeContext(applications: mockApps)
+        let context = await MCPToolTestHelpers.makeContext(
+            applications: mockApps,
+            snapshotOwner: Self.uiSnapshots.owner)
         let tool = AppTool(context: context)
         let args = ToolArguments(raw: [
             "action": "launch",
@@ -146,7 +152,9 @@ struct MCPBackgroundPolicyExecutionTests {
     @Test
     func `App tool launch foreground is explicit`() async throws {
         let mockApps = await MainActor.run { MockApplicationService() }
-        let context = await MCPToolTestHelpers.makeContext(applications: mockApps)
+        let context = await MCPToolTestHelpers.makeContext(
+            applications: mockApps,
+            snapshotOwner: Self.uiSnapshots.owner)
         let tool = AppTool(context: context)
 
         let response = try await tool.execute(arguments: ToolArguments(raw: [
@@ -162,7 +170,9 @@ struct MCPBackgroundPolicyExecutionTests {
     @Test
     func `App lifecycle refusal publishes safe MCP dispatch metadata`() async throws {
         let mockApps = await MainActor.run { MockApplicationService() }
-        let context = await MCPToolTestHelpers.makeContext(applications: mockApps)
+        let context = await MCPToolTestHelpers.makeContext(
+            applications: mockApps,
+            snapshotOwner: Self.uiSnapshots.owner)
         let tool = AppTool(context: context)
 
         let response = try await tool.execute(arguments: ToolArguments(raw: [
@@ -189,7 +199,9 @@ struct MCPBackgroundPolicyExecutionTests {
         let mockApps = await MainActor.run {
             ReadinessFailureApplicationService()
         }
-        let context = await MCPToolTestHelpers.makeContext(applications: mockApps)
+        let context = await MCPToolTestHelpers.makeContext(
+            applications: mockApps,
+            snapshotOwner: Self.uiSnapshots.owner)
 
         let response = try await AppTool(context: context).execute(arguments: ToolArguments(raw: [
             "action": "launch",
@@ -214,7 +226,9 @@ struct MCPBackgroundPolicyExecutionTests {
         _ action: String) async throws
     {
         let mockApps = await MainActor.run { MockApplicationService() }
-        let context = await MCPToolTestHelpers.makeContext(applications: mockApps)
+        let context = await MCPToolTestHelpers.makeContext(
+            applications: mockApps,
+            snapshotOwner: Self.uiSnapshots.owner)
         var raw: [String: Any] = [
             "action": action,
             "name": "TextEdit",
@@ -240,7 +254,9 @@ struct MCPBackgroundPolicyExecutionTests {
     @Test
     func `App tool exposes new-instance launch with foreground consent`() async throws {
         let mockApps = await MainActor.run { MockApplicationService() }
-        let context = await MCPToolTestHelpers.makeContext(applications: mockApps)
+        let context = await MCPToolTestHelpers.makeContext(
+            applications: mockApps,
+            snapshotOwner: Self.uiSnapshots.owner)
         let tool = AppTool(context: context)
 
         let response = try await tool.execute(arguments: ToolArguments(raw: [
@@ -261,7 +277,9 @@ struct MCPBackgroundPolicyExecutionTests {
     @Test
     func `App tool open sends URL to default handler with foreground consent`() async throws {
         let mockApps = await MainActor.run { MockApplicationService() }
-        let context = await MCPToolTestHelpers.makeContext(applications: mockApps)
+        let context = await MCPToolTestHelpers.makeContext(
+            applications: mockApps,
+            snapshotOwner: Self.uiSnapshots.owner)
         let tool = AppTool(context: context)
 
         let response = try await tool.execute(arguments: ToolArguments(raw: [
@@ -281,7 +299,9 @@ struct MCPBackgroundPolicyExecutionTests {
     @Test
     func `Foreground app open resolves files and preserves strict bundle handler`() async throws {
         let mockApps = await MainActor.run { MockApplicationService() }
-        let context = await MCPToolTestHelpers.makeContext(applications: mockApps)
+        let context = await MCPToolTestHelpers.makeContext(
+            applications: mockApps,
+            snapshotOwner: Self.uiSnapshots.owner)
         let tool = AppTool(context: context)
 
         let response = try await tool.execute(arguments: ToolArguments(raw: [
@@ -303,7 +323,7 @@ struct MCPBackgroundPolicyExecutionTests {
 
     @Test
     func `Click tool pins background coordinates to snapshot window`() async throws {
-        await UISnapshotManager.shared.removeAllSnapshots()
+        await Self.uiSnapshots.removeAllSnapshots()
         let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
         let window = ServiceWindowInfo(
             windowID: 42,
@@ -315,8 +335,11 @@ struct MCPBackgroundPolicyExecutionTests {
                 ownerProcessIdentifier: 111,
                 ownerProcessStartIdentity: 1))
         let windows = PointerPolicyWindowService(window: window)
-        let context = await MCPToolTestHelpers.makeContext(automation: automation, windows: windows)
-        let snapshot = await UISnapshotManager.shared.createSnapshot()
+        let context = await MCPToolTestHelpers.makeContext(
+            automation: automation,
+            windows: windows,
+            snapshotOwner: Self.uiSnapshots.owner)
+        let snapshot = await Self.uiSnapshots.createSnapshot()
         let snapshotId = await snapshot.id
         await snapshot.setScreenshot(
             path: "/tmp/exact-window-coordinate-snapshot.png",
@@ -350,10 +373,12 @@ struct MCPBackgroundPolicyExecutionTests {
 
     @Test
     func `Click tool refuses empty or missing background coordinate references before dispatch`() async throws {
-        await UISnapshotManager.shared.removeAllSnapshots()
+        await Self.uiSnapshots.removeAllSnapshots()
         let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
-        let context = await MCPToolTestHelpers.makeContext(automation: automation)
-        let retainedSnapshot = await UISnapshotManager.shared.createSnapshot()
+        let context = await MCPToolTestHelpers.makeContext(
+            automation: automation,
+            snapshotOwner: Self.uiSnapshots.owner)
+        let retainedSnapshot = await Self.uiSnapshots.createSnapshot()
         let retainedSnapshotID = await retainedSnapshot.id
         let requests: [[String: Any]] = [
             ["coords": "100,200", "pid": 111, "snapshot": "", "coordinate_reference": ""],
@@ -374,12 +399,12 @@ struct MCPBackgroundPolicyExecutionTests {
         }
 
         #expect(await MainActor.run { automation.targetedClickCalls.isEmpty })
-        #expect(await UISnapshotManager.shared.getSnapshot(id: nil)?.id == retainedSnapshotID)
+        #expect(await Self.uiSnapshots.getSnapshot(id: nil)?.id == retainedSnapshotID)
     }
 
     @Test
     func `Click tool rejects same ID replacement generation before automation`() async throws {
-        await UISnapshotManager.shared.removeAllSnapshots()
+        await Self.uiSnapshots.removeAllSnapshots()
         let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
         let capturedIdentity = WindowMutationIdentity(
             windowID: 42,
@@ -404,8 +429,9 @@ struct MCPBackgroundPolicyExecutionTests {
             mutationIdentity: replacementIdentity)
         let context = await MCPToolTestHelpers.makeContext(
             automation: automation,
-            windows: PointerPolicyWindowService(window: replacementWindow))
-        let snapshot = await UISnapshotManager.shared.createSnapshot()
+            windows: PointerPolicyWindowService(window: replacementWindow),
+            snapshotOwner: Self.uiSnapshots.owner)
+        let snapshot = await Self.uiSnapshots.createSnapshot()
         let snapshotID = await snapshot.id
         await snapshot.setScreenshot(
             path: "/tmp/replaced-coordinate-window.png",
@@ -433,12 +459,12 @@ struct MCPBackgroundPolicyExecutionTests {
         #expect(meta["mutation_dispatched"] == .bool(false))
         #expect(meta["retry_safe"] == .bool(true))
         #expect(await MainActor.run { automation.targetedClickCalls.isEmpty })
-        #expect(await UISnapshotManager.shared.getSnapshot(id: nil)?.id == snapshotID)
+        #expect(await Self.uiSnapshots.getSnapshot(id: nil)?.id == snapshotID)
     }
 
     @Test
     func `Click tool never mints a missing snapshot window receipt at dispatch`() async throws {
-        await UISnapshotManager.shared.removeAllSnapshots()
+        await Self.uiSnapshots.removeAllSnapshots()
         let automation = await MainActor.run { MockAutomationService(accessibilityGranted: true) }
         let window = ServiceWindowInfo(
             windowID: 42,
@@ -447,8 +473,9 @@ struct MCPBackgroundPolicyExecutionTests {
             index: 0)
         let context = await MCPToolTestHelpers.makeContext(
             automation: automation,
-            windows: PointerPolicyWindowService(window: window))
-        let snapshot = await UISnapshotManager.shared.createSnapshot()
+            windows: PointerPolicyWindowService(window: window),
+            snapshotOwner: Self.uiSnapshots.owner)
+        let snapshot = await Self.uiSnapshots.createSnapshot()
         let snapshotId = await snapshot.id
         await snapshot.setScreenshot(
             path: "/tmp/missing-window-receipt.png",

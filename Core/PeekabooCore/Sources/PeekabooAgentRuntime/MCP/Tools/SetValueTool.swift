@@ -58,7 +58,7 @@ public struct SetValueTool: MCPTool {
                 target: request.target,
                 value: request.value,
                 snapshotId: effectiveSnapshotId)
-            let invalidatedSnapshotId = await UISnapshotManager.shared.invalidateActiveSnapshot(id: effectiveSnapshotId)
+            let invalidatedSnapshotId = await self.context.uiSnapshots.invalidateActiveSnapshot(id: effectiveSnapshotId)
             let elapsed = Date().timeIntervalSince(startTime)
             return self.buildResponse(
                 result: result,
@@ -75,7 +75,7 @@ public struct SetValueTool: MCPTool {
 
     private func effectiveSnapshotId(_ requestedSnapshotId: String?) async throws -> String {
         if let requestedSnapshotId {
-            guard let snapshot = await UISnapshotManager.shared.getSnapshot(id: requestedSnapshotId) else {
+            guard let snapshot = await self.context.uiSnapshots.getSnapshot(id: requestedSnapshotId) else {
                 throw SetValueToolError(
                     "Snapshot '\(requestedSnapshotId)' not found. Run 'see' or 'inspect_ui' again.",
                     errorCode: "SNAPSHOT_NOT_FOUND")
@@ -83,7 +83,7 @@ public struct SetValueTool: MCPTool {
             return snapshot.id
         }
 
-        guard let snapshot = await UISnapshotManager.shared.getSnapshot(id: nil) else {
+        guard let snapshot = await self.context.uiSnapshots.getSnapshot(id: nil) else {
             throw SetValueToolError(
                 "No active UI snapshot is available. Run 'see' or 'inspect_ui' before using set_value.",
                 errorCode: "SNAPSHOT_NOT_FOUND")

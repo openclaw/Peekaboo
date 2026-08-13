@@ -154,7 +154,7 @@ public struct SeeTool: MCPTool {
                     PendingSnapshotCleanupPolicy.shouldPreserveReservation(after: error)
                 if !preserveReservation {
                     try? await self.context.snapshots.cleanSnapshot(snapshotId: newlyCreatedSnapshotID)
-                    await UISnapshotManager.shared.removeSnapshot(id: newlyCreatedSnapshotID)
+                    await self.context.uiSnapshots.removeSnapshot(id: newlyCreatedSnapshotID)
                 }
             }
             self.logger.error("See tool execution failed: \(error.localizedDescription)")
@@ -169,7 +169,7 @@ public struct SeeTool: MCPTool {
             // Try to get existing snapshot
             let hostHasSnapshot = try await self.context.snapshots.listSnapshots().contains { $0.id == snapshotId }
             if hostHasSnapshot,
-               let existingSnapshot = await UISnapshotManager.shared.getSnapshot(id: snapshotId)
+               let existingSnapshot = await self.context.uiSnapshots.getSnapshot(id: snapshotId)
             {
                 return (existingSnapshot, false)
             }
@@ -181,7 +181,7 @@ public struct SeeTool: MCPTool {
         } else {
             try await self.context.snapshots.createSnapshot()
         }
-        let snapshot = await UISnapshotManager.shared.createSnapshot(
+        let snapshot = await self.context.uiSnapshots.createSnapshot(
             id: snapshotId,
             at: observationStartedAt ?? Date(),
             pending: observationStartedAt != nil)

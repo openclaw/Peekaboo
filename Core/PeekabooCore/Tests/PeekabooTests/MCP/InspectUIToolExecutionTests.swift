@@ -11,6 +11,8 @@ import Testing
 
 @Suite(.serialized)
 struct InspectUIToolExecutionTests {
+    private static let uiSnapshots = MCPToolUISnapshotStore(owner: MCPToolSnapshotOwner())
+
     @Test
     func `Inspect UI tool returns text without screenshot`() async throws {
         let detectionResult = ElementDetectionResult(
@@ -86,7 +88,7 @@ struct InspectUIToolExecutionTests {
 
     @Test
     func `failed read-only Inspect UI removes its snapshot`() async throws {
-        await UISnapshotManager.shared.removeAllSnapshots()
+        await Self.uiSnapshots.removeAllSnapshots()
         let automation = await MainActor.run { InspectUITestAutomationService(accessibilityGranted: true) }
         let snapshots = await MainActor.run { InMemorySnapshotManager() }
         let context = await Self.makeContext(automation: automation, snapshots: snapshots)
@@ -96,13 +98,13 @@ struct InspectUIToolExecutionTests {
 
         #expect(response.isError)
         #expect(try await snapshots.listSnapshots().isEmpty)
-        #expect(await UISnapshotManager.shared.getSnapshot(id: nil) == nil)
-        await UISnapshotManager.shared.removeAllSnapshots()
+        #expect(await Self.uiSnapshots.getSnapshot(id: nil) == nil)
+        await Self.uiSnapshots.removeAllSnapshots()
     }
 
     @Test
     func `timed out Inspect UI retains its pending snapshot tombstone`() async throws {
-        await UISnapshotManager.shared.removeAllSnapshots()
+        await Self.uiSnapshots.removeAllSnapshots()
         let automation = await MainActor.run {
             InspectUITestAutomationService(
                 accessibilityGranted: true,
@@ -119,8 +121,8 @@ struct InspectUIToolExecutionTests {
         #expect(response.isError)
         #expect(try await snapshots.listSnapshots().isEmpty)
         #expect(try await snapshots.cleanAllSnapshots() == 1)
-        #expect(await UISnapshotManager.shared.getSnapshot(id: nil) == nil)
-        await UISnapshotManager.shared.removeAllSnapshots()
+        #expect(await Self.uiSnapshots.getSnapshot(id: nil) == nil)
+        await Self.uiSnapshots.removeAllSnapshots()
     }
 
     @Test
@@ -294,7 +296,7 @@ struct InspectUIToolExecutionTests {
 
     @Test
     func `Inspect UI tool reuses existing snapshot when provided`() async throws {
-        await UISnapshotManager.shared.removeAllSnapshots()
+        await Self.uiSnapshots.removeAllSnapshots()
         let detectionResult = ElementDetectionResult(
             snapshotId: "ignored-detection-snapshot",
             screenshotPath: "",
@@ -313,7 +315,7 @@ struct InspectUIToolExecutionTests {
         }
         let context = await Self.makeContext(automation: automation)
         let snapshotId = try await context.snapshots.createSnapshot()
-        let snapshot = await UISnapshotManager.shared.createSnapshot(id: snapshotId)
+        let snapshot = await Self.uiSnapshots.createSnapshot(id: snapshotId)
         await snapshot.setUIElements([
             UIElement(
                 id: "old",
@@ -347,7 +349,7 @@ struct InspectUIToolExecutionTests {
 
     @Test
     func `Inspect UI tool rejects a missing explicit snapshot without inspecting frontmost UI`() async throws {
-        await UISnapshotManager.shared.removeAllSnapshots()
+        await Self.uiSnapshots.removeAllSnapshots()
         let automation = await MainActor.run {
             InspectUITestAutomationService(
                 accessibilityGranted: true,
@@ -373,12 +375,12 @@ struct InspectUIToolExecutionTests {
         #expect(await MainActor.run { automation.lastInspectWindowContext } == nil)
         let hostSnapshotIDsAfter = try await Set(context.snapshots.listSnapshots().map(\.id))
         #expect(hostSnapshotIDsAfter == hostSnapshotIDsBefore)
-        #expect(await UISnapshotManager.shared.getSnapshot(id: nil) == nil)
+        #expect(await Self.uiSnapshots.getSnapshot(id: nil) == nil)
     }
 
     @Test
     func `Inspect UI tool rejects a host-only snapshot unavailable in the current process`() async throws {
-        await UISnapshotManager.shared.removeAllSnapshots()
+        await Self.uiSnapshots.removeAllSnapshots()
         let automation = await MainActor.run {
             InspectUITestAutomationService(
                 accessibilityGranted: true,
@@ -406,13 +408,13 @@ struct InspectUIToolExecutionTests {
         let hostSnapshotIDsAfter = try await Set(context.snapshots.listSnapshots().map(\.id))
         #expect(hostSnapshotIDsAfter == hostSnapshotIDsBefore)
         #expect(hostSnapshotIDsAfter.contains(snapshotId))
-        #expect(await UISnapshotManager.shared.getSnapshot(id: nil) == nil)
+        #expect(await Self.uiSnapshots.getSnapshot(id: nil) == nil)
         try await context.snapshots.cleanSnapshot(snapshotId: snapshotId)
     }
 
     @Test
     func `Inspect UI tool stores detection result for follow-up automation`() async throws {
-        await UISnapshotManager.shared.removeAllSnapshots()
+        await Self.uiSnapshots.removeAllSnapshots()
         let detectionResult = ElementDetectionResult(
             snapshotId: "automation-owned-snapshot",
             screenshotPath: "",
@@ -431,7 +433,7 @@ struct InspectUIToolExecutionTests {
         }
         let context = await Self.makeContext(automation: automation)
         let snapshotId = try await context.snapshots.createSnapshot()
-        _ = await UISnapshotManager.shared.createSnapshot(id: snapshotId)
+        _ = await Self.uiSnapshots.createSnapshot(id: snapshotId)
         let tool = InspectUITool(context: context)
 
         let response = try await tool.execute(arguments: ToolArguments(raw: [
@@ -446,7 +448,7 @@ struct InspectUIToolExecutionTests {
 
     @Test
     func `Inspect UI tool refreshes snapshot target metadata`() async throws {
-        await UISnapshotManager.shared.removeAllSnapshots()
+        await Self.uiSnapshots.removeAllSnapshots()
         let detectionResult = ElementDetectionResult(
             snapshotId: "automation-owned-snapshot",
             screenshotPath: "",
@@ -472,7 +474,7 @@ struct InspectUIToolExecutionTests {
         }
         let context = await Self.makeContext(automation: automation)
         let snapshotId = try await context.snapshots.createSnapshot()
-        let snapshot = await UISnapshotManager.shared.createSnapshot(id: snapshotId)
+        let snapshot = await Self.uiSnapshots.createSnapshot(id: snapshotId)
         await snapshot.setTargetMetadata(from: WindowContext(
             applicationName: "OldApp",
             applicationProcessId: 111,
@@ -762,7 +764,8 @@ struct InspectUIToolExecutionTests {
             agent: services.agent,
             permissions: services.permissions,
             clipboard: services.clipboard,
-            browser: services.browser)
+            browser: services.browser,
+            snapshotOwner: Self.uiSnapshots.owner)
     }
 
     private static func emptyDetectionResult(id: String) -> ElementDetectionResult {

@@ -144,7 +144,7 @@ public struct InspectUITool: MCPTool {
                     PendingSnapshotCleanupPolicy.shouldPreserveReservation(after: error)
                 if !preserveReservation {
                     try? await self.context.snapshots.cleanSnapshot(snapshotId: newlyCreatedSnapshotID)
-                    await UISnapshotManager.shared.removeSnapshot(id: newlyCreatedSnapshotID)
+                    await self.context.uiSnapshots.removeSnapshot(id: newlyCreatedSnapshotID)
                 }
             }
             self.logger.error("Inspect UI tool execution failed: \(error.localizedDescription)")
@@ -205,7 +205,7 @@ public struct InspectUITool: MCPTool {
                 throw PeekabooError.snapshotNotFound(
                     "Snapshot '\(snapshotId)' was not found. Omit the `snapshot` argument and run `inspect_ui` again.")
             }
-            guard let existingSnapshot = await UISnapshotManager.shared.getSnapshot(id: snapshotId) else {
+            guard let existingSnapshot = await self.context.uiSnapshots.getSnapshot(id: snapshotId) else {
                 throw PeekabooError.snapshotNotFound(
                     "Snapshot '\(snapshotId)' is not available in this process. " +
                         "Omit the `snapshot` argument and run `inspect_ui` again.")
@@ -218,7 +218,7 @@ public struct InspectUITool: MCPTool {
         } else {
             try await self.context.snapshots.createSnapshot()
         }
-        let snapshot = await UISnapshotManager.shared.createSnapshot(
+        let snapshot = await self.context.uiSnapshots.createSnapshot(
             id: snapshotId,
             at: observationStartedAt ?? Date(),
             pending: observationStartedAt != nil)

@@ -54,6 +54,7 @@ public final class PeekabooAgentService: AgentServiceProtocol {
     /// Construction-only propagation. Every built tool captures the resulting immutable context,
     /// so concurrent sessions cannot change one another's authority after construction.
     @TaskLocal static var toolConstructionExecutionPolicy: MCPToolExecutionPolicy = .unrestricted
+    @TaskLocal static var toolConstructionSnapshotOwner = MCPToolSnapshotOwner.legacyProcess
 
     /// The default model used by this agent service
     public var defaultModel: String {

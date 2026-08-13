@@ -10,6 +10,13 @@ import Tachikoma
 
 @available(macOS 14.0, *)
 extension PeekabooAgentService {
+    private func scheduleSnapshotOwnerRelease(_ owner: MCPToolSnapshotOwner) {
+        let snapshots = MCPToolUISnapshotStore(owner: owner)
+        Task {
+            await snapshots.releaseOwner()
+        }
+    }
+
     func generationSettings(for model: LanguageModel) -> GenerationSettings {
         let maxTokens = self.configuredMaxTokens(for: model)
         let temperature = self.shouldOmitTemperature(for: model) ? nil : self.configuredTemperature(for: model)
@@ -300,7 +307,13 @@ extension PeekabooAgentService {
     {
         let maxSteps = try AgentStepBudget.validate(maxSteps)
         _ = streamingDelegate
-        let tools = await self.buildToolset(for: model, executionPolicy: context.toolExecutionPolicy)
+        let snapshotOwner = MCPToolSnapshotOwner(sessionID: context.id)
+        await MCPToolUISnapshotStore(owner: snapshotOwner).retainOwner()
+        defer { self.scheduleSnapshotOwnerRelease(snapshotOwner) }
+        let tools = await self.buildToolset(
+            for: model,
+            snapshotOwner: snapshotOwner,
+            executionPolicy: context.toolExecutionPolicy)
         self.logModelUsage(model, prefix: "Streaming ")
         guard let provider = context.provider else {
             throw PeekabooError.invalidInput("The session has no verified model provider; refusing to execute it.")
@@ -381,7 +394,13 @@ extension PeekabooAgentService {
         enhancementOptions: AgentEnhancementOptions? = nil) async throws -> AgentExecutionResult
     {
         let maxSteps = try AgentStepBudget.validate(maxSteps)
-        let tools = await self.buildToolset(for: model, executionPolicy: context.toolExecutionPolicy)
+        let snapshotOwner = MCPToolSnapshotOwner(sessionID: context.id)
+        await MCPToolUISnapshotStore(owner: snapshotOwner).retainOwner()
+        defer { self.scheduleSnapshotOwnerRelease(snapshotOwner) }
+        let tools = await self.buildToolset(
+            for: model,
+            snapshotOwner: snapshotOwner,
+            executionPolicy: context.toolExecutionPolicy)
         self.logModelUsage(model, prefix: "")
         guard let provider = context.provider else {
             throw PeekabooError.invalidInput("The session has no verified model provider; refusing to execute it.")

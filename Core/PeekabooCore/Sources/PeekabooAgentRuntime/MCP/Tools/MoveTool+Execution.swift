@@ -150,7 +150,7 @@ extension MoveTool {
     }
 
     func getSnapshot(id: String?) async -> UISnapshot? {
-        await UISnapshotManager.shared.getSnapshot(id: id)
+        await self.context.uiSnapshots.getSnapshot(id: id)
     }
 
     func resolveMovementParameters(for request: MoveRequest, distance: CGFloat) -> MovementParameters {

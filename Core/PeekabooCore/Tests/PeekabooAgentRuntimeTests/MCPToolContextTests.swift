@@ -41,17 +41,36 @@ struct MCPToolContextTests {
     @MainActor
     func `Agent tool construction captures task-local immutable policy`() throws {
         let agent = try PeekabooAgentService(services: PeekabooServices())
+        let owner = MCPToolSnapshotOwner(sessionID: "durable-agent-session")
 
-        let background = PeekabooAgentService.$toolConstructionExecutionPolicy.withValue(.backgroundOnly) {
-            agent.makeToolContext()
+        let background = PeekabooAgentService.$toolConstructionSnapshotOwner.withValue(owner) {
+            PeekabooAgentService.$toolConstructionExecutionPolicy.withValue(.backgroundOnly) {
+                agent.makeToolContext()
+            }
         }
         let foreground = PeekabooAgentService.$toolConstructionExecutionPolicy.withValue(.foregroundAllowed) {
             agent.makeToolContext()
         }
 
         #expect(background.executionPolicy == .backgroundOnly)
+        #expect(background.uiSnapshots.owner == owner)
         #expect(foreground.executionPolicy == .foregroundAllowed)
+        #expect(foreground.uiSnapshots.owner != owner)
         #expect(agent.makeToolContext().executionPolicy == .unrestricted)
+    }
+
+    @Test
+    @MainActor
+    func `legacy contexts share process owner while explicit contexts isolate`() {
+        let services = PeekabooServices()
+        let first = MCPToolContext(services: services)
+        let second = MCPToolContext(services: services)
+        let isolated = MCPToolContext(
+            services: services,
+            snapshotOwner: MCPToolSnapshotOwner())
+
+        #expect(first.uiSnapshots.owner == second.uiSnapshots.owner)
+        #expect(first.uiSnapshots.owner != isolated.uiSnapshots.owner)
     }
 
     @Test

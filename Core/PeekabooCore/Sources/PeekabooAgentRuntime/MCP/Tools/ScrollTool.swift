@@ -86,7 +86,7 @@ public struct ScrollTool: MCPTool {
     }
 
     private func getSnapshot(id: String?) async -> UISnapshot? {
-        await UISnapshotManager.shared.getSnapshot(id: id)
+        await self.context.uiSnapshots.getSnapshot(id: id)
     }
 
     private func parseRequest(arguments: ToolArguments) throws -> ScrollToolRequest {
@@ -152,7 +152,7 @@ public struct ScrollTool: MCPTool {
             foreground: request.foreground)
         try await automation.scroll(serviceRequest)
 
-        let invalidatedSnapshotId = await UISnapshotManager.shared.invalidateActiveSnapshot(id: target.snapshotId)
+        let invalidatedSnapshotId = await self.context.uiSnapshots.invalidateActiveSnapshot(id: target.snapshotId)
         let executionTime = Date().timeIntervalSince(startTime)
         let scrollDescription = request.smooth ? "smooth scroll" : "scroll"
         let duration = String(format: "%.2f", executionTime) + "s"

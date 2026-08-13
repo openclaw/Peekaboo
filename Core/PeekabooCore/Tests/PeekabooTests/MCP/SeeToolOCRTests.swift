@@ -11,9 +11,11 @@ import Testing
 
 @Suite(.serialized)
 struct SeeToolOCRTests {
+    private static let uiSnapshots = MCPToolUISnapshotStore(owner: MCPToolSnapshotOwner())
+
     @Test
     func `See declares local additive OCR as an opt in boolean`() async {
-        let context = await MCPToolTestHelpers.makeContext()
+        let context = await MCPToolTestHelpers.makeContext(snapshotOwner: Self.uiSnapshots.owner)
         let tool = SeeTool(context: context)
         guard case let .object(root) = tool.inputSchema,
               case let .object(properties)? = root["properties"],
@@ -35,12 +37,12 @@ struct SeeToolOCRTests {
 
     @Test
     func `Calendar shaped incomplete AX observation succeeds with exact OCR evidence`() async throws {
-        await UISnapshotManager.shared.removeAllSnapshots()
+        await Self.uiSnapshots.removeAllSnapshots()
         let snapshots = await MainActor.run { InMemorySnapshotManager() }
         let observation = await MainActor.run { CalendarOCRObservationService(snapshots: snapshots) }
         let context = await self.makeContext(desktopObservation: observation, snapshots: snapshots)
         defer {
-            Task { await UISnapshotManager.shared.removeAllSnapshots() }
+            Task { await Self.uiSnapshots.removeAllSnapshots() }
         }
 
         let response = try await SeeTool(context: context).execute(arguments: ToolArguments(raw: [
@@ -81,7 +83,7 @@ struct SeeToolOCRTests {
         #expect(window["window_id"] == .int(119))
         #expect(warnings.contains(.string("ax_incomplete_read")))
 
-        let snapshotValue = await UISnapshotManager.shared.getSnapshot(id: snapshotID)
+        let snapshotValue = await Self.uiSnapshots.getSnapshot(id: snapshotID)
         let snapshot = try #require(snapshotValue)
         let ocrElementValue = await snapshot.getElement(byId: "ocr_1")
         let ocrElement = try #require(ocrElementValue)
@@ -158,7 +160,7 @@ struct SeeToolOCRTests {
         desktopObservation: any DesktopObservationServiceProtocol,
         snapshots: any SnapshotManagerProtocol) async -> MCPToolContext
     {
-        let base = await MCPToolTestHelpers.makeContext()
+        let base = await MCPToolTestHelpers.makeContext(snapshotOwner: Self.uiSnapshots.owner)
         return await MainActor.run {
             MCPToolContext(
                 automation: base.automation,
@@ -176,7 +178,8 @@ struct SeeToolOCRTests {
                 clipboard: base.clipboard,
                 browser: base.browser,
                 snapshotMutationCoordinator: base.snapshotMutationCoordinator,
-                snapshotExecutionGate: base.snapshotExecutionGate)
+                snapshotExecutionGate: base.snapshotExecutionGate,
+                snapshotOwner: Self.uiSnapshots.owner)
         }
     }
 }

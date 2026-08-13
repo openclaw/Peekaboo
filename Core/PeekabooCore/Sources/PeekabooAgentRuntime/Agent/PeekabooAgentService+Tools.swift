@@ -40,6 +40,7 @@ extension PeekabooAgentService {
             services: self.services,
             snapshotMutationCoordinator: self.snapshotMutationCoordinator,
             snapshotExecutionGate: self.snapshotExecutionGate,
+            snapshotOwner: Self.toolConstructionSnapshotOwner,
             executionPolicy: Self.toolConstructionExecutionPolicy)
     }
 

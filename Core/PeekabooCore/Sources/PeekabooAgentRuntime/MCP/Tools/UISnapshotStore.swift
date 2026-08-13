@@ -244,6 +244,109 @@ actor UISnapshot {
     }
 }
 
+/// Logical owner of one MCP/Agent snapshot history inside this process.
+///
+/// Snapshot IDs stay unchanged at the tool and Bridge boundaries. The owner is
+/// only an in-process namespace, so two sessions can safely receive the same
+/// external ID without replacing one another's UI metadata.
+public struct MCPToolSnapshotOwner: Hashable, Sendable {
+    fileprivate let rawValue: String
+
+    public init() {
+        self.rawValue = "context:\(UUID().uuidString)"
+    }
+
+    init(sessionID: String) {
+        self.rawValue = "agent-session:\(sessionID)"
+    }
+
+    private init(rawValue: String) {
+        self.rawValue = rawValue
+    }
+
+    public static let legacyProcess = Self(rawValue: "process-compatibility")
+    static let compatibility = Self.legacyProcess
+}
+
+struct MCPToolUISnapshotStore: Sendable {
+    let owner: MCPToolSnapshotOwner
+    private let manager: UISnapshotManager
+
+    init(owner: MCPToolSnapshotOwner, manager: UISnapshotManager = .shared) {
+        self.owner = owner
+        self.manager = manager
+    }
+
+    func createSnapshot(
+        id: String = UUID().uuidString,
+        at creationDate: Date = Date(),
+        pending: Bool = false) async -> UISnapshot
+    {
+        await self.manager.createSnapshot(
+            owner: self.owner,
+            id: id,
+            at: creationDate,
+            pending: pending)
+    }
+
+    func getSnapshot(id: String?) async -> UISnapshot? {
+        await self.manager.getSnapshot(owner: self.owner, id: id)
+    }
+
+    func synchronizeImplicitLatestInvalidationWatermark(_ watermark: Date?) async {
+        await self.manager.synchronizeImplicitLatestInvalidationWatermark(
+            watermark,
+            owner: self.owner)
+    }
+
+    func activeSnapshotId(id: String?) async -> String? {
+        await self.manager.activeSnapshotId(owner: self.owner, id: id)
+    }
+
+    @discardableResult
+    func invalidateActiveSnapshot(id: String?) async -> String? {
+        await self.manager.invalidateActiveSnapshot(owner: self.owner, id: id)
+    }
+
+    @discardableResult
+    func invalidateImplicitLatestSnapshot(
+        through cutoff: Date,
+        preserving snapshotId: String? = nil,
+        preservedAt: Date? = nil) async -> String?
+    {
+        let effectivePreservedAt = snapshotId == nil ? nil : (preservedAt ?? Date())
+        return await self.manager.invalidateImplicitLatestSnapshot(
+            owner: self.owner,
+            through: cutoff,
+            preserving: snapshotId,
+            preservedAt: effectivePreservedAt)
+    }
+
+    func removeSnapshot(id: String) async {
+        await self.manager.removeSnapshot(owner: self.owner, id: id)
+    }
+
+    func removeAllSnapshots() async {
+        await self.manager.removeAllSnapshots(owner: self.owner)
+    }
+
+    func removeOwner() async {
+        await self.manager.removeOwner(self.owner)
+    }
+
+    func retainOwner() async {
+        await self.manager.retainOwner(self.owner)
+    }
+
+    func releaseOwner() async {
+        await self.manager.releaseOwner(self.owner)
+    }
+
+    func cleanupOldSnapshots(olderThan timeInterval: TimeInterval = 3600) async {
+        await self.manager.cleanupOldSnapshots(owner: self.owner, olderThan: timeInterval)
+    }
+}
+
 actor UISnapshotManager {
     static let defaultMaximumRetainedSnapshots = 25
 
@@ -255,12 +358,17 @@ actor UISnapshotManager {
 
     static let shared = UISnapshotManager()
 
-    private var snapshots: [String: UISnapshot] = [:]
-    private var orderedSnapshotIds: [String] = []
-    private var snapshotCreationDates: [String: Date] = [:]
-    private var pendingSnapshotIds: Set<String> = []
-    private var implicitLatestInvalidatedThrough: Date?
-    private var implicitLatestPreservation: ImplicitLatestPreservation?
+    private struct OwnerState {
+        var snapshots: [String: UISnapshot] = [:]
+        var orderedSnapshotIds: [String] = []
+        var snapshotCreationDates: [String: Date] = [:]
+        var pendingSnapshotIds: Set<String> = []
+        var implicitLatestInvalidatedThrough: Date?
+        var implicitLatestPreservation: ImplicitLatestPreservation?
+        var activeLeaseCount = 0
+    }
+
+    private var ownerStates: [MCPToolSnapshotOwner: OwnerState] = [:]
     private let maximumRetainedSnapshots: Int
 
     init(maximumRetainedSnapshots: Int = UISnapshotManager.defaultMaximumRetainedSnapshots) {
@@ -268,33 +376,37 @@ actor UISnapshotManager {
     }
 
     func createSnapshot(
+        owner: MCPToolSnapshotOwner,
         id: String = UUID().uuidString,
         at creationDate: Date = Date(),
         pending: Bool = false) -> UISnapshot
     {
-        if self.snapshots[id] != nil {
-            self.removeSnapshot(id: id)
+        var state = self.ownerStates[owner] ?? OwnerState()
+        if state.snapshots[id] != nil {
+            Self.removeSnapshot(id: id, from: &state)
         }
         let snapshot = UISnapshot(id: id, createdAt: creationDate)
-        self.snapshots[snapshot.id] = snapshot
-        self.orderedSnapshotIds.append(snapshot.id)
-        self.snapshotCreationDates[snapshot.id] = creationDate
+        state.snapshots[snapshot.id] = snapshot
+        state.orderedSnapshotIds.append(snapshot.id)
+        state.snapshotCreationDates[snapshot.id] = creationDate
         if pending {
-            self.pendingSnapshotIds.insert(snapshot.id)
+            state.pendingSnapshotIds.insert(snapshot.id)
         }
-        self.pruneOverflowIfNeeded()
+        self.pruneOverflowIfNeeded(state: &state)
+        self.ownerStates[owner] = state
         return snapshot
     }
 
-    func getSnapshot(id: String?) -> UISnapshot? {
+    func getSnapshot(owner: MCPToolSnapshotOwner, id: String?) -> UISnapshot? {
+        guard let state = self.ownerStates[owner] else { return nil }
         if let id {
-            return self.snapshots[id]
+            return state.snapshots[id]
         }
-        let normalLatest = self.orderedSnapshotIds.enumerated().compactMap { index, snapshotId
+        let normalLatest = state.orderedSnapshotIds.enumerated().compactMap { index, snapshotId
             -> (id: String, createdAt: Date, insertionIndex: Int)? in
-            guard let creationDate = self.snapshotCreationDates[snapshotId],
-                  !self.pendingSnapshotIds.contains(snapshotId),
-                  self.implicitLatestInvalidatedThrough.map({ creationDate > $0 }) ?? true
+            guard let creationDate = state.snapshotCreationDates[snapshotId],
+                  !state.pendingSnapshotIds.contains(snapshotId),
+                  state.implicitLatestInvalidatedThrough.map({ creationDate > $0 }) ?? true
             else { return nil }
             return (snapshotId, creationDate, index)
         }.max { lhs, rhs in
@@ -303,37 +415,43 @@ actor UISnapshotManager {
             }
             return lhs.createdAt < rhs.createdAt
         }
-        if let preservation = self.implicitLatestPreservation,
-           self.snapshots[preservation.snapshotId] != nil,
+        if let preservation = state.implicitLatestPreservation,
+           state.snapshots[preservation.snapshotId] != nil,
            normalLatest.map({ $0.createdAt <= preservation.preservedAt }) ?? true
         {
-            return self.snapshots[preservation.snapshotId]
+            return state.snapshots[preservation.snapshotId]
         }
-        return normalLatest.flatMap { self.snapshots[$0.id] }
+        return normalLatest.flatMap { state.snapshots[$0.id] }
     }
 
-    func removeSnapshot(id: String) {
-        self.snapshots.removeValue(forKey: id)
-        self.orderedSnapshotIds.removeAll(where: { $0 == id })
-        self.snapshotCreationDates.removeValue(forKey: id)
-        self.pendingSnapshotIds.remove(id)
-        if self.implicitLatestPreservation?.snapshotId == id {
-            self.implicitLatestPreservation = nil
+    func removeSnapshot(owner: MCPToolSnapshotOwner, id: String) {
+        guard var state = self.ownerStates[owner] else { return }
+        Self.removeSnapshot(id: id, from: &state)
+        self.store(state, for: owner)
+    }
+
+    private static func removeSnapshot(id: String, from state: inout OwnerState) {
+        state.snapshots.removeValue(forKey: id)
+        state.orderedSnapshotIds.removeAll(where: { $0 == id })
+        state.snapshotCreationDates.removeValue(forKey: id)
+        state.pendingSnapshotIds.remove(id)
+        if state.implicitLatestPreservation?.snapshotId == id {
+            state.implicitLatestPreservation = nil
         }
     }
 
-    private func pruneOverflowIfNeeded() {
-        let overflow = self.snapshots.count - self.maximumRetainedSnapshots
+    private func pruneOverflowIfNeeded(state: inout OwnerState) {
+        let overflow = state.snapshots.count - self.maximumRetainedSnapshots
         guard overflow > 0 else { return }
 
-        let preservedSnapshotId = self.implicitLatestPreservation?.snapshotId
-        let evictionCandidates = self.orderedSnapshotIds.enumerated()
+        let preservedSnapshotId = state.implicitLatestPreservation?.snapshotId
+        let evictionCandidates = state.orderedSnapshotIds.enumerated()
             .filter { _, id in
-                self.snapshots[id] != nil && id != preservedSnapshotId
+                state.snapshots[id] != nil && id != preservedSnapshotId
             }
             .sorted { lhs, rhs in
-                let lhsDate = self.snapshotCreationDates[lhs.element] ?? .distantPast
-                let rhsDate = self.snapshotCreationDates[rhs.element] ?? .distantPast
+                let lhsDate = state.snapshotCreationDates[lhs.element] ?? .distantPast
+                let rhsDate = state.snapshotCreationDates[rhs.element] ?? .distantPast
                 if lhsDate == rhsDate {
                     return lhs.offset < rhs.offset
                 }
@@ -341,43 +459,190 @@ actor UISnapshotManager {
             }
 
         for candidate in evictionCandidates.prefix(overflow) {
-            self.removeSnapshot(id: candidate.element)
+            Self.removeSnapshot(id: candidate.element, from: &state)
         }
     }
 
-    func activeSnapshotId(id: String?) -> String? {
-        if let id, self.snapshots[id] != nil {
+    func activeSnapshotId(owner: MCPToolSnapshotOwner, id: String?) -> String? {
+        if let id, self.ownerStates[owner]?.snapshots[id] != nil {
             return id
         }
         if id != nil {
             return nil
         }
-        return self.getSnapshot(id: nil)?.id
+        return self.getSnapshot(owner: owner, id: nil)?.id
     }
 
-    func synchronizeImplicitLatestInvalidationWatermark(_ watermark: Date?) {
+    func synchronizeImplicitLatestInvalidationWatermark(
+        _ watermark: Date?,
+        owner: MCPToolSnapshotOwner)
+    {
         guard let watermark else { return }
-        _ = self.invalidateImplicitLatestSnapshot(through: watermark)
+        _ = self.invalidateImplicitLatestSnapshot(owner: owner, through: watermark)
     }
 
     @discardableResult
-    func invalidateActiveSnapshot(id: String?) -> String? {
-        guard let id = self.activeSnapshotId(id: id) else { return nil }
-        self.invalidateImplicitLatestSnapshot(through: Date())
+    func invalidateActiveSnapshot(owner: MCPToolSnapshotOwner, id: String?) -> String? {
+        guard let id = self.activeSnapshotId(owner: owner, id: id) else { return nil }
+        self.invalidateImplicitLatestSnapshot(owner: owner, through: Date())
         return id
     }
 
     @discardableResult
+    func invalidateImplicitLatestSnapshot(owner: MCPToolSnapshotOwner, through cutoff: Date) -> String? {
+        self.invalidateImplicitLatestSnapshot(owner: owner, through: cutoff, preserving: nil)
+    }
+
+    @discardableResult
+    func invalidateImplicitLatestSnapshot(
+        owner: MCPToolSnapshotOwner,
+        through cutoff: Date,
+        preserving snapshotId: String?) -> String?
+    {
+        self.invalidateImplicitLatestSnapshot(
+            owner: owner,
+            through: cutoff,
+            preserving: snapshotId,
+            preservedAt: snapshotId == nil ? nil : Date())
+    }
+
+    @discardableResult
+    func invalidateImplicitLatestSnapshot(
+        owner: MCPToolSnapshotOwner,
+        through cutoff: Date,
+        preserving snapshotId: String?,
+        preservedAt: Date?) -> String?
+    {
+        var state = self.ownerStates[owner] ?? OwnerState()
+        let invalidatedSnapshotId = self.activeSnapshotId(owner: owner, id: nil)
+        if let snapshotId {
+            state.pendingSnapshotIds.remove(snapshotId)
+        }
+        let existingWatermark = state.implicitLatestInvalidatedThrough
+        if let snapshotId,
+           let preservedAt,
+           state.snapshots[snapshotId] != nil,
+           existingWatermark.map({ $0 <= cutoff }) ?? true
+        {
+            state.implicitLatestPreservation = .init(
+                snapshotId: snapshotId,
+                invalidatedThrough: cutoff,
+                preservedAt: preservedAt)
+        } else if let preservation = state.implicitLatestPreservation,
+                  cutoff > preservation.invalidatedThrough
+        {
+            state.implicitLatestPreservation = nil
+        }
+        state.implicitLatestInvalidatedThrough = max(state.implicitLatestInvalidatedThrough ?? cutoff, cutoff)
+        self.store(state, for: owner)
+        return invalidatedSnapshotId
+    }
+
+    func removeAllSnapshots(owner: MCPToolSnapshotOwner) {
+        self.ownerStates.removeValue(forKey: owner)
+    }
+
+    func removeOwner(_ owner: MCPToolSnapshotOwner) {
+        guard owner != .compatibility else { return }
+        self.ownerStates.removeValue(forKey: owner)
+    }
+
+    func retainOwner(_ owner: MCPToolSnapshotOwner) {
+        guard owner != .compatibility else { return }
+        var state = self.ownerStates[owner] ?? OwnerState()
+        state.activeLeaseCount += 1
+        self.ownerStates[owner] = state
+    }
+
+    func releaseOwner(_ owner: MCPToolSnapshotOwner) {
+        guard owner != .compatibility,
+              var state = self.ownerStates[owner]
+        else { return }
+        state.activeLeaseCount = max(0, state.activeLeaseCount - 1)
+        if state.activeLeaseCount == 0 {
+            self.ownerStates.removeValue(forKey: owner)
+        } else {
+            self.ownerStates[owner] = state
+        }
+    }
+
+    func retainedOwnerCountForTesting() -> Int {
+        self.ownerStates.count
+    }
+
+    func cleanupOldSnapshots(
+        owner: MCPToolSnapshotOwner,
+        olderThan timeInterval: TimeInterval = 3600) async
+    {
+        let cutoffDate = Date().addingTimeInterval(-timeInterval)
+        let candidates = self.ownerStates[owner]?.snapshots ?? [:]
+        for (id, snapshot) in candidates {
+            let lastAccessed = await snapshot.lastAccessedAt
+            guard lastAccessed <= cutoffDate,
+                  self.ownerStates[owner]?.snapshots[id] === snapshot
+            else { continue }
+            self.removeSnapshot(owner: owner, id: id)
+        }
+    }
+
+    private func store(_ state: OwnerState, for owner: MCPToolSnapshotOwner) {
+        if state.snapshots.isEmpty,
+           state.implicitLatestInvalidatedThrough == nil,
+           state.implicitLatestPreservation == nil,
+           state.activeLeaseCount == 0
+        {
+            self.ownerStates.removeValue(forKey: owner)
+        } else {
+            self.ownerStates[owner] = state
+        }
+    }
+
+    /// Source-compatible test seams. Production callers use the owner-scoped
+    /// store injected by `MCPToolContext`.
+    func createSnapshot(
+        id: String = UUID().uuidString,
+        at creationDate: Date = Date(),
+        pending: Bool = false) -> UISnapshot
+    {
+        self.createSnapshot(
+            owner: .compatibility,
+            id: id,
+            at: creationDate,
+            pending: pending)
+    }
+
+    func getSnapshot(id: String?) -> UISnapshot? {
+        self.getSnapshot(owner: .compatibility, id: id)
+    }
+
+    func removeSnapshot(id: String) {
+        self.removeSnapshot(owner: .compatibility, id: id)
+    }
+
+    func activeSnapshotId(id: String?) -> String? {
+        self.activeSnapshotId(owner: .compatibility, id: id)
+    }
+
+    func synchronizeImplicitLatestInvalidationWatermark(_ watermark: Date?) {
+        self.synchronizeImplicitLatestInvalidationWatermark(watermark, owner: .compatibility)
+    }
+
+    @discardableResult
+    func invalidateActiveSnapshot(id: String?) -> String? {
+        self.invalidateActiveSnapshot(owner: .compatibility, id: id)
+    }
+
+    @discardableResult
     func invalidateImplicitLatestSnapshot(through cutoff: Date) -> String? {
-        self.invalidateImplicitLatestSnapshot(through: cutoff, preserving: nil)
+        self.invalidateImplicitLatestSnapshot(owner: .compatibility, through: cutoff)
     }
 
     @discardableResult
     func invalidateImplicitLatestSnapshot(through cutoff: Date, preserving snapshotId: String?) -> String? {
         self.invalidateImplicitLatestSnapshot(
+            owner: .compatibility,
             through: cutoff,
-            preserving: snapshotId,
-            preservedAt: snapshotId == nil ? nil : Date())
+            preserving: snapshotId)
     }
 
     @discardableResult
@@ -386,47 +651,18 @@ actor UISnapshotManager {
         preserving snapshotId: String?,
         preservedAt: Date?) -> String?
     {
-        let invalidatedSnapshotId = self.activeSnapshotId(id: nil)
-        if let snapshotId {
-            self.pendingSnapshotIds.remove(snapshotId)
-        }
-        let existingWatermark = self.implicitLatestInvalidatedThrough
-        if let snapshotId,
-           let preservedAt,
-           self.snapshots[snapshotId] != nil,
-           existingWatermark.map({ $0 <= cutoff }) ?? true
-        {
-            self.implicitLatestPreservation = .init(
-                snapshotId: snapshotId,
-                invalidatedThrough: cutoff,
-                preservedAt: preservedAt)
-        } else if let preservation = self.implicitLatestPreservation,
-                  cutoff > preservation.invalidatedThrough
-        {
-            self.implicitLatestPreservation = nil
-        }
-        self.implicitLatestInvalidatedThrough = max(self.implicitLatestInvalidatedThrough ?? cutoff, cutoff)
-        return invalidatedSnapshotId
+        self.invalidateImplicitLatestSnapshot(
+            owner: .compatibility,
+            through: cutoff,
+            preserving: snapshotId,
+            preservedAt: preservedAt)
     }
 
     func removeAllSnapshots() {
-        self.snapshots.removeAll()
-        self.orderedSnapshotIds.removeAll()
-        self.snapshotCreationDates.removeAll()
-        self.pendingSnapshotIds.removeAll()
-        self.implicitLatestInvalidatedThrough = nil
-        self.implicitLatestPreservation = nil
+        self.removeAllSnapshots(owner: .compatibility)
     }
 
     func cleanupOldSnapshots(olderThan timeInterval: TimeInterval = 3600) async {
-        let cutoffDate = Date().addingTimeInterval(-timeInterval)
-        let candidates = self.snapshots
-        for (id, snapshot) in candidates {
-            let lastAccessed = await snapshot.lastAccessedAt
-            guard lastAccessed <= cutoffDate,
-                  self.snapshots[id] === snapshot
-            else { continue }
-            self.removeSnapshot(id: id)
-        }
+        await self.cleanupOldSnapshots(owner: .compatibility, olderThan: timeInterval)
     }
 }

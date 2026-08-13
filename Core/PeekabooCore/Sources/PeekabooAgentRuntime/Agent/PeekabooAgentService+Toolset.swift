@@ -10,10 +10,13 @@ import Tachikoma
 extension PeekabooAgentService {
     func buildToolset(
         for model: LanguageModel,
+        snapshotOwner: MCPToolSnapshotOwner = MCPToolSnapshotOwner(),
         executionPolicy: MCPToolExecutionPolicy = .backgroundOnly) async -> [AgentTool]
     {
-        let tools = Self.$toolConstructionExecutionPolicy.withValue(executionPolicy) {
-            self.createAgentTools()
+        let tools = Self.$toolConstructionSnapshotOwner.withValue(snapshotOwner) {
+            Self.$toolConstructionExecutionPolicy.withValue(executionPolicy) {
+                self.createAgentTools()
+            }
         }
         let authorityFiltered = executionPolicy == .unrestricted
             ? tools
