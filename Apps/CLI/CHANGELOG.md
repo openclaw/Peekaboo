@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Preserve integer-valued Agent tool data across Codable and Foundation JSON conversion instead of mistaking numeric `0` and `1` for booleans.
+- Carry verified exact-background close, minimize, restore, maximize, move, resize, and set-bounds outcomes through Bridge protocol 1.23 while older hosts remain conservative.
 - Bind each discovered Agent tool to its exact provider and registry generation, recover unchanged bindings after transient discovery failures while refusing ambiguous or stale ownership, and preserve boolean/integer MCP arguments through one typed conversion path.
 - Reject duplicate command, subcommand, option, and flag definitions deterministically instead of trapping or silently selecting one, while keeping daemon `--bridge-socket` on the canonical runtime option.
 - Consolidate accessibility observer registration, exact element/process dispatch, stop, and deinitialization cleanup under one instance-owned registry.
