@@ -82,6 +82,25 @@ struct MCPDesktopActionOutcomeProjectionTests {
         #expect(wireMeta["requires_fresh_observation"] as? Bool == false)
     }
 
+    @Test
+    func `pre-dispatch refusal merges presentation metadata around canonical fields`() throws {
+        let response = MCPToolResponseMetadataProjector.preDispatchRefusalResponse(
+            message: "Invalid numeric argument",
+            reason: .invalidRequest,
+            additionalFields: [
+                "error_code": .string("VALIDATION_ERROR"),
+                "retry_safe": .bool(false),
+            ])
+        let meta = try #require(response.meta?.objectValue)
+
+        #expect(meta["error_code"] == .string("VALIDATION_ERROR"))
+        #expect(meta["state"] == .string("refused"))
+        #expect(meta["refusal_reason"] == .string("invalid_request"))
+        #expect(meta["retry_safe"] == .bool(true))
+        #expect(meta["mutation_dispatched"] == .bool(false))
+        #expect(meta["requires_fresh_observation"] == .bool(false))
+    }
+
     private struct ProjectionExpectation {
         let state: DesktopActionOutcome.State
         let dispatched: Bool

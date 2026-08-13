@@ -35,7 +35,11 @@ extension ToolArguments {
 }
 
 enum MCPToolArgumentValidator {
-    static func rejection(tool: any MCPTool, arguments: ToolArguments) -> ToolResponse? {
+    static func rejection(
+        tool: any MCPTool,
+        arguments: ToolArguments,
+        snapshotEffect: MCPToolSnapshotEffect) -> ToolResponse?
+    {
         guard case let .object(schema) = tool.inputSchema,
               case let .object(properties)? = schema["properties"]
         else {
@@ -61,19 +65,28 @@ enum MCPToolArgumentValidator {
             }
             return nil
         } catch let error as MCPToolArgumentValueError {
-            return ToolResponse.error(
-                error.localizedDescription,
-                meta: .object([
-                    "mutation_dispatched": .bool(false),
-                    "retry_safe": .bool(true),
-                ]))
+            return self.rejectionResponse(
+                message: error.localizedDescription,
+                snapshotEffect: snapshotEffect)
         } catch {
-            return ToolResponse.error(
-                "Invalid numeric tool argument: \(error.localizedDescription)",
-                meta: .object([
-                    "mutation_dispatched": .bool(false),
-                    "retry_safe": .bool(true),
-                ]))
+            return self.rejectionResponse(
+                message: "Invalid numeric tool argument: \(error.localizedDescription)",
+                snapshotEffect: snapshotEffect)
+        }
+    }
+
+    private static func rejectionResponse(
+        message: String,
+        snapshotEffect: MCPToolSnapshotEffect) -> ToolResponse
+    {
+        switch snapshotEffect {
+        case .mutation, .mutationProducingFreshObservation:
+            MCPToolResponseMetadataProjector.preDispatchRefusalResponse(
+                message: message,
+                reason: .invalidRequest,
+                additionalFields: ["error_code": .string("VALIDATION_ERROR")])
+        case .none, .freshObservation:
+            ToolResponse.error(message)
         }
     }
 }

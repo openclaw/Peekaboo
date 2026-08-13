@@ -18,7 +18,7 @@ extension ClickCommand {
         }
 
         if let coordString = self.at, Self.parseCoordinates(coordString) == nil {
-            throw ValidationError("Invalid coordinates format. Use: x,y")
+            throw Self.invalidCoordinatesRefusal
         }
 
         if self.global && self.at == nil {

@@ -207,12 +207,16 @@ public struct MCPToolContext: @unchecked Sendable {
         if let rejection = self.executionPolicy.rejection(toolName: tool.name, arguments: arguments) {
             return rejection
         }
-        if let rejection = MCPToolArgumentValidator.rejection(tool: tool, arguments: arguments) {
+        let effect = MCPToolSnapshotMutationPolicy.effect(toolName: tool.name, arguments: arguments)
+        if let rejection = MCPToolArgumentValidator.rejection(
+            tool: tool,
+            arguments: arguments,
+            snapshotEffect: effect)
+        {
             return rejection
         }
         await self.uiSnapshots.synchronizeImplicitLatestInvalidationWatermark(
             self.snapshots.effectiveImplicitLatestInvalidationWatermark)
-        let effect = MCPToolSnapshotMutationPolicy.effect(toolName: tool.name, arguments: arguments)
         guard effect != .none else {
             try Task.checkCancellation()
             let response = try await tool.execute(arguments: arguments)

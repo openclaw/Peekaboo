@@ -1,4 +1,5 @@
 import Foundation
+import PeekabooFoundation
 import Tachikoma
 import TachikomaMCP
 
@@ -15,15 +16,21 @@ public enum MCPToolExecutionPolicy: String, Codable, Sendable {
     static let refusalErrorCode = "AGENT_EXECUTION_POLICY_REFUSAL"
 
     func rejection(toolName: String, arguments: ToolArguments) -> ToolResponse? {
-        let reason: String? = switch self {
+        let refusal: (message: String, reason: DesktopActionOutcome.RefusalReason)? = switch self {
         case .unrestricted:
             nil
         case .backgroundOnly:
-            BackgroundOnlyToolPolicy.violation(toolName: toolName, arguments: arguments)?.reason
+            BackgroundOnlyToolPolicy.violation(toolName: toolName, arguments: arguments).map {
+                ($0.message, $0.refusalReason)
+            }
         case .foregroundAllowed:
-            ForegroundAllowedAgentToolPolicy.refusalReason(toolName: toolName)
+            ForegroundAllowedAgentToolPolicy.refusalMessage(toolName: toolName).map {
+                ($0, .operationUnsupported)
+            }
         }
-        return reason.map { self.refusal(toolName: toolName, reason: $0) }
+        return refusal.map {
+            self.refusal(toolName: toolName, message: $0.message, reason: $0.reason)
+        }
     }
 
     func systemSurfaceRejection(
@@ -47,7 +54,8 @@ public enum MCPToolExecutionPolicy: String, Codable, Sendable {
         }
         return self.refusal(
             toolName: toolName,
-            reason: "the selected target is shared system UI and cannot be mutated in background-only mode")
+            message: "the selected target is shared system UI and cannot be mutated in background-only mode",
+            reason: .foregroundConsentRequired)
     }
 
     func unresolvedTargetRejection(toolName: String, detail: String) -> ToolResponse? {
@@ -56,20 +64,23 @@ public enum MCPToolExecutionPolicy: String, Codable, Sendable {
         }
         return self.refusal(
             toolName: toolName,
-            reason: "the selected mutation target could not be proven background-safe: \(detail)")
+            message: "the selected mutation target could not be proven background-safe: \(detail)",
+            reason: .targetUnavailable)
     }
 
-    private func refusal(toolName: String, reason: String) -> ToolResponse {
-        ToolResponse.error(
-            "Agent session policy refused '\(toolName)' before dispatch because \(reason). " +
+    private func refusal(
+        toolName: String,
+        message: String,
+        reason: DesktopActionOutcome.RefusalReason) -> ToolResponse
+    {
+        MCPToolResponseMetadataProjector.preDispatchRefusalResponse(
+            message: "Agent session policy refused '\(toolName)' before dispatch because \(message). " +
                 "Only a human can authorize a different Agent execution policy.",
-            meta: .object([
-                "effect": .string("refused"),
+            reason: reason,
+            additionalFields: [
                 "error_code": .string(Self.refusalErrorCode),
                 "execution_policy": .string(self.rawValue),
-                "mutation_dispatched": .bool(false),
-                "retry_safe": .bool(true),
-            ]))
+            ])
     }
 
     private static let sharedSystemUIBundleIdentifiers: Set<String> = [
@@ -107,12 +118,21 @@ private enum BackgroundOnlyToolPolicy {
         case sharedDesktop(String)
         case unclassified
 
-        var reason: String {
+        var message: String {
             switch self {
             case let .foregroundRequest(detail): detail
             case let .activation(detail): detail
             case let .sharedDesktop(detail): detail
             case .unclassified: "the tool or action is not classified as background-safe"
+            }
+        }
+
+        var refusalReason: DesktopActionOutcome.RefusalReason {
+            switch self {
+            case .foregroundRequest, .activation, .sharedDesktop:
+                .foregroundConsentRequired
+            case .unclassified:
+                .operationUnsupported
             }
         }
     }
@@ -372,7 +392,7 @@ private enum ForegroundAllowedAgentToolPolicy {
         "set_value", "sleep", "space", "type", "verify_state", "window",
     ]
 
-    static func refusalReason(toolName: String) -> String? {
+    static func refusalMessage(toolName: String) -> String? {
         if toolName == "shell" {
             return "shell execution is a separate privilege and can bypass native UI automation, including through " +
                 "AppleScript, JXA, OSA, or arbitrary subprocesses"

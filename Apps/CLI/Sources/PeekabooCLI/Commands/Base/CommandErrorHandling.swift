@@ -17,6 +17,12 @@ extension ErrorHandlingCommand {
     func handleError(_ error: any Error, customCode: ErrorCode? = nil) {
         if jsonOutput {
             let envelopeError = error as? any ResultEnvelopeError
+            let isActionCommand = (self as? any ActionOutputFormattable)?.defaultEffect != nil
+            let actionFailure: DesktopActionFailure? = if isActionCommand {
+                (error as? DesktopActionFailure) ?? envelopeError?.envelopeActionFailure
+            } else {
+                nil
+            }
             let lifecycleRefusal = applicationLifecycleRefusalProjection(for: error)
             let lifecycleFailure = applicationLifecycleFailureProjection(for: error)
             let errorCode = customCode ?? envelopeError?.envelopeCode ?? self.mapErrorToCode(error)
@@ -34,9 +40,9 @@ extension ErrorHandlingCommand {
             outputError(
                 message: errorMessage(for: error),
                 code: errorCode,
-                hint: envelopeError?.envelopeHint ?? lifecycleFailure?.metadata.hint,
-                details: errorDetails(for: error),
-                effect: lifecycleFailure?.effect
+                hint: envelopeError?.envelopeHint ?? actionFailure?.hint ?? lifecycleFailure?.metadata.hint,
+                details: actionFailure?.causeDescription ?? errorDetails(for: error),
+                effect: actionFailure?.outcome.effect ?? lifecycleFailure?.effect
                     ?? (lifecycleRefusal != nil ? .refused
                         : failureReceipt?.mutationDispatched == true
                         ? .partial
@@ -46,6 +52,7 @@ extension ErrorHandlingCommand {
                             : defaultActionErrorEffect(errorCode))),
                 retrySafe: failureReceipt?.retrySafe ?? envelopeError?.envelopeRetrySafe,
                 mutationDispatched: failureReceipt?.mutationDispatched ?? envelopeError?.envelopeMutationDispatched,
+                actionFailure: actionFailure,
                 logger: logger
             )
         } else {
@@ -86,12 +93,12 @@ extension ErrorHandlingCommand {
             errorCode(for: bridgeError)
         case is ApplicationLifecycleRefusalError:
             .INTERACTION_FAILED
+        case is DesktopActionFailure:
+            .INTERACTION_FAILED
         case let failure as ApplicationLifecycleReadOnlyFailureError:
             self.mapPeekabooErrorToCode(failure.underlyingError)
         case let posixError as POSIXError:
             errorCode(for: posixError)
-        case is ActionRefusalError:
-            .VALIDATION_ERROR
         case is CaptureCadenceValidationError:
             .VALIDATION_ERROR
         case is Commander.ValidationError:
@@ -382,7 +389,8 @@ func applicationLifecyclePreDispatchError(
     PreDispatchActionError(
         message: error.userMessage,
         code: .INTERACTION_FAILED,
-        hint: error.hint
+        hint: error.hint,
+        reason: .foregroundConsentRequired
     )
 }
 

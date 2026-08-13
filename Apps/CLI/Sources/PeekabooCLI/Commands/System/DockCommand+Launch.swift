@@ -26,9 +26,11 @@ extension DockCommand {
 
             do {
                 guard self.foreground else {
-                    throw ActionRefusalError(
+                    throw PreDispatchActionError(
                         message: "dock launch activates its target and requires explicit foreground consent.",
-                        hint: "Use --foreground to allow the Dock and target application to come forward."
+                        code: .VALIDATION_ERROR,
+                        hint: "Use --foreground to allow the Dock and target application to come forward.",
+                        reason: .foregroundConsentRequired
                     )
                 }
                 self.resolvedRuntime.beginInteractionMutation()

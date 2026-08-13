@@ -24,9 +24,11 @@ extension DockCommand {
 
             do {
                 guard self.foreground else {
-                    throw ActionRefusalError(
+                    throw PreDispatchActionError(
                         message: "dock right-click opens global Dock UI and requires explicit foreground consent.",
-                        hint: "Use --foreground to allow the Dock context menu to open."
+                        code: .VALIDATION_ERROR,
+                        hint: "Use --foreground to allow the Dock context menu to open.",
+                        reason: .foregroundConsentRequired
                     )
                 }
                 let dockItem = try await DockServiceBridge.findDockItem(dock: self.services.dock, name: self.app)

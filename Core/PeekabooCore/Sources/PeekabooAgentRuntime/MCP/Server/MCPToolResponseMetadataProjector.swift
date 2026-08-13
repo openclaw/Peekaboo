@@ -93,9 +93,11 @@ enum MCPToolResponseMetadataProjector {
 
     static func errorResponse(
         for failure: DesktopActionFailure,
-        invalidatedSnapshotID: String?) throws -> ToolResponse
+        invalidatedSnapshotID: String?,
+        additionalFields: [String: Value] = [:]) throws -> ToolResponse
     {
-        var fields = try self.fields(for: failure.outcome.projection)
+        var fields = additionalFields
+        try fields.merge(self.fields(for: failure.outcome.projection)) { _, canonical in canonical }
         if let invalidatedSnapshotID {
             fields["invalidated_snapshot"] = .string(invalidatedSnapshotID)
         }
@@ -103,6 +105,23 @@ enum MCPToolResponseMetadataProjector {
         return ToolResponse.error(
             self.message(for: failure),
             meta: .object(fields))
+    }
+
+    static func preDispatchRefusalResponse(
+        message: String,
+        reason: DesktopActionOutcome.RefusalReason,
+        additionalFields: [String: Value] = [:]) -> ToolResponse
+    {
+        let failure = DesktopActionFailure.refused(reason: reason, message: message)
+        do {
+            return try self.errorResponse(
+                for: failure,
+                invalidatedSnapshotID: nil,
+                additionalFields: additionalFields)
+        } catch {
+            let metadata: Value? = additionalFields.isEmpty ? nil : .object(additionalFields)
+            return ToolResponse.error(message, meta: metadata)
+        }
     }
 
     private enum ProjectionError: Error {

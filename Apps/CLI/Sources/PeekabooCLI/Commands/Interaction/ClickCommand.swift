@@ -77,7 +77,7 @@ struct ClickCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
             // one capture-owned exact-window receipt from a named snapshot.
             if let coordString = at {
                 guard let point = Self.parseCoordinates(coordString) else {
-                    throw ValidationError("Invalid coordinates format. Use: x,y")
+                    throw Self.invalidCoordinatesRefusal
                 }
                 let coordinateSnapshotId = self.snapshot?.trimmingCharacters(in: .whitespacesAndNewlines)
                 let resolvedCoordinates: InteractionCoordinateResolution
@@ -908,9 +908,17 @@ struct ClickCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
 }
 
 extension ClickCommand {
-    private static let backgroundCoordinateRefusal = ActionRefusalError(
+    private static let backgroundCoordinateRefusal = PreDispatchActionError(
         message: backgroundCoordinateReferenceMessage,
-        hint: "Use --foreground for explicit global input."
+        code: .VALIDATION_ERROR,
+        hint: "Use --foreground for explicit global input.",
+        reason: .invalidRequest
+    )
+    static let invalidCoordinatesRefusal = PreDispatchActionError(
+        message: "Invalid coordinates format. Use: x,y",
+        code: .VALIDATION_ERROR,
+        hint: nil,
+        reason: .invalidRequest
     )
     private static let backgroundCoordinateReferenceMessage =
         "Background coordinate clicks require --snapshot from a fresh see capture of the exact target window. " +

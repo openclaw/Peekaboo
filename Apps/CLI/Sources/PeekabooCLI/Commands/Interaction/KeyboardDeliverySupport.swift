@@ -103,9 +103,11 @@ enum KeyboardDeliverySupport {
             )
         }
 
-        throw ValidationError(
-            "Keyboard input requires --app, --pid, or --snapshot for background delivery. " +
-                "Use --foreground for intentional global input."
+        throw PreDispatchActionError(
+            message: "Keyboard input requires --app, --pid, or --snapshot for background delivery.",
+            code: .VALIDATION_ERROR,
+            hint: "Use --foreground for intentional global input.",
+            reason: .invalidRequest
         )
     }
 

@@ -53,9 +53,11 @@ struct MoveCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormatt
             throw ValidationError("Specify exactly one target: --at or --on")
         }
         guard self.focusOptions.foreground else {
-            throw ActionRefusalError(
+            throw PreDispatchActionError(
                 message: "move changes the physical cursor and requires explicit consent.",
-                hint: "Use --foreground to provide explicit consent."
+                code: .VALIDATION_ERROR,
+                hint: "Use --foreground to provide explicit consent.",
+                reason: .foregroundConsentRequired
             )
         }
 

@@ -9,14 +9,16 @@ private enum MenuBarClickPreflight {
         message: "Menu bar clicks require --foreground because status items open global UI.",
         code: .VALIDATION_ERROR,
         hint: "Re-run with --foreground only when interrupting the user's menu bar is acceptable. " +
-            "Use 'peekaboo menubar list' for read-only discovery."
+            "Use 'peekaboo menubar list' for read-only discovery.",
+        reason: .foregroundConsentRequired
     )
 
     static func itemNotFound(_ item: String, hint: String) -> PreDispatchActionError {
         PreDispatchActionError(
             message: "Menu bar item not found: \(item)",
             code: .MENU_ITEM_NOT_FOUND,
-            hint: hint
+            hint: hint,
+            reason: .targetUnavailable
         )
     }
 }
@@ -111,7 +113,8 @@ struct MenuBarActionCommand: ErrorHandlingCommand, OutputFormattable, InjectedRu
                 throw PreDispatchActionError(
                     message: "Provide a menu bar item name or use --index.",
                     code: .VALIDATION_ERROR,
-                    hint: "Run 'peekaboo menubar list' to discover available status items."
+                    hint: "Run 'peekaboo menubar list' to discover available status items.",
+                    reason: .invalidRequest
                 )
             }
 
@@ -166,7 +169,8 @@ struct MenuBarActionCommand: ErrorHandlingCommand, OutputFormattable, InjectedRu
                 throw PreDispatchActionError(
                     message: "Provide a menu bar item name or use --index.",
                     code: .VALIDATION_ERROR,
-                    hint: "Run 'peekaboo menubar list' to discover available status items."
+                    hint: "Run 'peekaboo menubar list' to discover available status items.",
+                    reason: .invalidRequest
                 )
             }
             requestedName = name

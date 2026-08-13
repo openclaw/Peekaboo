@@ -158,9 +158,11 @@ struct ScrollCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputForma
     private func validateDeliveryMode() throws {
         guard self.focusOptions.foreground else {
             if self.on == nil {
-                throw ActionRefusalError(
+                throw PreDispatchActionError(
                     message: "Background scroll requires --on with an Accessibility-scrollable element.",
-                    hint: "Add --foreground to scroll at the physical pointer."
+                    code: .VALIDATION_ERROR,
+                    hint: "Add --foreground to scroll at the physical pointer.",
+                    reason: .invalidRequest
                 )
             }
             if self.smooth || self.delay.milliseconds > 0 {

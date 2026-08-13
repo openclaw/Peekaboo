@@ -11,7 +11,8 @@ RuntimeOptionsConfigurable {
     private static let foregroundConsentRequired = PreDispatchActionError(
         message: RawPressPolicy.foregroundConsentRequiredMessage,
         code: .INTERACTION_FAILED,
-        hint: RawPressPolicy.foregroundConsentRequiredHint
+        hint: RawPressPolicy.foregroundConsentRequiredHint,
+        reason: .foregroundConsentRequired
     )
 
     @Argument(

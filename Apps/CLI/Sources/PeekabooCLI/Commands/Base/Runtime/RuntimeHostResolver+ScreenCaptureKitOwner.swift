@@ -227,7 +227,8 @@ extension RuntimeHostResolver {
         return PreDispatchActionError(
             message: "Peekaboo could not establish safe ScreenCaptureKit process ownership. No capture was dispatched.",
             code: .CAPTURE_FAILED,
-            hint: error.localizedDescription
+            hint: error.localizedDescription,
+            reason: .runtimeIncompatible
         )
     }
 
@@ -247,7 +248,8 @@ extension RuntimeHostResolver {
                 "ScreenCaptureKit ownership. No capture was dispatched.",
             code: .CAPTURE_FAILED,
             hint: "Update and relaunch Peekaboo, or verify and stop that exact host before retrying. " +
-                "Peekaboo will not start a second ScreenCaptureKit owner while it remains live."
+                "Peekaboo will not start a second ScreenCaptureKit owner while it remains live.",
+            reason: .runtimeIncompatible
         )
     }
 
@@ -351,7 +353,12 @@ extension RuntimeHostResolver {
             "Use a Bridge socket served by exactly \(ownerText); otherwise verify and stop that exact owner, " +
                 "or explicitly choose --capture-engine classic."
         }
-        return PreDispatchActionError(message: message, code: .CAPTURE_FAILED, hint: hint)
+        return PreDispatchActionError(
+            message: message,
+            code: .CAPTURE_FAILED,
+            hint: hint,
+            reason: .runtimeIncompatible
+        )
     }
 
     static func ownerRefusal(
@@ -364,7 +371,8 @@ extension RuntimeHostResolver {
                 "ScreenCaptureKit owner (\(ownerText)). No capture was dispatched.",
             code: .CAPTURE_FAILED,
             hint: "Change or remove --bridge-socket to select the exact owner host; otherwise verify and stop " +
-                "\(ownerText), or explicitly choose --capture-engine classic."
+                "\(ownerText), or explicitly choose --capture-engine classic.",
+            reason: .runtimeIncompatible
         )
     }
 
@@ -378,7 +386,8 @@ extension RuntimeHostResolver {
                 "runtime at \(requiredSocket). No capture was dispatched.",
             code: .CAPTURE_FAILED,
             hint: "Stop or upgrade the exact owner before retrying. Peekaboo will not violate process ownership " +
-                "or route stateful snapshot work to a different build."
+                "or route stateful snapshot work to a different build.",
+            reason: .runtimeIncompatible
         )
     }
 

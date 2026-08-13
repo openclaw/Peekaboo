@@ -1,4 +1,5 @@
 import MCP
+import PeekabooFoundation
 import TachikomaMCP
 import Testing
 @testable import PeekabooAgentRuntime
@@ -6,7 +7,7 @@ import Testing
 @MainActor
 struct MCPToolArgumentValidationTests {
     @Test
-    func `unsafe numeric arguments are refused before tool dispatch`() async throws {
+    func `generic numeric validation probes remain ordinary errors`() async throws {
         let context = await MCPToolTestHelpers.makeContext()
         let counter = MCPNumericDispatchCounter()
         let typeTool = TypeTool(context: context)
@@ -43,12 +44,7 @@ struct MCPToolArgumentValidationTests {
                 arguments: ToolArguments(value: .object([key: value])))
 
             #expect(response.isError, "Expected \(sourceTool.name).\(key) to be rejected")
-            guard case let .object(meta) = response.meta else {
-                Issue.record("Expected refusal metadata for \(sourceTool.name).\(key)")
-                continue
-            }
-            #expect(meta["mutation_dispatched"] == .bool(false))
-            #expect(meta["retry_safe"] == .bool(true))
+            #expect(response.meta == nil, "Generic probe gained desktop-action metadata for \(sourceTool.name).\(key)")
         }
 
         #expect(await counter.value == 0)
@@ -121,11 +117,50 @@ struct MCPToolArgumentValidationTests {
                 tool: tool,
                 arguments: ToolArguments(value: .object(values)))
             #expect(response.isError)
+            let meta = try #require(response.meta?.objectValue)
+            #expect(meta["state"] == .string(DesktopActionOutcome.State.refused.rawValue))
+            #expect(meta["effect"] == .string(DesktopActionOutcome.Effect.refused.rawValue))
+            #expect(meta["refusal_reason"] == .string(DesktopActionOutcome.RefusalReason.invalidRequest.rawValue))
+            #expect(meta["dispatch_state"] == .string("none"))
+            #expect(meta["mutation_dispatched"] == .bool(false))
+            #expect(meta["retry_safe"] == .bool(true))
+            #expect(meta["requires_fresh_observation"] == .bool(false))
+            #expect(meta["error_code"] == .string("VALIDATION_ERROR"))
         }
 
         #expect(automation.lastTypeActions == nil)
         #expect(automation.targetedTypeActionsCalls.isEmpty)
         #expect(automation.scrollRequests.isEmpty)
+    }
+
+    @Test
+    func `invalid read-only numerics omit desktop-action metadata`() async throws {
+        let context = await MCPToolTestHelpers.makeContext()
+        let counter = MCPNumericDispatchCounter()
+        let cases: [(name: String, schema: Value, arguments: [String: Value])] = [
+            (
+                "sleep",
+                SleepTool().inputSchema,
+                ["duration": .double(.infinity)]),
+            (
+                "see",
+                SeeTool(context: context).inputSchema,
+                ["max_depth": .double(1.5)]),
+        ]
+
+        for testCase in cases {
+            let response = try await context.execute(
+                tool: MCPNumericSchemaProbeTool(
+                    name: testCase.name,
+                    inputSchema: testCase.schema,
+                    counter: counter),
+                arguments: ToolArguments(value: .object(testCase.arguments)))
+
+            #expect(response.isError)
+            #expect(response.meta == nil)
+        }
+
+        #expect(await counter.value == 0)
     }
 }
 

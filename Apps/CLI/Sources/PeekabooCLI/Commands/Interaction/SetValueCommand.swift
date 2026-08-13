@@ -2,6 +2,7 @@ import Commander
 import Foundation
 import PeekabooAutomationKit
 import PeekabooCore
+import PeekabooFoundation
 
 @available(macOS 14.0, *)
 @MainActor
@@ -185,8 +186,10 @@ enum ElementActionCommandExecutor {
                     refreshRuntime.beginInteractionMutation(at: startedAt)
                 }
             )
-            try await observation.validateIfExplicit(using: services.snapshots)
-            let actionSnapshotId = try observation.requireSnapshot()
+            let actionSnapshotId = try await self.requireActionSnapshot(
+                observation,
+                snapshots: services.snapshots
+            )
             let startTime = Date()
             runtime.beginInteractionMutation()
             if Self.shouldFocus(target: target, focusOptions: context.focusOptions) {
@@ -232,5 +235,30 @@ enum ElementActionCommandExecutor {
 
     static func shouldAllowWebFocusFallback(focusOptions: FocusCommandOptions) -> Bool {
         focusOptions.foreground && focusOptions.autoFocus
+    }
+
+    private static func requireActionSnapshot(
+        _ observation: InteractionObservationContext,
+        snapshots: any SnapshotManagerProtocol
+    ) async throws -> String {
+        do {
+            try await observation.validateIfExplicit(using: snapshots)
+            return try observation.requireSnapshot()
+        } catch let error as PeekabooError {
+            let code: ErrorCode = switch error {
+            case .snapshotNotFound, .snapshotNotAvailable:
+                .SNAPSHOT_NOT_FOUND
+            case .snapshotStale:
+                .SNAPSHOT_STALE
+            default:
+                throw error
+            }
+            throw PreDispatchActionError(
+                message: error.localizedDescription,
+                code: code,
+                hint: nil,
+                reason: .targetUnavailable
+            )
+        }
     }
 }

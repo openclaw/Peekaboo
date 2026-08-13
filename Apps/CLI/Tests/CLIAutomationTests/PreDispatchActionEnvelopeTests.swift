@@ -1,4 +1,5 @@
 import Foundation
+import PeekabooFoundation
 import Testing
 @testable import PeekabooCLI
 
@@ -7,6 +8,7 @@ struct PreDispatchActionEnvelopeTests {
     private struct FailureEnvelope: Decodable {
         let success: Bool
         let effect: ActionEffect?
+        let outcome: DesktopActionOutcome.Projection?
         let data: Empty?
         let error: ErrorInfo?
     }
@@ -74,8 +76,65 @@ struct PreDispatchActionEnvelopeTests {
             #expect(envelope.effect == .refused, "Action was not refused for \(testCase.name)")
             #expect(envelope.data == nil)
             #expect(envelope.error?.code == testCase.errorCode.rawValue)
+            Self.expectCanonicalRefusal(envelope, reason: .invalidRequest, name: testCase.name)
             #expect(object["effect"] as? String == ActionEffect.refused.rawValue)
             #expect(object["data"] is NSNull)
+            #expect(result.stderr.isEmpty)
+        }
+    }
+
+    @Test
+    func `source-blind refusal fixtures carry canonical zero-dispatch outcomes`() async throws {
+        let cases: [(name: String, arguments: [String], code: ErrorCode, reason: DesktopActionOutcome.RefusalReason)] =
+            [
+                (
+                    "background coordinate click without receipt",
+                    ["click", "--at", "10,10", "--json"],
+                    .VALIDATION_ERROR,
+                    .invalidRequest
+                ),
+                (
+                    "snapshotless action",
+                    ["action", "AXPress", "--on", "B1", "--json"],
+                    .SNAPSHOT_NOT_FOUND,
+                    .targetUnavailable
+                ),
+                (
+                    "snapshotless set-value",
+                    ["set-value", "hello", "--on", "T1", "--json"],
+                    .SNAPSHOT_NOT_FOUND,
+                    .targetUnavailable
+                ),
+                (
+                    "targetless background scroll",
+                    ["scroll", "--direction", "down", "--json"],
+                    .VALIDATION_ERROR,
+                    .invalidRequest
+                ),
+                (
+                    "targetless background type",
+                    ["type", "hello", "--json"],
+                    .VALIDATION_ERROR,
+                    .invalidRequest
+                ),
+                (
+                    "malformed coordinate click",
+                    ["click", "--at", ",", "--json"],
+                    .VALIDATION_ERROR,
+                    .invalidRequest
+                ),
+            ]
+
+        for testCase in cases {
+            let result = try await InProcessCommandRunner.runShared(
+                testCase.arguments,
+                allowedExitCodes: [1]
+            )
+            let envelope = try JSONDecoder().decode(FailureEnvelope.self, from: Data(result.stdout.utf8))
+
+            #expect(envelope.success == false, "Expected failure for \(testCase.name)")
+            #expect(envelope.error?.code == testCase.code.rawValue)
+            Self.expectCanonicalRefusal(envelope, reason: testCase.reason, name: testCase.name)
             #expect(result.stderr.isEmpty)
         }
     }
@@ -135,8 +194,11 @@ struct PreDispatchActionEnvelopeTests {
 
             #expect(envelope.success == false, "Expected failure for \(testCase.name)")
             #expect(envelope.effect == nil, "Read-only command gained an effect for \(testCase.name)")
+            #expect(envelope.outcome == nil, "Read-only command gained an outcome for \(testCase.name)")
             #expect(envelope.data == nil)
             #expect(envelope.error?.code == testCase.errorCode.rawValue)
+            #expect(envelope.error?.retry_safe == nil)
+            #expect(envelope.error?.mutation_dispatched == nil)
             #expect(object["effect"] == nil, "Read-only command emitted an effect key for \(testCase.name)")
             #expect(object["data"] is NSNull)
             #expect(result.stderr.isEmpty)
@@ -162,5 +224,23 @@ struct PreDispatchActionEnvelopeTests {
         #expect(bindingResult.stderr.hasPrefix("Error: "))
         #expect(!bindingResult.stderr.contains("\"effect\""))
         #expect(!bindingResult.stderr.contains("{"))
+    }
+
+    private static func expectCanonicalRefusal(
+        _ envelope: FailureEnvelope,
+        reason: DesktopActionOutcome.RefusalReason,
+        name: String
+    ) {
+        #expect(envelope.effect == .refused, "Action was not refused for \(name)")
+        #expect(envelope.outcome?.state == .refused, "Missing canonical refusal for \(name)")
+        #expect(envelope.outcome?.refusalReason == reason, "Wrong refusal reason for \(name)")
+        #expect(
+            envelope.outcome?.dispatchState == DesktopActionOutcome.DispatchState.none,
+            "Dispatch was claimed for \(name)"
+        )
+        #expect(envelope.outcome?.retrySafe == true, "Retry was not safe for \(name)")
+        #expect(envelope.outcome?.requiresFreshObservation == false, "Fresh observation was requested for \(name)")
+        #expect(envelope.error?.retry_safe == true, "Legacy retry field disagreed for \(name)")
+        #expect(envelope.error?.mutation_dispatched == false, "Legacy dispatch field disagreed for \(name)")
     }
 }

@@ -195,9 +195,11 @@ struct DragCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormatt
             throw ValidationError("Specify only one of --to or --to-app")
         }
         guard self.focusOptions.foreground else {
-            throw ActionRefusalError(
+            throw PreDispatchActionError(
                 message: "drag changes the physical cursor and requires explicit consent.",
-                hint: "Use --foreground to provide explicit consent."
+                code: .VALIDATION_ERROR,
+                hint: "Use --foreground to provide explicit consent.",
+                reason: .foregroundConsentRequired
             )
         }
         guard self.resolvedButton != nil else {

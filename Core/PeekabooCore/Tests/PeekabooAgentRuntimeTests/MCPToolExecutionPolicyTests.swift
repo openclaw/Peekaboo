@@ -1,5 +1,6 @@
 import MCP
 import PeekabooAutomationKit
+import PeekabooFoundation
 import Tachikoma
 import TachikomaMCP
 import Testing
@@ -94,9 +95,17 @@ struct MCPToolExecutionPolicyTests {
                 continue
             }
             #expect(meta["effect"] == .string("refused"))
+            #expect(meta["state"] == .string("refused"))
+            #expect(meta["dispatch_state"] == .string("none"))
             #expect(meta["mutation_dispatched"] == .bool(false))
             #expect(meta["retry_safe"] == .bool(true))
+            #expect(meta["requires_fresh_observation"] == .bool(false))
             #expect(meta["execution_policy"] == .string("background_only"))
+            let expectedReason: DesktopActionOutcome.RefusalReason =
+                ["agent", "future_desktop_tool"].contains(item.tool)
+                ? .operationUnsupported
+                : .foregroundConsentRequired
+            #expect(meta["refusal_reason"] == .string(expectedReason.rawValue))
         }
     }
 
@@ -186,6 +195,9 @@ struct MCPToolExecutionPolicyTests {
             #expect(meta["mutation_dispatched"] == .bool(false))
             #expect(meta["retry_safe"] == .bool(true))
             #expect(meta["execution_policy"] == .string("foreground_allowed"))
+            #expect(meta["state"] == .string("refused"))
+            #expect(meta["refusal_reason"] == .string("operation_unsupported"))
+            #expect(meta["escalation"] == .string("correct_request"))
         }
 
         #expect(MCPToolExecutionPolicy.foregroundAllowed.rejection(
@@ -226,6 +238,24 @@ struct MCPToolExecutionPolicyTests {
                 applicationBundleIdentifier: bundleIdentifier,
                 applicationName: nil)?.isError == true)
         }
+    }
+
+    @Test
+    func `policy target refusals preserve their canonical recovery reason`() throws {
+        let unresolved = try #require(MCPToolExecutionPolicy.backgroundOnly.unresolvedTargetRejection(
+            toolName: "click",
+            detail: "process generation changed"))
+        let unresolvedMeta = try #require(unresolved.meta?.objectValue)
+        #expect(unresolvedMeta["refusal_reason"] == .string("target_unavailable"))
+        #expect(unresolvedMeta["escalation"] == .string("refresh_target"))
+
+        let systemSurface = try #require(MCPToolExecutionPolicy.backgroundOnly.systemSurfaceRejection(
+            toolName: "action",
+            applicationBundleIdentifier: "com.apple.dock",
+            applicationName: nil))
+        let systemMeta = try #require(systemSurface.meta?.objectValue)
+        #expect(systemMeta["refusal_reason"] == .string("foreground_consent_required"))
+        #expect(systemMeta["escalation"] == .string("correct_request"))
     }
 
     @Test

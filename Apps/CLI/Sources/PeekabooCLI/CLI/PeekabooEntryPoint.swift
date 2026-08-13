@@ -67,7 +67,9 @@ private func printCommanderError(_ error: CommanderProgramError, jsonOutput: Boo
 
     let logger = Logger.shared
     logger.setJsonOutputMode(true)
-    outputError(message: message, code: .INVALID_ARGUMENT, logger: logger)
+    ResultEnvelopeContext.$isPreDispatchFailure.withValue(true) {
+        outputError(message: message, code: .INVALID_ARGUMENT, logger: logger)
+    }
 }
 
 private func printGenericError(_ error: any Error, jsonOutput: Bool) {
@@ -80,6 +82,7 @@ private func printGenericError(_ error: any Error, jsonOutput: Bool) {
         .UNKNOWN_ERROR
     }
     let code = envelopeError?.envelopeCode ?? fallbackCode
+    let actionFailure = ResultEnvelopeContext.isActionCommand ? envelopeError?.envelopeActionFailure : nil
 
     guard jsonOutput else {
         let hint = envelopeError?.envelopeHint.map { " Hint: \($0)" } ?? ""
@@ -89,13 +92,18 @@ private func printGenericError(_ error: any Error, jsonOutput: Bool) {
 
     let logger = Logger.shared
     logger.setJsonOutputMode(true)
-    outputError(
-        message: error.localizedDescription,
-        code: code,
-        hint: envelopeError?.envelopeHint,
-        effect: envelopeError?.envelopeEffect,
-        retrySafe: envelopeError?.envelopeRetrySafe,
-        mutationDispatched: envelopeError?.envelopeMutationDispatched,
-        logger: logger
-    )
+    let isGenericPreDispatchFailure = error is CommanderBindingError || error is CommanderUsageError ||
+        error is Commander.ValidationError
+    ResultEnvelopeContext.$isPreDispatchFailure.withValue(isGenericPreDispatchFailure) {
+        outputError(
+            message: error.localizedDescription,
+            code: code,
+            hint: envelopeError?.envelopeHint,
+            effect: envelopeError?.envelopeEffect,
+            retrySafe: envelopeError?.envelopeRetrySafe,
+            mutationDispatched: envelopeError?.envelopeMutationDispatched,
+            actionFailure: actionFailure,
+            logger: logger
+        )
+    }
 }
