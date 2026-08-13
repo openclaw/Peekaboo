@@ -13,6 +13,18 @@ struct CommanderBinderProgramResolutionTests {
             commanderErrorMessage(.duplicateSubcommand(command: "window manage", name: "move")) ==
                 "Duplicate subcommand 'move' for command 'window manage'"
         )
+        #expect(
+            commanderErrorMessage(.invalidDefaultSubcommand(command: "window", name: "inspect")) ==
+                "Default subcommand 'inspect' is not registered for command 'window'"
+        )
+        #expect(
+            commanderErrorMessage(.invalidCommandSignature(
+                command: "see",
+                error: .conflictingName(spelling: "--json", optionLabel: "json", flagLabel: "jsonOutput")
+            )) ==
+                "Invalid signature for command 'see': " +
+                "Conflicting spelling --json for option 'json' and flag 'jsonOutput'"
+        )
     }
 
     @Test
