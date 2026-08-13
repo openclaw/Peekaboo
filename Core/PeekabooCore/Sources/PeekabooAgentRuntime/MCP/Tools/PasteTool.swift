@@ -3,6 +3,7 @@ import Foundation
 import MCP
 import os.log
 import PeekabooAutomation
+import PeekabooFoundation
 import TachikomaMCP
 import UniformTypeIdentifiers
 
@@ -126,7 +127,9 @@ public struct PasteTool: MCPTool {
                     foreground: false,
                     expectedPIDIdentity: expectedPIDIdentity)
                 guard destination.targetPID != nil else {
-                    throw PasteToolError("Background text paste requires an app or pid target.")
+                    throw PasteToolError(
+                        "Background text paste requires an app or pid target.",
+                        refusalReason: .invalidRequest)
                 }
                 return try await self.performBackgroundTextPaste(
                     text: text,
@@ -157,7 +160,7 @@ public struct PasteTool: MCPTool {
             }
 
             guard case let .explicit(request, _) = payload else {
-                throw PasteToolError("Invalid paste payload.")
+                throw PasteToolError("Invalid paste payload.", refusalReason: .invalidRequest)
             }
             let outcome = try await ClipboardPasteTransactionGate.withExclusiveTransaction {
                 let destination = try await self.resolveDeliveryDestination(
@@ -228,7 +231,9 @@ public struct PasteTool: MCPTool {
                 content: [.text(text: message, annotations: nil, _meta: nil)],
                 meta: ToolEventSummary.merge(summary: summary, into: meta))
         } catch let error as MCPInteractionTargetError {
-            return ToolResponse.error(error.localizedDescription)
+            return MCPToolResponseMetadataProjector.preDispatchRefusalResponse(
+                message: error.localizedDescription,
+                reason: error.refusalReason)
         } catch let error as ClipboardPasteOutcomeError {
             self.logger.error("Paste outcome was \(error.kind.rawValue, privacy: .public)")
             return ToolResponse.error(
@@ -246,7 +251,9 @@ public struct PasteTool: MCPTool {
                     "requires_fresh_observation": .bool(true),
                 ]))
         } catch let error as PasteToolError {
-            return ToolResponse.error(error.message)
+            return MCPToolResponseMetadataProjector.preDispatchRefusalResponse(
+                message: error.message,
+                reason: error.refusalReason)
         } catch {
             self.logger.error("Paste failed: \(error.localizedDescription)")
             return ToolResponse.error("Paste failed: \(error.localizedDescription)")
@@ -293,7 +300,8 @@ public struct PasteTool: MCPTool {
                   automation.supportsExactWindowTargetedKeyboard
             else {
                 throw PasteToolError(
-                    "This automation host does not support atomic exact-window background paste delivery.")
+                    "This automation host does not support atomic exact-window background paste delivery.",
+                    refusalReason: .runtimeIncompatible)
             }
             exactWindowAutomation = automation
             targetedAutomation = nil
@@ -302,7 +310,9 @@ public struct PasteTool: MCPTool {
                   automation.supportsTargetedHotkeys,
                   automation.supportsProcessGenerationPinnedHotkeys
             else {
-                throw PasteToolError("This automation host does not support background paste delivery.")
+                throw PasteToolError(
+                    "This automation host does not support background paste delivery.",
+                    refusalReason: .runtimeIncompatible)
             }
             exactWindowAutomation = nil
             targetedAutomation = automation
@@ -438,7 +448,8 @@ public struct PasteTool: MCPTool {
                   automation.supportsExactWindowTargetedKeyboard
             else {
                 throw PasteToolError(
-                    "This automation host does not support atomic exact-window background paste delivery.")
+                    "This automation host does not support atomic exact-window background paste delivery.",
+                    refusalReason: .runtimeIncompatible)
             }
             exactWindowAutomation = automation
             targetedAutomation = nil
@@ -447,7 +458,9 @@ public struct PasteTool: MCPTool {
                   automation.supportsTargetedHotkeys,
                   automation.supportsProcessGenerationPinnedHotkeys
             else {
-                throw PasteToolError("This automation host does not support background paste delivery.")
+                throw PasteToolError(
+                    "This automation host does not support background paste delivery.",
+                    refusalReason: .runtimeIncompatible)
             }
             exactWindowAutomation = nil
             targetedAutomation = automation
@@ -517,7 +530,8 @@ public struct PasteTool: MCPTool {
                   automation.supportsExactWindowTargetedKeyboard
             else {
                 throw PasteToolError(
-                    "This automation host does not support atomic exact-window background text delivery.")
+                    "This automation host does not support atomic exact-window background text delivery.",
+                    refusalReason: .runtimeIncompatible)
             }
             try Task.checkCancellation()
             do {
@@ -539,7 +553,9 @@ public struct PasteTool: MCPTool {
                   automation.supportsProcessGenerationPinnedTypeActions,
                   let processIdentity = destination.processIdentity
             else {
-                throw PasteToolError("This automation host does not support background text delivery.")
+                throw PasteToolError(
+                    "This automation host does not support background text delivery.",
+                    refusalReason: .runtimeIncompatible)
             }
             try Task.checkCancellation()
             do {
@@ -646,26 +662,6 @@ public struct PasteTool: MCPTool {
             meta: ToolEventSummary.merge(summary: summary, into: meta))
     }
 
-    private static func readResult(for request: ClipboardWriteRequest) throws -> ClipboardReadResult {
-        guard let primary = request.representations.first else {
-            throw ClipboardServiceError.writeFailed("No representations provided.")
-        }
-        let textPreview: String? = if let text = request.alsoText {
-            String(text.prefix(80))
-        } else if primary.utiIdentifier == UTType.plainText.identifier ||
-            primary.utiIdentifier == UTType.utf8PlainText.identifier,
-            let string = String(data: primary.data, encoding: .utf8)
-        {
-            String(string.prefix(80))
-        } else {
-            nil
-        }
-        return ClipboardReadResult(
-            utiIdentifier: primary.utiIdentifier,
-            data: primary.data,
-            textPreview: textPreview)
-    }
-
     @MainActor
     private func resolveDeliveryDestination(
         target: MCPInteractionTarget,
@@ -707,7 +703,9 @@ public struct PasteTool: MCPTool {
     {
         try target.validate()
         guard let windowTarget = try target.toWindowTarget() else {
-            throw PasteToolError("Exact-window background paste requires a window selector.")
+            throw PasteToolError(
+                "Exact-window background paste requires a window selector.",
+                refusalReason: .invalidRequest)
         }
         guard let selectedWindow = try await self.context.windows.listWindows(target: windowTarget).first else {
             throw PasteToolError("Could not resolve the requested exact window.")
@@ -859,6 +857,26 @@ public struct PasteTool: MCPTool {
 }
 
 extension PasteTool {
+    fileprivate static func readResult(for request: ClipboardWriteRequest) throws -> ClipboardReadResult {
+        guard let primary = request.representations.first else {
+            throw ClipboardServiceError.writeFailed("No representations provided.")
+        }
+        let textPreview: String? = if let text = request.alsoText {
+            String(text.prefix(80))
+        } else if primary.utiIdentifier == UTType.plainText.identifier ||
+            primary.utiIdentifier == UTType.utf8PlainText.identifier,
+            let string = String(data: primary.data, encoding: .utf8)
+        {
+            String(string.prefix(80))
+        } else {
+            nil
+        }
+        return ClipboardReadResult(
+            utiIdentifier: primary.utiIdentifier,
+            data: primary.data,
+            textPreview: textPreview)
+    }
+
     fileprivate static func backgroundPlainText(from request: ClipboardWriteRequest) -> String? {
         guard let primary = request.representations.first,
               primary.utiIdentifier == UTType.plainText.identifier ||
@@ -933,7 +951,13 @@ private struct CurrentClipboardPasteOutcome: Sendable {
 
 private struct PasteToolError: Error {
     let message: String
-    init(_ message: String) {
+    let refusalReason: DesktopActionOutcome.RefusalReason
+
+    init(
+        _ message: String,
+        refusalReason: DesktopActionOutcome.RefusalReason = .targetUnavailable)
+    {
         self.message = message
+        self.refusalReason = refusalReason
     }
 }

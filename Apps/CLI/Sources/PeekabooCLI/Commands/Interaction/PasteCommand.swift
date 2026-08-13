@@ -86,7 +86,7 @@ struct PasteCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
                 request: request
             ) {
                 let expectedPIDIdentity = try self.explicitPIDIdentity()
-                if let targetIdentity = try await self.verifiedBackgroundProcessIdentity(
+                if let targetIdentity = try await self.preDispatchBackgroundProcessIdentity(
                     expectedPIDIdentity: expectedPIDIdentity
                 ) {
                     try await self.pasteTextInBackground(text, request: request, targetIdentity: targetIdentity)
@@ -97,7 +97,7 @@ struct PasteCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
             let expectedPIDIdentity = try self.explicitPIDIdentity()
             let outcome = try await self.withInteractionMutationInvalidation {
                 try await ClipboardPasteTransactionGate.withExclusiveTransaction {
-                    let targetIdentity = try await self.verifiedBackgroundProcessIdentity(
+                    let targetIdentity = try await self.preDispatchBackgroundProcessIdentity(
                         expectedPIDIdentity: expectedPIDIdentity
                     )
                     if targetIdentity == nil {
@@ -397,7 +397,7 @@ struct PasteCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
     private func pasteCurrentClipboard(expectedPIDIdentity: UInt64?) async throws {
         let outcome = try await self.withInteractionMutationInvalidation {
             try await ClipboardPasteTransactionGate.withExclusiveTransaction {
-                let targetIdentity = try await self.verifiedBackgroundProcessIdentity(
+                let targetIdentity = try await self.preDispatchBackgroundProcessIdentity(
                     expectedPIDIdentity: expectedPIDIdentity
                 )
                 if targetIdentity == nil {
@@ -564,7 +564,10 @@ struct PasteCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
     private func explicitPIDIdentity() throws -> UInt64? {
         guard let pid = self.target.pid else { return nil }
         guard let identity = ClipboardPasteTransactionGate.processStartIdentity(pid_t(pid)) else {
-            throw ValidationError("Could not verify process identity for --pid \(pid).")
+            throw self.preDispatchActionError(
+                for: ValidationError("Could not verify process identity for --pid \(pid)."),
+                reason: .targetUnavailable
+            )
         }
         return identity
     }
@@ -601,6 +604,19 @@ struct PasteCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
             }
         }
         return processIdentity
+    }
+
+    private func preDispatchBackgroundProcessIdentity(
+        expectedPIDIdentity: UInt64? = nil
+    ) async throws -> ApplicationProcessIdentity? {
+        do {
+            return try await self.verifiedBackgroundProcessIdentity(expectedPIDIdentity: expectedPIDIdentity)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            try Task.checkCancellation()
+            throw self.preDispatchActionError(for: error, reason: .targetUnavailable)
+        }
     }
 
     private func validateExplicitPIDIdentity(_ expectedPIDIdentity: UInt64?) throws {

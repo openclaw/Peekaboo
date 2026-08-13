@@ -1,4 +1,5 @@
 import PeekabooAutomationKitTestSupport
+import PeekabooFoundation
 import Testing
 @testable import PeekabooCLI
 @testable import PeekabooCore
@@ -48,6 +49,8 @@ struct PasteCommandInventoryEligibilityTests {
 
             #expect(result.exitStatus != 0)
             #expect(result.stdout.contains("cannot receive background input"))
+            let envelope = try ActionEnvelopeTestProbe.decode(result.stdout)
+            ActionEnvelopeTestAssertions.expectCanonicalRefusal(reason: .targetUnavailable, in: envelope)
             #expect(automation.targetedTypeActionsCalls.isEmpty)
             #expect(automation.targetedHotkeyCalls.isEmpty)
             #expect(automation.hotkeyCalls.isEmpty)

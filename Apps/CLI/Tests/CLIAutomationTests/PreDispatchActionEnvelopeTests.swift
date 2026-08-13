@@ -117,6 +117,12 @@ struct PreDispatchActionEnvelopeTests {
                     .invalidRequest
                 ),
                 (
+                    "missing explicit type snapshot",
+                    ["type", "hello", "--snapshot", "synthetic-missing-snapshot", "--json", "--no-remote"],
+                    .SNAPSHOT_NOT_FOUND,
+                    .targetUnavailable
+                ),
+                (
                     "malformed coordinate click",
                     ["click", "--at", ",", "--json"],
                     .VALIDATION_ERROR,

@@ -143,6 +143,9 @@ struct PasteToolTransactionGateTests {
 
             #expect(response.isError)
             #expect(self.responseText(response).contains("cannot receive background input"))
+            try MCPToolTestHelpers.expectCanonicalOutcomeMetadata(
+                .refused(reason: .targetUnavailable),
+                in: response)
             #expect(await MainActor.run { automation.targetedTypeActionsCalls.isEmpty })
             #expect(await MainActor.run { automation.targetedHotkeyCalls.isEmpty })
             #expect(await MainActor.run { clipboard.getCallCount } == 0)

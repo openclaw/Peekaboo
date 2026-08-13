@@ -140,7 +140,7 @@ enum MCPToolResponseMetadataProjector {
         reason: DesktopActionOutcome.RefusalReason,
         additionalFields: [String: Value] = [:]) -> ToolResponse
     {
-        let failure = DesktopActionFailure.refused(reason: reason, message: message)
+        let failure = DesktopActionFailure.preDispatchRefusal(reason: reason, message: message)
         do {
             return try self.errorResponse(
                 for: failure,

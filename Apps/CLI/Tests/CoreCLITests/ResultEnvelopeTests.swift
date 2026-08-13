@@ -235,6 +235,49 @@ struct ResultEnvelopeTests {
         #expect(envelope.error?.mutation_dispatched == false)
     }
 
+    @Test func `definitive legacy no-dispatch receipt derives one canonical refusal`() {
+        let envelope = ResultEnvelopeContext.$isActionCommand.withValue(true) {
+            makeErrorEnvelope(
+                message: "The exact target has no provable focused element.",
+                code: .INVALID_INPUT,
+                effect: .refused,
+                retrySafe: true,
+                mutationDispatched: false
+            )
+        }
+
+        #expect(envelope.effect == .refused)
+        #expect(envelope.outcome?.state == .refused)
+        #expect(envelope.outcome?.refusalReason == .invalidRequest)
+        #expect(envelope.outcome?.dispatchState == DesktopActionOutcome.DispatchState.none)
+        #expect(envelope.outcome?.retrySafety == .safe)
+        #expect(envelope.outcome?.requiresFreshObservation == false)
+        #expect(envelope.error?.retry_safe == true)
+        #expect(envelope.error?.mutation_dispatched == false)
+    }
+
+    @Test func `incomplete legacy receipts never invent canonical action evidence`() {
+        let receipts: [(retrySafe: Bool?, mutationDispatched: Bool?)] = [
+            (nil, nil),
+            (true, nil),
+            (nil, false),
+            (false, false),
+            (true, true),
+        ]
+        for receipt in receipts {
+            let envelope = ResultEnvelopeContext.$isActionCommand.withValue(true) {
+                makeErrorEnvelope(
+                    message: "Fixture failure.",
+                    code: .INVALID_INPUT,
+                    effect: .refused,
+                    retrySafe: receipt.retrySafe,
+                    mutationDispatched: receipt.mutationDispatched
+                )
+            }
+            #expect(envelope.outcome == nil)
+        }
+    }
+
     @Test func `stale action target derives a canonical target refusal`() {
         let envelope = ResultEnvelopeContext.$isActionCommand.withValue(true) {
             ResultEnvelopeContext.$isPreDispatchFailure.withValue(true) {

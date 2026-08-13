@@ -134,4 +134,24 @@ extension DesktopActionOutcome {
     public var projection: Projection {
         Projection(outcome: self)
     }
+
+    /// Canonical flat projection for a refusal before any mutation dispatch.
+    public static func preDispatchRefusalProjection(
+        route: Route = .local,
+        reason: RefusalReason) -> Projection
+    {
+        refused(route: route, reason: reason).projection
+    }
+
+    /// Upgrades paired legacy compatibility fields only when they prove zero dispatch.
+    /// Either field on its own is insufficient evidence for the canonical state machine.
+    public static func preDispatchRefusalProjection(
+        route: Route = .local,
+        reason: RefusalReason,
+        legacyRetrySafe: Bool?,
+        legacyMutationDispatched: Bool?) -> Projection?
+    {
+        guard legacyRetrySafe == true, legacyMutationDispatched == false else { return nil }
+        return self.preDispatchRefusalProjection(route: route, reason: reason)
+    }
 }

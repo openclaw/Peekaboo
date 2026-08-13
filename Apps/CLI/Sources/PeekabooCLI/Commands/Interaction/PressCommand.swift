@@ -97,22 +97,22 @@ RuntimeOptionsConfigurable {
 
             let parsedChords = try self.parsedChords()
             var completedPresses = 0
-            var actionOutcomes: [DesktopActionOutcome] = []
+            var sequence = DesktopActionSequenceAccumulator()
 
             for repetition in 0..<self.count {
                 for (index, chord) in parsedChords.indexed() {
                     do {
                         try Task.checkCancellation()
                     } catch {
-                        guard completedPresses > 0 else { throw error }
-                        throw ActionSequenceFailureComposer.indeterminate(
-                            knownDispatchedUnitCount: completedPresses,
-                            context: self.indeterminateSequenceContext(
-                                completedPresses: completedPresses,
-                                actionOutcomes: actionOutcomes,
-                                causeDescription: error.localizedDescription
-                            )
+                        guard let failure = sequence.cancellationFailure(
+                            fallbackRoute: self.sequenceRoute,
+                            message: Self.indeterminateSequenceMessage(completedPresses: completedPresses),
+                            hint: Self.sequenceObservationHint,
+                            causeDescription: error.localizedDescription
                         )
+                        else { throw error }
+                        await self.invalidateAfterFailedMutation(failure)
+                        throw failure
                     }
                     let actionResult: UIAutomationActionResult<Void>
                     do {
@@ -121,41 +121,61 @@ RuntimeOptionsConfigurable {
                             keys: chord.serviceKeys,
                             holdDuration: self.hold.roundedMilliseconds
                         )
+                        try DesktopActionFailure.requireConfirmedIfReported(
+                            actionResult.outcome,
+                            operation: "Raw chord \(chord.displayValue)"
+                        )
                     } catch let failure as DesktopActionFailure {
-                        guard completedPresses > 0 else { throw failure }
-                        throw ActionSequenceFailureComposer.combining(
-                            completedUnitCount: completedPresses,
-                            leafFailure: failure,
-                            delivery: Self.foregroundHotkeyDelivery,
+                        let composed = sequence.failure(
+                            combining: failure,
                             message: Self.sequenceFailureMessage(
                                 completedPresses: completedPresses,
                                 detail: failure.message
                             ),
-                            indeterminateHint: Self.sequenceObservationHint
+                            hint: Self.sequenceObservationHint
                         )
+                        await self.invalidateAfterFailedMutation(composed)
+                        throw composed
                     } catch let error as InputDeliveryIndeterminateError {
-                        guard completedPresses > 0 else { throw error }
-                        throw ActionSequenceFailureComposer.indeterminate(
-                            knownDispatchedUnitCount: error.emittedUnitCount.map { completedPresses + $0 },
-                            context: self.indeterminateSequenceContext(
-                                completedPresses: completedPresses,
-                                actionOutcomes: actionOutcomes,
-                                causeDescription: error.causeDescription ?? error.localizedDescription
-                            )
+                        let failure = error.desktopActionFailure(
+                            delivery: Self.foregroundHotkeyDelivery,
+                            route: self.sequenceRoute
                         )
+                        let composed = sequence.failure(
+                            combining: failure,
+                            message: Self.indeterminateSequenceMessage(completedPresses: completedPresses),
+                            hint: Self.sequenceObservationHint,
+                            causeDescription: error.causeDescription ?? error.localizedDescription
+                        )
+                        await self.invalidateAfterFailedMutation(composed)
+                        throw composed
                     } catch {
-                        guard completedPresses > 0 else { throw error }
-                        throw ActionSequenceFailureComposer.indeterminate(
-                            knownDispatchedUnitCount: nil,
-                            context: self.indeterminateSequenceContext(
-                                completedPresses: completedPresses,
-                                actionOutcomes: actionOutcomes,
-                                causeDescription: error.localizedDescription
-                            )
+                        guard sequence.mutationDisposition.mutationDispatched else { throw error }
+                        let leaf = DesktopActionFailure.preDispatchRefusal(
+                            route: self.sequenceRoute,
+                            reason: .operationUnsupported,
+                            message: error.localizedDescription
                         )
+                        let composed = sequence.failure(
+                            combining: leaf,
+                            message: Self.indeterminateSequenceMessage(completedPresses: completedPresses),
+                            hint: Self.sequenceObservationHint,
+                            causeDescription: error.localizedDescription
+                        )
+                        await self.invalidateAfterFailedMutation(composed)
+                        throw composed
                     }
                     if let outcome = actionResult.outcome {
-                        actionOutcomes.append(outcome)
+                        sequence.record(.reportedOutcome(
+                            outcome,
+                            defaultDispatchedUnitCount: .one
+                        ))
+                    } else {
+                        sequence.record(.dispatched(
+                            route: self.sequenceRoute,
+                            delivery: Self.foregroundHotkeyDelivery,
+                            unitCount: .one
+                        ))
                     }
                     completedPresses += 1
 
@@ -170,58 +190,68 @@ RuntimeOptionsConfigurable {
                             try await Task.sleep(for: .seconds(self.delay.seconds))
                         }
                     } catch {
-                        throw ActionSequenceFailureComposer.indeterminate(
-                            knownDispatchedUnitCount: completedPresses,
-                            context: self.indeterminateSequenceContext(
-                                completedPresses: completedPresses,
-                                actionOutcomes: actionOutcomes,
-                                causeDescription: error.localizedDescription
-                            )
+                        guard let failure = sequence.cancellationFailure(
+                            fallbackRoute: self.sequenceRoute,
+                            message: Self.indeterminateSequenceMessage(completedPresses: completedPresses),
+                            hint: Self.sequenceObservationHint,
+                            causeDescription: error.localizedDescription
                         )
+                        else { throw error }
+                        await self.invalidateAfterFailedMutation(failure)
+                        throw failure
                     }
                 }
             }
 
-            await InteractionObservationInvalidator.invalidateAfterMutation(
-                targets: self.resolvedRuntime.interactionMutationTargets,
-                logger: self.logger,
-                reason: "press"
+            await self.finishSuccess(
+                parsedChords: parsedChords,
+                completedPresses: completedPresses,
+                sequence: sequence,
+                startTime: startTime
             )
-
-            // Output results
-            let pressResult = PressResult(
-                keys: parsedChords.map(\.displayValue),
-                totalPresses: completedPresses,
-                count: self.count,
-                deliveryMode: KeyboardDeliveryMode.foreground.rawValue,
-                targetPID: nil,
-                executionTime: Date().timeIntervalSince(startTime)
-            )
-
-            // A leaf receipt describes one hotkey call, not a CLI sequence. Keep a successful
-            // multi-call sequence on the legacy effect-only contract until the leaf owns batching.
-            let actionOutcome = completedPresses == 1 && actionOutcomes.count == 1 ? actionOutcomes[0] : nil
-            output(pressResult, effect: .unverifiable, outcome: actionOutcome) {
-                if let actionOutcome {
-                    print(ActionOutcomeHumanRenderer.statusLine(for: actionOutcome, operation: "Key press"))
-                } else {
-                    print("✅ Key press dispatched")
-                }
-                print("🔑 Chords: \(parsedChords.map(\.displayValue).joined(separator: " → "))")
-                if self.count > 1 {
-                    print("🔢 Repeated: \(self.count) times")
-                }
-                print("🎯 Mode: foreground")
-                print("📊 Total presses: \(completedPresses)")
-                if actionOutcome == nil {
-                    print("⚠️  Effect: unverifiable; observe the target before continuing")
-                }
-                print("⏱️  Completed in \(String(format: "%.2f", Date().timeIntervalSince(startTime)))s")
-            }
 
         } catch {
             self.handleError(error)
             throw ExitCode.failure
+        }
+    }
+
+    private func finishSuccess(
+        parsedChords: [KeyboardChord],
+        completedPresses: Int,
+        sequence: DesktopActionSequenceAccumulator,
+        startTime: Date
+    ) async {
+        await InteractionObservationInvalidator.invalidateAfterMutation(
+            targets: self.resolvedRuntime.interactionMutationTargets,
+            logger: self.logger,
+            reason: "press"
+        )
+        let pressResult = PressResult(
+            keys: parsedChords.map(\.displayValue),
+            totalPresses: completedPresses,
+            count: self.count,
+            deliveryMode: KeyboardDeliveryMode.foreground.rawValue,
+            targetPID: nil,
+            executionTime: Date().timeIntervalSince(startTime)
+        )
+        let actionOutcome = sequence.successResolution().outcome
+        self.output(pressResult, effect: .unverifiable, outcome: actionOutcome) {
+            if let actionOutcome {
+                print(ActionOutcomeHumanRenderer.statusLine(for: actionOutcome, operation: "Key press"))
+            } else {
+                print("✅ Key press dispatched")
+            }
+            print("🔑 Chords: \(parsedChords.map(\.displayValue).joined(separator: " → "))")
+            if self.count > 1 {
+                print("🔢 Repeated: \(self.count) times")
+            }
+            print("🎯 Mode: foreground")
+            print("📊 Total presses: \(completedPresses)")
+            if actionOutcome == nil {
+                print("⚠️  Effect: unverifiable; observe the target before continuing")
+            }
+            print("⏱️  Completed in \(String(format: "%.2f", Date().timeIntervalSince(startTime)))s")
         }
     }
 
@@ -266,21 +296,16 @@ RuntimeOptionsConfigurable {
             (completedPresses == 1 ? "" : "es")
     }
 
-    private func sequenceRoute(actionOutcomes: [DesktopActionOutcome]) -> DesktopActionOutcome.Route {
-        actionOutcomes.last?.route ?? (self.services.automation is RemoteUIAutomationService ? .bridge : .local)
+    private var sequenceRoute: DesktopActionOutcome.Route {
+        self.services.automation is RemoteUIAutomationService ? .bridge : .local
     }
 
-    private func indeterminateSequenceContext(
-        completedPresses: Int,
-        actionOutcomes: [DesktopActionOutcome],
-        causeDescription: String
-    ) -> ActionSequenceFailureComposer.IndeterminateContext {
-        .init(
-            route: self.sequenceRoute(actionOutcomes: actionOutcomes),
-            delivery: Self.foregroundHotkeyDelivery,
-            message: Self.indeterminateSequenceMessage(completedPresses: completedPresses),
-            hint: Self.sequenceObservationHint,
-            causeDescription: causeDescription
+    private func invalidateAfterFailedMutation(_ failure: DesktopActionFailure) async {
+        guard failure.outcome.dispatchState.mutationDispatched else { return }
+        await InteractionObservationInvalidator.invalidateAfterMutation(
+            targets: self.resolvedRuntime.interactionMutationTargets,
+            logger: self.logger,
+            reason: "press failure"
         )
     }
 

@@ -74,7 +74,7 @@ public struct SetValueTool: MCPTool {
                         snapshotId: effectiveSnapshotId),
                     outcome: nil)
             }
-            try MCPDesktopActionFailureHandler.requireConfirmed(
+            try DesktopActionFailure.requireConfirmedIfReported(
                 actionResult.outcome,
                 operation: "Set value")
             let invalidatedSnapshotId = await MCPDesktopActionSnapshotInvalidator.invalidate(

@@ -93,6 +93,8 @@ public struct DesktopActionOutcome: Codable, Equatable, Sendable {
     }
 
     public struct DispatchUnitCount: Codable, Equatable, Hashable, RawRepresentable, Sendable {
+        public static let one = Self(validatedRawValue: 1)
+
         public let rawValue: Int
 
         public init?(_ value: Int) {
@@ -118,6 +120,10 @@ public struct DesktopActionOutcome: Codable, Equatable, Sendable {
         public func encode(to encoder: any Encoder) throws {
             var container = encoder.singleValueContainer()
             try container.encode(self.rawValue)
+        }
+
+        private init(validatedRawValue: Int) {
+            self.rawValue = validatedRawValue
         }
     }
 
@@ -617,6 +623,38 @@ public struct DesktopActionFailure: Codable, Equatable, LocalizedError, Sendable
             message: message,
             hint: hint,
             causeDescription: causeDescription)
+    }
+
+    /// Constructs the canonical, retry-safe projection for a refusal before any mutation dispatch.
+    public static func preDispatchRefusal(
+        route: DesktopActionOutcome.Route = .local,
+        reason: DesktopActionOutcome.RefusalReason,
+        message: String,
+        hint: String? = nil,
+        causeDescription: String? = nil) -> DesktopActionFailure
+    {
+        .refused(
+            route: route,
+            reason: reason,
+            message: message,
+            hint: hint,
+            causeDescription: causeDescription)
+    }
+
+    /// Fails a step only when its implementation reported a non-confirmed canonical outcome.
+    /// Legacy implementations that report no outcome retain their existing compatibility behavior.
+    public static func requireConfirmedIfReported(
+        _ outcome: DesktopActionOutcome?,
+        operation: String,
+        hint: String = "Follow the canonical escalation metadata before deciding whether to retry.") throws
+    {
+        guard let outcome,
+              let failure = Self(
+                  outcome: outcome,
+                  message: "\(operation) did not return a confirmed outcome.",
+                  hint: hint)
+        else { return }
+        throw failure
     }
 
     public static func indeterminate(

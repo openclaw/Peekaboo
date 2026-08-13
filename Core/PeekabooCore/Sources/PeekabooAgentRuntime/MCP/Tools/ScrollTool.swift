@@ -164,7 +164,7 @@ public struct ScrollTool: MCPTool {
                     payload: automation.scroll(serviceRequest),
                     outcome: nil)
             }
-            try MCPDesktopActionFailureHandler.requireConfirmed(
+            try DesktopActionFailure.requireConfirmedIfReported(
                 actionResult.outcome,
                 operation: "Scroll")
         } catch let failure as DesktopActionFailure {

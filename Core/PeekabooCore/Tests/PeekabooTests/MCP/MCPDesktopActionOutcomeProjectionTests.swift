@@ -381,7 +381,9 @@ extension MCPDesktopActionOutcomeProjectionTests {
         #expect(!text.contains("Dispatched"))
         #expect(!text.contains("unverifiable"))
         #expect(meta["delivery_mode"] == nil)
-        #expect(meta["mutation_dispatched"] == nil)
+        #expect(meta["mutation_dispatched"] == .bool(false))
+        #expect(meta["retry_safe"] == .bool(true))
+        #expect(meta["requires_fresh_observation"] == .bool(false))
         #expect(meta["invalidated_snapshot"] == nil)
     }
 
@@ -418,7 +420,7 @@ extension MCPDesktopActionOutcomeProjectionTests {
 
     @Test
     @MainActor
-    func `multi chord legacy success preserves conservative safety metadata`() async throws {
+    func `multi chord legacy success publishes canonical unverified aggregate`() async throws {
         let automation = MockAutomationService(accessibilityGranted: true)
         let context = await MCPToolTestHelpers.makeContext(automation: automation)
 
@@ -430,10 +432,11 @@ extension MCPDesktopActionOutcomeProjectionTests {
         #expect(!response.isError)
         let meta = try #require(response.meta?.objectValue)
         #expect(meta["total_presses"] == .int(2))
-        #expect(meta["state"] == nil)
+        #expect(meta["state"] == .string("dispatched_unverified"))
         #expect(meta["effect"] == .string("unverifiable"))
         #expect(meta["mutation_dispatched"] == .bool(true))
         #expect(meta["requires_fresh_observation"] == .bool(true))
+        #expect(meta["dispatched_unit_count"] == .int(2))
     }
 
     @Test
@@ -464,17 +467,16 @@ extension MCPDesktopActionOutcomeProjectionTests {
 
     @Test
     func `multi chord leaf failure preserves cumulative canonical partial semantics`() throws {
-        var progress = PressSequenceProgress()
-        progress.record(outcome: .confirmedChange(
-            delivery: .init(mechanism: .globalEvents, mode: .foreground)))
+        var sequence = DesktopActionSequenceAccumulator()
+        sequence.record(
+            .reportedOutcome(
+                .confirmedChange(delivery: .init(mechanism: .globalEvents, mode: .foreground)),
+                defaultDispatchedUnitCount: .one))
         let leafFailure = DesktopActionFailure.partial(
             delivery: .init(mechanism: .globalEvents, mode: .foreground),
             unitCount: DesktopActionOutcome.DispatchUnitCount(1),
             message: "Second chord completed but cleanup failed")
-        let aggregate = PressTool.aggregateSequenceFailure(
-            leafFailure,
-            progress: progress,
-            setupFocusCompleted: false)
+        let aggregate = sequence.failure(combining: leafFailure, message: leafFailure.message)
         let response = try MCPToolResponseMetadataProjector.errorResponse(
             for: aggregate,
             invalidatedSnapshotID: nil)
@@ -490,14 +492,16 @@ extension MCPDesktopActionOutcomeProjectionTests {
 
     @Test
     func `press includes completed target focus before first chord refusal`() {
+        var sequence = DesktopActionSequenceAccumulator()
+        sequence.record(.dispatched(
+            route: nil,
+            delivery: nil,
+            unitCount: DesktopActionOutcome.DispatchUnitCount(1)))
         let leafFailure = DesktopActionFailure.refused(
             reason: .permissionDenied,
             message: "Hotkey was refused")
 
-        let aggregate = PressTool.aggregateSequenceFailure(
-            leafFailure,
-            progress: PressSequenceProgress(),
-            setupFocusCompleted: true)
+        let aggregate = sequence.failure(combining: leafFailure, message: leafFailure.message)
 
         #expect(aggregate.outcome.state == .indeterminate)
         #expect(aggregate.outcome.delivery == nil)
@@ -508,15 +512,17 @@ extension MCPDesktopActionOutcomeProjectionTests {
 
     @Test
     func `press does not assign a partial leaf delivery to completed target focus`() {
+        var sequence = DesktopActionSequenceAccumulator()
+        sequence.record(.dispatched(
+            route: nil,
+            delivery: nil,
+            unitCount: DesktopActionOutcome.DispatchUnitCount(1)))
         let leafFailure = DesktopActionFailure.partial(
             delivery: .init(mechanism: .globalEvents, mode: .foreground),
             unitCount: DesktopActionOutcome.DispatchUnitCount(1),
             message: "Chord completed but cleanup failed")
 
-        let aggregate = PressTool.aggregateSequenceFailure(
-            leafFailure,
-            progress: PressSequenceProgress(),
-            setupFocusCompleted: true)
+        let aggregate = sequence.failure(combining: leafFailure, message: leafFailure.message)
 
         #expect(aggregate.outcome.state == .indeterminate)
         #expect(aggregate.outcome.delivery == nil)
@@ -674,13 +680,16 @@ extension MCPDesktopActionOutcomeProjectionTests {
 
     @Test
     func `type conservatively counts a receiptless completed focus before refusal`() {
+        var sequence = DesktopActionSequenceAccumulator()
+        sequence.record(.dispatched(
+            route: nil,
+            delivery: nil,
+            unitCount: DesktopActionOutcome.DispatchUnitCount(1)))
         let leafFailure = DesktopActionFailure.refused(
             reason: .permissionDenied,
             message: "Typing was refused")
 
-        let aggregate = TypeTool.aggregateTypingFailure(
-            leafFailure,
-            after: TypeFocusResult(completed: true, outcome: nil))
+        let aggregate = sequence.failure(combining: leafFailure, message: leafFailure.message)
 
         #expect(aggregate.outcome.state == .indeterminate)
         #expect(aggregate.outcome.dispatchState.unitCount?.rawValue == 1)
@@ -697,9 +706,9 @@ extension MCPDesktopActionOutcomeProjectionTests {
             unitCount: DesktopActionOutcome.DispatchUnitCount(2),
             message: "Typing completed but cleanup failed")
 
-        let aggregate = TypeTool.aggregateTypingFailure(
-            leafFailure,
-            after: TypeFocusResult(completed: true, outcome: focusOutcome))
+        var sequence = DesktopActionSequenceAccumulator()
+        sequence.record(.reportedOutcome(focusOutcome, defaultDispatchedUnitCount: .one))
+        let aggregate = sequence.failure(combining: leafFailure, message: leafFailure.message)
 
         #expect(aggregate.outcome.state == .indeterminate)
         #expect(aggregate.outcome.dispatchState.unitCount?.rawValue == 3)
@@ -719,9 +728,9 @@ extension MCPDesktopActionOutcomeProjectionTests {
             unitCount: DesktopActionOutcome.DispatchUnitCount(2),
             message: "Typing completed but cleanup failed")
 
-        let aggregate = TypeTool.aggregateTypingFailure(
-            leafFailure,
-            after: TypeFocusResult(completed: true, outcome: focusOutcome))
+        var sequence = DesktopActionSequenceAccumulator()
+        sequence.record(.reportedOutcome(focusOutcome, defaultDispatchedUnitCount: .one))
+        let aggregate = sequence.failure(combining: leafFailure, message: leafFailure.message)
 
         #expect(aggregate.outcome.state == .partial)
         #expect(aggregate.outcome.dispatchState.unitCount?.rawValue == 3)
@@ -744,9 +753,9 @@ extension MCPDesktopActionOutcomeProjectionTests {
             unitCount: DesktopActionOutcome.DispatchUnitCount(1),
             message: "Typing completed but cleanup failed")
 
-        let aggregate = TypeTool.aggregateTypingFailure(
-            leafFailure,
-            after: TypeFocusResult(completed: true, outcome: focusOutcome))
+        var sequence = DesktopActionSequenceAccumulator()
+        sequence.record(.reportedOutcome(focusOutcome, defaultDispatchedUnitCount: .one))
+        let aggregate = sequence.failure(combining: leafFailure, message: leafFailure.message)
 
         #expect(aggregate.outcome.state == .indeterminate)
         #expect(aggregate.outcome.route == .bridge)
@@ -757,10 +766,10 @@ extension MCPDesktopActionOutcomeProjectionTests {
     @Test
     func `type preserves confirmed no change when no composite unit dispatched`() {
         let outcome = DesktopActionOutcome.confirmedNoChange()
-
-        let aggregate = TypeTool.aggregateTypingSuccess(
-            outcome,
-            after: TypeFocusResult(completed: true, outcome: .confirmedNoChange()))
+        var sequence = DesktopActionSequenceAccumulator()
+        sequence.record(.outcome(.confirmedNoChange()))
+        sequence.record(.outcome(outcome))
+        let aggregate = sequence.successResolution().outcome
 
         #expect(aggregate == outcome)
         #expect(aggregate?.state == .confirmedNoChange)
@@ -876,7 +885,9 @@ extension MCPDesktopActionOutcomeProjectionTests {
         #expect(!response.isError)
         let meta = try #require(response.meta?.objectValue)
         #expect(meta["state"] == nil)
-        #expect(meta["effect"] == nil)
+        #expect(meta["effect"] == .string("unverifiable"))
+        #expect(meta["mutation_dispatched"] == .bool(true))
+        #expect(meta["retry_safe"] == .bool(false))
         #expect(meta["delivery_mechanism"] == nil)
         #expect(meta["delivery_mode"] == nil)
         #expect(meta["requires_fresh_observation"] == .bool(true))

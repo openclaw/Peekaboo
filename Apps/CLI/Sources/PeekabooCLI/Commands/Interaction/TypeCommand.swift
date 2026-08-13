@@ -72,18 +72,79 @@ struct TypeCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormatt
         do {
             let actions = try self.buildActions()
             let observation = await self.resolveObservationContext()
-            try await observation.validateIfExplicit(using: self.services.snapshots)
-            let targetIdentity = try await self.backgroundProcessIdentity(snapshotId: observation.snapshotId)
+            let targetIdentity: ApplicationProcessIdentity?
+            do {
+                try await observation.validateIfExplicit(using: self.services.snapshots)
+                targetIdentity = try await self.backgroundProcessIdentity(snapshotId: observation.snapshotId)
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                try Task.checkCancellation()
+                throw self.preDispatchActionError(for: error)
+            }
             let targetPID = targetIdentity?.processIdentifier
             self.resolvedRuntime.beginInteractionMutation()
+            var sequence = DesktopActionSequenceAccumulator()
             if targetPID == nil {
                 try await self.focusIfNeeded(snapshotId: observation.focusSnapshotId(for: self.target))
+                if self.focusOptions.autoFocus,
+                   self.target.hasAnyTarget || observation.focusSnapshotId(for: self.target) != nil {
+                    sequence.record(.mayHaveDispatched(route: nil, delivery: nil, unitCount: .one))
+                }
             }
-            let actionResult = try await self.executeTypeActions(
-                actions: actions,
-                snapshotId: observation.snapshotId,
-                expectedProcessIdentity: targetIdentity
-            )
+            let actionResult: UIAutomationActionResult<TypeResult>
+            do {
+                actionResult = try await self.executeTypeActions(
+                    actions: actions,
+                    snapshotId: observation.snapshotId,
+                    expectedProcessIdentity: targetIdentity
+                )
+                try DesktopActionFailure.requireConfirmedIfReported(
+                    actionResult.outcome,
+                    operation: "Typing"
+                )
+            } catch let failure as DesktopActionFailure {
+                let composed = sequence.failure(
+                    combining: failure,
+                    message: "Typing failed after foreground setup may have changed focus.",
+                    hint: "Observe the target before deciding whether to retry typing."
+                )
+                await self.invalidateAfterFailedMutation(composed)
+                throw composed
+            } catch let error as InputDeliveryIndeterminateError {
+                let delivery = Self.delivery(targetProcessIdentifier: targetPID)
+                let composed = sequence.failure(
+                    combining: error.desktopActionFailure(delivery: delivery, route: self.actionRoute),
+                    message: "Typing outcome is indeterminate.",
+                    hint: "Observe the target before deciding whether to retry typing.",
+                    causeDescription: error.causeDescription ?? error.localizedDescription
+                )
+                await self.invalidateAfterFailedMutation(composed)
+                throw composed
+            } catch {
+                guard sequence.mutationDisposition.mutationDispatched else { throw error }
+                let composed = sequence.failure(
+                    combining: .preDispatchRefusal(
+                        route: self.actionRoute,
+                        reason: .operationUnsupported,
+                        message: error.localizedDescription
+                    ),
+                    message: "Typing failed after foreground setup may have changed focus.",
+                    hint: "Observe the target before deciding whether to retry typing.",
+                    causeDescription: error.localizedDescription
+                )
+                await self.invalidateAfterFailedMutation(composed)
+                throw composed
+            }
+            if let outcome = actionResult.outcome {
+                sequence.record(.reportedOutcome(outcome, defaultDispatchedUnitCount: .one))
+            } else {
+                sequence.record(.dispatched(
+                    route: self.actionRoute,
+                    delivery: Self.delivery(targetProcessIdentifier: targetPID),
+                    unitCount: .one
+                ))
+            }
             await InteractionObservationInvalidator.invalidateAfterMutation(
                 targets: self.resolvedRuntime.interactionMutationTargets,
                 logger: self.logger,
@@ -91,7 +152,7 @@ struct TypeCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormatt
             )
             self.renderResult(
                 actionResult.payload,
-                outcome: actionResult.outcome,
+                outcome: sequence.successResolution().outcome,
                 actions: actions,
                 startTime: startTime,
                 targetProcessIdentifier: targetPID
@@ -255,6 +316,25 @@ struct TypeCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormatt
         case .clear:
             TypeCommandActionSummary(kind: "clear", value: nil)
         }
+    }
+
+    private static func delivery(targetProcessIdentifier: pid_t?) -> DesktopActionOutcome.Delivery {
+        targetProcessIdentifier == nil
+            ? .init(mechanism: .globalEvents, mode: .foreground)
+            : .init(mechanism: .processTargetedEvents, mode: .background)
+    }
+
+    private func invalidateAfterFailedMutation(_ failure: DesktopActionFailure) async {
+        guard failure.outcome.dispatchState.mutationDispatched else { return }
+        await InteractionObservationInvalidator.invalidateAfterMutation(
+            targets: self.resolvedRuntime.interactionMutationTargets,
+            logger: self.logger,
+            reason: "type failure"
+        )
+    }
+
+    private var actionRoute: DesktopActionOutcome.Route {
+        self.services.automation is RemoteUIAutomationService ? .bridge : .local
     }
 }
 

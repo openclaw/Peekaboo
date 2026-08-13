@@ -83,7 +83,8 @@ public struct TypeTool: MCPTool {
             return try await MCPDesktopActionFailureHandler.response(
                 for: failure,
                 uiSnapshots: self.context.uiSnapshots,
-                snapshotID: mutationTracker.snapshotId)
+                snapshotID: mutationTracker.snapshotId,
+                additionalFields: mutationTracker.characterCompatibilityFields)
         } catch let error as InputDeliveryIndeterminateError {
             return try await MCPDesktopActionFailureHandler.response(
                 for: error.desktopActionFailure(delivery: mutationTracker.delivery),
@@ -185,7 +186,19 @@ public struct TypeTool: MCPTool {
                 causeDescription: error.causeDescription ?? error.localizedDescription)
         }
 
+        var sequence = DesktopActionSequenceAccumulator()
+        if focusResult.completed {
+            if let outcome = focusResult.outcome {
+                sequence.record(.reportedOutcome(
+                    outcome,
+                    defaultDispatchedUnitCount: .one))
+            } else {
+                sequence.record(.dispatched(route: nil, delivery: nil, unitCount: Self.singleDispatchUnit))
+            }
+        }
+
         let typeActionResult: UIAutomationActionResult<TypeResult>
+        mutationTracker.reportsCharactersTyped = true
         do {
             if focusResult.completed {
                 try await Task.sleep(nanoseconds: 100_000_000)
@@ -216,67 +229,107 @@ public struct TypeTool: MCPTool {
                 }
             }
         } catch let failure as DesktopActionFailure {
-            throw Self.aggregateTypingFailure(failure, after: focusResult)
+            throw sequence.failure(
+                combining: failure,
+                message: "Typing failed after its element focus action completed.",
+                hint: "Observe the target before deciding whether to retry typing.")
         } catch let error as InputDeliveryIndeterminateError {
             mutationTracker.charactersTyped = error.emittedUnitCount
-            if focusResult.dispatchedUnitCount > 0 {
+            if sequence.mutationDisposition.mutationDispatched {
                 mutationTracker.delivery = nil
             }
-            throw Self.aggregateIndeterminateTypingError(error, after: focusResult)
+            let failure = error.desktopActionFailure(delivery: mutationTracker.delivery)
+            throw sequence.failure(
+                combining: failure,
+                message: "Typing failed after its element focus action completed.",
+                hint: "Observe the target before deciding whether to retry typing.",
+                causeDescription: error.causeDescription ?? error.localizedDescription)
         } catch {
-            guard focusResult.dispatchedUnitCount > 0 else { throw error }
+            guard sequence.mutationDisposition.mutationDispatched else { throw error }
             mutationTracker.delivery = nil
-            throw InputDeliveryIndeterminateError(
-                operation: .type,
-                emittedUnitCount: focusResult.dispatchedUnitCount,
+            let leaf = DesktopActionFailure.preDispatchRefusal(
+                reason: .operationUnsupported,
+                message: error.localizedDescription)
+            throw sequence.failure(
+                combining: leaf,
+                message: "Typing failed after its element focus action completed.",
+                hint: "Observe the target before deciding whether to retry typing.",
                 causeDescription: error.localizedDescription)
         }
 
-        if let outcome = typeActionResult.outcome,
-           let failure = DesktopActionFailure(
-               outcome: outcome,
-               message: "Typing did not return a confirmed outcome.",
-               hint: "Follow the canonical escalation metadata before deciding whether to retry.")
-        {
-            throw Self.aggregateTypingFailure(failure, after: focusResult)
+        do {
+            try DesktopActionFailure.requireConfirmedIfReported(
+                typeActionResult.outcome,
+                operation: "Typing")
+        } catch let failure as DesktopActionFailure {
+            throw sequence.failure(
+                combining: failure,
+                message: "Typing failed after its element focus action completed.",
+                hint: "Observe the target before deciding whether to retry typing.")
         }
 
-        let responseOutcome = Self.aggregateTypingSuccess(
-            typeActionResult.outcome,
-            after: focusResult)
-        let mutationDispatched = focusResult.dispatchedUnitCount > 0 ||
-            (typeActionResult.outcome?.dispatchState.mutationDispatched ?? true)
+        if let outcome = typeActionResult.outcome {
+            sequence.record(.reportedOutcome(
+                outcome,
+                defaultDispatchedUnitCount: .one))
+        } else {
+            sequence.record(.dispatched(
+                route: nil,
+                delivery: mutationTracker.delivery,
+                unitCount: Self.singleDispatchUnit))
+        }
+        let sequenceResolution = sequence.successResolution()
+        return try await self.successResponse(TypeSuccessInput(
+            request: request,
+            targetContext: targetContext,
+            targetProcessIdentifier: targetProcessIdentifier,
+            snapshotID: effectiveSnapshotId,
+            startedAt: startTime,
+            actionResult: typeActionResult,
+            focusCompleted: focusResult.completed,
+            sequenceResolution: sequenceResolution))
+    }
+
+    @MainActor
+    private func successResponse(_ input: TypeSuccessInput) async throws -> ToolResponse {
+        let responseOutcome = input.sequenceResolution.outcome
         let invalidatedSnapshotId = await MCPDesktopActionSnapshotInvalidator.invalidate(
             uiSnapshots: self.context.uiSnapshots,
-            snapshotID: effectiveSnapshotId,
-            mutationDispatched: mutationDispatched)
-        let executionTime = Date().timeIntervalSince(startTime)
-        let typingDispatched = typeActionResult.outcome?.dispatchState.mutationDispatched ?? true
-        let charactersTyped = typingDispatched ? typeActionResult.payload.totalCharacters : 0
+            snapshotID: input.snapshotID,
+            mutationDispatched: input.sequenceResolution.mutationDispatched)
+        let executionTime = Date().timeIntervalSince(input.startedAt)
+        let typingDispatched = input.actionResult.outcome?.dispatchState.mutationDispatched ?? true
+        let charactersTyped = typingDispatched ? input.actionResult.payload.totalCharacters : 0
         let message = self.buildSummary(
-            request: request,
+            request: input.request,
             executionTime: executionTime,
-            result: typeActionResult.payload,
+            result: input.actionResult.payload,
             typingDispatched: typingDispatched)
         var baseMetaDict: [String: Value] = [
             "execution_time": .double(executionTime),
             "characters_typed": .double(Double(charactersTyped)),
         ]
-        if !focusResult.completed {
-            baseMetaDict["delivery_mode"] = .string(targetProcessIdentifier == nil ? "foreground" : "background")
+        if !input.focusCompleted {
+            baseMetaDict["delivery_mode"] = .string(
+                input.targetProcessIdentifier == nil ? "foreground" : "background")
         }
-        if let targetProcessIdentifier {
+        if let targetProcessIdentifier = input.targetProcessIdentifier {
             baseMetaDict["target_pid"] = .int(targetProcessIdentifier)
         }
         if let invalidatedSnapshotId {
             baseMetaDict["invalidated_snapshot"] = .string(invalidatedSnapshotId)
         }
-        if focusResult.completed, responseOutcome == nil, mutationDispatched {
-            baseMetaDict["requires_fresh_observation"] = .bool(true)
+        if responseOutcome == nil {
+            baseMetaDict["mutation_dispatched"] = .bool(input.sequenceResolution.mutationDispatched)
+            baseMetaDict["retry_safe"] = .bool(input.sequenceResolution.retrySafe)
+            baseMetaDict["requires_fresh_observation"] = .bool(input.sequenceResolution.requiresFreshObservation)
+            if input.sequenceResolution.mutationDispatched {
+                baseMetaDict["effect"] = .string(DesktopActionOutcome.Effect.unverifiable.rawValue)
+            }
         }
         let summary = self.buildEventSummary(
-            request: request,
-            targetContext: targetContext,
+            request: input.request,
+            targetContext: input.targetContext,
             typingDispatched: typingDispatched)
         let mergedMeta = try ToolEventSummary.merge(
             summary: summary,
@@ -356,97 +409,6 @@ public struct TypeTool: MCPTool {
             hint: "Observe the target before deciding whether to retry typing.")
         else { return }
         throw failure
-    }
-
-    static func aggregateTypingFailure(
-        _ failure: DesktopActionFailure,
-        after focusResult: TypeFocusResult) -> DesktopActionFailure
-    {
-        let focusUnits = focusResult.dispatchedUnitCount
-        guard focusUnits > 0 else { return failure }
-        let leafUnits: Int? = if let count = failure.outcome.dispatchState.unitCount?.rawValue {
-            count
-        } else if failure.outcome.dispatchState.mutationDispatched {
-            nil
-        } else {
-            0
-        }
-        let unitCount = leafUnits.flatMap { DesktopActionOutcome.DispatchUnitCount(focusUnits + $0) }
-        let aggregateRoute = failure.outcome.dispatchState.mutationDispatched
-            ? failure.outcome.route
-            : focusResult.outcome?.route ?? failure.outcome.route
-        if failure.outcome.state == .partial,
-           let delivery = failure.outcome.delivery,
-           focusResult.outcome?.delivery == delivery,
-           focusResult.outcome?.route == failure.outcome.route
-        {
-            return .partial(
-                route: failure.outcome.route,
-                delivery: delivery,
-                unitCount: unitCount,
-                message: failure.message,
-                hint: failure.hint,
-                causeDescription: failure.causeDescription)
-        }
-        return .indeterminate(
-            route: aggregateRoute,
-            delivery: nil,
-            evidence: .completionUnknown,
-            unitCount: unitCount,
-            message: "Typing failed after its element focus action completed.",
-            hint: "Observe the target before deciding whether to retry typing.",
-            causeDescription: failure.localizedDescription)
-    }
-
-    static func aggregateTypingSuccess(
-        _ outcome: DesktopActionOutcome?,
-        after focusResult: TypeFocusResult) -> DesktopActionOutcome?
-    {
-        guard focusResult.completed else { return outcome }
-        let focusUnits = focusResult.dispatchedUnitCount
-        guard focusUnits > 0 else {
-            if let focusOutcome = focusResult.outcome,
-               let outcome,
-               !outcome.dispatchState.mutationDispatched,
-               focusOutcome.route != outcome.route
-            {
-                return nil
-            }
-            return outcome
-        }
-        guard let focusOutcome = focusResult.outcome,
-              let outcome,
-              focusOutcome.isConfirmed,
-              outcome.isConfirmed
-        else { return nil }
-        guard outcome.dispatchState.mutationDispatched else { return focusOutcome }
-        guard focusOutcome.route == outcome.route,
-              let delivery = focusOutcome.delivery,
-              outcome.delivery == delivery
-        else { return nil }
-
-        let leafUnits = outcome.dispatchState.unitCount?.rawValue
-            ?? (outcome.dispatchState.mutationDispatched ? 1 : 0)
-        return .confirmedChange(
-            route: outcome.route,
-            delivery: delivery,
-            unitCount: DesktopActionOutcome.DispatchUnitCount(focusUnits + leafUnits))
-    }
-
-    static func aggregateIndeterminateTypingError(
-        _ error: InputDeliveryIndeterminateError,
-        after focusResult: TypeFocusResult) -> InputDeliveryIndeterminateError
-    {
-        let focusUnits = focusResult.dispatchedUnitCount
-        let emittedUnitCount = if focusUnits > 0 {
-            error.emittedUnitCount.map { focusUnits + $0 }
-        } else {
-            error.emittedUnitCount
-        }
-        return InputDeliveryIndeterminateError(
-            operation: .type,
-            emittedUnitCount: emittedUnitCount,
-            causeDescription: error.causeDescription ?? error.localizedDescription)
     }
 
     private func backgroundProcessIdentity(
@@ -575,11 +537,21 @@ public struct TypeTool: MCPTool {
     }
 }
 
+extension TypeTool {
+    fileprivate static let singleDispatchUnit: DesktopActionOutcome.DispatchUnitCount = .one
+}
+
 @MainActor
 private final class TypeMutationTracker {
     var snapshotId: String?
     var delivery: DesktopActionOutcome.Delivery?
     var charactersTyped: Int?
+    var reportsCharactersTyped = false
+
+    var characterCompatibilityFields: [String: Value] {
+        guard self.reportsCharactersTyped else { return [:] }
+        return ["characters_typed": self.charactersTyped.map(Value.int) ?? .null]
+    }
 }
 
 struct TypeFocusResult {
@@ -591,13 +563,6 @@ struct TypeFocusResult {
     static func completed(outcome: DesktopActionOutcome?) -> Self {
         Self(completed: true, outcome: outcome)
     }
-
-    var dispatchedUnitCount: Int {
-        guard self.completed else { return 0 }
-        guard let outcome else { return 1 }
-        guard outcome.dispatchState.mutationDispatched else { return 0 }
-        return outcome.dispatchState.unitCount?.rawValue ?? 1
-    }
 }
 
 private struct BackgroundTypeRequest {
@@ -605,4 +570,15 @@ private struct BackgroundTypeRequest {
     let cadence: TypingCadence
     let snapshotId: String?
     let expectedProcessIdentity: ApplicationProcessIdentity
+}
+
+private struct TypeSuccessInput {
+    let request: TypeRequest
+    let targetContext: TargetElementContext?
+    let targetProcessIdentifier: Int?
+    let snapshotID: String?
+    let startedAt: Date
+    let actionResult: UIAutomationActionResult<TypeResult>
+    let focusCompleted: Bool
+    let sequenceResolution: DesktopActionSequenceAccumulator.Resolution
 }

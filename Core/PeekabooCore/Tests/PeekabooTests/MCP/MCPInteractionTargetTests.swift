@@ -209,6 +209,11 @@ struct MCPInteractionTargetTests {
             }
             #expect(text.contains(fixture.message))
         }
+        for response in responses.prefix(3) {
+            try MCPToolTestHelpers.expectCanonicalOutcomeMetadata(
+                .refused(reason: .invalidRequest),
+                in: response)
+        }
     }
 
     private static func makeTarget(_ selectors: Selectors) throws -> MCPInteractionTarget {

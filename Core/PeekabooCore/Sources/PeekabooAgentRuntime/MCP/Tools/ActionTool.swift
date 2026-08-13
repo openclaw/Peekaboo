@@ -66,7 +66,7 @@ public struct ActionTool: MCPTool {
                         snapshotId: effectiveSnapshotId),
                     outcome: nil)
             }
-            try MCPDesktopActionFailureHandler.requireConfirmed(
+            try DesktopActionFailure.requireConfirmedIfReported(
                 actionResult.outcome,
                 operation: "Action")
             let invalidatedSnapshotId = await MCPDesktopActionSnapshotInvalidator.invalidate(

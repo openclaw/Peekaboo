@@ -213,7 +213,6 @@ struct TypeCommandTests {
             arguments: ["Hello", "--app", "TextEdit", "--json"],
             context: context
         )
-
         #expect(result.exitStatus == 0)
         let targetedCall = try #require(await self.automationState(context) { $0.targetedTypeActionsCalls.first })
         #expect(targetedCall.targetProcessIdentifier == 2468)
@@ -282,6 +281,86 @@ struct TypeCommandTests {
         )
         #expect(payload.data.deliveryMode == "foreground")
         #expect(payload.data.targetPID == nil)
+    }
+
+    @Test
+    func `Foreground setup suppresses a no-dispatch typing leaf`() async throws {
+        let windows = await MainActor.run { StubWindowService(windowsByApp: [:]) }
+        let automation = await MainActor.run {
+            let automation = OutcomeStubAutomationService()
+            automation.actionOutcome = .confirmedNoChange()
+            return automation
+        }
+        let context = await self.makeContext(automation: automation, windows: windows)
+
+        let result = try await self.runType(
+            arguments: ["Hello", "--window-id", "777", "--foreground", "--json"],
+            context: context
+        )
+        let object = try #require(
+            JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [String: Any]
+        )
+
+        #expect(result.exitStatus == 0)
+        #expect(object["effect"] as? String == "unverifiable")
+        #expect(object["outcome"] == nil)
+        let focusCalls = await MainActor.run { windows.focusCalls }
+        #expect(!focusCalls.isEmpty)
+    }
+
+    @Test
+    func `Foreground setup makes a refused typing leaf indeterminate`() async throws {
+        let windows = await MainActor.run { StubWindowService(windowsByApp: [:]) }
+        let automation = await MainActor.run {
+            let automation = OutcomeStubAutomationService()
+            automation.actionOutcome = .refused(reason: .permissionDenied)
+            return automation
+        }
+        let context = await self.makeContext(automation: automation, windows: windows)
+
+        let result = try await self.runType(
+            arguments: ["Hello", "--window-id", "777", "--foreground", "--json"],
+            context: context
+        )
+        let object = try #require(
+            JSONSerialization.jsonObject(with: Data(result.stdout.utf8)) as? [String: Any]
+        )
+        let outcome = try #require(object["outcome"] as? [String: Any])
+        let error = try #require(object["error"] as? [String: Any])
+
+        #expect(result.exitStatus == 1)
+        #expect(outcome["state"] as? String == "indeterminate")
+        #expect(outcome["dispatch_state"] as? String == "may_have_dispatched")
+        #expect(outcome["mutation_dispatched"] as? Bool == true)
+        #expect(outcome["retry_safe"] as? Bool == false)
+        #expect(outcome["requires_fresh_observation"] as? Bool == true)
+        #expect(error["mutation_dispatched"] as? Bool == true)
+        let focusCalls = await MainActor.run { windows.focusCalls }
+        #expect(!focusCalls.isEmpty)
+    }
+
+    @Test
+    func `Returned dispatched typing failure invalidates prior observations`() async throws {
+        let windows = await MainActor.run { StubWindowService(windowsByApp: [:]) }
+        let automation = await MainActor.run {
+            let automation = OutcomeStubAutomationService()
+            automation.actionOutcome = .dispatchedUnverified(
+                delivery: .init(mechanism: .globalEvents, mode: .foreground),
+                evidence: .deliveryAccepted
+            )
+            return automation
+        }
+        let context = await self.makeContext(automation: automation, windows: windows)
+        _ = try await context.snapshots.createSnapshot()
+
+        let result = try await self.runType(
+            arguments: ["Hello", "--window-id", "777", "--foreground", "--json"],
+            context: context
+        )
+
+        #expect(result.exitStatus == 1)
+        #expect(context.snapshots.invalidationCutoffs.count == 1)
+        #expect(await context.snapshots.getMostRecentSnapshot() == nil)
     }
 
     @Test
@@ -483,12 +562,17 @@ struct TypeCommandTests {
 
     @MainActor
     private func makeContext(
+        automation: StubAutomationService = StubAutomationService(),
         applications: any ApplicationServiceProtocol = StubApplicationService(applications: []),
         windows: any WindowManagementServiceProtocol = StubWindowService(windowsByApp: [:]),
         configure: ((StubAutomationService, StubSnapshotManager) -> Void)? = nil
     ) async -> TestServicesFactory.AutomationTestContext {
         await MainActor.run {
-            let context = TestServicesFactory.makeAutomationTestContext(applications: applications, windows: windows)
+            let context = TestServicesFactory.makeAutomationTestContext(
+                automation: automation,
+                applications: applications,
+                windows: windows
+            )
             configure?(context.automation, context.snapshots)
             return context
         }

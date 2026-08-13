@@ -87,7 +87,7 @@ struct PreDispatchActionError: LocalizedError, ResultEnvelopeError {
         hint: String?,
         reason: DesktopActionOutcome.RefusalReason
     ) {
-        self.failure = .refused(reason: reason, message: message)
+        self.failure = .preDispatchRefusal(reason: reason, message: message, hint: hint)
         self.code = code
         self.hint = hint
     }
@@ -321,7 +321,12 @@ func makeErrorEnvelope(
     let suppliedOutcome = actionFailure?.outcome.projection
     let resolvedEffect = suppliedOutcome?.effect ?? effect ??
         (ResultEnvelopeContext.isActionCommand ? defaultActionErrorEffect(code) : nil)
-    let resolvedOutcome = suppliedOutcome ?? defaultActionRefusalProjection(effect: resolvedEffect, code: code)
+    let resolvedOutcome = suppliedOutcome ?? defaultActionRefusalProjection(
+        effect: resolvedEffect,
+        code: code,
+        retrySafe: retrySafe,
+        mutationDispatched: mutationDispatched
+    )
     return ResultEnvelope(
         success: false,
         effect: resolvedOutcome?.effect ?? resolvedEffect,
@@ -341,16 +346,24 @@ func makeErrorEnvelope(
 
 func defaultActionRefusalProjection(
     effect: ActionEffect?,
-    code: ErrorCode
+    code: ErrorCode,
+    retrySafe: Bool? = nil,
+    mutationDispatched: Bool? = nil
 ) -> DesktopActionOutcome.Projection? {
     guard ResultEnvelopeContext.isActionCommand,
-          ResultEnvelopeContext.isPreDispatchFailure,
           effect == .refused,
           let reason = defaultActionRefusalReason(code)
     else {
         return nil
     }
-    return DesktopActionOutcome.refused(reason: reason).projection
+    if ResultEnvelopeContext.isPreDispatchFailure {
+        return DesktopActionOutcome.preDispatchRefusalProjection(reason: reason)
+    }
+    return DesktopActionOutcome.preDispatchRefusalProjection(
+        reason: reason,
+        legacyRetrySafe: retrySafe,
+        legacyMutationDispatched: mutationDispatched
+    )
 }
 
 func defaultActionRefusalReason(_ code: ErrorCode) -> DesktopActionOutcome.RefusalReason? {

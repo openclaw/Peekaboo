@@ -253,11 +253,10 @@ struct ActionOutcomeCommandTests {
     }
 
     @Test
-    func `successful multi press keeps legacy effect and omits singular outcome`() async throws {
+    func `successful multi press publishes one canonical aggregate`() async throws {
         let context = Self.makeContext()
-        context.automation.actionOutcome = .dispatchedUnverified(
-            delivery: .init(mechanism: .globalEvents, mode: .foreground),
-            evidence: .deliveryAccepted
+        context.automation.actionOutcome = .confirmedChange(
+            delivery: .init(mechanism: .globalEvents, mode: .foreground)
         )
 
         let result = try await InProcessCommandRunner.run(
@@ -267,17 +266,18 @@ struct ActionOutcomeCommandTests {
         let object = try Self.jsonObject(result.stdout)
 
         #expect(result.exitStatus == 0)
-        #expect(object["effect"] as? String == "unverifiable")
-        #expect(object["outcome"] == nil)
+        let projection = try #require(object["outcome"] as? [String: Any])
+        #expect(object["effect"] as? String == "confirmed")
+        #expect(projection["state"] as? String == "confirmed_change")
+        #expect(projection["dispatched_unit_count"] as? Int == 2)
         #expect(context.automation.hotkeyCalls.count == 2)
     }
 
     @Test
     func `mid sequence partial failure publishes cumulative canonical projection`() async throws {
         let context = Self.makeContext()
-        context.automation.actionOutcome = .dispatchedUnverified(
-            delivery: .init(mechanism: .globalEvents, mode: .foreground),
-            evidence: .deliveryAccepted
+        context.automation.actionOutcome = .confirmedChange(
+            delivery: .init(mechanism: .globalEvents, mode: .foreground)
         )
         let leafFailure = DesktopActionFailure.partial(
             delivery: .init(mechanism: .globalEvents, mode: .foreground),
@@ -308,9 +308,8 @@ struct ActionOutcomeCommandTests {
     @Test
     func `mid sequence partial failure preserves unknown leaf unit count`() async throws {
         let context = Self.makeContext()
-        context.automation.actionOutcome = .dispatchedUnverified(
-            delivery: .init(mechanism: .globalEvents, mode: .foreground),
-            evidence: .deliveryAccepted
+        context.automation.actionOutcome = .confirmedChange(
+            delivery: .init(mechanism: .globalEvents, mode: .foreground)
         )
         let leafFailure = DesktopActionFailure.partial(
             delivery: .init(mechanism: .globalEvents, mode: .foreground),
@@ -334,9 +333,8 @@ struct ActionOutcomeCommandTests {
     @Test
     func `mid sequence indeterminate failure adds completed and leaf units`() async throws {
         let context = Self.makeContext()
-        context.automation.actionOutcome = .dispatchedUnverified(
-            delivery: .init(mechanism: .globalEvents, mode: .foreground),
-            evidence: .deliveryAccepted
+        context.automation.actionOutcome = .confirmedChange(
+            delivery: .init(mechanism: .globalEvents, mode: .foreground)
         )
         let leafFailure = InputDeliveryIndeterminateError(
             operation: .hotkey,
@@ -360,7 +358,7 @@ struct ActionOutcomeCommandTests {
     }
 
     @Test
-    func `first unbacked indeterminate failure preserves legacy omission`() async throws {
+    func `first indeterminate failure publishes canonical retry guidance`() async throws {
         let context = Self.makeContext()
         let leafFailure = InputDeliveryIndeterminateError(
             operation: .hotkey,
@@ -375,20 +373,40 @@ struct ActionOutcomeCommandTests {
         )
         let object = try Self.jsonObject(result.stdout)
         let error = try #require(object["error"] as? [String: Any])
+        let projection = try #require(object["outcome"] as? [String: Any])
 
         #expect(result.exitStatus == 1)
         #expect(object["effect"] as? String == "unverifiable")
-        #expect(object["outcome"] == nil)
-        #expect(error["mutation_dispatched"] == nil)
-        #expect(error["retry_safe"] == nil)
+        #expect(projection["state"] as? String == "indeterminate")
+        #expect(projection["dispatched_unit_count"] == nil)
+        #expect(error["mutation_dispatched"] as? Bool == true)
+        #expect(error["retry_safe"] as? Bool == false)
+    }
+
+    @Test
+    func `returned dispatched press failure invalidates prior observations`() async throws {
+        let context = Self.makeContext()
+        context.automation.actionOutcome = .dispatchedUnverified(
+            delivery: .init(mechanism: .globalEvents, mode: .foreground),
+            evidence: .deliveryAccepted
+        )
+        _ = try await context.snapshots.createSnapshot()
+
+        let result = try await InProcessCommandRunner.run(
+            ["press", "cmd+a", "--foreground", "--json", "--no-remote"],
+            services: context.services
+        )
+
+        #expect(result.exitStatus == 1)
+        #expect(context.snapshots.invalidationCutoffs.count == 1)
+        #expect(await context.snapshots.getMostRecentSnapshot() == nil)
     }
 
     @Test
     func `later indeterminate failure keeps aggregate count unknown when leaf count is unknown`() async throws {
         let context = Self.makeContext()
-        context.automation.actionOutcome = .dispatchedUnverified(
-            delivery: .init(mechanism: .globalEvents, mode: .foreground),
-            evidence: .deliveryAccepted
+        context.automation.actionOutcome = .confirmedChange(
+            delivery: .init(mechanism: .globalEvents, mode: .foreground)
         )
         let leafFailure = InputDeliveryIndeterminateError(
             operation: .hotkey,
@@ -411,17 +429,19 @@ struct ActionOutcomeCommandTests {
     }
 
     @Test
-    func `between call failure projection preserves exact completed count`() {
-        let failure = ActionSequenceFailureComposer.indeterminate(
-            knownDispatchedUnitCount: 1,
-            context: .init(
-                route: .bridge,
-                delivery: .init(mechanism: .globalEvents, mode: .foreground),
-                message: "Key sequence outcome is indeterminate after 1 completed press",
-                hint: "Observe the target before retrying this key sequence.",
-                causeDescription: "Cancelled between chords"
-            )
-        )
+    func `between call failure projection preserves exact completed count`() throws {
+        var sequence = DesktopActionSequenceAccumulator()
+        sequence.record(.dispatched(
+            route: .bridge,
+            delivery: .init(mechanism: .globalEvents, mode: .foreground),
+            unitCount: DesktopActionOutcome.DispatchUnitCount(1)
+        ))
+        let failure = try #require(sequence.cancellationFailure(
+            fallbackRoute: .local,
+            message: "Key sequence outcome is indeterminate after 1 completed press",
+            hint: "Observe the target before retrying this key sequence.",
+            causeDescription: "Cancelled between chords"
+        ))
         let projection = failure.outcome.projection
 
         #expect(projection.state == .indeterminate)
@@ -433,6 +453,12 @@ struct ActionOutcomeCommandTests {
 
     @Test
     func `sequence composition preserves canonical response loss evidence and route`() {
+        var sequence = DesktopActionSequenceAccumulator()
+        sequence.record(.dispatched(
+            route: .bridge,
+            delivery: .init(mechanism: .globalEvents, mode: .foreground),
+            unitCount: DesktopActionOutcome.DispatchUnitCount(1)
+        ))
         let leafFailure = DesktopActionFailure.indeterminate(
             route: .bridge,
             delivery: .init(mechanism: .globalEvents, mode: .foreground),
@@ -440,12 +466,10 @@ struct ActionOutcomeCommandTests {
             unitCount: DesktopActionOutcome.DispatchUnitCount(2),
             message: "Bridge response was lost"
         )
-        let failure = ActionSequenceFailureComposer.combining(
-            completedUnitCount: 1,
-            leafFailure: leafFailure,
-            delivery: .init(mechanism: .globalEvents, mode: .foreground),
+        let failure = sequence.failure(
+            combining: leafFailure,
             message: "Key sequence stopped after 1 completed press",
-            indeterminateHint: "Observe before retrying"
+            hint: "Observe before retrying"
         )
         let projection = failure.outcome.projection
 

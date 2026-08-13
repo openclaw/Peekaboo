@@ -161,7 +161,7 @@ public struct ClickTool: MCPTool {
                 intent: request.intent,
                 deliveryMode: request.deliveryMode,
                 targetProcessIdentity: effectiveTargetProcessIdentity)
-            try MCPDesktopActionFailureHandler.requireConfirmed(
+            try DesktopActionFailure.requireConfirmedIfReported(
                 outcome,
                 operation: "Click")
 

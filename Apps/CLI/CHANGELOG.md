@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Wake Bridge hosts on kernel listener readiness instead of polling `accept` every 25 ms, draining queued clients per notification while preserving bounded, descriptor-safe shutdown.
 
 ### Fixed
+- Compose setup, delivery, cleanup, cancellation, and refusal receipts through one Foundation action-sequence owner so foreground focus cannot be erased by a no-dispatch leaf and CLI/MCP target refusals expose complete retry guidance.
 - Make explicit Bridge socket overrides fail closed when unavailable instead of reporting a successful local fallback.
 - Validate `see` selectors, explicit caller-local PIDs, and `scroll` directions before runtime-host and ScreenCaptureKit ownership preflight so request errors cannot be masked by ambient capture state.
 - Consume explicit snapshots for further mutations when a canonical action outcome requires fresh observation or is unavailable, refusing duplicate click/action/set-value/scroll dispatch before it reaches the app while preserving read-only snapshot evidence.

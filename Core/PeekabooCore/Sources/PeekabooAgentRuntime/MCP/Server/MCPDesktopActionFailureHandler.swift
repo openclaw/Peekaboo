@@ -3,19 +3,6 @@ import PeekabooFoundation
 import TachikomaMCP
 
 enum MCPDesktopActionFailureHandler {
-    static func requireConfirmed(
-        _ outcome: DesktopActionOutcome?,
-        operation: String) throws
-    {
-        guard let outcome,
-              let failure = DesktopActionFailure(
-                  outcome: outcome,
-                  message: "\(operation) did not return a confirmed outcome.",
-                  hint: "Follow the canonical escalation metadata before deciding whether to retry.")
-        else { return }
-        throw failure
-    }
-
     @MainActor
     static func response(
         for failure: DesktopActionFailure,
