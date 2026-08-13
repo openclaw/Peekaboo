@@ -747,6 +747,7 @@ final class StubSnapshotManager: SnapshotManagerProtocol, @unchecked Sendable {
     var mostRecentSnapshotId: String?
     var uiAutomationSnapshotError: PeekabooError?
     var invalidationError: (any Error)?
+    var mutationFinishError: (any Error)?
     var snapshotCreationDelay: Duration?
     var preservingInvalidationDelay: Duration?
     private(set) var invalidationCutoffs: [Date] = []
@@ -881,6 +882,9 @@ final class StubSnapshotManager: SnapshotManagerProtocol, @unchecked Sendable {
     ) async throws {
         guard self.mutationLeases[lease.snapshotId] == lease else {
             throw SnapshotError.storageError("Mutation lease changed before completion")
+        }
+        if let mutationFinishError {
+            throw mutationFinishError
         }
         self.mutationLeases.removeValue(forKey: lease.snapshotId)
         if requiresFreshObservation {

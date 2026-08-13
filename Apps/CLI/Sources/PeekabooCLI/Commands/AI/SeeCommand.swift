@@ -306,16 +306,24 @@ struct SeeCommand: ApplicationResolvable, ErrorHandlingCommand, PreRuntimeValida
     }
 
     func validateBeforeRuntime() throws {
-        try self.validateMergedOptions()
-        try self.validateExplicitLocalProcessTarget()
+        try self.validateBeforeRuntime(environment: ProcessInfo.processInfo.environment)
     }
 
-    private func validateExplicitLocalProcessTarget() throws {
+    func validateBeforeRuntime(environment: [String: String]) throws {
+        try self.validateMergedOptions()
+        try self.validateExplicitLocalProcessTarget(environment: environment)
+    }
+
+    private func validateExplicitLocalProcessTarget(environment: [String: String]) throws {
         guard let processIdentifier = try self.resolveExplicitPIDObservationTarget() else { return }
         guard processIdentifier > 0 else {
             throw ValidationError("--pid must be greater than 0")
         }
-        guard self.runtimeOptions.remoteIsolationRequested else { return }
+        guard RuntimeHostResolver.remoteIsolationRequested(
+            options: self.runtimeOptions,
+            environment: environment
+        )
+        else { return }
         guard let application = NSRunningApplication(processIdentifier: processIdentifier),
               !application.isTerminated
         else {

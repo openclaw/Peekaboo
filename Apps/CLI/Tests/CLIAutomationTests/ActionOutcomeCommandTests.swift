@@ -11,6 +11,23 @@ import Testing
 @MainActor
 @Suite(.serialized)
 struct ActionOutcomeCommandTests {
+    enum LeaseFinalizationFailure: CaseIterable, Sendable {
+        case bridgeTimeout
+        case unreadableReceipt
+        case consumeWriteFailure
+
+        var error: any Error {
+            switch self {
+            case .bridgeTimeout:
+                PeekabooError.timeout("Bridge mutation finalization timed out")
+            case .unreadableReceipt:
+                SnapshotError.corruptedData
+            case .consumeWriteFailure:
+                SnapshotError.storageError("Could not consume the mutation receipt")
+            }
+        }
+    }
+
     @Test
     func `service bridge preserves every canonical fixture without inference`() async throws {
         let automation = OutcomeStubAutomationService()
@@ -148,6 +165,70 @@ struct ActionOutcomeCommandTests {
                     return ()
                 },
                 outcome: { _ in nil }
+            )
+        }
+        #expect(dispatchCount == 1)
+        #expect(try await snapshots.getDetectionResult(snapshotId: snapshotID) != nil)
+    }
+
+    @Test(arguments: LeaseFinalizationFailure.allCases)
+    func `successful mutation becomes indeterminate when lease finalization fails`(
+        failureFixture: LeaseFinalizationFailure
+    ) async throws {
+        let snapshots = StubSnapshotManager()
+        let snapshotID = try await Self.storeElementSnapshot(in: snapshots)
+        let finalizationError = failureFixture.error
+        snapshots.mutationFinishError = finalizationError
+        let delivery = DesktopActionOutcome.Delivery(
+            mechanism: .accessibilityAction,
+            mode: .background
+        )
+        let expectedOutcome = DesktopActionOutcome.dispatchedUnverified(
+            route: .bridge,
+            delivery: delivery,
+            evidence: .deliveryAccepted,
+            unitCount: DesktopActionOutcome.DispatchUnitCount(2)
+        )
+        var dispatchCount = 0
+
+        let failure = await #expect(throws: DesktopActionFailure.self) {
+            _ = try await SnapshotMutationCoordinator.perform(
+                snapshotId: snapshotID,
+                snapshots: snapshots,
+                operation: {
+                    dispatchCount += 1
+                    return "delivered"
+                },
+                outcome: { _ in expectedOutcome }
+            )
+        }
+
+        let projection = try #require(failure?.outcome.projection)
+        #expect(projection.state == .indeterminate)
+        #expect(projection.route == .bridge)
+        #expect(projection.deliveryMechanism == delivery.mechanism)
+        #expect(projection.deliveryMode == delivery.mode)
+        #expect(projection.evidence == .completionUnknown)
+        #expect(projection.dispatchState == .mayHaveDispatched(unitCount: DesktopActionOutcome.DispatchUnitCount(2)))
+        #expect(projection.dispatchedUnitCount?.rawValue == 2)
+        #expect(projection.mutationDispatched)
+        #expect(projection.retrySafety == .unsafe)
+        #expect(!projection.retrySafe)
+        #expect(projection.escalation == .observeBeforeRetry)
+        #expect(projection.requiresFreshObservation)
+        #expect(failure?.message.contains("could not finalize") == true)
+        #expect(failure?.hint?.contains("do not reuse this snapshot") == true)
+        #expect(failure?.causeDescription == finalizationError.localizedDescription)
+        #expect(dispatchCount == 1)
+        await #expect(throws: PreDispatchActionError.self) {
+            _ = try await SnapshotMutationCoordinator.perform(
+                snapshotId: snapshotID,
+                snapshots: snapshots,
+                operation: {
+                    dispatchCount += 1
+                    return "duplicate"
+                },
+                outcome: { _ in expectedOutcome }
             )
         }
         #expect(dispatchCount == 1)

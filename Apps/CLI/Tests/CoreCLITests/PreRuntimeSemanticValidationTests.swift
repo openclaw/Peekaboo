@@ -47,4 +47,23 @@ struct PreRuntimeSemanticValidationTests {
         }
         #expect(error?.localizedDescription == testCase.expectedMessage)
     }
+
+    @Test
+    func `environment no remote validates local PID before runtime selection`() throws {
+        let resolved = try CommanderRuntimeRouter.resolve(argv: [
+            "peekaboo", "see", "--pid", "999999999", "--json",
+        ])
+        let command = try #require(CommanderCLIBinder.instantiateCommand(
+            type: resolved.type,
+            parsedValues: resolved.parsedValues
+        ) as? SeeCommand)
+
+        #expect(throws: Never.self) {
+            try command.validateBeforeRuntime(environment: [:])
+        }
+        let error = #expect(throws: ValidationError.self) {
+            try command.validateBeforeRuntime(environment: ["PEEKABOO_NO_REMOTE": "1"])
+        }
+        #expect(error?.localizedDescription == "No running application found for --pid 999999999.")
+    }
 }

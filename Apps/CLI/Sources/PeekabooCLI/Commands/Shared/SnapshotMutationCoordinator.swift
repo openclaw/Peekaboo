@@ -29,13 +29,9 @@ enum SnapshotMutationCoordinator {
             )
         }
 
+        let value: Value
         do {
-            let value = try await operation()
-            try await snapshots.finishSnapshotMutation(
-                lease,
-                requiresFreshObservation: outcome(value)?.projection.requiresFreshObservation ?? true
-            )
-            return value
+            value = try await operation()
         } catch let failure as DesktopActionFailure {
             // A typed failure says whether dispatch occurred. If lease finalization itself fails, the
             // still-present pending receipt remains the safer state and the original action failure
@@ -50,5 +46,24 @@ enum SnapshotMutationCoordinator {
             // cannot replay a mutation that may already have reached the application.
             throw error
         }
+
+        let canonicalOutcome = outcome(value)
+        do {
+            try await snapshots.finishSnapshotMutation(
+                lease,
+                requiresFreshObservation: canonicalOutcome?.projection.requiresFreshObservation ?? true
+            )
+        } catch {
+            throw DesktopActionFailure.indeterminate(
+                route: canonicalOutcome?.route ?? .local,
+                delivery: canonicalOutcome?.delivery,
+                evidence: .completionUnknown,
+                unitCount: canonicalOutcome?.dispatchState.unitCount,
+                message: "Action completed, but Peekaboo could not finalize its snapshot mutation lease.",
+                hint: "Observe the target before any retry and do not reuse this snapshot.",
+                causeDescription: error.localizedDescription
+            )
+        }
+        return value
     }
 }
