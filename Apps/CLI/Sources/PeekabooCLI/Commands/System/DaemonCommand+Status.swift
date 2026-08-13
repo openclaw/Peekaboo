@@ -13,7 +13,6 @@ extension DaemonCommand {
             }
         }
 
-        @Option(name: .long, help: "Override bridge socket path")
         var bridgeSocket: String?
 
         @RuntimeStorage var runtime: CommandRuntime?

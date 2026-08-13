@@ -15,7 +15,6 @@ extension DaemonCommand {
             }
         }
 
-        @Option(name: .long, help: "Override bridge socket path")
         var bridgeSocket: String?
 
         @Option(name: .customLong("poll-interval"), help: "Window tracker poll interval (bare values are milliseconds)")

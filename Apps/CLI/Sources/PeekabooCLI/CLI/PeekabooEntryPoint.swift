@@ -54,19 +54,8 @@ private func containsJSONOutputFlag(_ arguments: [String]) -> Bool {
         arguments.contains("--jsonOutput")
 }
 
-private func commanderErrorMessage(_ error: CommanderProgramError) -> String {
-    switch error {
-    case let .parsingError(parsing):
-        parsing.description
-    case let .unknownCommand(name):
-        "Unknown command '\(name)'"
-    case let .unknownSubcommand(command, name):
-        "Unknown subcommand '\(name)' for command '\(command)'"
-    case .missingCommand:
-        "No command specified"
-    case let .missingSubcommand(command):
-        "Command '\(command)' requires a subcommand"
-    }
+func commanderErrorMessage(_ error: CommanderProgramError) -> String {
+    error.description
 }
 
 private func printCommanderError(_ error: CommanderProgramError, jsonOutput: Bool) {

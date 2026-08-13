@@ -15,7 +15,6 @@ extension DaemonCommand {
             }
         }
 
-        @Option(name: .long, help: "Override bridge socket path")
         var bridgeSocket: String?
 
         @Option(name: .customLong("wait"), help: "Daemon shutdown wait (bare values are milliseconds; default 12s)")

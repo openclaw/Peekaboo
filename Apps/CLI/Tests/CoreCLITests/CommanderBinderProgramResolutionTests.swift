@@ -4,6 +4,18 @@ import Testing
 
 struct CommanderBinderProgramResolutionTests {
     @Test
+    func `Commander configuration failures retain actionable CLI messages`() {
+        #expect(
+            commanderErrorMessage(.duplicateCommand("see")) ==
+                "Duplicate root command 'see'"
+        )
+        #expect(
+            commanderErrorMessage(.duplicateSubcommand(command: "window manage", name: "move")) ==
+                "Duplicate subcommand 'move' for command 'window manage'"
+        )
+    }
+
+    @Test
     @MainActor
     func `Commander program resolves screenshot-only see options`() throws {
         let descriptors = CommanderRegistryBuilder.buildDescriptors()
