@@ -77,6 +77,14 @@ struct PreDispatchActionError: LocalizedError, ResultEnvelopeError {
         self.hint
     }
 
+    nonisolated var envelopeRetrySafe: Bool? {
+        self.failure.outcome.retrySafety == .safe
+    }
+
+    nonisolated var envelopeMutationDispatched: Bool? {
+        self.failure.outcome.dispatchState.mutationDispatched
+    }
+
     nonisolated var envelopeActionFailure: DesktopActionFailure? {
         self.failure
     }

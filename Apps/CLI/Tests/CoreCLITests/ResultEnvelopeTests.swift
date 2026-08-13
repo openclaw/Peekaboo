@@ -86,6 +86,8 @@ struct ResultEnvelopeTests {
 
         #expect(error.envelopeEffect == .refused)
         #expect(error.envelopeHint == "Use --foreground for explicit global input.")
+        #expect(error.envelopeRetrySafe == true)
+        #expect(error.envelopeMutationDispatched == false)
         #expect(error.envelopeActionFailure?.outcome.refusalReason == .invalidRequest)
     }
 
