@@ -206,7 +206,7 @@ public struct DesktopActionSequenceAccumulator: Sendable {
                 unitCount: unitCount,
                 message: message,
                 hint: hint ?? leafFailure.hint,
-                causeDescription: causeDescription ?? leafFailure.localizedDescription)
+                causeDescription: causeDescription ?? leafFailure.causeDescription)
         }
         return leafFailure
     }

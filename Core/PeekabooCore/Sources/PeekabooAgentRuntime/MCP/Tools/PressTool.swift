@@ -270,7 +270,7 @@ public struct PressTool: MCPTool {
     {
         let failure = sequence.failure(
             combining: leafFailure,
-            message: "Press sequence stopped after \(completedPresses) completed action unit(s).",
+            message: "Press sequence stopped after \(completedPresses) completed press(es).",
             hint: "Observe the target before deciding whether to continue the sequence.",
             causeDescription: causeDescription)
         return PressSequenceFailure(

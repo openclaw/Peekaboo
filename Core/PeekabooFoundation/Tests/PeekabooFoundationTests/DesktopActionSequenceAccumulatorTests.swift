@@ -135,7 +135,8 @@ struct DesktopActionSequenceAccumulatorTests {
     func `leaf refusal is preserved only while the whole composite has no dispatch`() throws {
         let refusal = DesktopActionFailure.preDispatchRefusal(
             reason: .targetUnavailable,
-            message: "Target drifted")
+            message: "Target drifted",
+            causeDescription: "The pinned window generation changed")
 
         var noDispatch = DesktopActionSequenceAccumulator()
         noDispatch.record(.outcome(.confirmedNoChange(route: .bridge)))
@@ -154,6 +155,7 @@ struct DesktopActionSequenceAccumulatorTests {
         #expect(try composed.outcome.dispatchState == .mayHaveDispatched(unitCount: self.units(1)))
         #expect(composed.outcome.retrySafety == .unsafe)
         #expect(composed.outcome.projection.requiresFreshObservation)
+        #expect(composed.causeDescription == "The pinned window generation changed")
     }
 
     @Test

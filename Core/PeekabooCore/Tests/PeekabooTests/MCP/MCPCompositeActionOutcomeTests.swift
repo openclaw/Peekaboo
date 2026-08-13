@@ -131,4 +131,29 @@ struct MCPCompositeActionOutcomeTests {
         #expect(response.meta?.objectValue?["state"] == .string("indeterminate"))
         #expect(response.meta?.objectValue?["emitted_units"] == .int(2))
     }
+
+    @Test
+    @MainActor
+    func `press failure message distinguishes completed presses from setup focus`() async throws {
+        let automation = StubAutomationService()
+        automation.actionOutcome = .refused(reason: .permissionDenied)
+        let context = await MCPToolTestHelpers.makeContext(
+            automation: automation,
+            windows: EmptyRecordingWindowService())
+
+        let response = try await PressTool(context: context).execute(arguments: ToolArguments(raw: [
+            "keys": ["cmd+a"],
+            "app": "Example",
+            "foreground": true,
+        ]))
+
+        #expect(response.isError)
+        guard case let .text(text, _, _) = response.content.first else {
+            Issue.record("Expected text response")
+            return
+        }
+        #expect(text.contains("0 completed press(es)"))
+        #expect(!text.contains("completed action unit"))
+        #expect(response.meta?.objectValue?["dispatched_unit_count"] == .int(1))
+    }
 }
