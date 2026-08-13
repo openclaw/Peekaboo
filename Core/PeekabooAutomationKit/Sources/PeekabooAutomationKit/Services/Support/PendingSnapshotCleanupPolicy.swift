@@ -6,6 +6,12 @@ public protocol PendingSnapshotFailureDispositionProviding: Error {
     var mayCompleteSnapshotWorkAfterFailure: Bool { get }
 }
 
+extension DesktopActionFailure: PendingSnapshotFailureDispositionProviding {
+    public var mayCompleteSnapshotWorkAfterFailure: Bool {
+        self.outcome.dispatchState != .none
+    }
+}
+
 public enum PendingSnapshotCleanupPolicy {
     /// Pending reservations double as tombstones for work that may outlive its caller.
     /// Definite failures can be removed eagerly; indeterminate failures must age out normally.

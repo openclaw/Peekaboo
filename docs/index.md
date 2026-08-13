@@ -45,7 +45,7 @@ Peekaboo is a macOS automation toolkit for humans and agents. It captures pixels
 | **CLI** | scripts, ad-hoc captures, CI | `brew install steipete/tap/peekaboo` |
 | **MCP server** | Codex, Claude Code, Cursor | `npx @steipete/peekaboo mcp` |
 | **Mac app** | menu-bar visualizer, permission prompts | [Releases](https://github.com/openclaw/Peekaboo/releases/latest) |
-| **Library** | embed in Swift apps and tools | `Core/PeekabooCore` (Swift Package) |
+| **Library** | embed foundation, protocols, automation, or Bridge in Swift apps and tools | Root `Package.swift` |
 
 ## Get help
 

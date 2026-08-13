@@ -597,12 +597,6 @@ extension PeekabooBridgeErrorEnvelope: PendingSnapshotFailureDispositionProvidin
     }
 }
 
-extension DesktopActionFailure: @retroactive PendingSnapshotFailureDispositionProviding {
-    public var mayCompleteSnapshotWorkAfterFailure: Bool {
-        self.outcome.dispatchState != .none
-    }
-}
-
 extension PeekabooBridgeErrorEnvelope: ApplicationLifecycleRefusalMetadataProviding {
     public var applicationLifecycleRefusalHint: String? {
         ApplicationLifecycleRefusalError.hint(forBridgeContext: self.context)
