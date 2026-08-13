@@ -26,6 +26,7 @@
 - Consolidate accessibility observer registration, exact element/process dispatch, stop, and deinitialization cleanup under one instance-owned registry.
 - Preserve middle and right mouse-button identity across clicks, holds, and drags, and prebuild complete input sequences so allocation failures cannot leave a button held down.
 - Refresh AXorcist to refuse element-scoped typing when focus cannot be established, preserve exact PID targets, reject conflicting application/PID selectors, and report point lookup misses as errors.
+- Refresh AXorcist point-to-app resolution to keep exact-app misses fail-closed and replace the former ~5-second all-app Accessibility scan with one native on-screen window snapshot; the source-blind exact-head validator measured 43–67 ms for these lookup cases.
 - Carry canonical desktop-action outcomes through capability-gated Bridge protocol 1.23 requests, preserving exact refused, partial, unverified, and indeterminate failures while older hosts remain conservative after a response is lost.
 - Project canonical desktop-action outcomes into MCP metadata, so partial failures retain recovery-side-effect semantics instead of incorrectly demanding a fresh observation.
 - Preserve successful native outcomes for click, type, type-actions, scroll, hotkey, action, and set-value across projected Bridge requests, and expose the validated canonical projection in CLI JSON and human output without changing legacy response payloads.
