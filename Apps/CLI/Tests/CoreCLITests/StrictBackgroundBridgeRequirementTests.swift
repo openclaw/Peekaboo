@@ -20,18 +20,54 @@ struct StrictBackgroundBridgeRequirementTests {
     }
 
     @Test
-    func `background dialog click requires strict remote capability`() throws {
+    func `background dialog click requires prepared exact remote capabilities`() throws {
         let background = try CommanderCLIBinder.makeRuntimeOptions(
-            from: ParsedValues(positional: [], options: [:], flags: []),
+            from: ParsedValues(
+                positional: [],
+                options: ["pid": ["123"], "button": ["OK"]],
+                flags: []
+            ),
             commandType: DialogCommand.ClickSubcommand.self
         )
         let foreground = try CommanderCLIBinder.makeRuntimeOptions(
-            from: ParsedValues(positional: [], options: [:], flags: ["foreground"]),
+            from: ParsedValues(
+                positional: [],
+                options: ["pid": ["123"], "button": ["OK"]],
+                flags: ["foreground"]
+            ),
             commandType: DialogCommand.ClickSubcommand.self
         )
 
-        #expect(background.requiresBackgroundDialogClick)
+        #expect(background.requiresPreparedDialogClick)
+        #expect(!background.requiresBackgroundDialogClick)
+        #expect(foreground.requiresPreparedDialogClick)
         #expect(!foreground.requiresBackgroundDialogClick)
+    }
+
+    @Test
+    func `dialog semantic errors refuse before runtime resolution`() {
+        #expect(throws: PreDispatchActionError.self) {
+            _ = try CommanderCLIBinder.makeRuntimeOptions(
+                from: ParsedValues(positional: [], options: ["button": ["OK"]], flags: []),
+                commandType: DialogCommand.ClickSubcommand.self
+            )
+        }
+        #expect(throws: PreDispatchActionError.self) {
+            _ = try CommanderCLIBinder.makeRuntimeOptions(
+                from: ParsedValues(
+                    positional: [],
+                    options: ["button": ["OK"], "pid": ["42"], "windowId": ["700"], "windowTitle": ["Save"]],
+                    flags: []
+                ),
+                commandType: DialogCommand.ClickSubcommand.self
+            )
+        }
+        #expect(throws: PreDispatchActionError.self) {
+            _ = try CommanderCLIBinder.makeRuntimeOptions(
+                from: ParsedValues(positional: [], options: ["text": ["value"], "pid": ["42"]], flags: []),
+                commandType: DialogCommand.InputSubcommand.self
+            )
+        }
     }
 
     @Test

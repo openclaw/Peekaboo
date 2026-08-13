@@ -2,6 +2,7 @@ import CoreGraphics
 import Foundation
 import PeekabooAutomationKit
 import PeekabooBridge
+import PeekabooFoundation
 import Testing
 @testable import PeekabooCore
 
@@ -12,6 +13,10 @@ struct BridgeStrictBackgroundOperationTests {
         let operations: Set<PeekabooBridgeOperation> = [
             .backgroundCloseWindow,
             .backgroundDialogClickButton,
+            .targetedDialogListElements,
+            .prepareDialogAction,
+            .exactDialogClickButton,
+            .exactDialogDismiss,
         ]
 
         let legacy = PeekabooBridgeOperation.compatible(
@@ -26,7 +31,14 @@ struct BridgeStrictBackgroundOperationTests {
 
         #expect(legacy.isEmpty)
         #expect(backgroundDialog == [.backgroundDialogClickButton])
-        #expect(current == operations)
+        #expect(current == [.backgroundCloseWindow, .backgroundDialogClickButton])
+        #expect(PeekabooBridgeOperation.compatible(
+            operations,
+            with: PeekabooBridgeProtocolVersion(major: 1, minor: 24)) ==
+            [.backgroundCloseWindow, .backgroundDialogClickButton])
+        #expect(PeekabooBridgeOperation.compatible(
+            operations,
+            with: PeekabooBridgeProtocolVersion(major: 1, minor: 25)) == operations)
     }
 
     @Test
@@ -130,5 +142,79 @@ struct BridgeStrictBackgroundOperationTests {
         } catch {
             Issue.record("Unexpected error: \(error)")
         }
+    }
+
+    @Test
+    func `remote prepared dialog action refuses before transport when one operation is missing`() async throws {
+        let client = PeekabooBridgeClient(socketPath: "/nonexistent/peekaboo-test.sock")
+        let service = RemoteDialogService(
+            client: client,
+            capabilities: RemoteDialogCapabilities(
+                prepareAction: true,
+                exactClick: false))
+        let target = try DialogTargetSelector(processIdentifier: 123)
+        let request = try DialogActionPreparationRequest(
+            target: target,
+            kind: .clickButton,
+            buttonText: "OK")
+
+        do {
+            _ = try await service.prepareDialogAction(request)
+            Issue.record("Expected capability refusal before transport")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .refused)
+            #expect(failure.outcome.refusalReason == .runtimeIncompatible)
+            #expect(failure.outcome.dispatchState == .none)
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+    }
+
+    @Test
+    func `remote service initializer preserves legacy background dialog capability label`() {
+        let client = PeekabooBridgeClient(socketPath: "/nonexistent/peekaboo-test.sock")
+        _ = RemotePeekabooServices(
+            client: client,
+            supportsBackgroundDialogClick: true)
+    }
+
+    @Test
+    func `remote prepare errors normalize to canonical bridge pre-dispatch refusals`() {
+        let envelope = PeekabooBridgeErrorEnvelope(
+            code: .invalidRequest,
+            message: "Dialog became ambiguous",
+            details: "candidate_window_ids=700,701")
+        let failure = RemoteDialogService.preDispatchFailure(for: envelope)
+
+        #expect(failure.outcome.route == .bridge)
+        #expect(failure.outcome.state == .refused)
+        #expect(failure.outcome.refusalReason == .invalidRequest)
+        #expect(failure.outcome.dispatchState == .none)
+        #expect(failure.outcome.retrySafety == .safe)
+        #expect(failure.causeDescription == "candidate_window_ids=700,701")
+    }
+
+    @Test
+    func `prepared dialog request wire retains exact action and window receipt`() throws {
+        let bounds = CGRect(x: 1, y: 2, width: 300, height: 200)
+        let identity = WindowMutationIdentity(
+            windowID: 700,
+            ownerProcessIdentifier: 42,
+            ownerProcessStartIdentity: 999,
+            capturedBounds: bounds)
+        let receipt = try PreparedDialogActionReceipt(
+            token: UUID(),
+            kind: .clickButton,
+            target: UIAutomationTarget.ExactWindow(identity: identity, bounds: bounds))
+        let request = PeekabooBridgeRequest.exactDialogClickButton(receipt)
+
+        let data = try JSONEncoder.peekabooBridgeEncoder().encode(request)
+        let decoded = try JSONDecoder.peekabooBridgeDecoder().decode(PeekabooBridgeRequest.self, from: data)
+        #expect(decoded.operation == .exactDialogClickButton)
+        guard case let .exactDialogClickButton(decodedReceipt) = decoded else {
+            Issue.record("Expected exact dialog click request")
+            return
+        }
+        #expect(decodedReceipt == receipt)
     }
 }

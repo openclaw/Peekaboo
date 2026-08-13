@@ -1,6 +1,7 @@
 import Commander
 import Foundation
 import PeekabooCore
+import PeekabooFoundation
 
 extension DialogCommand {
     // MARK: - Dismiss Dialog
@@ -25,10 +26,13 @@ extension DialogCommand {
         @MainActor
         mutating func run(using runtime: CommandRuntime) async throws {
             self.runtime = runtime
+            var preparedReceipt: PreparedDialogActionReceipt?
+            let force = self.force
             try await DialogCommand.execute(
                 runtime: runtime,
                 target: self.target,
                 focus: .whenRequested(self.foreground, self.focusOptions),
+                resolveWindowTitle: self.force,
                 validate: {
                     guard !self.force || self.foreground else {
                         throw ValidationError("dialog dismiss --force sends global Escape and requires --foreground")
@@ -37,12 +41,33 @@ extension DialogCommand {
                         throw ValidationError("Dialog focus options require --foreground")
                     }
                 },
-                operation: { context in
-                    let result = try await context.services.dialogs.dismissDialog(
-                        force: self.force,
-                        windowTitle: context.windowTitle,
-                        appName: context.appHint
+                prepareBeforeFocus: { context in
+                    guard !force else { return }
+                    let request = try DialogActionPreparationRequest(
+                        target: context.target,
+                        kind: .dismiss
                     )
+                    preparedReceipt = try await context.services.dialogs.prepareDialogAction(request)
+                },
+                operation: { context in
+                    let result: DialogActionResult
+                    if self.force {
+                        result = try await context.services.dialogs.dismissDialog(
+                            force: true,
+                            windowTitle: context.windowTitle,
+                            appName: context.appHint
+                        )
+                    } else {
+                        guard let receipt = preparedReceipt else {
+                            throw DesktopActionFailure.preDispatchRefusal(
+                                reason: .runtimeIncompatible,
+                                message: "Dialog dismiss lost its prepared action receipt before execution.",
+                                hint: "Prepare the dialog action again before retrying."
+                            )
+                        }
+                        result = try await context.services.dialogs.performPreparedDialogAction(receipt)
+                        _ = try result.requiredPreparedOutcome(kind: .dismiss)
+                    }
 
                     if self.jsonOutput {
                         let outputData = DialogDismissResult(
@@ -50,7 +75,12 @@ extension DialogCommand {
                             method: result.details["method"] ?? "unknown",
                             button: result.details["button"]
                         )
-                        outputSuccessCodable(data: outputData, effect: .confirmed, logger: self.outputLogger)
+                        outputSuccessCodable(
+                            data: outputData,
+                            effect: result.outcome == nil ? .confirmed : nil,
+                            outcome: result.outcome,
+                            logger: self.outputLogger
+                        )
                     } else if result.details["method"] == "escape" {
                         print("✓ Dismissed dialog with Escape")
                     } else if let button = result.details["button"] {
@@ -93,6 +123,7 @@ extension DialogCommand {
                 runtime: runtime,
                 target: self.target,
                 focus: .none,
+                resolveWindowTitle: false,
                 beginsInteractionMutation: false,
                 handlesValidationError: false,
                 operation: { context in
@@ -100,10 +131,14 @@ extension DialogCommand {
                         seconds: timeoutSeconds,
                         operationName: "dialog list"
                     ) {
-                        try await context.services.dialogs.listDialogElements(
-                            windowTitle: context.windowTitle,
-                            appName: context.appHint
-                        )
+                        if context.target.hasTarget {
+                            try await context.services.dialogs.listDialogElements(target: context.target)
+                        } else {
+                            try await context.services.dialogs.listDialogElements(
+                                windowTitle: nil,
+                                appName: nil
+                            )
+                        }
                     }
 
                     if self.jsonOutput {

@@ -116,13 +116,14 @@ private enum BackgroundOnlyToolPolicy {
         case foregroundRequest(String)
         case activation(String)
         case sharedDesktop(String)
+        case invalidRequest(String)
         case unclassified
 
         var message: String {
             switch self {
             case let .foregroundRequest(detail): detail
             case let .activation(detail): detail
-            case let .sharedDesktop(detail): detail
+            case let .sharedDesktop(detail), let .invalidRequest(detail): detail
             case .unclassified: "the tool or action is not classified as background-safe"
             }
         }
@@ -131,6 +132,8 @@ private enum BackgroundOnlyToolPolicy {
             switch self {
             case .foregroundRequest, .activation, .sharedDesktop:
                 .foregroundConsentRequired
+            case .invalidRequest:
+                .invalidRequest
             case .unclassified:
                 .operationUnsupported
             }
@@ -296,13 +299,45 @@ private enum BackgroundOnlyToolPolicy {
         if let foreground = self.explicitForeground(arguments) {
             return foreground
         }
-        switch self.normalized(arguments.getString("action")) {
-        case nil, "list":
+        let action: DialogToolAction
+        let inputs: DialogToolInputs
+        do {
+            action = try DialogToolAction(arguments: arguments)
+            inputs = try DialogToolInputs(arguments: arguments)
+            _ = try MCPInteractionTarget(
+                app: inputs.app,
+                pid: inputs.pid,
+                windowTitle: inputs.windowTitle,
+                windowIndex: inputs.windowIndex,
+                windowId: inputs.windowId)
+            if action == .click {
+                _ = try inputs.requireButton()
+            }
+        } catch {
+            return .invalidRequest(error.localizedDescription)
+        }
+        switch action {
+        case .list:
             return nil
-        case "click", "dismiss", "input", "file":
-            return .sharedDesktop("dialog mutation lacks an exact process-generation and window receipt")
-        default:
-            return .unclassified
+        case .click:
+            return self.hasDialogTarget(arguments)
+                ? nil
+                : .invalidRequest("dialog click requires an explicit app, PID, or window target")
+        case .dismiss:
+            if arguments.getBool("force") == true {
+                return .sharedDesktop("forced dialog dismissal sends shared global Escape input")
+            }
+            return self.hasDialogTarget(arguments)
+                ? nil
+                : .invalidRequest("dialog dismiss requires an explicit app, PID, or window target")
+        case .input, .file:
+            return .sharedDesktop("dialog keyboard/file interaction requires foreground consent")
+        }
+    }
+
+    private static func hasDialogTarget(_ arguments: ToolArguments) -> Bool {
+        ["app", "pid", "window_id", "window_title", "window_index"].contains {
+            arguments.getValue(for: $0) != nil
         }
     }
 

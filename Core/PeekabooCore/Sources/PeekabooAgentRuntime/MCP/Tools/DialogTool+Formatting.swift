@@ -19,12 +19,15 @@ extension DialogTool {
         let executionTime = Date().timeIntervalSince(startTime)
         let message = "\(AgentDisplayTokens.Status.success) \(context.verb) in \(Self.formattedDuration(executionTime))"
 
-        let meta: Value = .object([
+        let baseMeta: [String: Value] = [
             "action": .string(result.action.rawValue),
             "success": .bool(result.success),
             "execution_time": .double(executionTime),
             "details": .object(result.details.mapValues { .string($0) }),
-        ])
+        ]
+        let meta = try? MCPToolResponseMetadataProjector.metadata(
+            merging: baseMeta,
+            outcome: result.outcome)
 
         let summary = ToolEventSummary(
             targetApp: context.appHint,

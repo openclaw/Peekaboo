@@ -144,27 +144,27 @@ extension PeekabooBridgeServer {
         }
     }
 
-    func handleDialogRequest(_ request: PeekabooBridgeRequest) async throws -> PeekabooBridgeResponse {
+    func handleDialogRequest(_ request: PeekabooBridgeRequest) async throws -> PeekabooBridgeHandledResponse {
         switch request {
         case let .dialogFindActive(payload):
             let info = try await self.services.dialogs.findActiveDialog(
                 windowTitle: payload.windowTitle,
                 appName: payload.appName)
-            return .dialogInfo(info)
+            return .init(response: .dialogInfo(info))
         case let .dialogClickButton(payload):
             let result = try await self.services.dialogs.clickButton(
                 buttonText: payload.buttonText,
                 windowTitle: payload.windowTitle,
                 appName: payload.appName,
                 allowGlobalFallback: true)
-            return .dialogResult(result)
+            return .init(response: .dialogResult(result), outcome: result.outcome)
         case let .backgroundDialogClickButton(payload):
             let result = try await self.services.dialogs.clickButton(
                 buttonText: payload.buttonText,
                 windowTitle: payload.windowTitle,
                 appName: payload.appName,
                 allowGlobalFallback: false)
-            return .dialogResult(result)
+            return .init(response: .dialogResult(result), outcome: result.outcome)
         case let .dialogEnterText(payload):
             let result = try await self.services.dialogs.enterText(
                 text: payload.text,
@@ -172,7 +172,7 @@ extension PeekabooBridgeServer {
                 clearExisting: payload.clearExisting,
                 windowTitle: payload.windowTitle,
                 appName: payload.appName)
-            return .dialogResult(result)
+            return .init(response: .dialogResult(result), outcome: result.outcome)
         case let .dialogHandleFile(payload):
             let result = try await self.services.dialogs.handleFileDialog(
                 path: payload.path,
@@ -180,18 +180,38 @@ extension PeekabooBridgeServer {
                 actionButton: payload.actionButton,
                 ensureExpanded: payload.ensureExpanded ?? false,
                 appName: payload.appName)
-            return .dialogResult(result)
+            return .init(response: .dialogResult(result), outcome: result.outcome)
         case let .dialogDismiss(payload):
             let result = try await self.services.dialogs.dismissDialog(
                 force: payload.force,
                 windowTitle: payload.windowTitle,
                 appName: payload.appName)
-            return .dialogResult(result)
+            return .init(response: .dialogResult(result), outcome: result.outcome)
         case let .dialogListElements(payload):
             let elements = try await self.services.dialogs.listDialogElements(
                 windowTitle: payload.windowTitle,
                 appName: payload.appName)
-            return .dialogElements(elements)
+            return .init(response: .dialogElements(elements))
+        case let .targetedDialogListElements(selector):
+            let elements = try await self.services.dialogs.listDialogElements(target: selector)
+            return .init(response: .dialogElements(elements))
+        case let .prepareDialogAction(payload):
+            let receipt = try await self.services.dialogs.prepareDialogAction(payload)
+            return .init(response: .preparedDialogAction(receipt))
+        case let .exactDialogClickButton(receipt):
+            guard receipt.kind == .clickButton else {
+                throw PeekabooError.invalidInput("Exact dialog click requires a click-button receipt")
+            }
+            let result = try await self.services.dialogs.performPreparedDialogAction(receipt)
+            let outcome = try result.requiredPreparedOutcome(kind: .clickButton)
+            return .init(response: .dialogResult(result), outcome: outcome)
+        case let .exactDialogDismiss(receipt):
+            guard receipt.kind == .dismiss else {
+                throw PeekabooError.invalidInput("Exact dialog dismiss requires a dismiss receipt")
+            }
+            let result = try await self.services.dialogs.performPreparedDialogAction(receipt)
+            let outcome = try result.requiredPreparedOutcome(kind: .dismiss)
+            return .init(response: .dialogResult(result), outcome: outcome)
         default:
             throw Self.invalidRequest(for: request)
         }

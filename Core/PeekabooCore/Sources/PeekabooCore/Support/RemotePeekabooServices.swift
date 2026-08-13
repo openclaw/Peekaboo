@@ -47,6 +47,7 @@ public final class RemotePeekabooServices: PeekabooServiceProviding {
         supportsBackgroundWindowClose: Bool = false,
         supportsPinnedWindowMutations: Bool = false,
         supportsWindowRestore: Bool = false,
+        dialogCapabilities: RemoteDialogCapabilities = RemoteDialogCapabilities(),
         supportsBackgroundDialogClick: Bool = false,
         supportsTargetedScroll: Bool = false,
         supportsInspectAccessibilityTree: Bool = false,
@@ -166,9 +167,13 @@ public final class RemotePeekabooServices: PeekabooServiceProviding {
         }
         self.menu = menuService
         self.dock = RemoteDockService(client: client)
-        self.dialogs = RemoteDialogService(
-            client: client,
-            supportsBackgroundButtonClick: supportsBackgroundDialogClick)
+        let resolvedDialogCapabilities = RemoteDialogCapabilities(
+            backgroundButtonClick: dialogCapabilities.backgroundButtonClick || supportsBackgroundDialogClick,
+            targetedList: dialogCapabilities.targetedList,
+            prepareAction: dialogCapabilities.prepareAction,
+            exactClick: dialogCapabilities.exactClick,
+            exactDismiss: dialogCapabilities.exactDismiss)
+        self.dialogs = RemoteDialogService(client: client, capabilities: resolvedDialogCapabilities)
         self.snapshots = snapshotManager
         self.files = FileService()
         self.clipboard = ClipboardService()

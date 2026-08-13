@@ -218,6 +218,20 @@ enum BridgeCapabilityPolicy {
            !self.supportsOperation(.backgroundDialogClickButton, for: handshake) {
             return false
         }
+        if options.requiresTargetedDialogList,
+           !self.supportsOperation(.targetedDialogListElements, for: handshake) {
+            return false
+        }
+        if options.requiresPreparedDialogClick,
+           !self.supportsOperation(.prepareDialogAction, for: handshake) ||
+           !self.supportsOperation(.exactDialogClickButton, for: handshake) {
+            return false
+        }
+        if options.requiresPreparedDialogDismiss,
+           !self.supportsOperation(.prepareDialogAction, for: handshake) ||
+           !self.supportsOperation(.exactDialogDismiss, for: handshake) {
+            return false
+        }
         return true
     }
 
@@ -280,6 +294,15 @@ enum BridgeCapabilityPolicy {
         }
         if options.requiresBackgroundDialogClick {
             operations.append(.backgroundDialogClickButton)
+        }
+        if options.requiresTargetedDialogList {
+            operations.append(.targetedDialogListElements)
+        }
+        if options.requiresPreparedDialogClick {
+            operations.append(contentsOf: [.prepareDialogAction, .exactDialogClickButton])
+        }
+        if options.requiresPreparedDialogDismiss {
+            operations.append(contentsOf: [.prepareDialogAction, .exactDialogDismiss])
         }
         if options.requiresTargetedFocusedElement {
             operations.append(.getFocusedElement)

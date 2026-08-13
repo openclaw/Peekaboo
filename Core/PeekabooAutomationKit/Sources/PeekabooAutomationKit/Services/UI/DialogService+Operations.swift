@@ -6,7 +6,7 @@ import PeekabooFoundation
 @MainActor
 extension DialogService {
     public func findActiveDialog(windowTitle: String?, appName: String?) async throws -> DialogInfo {
-        try await self.operationLaneCoordinator.run(scope: .global, access: .write) {
+        try await self.operationLaneCoordinator.run(scope: .global, access: .read) {
             try await self.findActiveDialogWithOwnedLane(windowTitle: windowTitle, appName: appName)
         }
     }
@@ -149,39 +149,28 @@ extension DialogService {
     }
 
     public func listDialogElements(windowTitle: String?, appName: String?) async throws -> DialogElements {
-        try await self.operationLaneCoordinator.run(scope: .global, access: .write) {
+        try await self.operationLaneCoordinator.run(scope: .global, access: .read) {
             self.logger.info("Listing dialog elements")
             if let title = windowTitle {
                 self.logger.debug("For window: \(title)")
             }
 
-            let dialogInfo = try await self.findActiveDialogWithOwnedLane(windowTitle: windowTitle, appName: appName)
             let dialog = try await self.resolveDialogElement(windowTitle: windowTitle, appName: appName)
 
-            let buttons = self.dialogButtons(from: dialog)
-            let textFields = self.dialogTextFields(from: dialog)
-            let staticTexts = self.dialogStaticTexts(from: dialog)
-            let otherElements = self.dialogOtherElements(from: dialog)
+            let elements = self.dialogElements(for: dialog)
 
             try self.validateDialogElementList(
                 DialogElementListValidation(
                     dialog: dialog,
-                    dialogInfo: dialogInfo,
+                    dialogInfo: elements.dialogInfo,
                     windowTitle: windowTitle,
-                    buttons: buttons,
-                    textFields: textFields,
-                    staticTexts: staticTexts,
-                    otherElements: otherElements))
+                    buttons: elements.buttons,
+                    textFields: elements.textFields,
+                    staticTexts: elements.staticTexts,
+                    otherElements: elements.otherElements))
 
-            let elements = DialogElements(
-                dialogInfo: dialogInfo,
-                buttons: buttons,
-                textFields: textFields,
-                staticTexts: staticTexts,
-                otherElements: otherElements)
-
-            let summary = "\(AgentDisplayTokens.Status.success) Listed \(buttons.count) buttons, " +
-                "\(textFields.count) fields, \(staticTexts.count) texts"
+            let summary = "\(AgentDisplayTokens.Status.success) Listed \(elements.buttons.count) buttons, " +
+                "\(elements.textFields.count) fields, \(elements.staticTexts.count) texts"
             self.logger.info("\(summary, privacy: .public)")
             return elements
         }

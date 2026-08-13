@@ -21,6 +21,7 @@
 
 ### Added
 
+- Add Bridge protocol 1.25 one-shot dialog receipts that uniquely bind an exact process/window, raw dialog or sheet, and semantic AXPress button for background click/dismiss, with read-only targeted listing and canonical postcondition outcomes.
 - Add receipt-pinned exact-window background `type`, `paste`, and `press`, preserving process generation, window bounds, and focused-element identity while refusing ambiguous app/PID targets and unsafe Agent dialog/shared-UI routes.
 - Restore the root SwiftPM facade for external consumers with four lean library products—Foundation, Protocols, AutomationKit, and Bridge—plus a fresh-consumer build contract that prevents manifest and product drift.
 - Add a background-first native Bridge host runtime for signed macOS apps, with explicit caller allowlists, shared mutation/snapshot state, checked lifecycle, and no Core, provider, browser, daemon, or AppleScript surface.

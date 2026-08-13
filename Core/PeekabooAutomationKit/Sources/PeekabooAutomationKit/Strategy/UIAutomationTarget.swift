@@ -16,7 +16,7 @@ public enum UIAutomationTarget: Sendable, Equatable {
     /// Input is pinned to one process generation and exact WindowServer window.
     case exactWindow(ExactWindow)
 
-    public struct Process: Sendable, Equatable {
+    public struct Process: Sendable, Codable, Equatable {
         public let processIdentifier: pid_t
         public let identity: ApplicationProcessIdentity?
 
@@ -33,7 +33,7 @@ public enum UIAutomationTarget: Sendable, Equatable {
         }
     }
 
-    public struct ExactWindow: Sendable, Equatable {
+    public struct ExactWindow: Sendable, Codable, Equatable {
         public let identity: WindowMutationIdentity
         public let bounds: CGRect
         public let focusedElement: FocusedElementIdentity?

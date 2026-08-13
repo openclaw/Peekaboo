@@ -874,6 +874,7 @@ final class PointerPolicyWindowService: WindowManagementServiceProtocol, @unchec
 
 actor EmptyRecordingWindowService: WindowManagementServiceProtocol {
     private(set) var requestedWindowIDs: [Int] = []
+    private(set) var focusRequests: [WindowTarget] = []
 
     func closeWindow(target _: WindowTarget) async throws {}
     func minimizeWindow(target _: WindowTarget) async throws {}
@@ -881,7 +882,9 @@ actor EmptyRecordingWindowService: WindowManagementServiceProtocol {
     func moveWindow(target _: WindowTarget, to _: CGPoint) async throws {}
     func resizeWindow(target _: WindowTarget, to _: CGSize) async throws {}
     func setWindowBounds(target _: WindowTarget, bounds _: CGRect) async throws {}
-    func focusWindow(target _: WindowTarget) async throws {}
+    func focusWindow(target: WindowTarget) async throws {
+        self.focusRequests.append(target)
+    }
 
     func listWindows(target: WindowTarget) async throws -> [ServiceWindowInfo] {
         if case let .windowId(windowID) = target {

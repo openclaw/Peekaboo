@@ -74,6 +74,16 @@ public protocol DialogServiceProtocol: Sendable {
     func listDialogElements(
         windowTitle: String?,
         appName: String?) async throws -> DialogElements
+
+    /// Resolve one exact window/dialog/button tuple without dispatching a mutation.
+    func prepareDialogAction(_ request: DialogActionPreparationRequest) async throws
+        -> PreparedDialogActionReceipt
+
+    /// Atomically consume and execute a previously prepared one-shot dialog action.
+    func performPreparedDialogAction(_ receipt: PreparedDialogActionReceipt) async throws -> DialogActionResult
+
+    /// List one uniquely targeted dialog without creating mutation or snapshot debt.
+    func listDialogElements(target: DialogTargetSelector) async throws -> DialogElements
 }
 
 extension DialogServiceProtocol {
@@ -133,6 +143,29 @@ extension DialogServiceProtocol {
     public func listDialogElements(windowTitle: String?) async throws -> DialogElements {
         try await self.listDialogElements(windowTitle: windowTitle, appName: nil)
     }
+
+    public func prepareDialogAction(_ request: DialogActionPreparationRequest) async throws
+        -> PreparedDialogActionReceipt
+    {
+        throw DesktopActionFailure.preDispatchRefusal(
+            reason: .runtimeIncompatible,
+            message: "This dialog service does not support receipt-pinned background actions.",
+            hint: "Update the selected runtime host before retrying.")
+    }
+
+    public func performPreparedDialogAction(_ receipt: PreparedDialogActionReceipt) async throws
+        -> DialogActionResult
+    {
+        throw DesktopActionFailure.preDispatchRefusal(
+            reason: .runtimeIncompatible,
+            message: "This dialog service does not support receipt-pinned background actions.",
+            hint: "Update the selected runtime host before retrying.")
+    }
+
+    public func listDialogElements(target: DialogTargetSelector) async throws -> DialogElements {
+        throw PeekabooError.serviceUnavailable(
+            "This dialog service does not support uniquely targeted dialog reads")
+    }
 }
 
 /// Information about a dialog
@@ -178,14 +211,53 @@ public struct DialogActionResult: Sendable, Codable {
     /// Additional details about the action
     public let details: [String: String]
 
+    /// Canonical action evidence. Legacy foreground paths may omit it; receipt-pinned actions may not.
+    public let outcome: DesktopActionOutcome?
+
     public init(
         success: Bool,
         action: DialogActionType,
-        details: [String: String] = [:])
+        details: [String: String] = [:],
+        outcome: DesktopActionOutcome? = nil)
     {
         self.success = success
         self.action = action
         self.details = details
+        self.outcome = outcome
+    }
+}
+
+extension DialogActionResult {
+    /// Validates the exact contract required from receipt-pinned background dialog actions.
+    public func requiredPreparedOutcome(kind: DialogPreparedActionKind) throws -> DesktopActionOutcome {
+        let expectedAction: DialogActionType = kind == .clickButton ? .clickButton : .dismiss
+        guard let outcome = self.outcome else {
+            throw DesktopActionFailure.indeterminate(
+                delivery: .init(mechanism: .accessibilityAction, mode: .background),
+                evidence: .completionUnknown,
+                unitCount: .one,
+                message: "Prepared dialog action returned without its canonical outcome.",
+                hint: "Observe the dialog before retrying and update the runtime host.")
+        }
+        try DesktopActionFailure.requireConfirmedIfReported(outcome, operation: "Prepared dialog action")
+        let expectedDelivery = DesktopActionOutcome.Delivery(
+            mechanism: .accessibilityAction,
+            mode: .background)
+        guard self.success,
+              self.action == expectedAction,
+              outcome.state == .confirmedChange,
+              outcome.delivery == expectedDelivery,
+              outcome.dispatchState.unitCount == .one
+        else {
+            throw DesktopActionFailure.indeterminate(
+                route: outcome.route,
+                delivery: outcome.delivery,
+                evidence: .completionUnknown,
+                unitCount: outcome.dispatchState.unitCount,
+                message: "Prepared dialog action returned contradictory confirmation evidence.",
+                hint: "Observe the dialog before retrying and update the runtime host.")
+        }
+        return outcome
     }
 }
 

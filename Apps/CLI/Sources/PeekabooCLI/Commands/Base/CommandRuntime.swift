@@ -74,6 +74,9 @@ struct CommandRuntimeOptions {
     var requiresLongPressClick = false
     var requiresBackgroundWindowClose = false
     var requiresBackgroundDialogClick = false
+    var requiresTargetedDialogList = false
+    var requiresPreparedDialogClick = false
+    var requiresPreparedDialogDismiss = false
     /// Protocol 1.12 added the silent capture visualizer mode used by background observation.
     /// Older hosts cannot decode that enum value, so commands that can send it must fail preflight.
     var requiresSilentCapture = false

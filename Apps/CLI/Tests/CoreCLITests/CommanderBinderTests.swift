@@ -317,10 +317,6 @@ struct CommanderBinderTests {
             WindowCommand.MoveSubcommand.self,
             WindowCommand.ResizeSubcommand.self,
             WindowCommand.SetBoundsSubcommand.self,
-            DialogCommand.ClickSubcommand.self,
-            DialogCommand.DismissSubcommand.self,
-            DialogCommand.InputSubcommand.self,
-            DialogCommand.FileSubcommand.self,
             MenuCommand.ClickSubcommand.self,
             MenuCommand.ListSubcommand.self,
             DockCommand.LaunchSubcommand.self,
@@ -344,12 +340,6 @@ struct CommanderBinderTests {
             let options = try CommanderCLIBinder.makeRuntimeOptions(from: parsed, commandType: commandType)
             #expect(options.requiresCallerDesktopMutationBarrier)
         }
-        let remoteHostedClick = try CommanderCLIBinder.makeRuntimeOptions(
-            from: parsed,
-            commandType: ClickCommand.self
-        )
-        #expect(!remoteHostedClick.requiresCallerDesktopMutationBarrier)
-
         let menuBarClick = try CommanderCLIBinder.makeRuntimeOptions(
             from: parsed,
             commandType: MenuBarCommand.ClickSubcommand.self
@@ -387,49 +377,6 @@ struct CommanderBinderTests {
             commandType: SeeCommand.self
         )
         #expect(!seeWithoutWebFocus.requiresImplicitSnapshotInvalidation)
-
-        let readOnly = try CommanderCLIBinder.makeRuntimeOptions(
-            from: parsed,
-            commandType: AppCommand.ListSubcommand.self
-        )
-        #expect(!readOnly.requiresImplicitSnapshotInvalidation)
-
-        let untargetedDialogList = try CommanderCLIBinder.makeRuntimeOptions(
-            from: parsed,
-            commandType: DialogCommand.ListSubcommand.self
-        )
-        #expect(!untargetedDialogList.requiresImplicitSnapshotInvalidation)
-
-        let targetedDialogList = try CommanderCLIBinder.makeRuntimeOptions(
-            from: ParsedValues(positional: [], options: ["app": ["TextEdit"]], flags: []),
-            commandType: DialogCommand.ListSubcommand.self
-        )
-        #expect(targetedDialogList.requiresImplicitSnapshotInvalidation)
-
-        let backgroundDialogList = try CommanderCLIBinder.makeRuntimeOptions(
-            from: ParsedValues(
-                positional: [],
-                options: ["app": ["TextEdit"]],
-                flags: ["noAutoFocus"]
-            ),
-            commandType: DialogCommand.ListSubcommand.self
-        )
-        #expect(!backgroundDialogList.requiresImplicitSnapshotInvalidation)
-
-        for option in ["windowId", "windowTitle", "windowIndex"] {
-            let targetedBackgroundDialogList = try CommanderCLIBinder.makeRuntimeOptions(
-                from: ParsedValues(
-                    positional: [],
-                    options: [option: ["1"]],
-                    flags: ["noAutoFocus"]
-                ),
-                commandType: DialogCommand.ListSubcommand.self
-            )
-            #expect(
-                targetedBackgroundDialogList.requiresImplicitSnapshotInvalidation,
-                "Window-targeted dialog lookup may use visibility assist: \(option)"
-            )
-        }
     }
 
     @Test

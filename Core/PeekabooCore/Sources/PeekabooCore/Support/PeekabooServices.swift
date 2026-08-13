@@ -419,5 +419,4 @@ extension PeekabooServices: PeekabooBridgeServiceProviding {
         self.nativeDesktopOperationLaneOperations.contains(operation)
     }
 }
-
 typealias SystemLogger = os.Logger

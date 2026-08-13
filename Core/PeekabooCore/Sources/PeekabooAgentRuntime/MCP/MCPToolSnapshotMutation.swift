@@ -268,13 +268,7 @@ enum MCPToolSnapshotMutationPolicy {
     }
 
     private static func dialogEffect(arguments: ToolArguments) -> MCPToolSnapshotEffect {
-        guard arguments.getString("action") == "list" else { return .mutation }
-        let hasTarget = ["app", "window_title"].contains { key in
-            !(arguments.getString(key)?.isEmpty ?? true)
-        } || ["pid", "window_id", "window_index"].contains { key in
-            arguments.getInt(key) != nil
-        }
-        return hasTarget ? .mutation : .none
+        arguments.getString("action") == "list" ? .none : .mutation
     }
 
     private static func clipboardEffect(arguments: ToolArguments) -> MCPToolSnapshotEffect {

@@ -631,6 +631,20 @@ public final class PeekabooBridgeServer {
             operationError = error
         }
 
+        if let failure = operationError as? DesktopActionFailure,
+           failure.outcome.dispatchState == .none
+        {
+            do {
+                try desktopMutationWatermarkStore.cancelMutation(mutation)
+            } catch {
+                throw PeekabooBridgeErrorEnvelope(
+                    code: .internalError,
+                    message: "Could not cancel the desktop mutation barrier after pre-dispatch refusal",
+                    details: error.localizedDescription)
+            }
+            throw failure
+        }
+
         let completedLegacyResponse: PeekabooBridgeResponse?
         do {
             completedLegacyResponse = try await self.completeDesktopMutation(

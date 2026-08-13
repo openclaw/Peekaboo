@@ -87,6 +87,10 @@ public enum PeekabooBridgeRequest: Codable, Sendable {
     case dialogHandleFile(PeekabooBridgeDialogHandleFileRequest)
     case dialogDismiss(PeekabooBridgeDialogDismissRequest)
     case dialogListElements(PeekabooBridgeDialogFindRequest)
+    case targetedDialogListElements(DialogTargetSelector)
+    case prepareDialogAction(DialogActionPreparationRequest)
+    case exactDialogClickButton(PreparedDialogActionReceipt)
+    case exactDialogDismiss(PreparedDialogActionReceipt)
     case createSnapshot(PeekabooBridgeCreateSnapshotRequest)
     case storeDetectionResult(PeekabooBridgeStoreDetectionRequest)
     case getDetectionResult(PeekabooBridgeGetDetectionRequest)
@@ -192,6 +196,10 @@ extension PeekabooBridgeRequest {
         case .dialogHandleFile: .dialogHandleFile
         case .dialogDismiss: .dialogDismiss
         case .dialogListElements: .dialogListElements
+        case .targetedDialogListElements: .targetedDialogListElements
+        case .prepareDialogAction: .prepareDialogAction
+        case .exactDialogClickButton: .exactDialogClickButton
+        case .exactDialogDismiss: .exactDialogDismiss
         case .createSnapshot: .createSnapshot
         case .storeDetectionResult: .storeDetectionResult
         case .getDetectionResult: .getDetectionResult
@@ -241,6 +249,7 @@ public enum PeekabooBridgeResponse: Codable, Sendable {
     case dialogInfo(DialogInfo)
     case dialogElements(DialogElements)
     case dialogResult(DialogActionResult)
+    case preparedDialogAction(PreparedDialogActionReceipt)
     case snapshotId(String)
     case snapshotMutationLease(SnapshotMutationLease)
     case snapshots([SnapshotInfo])

@@ -16,6 +16,7 @@ struct DialogCommand: ParsableCommand {
         let services: any PeekabooServiceProviding
         let windowTitle: String?
         let appHint: String?
+        let target: DialogTargetSelector
     }
 
     static let commandDescription = CommandDescription(
@@ -25,19 +26,20 @@ struct DialogCommand: ParsableCommand {
 
         EXAMPLES:
           # Click a button in a dialog
-          peekaboo dialog click --button "OK"
-          peekaboo dialog click --button "Don't Save"
+          peekaboo dialog click --button "OK" --app TextEdit
+          peekaboo dialog click --button "Don't Save" --window-id 12345
 
           # Type in a dialog text field
           peekaboo dialog input --text "password123" --field "Password" --foreground
 
           # Handle file dialogs
-          peekaboo dialog file --path "/Users/me/Documents" --name "report.pdf" --select "Save" --foreground
+          peekaboo dialog file --app TextEdit --path "/Users/me/Documents" \
+            --name "report.pdf" --select "Save" --foreground
           peekaboo dialog file --app TextEdit --path /tmp --name poem.rtf --select default --foreground
 
           # Dismiss dialogs
-          peekaboo dialog dismiss
-          peekaboo dialog dismiss --force --foreground  # Press Escape
+          peekaboo dialog dismiss --app TextEdit
+          peekaboo dialog dismiss --force --foreground  # Explicit global Escape
         """,
         subcommands: [
             ClickSubcommand.self,
@@ -79,6 +81,7 @@ struct DialogCommand: ParsableCommand {
         handlesValidationError: Bool = true,
         handlesPeekabooError: Bool = false,
         validate: () throws -> Void = {},
+        prepareBeforeFocus: ((ExecutionContext) async throws -> Void)? = nil,
         operation: (ExecutionContext) async throws -> Void
     ) async throws {
         let target = target
@@ -89,6 +92,13 @@ struct DialogCommand: ParsableCommand {
         do {
             try target.validate()
             try validate()
+            let dialogTarget = try target.dialogTargetSelector()
+            try await prepareBeforeFocus?(ExecutionContext(
+                services: runtime.services,
+                windowTitle: nil,
+                appHint: nil,
+                target: dialogTarget
+            ))
 
             switch focus {
             case .none:
@@ -131,9 +141,29 @@ struct DialogCommand: ParsableCommand {
                 ExecutionContext(
                     services: runtime.services,
                     windowTitle: windowTitle,
-                    appHint: appHint
+                    appHint: appHint,
+                    target: dialogTarget
                 )
             )
+        } catch let failure as DesktopActionFailure {
+            if jsonOutput {
+                outputError(
+                    message: failure.message,
+                    code: .INTERACTION_FAILED,
+                    hint: failure.hint,
+                    details: failure.causeDescription,
+                    actionFailure: failure,
+                    logger: logger
+                )
+            } else {
+                let statusLine = ActionOutcomeHumanRenderer.statusLine(
+                    for: failure.outcome,
+                    operation: "Dialog action"
+                )
+                fputs("\(statusLine)\n", stderr)
+                fputs("Error: \(failure.localizedDescription)\n", stderr)
+            }
+            throw ExitCode(1)
         } catch let error as Commander.ValidationError {
             if handlesValidationError {
                 handleDialogValidationError(error, jsonOutput: jsonOutput, logger: logger)

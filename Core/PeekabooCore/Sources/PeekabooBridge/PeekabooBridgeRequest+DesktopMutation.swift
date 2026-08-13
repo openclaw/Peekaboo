@@ -58,6 +58,8 @@ extension PeekabooBridgeRequest {
             payload.expectedIdentity.map(DesktopOperationScope.window) ?? .global
         case let .quitApplication(payload):
             payload.expectedIdentity.map(DesktopOperationScope.process) ?? .global
+        case let .exactDialogClickButton(receipt), let .exactDialogDismiss(receipt):
+            .window(receipt.target.identity)
         default:
             .global
         }
@@ -97,8 +99,10 @@ extension PeekabooBridgeRequest {
              .isDockHidden,
              .findDockItem,
              .dialogFindActive,
-             .dialogListElements:
-            return (.global, .write)
+             .dialogListElements,
+             .targetedDialogListElements,
+             .prepareDialogAction:
+            return (.global, .read)
         default:
             return nil
         }
@@ -174,12 +178,6 @@ extension PeekabooBridgeRequest {
     var mayMutateDesktop: Bool {
         if case let .projectedAction(payload) = self {
             return payload.request.mayMutateDesktop
-        }
-        if case let .dialogFindActive(request) = self {
-            return request.windowTitle != nil
-        }
-        if case let .dialogListElements(request) = self {
-            return request.windowTitle != nil
         }
         if case let .desktopObservation(request) = self {
             let mayOpenMenuBarPopover = if case let .menubarPopover(_, openIfNeeded) = request.target {
@@ -257,7 +255,9 @@ extension PeekabooBridgeOperation {
              .backgroundDialogClickButton,
              .dialogEnterText,
              .dialogHandleFile,
-             .dialogDismiss:
+             .dialogDismiss,
+             .exactDialogClickButton,
+             .exactDialogDismiss:
             true
         case .permissionsStatus,
              .daemonStatus,
@@ -290,6 +290,8 @@ extension PeekabooBridgeOperation {
              .findDockItem,
              .dialogFindActive,
              .dialogListElements,
+             .targetedDialogListElements,
+             .prepareDialogAction,
              .createSnapshot,
              .storeDetectionResult,
              .getDetectionResult,

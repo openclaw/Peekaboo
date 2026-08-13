@@ -38,8 +38,8 @@ struct MCPToolExecutionPolicyTests {
             .init(tool: "window", arguments: ["action": "focus"]),
             .init(tool: "menu", arguments: ["action": "click", "foreground": true]),
             .init(tool: "dialog", arguments: ["action": "click", "foreground": true]),
-            .init(tool: "dialog", arguments: ["action": "click", "app": "TextEdit"]),
-            .init(tool: "dialog", arguments: ["action": "dismiss", "app": "TextEdit"]),
+            .init(tool: "dialog", arguments: ["action": "click", "button": "OK"]),
+            .init(tool: "dialog", arguments: ["action": "dismiss"]),
             .init(tool: "dialog", arguments: ["action": "input"]),
             .init(tool: "dialog", arguments: ["action": "file"]),
             .init(tool: "dialog", arguments: ["action": "dismiss", "force": true]),
@@ -103,9 +103,17 @@ struct MCPToolExecutionPolicyTests {
             #expect(meta["requires_fresh_observation"] == .bool(false))
             #expect(meta["execution_policy"] == .string("background_only"))
             let expectedReason: DesktopActionOutcome.RefusalReason =
-                ["agent", "future_desktop_tool"].contains(item.tool)
-                ? .operationUnsupported
-                : .foregroundConsentRequired
+                if ["agent", "future_desktop_tool"].contains(item.tool) {
+                    .operationUnsupported
+                } else if item.tool == "dialog",
+                          ["click", "dismiss"].contains(item.arguments["action"] as? String ?? ""),
+                          item.arguments["foreground"] == nil,
+                          item.arguments["force"] as? Bool != true
+                {
+                    .invalidRequest
+                } else {
+                    .foregroundConsentRequired
+                }
             #expect(meta["refusal_reason"] == .string(expectedReason.rawValue))
         }
     }
@@ -129,6 +137,8 @@ struct MCPToolExecutionPolicyTests {
             .init(tool: "window", arguments: ["action": "set-bounds"]),
             .init(tool: "menu", arguments: ["action": "click", "foreground": false]),
             .init(tool: "dialog", arguments: ["action": "list", "foreground": false]),
+            .init(tool: "dialog", arguments: ["action": "click", "button": "OK", "app": "TextEdit"]),
+            .init(tool: "dialog", arguments: ["action": "dismiss", "pid": 42]),
             .init(tool: "dock", arguments: ["action": "list"]),
             .init(tool: "space", arguments: ["action": "list"]),
             .init(tool: "space", arguments: [

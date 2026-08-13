@@ -127,6 +127,10 @@ public enum PeekabooBridgeOperation: String, Codable, Sendable, CaseIterable, Ha
     case dialogHandleFile
     case dialogDismiss
     case dialogListElements
+    case targetedDialogListElements
+    case prepareDialogAction
+    case exactDialogClickButton
+    case exactDialogDismiss
     // Snapshots/cache
     case createSnapshot
     case storeDetectionResult
@@ -220,6 +224,12 @@ public enum PeekabooBridgeOperation: String, Codable, Sendable, CaseIterable, Ha
         if version < PeekabooBridgeConstants.snapshotMutationLeaseVersion {
             compatible.remove(.beginSnapshotMutation)
             compatible.remove(.finishSnapshotMutation)
+        }
+        if version < PeekabooBridgeConstants.receiptPinnedDialogActionVersion {
+            compatible.remove(.targetedDialogListElements)
+            compatible.remove(.prepareDialogAction)
+            compatible.remove(.exactDialogClickButton)
+            compatible.remove(.exactDialogDismiss)
         }
         return compatible
     }

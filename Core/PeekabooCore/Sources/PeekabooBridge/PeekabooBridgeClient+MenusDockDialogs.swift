@@ -230,4 +230,86 @@ extension PeekabooBridgeClient {
                 message: "Unexpected dialog elements response")
         }
     }
+
+    public func targetedDialogListElements(target: DialogTargetSelector) async throws -> DialogElements {
+        let response = try await self.send(.targetedDialogListElements(target))
+        switch response {
+        case let .dialogElements(elements): return elements
+        case let .error(envelope): throw envelope
+        default:
+            throw PeekabooBridgeErrorEnvelope(
+                code: .invalidRequest,
+                message: "Unexpected targeted dialog elements response")
+        }
+    }
+
+    public func prepareDialogAction(_ request: DialogActionPreparationRequest) async throws
+        -> PreparedDialogActionReceipt
+    {
+        let response = try await self.send(.prepareDialogAction(request))
+        switch response {
+        case let .preparedDialogAction(receipt): return receipt
+        case let .error(envelope): throw envelope
+        default:
+            throw PeekabooBridgeErrorEnvelope(
+                code: .invalidRequest,
+                message: "Unexpected prepared dialog action response")
+        }
+    }
+
+    public func performPreparedDialogAction(_ receipt: PreparedDialogActionReceipt) async throws
+        -> DialogActionResult
+    {
+        let request: PeekabooBridgeRequest = switch receipt.kind {
+        case .clickButton: .exactDialogClickButton(receipt)
+        case .dismiss: .exactDialogDismiss(receipt)
+        }
+        let reply = try await self.sendCarryingActionOutcome(request)
+        switch reply.response {
+        case let .dialogResult(result):
+            let outcome = try result.requiredPreparedOutcome(kind: receipt.kind)
+            let routedOutcome = outcome.routed(to: .bridge)
+            if let projected = reply.outcome?.outcome, projected != routedOutcome {
+                throw DesktopActionFailure.indeterminate(
+                    route: .bridge,
+                    delivery: outcome.delivery,
+                    evidence: .completionUnknown,
+                    unitCount: outcome.dispatchState.unitCount,
+                    message: "Bridge dialog action carried contradictory canonical outcomes.",
+                    hint: "Observe the dialog before retrying and update the runtime host.")
+            }
+            return DialogActionResult(
+                success: result.success,
+                action: result.action,
+                details: result.details,
+                outcome: routedOutcome)
+        case let .error(envelope):
+            if let failure = envelope.desktopActionFailure ?? reply.outcome.flatMap({ projection in
+                DesktopActionFailure(
+                    outcome: projection.outcome,
+                    message: envelope.message,
+                    hint: envelope.actionFailureHint,
+                    causeDescription: envelope.actionFailureCauseDescription ?? envelope.details)
+            }) {
+                throw failure.routed(to: .bridge)
+            }
+            if let outcome = reply.outcome?.outcome {
+                throw DesktopActionFailure.indeterminate(
+                    route: .bridge,
+                    delivery: outcome.delivery,
+                    evidence: .completionUnknown,
+                    unitCount: outcome.dispatchState.unitCount,
+                    message: "Bridge dialog error carried an invalid confirmed outcome.",
+                    hint: "Observe the dialog before retrying and update the runtime host.")
+            }
+            throw envelope
+        default:
+            throw DesktopActionFailure.indeterminate(
+                route: .bridge,
+                evidence: .completionUnknown,
+                unitCount: .one,
+                message: "Bridge returned an unexpected exact dialog action response.",
+                hint: "Observe the dialog before retrying and update the runtime host.")
+        }
+    }
 }

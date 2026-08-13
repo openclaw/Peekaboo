@@ -58,6 +58,10 @@ extension PeekabooBridgeOperation {
              .dialogHandleFile,
              .dialogDismiss,
              .dialogListElements,
+             .targetedDialogListElements,
+             .prepareDialogAction,
+             .exactDialogClickButton,
+             .exactDialogDismiss,
              .desktopObservation:
             true
         case .permissionsStatus,
@@ -132,7 +136,8 @@ extension PeekabooBridgeOperation {
              .listMenuBarItems, .clickMenuBarItemNamed, .clickMenuBarItemIndex, .listDockItems, .launchDockItem,
              .rightClickDockItem, .hideDock, .showDock, .isDockHidden, .findDockItem, .dialogFindActive,
              .dialogClickButton, .backgroundDialogClickButton, .dialogEnterText, .dialogHandleFile, .dialogDismiss,
-             .dialogListElements:
+             .dialogListElements, .targetedDialogListElements, .prepareDialogAction,
+             .exactDialogClickButton, .exactDialogDismiss:
             [.accessibility]
         case .targetedClick, .exactWindowTargetedClick, .targetedScroll:
             [.accessibility]
@@ -259,6 +264,10 @@ extension PeekabooBridgeOperation {
         .dialogHandleFile,
         .dialogDismiss,
         .dialogListElements,
+        .targetedDialogListElements,
+        .prepareDialogAction,
+        .exactDialogClickButton,
+        .exactDialogDismiss,
         .createSnapshot,
         .storeDetectionResult,
         .getDetectionResult,

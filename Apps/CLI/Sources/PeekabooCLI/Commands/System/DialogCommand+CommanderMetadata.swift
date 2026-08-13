@@ -9,7 +9,7 @@ extension DialogCommand.ClickSubcommand: CommanderSignatureProviding {
             flags: [
                 .commandFlag(
                     "foreground",
-                    help: "Focus the target and allow foreground click fallback",
+                    help: "Focus the target before the exact AXPress action",
                     long: "foreground"
                 ),
             ],

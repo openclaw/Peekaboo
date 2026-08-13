@@ -60,6 +60,7 @@ public final class DialogService: DialogServiceProtocol {
     let windowIdentityService = WindowIdentityService()
     let feedbackClient: any AutomationFeedbackClient
     let operationLaneCoordinator: DesktopOperationLaneCoordinator
+    let preparedActionStore: DialogPreparedActionStore
     var scansAllApplicationsForDialogs: Bool {
         ProcessInfo.processInfo.environment["PEEKABOO_DIALOG_SCAN_ALL_APPS"] == "1"
     }
@@ -79,12 +80,14 @@ public final class DialogService: DialogServiceProtocol {
         applicationService: (any ApplicationServiceProtocol)? = nil,
         feedbackClient: any AutomationFeedbackClient = NoopAutomationFeedbackClient(),
         syntheticInputDriver: any SyntheticInputDriving,
-        operationLaneCoordinator: DesktopOperationLaneCoordinator = .shared)
+        operationLaneCoordinator: DesktopOperationLaneCoordinator = .shared,
+        preparedActionStore: DialogPreparedActionStore = DialogPreparedActionStore())
     {
         self.applicationService = applicationService ?? ApplicationService()
         self.feedbackClient = feedbackClient
         self.syntheticInputDriver = syntheticInputDriver
         self.operationLaneCoordinator = operationLaneCoordinator
+        self.preparedActionStore = preparedActionStore
         self.logger.debug("DialogService initialized")
         // Connect to visual feedback if available.
         let isMacApp = Bundle.main.bundleIdentifier?.hasPrefix("boo.peekaboo.mac") == true

@@ -1,4 +1,6 @@
 import Foundation
+import PeekabooAutomation
+import PeekabooFoundation
 import TachikomaMCP
 
 enum DialogToolAction: String, CaseIterable, Equatable {
@@ -35,6 +37,15 @@ enum DialogToolInputError: LocalizedError {
             "Missing required parameter for \(action.rawValue): \(field)"
         case let .foregroundRequired(action):
             "Dialog \(action.rawValue) uses global keyboard/coordinate input and requires foreground=true."
+        }
+    }
+
+    var refusalReason: DesktopActionOutcome.RefusalReason {
+        switch self {
+        case .foregroundRequired:
+            .foregroundConsentRequired
+        case .missing, .invalid, .missingForAction:
+            .invalidRequest
         }
     }
 }
@@ -128,5 +139,14 @@ struct DialogToolInputs {
 
     func fileRequest() -> DialogFileRequest {
         DialogFileRequest(path: self.path, name: self.name, select: self.select, ensureExpanded: self.ensureExpanded)
+    }
+
+    func targetSelector() throws -> DialogTargetSelector {
+        try DialogTargetSelector(
+            applicationIdentifier: self.app,
+            processIdentifier: self.pid.flatMap(Int32.init(exactly:)),
+            windowID: self.windowId,
+            windowTitle: self.windowTitle,
+            windowIndex: self.windowIndex)
     }
 }

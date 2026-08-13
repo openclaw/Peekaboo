@@ -2,10 +2,18 @@ import Foundation
 import MCP
 import os.log
 import PeekabooAutomation
+import PeekabooFoundation
 import TachikomaMCP
 
 /// MCP tool for interacting with system dialogs and alerts.
 public struct DialogTool: MCPTool {
+    private struct ExecutionTarget {
+        let selector: DialogTargetSelector
+        let windowTitle: String?
+        let appHint: String?
+        let preparedReceipt: PreparedDialogActionReceipt?
+    }
+
     private let logger = os.Logger(subsystem: "boo.peekaboo.mcp", category: "DialogTool")
     private let context: MCPToolContext
 
@@ -22,8 +30,9 @@ public struct DialogTool: MCPTool {
         - file: drive NSOpenPanel/NSSavePanel dialogs (path/name/select/verify)
         - dismiss: close the active dialog
 
-        Targeting (recommended for determinism):
-        - Provide app/pid and optionally window_id/window_title/window_index to resolve the dialog in the background.
+        Targeting:
+        - click, input, file, and non-forced dismiss require app/pid or an exact window_id target.
+        - list may be targetless; targeted list remains read-only and must resolve exactly one dialog.
         - app and pid are alternatives. Provide at most one window selector; title/index require app or pid.
         - Set foreground=true only for keyboard/file interaction or an explicit global fallback.
 
@@ -109,24 +118,61 @@ public struct DialogTool: MCPTool {
                 windowTitle: inputs.windowTitle,
                 windowIndex: inputs.windowIndex,
                 windowId: inputs.windowId)
+            let dialogTarget = try inputs.targetSelector()
+            let permitsTargetlessMutation = action == .dismiss && inputs.force == true
+            if action != .list, !permitsTargetlessMutation, !dialogTarget.hasTarget {
+                throw DialogToolInputError.missingForAction(action: action, field: "app, pid, or window_id target")
+            }
+
+            let preparedReceipt: PreparedDialogActionReceipt? = switch action {
+            case .click:
+                try await self.context.dialogs.prepareDialogAction(DialogActionPreparationRequest(
+                    target: dialogTarget,
+                    kind: .clickButton,
+                    buttonText: inputs.requireButton()))
+            case .dismiss where inputs.force != true:
+                try await self.context.dialogs.prepareDialogAction(DialogActionPreparationRequest(
+                    target: dialogTarget,
+                    kind: .dismiss))
+            case .list, .input, .file, .dismiss:
+                nil
+            }
 
             if inputs.foreground, inputs.hasAnyTargeting {
                 _ = try await target.focusIfRequested(windows: self.context.windows)
             }
 
-            let resolvedWindowTitle = try await target.resolveWindowTitleIfNeeded(windows: self.context.windows)
+            let usesLegacyDialogResolution = action == .input || action == .file ||
+                (action == .dismiss && inputs.force == true)
+            let resolvedWindowTitle: String? = if usesLegacyDialogResolution {
+                try await target.resolveWindowTitleIfNeeded(windows: self.context.windows)
+            } else {
+                nil
+            }
             let appHint = target.appIdentifier
 
             return try await self.perform(
                 action: action,
                 inputs: inputs,
-                windowTitle: resolvedWindowTitle,
-                appHint: appHint,
+                target: ExecutionTarget(
+                    selector: dialogTarget,
+                    windowTitle: resolvedWindowTitle,
+                    appHint: appHint,
+                    preparedReceipt: preparedReceipt),
                 startTime: startTime)
         } catch let error as MCPInteractionTargetError {
-            return ToolResponse.error(error.localizedDescription)
+            return MCPToolResponseMetadataProjector.preDispatchRefusalResponse(
+                message: error.localizedDescription,
+                reason: error.refusalReason)
         } catch let error as DialogToolInputError {
-            return ToolResponse.error(error.localizedDescription)
+            return MCPToolResponseMetadataProjector.preDispatchRefusalResponse(
+                message: error.localizedDescription,
+                reason: error.refusalReason)
+        } catch let failure as DesktopActionFailure {
+            return try await MCPDesktopActionFailureHandler.response(
+                for: failure,
+                uiSnapshots: self.context.uiSnapshots,
+                snapshotID: nil)
         } catch {
             self.logger.error("Dialog execution failed: \(error.localizedDescription)")
             return ToolResponse.error("Dialog failed: \(error.localizedDescription)")
@@ -136,13 +182,18 @@ public struct DialogTool: MCPTool {
     private func perform(
         action: DialogToolAction,
         inputs: DialogToolInputs,
-        windowTitle: String?,
-        appHint: String?,
+        target: ExecutionTarget,
         startTime: Date) async throws -> ToolResponse
     {
+        let windowTitle = target.windowTitle
+        let appHint = target.appHint
         switch action {
         case .list:
-            let elements = try await self.context.dialogs.listDialogElements(windowTitle: windowTitle, appName: appHint)
+            let elements = if target.selector.hasTarget {
+                try await self.context.dialogs.listDialogElements(target: target.selector)
+            } else {
+                try await self.context.dialogs.listDialogElements(windowTitle: nil, appName: nil)
+            }
             let executionTime = Date().timeIntervalSince(startTime)
             return self.formatList(
                 elements: elements,
@@ -152,11 +203,14 @@ public struct DialogTool: MCPTool {
 
         case .click:
             let button = try inputs.requireButton()
-            let result = try await self.context.dialogs.clickButton(
-                buttonText: button,
-                windowTitle: windowTitle,
-                appName: appHint,
-                allowGlobalFallback: inputs.foreground)
+            guard let receipt = target.preparedReceipt else {
+                throw DesktopActionFailure.preDispatchRefusal(
+                    reason: .runtimeIncompatible,
+                    message: "Dialog click lost its prepared action receipt before execution.",
+                    hint: "Prepare the dialog action again before retrying.")
+            }
+            let result = try await self.context.dialogs.performPreparedDialogAction(receipt)
+            _ = try result.requiredPreparedOutcome(kind: .clickButton)
             return self.formatActionResult(
                 context: ActionResultContext(
                     verb: "Clicked",
@@ -235,10 +289,22 @@ public struct DialogTool: MCPTool {
 
         case .dismiss:
             let force = inputs.force ?? false
-            let result = try await self.context.dialogs.dismissDialog(
-                force: force,
-                windowTitle: windowTitle,
-                appName: appHint)
+            let result: DialogActionResult
+            if force {
+                result = try await self.context.dialogs.dismissDialog(
+                    force: true,
+                    windowTitle: windowTitle,
+                    appName: appHint)
+            } else {
+                guard let receipt = target.preparedReceipt else {
+                    throw DesktopActionFailure.preDispatchRefusal(
+                        reason: .runtimeIncompatible,
+                        message: "Dialog dismiss lost its prepared action receipt before execution.",
+                        hint: "Prepare the dialog action again before retrying.")
+                }
+                result = try await self.context.dialogs.performPreparedDialogAction(receipt)
+                _ = try result.requiredPreparedOutcome(kind: .dismiss)
+            }
             let verb = force ? "Dismissed (forced)" : "Dismissed"
             return self.formatActionResult(
                 context: ActionResultContext(

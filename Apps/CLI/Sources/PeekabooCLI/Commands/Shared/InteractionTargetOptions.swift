@@ -128,6 +128,17 @@ struct InteractionTargetOptions: CommanderParsable, ApplicationResolvable {
 
         return .application(appIdentifier)
     }
+
+    func dialogTargetSelector() throws -> DialogTargetSelector {
+        try self.validate()
+        return try DialogTargetSelector(
+            applicationIdentifier: self.app,
+            processIdentifier: self.pid,
+            windowID: self.windowId,
+            windowTitle: self.windowTitle,
+            windowIndex: self.windowIndex
+        )
+    }
 }
 
 extension InteractionTargetSelectorValidator {

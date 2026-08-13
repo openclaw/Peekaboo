@@ -824,10 +824,7 @@ enum RuntimeHostResolver {
             ),
             supportsPinnedWindowMutations: BridgeCapabilityPolicy.supportsPinnedWindowMutations(for: handshake),
             supportsWindowRestore: BridgeCapabilityPolicy.supportsOperation(.restoreWindow, for: handshake),
-            supportsBackgroundDialogClick: BridgeCapabilityPolicy.supportsOperation(
-                .backgroundDialogClickButton,
-                for: handshake
-            ),
+            dialogCapabilities: Self.remoteDialogCapabilities(for: handshake),
             supportsTargetedScroll: BridgeCapabilityPolicy.supportsTargetedScroll(for: handshake),
             supportsInspectAccessibilityTree: BridgeCapabilityPolicy.supportsInspectAccessibilityTree(for: handshake),
             supportsExactWindowTargetedKeyboard: supportsExactKeyboard,

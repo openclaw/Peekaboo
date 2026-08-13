@@ -47,6 +47,7 @@ enum CommanderCLIBinder {
         var options = CommandRuntimeOptions()
         let commandValues = CommanderBindableValues(parsedValues: parsedValues)
         try Self.validateApplicationLifecycleBeforeRuntimeResolution(commandType, values: commandValues)
+        try Self.validateDialogBeforeRuntimeResolution(commandType, values: commandValues)
         options.requiresApplicationLaunchOptions = Self.requiresApplicationLaunchOptions(commandType)
         options.requiresSafeBackgroundApplicationLaunchNoOp =
             commandType == AppCommand.LaunchSubcommand.self && !commandValues.flag("foreground")
@@ -116,8 +117,7 @@ enum CommanderCLIBinder {
             commandValues.flag("longPress") && commandValues.flag("foreground")
         options.requiresBackgroundWindowClose = commandType == WindowCommand.CloseSubcommand.self &&
             !commandValues.flag("foreground")
-        options.requiresBackgroundDialogClick = commandType == DialogCommand.ClickSubcommand.self &&
-            !commandValues.flag("foreground")
+        try Self.applyDialogRuntimeOptions(&options, commandType, commandValues, servesDynamicTools)
         options.requiresSilentCapture = Self.requiresSilentCapture(commandType, parsedValues: parsedValues)
         options.requiresExactWindowROIObservation = commandType == SeeCommand.self &&
             commandValues.singleOption("roi")?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
@@ -363,9 +363,6 @@ enum CommanderCLIBinder {
         if self.isInteractivePermissionRequest(commandType) {
             return true
         }
-        if commandType == DialogCommand.ListSubcommand.self {
-            return self.dialogListMayFocus(parsedValues)
-        }
         if commandType == MenuCommand.ListSubcommand.self {
             return self.menuListMayFocus(parsedValues)
         }
@@ -432,22 +429,6 @@ enum CommanderCLIBinder {
     private static func menuListMayFocus(_ parsedValues: ParsedValues) -> Bool {
         let values = CommanderBindableValues(parsedValues: parsedValues)
         return !values.flag("noAutoFocus")
-    }
-
-    private static func dialogListMayFocus(_ parsedValues: ParsedValues) -> Bool {
-        let values = CommanderBindableValues(parsedValues: parsedValues)
-        let hasWindowTarget = values.singleOption("windowId") != nil ||
-            values.singleOption("windowTitle") != nil ||
-            values.singleOption("windowIndex") != nil
-        if hasWindowTarget {
-            return true
-        }
-        guard !values.flag("noAutoFocus") else { return false }
-
-        let app = values.singleOption("app")?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        return app?.isEmpty == false ||
-            values.singleOption("pid") != nil
     }
 
     private static func captureCommandMayFocus(

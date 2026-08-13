@@ -12,15 +12,18 @@ read_when:
 ## Subcommands
 | Name | Purpose | Key options |
 | --- | --- | --- |
-| `click` | Press a dialog button with AX. | `--button <label>` (required), optional target flags; `--foreground` permits focus and a coordinate fallback if AXPress fails. |
-| `input` | Enter text into a dialog field. | `--foreground` (required), `--text`, optional `--field <label>` or `--index <0-based>`, `--clear`, plus optional target flags. |
-| `file` | Drive NSOpenPanel/NSSavePanel style dialogs. | `--foreground` (required), `--path <dir>`, `--name <filename>`, `--select <button>`, `--ensure-expanded`, `--timeout <duration>`, plus optional target flags. Save-like actions verify the file exists and return `saved_path`. |
-| `dismiss` | Close the current dialog. | Normal dismissal searches for and AX-presses a cancel/close button in the background. `--force --foreground` explicitly sends global Escape. |
+| `click` | Press a dialog button with AX. | `--button <exact label>` and an app/PID/window target are required; `--foreground` may focus first but never enables pointer fallback. |
+| `input` | Enter text into a dialog field. | `--foreground`, `--text`, and an app/PID/window target are required; optional `--field <label>` or `--index <0-based>` and `--clear`. |
+| `file` | Drive NSOpenPanel/NSSavePanel style dialogs. | `--foreground` and an app/PID/window target are required; `--path <dir>`, `--name <filename>`, `--select <button>`, `--ensure-expanded`, and `--timeout <duration>`. Save-like actions verify the file exists and return `saved_path`. |
+| `dismiss` | Close the current dialog. | Normal dismissal requires a target and uniquely resolves one cancel/close AXPress button in the background. `--force --foreground` explicitly sends global Escape. |
 | `list` | Read dialog metadata (buttons, text fields, static text) without focusing or mutating it. | Optional `--app`/`--pid`, optional `--window-id`/`--window-title`/`--window-index`, and `--timeout <duration>`. |
 
 ## Implementation notes
-- `dialog list` is always read-only/background. `dialog click` is AX-only by default and fails honestly if AXPress is unsupported; `--foreground` explicitly permits focus and coordinate fallback.
-- Remote background button clicks require a Bridge host that advertises the strict AX-only operation; Peekaboo rejects stale hosts before dispatch instead of letting them apply legacy coordinate fallback.
+- Every `dialog list` form is read-only/background and creates no mutation or snapshot debt. A targeted list must resolve exactly one dialog; ambiguity reports candidate window IDs.
+- Default background click and non-forced dismiss use Bridge protocol 1.25's two-phase contract: a read-only prepare operation uniquely upgrades app/PID/title selectors to one exact process-generation/window receipt and retains the raw AX window, dialog, and button identities under a short-lived one-shot token.
+- Immediately before AXPress, Peekaboo consumes the token, reacquires the exact-window write lane, re-enumerates and compares all three raw AX identities, and rechecks owner generation, window bounds, enabled state, and AXPress support. It never falls back to the physical pointer, clipboard, focus, or global input.
+- Success is confirmed only after the retained dialog or sheet disappears. An accepted press without a verified postcondition is retry-unsafe and requires fresh observation; planning or identity ambiguity is a retry-safe pre-dispatch refusal.
+- Remote targeted list/prepare/click/dismiss require the exact advertised and enabled operation, not merely a 1.25 version number. Missing capabilities refuse before operation transport.
 - `dialog input`, `dialog file`, and forced dismissal use global keyboard or coordinate events and therefore reject calls without `--foreground` (or `foreground: true` over MCP).
 - Button clicks and text entry route through `services.dialogs` helpers, which return dictionaries describing what happened; JSON output exposes those details verbatim (`button`, `field`, `text_length`, etc.).
 - `dialog input` accepts either a field label (`--field`) or an index; when neither is provided it targets the first text field. `--clear` issues a Cmd+A/Delete before typing.
