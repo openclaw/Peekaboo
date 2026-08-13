@@ -7,7 +7,7 @@ read_when:
 
 # `peekaboo press`
 
-`press` sends raw xdotool `key`-style chords such as `cmd+c`, `cmd+shift+t`, and `Return`. Multiple positional chords form a sequence. Raw keys cannot certify semantic intent or effect on a shared desktop, so `--foreground` is required. For background automation, use a semantic `action`, `menu`, `window`, `app`, or `dialog` command with an exact target.
+`press` sends raw xdotool `key`-style chords such as `cmd+c`, `cmd+shift+t`, and `Return`. Multiple positional chords form a sequence. Raw keys require either `--foreground` or an exact window/snapshot receipt whose focused element stays unchanged through native background dispatch.
 
 ## Key options
 | Flag | Description |
@@ -17,18 +17,18 @@ read_when:
 | `--delay <duration>` | Delay between key presses (default `100ms`; bare values are milliseconds). |
 | `--hold <duration>` | Hold duration per key (default `50ms`; bare values are milliseconds). |
 | `--snapshot <id>` | Optional snapshot ID used for validation/focus (no implicit “latest snapshot” lookup). |
-| Target flags | `--app <name>`, `--pid <pid>`, or window selectors identify what to focus before foreground dispatch. |
-| `--foreground` | Required. Focus a supplied target or intentionally send foreground/global key presses. |
+| Target flags | An exact window selector enables receipt-pinned background press; app/PID-only targeting still requires `--foreground`. |
+| `--foreground` | Focus a supplied target or intentionally send foreground/global key presses. |
 | Focus flags | Foreground focus controls; same `FocusCommandOptions` bundle as `click`/`type`. |
 
 ## Delivery mode
-- **Background omission is fail-closed.** Without `--foreground`, `press` returns `effect: refused`, `mutation_dispatched: false`, and `retry_safe: true`. Supplying an app, PID, window, or snapshot does not turn a raw chord into certifiable background intent.
+- **Exact background** accepts only a fresh exact-window selector or snapshot. Peekaboo pins process generation, window ID/bounds, and focused-element identity; missing, ambiguous, or stale receipts refuse before dispatch. App/PID-only and targetless forms retain the canonical retry-safe refusal.
 - **Foreground** (`--foreground`) focuses a supplied target first and sends normal/global key presses. A dispatched chord remains `effect: unverifiable`; run a fresh observation before continuing.
-- Prefer named Accessibility actions and dedicated menu/window/app/dialog operations in background workflows. Peekaboo's internal receipt-pinned keyboard transport remains available to typed composite operations, but public raw `press` does not expose it as successful intent.
+- Prefer named Accessibility actions and dedicated menu/window/app/dialog operations in background workflows. Exact-window `press` exposes the receipt-pinned transport but still reports its semantic effect honestly.
 
 ## Implementation notes
 - Bare keys include Return, Tab, Escape, Delete/Forward Delete, arrows, navigation keys, F1-F12, letters/digits, Space, and standard punctuation. Comma- and space-delimited chord syntax is rejected.
-- Every background raw chord is rejected before dispatch, including app/PID/snapshot and window-targeted forms.
+- Background raw chords never collapse an exact selector to process delivery and never silently foreground. Exact-window remote delivery requires Bridge protocol 1.24.
 - Repetition multiplies the sequence client-side—e.g., `press tab return --count 3 --foreground` becomes six actions—so you get predictable ordering.
 - Results include the literal key list, total presses, repeat count, delivery mode, optional target PID, and elapsed time in both text and JSON modes.
 - The `--hold` flag is passed to the hotkey service for each key press.
@@ -49,6 +49,9 @@ peekaboo press return --app TextEdit --foreground
 
 # Reopen a browser tab with explicit foreground consent
 peekaboo press cmd+shift+t --app Safari --foreground
+
+# Send a chord to one already-focused exact window without activating it
+peekaboo press cmd+l --window-id 12345
 ```
 
 ## Troubleshooting

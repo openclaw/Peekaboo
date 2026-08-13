@@ -1,0 +1,272 @@
+import CoreGraphics
+import PeekabooAutomationKit
+import PeekabooAutomationKitTestSupport
+import PeekabooFoundation
+import TachikomaMCP
+import Testing
+@testable import PeekabooAgentRuntime
+@testable import PeekabooCore
+
+@Suite(.serialized)
+struct MCPExactWindowKeyboardToolTests {
+    private static let uiSnapshots = MCPToolUISnapshotStore(owner: MCPToolSnapshotOwner())
+
+    @Test
+    func `Press exact window pins focused element and never uses global delivery`() async throws {
+        let fixture = await Self.makeFixture(focusedWindowID: 42)
+        let response = try await PressTool(context: fixture.context).execute(arguments: ToolArguments(raw: [
+            "window_id": 42,
+            "keys": ["cmd+l"],
+        ]))
+
+        #expect(!response.isError)
+        let call = try #require(await MainActor.run { fixture.automation.exactHotkeyCalls.first })
+        #expect(call.target.windowIdentity.windowID == 42)
+        #expect(call.target.focusedElement.identifier == "editor")
+        #expect(await MainActor.run { fixture.automation.lastHotkeyKeys } == nil)
+        #expect(await MainActor.run { fixture.automation.targetedHotkeyCalls.isEmpty })
+    }
+
+    @Test
+    func `Press exact window refuses focused owner drift without dispatch`() async throws {
+        let fixture = await Self.makeFixture(focusedWindowID: 41)
+        let response = try await PressTool(context: fixture.context).execute(arguments: ToolArguments(raw: [
+            "window_id": 42,
+            "keys": ["cmd+l"],
+        ]))
+
+        #expect(response.isError)
+        #expect(response.meta?.objectValue?["refusal_reason"] == .string("target_unavailable"))
+        #expect(await MainActor.run { fixture.automation.exactHotkeyCalls.isEmpty })
+        #expect(await MainActor.run { fixture.automation.lastHotkeyKeys } == nil)
+    }
+
+    @Test
+    func `Type app target upgrades one eligible window and refuses ambiguity`() async throws {
+        let one = await Self.makeFixture(focusedWindowID: 42)
+        let success = try await TypeTool(context: one.context).execute(arguments: ToolArguments(raw: [
+            "app": "Editor",
+            "text": "hello",
+        ]))
+
+        #expect(!success.isError)
+        let call = try #require(await MainActor.run { one.automation.exactTypeCalls.first })
+        #expect(call.target.windowIdentity.windowID == 42)
+        #expect(call.target.focusedElement.identifier == "editor")
+        #expect(success.meta?.objectValue?["target_window_id"] == .int(42))
+
+        let ambiguous = await Self.makeFixture(
+            focusedWindowID: nil,
+            windows: [Self.keyboardWindow(id: 41, index: 0), Self.keyboardWindow(id: 42, index: 1)])
+        let refusal = try await TypeTool(context: ambiguous.context).execute(arguments: ToolArguments(raw: [
+            "app": "Editor",
+            "text": "hello",
+        ]))
+
+        #expect(refusal.isError)
+        #expect(refusal.meta?.objectValue?["refusal_reason"] == .string("target_unavailable"))
+        #expect(await MainActor.run { ambiguous.automation.exactTypeCalls.isEmpty })
+        #expect(await MainActor.run { ambiguous.automation.targetedTypeActionsCalls.isEmpty })
+    }
+
+    @Test
+    func `Background-only exact snapshot press reaches the exact leaf`() async throws {
+        let snapshot = await Self.makeSnapshot(window: Self.keyboardWindow(id: 42, index: 0))
+        let fixture = await Self.makeFixture(
+            focusedWindowID: 42,
+            backgroundOnly: true,
+            snapshots: InMemorySnapshotManager(detectionResult: snapshot.detectionResult))
+
+        let response = try await fixture.context.execute(
+            tool: PressTool(context: fixture.context),
+            arguments: ToolArguments(raw: [
+                "snapshot": snapshot.id,
+                "keys": ["cmd+l"],
+            ]))
+
+        #expect(!response.isError)
+        let call = try #require(await MainActor.run { fixture.automation.exactHotkeyCalls.first })
+        #expect(call.target.windowIdentity.windowID == 42)
+        #expect(await MainActor.run { fixture.automation.lastHotkeyKeys } == nil)
+        await Self.uiSnapshots.removeSnapshot(id: snapshot.id)
+    }
+
+    private static func makeFixture(
+        focusedWindowID: Int?,
+        windows: [ServiceWindowInfo] = [Self.keyboardWindow(id: 42, index: 0)],
+        backgroundOnly: Bool = false,
+        snapshots: (any SnapshotManagerProtocol)? = nil) async
+        -> (context: MCPToolContext, automation: ExactKeyboardAutomationService)
+    {
+        let automation = await MainActor.run {
+            let service = ExactKeyboardAutomationService(accessibilityGranted: true)
+            service.uiAutomationOutcomeScript.setDefaultOutcome(.confirmedChange(delivery: .init(
+                mechanism: .windowTargetedEvents,
+                mode: .background)))
+            if let focusedWindowID {
+                service.focusedElementsByPID[333] = Self.focusInfo(windowID: focusedWindowID)
+            }
+            return service
+        }
+        let applications = await MainActor.run {
+            MockApplicationService(applications: [AutomationTestFixtures.application(
+                processIdentifier: 333,
+                processStartIdentity: 33,
+                bundleIdentifier: "com.example.editor",
+                name: "Editor")])
+        }
+        let context = await MCPToolTestHelpers.makeContext(
+            automation: automation,
+            applications: applications,
+            windows: ExactKeyboardWindowService(windows: windows),
+            snapshots: snapshots,
+            snapshotOwner: Self.uiSnapshots.owner,
+            executionPolicy: backgroundOnly ? .backgroundOnly : .unrestricted)
+        return (context, automation)
+    }
+
+    private static func keyboardWindow(id: Int, index: Int) -> ServiceWindowInfo {
+        let bounds = CGRect(x: CGFloat(index * 500), y: 0, width: 480, height: 360)
+        return ServiceWindowInfo(
+            windowID: id,
+            title: "Document \(index + 1)",
+            bounds: bounds,
+            index: index,
+            mutationIdentity: WindowMutationIdentity(
+                windowID: id,
+                ownerProcessIdentifier: 333,
+                ownerProcessStartIdentity: 33,
+                capturedBounds: bounds))
+    }
+
+    private static func focusInfo(windowID: Int) -> UIFocusInfo {
+        UIFocusInfo(
+            role: "AXTextField",
+            title: "Editor",
+            value: nil,
+            frame: CGRect(x: 20, y: 20, width: 100, height: 30),
+            applicationName: "Editor",
+            bundleIdentifier: "com.example.editor",
+            processId: 333,
+            windowID: windowID,
+            identifier: "editor")
+    }
+
+    private static func makeSnapshot(window: ServiceWindowInfo) async
+        -> (id: String, detectionResult: ElementDetectionResult)
+    {
+        await self.uiSnapshots.removeAllSnapshots()
+        let snapshot = await self.uiSnapshots.createSnapshot()
+        let snapshotID = await snapshot.id
+        await snapshot.setScreenshot(
+            path: "/tmp/exact-keyboard.png",
+            metadata: CaptureMetadata(
+                size: window.bounds.size,
+                mode: .window,
+                applicationInfo: AutomationTestFixtures.application(
+                    processIdentifier: 333,
+                    processStartIdentity: 33,
+                    bundleIdentifier: "com.example.editor",
+                    name: "Editor"),
+                windowInfo: window))
+        let windowContext = WindowContext(
+            applicationName: "Editor",
+            applicationBundleId: "com.example.editor",
+            applicationProcessId: 333,
+            windowTitle: window.title,
+            windowID: window.windowID,
+            windowBounds: window.bounds,
+            windowMutationIdentity: window.mutationIdentity)
+        return (
+            snapshotID,
+            ElementDetectionResult(
+                snapshotId: snapshotID,
+                screenshotPath: "/tmp/exact-keyboard.png",
+                elements: DetectedElements(),
+                metadata: DetectionMetadata(
+                    detectionTime: 0.01,
+                    elementCount: 0,
+                    method: "test",
+                    windowContext: windowContext)))
+    }
+}
+
+@MainActor
+private final class ExactKeyboardAutomationService: MockAutomationService,
+    ExactWindowTargetedKeyboardServiceProtocol,
+    ScriptedUIAutomationActionOutcomeProviding,
+    TargetedFocusedElementServiceProtocol
+{
+    struct TypeCall {
+        let target: ExactWindowKeyboardTarget
+    }
+
+    struct HotkeyCall {
+        let keys: String
+        let target: ExactWindowKeyboardTarget
+    }
+
+    let supportsExactWindowTargetedKeyboard = true
+    let exactWindowTargetedKeyboardUnavailableReason: String? = nil
+    let uiAutomationOutcomeScript = UIAutomationOutcomeScript()
+    var focusedElementsByPID: [pid_t: UIFocusInfo] = [:]
+    private(set) var exactTypeCalls: [TypeCall] = []
+    private(set) var exactHotkeyCalls: [HotkeyCall] = []
+
+    func getFocusedElement(targetProcessIdentifier: pid_t) async -> UIFocusInfo? {
+        self.focusedElementsByPID[targetProcessIdentifier]
+    }
+
+    func typeActions(
+        _ actions: [TypeAction],
+        cadence _: TypingCadence,
+        snapshotId _: String?,
+        target: ExactWindowKeyboardTarget) async throws -> TypeResult
+    {
+        self.exactTypeCalls.append(TypeCall(target: target))
+        let characterCount = actions.reduce(into: 0) { count, action in
+            if case let .text(text) = action {
+                count += text.count
+            }
+        }
+        return TypeResult(totalCharacters: characterCount, keyPresses: 0)
+    }
+
+    func hotkey(
+        keys: String,
+        holdDuration _: Int,
+        target: ExactWindowKeyboardTarget) async throws
+    {
+        self.exactHotkeyCalls.append(HotkeyCall(keys: keys, target: target))
+    }
+}
+
+private actor ExactKeyboardWindowService: WindowManagementServiceProtocol {
+    let windows: [ServiceWindowInfo]
+
+    init(windows: [ServiceWindowInfo]) {
+        self.windows = windows
+    }
+
+    func closeWindow(target _: WindowTarget) async throws {}
+    func minimizeWindow(target _: WindowTarget) async throws {}
+    func maximizeWindow(target _: WindowTarget) async throws {}
+    func moveWindow(target _: WindowTarget, to _: CGPoint) async throws {}
+    func resizeWindow(target _: WindowTarget, to _: CGSize) async throws {}
+    func setWindowBounds(target _: WindowTarget, bounds _: CGRect) async throws {}
+    func focusWindow(target _: WindowTarget) async throws {}
+
+    func listWindows(target: WindowTarget) async throws -> [ServiceWindowInfo] {
+        switch target {
+        case let .windowId(windowID): self.windows.filter { $0.windowID == windowID }
+        case let .title(title), let .applicationAndTitle(_, title):
+            self.windows.filter { $0.title.localizedCaseInsensitiveContains(title) }
+        case let .index(_, index): self.windows.filter { $0.index == index }
+        case .application, .frontmost: self.windows
+        }
+    }
+
+    func getFocusedWindow() async throws -> ServiceWindowInfo? {
+        self.windows.first
+    }
+}

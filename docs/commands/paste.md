@@ -19,15 +19,15 @@ This reduces drift by collapsing multiple CLI steps into one command. Plain text
 | `--data-base64` + `--uti` | Paste raw base64 payload with explicit UTI (e.g. `public.rtf`). |
 | `--also-text` | Optional plain-text companion when pasting binary. |
 | `--restore-delay <duration>` | Delay before restoring the previous clipboard (default `150ms`; bare values are milliseconds). |
-| Target flags | `--app <name>` or `--pid <pid>` for process-targeted background paste. Window selectors require `--foreground`. |
+| Target flags | `--app <name>`, `--pid <pid>`, or an exact window selector for background paste. |
 | `--foreground` | Focus a supplied target or intentionally send foreground/global Cmd+V. |
 | Focus flags | Foreground focus controls (`--space-switch`, `--no-auto-focus`, etc.). |
 
 ## Delivery modes
-- **Background** is the default when Peekaboo can resolve a target process from target flags or snapshot metadata. Plain text is delivered directly without touching the clipboard. Binary/rich content and current-clipboard requests still post process-targeted Cmd+V without activating the app, but macOS provides no receiver-consumption acknowledgement. Peekaboo therefore returns a nonzero, explicit “may have pasted; do not retry” result after the settle/restore transaction instead of claiming success. Observe the target before taking another action.
+- **Background** is the default when Peekaboo can resolve a target. Exact-window routes pin the process generation, window ID/bounds, and focused element. App/PID routes upgrade when one eligible window exists and refuse when several are eligible. Plain text is delivered directly without touching the clipboard. Binary/rich and current-clipboard requests remain receiver-unverifiable and return “may have pasted; do not retry” after cleanup.
 - **Foreground** (`--foreground`) focuses the target first and sends normal/global Cmd+V. Use it for apps that ignore background paste or for flows where focus should visibly move.
 - Without an app/PID target, `paste` fails before mutating the clipboard. Add `--foreground` only when global delivery is intentional.
-- Window selectors are rejected in background mode because process-targeted events cannot prove which window owns the process's focused element.
+- Exact window selectors stay exact through text or Cmd+V dispatch; focus, owner, generation, or bounds drift fails before clipboard access whenever no event has begun. Exact-window remote delivery requires Bridge protocol 1.24.
 - Process-targeted text and Cmd+V delivery retain the resolved app's process-generation receipt. Plain text revalidates before every emitted character, while clipboard-backed paste uses generation-pinned hotkey delivery. A target exit or relaunch never silently retargets the reusable PID. Remote background paste requires Bridge protocol 1.22 or newer.
 - Clipboard-backed transactions are serialized across CLI, daemon, and GUI processes with a private per-user lock under `~/Library/Application Support/Peekaboo`, independent of each process's temporary directory.
 - Target capability checks, cancellation checks, and the prior-clipboard snapshot must all succeed before Peekaboo writes a temporary payload. A read failure is never treated as an empty clipboard; if a write fails after partially changing the pasteboard, Peekaboo restores the exact saved state before returning the error.
@@ -42,7 +42,7 @@ peekaboo paste --foreground
 peekaboo paste "Hello, world" --app TextEdit
 
 # Paste rich text (RTF) into a specific window title
-peekaboo paste --data-base64 "$RTF_B64" --uti public.rtf --also-text "fallback" --app TextEdit --window-title "Untitled" --foreground
+peekaboo paste --data-base64 "$RTF_B64" --uti public.rtf --also-text "fallback" --app TextEdit --window-title "Untitled"
 
 # Paste a PNG into Notes with a confirmed foreground dispatch result
 peekaboo paste --file-path /tmp/snippet.png --app Notes --foreground

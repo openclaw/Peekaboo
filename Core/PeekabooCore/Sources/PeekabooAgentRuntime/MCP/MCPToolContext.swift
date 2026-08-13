@@ -394,23 +394,24 @@ public struct MCPToolContext: @unchecked Sendable {
 
         guard self.executionPolicy == .backgroundOnly else { return permitted(arguments) }
         let usesSnapshotTarget = ["action", "click", "scroll", "set_value"].contains(toolName) ||
-            (toolName == "type" &&
+            (["type", "press"].contains(toolName) &&
                 (arguments.getValue(for: "on") != nil || arguments.getValue(for: "snapshot") != nil))
         guard usesSnapshotTarget else {
             // BrowserTool mutates DevTools page targets rather than macOS desktop targets. Its policy separately
             // requires background pages and forbids page fronting before dispatch.
-            if toolName == "type" {
+            if ["type", "press"].contains(toolName) {
                 return BackgroundTargetAuthorization(
                     arguments: arguments,
                     rejection: self.executionPolicy.unresolvedTargetRejection(
                         toolName: toolName,
-                        detail: "background Agent typing requires an exact non-dialog snapshot or element target"))
+                        detail: "background Agent keyboard input requires an exact non-dialog snapshot " +
+                            "or element target"))
             }
             return await self.backgroundApplicationTargetAuthorization(
                 toolName: toolName,
                 arguments: arguments)
         }
-        if toolName == "type",
+        if ["type", "press"].contains(toolName),
            ["app", "pid", "window_id", "window_title", "window_index"].contains(where: {
                arguments.getValue(for: $0) != nil
            })
@@ -419,7 +420,7 @@ public struct MCPToolContext: @unchecked Sendable {
                 arguments: arguments,
                 rejection: self.executionPolicy.unresolvedTargetRejection(
                     toolName: toolName,
-                    detail: "snapshot/element typing cannot include competing app, PID, or window selectors"))
+                    detail: "snapshot keyboard input cannot include competing app, PID, or window selectors"))
         }
         let snapshotSelector = Self.strictString(arguments, key: "snapshot")
         let coordinateSelector = Self.strictString(arguments, key: "coordinate_reference")

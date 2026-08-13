@@ -18,24 +18,24 @@ read_when:
 | `--wpm <80-220>` | Enable human-typing cadence at the chosen words per minute. |
 | `--profile <linear|human>` | Switch between linear (default, honors `--delay`) and human (honors `--wpm`). |
 | `--clear` | Issue Cmd+A, Delete before typing any new text. |
-| Target flags | `--app <name>` or `--pid <pid>` for process-targeted background input. Window selectors require `--foreground`. |
+| Target flags | `--app <name>`, `--pid <pid>`, or an exact window selector for background input. |
 | `--foreground` | Focus a supplied target or intentionally send foreground/global keyboard input. |
 | Focus flags | Foreground focus controls (`--no-auto-focus`, `--space-switch`, etc.). |
 
 ## Delivery modes
-- **Background** is the default when Peekaboo can resolve a target process from target flags or snapshot metadata. It sends process-targeted keyboard events without activating the target app.
+- **Background** is the default when Peekaboo can resolve a target from flags or snapshot metadata. Exact window/snapshot routes pin the process generation, window ID/bounds, and focused element without activating the app. App/PID routes upgrade when one eligible window exists and refuse when several are eligible.
 - **Foreground** (`--foreground`) focuses the target first and sends normal/global keyboard input. Use it for apps or fields that only accept text in the focused key window, or when focus changes are desired.
 - If no target process can be resolved, `type` fails before sending input. Add `--foreground` only when global delivery is intentional.
 
 ## Implementation notes
 - Text may be omitted only when `--clear` is used. Chain a following `press` command for Return, Tab, Escape, or Delete.
 - Escape handling splits literal text and key presses: `"Hello\nWorld"` becomes `text("Hello"), key(.return), text("World")`, so newlines don’t require separate flags.
-- Window selectors are rejected in background mode because process-targeted events cannot prove which window owns the process's focused element. Use `--foreground` to focus that window first.
+- Exact window selectors and fresh exact-window snapshots preserve PID generation, window ID/bounds, and focused-element identity through dispatch. Stale or ambiguous receipts fail before typing.
 - Default profile is `linear`, using no inter-key delay for fast deterministic input. Passing `--wpm` opts into human cadence; `--profile human` uses 140 WPM when `--wpm` is omitted.
 - Background delivery uses process-targeted CoreGraphics keyboard events and requires Event Synthesizing access. Apps that only accept typing in a focused key window may still need `--foreground`.
 - Printable background text is carried as Unicode instead of physical US key positions, so the requested characters remain stable across active keyboard layouts.
-- Background app/PID delivery is pinned to the process generation resolved before dispatch. Peekaboo revalidates the receipt before every character or special action, stops on target exit/relaunch, and reports partial delivery as retry-unsafe. Remote delivery requires Bridge protocol 1.22 or newer.
-- JSON output reports `totalCharacters`, `keyPresses`, delivery mode, optional target PID, and elapsed time; this matches what the agent logs when executing scripted steps.
+- Background app/PID delivery is pinned to the process generation resolved before dispatch. Peekaboo revalidates the receipt before every character or special action, stops on target exit/relaunch, and reports partial delivery as retry-unsafe. Exact-window remote delivery requires Bridge protocol 1.24.
+- JSON output reports `totalCharacters`, `keyPresses`, delivery mode, optional target PID/window ID, and elapsed time; this matches what the agent logs when executing scripted steps.
 
 ## Examples
 ```bash

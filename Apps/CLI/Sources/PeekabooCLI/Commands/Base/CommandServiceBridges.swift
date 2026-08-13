@@ -182,6 +182,53 @@ enum AutomationServiceBridge {
         }.value
     }
 
+    static func typeActions(
+        automation: any UIAutomationServiceProtocol,
+        request: TypeActionsRequest,
+        target: UIAutomationTarget
+    ) async throws -> UIAutomationActionResult<TypeResult> {
+        switch target {
+        case .foreground:
+            return try await self.typeActions(automation: automation, request: request)
+        case let .process(process):
+            guard let identity = process.identity else {
+                throw PeekabooError.invalidInput(
+                    field: "target",
+                    reason: "Background typing requires a process-generation receipt"
+                )
+            }
+            return try await self.typeActions(
+                automation: automation,
+                request: request,
+                expectedProcessIdentity: identity
+            )
+        case let .exactWindow(exactWindow):
+            let outcomeService = try ExactWindowKeyboardRuntime.requireOutcomeProvider(
+                automation: automation,
+                operation: "Background typing"
+            )
+            guard let focusedElement = exactWindow.focusedElement else {
+                throw PeekabooError.invalidInput(
+                    field: "target",
+                    reason: "Exact-window typing requires a focused-element receipt"
+                )
+            }
+            return try await ExactWindowKeyboardRuntime.validateRouteReceipt(
+                outcomeService.typeActionsWithOutcome(
+                    request.actions,
+                    cadence: request.cadence,
+                    snapshotId: request.snapshotId,
+                    target: ExactWindowKeyboardTarget(
+                        windowIdentity: exactWindow.identity,
+                        windowBounds: exactWindow.bounds,
+                        focusedElement: focusedElement
+                    )
+                ),
+                operation: "Background typing"
+            )
+        }
+    }
+
     static func scroll(
         automation: any UIAutomationServiceProtocol,
         request: ScrollRequest
@@ -259,6 +306,54 @@ enum AutomationServiceBridge {
             try await automation.hotkey(keys: keys, holdDuration: holdDuration)
             return UIAutomationActionResult(payload: (), outcome: nil)
         }.value
+    }
+
+    static func hotkey(
+        automation: any UIAutomationServiceProtocol,
+        keys: String,
+        holdDuration: Int,
+        target: UIAutomationTarget
+    ) async throws -> UIAutomationActionResult<Void> {
+        switch target {
+        case .foreground:
+            return try await self.hotkey(automation: automation, keys: keys, holdDuration: holdDuration)
+        case let .process(process):
+            guard let identity = process.identity else {
+                throw PeekabooError.invalidInput(
+                    field: "target",
+                    reason: "Background hotkeys require a process-generation receipt"
+                )
+            }
+            return try await self.hotkey(
+                automation: automation,
+                keys: keys,
+                holdDuration: holdDuration,
+                expectedProcessIdentity: identity
+            )
+        case let .exactWindow(exactWindow):
+            let outcomeService = try ExactWindowKeyboardRuntime.requireOutcomeProvider(
+                automation: automation,
+                operation: "Background hotkeys"
+            )
+            guard let focusedElement = exactWindow.focusedElement else {
+                throw PeekabooError.invalidInput(
+                    field: "target",
+                    reason: "Exact-window hotkeys require a focused-element receipt"
+                )
+            }
+            return try await ExactWindowKeyboardRuntime.validateRouteReceipt(
+                outcomeService.hotkeyWithOutcome(
+                    keys: keys,
+                    holdDuration: holdDuration,
+                    target: ExactWindowKeyboardTarget(
+                        windowIdentity: exactWindow.identity,
+                        windowBounds: exactWindow.bounds,
+                        focusedElement: focusedElement
+                    )
+                ),
+                operation: "Background hotkeys"
+            )
+        }
     }
 
     static func hotkey(

@@ -15,12 +15,24 @@ struct PasteToolExactWindowTests {
         windowID: 41,
         title: "First Document",
         bounds: CGRect(x: 10, y: 20, width: 500, height: 400),
-        index: 0)
+        index: 0,
+        mutationIdentity: AutomationTestFixtures.windowIdentity(
+            windowID: 41,
+            processIdentity: AutomationTestFixtures.processIdentity(
+                processIdentifier: 333,
+                processStartIdentity: 33),
+            bounds: CGRect(x: 10, y: 20, width: 500, height: 400)))
     private let secondWindow = ServiceWindowInfo(
         windowID: 42,
         title: "Second Document",
         bounds: CGRect(x: 600, y: 20, width: 500, height: 400),
-        index: 1)
+        index: 1,
+        mutationIdentity: AutomationTestFixtures.windowIdentity(
+            windowID: 42,
+            processIdentity: AutomationTestFixtures.processIdentity(
+                processIdentifier: 333,
+                processStartIdentity: 33),
+            bounds: CGRect(x: 600, y: 20, width: 500, height: 400)))
 
     @Test
     func `Exact title text paste keeps same-process sibling window identity`() async throws {
@@ -88,7 +100,7 @@ struct PasteToolExactWindowTests {
         ]))
 
         #expect(response.isError)
-        #expect(self.responseText(response).contains("atomic exact-window background paste"))
+        #expect(self.responseText(response).contains("requires atomic exact-window keyboard delivery"))
         #expect(await MainActor.run { fixture.clipboard.saveCallCount } == 0)
         #expect(await MainActor.run { fixture.clipboard.setCallCount } == 0)
         #expect(await MainActor.run { fixture.automation.targetedHotkeyCalls.isEmpty })
@@ -106,7 +118,7 @@ struct PasteToolExactWindowTests {
         ]))
 
         #expect(response.isError)
-        #expect(self.responseText(response).contains("atomic exact-window background paste"))
+        #expect(self.responseText(response).contains("requires atomic exact-window keyboard delivery"))
         #expect(await MainActor.run { fixture.clipboard.setCallCount } == 0)
         #expect(await MainActor.run { fixture.automation.targetedHotkeyCalls.isEmpty })
         #expect(await MainActor.run { fixture.automation.lastHotkeyKeys } == nil)
@@ -117,6 +129,7 @@ struct PasteToolExactWindowTests {
     func `Exact window paste refuses an incomplete owner before dispatch`() async throws {
         let application = ServiceApplicationInfo(
             processIdentifier: 333,
+            processStartIdentity: 33,
             bundleIdentifier: nil,
             name: "Incomplete Editor",
             isHiddenKnown: false,
@@ -305,6 +318,7 @@ struct PasteToolExactWindowTests {
     {
         let application = application ?? ServiceApplicationInfo(
             processIdentifier: 333,
+            processStartIdentity: 33,
             bundleIdentifier: "com.example.editor",
             name: "Editor")
         let applications = MockApplicationService(applications: [application])
@@ -329,21 +343,7 @@ struct PasteToolExactWindowTests {
             applications: applications,
             windows: windows,
             clipboard: clipboard)
-        let identities = [self.firstWindow, self.secondWindow].reduce(
-            into: [CGWindowID: SystemWindowIdentity]())
-        { result, window in
-            result[CGWindowID(window.windowID)] = SystemWindowIdentity(
-                windowID: CGWindowID(window.windowID),
-                ownerProcessIdentifier: 333,
-                title: window.title,
-                bounds: window.bounds,
-                layer: 0,
-                alpha: 1,
-                isOnScreen: true,
-                sharingState: .readWrite,
-                applicationName: "Editor")
-        }
-        let tool = PasteTool(context: context) { identities[$0] }
+        let tool = PasteTool(context: context)
         return PasteExactWindowFixture(
             tool: tool,
             automation: automation,
@@ -400,7 +400,9 @@ private struct PasteExactWindowFixture {
 
 @MainActor
 private final class ExactPasteAutomationService: MockAutomationService,
-    ExactWindowTargetedKeyboardServiceProtocol
+    ExactWindowTargetedKeyboardServiceProtocol,
+    ScriptedUIAutomationActionOutcomeProviding,
+    TargetedFocusedElementServiceProtocol
 {
     struct TypeCall {
         let targetProcessIdentifier: pid_t
@@ -417,6 +419,10 @@ private final class ExactPasteAutomationService: MockAutomationService,
 
     let supportsExactWindowTargetedKeyboard = true
     let exactWindowTargetedKeyboardUnavailableReason: String? = nil
+    let uiAutomationOutcomeScript = UIAutomationOutcomeScript(defaultResponse: .outcome(
+        .confirmedChange(delivery: .init(
+            mechanism: .windowTargetedEvents,
+            mode: .background))))
     private(set) var exactTypeCalls: [TypeCall] = []
     private(set) var exactHotkeyCalls: [HotkeyCall] = []
     var typeErrorAfterPrefix: String?
@@ -459,6 +465,45 @@ private final class ExactPasteAutomationService: MockAutomationService,
             targetProcessIdentifier: expectedWindowIdentity.ownerProcessIdentifier,
             targetWindowID: expectedWindowIdentity.windowID,
             expectedWindowBounds: expectedWindowBounds))
+    }
+
+    func typeActions(
+        _ actions: [TypeAction],
+        cadence: TypingCadence,
+        snapshotId: String?,
+        target: ExactWindowKeyboardTarget) async throws -> TypeResult
+    {
+        try await self.typeActions(
+            actions,
+            cadence: cadence,
+            snapshotId: snapshotId,
+            expectedWindowIdentity: target.windowIdentity,
+            expectedWindowBounds: target.windowBounds)
+    }
+
+    func hotkey(
+        keys: String,
+        holdDuration: Int,
+        target: ExactWindowKeyboardTarget) async throws
+    {
+        try await self.hotkey(
+            keys: keys,
+            holdDuration: holdDuration,
+            expectedWindowIdentity: target.windowIdentity,
+            expectedWindowBounds: target.windowBounds)
+    }
+
+    func getFocusedElement(targetProcessIdentifier: pid_t) async -> UIFocusInfo? {
+        UIFocusInfo(
+            role: "AXTextArea",
+            title: nil,
+            value: nil,
+            frame: CGRect(x: 620, y: 50, width: 200, height: 100),
+            applicationName: "Editor",
+            bundleIdentifier: "com.example.editor",
+            processId: Int(targetProcessIdentifier),
+            windowID: 42,
+            identifier: "editor")
     }
 }
 

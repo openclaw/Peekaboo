@@ -17,10 +17,9 @@ public struct PressTool: MCPTool {
         """
         Presses one or more raw keyboard chords. Use `keys` for an xdotool-style chord sequence such as
         ["cmd+c", "Return"], or use `key` plus `modifiers` for a single chord. The two input shapes are
-        mutually exclusive. Raw chords cannot prove semantic intent or effect on a shared desktop and require
-        foreground=true. For certifiable background automation, use action, menu, window, app, or dialog with an
-        exact target. app and pid are alternatives; provide at most one of window_id, window_title, or window_index,
-        and pair title/index with app or pid.
+        mutually exclusive. Raw chords require foreground=true or an exact window/snapshot receipt whose focused
+        element can be pinned through native background dispatch. App/PID-only and targetless background press are
+        refused. app and pid are alternatives; provide at most one window selector; pair title/index with app or pid.
         \(PeekabooMCPVersion.banner) using openai/gpt-5.6, anthropic/claude-opus-5
         """
     }
@@ -70,8 +69,10 @@ public struct PressTool: MCPTool {
                     .string(description: "Optional window title (substring match) to focus before raw input."),
                 "window_index": SchemaBuilder
                     .integer(description: "Optional window index (0-based); requires app/pid."),
+                "snapshot": SchemaBuilder.string(
+                    description: "Optional fresh exact-window snapshot for receipt-pinned background press."),
                 "foreground": SchemaBuilder.boolean(
-                    description: "Required true. Focus a target or intentionally send OS-global raw keyboard input.",
+                    description: "Focus a target or intentionally send OS-global raw keyboard input.",
                     default: false),
             ],
             required: [])
@@ -97,18 +98,28 @@ public struct PressTool: MCPTool {
                 windowTitle: arguments.getString("window_title"),
                 windowIndex: arguments.validatedInt("window_index"),
                 windowId: arguments.validatedInt("window_id"))
-            guard foreground else {
+            let snapshotID = arguments.getString("snapshot")
+            if foreground, snapshotID?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
+                throw PressToolValidationError(
+                    message: "snapshot is only supported for receipt-pinned background press")
+            }
+            guard foreground || target.hasWindowSelector ||
+                snapshotID?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            else {
                 return try Self.foregroundConsentRefusal()
             }
             let resolvedWindowTitle = try await target.resolveWindowTitleIfNeeded(windows: self.context.windows)
-            let targetFocusCompleted = try await target.focusIfRequested(
-                windows: self.context.windows,
-                onlyWhenTargeted: true) != nil
+            let deliveryPlan = try await self.resolveDeliveryTarget(
+                foreground: foreground,
+                target: target,
+                snapshotID: snapshotID)
+            let targetFocusCompleted = deliveryPlan.targetFocusCompleted
 
             let startTime = Date()
             let run = try await self.dispatchSequence(
                 chords: chords,
                 parameters: parameters,
+                target: deliveryPlan.target,
                 targetFocusCompleted: targetFocusCompleted)
             let display = chords.map(\.displayValue)
             let elapsed = Date().timeIntervalSince(startTime)
@@ -128,11 +139,13 @@ public struct PressTool: MCPTool {
                 "delay": .int(delay),
                 "hold": .int(hold),
                 "total_presses": .int(run.completedPresses),
-                "target_pid": .null,
+                "target_pid": deliveryPlan.target.processIdentifier.map { .int(Int($0)) } ?? .null,
+                "target_window_id": deliveryPlan.target.exactWindow.map { .int($0.identity.windowID) } ?? .null,
                 "execution_time": .double(elapsed),
             ]
             if !targetFocusCompleted, sequenceResolution.mutationDispatched {
-                baseMeta["delivery_mode"] = .string("foreground")
+                baseMeta["delivery_mode"] = .string(
+                    deliveryPlan.target.processIdentifier == nil ? "foreground" : "background")
             }
             if outcome == nil {
                 if sequenceResolution.mutationDispatched {
@@ -143,7 +156,8 @@ public struct PressTool: MCPTool {
                 baseMeta["requires_fresh_observation"] = .bool(sequenceResolution.requiresFreshObservation)
             }
             if let invalidatedSnapshotID = await self.invalidateSnapshotAfterSuccess(
-                resolution: sequenceResolution)
+                resolution: sequenceResolution,
+                snapshotID: snapshotID)
             {
                 baseMeta["invalidated_snapshot"] = .string(invalidatedSnapshotID)
             }
@@ -162,18 +176,27 @@ public struct PressTool: MCPTool {
         } catch let error as KeyboardChordError {
             return try Self.invalidRequest(error.localizedDescription)
         } catch let error as PressToolValidationError {
-            return try Self.invalidRequest(error.message)
+            return MCPToolResponseMetadataProjector.preDispatchRefusalResponse(
+                message: error.message,
+                reason: error.refusalReason)
         } catch let error as MCPToolArgumentValueError {
             return try Self.invalidRequest(error.localizedDescription)
         } catch let failure as PressSequenceFailure {
             return try await self.failureResponse(
                 failure.failure,
-                compatibility: failure.compatibility)
+                compatibility: failure.compatibility,
+                snapshotID: arguments.getString("snapshot"))
         } catch let failure as DesktopActionFailure {
-            return try await self.failureResponse(failure, compatibility: .none)
+            return try await self.failureResponse(
+                failure,
+                compatibility: .none,
+                snapshotID: arguments.getString("snapshot"))
         } catch let error as InputDeliveryIndeterminateError {
             let failure = error.desktopActionFailure(delivery: nil)
-            return try await self.failureResponse(failure, compatibility: .none)
+            return try await self.failureResponse(
+                failure,
+                compatibility: .none,
+                snapshotID: arguments.getString("snapshot"))
         } catch {
             self.logger.error("Press execution failed: \(error.localizedDescription)")
             return ToolResponse.error(error.localizedDescription)
@@ -184,6 +207,7 @@ public struct PressTool: MCPTool {
     private func dispatchSequence(
         chords: [KeyboardChord],
         parameters: PressExecutionParameters,
+        target: UIAutomationTarget,
         targetFocusCompleted: Bool) async throws -> PressSequenceRun
     {
         var sequence = DesktopActionSequenceAccumulator()
@@ -196,7 +220,10 @@ public struct PressTool: MCPTool {
         do {
             for repetition in 0..<parameters.count {
                 for (index, chord) in chords.enumerated() {
-                    let result = try await self.dispatch(chord: chord, hold: parameters.hold)
+                    let result = try await self.dispatch(
+                        chord: chord,
+                        hold: parameters.hold,
+                        target: target)
                     try DesktopActionFailure.requireConfirmedIfReported(
                         result.outcome,
                         operation: "Raw chord \(chord.displayValue)")
@@ -212,7 +239,7 @@ public struct PressTool: MCPTool {
                         allChordsConfirmedNoChange = false
                         let step = DesktopActionSequenceAccumulator.Step.dispatched(
                             route: .local,
-                            delivery: Self.foregroundHotkeyDelivery,
+                            delivery: Self.delivery(for: target),
                             unitCount: Self.singleDispatchUnit)
                         sequence.record(step)
                         chordSequence.record(step)
@@ -232,7 +259,7 @@ public struct PressTool: MCPTool {
                 chordDisposition: chordSequence.mutationDisposition)
         } catch let error as InputDeliveryIndeterminateError {
             throw Self.sequenceFailure(
-                error.desktopActionFailure(delivery: Self.foregroundHotkeyDelivery),
+                error.desktopActionFailure(delivery: Self.delivery(for: target)),
                 sequence: sequence,
                 completedPresses: completedPresses,
                 chordDisposition: chordSequence.mutationDisposition,
@@ -253,7 +280,29 @@ public struct PressTool: MCPTool {
     }
 
     @MainActor
-    private func dispatch(chord: KeyboardChord, hold: Int) async throws -> UIAutomationActionResult<Void> {
+    private func dispatch(
+        chord: KeyboardChord,
+        hold: Int,
+        target: UIAutomationTarget) async throws -> UIAutomationActionResult<Void>
+    {
+        if let exactWindow = target.exactWindow {
+            let outcomeAutomation = try ExactWindowKeyboardRuntime.requireOutcomeProvider(
+                automation: self.context.automation,
+                operation: "Background hotkeys")
+            guard let focusedElement = exactWindow.focusedElement else {
+                throw PressToolValidationError(
+                    message: "Exact-window background hotkeys require a focused-element receipt.")
+            }
+            return try await ExactWindowKeyboardRuntime.validateRouteReceipt(
+                outcomeAutomation.hotkeyWithOutcome(
+                    keys: chord.serviceKeys,
+                    holdDuration: hold,
+                    target: ExactWindowKeyboardTarget(
+                        windowIdentity: exactWindow.identity,
+                        windowBounds: exactWindow.bounds,
+                        focusedElement: focusedElement)),
+                operation: "Background hotkeys")
+        }
         if let automation = self.context.automation as? any UIAutomationActionOutcomeProviding {
             return try await automation.hotkeyWithOutcome(keys: chord.serviceKeys, holdDuration: hold)
         }
@@ -301,24 +350,109 @@ public struct PressTool: MCPTool {
     }
 
     @MainActor
+    private func resolveDeliveryTarget(
+        foreground: Bool,
+        target: MCPInteractionTarget,
+        snapshotID: String?) async throws -> PressDeliveryPlan
+    {
+        if foreground {
+            let targetFocusCompleted = try await target.focusIfRequested(
+                windows: self.context.windows,
+                onlyWhenTargeted: true) != nil
+            return PressDeliveryPlan(target: .foreground, targetFocusCompleted: targetFocusCompleted)
+        }
+
+        let snapshotExactWindow = try await self.snapshotExactWindow(id: snapshotID)
+        let plannedTarget: UIAutomationTarget
+        do {
+            plannedTarget = try await target.requireBackgroundKeyboardTarget(
+                applications: self.context.applications,
+                windows: self.context.windows,
+                snapshotExactWindow: snapshotExactWindow,
+                requiresExplicitExactWindow: true)
+        } catch let error as MCPInteractionTargetError {
+            throw error
+        } catch {
+            throw PressToolValidationError(
+                message: error.localizedDescription,
+                refusalReason: .targetUnavailable)
+        }
+        guard plannedTarget.exactWindow != nil else {
+            throw PressToolValidationError(
+                message: "Background raw key presses require one exact-window receipt.",
+                refusalReason: .invalidRequest)
+        }
+        do {
+            _ = try ExactWindowKeyboardRuntime.requireOutcomeProvider(
+                automation: self.context.automation,
+                operation: "Background hotkeys")
+        } catch {
+            throw PressToolValidationError(
+                message: error.localizedDescription,
+                refusalReason: .runtimeIncompatible)
+        }
+        guard self.context.automation is any TargetedFocusedElementServiceProtocol else {
+            throw PressToolValidationError(
+                message: "This automation host does not support focused exact-window background hotkeys.",
+                refusalReason: .runtimeIncompatible)
+        }
+        do {
+            let deliveryTarget = try await plannedTarget.pinningCurrentFocusedElement(
+                using: self.context.automation)
+            return PressDeliveryPlan(target: deliveryTarget, targetFocusCompleted: false)
+        } catch {
+            throw PressToolValidationError(
+                message: error.localizedDescription,
+                refusalReason: .targetUnavailable)
+        }
+    }
+
+    private func snapshotExactWindow(id: String?) async throws -> UIAutomationTarget.ExactWindow? {
+        guard let id, !id.isEmpty else { return nil }
+        guard let snapshot = await self.context.uiSnapshots.getSnapshot(id: id),
+              let processIdentifier = snapshot.applicationProcessId,
+              processIdentifier > 0,
+              let windowID = snapshot.windowID,
+              let bounds = snapshot.windowBounds,
+              let identity = snapshot.windowMutationIdentity,
+              identity.ownerProcessIdentifier == processIdentifier,
+              identity.windowID == windowID,
+              identity.capturedBounds == bounds
+        else {
+            throw PressToolValidationError(
+                message: "The selected snapshot has no exact process-generation, window, and bounds receipt.",
+                refusalReason: .targetUnavailable)
+        }
+        return try UIAutomationTarget.ExactWindow(identity: identity, bounds: bounds)
+    }
+
+    private static func delivery(for target: UIAutomationTarget) -> DesktopActionOutcome.Delivery {
+        target.exactWindow == nil
+            ? .init(mechanism: .globalEvents, mode: .foreground)
+            : .init(mechanism: .windowTargetedEvents, mode: .background)
+    }
+
+    @MainActor
     private func invalidateSnapshotAfterSuccess(
-        resolution: DesktopActionSequenceAccumulator.Resolution) async -> String?
+        resolution: DesktopActionSequenceAccumulator.Resolution,
+        snapshotID: String?) async -> String?
     {
         await MCPDesktopActionSnapshotInvalidator.invalidate(
             uiSnapshots: self.context.uiSnapshots,
-            snapshotID: nil,
+            snapshotID: snapshotID,
             mutationDispatched: resolution.mutationDispatched)
     }
 
     @MainActor
     private func failureResponse(
         _ failure: DesktopActionFailure,
-        compatibility: PressFailureCompatibility) async throws -> ToolResponse
+        compatibility: PressFailureCompatibility,
+        snapshotID: String?) async throws -> ToolResponse
     {
         try await MCPDesktopActionFailureHandler.response(
             for: failure,
             uiSnapshots: self.context.uiSnapshots,
-            snapshotID: nil,
+            snapshotID: snapshotID,
             additionalFields: compatibility.fields)
     }
 
@@ -420,9 +554,6 @@ struct PressFailureCompatibility {
 }
 
 extension PressTool {
-    fileprivate static let foregroundHotkeyDelivery = DesktopActionOutcome.Delivery(
-        mechanism: .globalEvents,
-        mode: .foreground)
     fileprivate static let singleDispatchUnit: DesktopActionOutcome.DispatchUnitCount = .one
 }
 
@@ -443,6 +574,11 @@ private struct PressSequenceFailure: Error {
     let compatibility: PressFailureCompatibility
 }
 
+private struct PressDeliveryPlan {
+    let target: UIAutomationTarget
+    let targetFocusCompleted: Bool
+}
+
 private struct PressResponseMessageInput {
     let display: [String]
     let completed: Int
@@ -454,4 +590,13 @@ private struct PressResponseMessageInput {
 
 private struct PressToolValidationError: Error {
     let message: String
+    let refusalReason: DesktopActionOutcome.RefusalReason
+
+    init(
+        message: String,
+        refusalReason: DesktopActionOutcome.RefusalReason = .invalidRequest)
+    {
+        self.message = message
+        self.refusalReason = refusalReason
+    }
 }

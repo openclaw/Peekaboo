@@ -25,12 +25,19 @@ enum MCPToolTestHelpers {
     {
         await MainActor.run {
             let services = PeekabooServices()
+            let resolvedWindows: any WindowManagementServiceProtocol = if let windows {
+                windows
+            } else if applications != nil {
+                EmptyRecordingWindowService()
+            } else {
+                services.windows
+            }
             let resolvedScreens = screens ?? services.screens
             let resolvedSnapshots = snapshots ?? services.snapshots
             return MCPToolContext(
                 automation: automation ?? services.automation,
                 menu: services.menu,
-                windows: windows ?? services.windows,
+                windows: resolvedWindows,
                 applications: applications ?? services.applications,
                 dialogs: services.dialogs,
                 dock: services.dock,

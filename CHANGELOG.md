@@ -4,6 +4,7 @@
 
 ### Added
 
+- Add receipt-pinned exact-window background `type`, `paste`, and `press`, preserving process generation, window bounds, and focused-element identity while refusing ambiguous app/PID targets and unsafe Agent dialog/shared-UI routes.
 - Restore the root SwiftPM facade for external consumers with four lean library products—Foundation, Protocols, AutomationKit, and Bridge—plus a fresh-consumer build contract that prevents manifest and product drift.
 - Add opt-in host-local Vision OCR to CLI/MCP `see`, preserving incomplete AX evidence, exact snapshot receipts, logical bounds, confidence, background-only observation, and fail-before-dispatch compatibility with older Bridge hosts.
 - Stateless exact-window ROI capture for CLI/MCP `see`, with generation-pinned

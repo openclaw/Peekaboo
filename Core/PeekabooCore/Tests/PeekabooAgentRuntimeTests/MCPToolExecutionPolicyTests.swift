@@ -26,6 +26,7 @@ struct MCPToolExecutionPolicyTests {
             .init(tool: "press", arguments: [:]),
             .init(tool: "press", arguments: ["foreground": false]),
             .init(tool: "press", arguments: ["foreground": true]),
+            .init(tool: "press", arguments: ["window_id": 42]),
             .init(tool: "paste", arguments: ["foreground": true]),
             .init(tool: "paste", arguments: ["foreground": false, "window_id": 42]),
             .init(tool: "image", arguments: ["capture_focus": "foreground"]),
@@ -117,6 +118,7 @@ struct MCPToolExecutionPolicyTests {
             .init(tool: "verify_state", arguments: [:]),
             .init(tool: "click", arguments: ["foreground": false]),
             .init(tool: "type", arguments: ["foreground": false]),
+            .init(tool: "press", arguments: ["snapshot": "exact-window"]),
             .init(tool: "action", arguments: ["action": "AXPress"]),
             .init(tool: "set_value", arguments: [:]),
             .init(tool: "image", arguments: [:]),
@@ -316,6 +318,7 @@ struct MCPToolExecutionPolicyTests {
         let snapshots = InMemorySnapshotManager(detectionResult: detectionResult)
         let services = PeekabooServices(snapshotManager: snapshots)
         let context = MCPToolContext(services: services, executionPolicy: .backgroundOnly)
+        let pressCapture = PolicySnapshotArgumentCapture()
 
         let response = try await context.execute(
             tool: ActionTool(context: context),
@@ -324,8 +327,16 @@ struct MCPToolExecutionPolicyTests {
                 "action": "AXPress",
                 "snapshot": snapshotID,
             ]))
+        let pressResponse = try await context.execute(
+            tool: PolicySnapshotProbeTool(name: "press", capture: pressCapture),
+            arguments: ToolArguments(raw: [
+                "keys": ["return"],
+                "snapshot": snapshotID,
+            ]))
 
         #expect(response.isError)
+        #expect(pressResponse.isError)
+        #expect(await pressCapture.callCount == 0)
         guard case let .object(meta)? = response.meta else {
             Issue.record("Missing structured Dock policy refusal metadata")
             return
@@ -430,6 +441,7 @@ struct MCPToolExecutionPolicyTests {
         let toolSnapshot = await UISnapshotManager.shared.createSnapshot(id: snapshotID)
         await toolSnapshot.setTargetMetadata(from: windowContext)
         let capture = PolicySnapshotArgumentCapture()
+        let pressCapture = PolicySnapshotArgumentCapture()
 
         let response = try await context.execute(
             tool: PolicySnapshotProbeTool(name: "click", capture: capture),
@@ -468,6 +480,25 @@ struct MCPToolExecutionPolicyTests {
                 "text": "hello",
                 "app": "TextEdit",
             ]))
+        let exactPressResponse = try await context.execute(
+            tool: PolicySnapshotProbeTool(name: "press", capture: pressCapture),
+            arguments: ToolArguments(raw: [
+                "keys": ["return"],
+                "snapshot": snapshotID,
+            ]))
+        let mixedPressResponse = try await context.execute(
+            tool: PolicySnapshotProbeTool(name: "press", capture: pressCapture),
+            arguments: ToolArguments(raw: [
+                "keys": ["return"],
+                "snapshot": snapshotID,
+                "app": "TextEdit",
+            ]))
+        let windowOnlyPressResponse = try await context.execute(
+            tool: PolicySnapshotProbeTool(name: "press", capture: pressCapture),
+            arguments: ToolArguments(raw: [
+                "keys": ["return"],
+                "window_id": 702,
+            ]))
         try await snapshots.storeDetectionResult(
             snapshotId: snapshotID,
             result: ElementDetectionResult(
@@ -487,6 +518,12 @@ struct MCPToolExecutionPolicyTests {
                 "action": "AXPress",
                 "snapshot": snapshotID,
             ]))
+        let dialogPressResponse = try await context.execute(
+            tool: PolicySnapshotProbeTool(name: "press", capture: pressCapture),
+            arguments: ToolArguments(raw: [
+                "keys": ["return"],
+                "snapshot": snapshotID,
+            ]))
         await UISnapshotManager.shared.removeSnapshot(id: snapshotID)
 
         #expect(response.isError)
@@ -495,7 +532,12 @@ struct MCPToolExecutionPolicyTests {
         #expect(missingReceiptResponse.isError)
         #expect(mixedTypeResponse.isError)
         #expect(processTypeResponse.isError)
+        #expect(!exactPressResponse.isError)
+        #expect(mixedPressResponse.isError)
+        #expect(windowOnlyPressResponse.isError)
         #expect(genericDialogResponse.isError)
+        #expect(dialogPressResponse.isError)
+        #expect(await pressCapture.callCount == 1)
         #expect(await capture.snapshotID == nil)
         guard case let .object(meta)? = response.meta else {
             Issue.record("Missing selector-conflict refusal metadata")
@@ -629,8 +671,10 @@ private actor PolicyInvocationCounter {
 private actor PolicySnapshotArgumentCapture {
     private(set) var snapshotID: String?
     private(set) var coordinateReference: String?
+    private(set) var callCount = 0
 
     func record(snapshotID: String?, coordinateReference: String?) {
+        self.callCount += 1
         self.snapshotID = snapshotID
         self.coordinateReference = coordinateReference
     }

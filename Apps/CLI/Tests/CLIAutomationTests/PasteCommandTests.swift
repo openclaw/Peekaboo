@@ -594,6 +594,55 @@ struct PasteCommandTests {
 
     @Test
     @MainActor
+    func `Exact window capability refusal happens before clipboard access`() async throws {
+        let pid: Int32 = 2468
+        let bounds = CGRect(x: 20, y: 30, width: 500, height: 400)
+        let clipboard = StubClipboardService()
+        clipboard.current = ClipboardReadResult(
+            utiIdentifier: "public.utf8-plain-text",
+            data: Data("prior".utf8),
+            textPreview: "prior"
+        )
+        let services = TestServicesFactory.makePeekabooServices(
+            applications: StubApplicationService(applications: [ServiceApplicationInfo(
+                processIdentifier: pid,
+                processStartIdentity: 71,
+                bundleIdentifier: "com.apple.TextEdit",
+                name: "TextEdit"
+            )]),
+            windows: StubWindowService(windowsByApp: ["TextEdit": [ServiceWindowInfo(
+                windowID: 901,
+                title: "Untitled",
+                bounds: bounds,
+                mutationIdentity: WindowMutationIdentity(
+                    windowID: 901,
+                    ownerProcessIdentifier: pid,
+                    ownerProcessStartIdentity: 71,
+                    capturedBounds: bounds
+                )
+            )]]),
+            clipboard: clipboard,
+            automation: StubAutomationService()
+        )
+
+        let result = try await InProcessCommandRunner.run(
+            [
+                "paste", "--app", "TextEdit", "--window-id", "901",
+                "--data-base64", "cGF5bG9hZA==", "--uti", "public.data",
+                "--json", "--no-remote",
+            ],
+            services: services
+        )
+
+        #expect(result.exitStatus != 0)
+        #expect(clipboard.getCallCount == 0)
+        #expect(clipboard.saveCallCount == 0)
+        #expect(clipboard.setCallCount == 0)
+        #expect(clipboard.restoreCallCount == 0)
+    }
+
+    @Test
+    @MainActor
     func `Clipboard read failure is not treated as an empty clipboard`() async throws {
         let context = self.makeTransactionGateContext()
         context.clipboard.getError = ClipboardServiceError.writeFailed("simulated read failure")

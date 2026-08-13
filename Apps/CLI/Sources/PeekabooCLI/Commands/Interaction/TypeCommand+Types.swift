@@ -13,6 +13,7 @@ struct TypeCommandResult: Codable {
     let profile: String
     let deliveryMode: String
     let targetPID: Int?
+    let targetWindowID: Int?
 }
 
 struct TypeCommandActionSummary: Codable {

@@ -14,10 +14,16 @@ enum MCPInteractionTargetError: LocalizedError, Equatable {
     case backgroundWindowTargetUnsupported
     case targetProcessNotFound
     case targetProcessIdentityUnavailable
+    case backgroundWindowTargetAmbiguous
+    case backgroundWindowTargetMismatch
+    case backgroundTargetIneligible
 
     var refusalReason: DesktopActionOutcome.RefusalReason {
         switch self {
-        case .targetProcessNotFound:
+        case .targetProcessNotFound,
+             .backgroundWindowTargetAmbiguous,
+             .backgroundWindowTargetMismatch,
+             .backgroundTargetIneligible:
             .targetUnavailable
         case .targetProcessIdentityUnavailable:
             .runtimeIncompatible
@@ -59,6 +65,14 @@ enum MCPInteractionTargetError: LocalizedError, Equatable {
         case .targetProcessIdentityUnavailable:
             "The runtime host could not pin the target to a process generation. " +
                 "Update the host before background input."
+        case .backgroundWindowTargetAmbiguous:
+            "Background keyboard delivery could not resolve one exact window. " +
+                "Add an exact window_id or fresh snapshot."
+        case .backgroundWindowTargetMismatch:
+            "The selected app, window, and snapshot do not identify the same exact process/window receipt."
+        case .backgroundTargetIneligible:
+            "The target cannot receive background input because it is a prohibited helper or its metadata is " +
+                "incomplete."
         }
     }
 }
@@ -288,6 +302,114 @@ struct MCPInteractionTarget {
             throw MCPInteractionTargetError.targetProcessIdentityUnavailable
         }
         return identity
+    }
+
+    func requireBackgroundKeyboardTarget(
+        applications: any ApplicationServiceProtocol,
+        windows: any WindowManagementServiceProtocol,
+        snapshotProcessIdentity: ApplicationProcessIdentity? = nil,
+        snapshotExactWindow: UIAutomationTarget.ExactWindow? = nil,
+        requiresExplicitExactWindow: Bool = false) async throws -> UIAutomationTarget
+    {
+        try self.validate()
+        let selectedWindow: UIAutomationTarget.ExactWindow? = if self.hasWindowSelector {
+            try await self.requireSelectedExactWindow(windows: windows)
+        } else {
+            nil
+        }
+        let exactWindow: UIAutomationTarget.ExactWindow?
+        if let snapshotExactWindow, let selectedWindow {
+            guard snapshotExactWindow == selectedWindow else {
+                throw MCPInteractionTargetError.backgroundWindowTargetMismatch
+            }
+            exactWindow = snapshotExactWindow
+        } else {
+            exactWindow = snapshotExactWindow ?? selectedWindow
+        }
+
+        let selectedProcessIdentity = try await self.selectedProcessIdentity(applications: applications)
+        let identities = [
+            selectedProcessIdentity,
+            snapshotProcessIdentity,
+            snapshotExactWindow?.identity.processIdentity,
+            selectedWindow?.identity.processIdentity,
+        ].compactMap(\.self)
+        guard let processIdentity = identities.first else {
+            throw MCPInteractionTargetError.backgroundTargetRequired
+        }
+        guard identities.allSatisfy({ $0 == processIdentity }) else {
+            throw MCPInteractionTargetError.backgroundWindowTargetMismatch
+        }
+
+        let listedApplications = try await applications.listApplications().data.applications
+        guard let application = listedApplications.first(where: {
+            $0.processIdentifier == processIdentity.processIdentifier
+        }) else {
+            throw MCPInteractionTargetError.targetProcessNotFound
+        }
+        guard application.processIdentity == processIdentity else {
+            throw MCPInteractionTargetError.targetProcessIdentityUnavailable
+        }
+        guard application.isEligibleForBackgroundInput else {
+            throw MCPInteractionTargetError.backgroundTargetIneligible
+        }
+
+        let process = try UIAutomationTarget.Process(
+            processIdentifier: processIdentity.processIdentifier,
+            identity: processIdentity)
+        if let exactWindow {
+            return try UIAutomationTarget.backgroundKeyboard(
+                process: process,
+                exactWindow: exactWindow)
+        }
+
+        let eligibleWindows: [UIAutomationTarget.ExactWindow]
+        if requiresExplicitExactWindow {
+            eligibleWindows = []
+        } else {
+            let listed = try await windows.listWindows(
+                target: .application("PID:\(processIdentity.processIdentifier)"))
+            eligibleWindows = try ObservationTargetResolver.captureCandidates(from: listed).map {
+                try UIAutomationTarget.ExactWindow(window: $0)
+            }
+        }
+        return try UIAutomationTarget.backgroundKeyboard(
+            process: process,
+            eligibleWindows: eligibleWindows,
+            requiresExplicitExactWindow: requiresExplicitExactWindow)
+    }
+
+    private func selectedProcessIdentity(
+        applications: any ApplicationServiceProtocol) async throws -> ApplicationProcessIdentity?
+    {
+        let application: ServiceApplicationInfo
+        if let pid {
+            application = try await applications.findApplication(identifier: "PID:\(pid)")
+            guard application.processIdentifier == pid else {
+                throw MCPInteractionTargetError.targetProcessNotFound
+            }
+        } else if let app = self.app?.trimmingCharacters(in: .whitespacesAndNewlines), !app.isEmpty {
+            application = try await applications.findApplication(identifier: app)
+        } else {
+            return nil
+        }
+        guard let identity = application.processIdentity else {
+            throw MCPInteractionTargetError.targetProcessIdentityUnavailable
+        }
+        return identity
+    }
+
+    private func requireSelectedExactWindow(
+        windows: any WindowManagementServiceProtocol) async throws -> UIAutomationTarget.ExactWindow
+    {
+        guard let windowTarget = try self.toWindowTarget() else {
+            throw MCPInteractionTargetError.backgroundWindowTargetUnsupported
+        }
+        let matches = try await windows.listWindows(target: windowTarget)
+        guard matches.count == 1, let window = matches.first else {
+            throw MCPInteractionTargetError.backgroundWindowTargetAmbiguous
+        }
+        return try UIAutomationTarget.ExactWindow(window: window)
     }
 
     func focusIfRequested(windows: any WindowManagementServiceProtocol, onlyWhenTargeted: Bool) async throws

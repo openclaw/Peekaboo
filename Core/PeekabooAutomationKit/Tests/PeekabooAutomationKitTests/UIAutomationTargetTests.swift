@@ -1,5 +1,6 @@
 import CoreGraphics
 import PeekabooAutomationKitTestSupport
+import PeekabooFoundation
 import Testing
 @testable import PeekabooAutomationKit
 
@@ -193,6 +194,79 @@ struct UIAutomationTargetTests {
         let unpinned = try UIAutomationTarget.process(UIAutomationTarget.Process(
             processIdentifier: self.processIdentity.processIdentifier))
         #expect(try unpinned.refined(to: replacement) == .exactWindow(replacement))
+    }
+
+    @Test
+    func `background keyboard upgrades one authoritative window and refuses ambiguity`() throws {
+        let process = try UIAutomationTarget.Process(
+            processIdentifier: self.processIdentity.processIdentifier,
+            identity: self.processIdentity)
+        let first = try self.exactWindowTarget()
+        let secondBounds = CGRect(x: 700, y: 20, width: 640, height: 480)
+        let second = try UIAutomationTarget.ExactWindow(
+            identity: AutomationTestFixtures.windowIdentity(
+                windowID: first.identity.windowID + 1,
+                processIdentity: self.processIdentity,
+                bounds: secondBounds),
+            bounds: secondBounds)
+
+        #expect(try UIAutomationTarget.backgroundKeyboard(
+            process: process,
+            eligibleWindows: [first]) == .exactWindow(first))
+        #expect(try UIAutomationTarget.backgroundKeyboard(
+            process: process,
+            eligibleWindows: []) == .process(process))
+        #expect(throws: (any Error).self) {
+            _ = try UIAutomationTarget.backgroundKeyboard(
+                process: process,
+                eligibleWindows: [first, second])
+        }
+    }
+
+    @Test
+    func `raw background press requires explicit exact evidence`() throws {
+        let process = try UIAutomationTarget.Process(
+            processIdentifier: self.processIdentity.processIdentifier,
+            identity: self.processIdentity)
+        let exact = try self.exactWindowTarget()
+
+        #expect(throws: (any Error).self) {
+            _ = try UIAutomationTarget.backgroundKeyboard(
+                process: process,
+                eligibleWindows: [exact],
+                requiresExplicitExactWindow: true)
+        }
+        #expect(try UIAutomationTarget.backgroundKeyboard(
+            process: process,
+            exactWindow: exact) == .exactWindow(exact))
+    }
+
+    @Test
+    @MainActor
+    func `exact keyboard route validator requires the window targeted background receipt`() throws {
+        let expectedDelivery = DesktopActionOutcome.Delivery(
+            mechanism: .windowTargetedEvents,
+            mode: .background)
+        let confirmed = DesktopActionOutcome.confirmedChange(delivery: expectedDelivery)
+        let accepted = try ExactWindowKeyboardRuntime.validateRouteReceipt(
+            UIAutomationActionResult(payload: 1, outcome: confirmed),
+            operation: "Fixture")
+        #expect(accepted.outcome == confirmed)
+
+        #expect(throws: DesktopActionFailure.self) {
+            _ = try ExactWindowKeyboardRuntime.validateRouteReceipt(
+                UIAutomationActionResult<Int>(payload: 1, outcome: nil),
+                operation: "Fixture")
+        }
+        #expect(throws: DesktopActionFailure.self) {
+            _ = try ExactWindowKeyboardRuntime.validateRouteReceipt(
+                UIAutomationActionResult(
+                    payload: 1,
+                    outcome: .confirmedChange(delivery: .init(
+                        mechanism: .processTargetedEvents,
+                        mode: .background))),
+                operation: "Fixture")
+        }
     }
 
     private func exactWindowTarget(isMinimized: Bool = false) throws -> UIAutomationTarget.ExactWindow {

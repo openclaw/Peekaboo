@@ -215,9 +215,26 @@ private enum BackgroundOnlyToolPolicy {
         return nil
     }
 
-    private static func rawPressViolation(_ arguments: ToolArguments) -> Violation {
-        self.explicitForeground(arguments) ?? .sharedDesktop(
-            "public raw press cannot prove background intent or effect and requires foreground consent")
+    private static func rawPressViolation(_ arguments: ToolArguments) -> Violation? {
+        if let violation = self.explicitForeground(arguments) {
+            return violation
+        }
+        let snapshot = arguments.getString("snapshot")?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if snapshot?.isEmpty == false {
+            return nil
+        }
+        if self.hasExactWindowSelector(arguments) {
+            return .sharedDesktop(
+                "a window selector alone cannot prove that raw press targets non-dialog, non-system UI")
+        }
+        return .sharedDesktop(
+            "public raw press requires foreground consent or a fresh exact non-dialog snapshot receipt")
+    }
+
+    private static func hasExactWindowSelector(_ arguments: ToolArguments) -> Bool {
+        arguments.getValue(for: "window_id") != nil ||
+            arguments.getValue(for: "window_title") != nil ||
+            arguments.getValue(for: "window_index") != nil
     }
 
     private static func captureViolation(_ arguments: ToolArguments) -> Violation? {

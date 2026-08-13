@@ -86,10 +86,10 @@ struct PasteCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
                 request: request
             ) {
                 let expectedPIDIdentity = try self.explicitPIDIdentity()
-                if let targetIdentity = try await self.preDispatchBackgroundProcessIdentity(
+                if let deliveryTarget = try await self.preDispatchBackgroundTarget(
                     expectedPIDIdentity: expectedPIDIdentity
                 ) {
-                    try await self.pasteTextInBackground(text, request: request, targetIdentity: targetIdentity)
+                    try await self.pasteTextInBackground(text, request: request, target: deliveryTarget)
                     return
                 }
             }
@@ -97,10 +97,10 @@ struct PasteCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
             let expectedPIDIdentity = try self.explicitPIDIdentity()
             let outcome = try await self.withInteractionMutationInvalidation {
                 try await ClipboardPasteTransactionGate.withExclusiveTransaction {
-                    let targetIdentity = try await self.preDispatchBackgroundProcessIdentity(
+                    let deliveryTarget = try await self.preDispatchBackgroundTarget(
                         expectedPIDIdentity: expectedPIDIdentity
                     )
-                    if targetIdentity == nil {
+                    if deliveryTarget == nil {
                         try await ensureFocused(
                             snapshotId: nil,
                             target: self.target,
@@ -110,7 +110,7 @@ struct PasteCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
                     }
                     return try await self.performClipboardPasteTransaction(
                         request: request,
-                        targetIdentity: targetIdentity
+                        target: deliveryTarget ?? .foreground
                     )
                 }
             }
@@ -135,7 +135,8 @@ struct PasteCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
                 restoreDelayMs: self.resolvedRestoreDelayMs,
                 deliveryMode: outcome.targetPID == nil ? KeyboardDeliveryMode.foreground.rawValue :
                     KeyboardDeliveryMode.background.rawValue,
-                targetPID: outcome.targetPID.map(Int.init)
+                targetPID: outcome.targetPID.map(Int.init),
+                targetWindowID: outcome.targetWindowID
             )
 
             self.output(
@@ -159,6 +160,9 @@ struct PasteCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
                 if let targetPID = outcome.targetPID {
                     print("🎯 Mode: background to PID \(targetPID)")
                 }
+                if let targetWindowID = outcome.targetWindowID {
+                    print("🪟 Window: \(targetWindowID)")
+                }
             }
         } catch let error as ClipboardPasteOutcomeError {
             self.handleError(error, customCode: .INTERACTION_FAILED)
@@ -171,9 +175,14 @@ struct PasteCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
 
     private func performClipboardPasteTransaction(
         request: ClipboardWriteRequest,
-        targetIdentity: ApplicationProcessIdentity?
+        target: UIAutomationTarget
     ) async throws -> ClipboardPasteTransactionOutcome {
-        if targetIdentity != nil {
+        if target.exactWindow != nil {
+            _ = try ExactWindowKeyboardRuntime.requireOutcomeProvider(
+                automation: self.services.automation,
+                operation: "Exact-window paste"
+            )
+        } else if target.processIdentifier != nil {
             guard let automation = self.services.automation as? any TargetedHotkeyServiceProtocol,
                   automation.supportsTargetedHotkeys,
                   automation.supportsProcessGenerationPinnedHotkeys
@@ -233,24 +242,26 @@ struct PasteCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
             try restoreBeforeDispatchFailure(error)
         }
 
+        let dispatchFailure: DesktopActionFailure?
         let dispatchErrorDescription: String?
         do {
-            if let targetIdentity {
-                _ = try await AutomationServiceBridge.hotkey(
-                    automation: self.services.automation,
-                    keys: "cmd,v",
-                    holdDuration: 50,
-                    expectedProcessIdentity: targetIdentity
-                )
-            } else {
-                _ = try await AutomationServiceBridge.hotkey(
-                    automation: self.services.automation,
-                    keys: "cmd,v",
-                    holdDuration: 50
-                )
-            }
+            let result = try await AutomationServiceBridge.hotkey(
+                automation: self.services.automation,
+                keys: "cmd,v",
+                holdDuration: 50,
+                target: target
+            )
+            try DesktopActionFailure.requireConfirmedIfReported(
+                result.outcome,
+                operation: "Paste hotkey"
+            )
+            dispatchFailure = nil
+            dispatchErrorDescription = nil
+        } catch let failure as DesktopActionFailure {
+            dispatchFailure = failure
             dispatchErrorDescription = nil
         } catch {
+            dispatchFailure = nil
             dispatchErrorDescription = error.localizedDescription
         }
 
@@ -269,22 +280,33 @@ struct PasteCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
         }
         restorePending = false
 
+        if let dispatchFailure {
+            guard let restoreErrorDescription else { throw dispatchFailure }
+            throw ClipboardPasteOutcomeError(
+                kind: .indeterminate,
+                causeDescription: "\(dispatchFailure.localizedDescription); clipboard restoration also failed: " +
+                    restoreErrorDescription,
+                clipboardRestoreAttempted: true,
+                clipboardRestoreErrorDescription: restoreErrorDescription,
+                targetProcessIdentifier: target.processIdentifier
+            )
+        }
         if dispatchErrorDescription != nil || Task.isCancelled {
             throw ClipboardPasteOutcomeError(
                 kind: .indeterminate,
                 causeDescription: dispatchErrorDescription ?? "The caller cancelled after Cmd+V dispatch began.",
                 clipboardRestoreAttempted: true,
                 clipboardRestoreErrorDescription: restoreErrorDescription,
-                targetProcessIdentifier: targetIdentity?.processIdentifier
+                targetProcessIdentifier: target.processIdentifier
             )
         }
-        if targetIdentity != nil {
+        if target.processIdentifier != nil {
             throw ClipboardPasteOutcomeError(
                 kind: .unverified,
                 causeDescription: "The targeted event API does not acknowledge receiver consumption.",
                 clipboardRestoreAttempted: true,
                 clipboardRestoreErrorDescription: restoreErrorDescription,
-                targetProcessIdentifier: targetIdentity?.processIdentifier
+                targetProcessIdentifier: target.processIdentifier
             )
         }
 
@@ -293,27 +315,32 @@ struct PasteCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
             previousClipboardPresent: priorClipboard != nil,
             restoreResult: restoreResult,
             restoreErrorDescription: restoreErrorDescription,
-            targetPID: targetIdentity?.processIdentifier
+            targetPID: target.processIdentifier,
+            targetWindowID: target.exactWindow?.identity.windowID
         )
     }
 
     private func pasteTextInBackground(
         _ text: String,
         request: ClipboardWriteRequest,
-        targetIdentity: ApplicationProcessIdentity
+        target: UIAutomationTarget
     ) async throws {
         let setResult = try Self.readResult(for: request)
-        _ = try await self.withInteractionMutationInvalidation {
-            _ = try await AutomationServiceBridge.typeActions(
+        let actionResult = try await self.withInteractionMutationInvalidation {
+            try await AutomationServiceBridge.typeActions(
                 automation: self.services.automation,
                 request: TypeActionsRequest(
                     actions: [.text(text)],
                     cadence: .fixed(milliseconds: 0),
                     snapshotId: nil
                 ),
-                expectedProcessIdentity: targetIdentity
+                target: target
             )
         }
+        try DesktopActionFailure.requireConfirmedIfReported(
+            actionResult.outcome,
+            operation: "Background text paste"
+        )
 
         let result = PasteResult(
             pastedUti: setResult.utiIdentifier,
@@ -326,13 +353,19 @@ struct PasteCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
             restoreError: nil,
             restoreDelayMs: 0,
             deliveryMode: KeyboardDeliveryMode.background.rawValue,
-            targetPID: Int(targetIdentity.processIdentifier)
+            targetPID: target.processIdentifier.map(Int.init),
+            targetWindowID: target.exactWindow?.identity.windowID
         )
 
-        self.output(result) {
+        self.output(result, outcome: actionResult.outcome) {
             print("✅ Pasted text")
             print("📋 Pasted: \(setResult.utiIdentifier) (\(setResult.data.count) bytes)")
-            print("🎯 Mode: background to PID \(targetIdentity.processIdentifier)")
+            if let processIdentifier = target.processIdentifier {
+                print("🎯 Mode: background to PID \(processIdentifier)")
+            }
+            if let windowID = target.exactWindow?.identity.windowID {
+                print("🪟 Window: \(windowID)")
+            }
         }
     }
 
@@ -397,10 +430,10 @@ struct PasteCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
     private func pasteCurrentClipboard(expectedPIDIdentity: UInt64?) async throws {
         let outcome = try await self.withInteractionMutationInvalidation {
             try await ClipboardPasteTransactionGate.withExclusiveTransaction {
-                let targetIdentity = try await self.preDispatchBackgroundProcessIdentity(
+                let deliveryTarget = try await self.preDispatchBackgroundTarget(
                     expectedPIDIdentity: expectedPIDIdentity
                 )
-                if targetIdentity == nil {
+                if deliveryTarget == nil {
                     try await ensureFocused(
                         snapshotId: nil,
                         target: self.target,
@@ -410,49 +443,55 @@ struct PasteCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
                 }
                 let currentClipboard = try self.services.clipboard.get(prefer: nil)
                 try Task.checkCancellation()
+                let dispatchFailure: DesktopActionFailure?
                 let dispatchErrorDescription: String?
                 do {
-                    if let targetIdentity {
-                        _ = try await AutomationServiceBridge.hotkey(
-                            automation: self.services.automation,
-                            keys: "cmd,v",
-                            holdDuration: 50,
-                            expectedProcessIdentity: targetIdentity
-                        )
-                    } else {
-                        _ = try await AutomationServiceBridge.hotkey(
-                            automation: self.services.automation,
-                            keys: "cmd,v",
-                            holdDuration: 50
-                        )
-                    }
+                    let result = try await AutomationServiceBridge.hotkey(
+                        automation: self.services.automation,
+                        keys: "cmd,v",
+                        holdDuration: 50,
+                        target: deliveryTarget ?? .foreground
+                    )
+                    try DesktopActionFailure.requireConfirmedIfReported(
+                        result.outcome,
+                        operation: "Paste hotkey"
+                    )
+                    dispatchFailure = nil
+                    dispatchErrorDescription = nil
+                } catch let failure as DesktopActionFailure {
+                    dispatchFailure = failure
                     dispatchErrorDescription = nil
                 } catch {
+                    dispatchFailure = nil
                     dispatchErrorDescription = error.localizedDescription
                 }
                 await ClipboardPasteTransactionGate.waitForPasteConsumption(
                     milliseconds: self.resolvedRestoreDelayMs
                 )
+                if let dispatchFailure {
+                    throw dispatchFailure
+                }
                 if dispatchErrorDescription != nil || Task.isCancelled {
                     throw ClipboardPasteOutcomeError(
                         kind: .indeterminate,
                         causeDescription: dispatchErrorDescription ??
                             "The caller cancelled after Cmd+V dispatch began.",
                         clipboardRestoreAttempted: false,
-                        targetProcessIdentifier: targetIdentity?.processIdentifier
+                        targetProcessIdentifier: deliveryTarget?.processIdentifier
                     )
                 }
-                if targetIdentity != nil {
+                if deliveryTarget != nil {
                     throw ClipboardPasteOutcomeError(
                         kind: .unverified,
                         causeDescription: "The targeted event API does not acknowledge receiver consumption.",
                         clipboardRestoreAttempted: false,
-                        targetProcessIdentifier: targetIdentity?.processIdentifier
+                        targetProcessIdentifier: deliveryTarget?.processIdentifier
                     )
                 }
                 return CurrentClipboardPasteOutcome(
                     clipboard: currentClipboard,
-                    targetPID: targetIdentity?.processIdentifier
+                    targetPID: deliveryTarget?.processIdentifier,
+                    targetWindowID: deliveryTarget?.exactWindow?.identity.windowID
                 )
             }
         }
@@ -480,7 +519,8 @@ struct PasteCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
             restoreDelayMs: self.resolvedRestoreDelayMs,
             deliveryMode: outcome.targetPID == nil ? KeyboardDeliveryMode.foreground.rawValue :
                 KeyboardDeliveryMode.background.rawValue,
-            targetPID: outcome.targetPID.map(Int.init)
+            targetPID: outcome.targetPID.map(Int.init),
+            targetWindowID: outcome.targetWindowID
         )
 
         self.output(result) {
@@ -489,6 +529,9 @@ struct PasteCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
                 print("🎯 Mode: background to PID \(targetPID)")
             } else {
                 print("🎯 Mode: foreground")
+            }
+            if let targetWindowID = outcome.targetWindowID {
+                print("🪟 Window: \(targetWindowID)")
             }
         }
     }
@@ -572,29 +615,21 @@ struct PasteCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
         return identity
     }
 
-    private func verifiedBackgroundProcessIdentity(
+    private func verifiedBackgroundTarget(
         expectedPIDIdentity: UInt64? = nil
-    ) async throws -> ApplicationProcessIdentity? {
+    ) async throws -> UIAutomationTarget? {
         if self.focusOptions.foreground {
             try self.validateExplicitPIDIdentity(expectedPIDIdentity)
             return nil
         }
 
-        let processIdentity = try await KeyboardDeliverySupport.requireBackgroundProcessIdentity(
+        let plannedTarget = try await KeyboardDeliverySupport.requireBackgroundKeyboardTarget(
             target: self.target,
             snapshotId: nil,
             services: self.services
         )
-        let processIdentifier = processIdentity.processIdentifier
-        let applications = try await self.services.applications.listApplications().data.applications
-        guard let application = applications.first(where: { $0.processIdentifier == processIdentifier }) else {
-            throw ValidationError("Target process PID \(processIdentifier) is no longer running.")
-        }
-        guard application.isEligibleForBackgroundInput else {
-            throw ValidationError(
-                "Target process PID \(processIdentifier) cannot receive background input because it is a " +
-                    "prohibited helper or its application metadata is incomplete."
-            )
+        guard let processIdentifier = plannedTarget.processIdentifier else {
+            throw ValidationError("Background paste requires a resolved target process.")
         }
         if self.target.pid != nil {
             guard let expectedPIDIdentity,
@@ -603,14 +638,38 @@ struct PasteCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormat
                 throw ValidationError("Target process PID \(processIdentifier) changed identity while waiting.")
             }
         }
-        return processIdentity
+        if plannedTarget.exactWindow != nil {
+            do {
+                _ = try ExactWindowKeyboardRuntime.requireOutcomeProvider(
+                    automation: self.services.automation,
+                    operation: "Exact-window paste"
+                )
+            } catch {
+                throw PreDispatchActionError(
+                    message: error.localizedDescription,
+                    code: .INTERACTION_FAILED,
+                    hint: "Update the Peekaboo host and retry with a fresh exact-window target.",
+                    reason: .runtimeIncompatible
+                )
+            }
+            guard self.services.automation is any TargetedFocusedElementServiceProtocol else {
+                throw PreDispatchActionError(
+                    message: "This automation host does not support focused exact-window background paste.",
+                    code: .INTERACTION_FAILED,
+                    hint: "Update the Peekaboo host and retry with a fresh exact-window target.",
+                    reason: .runtimeIncompatible
+                )
+            }
+            return try await plannedTarget.pinningCurrentFocusedElement(using: self.services.automation)
+        }
+        return plannedTarget
     }
 
-    private func preDispatchBackgroundProcessIdentity(
+    private func preDispatchBackgroundTarget(
         expectedPIDIdentity: UInt64? = nil
-    ) async throws -> ApplicationProcessIdentity? {
+    ) async throws -> UIAutomationTarget? {
         do {
-            return try await self.verifiedBackgroundProcessIdentity(expectedPIDIdentity: expectedPIDIdentity)
+            return try await self.verifiedBackgroundTarget(expectedPIDIdentity: expectedPIDIdentity)
         } catch is CancellationError {
             throw CancellationError()
         } catch {
@@ -635,11 +694,13 @@ private struct ClipboardPasteTransactionOutcome: Sendable {
     let restoreResult: ClipboardReadResult?
     let restoreErrorDescription: String?
     let targetPID: pid_t?
+    let targetWindowID: Int?
 }
 
 private struct CurrentClipboardPasteOutcome: Sendable {
     let clipboard: ClipboardReadResult?
     let targetPID: pid_t?
+    let targetWindowID: Int?
 }
 
 struct PasteResult: Codable {
@@ -654,6 +715,7 @@ struct PasteResult: Codable {
     let restoreDelayMs: Int
     let deliveryMode: String
     let targetPID: Int?
+    let targetWindowID: Int?
 }
 
 @MainActor
@@ -665,8 +727,8 @@ extension PasteCommand: ParsableCommand {
                 abstract: "Paste current clipboard or set clipboard, paste, and restore",
                 discussion: """
                     With no payload, paste sends Cmd+V using the current clipboard contents.
-                    Background paste requires --app or --pid. Add --foreground for intentional
-                    paste into the current focus or to focus a selected window first.
+                    Background paste requires an exact window selector, or an app/PID with at most
+                    one eligible window. Add --foreground for intentional foreground/global paste.
 
                     This command reduces drift in automation flows by collapsing:
                       1) clipboard set
@@ -682,7 +744,7 @@ extension PasteCommand: ParsableCommand {
                       peekaboo paste --foreground
                       peekaboo paste \"Hello\" --app TextEdit
                       peekaboo paste \"Hello\" --app TextEdit --foreground
-                      peekaboo paste --text \"Hello\" --app TextEdit --window-title \"Untitled\" --foreground
+                      peekaboo paste --text \"Hello\" --app TextEdit --window-title \"Untitled\"
                       peekaboo paste --data-base64 \"$BASE64\" --uti public.rtf --also-text \"fallback\" --app TextEdit
                       peekaboo paste --file-path /tmp/snippet.png --app Notes
                 """,

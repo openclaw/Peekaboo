@@ -15,11 +15,12 @@ public struct TypeTool: MCPTool {
 
     public var description: String {
         """
-        Types text into UI elements or a targeted app process.
+        Types text into UI elements, a targeted app process, or one exact background window.
         Supports human typing (--wpm) or fixed-delay (--delay) pacing. Use `press` for key presses and chords.
         Background delivery requires an element/snapshot/app/pid target. Set `foreground=true` for intentional input
         at the current keyboard focus or when the app must be focused first. app and pid are alternatives; provide at
-        most one window selector, and pair window_title/window_index with app or pid.
+        most one window selector, and pair window_title/window_index with app or pid. A process target with one
+        eligible window is upgraded to exact-window delivery; multiple eligible windows are refused.
         \(PeekabooMCPVersion.banner) using openai/gpt-5.6
         and anthropic/claude-opus-5
         """
@@ -52,11 +53,12 @@ public struct TypeTool: MCPTool {
                     description: "Optional. Target app name/bundle ID, or 'PID:<n>' for background typing."),
                 "pid": SchemaBuilder.integer(
                     description: "Optional. Target process ID for background typing when no element snapshot is used."),
-                "window_id": SchemaBuilder.integer(description: "Optional. Window ID; requires foreground=true."),
+                "window_id": SchemaBuilder.integer(
+                    description: "Optional. Exact background window ID; foreground=true focuses it instead."),
                 "window_title": SchemaBuilder
-                    .string(description: "Optional. Window title (substring match); requires foreground=true."),
+                    .string(description: "Optional. Exact window title substring; must resolve uniquely."),
                 "window_index": SchemaBuilder
-                    .integer(description: "Optional. Window index (0-based); requires app/pid and foreground=true."),
+                    .integer(description: "Optional. Window index (0-based); requires app/pid."),
             ],
             required: [])
     }
@@ -84,15 +86,15 @@ public struct TypeTool: MCPTool {
                 for: failure,
                 uiSnapshots: self.context.uiSnapshots,
                 snapshotID: mutationTracker.snapshotId,
-                additionalFields: mutationTracker.characterCompatibilityFields)
+                additionalFields: mutationTracker.compatibilityFields)
         } catch let error as InputDeliveryIndeterminateError {
+            var additionalFields = mutationTracker.targetFields
+            additionalFields["characters_typed"] = mutationTracker.charactersTyped.map(Value.int) ?? .null
             return try await MCPDesktopActionFailureHandler.response(
                 for: error.desktopActionFailure(delivery: mutationTracker.delivery),
                 uiSnapshots: self.context.uiSnapshots,
                 snapshotID: mutationTracker.snapshotId,
-                additionalFields: [
-                    "characters_typed": mutationTracker.charactersTyped.map(Value.int) ?? .null,
-                ])
+                additionalFields: additionalFields)
         } catch {
             self.logger.error("Type execution failed: \(error)")
             return ToolResponse.error("Failed to type text: \(error.localizedDescription)")
@@ -162,13 +164,19 @@ public struct TypeTool: MCPTool {
             for: request,
             targetContext: targetContext)
 
-        let targetProcessIdentity = try await self.backgroundProcessIdentity(
+        let plannedTarget = try await self.backgroundKeyboardTarget(
             request: request,
             snapshot: snapshotContext)
-        let targetProcessIdentifier = targetProcessIdentity.map { Int($0.processIdentifier) }
+        let targetProcessIdentifier = plannedTarget?.processIdentifier.map(Int.init)
+        let targetWindowID = plannedTarget?.exactWindow?.identity.windowID
         let actions = try self.buildActions(for: request)
         let effectiveSnapshotId = snapshotContext?.id
         mutationTracker.snapshotId = effectiveSnapshotId
+        mutationTracker.targetWindowId = targetWindowID
+        try self.preflightBackgroundType(
+            target: plannedTarget,
+            requiresElementFocus: targetContext != nil,
+            automation: automation)
 
         let focusResult: TypeFocusResult
         do {
@@ -176,7 +184,7 @@ public struct TypeTool: MCPTool {
                 targetContext: targetContext,
                 request: request,
                 automation: automation,
-                targetProcessIdentity: targetProcessIdentity)
+                target: plannedTarget)
         } catch let failure as DesktopActionFailure {
             throw failure
         } catch let error as InputDeliveryIndeterminateError {
@@ -203,13 +211,16 @@ public struct TypeTool: MCPTool {
             if focusResult.completed {
                 try await Task.sleep(nanoseconds: 100_000_000)
             }
-            if let targetProcessIdentity {
+            if let plannedTarget {
+                let deliveryTarget = try await self.pinningCurrentFocusedElement(
+                    on: plannedTarget,
+                    using: automation)
                 typeActionResult = try await self.performBackgroundType(
                     request: BackgroundTypeRequest(
                         actions: actions,
                         cadence: request.cadence,
                         snapshotId: effectiveSnapshotId,
-                        expectedProcessIdentity: targetProcessIdentity),
+                        target: deliveryTarget),
                     automation: automation,
                     mutationTracker: mutationTracker)
             } else {
@@ -283,6 +294,7 @@ public struct TypeTool: MCPTool {
             request: request,
             targetContext: targetContext,
             targetProcessIdentifier: targetProcessIdentifier,
+            targetWindowID: targetWindowID,
             snapshotID: effectiveSnapshotId,
             startedAt: startTime,
             actionResult: typeActionResult,
@@ -316,6 +328,9 @@ public struct TypeTool: MCPTool {
         if let targetProcessIdentifier = input.targetProcessIdentifier {
             baseMetaDict["target_pid"] = .int(targetProcessIdentifier)
         }
+        if let targetWindowID = input.targetWindowID {
+            baseMetaDict["target_window_id"] = .int(targetWindowID)
+        }
         if let invalidatedSnapshotId {
             baseMetaDict["invalidated_snapshot"] = .string(invalidatedSnapshotId)
         }
@@ -343,14 +358,63 @@ public struct TypeTool: MCPTool {
     }
 
     @MainActor
+    private func pinningCurrentFocusedElement(
+        on target: UIAutomationTarget,
+        using automation: any UIAutomationServiceProtocol) async throws -> UIAutomationTarget
+    {
+        guard target.exactWindow != nil else { return target }
+        do {
+            return try await target.pinningCurrentFocusedElement(using: automation)
+        } catch {
+            throw TypeToolValidationError(
+                error.localizedDescription,
+                refusalReason: .targetUnavailable)
+        }
+    }
+
+    @MainActor
+    private func preflightBackgroundType(
+        target: UIAutomationTarget?,
+        requiresElementFocus: Bool,
+        automation: any UIAutomationServiceProtocol) throws
+    {
+        guard target?.exactWindow != nil else { return }
+        do {
+            _ = try ExactWindowKeyboardRuntime.requireOutcomeProvider(
+                automation: automation,
+                operation: "Background typing")
+        } catch {
+            throw TypeToolValidationError(
+                error.localizedDescription,
+                refusalReason: .runtimeIncompatible)
+        }
+        guard automation is any TargetedFocusedElementServiceProtocol else {
+            throw TypeToolValidationError(
+                "This automation host does not support focused exact-window background typing.",
+                refusalReason: .runtimeIncompatible)
+        }
+        guard requiresElementFocus else { return }
+        guard let targetedClick = automation as? any TargetedClickServiceProtocol,
+              targetedClick.supportsTargetedClicks,
+              targetedClick.supportsProcessGenerationPinnedClicks,
+              let exactClick = automation as? any ExactWindowTargetedClickServiceProtocol,
+              exactClick.supportsExactWindowTargetedClicks
+        else {
+            throw TypeToolValidationError(
+                "This automation host does not support exact-window background element focus.",
+                refusalReason: .runtimeIncompatible)
+        }
+    }
+
+    @MainActor
     private func focusIfNeeded(
         targetContext: TargetElementContext?,
         request: TypeRequest,
         automation: any UIAutomationServiceProtocol,
-        targetProcessIdentity: ApplicationProcessIdentity?) async throws -> TypeFocusResult
+        target: UIAutomationTarget?) async throws -> TypeFocusResult
     {
         guard let context = targetContext else {
-            if targetProcessIdentity == nil {
+            if target == nil {
                 let focusedTarget = try await request.target.focusIfRequested(
                     windows: self.context.windows,
                     onlyWhenTargeted: true)
@@ -360,7 +424,7 @@ public struct TypeTool: MCPTool {
         }
 
         let element = context.element
-        if let targetProcessIdentity, !request.foreground {
+        if let target, !request.foreground {
             guard let automation = automation as? any TargetedClickServiceProtocol,
                   automation.supportsTargetedClicks,
                   automation.supportsProcessGenerationPinnedClicks
@@ -369,12 +433,43 @@ public struct TypeTool: MCPTool {
                     "This automation host does not support background element focus.",
                     refusalReason: .runtimeIncompatible)
             }
+            if let exactWindow = target.exactWindow {
+                guard let exactAutomation = automation as? any ExactWindowTargetedClickServiceProtocol,
+                      exactAutomation.supportsExactWindowTargetedClicks
+                else {
+                    throw TypeToolValidationError(
+                        "This automation host does not support exact-window background element focus.",
+                        refusalReason: .runtimeIncompatible)
+                }
+                if let outcomeAutomation = automation as? any UIAutomationActionOutcomeProviding {
+                    let result = try await outcomeAutomation.clickWithOutcome(
+                        target: .elementId(element.id),
+                        clickType: .single,
+                        snapshotId: context.snapshot.id,
+                        expectedWindowIdentity: exactWindow.identity,
+                        expectedWindowBounds: exactWindow.bounds)
+                    try Self.requireConfirmedFocus(result.outcome)
+                    return .completed(outcome: result.outcome)
+                }
+                try await exactAutomation.click(
+                    target: .elementId(element.id),
+                    clickType: .single,
+                    snapshotId: context.snapshot.id,
+                    expectedWindowIdentity: exactWindow.identity,
+                    expectedWindowBounds: exactWindow.bounds)
+                return .completed(outcome: nil)
+            }
+            guard let processIdentity = target.processIdentity else {
+                throw TypeToolValidationError(
+                    "Background element focus has no process-generation receipt.",
+                    refusalReason: .targetUnavailable)
+            }
             if let outcomeAutomation = automation as? any UIAutomationActionOutcomeProviding {
                 let result = try await outcomeAutomation.clickWithOutcome(
                     target: .elementId(element.id),
                     clickType: .single,
                     snapshotId: context.snapshot.id,
-                    expectedProcessIdentity: targetProcessIdentity)
+                    expectedProcessIdentity: processIdentity)
                 try Self.requireConfirmedFocus(result.outcome)
                 return .completed(outcome: result.outcome)
             } else {
@@ -382,7 +477,7 @@ public struct TypeTool: MCPTool {
                     target: .elementId(element.id),
                     clickType: .single,
                     snapshotId: context.snapshot.id,
-                    expectedProcessIdentity: targetProcessIdentity)
+                    expectedProcessIdentity: processIdentity)
                 return .completed(outcome: nil)
             }
         } else if let outcomeAutomation = automation as? any UIAutomationActionOutcomeProviding {
@@ -411,33 +506,33 @@ public struct TypeTool: MCPTool {
         throw failure
     }
 
-    private func backgroundProcessIdentity(
+    private func backgroundKeyboardTarget(
         request: TypeRequest,
-        snapshot: UISnapshot?) async throws -> ApplicationProcessIdentity?
+        snapshot: UISnapshot?) async throws -> UIAutomationTarget?
     {
         guard !request.foreground else { return nil }
 
-        if request.target.hasTarget {
-            let identity = try await request.target.requireBackgroundProcessIdentity(
-                applications: self.context.applications,
-                windows: self.context.windows)
-            if let snapshot {
-                guard let snapshotIdentity = try await self.snapshotProcessIdentity(snapshot) else {
-                    throw TypeToolValidationError(
-                        "The selected snapshot has no capture-time process-generation receipt. " +
-                            "Capture fresh UI state.",
-                        refusalReason: .targetUnavailable)
-                }
-                guard snapshotIdentity == identity else {
-                    throw TypeToolValidationError(
-                        "The selected snapshot belongs to a different process generation. Capture fresh UI state.",
-                        refusalReason: .targetUnavailable)
-                }
-            }
-            return identity
+        let snapshotProcessIdentity = try await self.snapshotProcessIdentity(snapshot)
+        let snapshotExactWindow = try self.snapshotExactWindow(snapshot)
+        if request.target.hasTarget, snapshot != nil, snapshotProcessIdentity == nil {
+            throw TypeToolValidationError(
+                "The selected snapshot has no capture-time process-generation receipt. Capture fresh UI state.",
+                refusalReason: .targetUnavailable)
         }
-        if let identity = try await self.snapshotProcessIdentity(snapshot) {
-            return identity
+        if request.target.hasTarget || snapshotProcessIdentity != nil {
+            do {
+                return try await request.target.requireBackgroundKeyboardTarget(
+                    applications: self.context.applications,
+                    windows: self.context.windows,
+                    snapshotProcessIdentity: snapshotProcessIdentity,
+                    snapshotExactWindow: snapshotExactWindow)
+            } catch let error as MCPInteractionTargetError {
+                throw error
+            } catch {
+                throw TypeToolValidationError(
+                    error.localizedDescription,
+                    refusalReason: .targetUnavailable)
+            }
         }
         if snapshot != nil || request.elementId != nil || request.snapshotId != nil {
             throw TypeToolValidationError(
@@ -455,9 +550,38 @@ public struct TypeTool: MCPTool {
         automation: any UIAutomationServiceProtocol,
         mutationTracker: TypeMutationTracker) async throws -> UIAutomationActionResult<TypeResult>
     {
+        if let exactWindow = request.target.exactWindow {
+            let outcomeAutomation: any UIAutomationActionOutcomeProviding
+            do {
+                outcomeAutomation = try ExactWindowKeyboardRuntime.requireOutcomeProvider(
+                    automation: automation,
+                    operation: "Background typing")
+            } catch {
+                throw TypeToolValidationError(
+                    error.localizedDescription,
+                    refusalReason: .runtimeIncompatible)
+            }
+            guard let focusedElement = exactWindow.focusedElement else {
+                throw TypeToolValidationError(
+                    "Exact-window background typing requires a focused-element receipt.",
+                    refusalReason: .targetUnavailable)
+            }
+            mutationTracker.delivery = .init(mechanism: .windowTargetedEvents, mode: .background)
+            return try await ExactWindowKeyboardRuntime.validateRouteReceipt(
+                outcomeAutomation.typeActionsWithOutcome(
+                    request.actions,
+                    cadence: request.cadence,
+                    snapshotId: request.snapshotId,
+                    target: ExactWindowKeyboardTarget(
+                        windowIdentity: exactWindow.identity,
+                        windowBounds: exactWindow.bounds,
+                        focusedElement: focusedElement)),
+                operation: "Background typing")
+        }
         guard let automation = automation as? any TargetedTypeServiceProtocol,
               automation.supportsTargetedTypeActions,
-              automation.supportsProcessGenerationPinnedTypeActions
+              automation.supportsProcessGenerationPinnedTypeActions,
+              let processIdentity = request.target.processIdentity
         else {
             throw TypeToolValidationError(
                 "This automation host does not support background typing.",
@@ -469,15 +593,34 @@ public struct TypeTool: MCPTool {
                 request.actions,
                 cadence: request.cadence,
                 snapshotId: request.snapshotId,
-                expectedProcessIdentity: request.expectedProcessIdentity)
+                expectedProcessIdentity: processIdentity)
         }
         return try await UIAutomationActionResult(
             payload: automation.typeActions(
                 request.actions,
                 cadence: request.cadence,
                 snapshotId: request.snapshotId,
-                expectedProcessIdentity: request.expectedProcessIdentity),
+                expectedProcessIdentity: processIdentity),
             outcome: nil)
+    }
+
+    private func snapshotExactWindow(_ snapshot: UISnapshot?) throws -> UIAutomationTarget.ExactWindow? {
+        guard let snapshot else { return nil }
+        guard snapshot.windowMutationIdentity != nil else { return nil }
+        guard let processIdentifier = snapshot.applicationProcessId,
+              processIdentifier > 0,
+              let windowID = snapshot.windowID,
+              let bounds = snapshot.windowBounds,
+              let identity = snapshot.windowMutationIdentity,
+              identity.ownerProcessIdentifier == processIdentifier,
+              identity.windowID == windowID,
+              identity.capturedBounds == bounds
+        else {
+            throw TypeToolValidationError(
+                "The selected snapshot has inconsistent process/window metadata.",
+                refusalReason: .targetUnavailable)
+        }
+        return try UIAutomationTarget.ExactWindow(identity: identity, bounds: bounds)
     }
 
     private func snapshotProcessIdentity(_ snapshot: UISnapshot?) async throws -> ApplicationProcessIdentity? {
@@ -547,10 +690,18 @@ private final class TypeMutationTracker {
     var delivery: DesktopActionOutcome.Delivery?
     var charactersTyped: Int?
     var reportsCharactersTyped = false
+    var targetWindowId: Int?
 
-    var characterCompatibilityFields: [String: Value] {
-        guard self.reportsCharactersTyped else { return [:] }
-        return ["characters_typed": self.charactersTyped.map(Value.int) ?? .null]
+    var targetFields: [String: Value] {
+        self.targetWindowId.map { ["target_window_id": .int($0)] } ?? [:]
+    }
+
+    var compatibilityFields: [String: Value] {
+        var fields = self.targetFields
+        if self.reportsCharactersTyped {
+            fields["characters_typed"] = self.charactersTyped.map(Value.int) ?? .null
+        }
+        return fields
     }
 }
 
@@ -569,13 +720,14 @@ private struct BackgroundTypeRequest {
     let actions: [TypeAction]
     let cadence: TypingCadence
     let snapshotId: String?
-    let expectedProcessIdentity: ApplicationProcessIdentity
+    let target: UIAutomationTarget
 }
 
 private struct TypeSuccessInput {
     let request: TypeRequest
     let targetContext: TargetElementContext?
     let targetProcessIdentifier: Int?
+    let targetWindowID: Int?
     let snapshotID: String?
     let startedAt: Date
     let actionResult: UIAutomationActionResult<TypeResult>

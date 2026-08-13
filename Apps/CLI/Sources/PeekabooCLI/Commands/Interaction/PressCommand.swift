@@ -85,19 +85,24 @@ RuntimeOptionsConfigurable {
                 fallbackToLatest: false,
                 snapshots: self.services.snapshots
             )
-            try await observation.validateIfExplicit(using: self.services.snapshots)
+            do {
+                try await observation.validateIfExplicit(using: self.services.snapshots)
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                try Task.checkCancellation()
+                throw self.preDispatchActionError(for: error, reason: .targetUnavailable)
+            }
 
             self.resolvedRuntime.beginInteractionMutation()
-            try await ensureFocused(
-                snapshotId: observation.focusSnapshotId(for: self.target),
-                target: self.target,
-                options: self.focusOptions,
-                services: self.services
-            )
-
             let parsedChords = try self.parsedChords()
             var completedPresses = 0
             var sequence = DesktopActionSequenceAccumulator()
+            let deliveryPlan = try await self.resolveDeliveryPlan(observation: observation)
+            if deliveryPlan.foregroundSetupMayHaveMutated {
+                sequence.record(.mayHaveDispatched(route: nil, delivery: nil, unitCount: .one))
+            }
+            let deliveryTarget = deliveryPlan.target
 
             for repetition in 0..<self.count {
                 for (index, chord) in parsedChords.indexed() {
@@ -119,7 +124,8 @@ RuntimeOptionsConfigurable {
                         actionResult = try await AutomationServiceBridge.hotkey(
                             automation: self.services.automation,
                             keys: chord.serviceKeys,
-                            holdDuration: self.hold.roundedMilliseconds
+                            holdDuration: self.hold.roundedMilliseconds,
+                            target: deliveryTarget
                         )
                         try DesktopActionFailure.requireConfirmedIfReported(
                             actionResult.outcome,
@@ -138,7 +144,7 @@ RuntimeOptionsConfigurable {
                         throw composed
                     } catch let error as InputDeliveryIndeterminateError {
                         let failure = error.desktopActionFailure(
-                            delivery: Self.foregroundHotkeyDelivery,
+                            delivery: Self.delivery(for: deliveryTarget),
                             route: self.sequenceRoute
                         )
                         let composed = sequence.failure(
@@ -173,7 +179,7 @@ RuntimeOptionsConfigurable {
                     } else {
                         sequence.record(.dispatched(
                             route: self.sequenceRoute,
-                            delivery: Self.foregroundHotkeyDelivery,
+                            delivery: Self.delivery(for: deliveryTarget),
                             unitCount: .one
                         ))
                     }
@@ -207,6 +213,7 @@ RuntimeOptionsConfigurable {
                 parsedChords: parsedChords,
                 completedPresses: completedPresses,
                 sequence: sequence,
+                deliveryTarget: deliveryTarget,
                 startTime: startTime
             )
 
@@ -220,6 +227,7 @@ RuntimeOptionsConfigurable {
         parsedChords: [KeyboardChord],
         completedPresses: Int,
         sequence: DesktopActionSequenceAccumulator,
+        deliveryTarget: UIAutomationTarget,
         startTime: Date
     ) async {
         await InteractionObservationInvalidator.invalidateAfterMutation(
@@ -231,8 +239,11 @@ RuntimeOptionsConfigurable {
             keys: parsedChords.map(\.displayValue),
             totalPresses: completedPresses,
             count: self.count,
-            deliveryMode: KeyboardDeliveryMode.foreground.rawValue,
-            targetPID: nil,
+            deliveryMode: deliveryTarget.processIdentifier == nil
+                ? KeyboardDeliveryMode.foreground.rawValue
+                : KeyboardDeliveryMode.background.rawValue,
+            targetPID: deliveryTarget.processIdentifier.map(Int.init),
+            targetWindowID: deliveryTarget.exactWindow?.identity.windowID,
             executionTime: Date().timeIntervalSince(startTime)
         )
         let actionOutcome = sequence.successResolution().outcome
@@ -246,7 +257,14 @@ RuntimeOptionsConfigurable {
             if self.count > 1 {
                 print("🔢 Repeated: \(self.count) times")
             }
-            print("🎯 Mode: foreground")
+            if let targetPID = deliveryTarget.processIdentifier {
+                print("🎯 Mode: background to PID \(targetPID)")
+            } else {
+                print("🎯 Mode: foreground")
+            }
+            if let targetWindowID = deliveryTarget.exactWindow?.identity.windowID {
+                print("🪟 Window: \(targetWindowID)")
+            }
             print("📊 Total presses: \(completedPresses)")
             if actionOutcome == nil {
                 print("⚠️  Effect: unverifiable; observe the target before continuing")
@@ -271,7 +289,11 @@ RuntimeOptionsConfigurable {
             throw ValidationError("--count must be greater than 0")
         }
         _ = try self.parsedChords()
-        guard self.focusOptions.foreground else {
+        let hasExactSelector = self.target.windowId != nil || self.target.windowTitle != nil ||
+            self.target
+            .windowIndex != nil || !(self.snapshot?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ??
+                true)
+        guard self.focusOptions.foreground || hasExactSelector else {
             throw Self.foregroundConsentRequired
         }
     }
@@ -283,6 +305,71 @@ RuntimeOptionsConfigurable {
             } catch {
                 throw ValidationError(error.localizedDescription)
             }
+        }
+    }
+
+    private func resolveDeliveryPlan(
+        observation: InteractionObservationContext
+    ) async throws -> PressDeliveryPlan {
+        if self.focusOptions.foreground {
+            try await ensureFocused(
+                snapshotId: observation.focusSnapshotId(for: self.target),
+                target: self.target,
+                options: self.focusOptions,
+                services: self.services
+            )
+            return PressDeliveryPlan(
+                target: .foreground,
+                foregroundSetupMayHaveMutated: self.target.hasAnyTarget ||
+                    observation.focusSnapshotId(for: self.target) != nil
+            )
+        }
+
+        let target: UIAutomationTarget
+        do {
+            target = try await KeyboardDeliverySupport.requireBackgroundKeyboardTarget(
+                target: self.target,
+                snapshotId: observation.snapshotId,
+                services: self.services,
+                requiresExplicitExactWindow: true
+            )
+        } catch {
+            throw self.preDispatchActionError(for: error, reason: .targetUnavailable)
+        }
+        guard target.exactWindow != nil else {
+            throw self.preDispatchActionError(
+                for: PeekabooError.invalidInput(
+                    field: "target",
+                    reason: "Background raw key presses require one exact-window receipt"
+                )
+            )
+        }
+        do {
+            _ = try ExactWindowKeyboardRuntime.requireOutcomeProvider(
+                automation: self.services.automation,
+                operation: "Background hotkeys"
+            )
+        } catch {
+            throw PreDispatchActionError(
+                message: error.localizedDescription,
+                code: .INTERACTION_FAILED,
+                hint: "Update the Peekaboo host and retry with a fresh exact-window target.",
+                reason: .runtimeIncompatible
+            )
+        }
+        guard self.services.automation is any TargetedFocusedElementServiceProtocol else {
+            throw PreDispatchActionError(
+                message: "This automation host does not support focused exact-window background hotkeys.",
+                code: .INTERACTION_FAILED,
+                hint: "Update the Peekaboo host and retry with a fresh exact-window target.",
+                reason: .runtimeIncompatible
+            )
+        }
+        do {
+            let pinnedTarget = try await target.pinningCurrentFocusedElement(using: self.services.automation)
+            return PressDeliveryPlan(target: pinnedTarget, foregroundSetupMayHaveMutated: false)
+        } catch {
+            throw self.preDispatchActionError(for: error, reason: .targetUnavailable)
         }
     }
 
@@ -310,10 +397,17 @@ RuntimeOptionsConfigurable {
     }
 
     private static let sequenceObservationHint = "Observe the target before retrying this key sequence."
-    private static let foregroundHotkeyDelivery = DesktopActionOutcome.Delivery(
-        mechanism: .globalEvents,
-        mode: .foreground
-    )
+
+    private static func delivery(for target: UIAutomationTarget) -> DesktopActionOutcome.Delivery {
+        target.exactWindow == nil
+            ? .init(mechanism: .globalEvents, mode: .foreground)
+            : .init(mechanism: .windowTargetedEvents, mode: .background)
+    }
+}
+
+private struct PressDeliveryPlan {
+    let target: UIAutomationTarget
+    let foregroundSetupMayHaveMutated: Bool
 }
 
 struct PressResult: Codable {
@@ -322,6 +416,7 @@ struct PressResult: Codable {
     let count: Int
     let deliveryMode: String
     let targetPID: Int?
+    let targetWindowID: Int?
     let executionTime: TimeInterval
 }
 
@@ -338,13 +433,13 @@ extension PressCommand: ParsableCommand {
                     The 'press' command sends keyboard chords in sequence.
                     Chord syntax matches xdotool key (cmd+shift+t).
 
-                    Raw chords cannot prove their semantic effect on a shared desktop and require
-                    explicit --foreground consent. Use action, menu, window, app, or dialog for
-                    certifiable background intent.
+                    Raw chords require either explicit --foreground consent or a fresh exact-window
+                    receipt whose focused element remains pinned through native background dispatch.
+                    App/PID-only and targetless background press are refused.
 
                     EXAMPLES:
                       peekaboo press cmd+c --app TextEdit --foreground
-                      peekaboo press Return --app TextEdit --foreground
+                      peekaboo press Return --app TextEdit --window-id 1234
                       peekaboo press cmd+shift+4 --foreground
                       peekaboo press ctrl+a Delete --app TextEdit --foreground
 
@@ -362,8 +457,8 @@ extension PressCommand: ParsableCommand {
                       Use --hold to control how long each key is held (default: 50ms)
 
                     TARGETING:
-                      --foreground is required. App, PID, snapshot, and window selectors identify
-                      what Peekaboo focuses before dispatch; they do not authorize raw background input.
+                      Exact window selectors or a fresh exact-window snapshot authorize receipt-pinned
+                      background dispatch. App/PID-only targets require --foreground.
                 """,
 
                 showHelpOnEmptyInvocation: true

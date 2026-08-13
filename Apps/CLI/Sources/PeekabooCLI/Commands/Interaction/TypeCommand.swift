@@ -72,17 +72,33 @@ struct TypeCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormatt
         do {
             let actions = try self.buildActions()
             let observation = await self.resolveObservationContext()
-            let targetIdentity: ApplicationProcessIdentity?
             do {
                 try await observation.validateIfExplicit(using: self.services.snapshots)
-                targetIdentity = try await self.backgroundProcessIdentity(snapshotId: observation.snapshotId)
             } catch is CancellationError {
                 throw CancellationError()
             } catch {
                 try Task.checkCancellation()
                 throw self.preDispatchActionError(for: error)
             }
-            let targetPID = targetIdentity?.processIdentifier
+            let backgroundTarget: UIAutomationTarget?
+            do {
+                backgroundTarget = try await self.backgroundKeyboardTarget(snapshotId: observation.snapshotId)
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                try Task.checkCancellation()
+                throw self.preDispatchActionError(for: error, reason: .targetUnavailable)
+            }
+            let deliveryTarget: UIAutomationTarget
+            do {
+                deliveryTarget = try await self.pinningCurrentFocusedElement(on: backgroundTarget) ?? .foreground
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                try Task.checkCancellation()
+                throw self.preDispatchActionError(for: error, reason: .targetUnavailable)
+            }
+            let targetPID = deliveryTarget.processIdentifier
             self.resolvedRuntime.beginInteractionMutation()
             var sequence = DesktopActionSequenceAccumulator()
             if targetPID == nil {
@@ -97,7 +113,7 @@ struct TypeCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormatt
                 actionResult = try await self.executeTypeActions(
                     actions: actions,
                     snapshotId: observation.snapshotId,
-                    expectedProcessIdentity: targetIdentity
+                    target: deliveryTarget
                 )
                 try DesktopActionFailure.requireConfirmedIfReported(
                     actionResult.outcome,
@@ -112,7 +128,7 @@ struct TypeCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormatt
                 await self.invalidateAfterFailedMutation(composed)
                 throw composed
             } catch let error as InputDeliveryIndeterminateError {
-                let delivery = Self.delivery(targetProcessIdentifier: targetPID)
+                let delivery = Self.delivery(for: deliveryTarget)
                 let composed = sequence.failure(
                     combining: error.desktopActionFailure(delivery: delivery, route: self.actionRoute),
                     message: "Typing outcome is indeterminate.",
@@ -141,7 +157,7 @@ struct TypeCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormatt
             } else {
                 sequence.record(.dispatched(
                     route: self.actionRoute,
-                    delivery: Self.delivery(targetProcessIdentifier: targetPID),
+                    delivery: Self.delivery(for: deliveryTarget),
                     unitCount: .one
                 ))
             }
@@ -155,7 +171,7 @@ struct TypeCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormatt
                 outcome: sequence.successResolution().outcome,
                 actions: actions,
                 startTime: startTime,
-                targetProcessIdentifier: targetPID
+                target: deliveryTarget
             )
         } catch {
             self.handleError(error)
@@ -232,29 +248,43 @@ struct TypeCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormatt
     private func executeTypeActions(
         actions: [TypeAction],
         snapshotId: String?,
-        expectedProcessIdentity: ApplicationProcessIdentity?
+        target: UIAutomationTarget
     ) async throws -> UIAutomationActionResult<TypeResult> {
         let request = TypeActionsRequest(actions: actions, cadence: self.typingCadence, snapshotId: snapshotId)
-        if let expectedProcessIdentity {
-            return try await AutomationServiceBridge.typeActions(
-                automation: self.services.automation,
-                request: request,
-                expectedProcessIdentity: expectedProcessIdentity
-            )
-        }
-        return try await AutomationServiceBridge.typeActions(automation: self.services.automation, request: request)
+        return try await AutomationServiceBridge.typeActions(
+            automation: self.services.automation,
+            request: request,
+            target: target
+        )
     }
 
-    private func backgroundProcessIdentity(snapshotId: String?) async throws -> ApplicationProcessIdentity? {
+    private func backgroundKeyboardTarget(snapshotId: String?) async throws -> UIAutomationTarget? {
         guard !self.focusOptions.foreground else {
             return nil
         }
 
-        return try await KeyboardDeliverySupport.requireBackgroundProcessIdentity(
+        return try await KeyboardDeliverySupport.requireBackgroundKeyboardTarget(
             target: self.target,
             snapshotId: snapshotId,
             services: self.services
         )
+    }
+
+    private func pinningCurrentFocusedElement(on target: UIAutomationTarget?) async throws -> UIAutomationTarget? {
+        guard let target, target.exactWindow != nil else { return target }
+        guard let exactService = self.services.automation as? any ExactWindowTargetedKeyboardServiceProtocol,
+              exactService.supportsExactWindowTargetedKeyboard,
+              self.services.automation is any UIAutomationActionOutcomeProviding,
+              self.services.automation is any TargetedFocusedElementServiceProtocol
+        else {
+            throw PreDispatchActionError(
+                message: "This automation host does not support receipt-pinned exact-window background typing.",
+                code: .INTERACTION_FAILED,
+                hint: "Update the Peekaboo host and retry with a fresh exact-window target.",
+                reason: .runtimeIncompatible
+            )
+        }
+        return try await target.pinningCurrentFocusedElement(using: self.services.automation)
     }
 
     private func renderResult(
@@ -262,8 +292,10 @@ struct TypeCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormatt
         outcome: DesktopActionOutcome?,
         actions: [TypeAction],
         startTime: Date,
-        targetProcessIdentifier: pid_t?
+        target: UIAutomationTarget
     ) {
+        let targetProcessIdentifier = target.processIdentifier
+        let targetWindowID = target.exactWindow?.identity.windowID
         let specialKeys = max(typeResult.keyPresses - typeResult.totalCharacters, 0)
         let result = TypeCommandResult(
             requestedText: self.resolvedText,
@@ -278,7 +310,8 @@ struct TypeCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormatt
             profile: self.resolvedProfile.rawValue,
             deliveryMode: targetProcessIdentifier == nil ? KeyboardDeliveryMode.foreground.rawValue :
                 KeyboardDeliveryMode.background.rawValue,
-            targetPID: targetProcessIdentifier.map(Int.init)
+            targetPID: targetProcessIdentifier.map(Int.init),
+            targetWindowID: targetWindowID
         )
 
         output(result, outcome: outcome) {
@@ -295,6 +328,9 @@ struct TypeCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormatt
             }
             if let targetProcessIdentifier {
                 print("🎯 Mode: background to PID \(targetProcessIdentifier)")
+            }
+            if let targetWindowID {
+                print("🪟 Window: \(targetWindowID)")
             }
             print("📊 Total characters: \(typeResult.totalCharacters)")
             switch self.resolvedProfile {
@@ -318,8 +354,11 @@ struct TypeCommand: ActionOutputFormattable, ErrorHandlingCommand, OutputFormatt
         }
     }
 
-    private static func delivery(targetProcessIdentifier: pid_t?) -> DesktopActionOutcome.Delivery {
-        targetProcessIdentifier == nil
+    private static func delivery(for target: UIAutomationTarget) -> DesktopActionOutcome.Delivery {
+        if target.exactWindow != nil {
+            return .init(mechanism: .windowTargetedEvents, mode: .background)
+        }
+        return target.processIdentifier == nil
             ? .init(mechanism: .globalEvents, mode: .foreground)
             : .init(mechanism: .processTargetedEvents, mode: .background)
     }
@@ -403,9 +442,10 @@ extension TypeCommand: ParsableCommand {
 
                     FOCUS MANAGEMENT:
                       Provide --app, --pid, or a snapshot for background delivery.
-                      Window selectors require --foreground because process-targeted events
-                      cannot prove which window owns the focused element. Without a target,
-                      --foreground is required for intentional global keyboard input.
+                      Exact window selectors and fresh snapshots stay pinned through native
+                      dispatch. App/PID-only background typing is accepted only when the process
+                      has at most one eligible window; otherwise add a window selector or snapshot.
+                      Without a target, --foreground is required for intentional global input.
 
                     TYPING CADENCE:
                     Linear typing is the default and uses --delay (0ms by default).

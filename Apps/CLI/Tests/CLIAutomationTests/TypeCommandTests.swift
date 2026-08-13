@@ -231,6 +231,98 @@ struct TypeCommandTests {
     }
 
     @Test
+    @MainActor
+    func `Type upgrades one eligible app window to exact receipt-pinned delivery`() async throws {
+        let pid: Int32 = 2468
+        let bounds = CGRect(x: 20, y: 30, width: 500, height: 400)
+        let applicationService = StubApplicationService(applications: [ServiceApplicationInfo(
+            processIdentifier: pid,
+            processStartIdentity: 71,
+            bundleIdentifier: "com.apple.TextEdit",
+            name: "TextEdit"
+        )])
+        let windows = StubWindowService(windowsByApp: ["TextEdit": [ServiceWindowInfo(
+            windowID: 901,
+            title: "Untitled",
+            bounds: bounds,
+            mutationIdentity: WindowMutationIdentity(
+                windowID: 901,
+                ownerProcessIdentifier: pid,
+                ownerProcessStartIdentity: 71,
+                capturedBounds: bounds
+            )
+        )]])
+        let automation = OutcomeStubAutomationService()
+        automation.actionOutcome = .confirmedChange(delivery: .init(
+            mechanism: .windowTargetedEvents,
+            mode: .background
+        ))
+        automation.targetedFocusedElement = UIFocusInfo(
+            role: "AXTextArea",
+            title: nil,
+            value: nil,
+            frame: CGRect(x: 40, y: 60, width: 200, height: 100),
+            applicationName: "TextEdit",
+            bundleIdentifier: "com.apple.TextEdit",
+            processId: Int(pid),
+            windowID: 901,
+            identifier: "editor"
+        )
+        let context = await self.makeContext(
+            automation: automation,
+            applications: applicationService,
+            windows: windows
+        )
+
+        let result = try await self.runType(
+            arguments: ["Hello", "--app", "TextEdit", "--json"],
+            context: context
+        )
+
+        #expect(result.exitStatus == 0)
+        let call = try #require(automation.exactTypeActionsCalls.first)
+        #expect(call.target.windowIdentity.windowID == 901)
+        #expect(call.target.focusedElement.identifier == "editor")
+        let payload = try ExternalCommandRunner.decodeJSONResponse(
+            from: result,
+            as: CodableJSONResponse<TypeCommandResult>.self
+        )
+        #expect(payload.data.targetWindowID == 901)
+    }
+
+    @Test
+    @MainActor
+    func `Type refuses ambiguous app windows before any keyboard dispatch`() async throws {
+        let pid: Int32 = 2468
+        let applicationService = StubApplicationService(applications: [ServiceApplicationInfo(
+            processIdentifier: pid,
+            processStartIdentity: 71,
+            bundleIdentifier: "com.apple.TextEdit",
+            name: "TextEdit"
+        )])
+        let windows = StubWindowService(windowsByApp: ["TextEdit": [
+            self.window(windowID: 901, pid: pid, generation: 71),
+            self.window(windowID: 902, pid: pid, generation: 71),
+        ]])
+        let automation = OutcomeStubAutomationService()
+        let context = await self.makeContext(
+            automation: automation,
+            applications: applicationService,
+            windows: windows
+        )
+
+        let result = try await self.runType(
+            arguments: ["Hello", "--app", "TextEdit", "--json"],
+            context: context
+        )
+
+        #expect(result.exitStatus != 0)
+        #expect(automation.exactTypeActionsCalls.isEmpty)
+        #expect(automation.targetedTypeActionsCalls.isEmpty)
+        #expect(result.combinedOutput.contains("multiple eligible windows"))
+    }
+
+    @Test
     func `Type refuses an unpinned background process before delivery`() async throws {
         let app = ServiceApplicationInfo(
             processIdentifier: 2468,
@@ -364,7 +456,7 @@ struct TypeCommandTests {
     }
 
     @Test
-    func `Type background delivery rejects process-wide collapse of window selectors`() async throws {
+    func `Type background delivery refuses an unresolved exact window selector`() async throws {
         let app = ServiceApplicationInfo(
             processIdentifier: 2468,
             processStartIdentity: 71,
@@ -388,7 +480,7 @@ struct TypeCommandTests {
         let payload = try ExternalCommandRunner.decodeJSONResponse(from: result, as: JSONResponse.self)
         #expect(payload.success == false)
         #expect(payload.error?.code == ErrorCode.VALIDATION_ERROR.rawValue)
-        #expect(payload.error?.message.contains("cannot safely target a specific window") == true)
+        #expect(payload.error?.message.contains("no matching window") == true)
         let targetedCalls = await self.automationState(context) { $0.targetedTypeActionsCalls }
         #expect(targetedCalls.isEmpty)
     }
@@ -576,6 +668,25 @@ struct TypeCommandTests {
             configure?(context.automation, context.snapshots)
             return context
         }
+    }
+
+    private func window(
+        windowID: Int,
+        pid: Int32,
+        generation: UInt64
+    ) -> ServiceWindowInfo {
+        let bounds = CGRect(x: windowID * 2, y: 30, width: 500, height: 400)
+        return ServiceWindowInfo(
+            windowID: windowID,
+            title: "Document \(windowID)",
+            bounds: bounds,
+            mutationIdentity: WindowMutationIdentity(
+                windowID: windowID,
+                ownerProcessIdentifier: pid,
+                ownerProcessStartIdentity: generation,
+                capturedBounds: bounds
+            )
+        )
     }
 
     @MainActor

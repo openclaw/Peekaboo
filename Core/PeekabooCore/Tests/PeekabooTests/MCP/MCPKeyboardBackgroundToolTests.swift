@@ -398,6 +398,11 @@ struct MCPKeyboardBackgroundToolTests {
         }
         let context = await MCPToolTestHelpers.makeContext(
             automation: automation,
+            applications: MockApplicationService(applications: [AutomationTestFixtures.application(
+                processIdentifier: 113,
+                processStartIdentity: 13,
+                bundleIdentifier: "com.example.snapshot",
+                name: "SnapshotApp")]),
             snapshotOwner: Self.uiSnapshots.owner)
         let snapshot = await Self.uiSnapshots.createSnapshot()
         let snapshotId = await snapshot.id
@@ -465,6 +470,11 @@ struct MCPKeyboardBackgroundToolTests {
         }
         let context = await MCPToolTestHelpers.makeContext(
             automation: automation,
+            applications: MockApplicationService(applications: [AutomationTestFixtures.application(
+                processIdentifier: 115,
+                processStartIdentity: 15,
+                bundleIdentifier: "com.example.snapshot",
+                name: "SnapshotApp")]),
             snapshotOwner: Self.uiSnapshots.owner)
         let snapshotId = await self.makeTypingSnapshot(
             processIdentifier: 115,
@@ -501,6 +511,11 @@ struct MCPKeyboardBackgroundToolTests {
         }
         let context = await MCPToolTestHelpers.makeContext(
             automation: automation,
+            applications: MockApplicationService(applications: [AutomationTestFixtures.application(
+                processIdentifier: 114,
+                processStartIdentity: 14,
+                bundleIdentifier: "com.example.snapshot",
+                name: "SnapshotApp")]),
             snapshotOwner: Self.uiSnapshots.owner)
         let snapshotId = await self.makeTypingSnapshot(
             processIdentifier: 114,
