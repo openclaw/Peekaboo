@@ -18,11 +18,8 @@ extension ErrorHandlingCommand {
         if jsonOutput {
             let envelopeError = error as? any ResultEnvelopeError
             let isActionCommand = (self as? any ActionOutputFormattable)?.defaultEffect != nil
-            let actionFailure: DesktopActionFailure? = if isActionCommand {
-                (error as? DesktopActionFailure) ?? envelopeError?.envelopeActionFailure
-            } else {
-                nil
-            }
+            let actionMetadata = actionErrorEnvelopeMetadata(for: error, isActionCommand: isActionCommand)
+            let actionFailure = actionMetadata.failure
             let lifecycleRefusal = applicationLifecycleRefusalProjection(for: error)
             let lifecycleFailure = applicationLifecycleFailureProjection(for: error)
             let errorCode = customCode ?? envelopeError?.envelopeCode ?? self.mapErrorToCode(error)
@@ -37,24 +34,25 @@ extension ErrorHandlingCommand {
             } else {
                 Logger.shared
             }
-            outputError(
-                message: errorMessage(for: error),
-                code: errorCode,
-                hint: envelopeError?.envelopeHint ?? actionFailure?.hint ?? lifecycleFailure?.metadata.hint,
-                details: actionFailure?.causeDescription ?? errorDetails(for: error),
-                effect: actionFailure?.outcome.effect ?? lifecycleFailure?.effect
-                    ?? (lifecycleRefusal != nil ? .refused
-                        : failureReceipt?.mutationDispatched == true
-                        ? .partial
-                        : envelopeError?.envelopeEffect ??
-                        ((self as? any ActionOutputFormattable)?.defaultEffect == nil
-                            ? nil
-                            : defaultActionErrorEffect(errorCode))),
-                retrySafe: failureReceipt?.retrySafe ?? envelopeError?.envelopeRetrySafe,
-                mutationDispatched: failureReceipt?.mutationDispatched ?? envelopeError?.envelopeMutationDispatched,
-                actionFailure: actionFailure,
-                logger: logger
-            )
+            let isPreDispatchFailure = ResultEnvelopeContext.isPreDispatchFailure ||
+                isGenericPreDispatchError(error)
+            ResultEnvelopeContext.$isPreDispatchFailure.withValue(isPreDispatchFailure) {
+                outputError(
+                    message: errorMessage(for: error),
+                    code: errorCode,
+                    hint: envelopeError?.envelopeHint ?? actionFailure?.hint ?? lifecycleFailure?.metadata.hint,
+                    details: actionFailure?.causeDescription ?? errorDetails(for: error),
+                    effect: actionMetadata.effect ?? lifecycleFailure?.effect
+                        ?? (lifecycleRefusal != nil ? .refused
+                            : failureReceipt?.mutationDispatched == true
+                            ? .partial
+                            : isActionCommand ? defaultActionErrorEffect(errorCode) : nil),
+                    retrySafe: failureReceipt?.retrySafe ?? actionMetadata.retrySafe,
+                    mutationDispatched: failureReceipt?.mutationDispatched ?? actionMetadata.mutationDispatched,
+                    actionFailure: actionFailure,
+                    logger: logger
+                )
+            }
         } else {
             let errorMessage: String = if let peekabooError = error as? PeekabooError {
                 peekabooError.errorDescription ?? String(describing: error)
@@ -295,6 +293,10 @@ extension ErrorHandlingCommand {
         guard isIncomplete else { return nil }
         return CaptureFailureReceipt(retrySafe: true, mutationDispatched: false)
     }
+}
+
+func isGenericPreDispatchError(_ error: any Error) -> Bool {
+    error is CommanderBindingError || error is CommanderUsageError || error is Commander.ValidationError
 }
 
 struct CaptureFailureReceipt: Equatable {

@@ -91,6 +91,27 @@ struct ResultEnvelopeTests {
         #expect(error.envelopeActionFailure?.outcome.refusalReason == .invalidRequest)
     }
 
+    @Test func `action metadata is projected only for action owners`() {
+        let error = PreDispatchActionError(
+            message: "Runtime is incompatible.",
+            code: .CAPTURE_FAILED,
+            hint: "Update the selected host.",
+            reason: .runtimeIncompatible
+        )
+
+        let action = actionErrorEnvelopeMetadata(for: error, isActionCommand: true)
+        #expect(action.failure?.outcome.refusalReason == .runtimeIncompatible)
+        #expect(action.effect == .refused)
+        #expect(action.retrySafe == true)
+        #expect(action.mutationDispatched == false)
+
+        let readOnly = actionErrorEnvelopeMetadata(for: error, isActionCommand: false)
+        #expect(readOnly.failure == nil)
+        #expect(readOnly.effect == nil)
+        #expect(readOnly.retrySafe == nil)
+        #expect(readOnly.mutationDispatched == nil)
+    }
+
     @Test func `encoding fallback remains valid JSON`() throws {
         let fallback = makeJSONEncodingFailureEnvelope(effect: .confirmed)
         let data = try JSONEncoder().encode(fallback)

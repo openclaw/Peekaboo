@@ -45,6 +45,37 @@ extension ResultEnvelopeError {
     }
 }
 
+struct ActionErrorEnvelopeMetadata {
+    let failure: DesktopActionFailure?
+    let effect: ActionEffect?
+    let retrySafe: Bool?
+    let mutationDispatched: Bool?
+}
+
+func actionErrorEnvelopeMetadata(
+    for error: any Error,
+    isActionCommand: Bool
+) -> ActionErrorEnvelopeMetadata {
+    guard isActionCommand else {
+        return ActionErrorEnvelopeMetadata(
+            failure: nil,
+            effect: nil,
+            retrySafe: nil,
+            mutationDispatched: nil
+        )
+    }
+
+    let envelopeError = error as? any ResultEnvelopeError
+    let failure = (error as? DesktopActionFailure) ?? envelopeError?.envelopeActionFailure
+    return ActionErrorEnvelopeMetadata(
+        failure: failure,
+        effect: failure?.outcome.effect ?? envelopeError?.envelopeEffect,
+        retrySafe: failure.map { $0.outcome.retrySafety == .safe } ?? envelopeError?.envelopeRetrySafe,
+        mutationDispatched: failure?.outcome.dispatchState.mutationDispatched ??
+            envelopeError?.envelopeMutationDispatched
+    )
+}
+
 struct PreDispatchActionError: LocalizedError, ResultEnvelopeError {
     let failure: DesktopActionFailure
     let code: ErrorCode

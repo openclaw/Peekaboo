@@ -61,6 +61,13 @@ struct PreDispatchActionEnvelopeTests {
                 ],
                 errorCode: .VALIDATION_ERROR
             ),
+            ValidationCase(
+                name: "drag handler validation",
+                arguments: [
+                    "drag", "--from", "1,1", "--to", "2,2", "--button", "middle", "--foreground", "--json",
+                ],
+                errorCode: .VALIDATION_ERROR
+            ),
         ]
 
         for testCase in cases {
