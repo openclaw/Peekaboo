@@ -9,6 +9,55 @@ import Testing
 struct ClickServiceExactWindowTests {
     @Test
     @MainActor
+    func `Snapshot refinement cannot replace the caller process generation`() async throws {
+        let pinnedProcess = AutomationTestFixtures.processIdentity(
+            processIdentifier: getpid(),
+            processStartIdentity: 71)
+        let replacementProcess = AutomationTestFixtures.processIdentity(
+            processIdentifier: getpid(),
+            processStartIdentity: 72)
+        let bounds = CGRect(x: 0, y: 0, width: 200, height: 100)
+        let detection = ElementDetectionResult(
+            snapshotId: "snapshot",
+            screenshotPath: "/tmp/shot.png",
+            elements: DetectedElements(buttons: [DetectedElement(
+                id: "B1",
+                type: .button,
+                label: "Button",
+                bounds: CGRect(x: 20, y: 30, width: 100, height: 40))]),
+            metadata: DetectionMetadata(
+                detectionTime: 0,
+                elementCount: 1,
+                method: "test",
+                windowContext: WindowContext(
+                    applicationProcessId: replacementProcess.processIdentifier,
+                    windowID: 42,
+                    windowBounds: bounds,
+                    windowMutationIdentity: AutomationTestFixtures.windowIdentity(
+                        windowID: 42,
+                        processIdentity: replacementProcess,
+                        bounds: bounds))))
+        let synthetic = ClickRecordingSyntheticInputDriver()
+        let service = ClickService(
+            snapshotManager: InMemorySnapshotManager(detectionResult: detection),
+            inputPolicy: UIInputPolicy(defaultStrategy: .synthOnly),
+            syntheticInputDriver: synthetic,
+            exactWindowIdentityValidator: { _, _ in true },
+            processStartIdentityProvider: { _ in replacementProcess.processStartIdentity })
+
+        await #expect(throws: PeekabooError.self) {
+            _ = try await service.click(
+                target: .elementId("B1"),
+                clickType: .single,
+                snapshotId: "snapshot",
+                targetProcessIdentifier: pinnedProcess.processIdentifier,
+                expectedProcessIdentity: pinnedProcess)
+        }
+        #expect(synthetic.events.isEmpty)
+    }
+
+    @Test
+    @MainActor
     func `Background coordinate click preserves exact target window`() async throws {
         let synthetic = ClickRecordingSyntheticInputDriver()
         let identity = WindowMutationIdentity(

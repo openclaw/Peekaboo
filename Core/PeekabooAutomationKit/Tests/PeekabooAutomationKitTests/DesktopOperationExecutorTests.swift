@@ -204,7 +204,7 @@ struct DesktopOperationExecutorTests {
         let identity = ApplicationProcessIdentity(processIdentifier: 501, processStartIdentity: 1)
         let plan = try self.makePlan(
             strategy: .synthOnly,
-            receipt: DesktopOperationPlan.CaptureReceipt(processIdentity: identity),
+            receipt: Self.processReceipt(identity),
             action: nil,
             synthesis: .init { Self.synthOutcome })
 
@@ -224,7 +224,7 @@ struct DesktopOperationExecutorTests {
         let identity = ApplicationProcessIdentity(processIdentifier: 501, processStartIdentity: 1)
         let plan = try self.makePlan(
             strategy: .synthOnly,
-            receipt: DesktopOperationPlan.CaptureReceipt(processIdentity: identity),
+            receipt: Self.processReceipt(identity),
             action: nil,
             synthesis: .init {
                 .confirmedChange(delivery: .init(mechanism: .globalEvents, mode: .foreground))
@@ -245,7 +245,7 @@ struct DesktopOperationExecutorTests {
         let identity = ApplicationProcessIdentity(processIdentifier: 501, processStartIdentity: 1)
         let plan = try self.makePlan(
             strategy: .synthOnly,
-            receipt: DesktopOperationPlan.CaptureReceipt(processIdentity: identity),
+            receipt: Self.processReceipt(identity),
             action: nil,
             synthesis: .init {
                 .dispatchedUnverified(
@@ -263,7 +263,7 @@ struct DesktopOperationExecutorTests {
         let identity = ApplicationProcessIdentity(processIdentifier: 501, processStartIdentity: 1)
         let plan = try self.makePlan(
             strategy: .synthOnly,
-            receipt: DesktopOperationPlan.CaptureReceipt(processIdentity: identity),
+            receipt: Self.processReceipt(identity),
             action: nil,
             synthesis: .init {
                 .indeterminate(evidence: .completionUnknown)
@@ -284,7 +284,7 @@ struct DesktopOperationExecutorTests {
         let identity = ApplicationProcessIdentity(processIdentifier: 501, processStartIdentity: 1)
         let plan = try self.makePlan(
             strategy: .synthOnly,
-            receipt: DesktopOperationPlan.CaptureReceipt(processIdentity: identity),
+            receipt: Self.processReceipt(identity),
             action: nil,
             synthesis: .init { .confirmedNoChange() })
 
@@ -345,8 +345,7 @@ struct DesktopOperationExecutorTests {
         let plan = try DesktopOperationPlan(
             verb: .performAction,
             selector: .focused,
-            captureReceipt: DesktopOperationPlan.CaptureReceipt(),
-            deliveryIntent: .foreground,
+            captureReceipt: DesktopOperationPlan.CaptureReceipt(target: .foreground),
             strategy: .actionOnly,
             prepare: { preparedBundle = "com.example.synth-only" },
             routing: {
@@ -747,8 +746,7 @@ struct DesktopOperationExecutorTests {
         try DesktopOperationPlan(
             verb: .click,
             selector: .focused,
-            captureReceipt: receipt ?? DesktopOperationPlan.CaptureReceipt(),
-            deliveryIntent: receipt?.processIdentity == nil ? .foreground : .background,
+            captureReceipt: receipt ?? DesktopOperationPlan.CaptureReceipt(target: .foreground),
             strategy: strategy,
             prepare: prepare,
             action: action,
@@ -763,7 +761,7 @@ struct DesktopOperationExecutorTests {
         probe: OverlapProbe? = nil,
         serialProbe: SerialProbe? = nil) throws -> DesktopOperationPlan
     {
-        let receipt = try DesktopOperationPlan.CaptureReceipt(processIdentity: identity)
+        let receipt = try Self.processReceipt(identity)
         return try self.makePlan(
             strategy: .synthOnly,
             receipt: receipt,
@@ -782,6 +780,15 @@ struct DesktopOperationExecutorTests {
     private static func temporaryRoot() -> URL {
         FileManager.default.temporaryDirectory
             .appendingPathComponent("desktop-operation-executor-\(UUID().uuidString)", isDirectory: true)
+    }
+
+    private static func processReceipt(
+        _ identity: ApplicationProcessIdentity) throws -> DesktopOperationPlan.CaptureReceipt
+    {
+        try DesktopOperationPlan.CaptureReceipt(
+            target: .process(UIAutomationTarget.Process(
+                processIdentifier: identity.processIdentifier,
+                identity: identity)))
     }
 
     private static let actionOutcome = DesktopActionOutcome.dispatchedUnverified(

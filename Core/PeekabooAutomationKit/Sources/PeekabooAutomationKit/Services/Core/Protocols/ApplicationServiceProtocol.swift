@@ -457,6 +457,23 @@ public struct WindowMutationIdentity: Sendable, Codable, Equatable {
             capturedBounds: self.capturedBounds,
             isMinimized: isMinimized)
     }
+
+    /// The generation-bound process receipt embedded in this window receipt.
+    public var processIdentity: ApplicationProcessIdentity {
+        ApplicationProcessIdentity(
+            processIdentifier: self.ownerProcessIdentifier,
+            processStartIdentity: self.ownerProcessStartIdentity)
+    }
+
+    /// Compares the stable receipt fields while intentionally ignoring minimized state.
+    ///
+    /// Minimized state is mutable window state, not evidence that a WindowServer identifier or
+    /// owner process generation changed.
+    public func hasSameStableReceipt(as other: WindowMutationIdentity) -> Bool {
+        self.windowID == other.windowID &&
+            self.processIdentity == other.processIdentity &&
+            self.capturedBounds == other.capturedBounds
+    }
 }
 
 public struct ServiceWindowInfo: Sendable, Codable, Equatable {

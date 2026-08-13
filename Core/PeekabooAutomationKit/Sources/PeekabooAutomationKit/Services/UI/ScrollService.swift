@@ -107,7 +107,9 @@ public final class ScrollService {
         let strategy: UIInputStrategy = request.foreground ? .synthOnly : .actionOnly
         let captureReceipt: DesktopOperationPlan.CaptureReceipt
         if request.foreground {
-            captureReceipt = try DesktopOperationPlan.CaptureReceipt(snapshotID: request.snapshotId)
+            captureReceipt = DesktopOperationPlan.CaptureReceipt(
+                snapshotID: request.snapshotId,
+                target: .foreground)
         } else {
             guard let snapshotID = request.snapshotId,
                   request.target?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
@@ -129,7 +131,6 @@ public final class ScrollService {
                 verb: .scroll,
                 selector: .element(request.target),
                 captureReceipt: captureReceipt,
-                deliveryIntent: request.foreground ? .foreground : .background,
                 strategy: strategy,
                 prepare: {
                     if request.foreground {

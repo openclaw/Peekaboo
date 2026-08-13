@@ -124,10 +124,12 @@ extension UIAutomationService {
         targetProcessIdentifier: pid_t) async throws -> UIAutomationActionResult<Void>
     {
         self.logger.debug("Delegating targeted hotkey to HotkeyService")
+        let automationTarget: UIAutomationTarget = try .process(UIAutomationTarget.Process(
+            processIdentifier: targetProcessIdentifier))
         let result = try await self.hotkeyService.hotkey(
             keys: keys,
             holdDuration: holdDuration,
-            targetProcessIdentifier: targetProcessIdentifier)
+            automationTarget: automationTarget)
 
         await self.visualizeHotkey(keys: keys, targetProcessIdentifier: targetProcessIdentifier)
         return UIAutomationActionResult(payload: (), outcome: result.outcome)
@@ -149,6 +151,9 @@ extension UIAutomationService {
         holdDuration: Int,
         expectedProcessIdentity: ApplicationProcessIdentity) async throws -> UIAutomationActionResult<Void>
     {
+        let automationTarget: UIAutomationTarget = try .process(UIAutomationTarget.Process(
+            processIdentifier: expectedProcessIdentity.processIdentifier,
+            identity: expectedProcessIdentity))
         let validator: @MainActor @Sendable () async throws -> Void = {
             guard self.processStartIdentityProvider(expectedProcessIdentity.processIdentifier) ==
                 expectedProcessIdentity.processStartIdentity
@@ -160,9 +165,8 @@ extension UIAutomationService {
         let result = try await self.hotkeyService.hotkey(
             keys: keys,
             holdDuration: holdDuration,
-            targetProcessIdentifier: expectedProcessIdentity.processIdentifier,
-            deliveryValidator: validator,
-            expectedProcessIdentity: expectedProcessIdentity)
+            automationTarget: automationTarget,
+            deliveryValidator: validator)
         return UIAutomationActionResult(payload: (), outcome: result.outcome)
     }
 
@@ -185,9 +189,9 @@ extension UIAutomationService {
         expectedWindowIdentity: WindowMutationIdentity,
         expectedWindowBounds: CGRect) async throws -> UIAutomationActionResult<Void>
     {
-        let processIdentity = ApplicationProcessIdentity(
-            processIdentifier: expectedWindowIdentity.ownerProcessIdentifier,
-            processStartIdentity: expectedWindowIdentity.ownerProcessStartIdentity)
+        let automationTarget: UIAutomationTarget = try .exactWindow(UIAutomationTarget.ExactWindow(
+            identity: expectedWindowIdentity,
+            bounds: expectedWindowBounds))
         let validator: @MainActor @Sendable () async throws -> Void = {
             try await self.requireExactWindowKeyboardFocus(
                 expectedWindowIdentity: expectedWindowIdentity,
@@ -196,9 +200,8 @@ extension UIAutomationService {
         let result = try await self.hotkeyService.hotkey(
             keys: keys,
             holdDuration: holdDuration,
-            targetProcessIdentifier: expectedWindowIdentity.ownerProcessIdentifier,
-            deliveryValidator: validator,
-            expectedProcessIdentity: processIdentity)
+            automationTarget: automationTarget,
+            deliveryValidator: validator)
         return UIAutomationActionResult(payload: (), outcome: result.outcome)
     }
 
@@ -218,9 +221,10 @@ extension UIAutomationService {
         holdDuration: Int,
         target: ExactWindowKeyboardTarget) async throws -> UIAutomationActionResult<Void>
     {
-        let processIdentity = ApplicationProcessIdentity(
-            processIdentifier: target.windowIdentity.ownerProcessIdentifier,
-            processStartIdentity: target.windowIdentity.ownerProcessStartIdentity)
+        let automationTarget: UIAutomationTarget = try .exactWindow(UIAutomationTarget.ExactWindow(
+            identity: target.windowIdentity,
+            bounds: target.windowBounds,
+            focusedElement: target.focusedElement))
         let validator: @MainActor @Sendable () async throws -> Void = {
             try await self.requireExactWindowKeyboardFocus(
                 expectedWindowIdentity: target.windowIdentity,
@@ -230,9 +234,8 @@ extension UIAutomationService {
         let result = try await self.hotkeyService.hotkey(
             keys: keys,
             holdDuration: holdDuration,
-            targetProcessIdentifier: target.windowIdentity.ownerProcessIdentifier,
-            deliveryValidator: validator,
-            expectedProcessIdentity: processIdentity)
+            automationTarget: automationTarget,
+            deliveryValidator: validator)
         return UIAutomationActionResult(payload: (), outcome: result.outcome)
     }
 

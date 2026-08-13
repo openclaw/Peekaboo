@@ -66,7 +66,7 @@ public enum AutomationTestFixtures {
     public static func windowIdentity(
         windowID: Int = 201,
         processIdentity: ApplicationProcessIdentity = Self.processIdentity(),
-        bounds: CGRect = CGRect(x: 10, y: 20, width: 640, height: 480),
+        bounds: CGRect? = CGRect(x: 10, y: 20, width: 640, height: 480),
         isMinimized: Bool = false) -> WindowMutationIdentity
     {
         WindowMutationIdentity(

@@ -143,7 +143,7 @@ extension UIAutomationService {
                 actions,
                 cadence: cadence,
                 snapshotId: snapshotId,
-                targetProcessIdentifier: nil,
+                automationTarget: .foreground,
                 lanePreparation: {
                     visualizerTarget = await self.visualizerTargetWindow(snapshotId: snapshotId)
                 },
@@ -182,9 +182,9 @@ extension UIAutomationService {
         expectedWindowIdentity: WindowMutationIdentity,
         expectedWindowBounds: CGRect) async throws -> UIAutomationActionResult<TypeResult>
     {
-        let processIdentity = ApplicationProcessIdentity(
-            processIdentifier: expectedWindowIdentity.ownerProcessIdentifier,
-            processStartIdentity: expectedWindowIdentity.ownerProcessStartIdentity)
+        let automationTarget: UIAutomationTarget = try .exactWindow(UIAutomationTarget.ExactWindow(
+            identity: expectedWindowIdentity,
+            bounds: expectedWindowBounds))
         let validator: @MainActor @Sendable () async throws -> Void = {
             try await self.requireExactWindowKeyboardFocus(
                 expectedWindowIdentity: expectedWindowIdentity,
@@ -195,9 +195,8 @@ extension UIAutomationService {
                 actions,
                 cadence: cadence,
                 snapshotId: snapshotId,
-                targetProcessIdentifier: expectedWindowIdentity.ownerProcessIdentifier,
-                deliveryValidator: validator,
-                expectedProcessIdentity: processIdentity)
+                automationTarget: automationTarget,
+                deliveryValidator: validator)
         }
         return UIAutomationActionResult(
             payload: summary.result,
@@ -223,9 +222,10 @@ extension UIAutomationService {
         snapshotId: String?,
         target: ExactWindowKeyboardTarget) async throws -> UIAutomationActionResult<TypeResult>
     {
-        let processIdentity = ApplicationProcessIdentity(
-            processIdentifier: target.windowIdentity.ownerProcessIdentifier,
-            processStartIdentity: target.windowIdentity.ownerProcessStartIdentity)
+        let automationTarget: UIAutomationTarget = try .exactWindow(UIAutomationTarget.ExactWindow(
+            identity: target.windowIdentity,
+            bounds: target.windowBounds,
+            focusedElement: target.focusedElement))
         let validator: @MainActor @Sendable () async throws -> Void = {
             try await self.requireExactWindowKeyboardFocus(
                 expectedWindowIdentity: target.windowIdentity,
@@ -237,9 +237,8 @@ extension UIAutomationService {
                 actions,
                 cadence: cadence,
                 snapshotId: snapshotId,
-                targetProcessIdentifier: target.windowIdentity.ownerProcessIdentifier,
-                deliveryValidator: validator,
-                expectedProcessIdentity: processIdentity)
+                automationTarget: automationTarget,
+                deliveryValidator: validator)
         }
         return UIAutomationActionResult(
             payload: summary.result,
@@ -266,12 +265,14 @@ extension UIAutomationService {
         targetProcessIdentifier: pid_t) async throws -> UIAutomationActionResult<TypeResult>
     {
         self.logger.debug("Delegating targeted typeActions to TypeService")
+        let automationTarget: UIAutomationTarget = try .process(UIAutomationTarget.Process(
+            processIdentifier: targetProcessIdentifier))
         let summary = try await self.normalizingSnapshotErrors {
             try await self.typeService.typeActionsTrackingSecureInput(
                 actions,
                 cadence: cadence,
                 snapshotId: snapshotId,
-                targetProcessIdentifier: targetProcessIdentifier)
+                automationTarget: automationTarget)
         }
         await self.visualizeTypeActions(
             actions,
@@ -302,6 +303,9 @@ extension UIAutomationService {
         snapshotId: String?,
         expectedProcessIdentity: ApplicationProcessIdentity) async throws -> UIAutomationActionResult<TypeResult>
     {
+        let automationTarget: UIAutomationTarget = try .process(UIAutomationTarget.Process(
+            processIdentifier: expectedProcessIdentity.processIdentifier,
+            identity: expectedProcessIdentity))
         let validator: @MainActor @Sendable () async throws -> Void = {
             guard self.processStartIdentityProvider(expectedProcessIdentity.processIdentifier) ==
                 expectedProcessIdentity.processStartIdentity
@@ -315,9 +319,8 @@ extension UIAutomationService {
                 actions,
                 cadence: cadence,
                 snapshotId: snapshotId,
-                targetProcessIdentifier: expectedProcessIdentity.processIdentifier,
-                deliveryValidator: validator,
-                expectedProcessIdentity: expectedProcessIdentity)
+                automationTarget: automationTarget,
+                deliveryValidator: validator)
         }
         return UIAutomationActionResult(
             payload: summary.result,

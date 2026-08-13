@@ -145,8 +145,8 @@ public final class TypeService {
             verb: .type,
             selector: .element(target),
             captureReceipt: DesktopOperationPlan.CaptureReceipt(
-                snapshotID: snapshotId),
-            deliveryIntent: .foreground,
+                snapshotID: snapshotId,
+                target: .foreground),
             strategy: self.inputPolicy.strategy(for: .type),
             prepare: {
                 bundleIdentifier = await self.bundleIdentifier(snapshotId: snapshotId)
@@ -309,17 +309,42 @@ public final class TypeService {
         laneCompletion: @escaping @MainActor (TypeActionExecutionSummary) async -> Void = { _ in }) async throws
         -> TypeActionExecutionSummary
     {
+        let automationTarget: UIAutomationTarget = if let targetProcessIdentifier {
+            try .process(UIAutomationTarget.Process(
+                processIdentifier: targetProcessIdentifier,
+                identity: expectedProcessIdentity))
+        } else {
+            .foreground
+        }
+        return try await self.typeActionsTrackingSecureInput(
+            actions,
+            cadence: cadence,
+            snapshotId: snapshotId,
+            automationTarget: automationTarget,
+            deliveryValidator: deliveryValidator,
+            lanePreparation: lanePreparation,
+            laneCompletion: laneCompletion)
+    }
+
+    func typeActionsTrackingSecureInput(
+        _ actions: [TypeAction],
+        cadence: TypingCadence,
+        snapshotId: String?,
+        automationTarget: UIAutomationTarget,
+        deliveryValidator: (@MainActor @Sendable () async throws -> Void)? = nil,
+        lanePreparation: @escaping @MainActor () async -> Void = {},
+        laneCompletion: @escaping @MainActor (TypeActionExecutionSummary) async -> Void = { _ in }) async throws
+        -> TypeActionExecutionSummary
+    {
         var payloadSummary: TypeActionPayloadSummary?
         var summary: TypeActionExecutionSummary?
-        let foreground = targetProcessIdentifier == nil
+        let targetProcessIdentifier = automationTarget.processIdentifier
         let plan = try DesktopOperationPlan(
             verb: .type,
             selector: .focused,
             captureReceipt: DesktopOperationPlan.CaptureReceipt(
                 snapshotID: snapshotId,
-                processIdentifier: targetProcessIdentifier,
-                processIdentity: expectedProcessIdentity),
-            deliveryIntent: foreground ? .foreground : .background,
+                target: automationTarget),
             strategy: targetProcessIdentifier == nil ? self.inputPolicy.strategy(for: .type) : .synthOnly,
             prepare: { await lanePreparation() },
             action: nil,

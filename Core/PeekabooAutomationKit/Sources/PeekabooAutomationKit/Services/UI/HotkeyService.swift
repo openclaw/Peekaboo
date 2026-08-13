@@ -92,8 +92,7 @@ public final class HotkeyService {
         let plan = try DesktopOperationPlan(
             verb: .hotkey,
             selector: .focused,
-            captureReceipt: DesktopOperationPlan.CaptureReceipt(),
-            deliveryIntent: .foreground,
+            captureReceipt: DesktopOperationPlan.CaptureReceipt(target: .foreground),
             strategy: self.inputPolicy.strategy(for: .hotkey),
             prepare: {
                 application = self.frontmostApplicationResolver()
@@ -139,13 +138,34 @@ public final class HotkeyService {
         expectedProcessIdentity: ApplicationProcessIdentity? = nil) async throws
         -> UIInputExecutionResult
     {
+        let automationTarget: UIAutomationTarget = try .process(UIAutomationTarget.Process(
+            processIdentifier: targetProcessIdentifier,
+            identity: expectedProcessIdentity))
+        return try await self.hotkey(
+            keys: keys,
+            holdDuration: holdDuration,
+            automationTarget: automationTarget,
+            deliveryValidator: deliveryValidator)
+    }
+
+    @discardableResult
+    func hotkey(
+        keys: String,
+        holdDuration: Int,
+        automationTarget: UIAutomationTarget,
+        deliveryValidator: (@MainActor @Sendable () async throws -> Void)? = nil) async throws
+        -> UIInputExecutionResult
+    {
+        guard let targetProcessIdentifier = automationTarget.processIdentifier else {
+            throw PeekabooError.invalidInput("Targeted hotkey requires a process target")
+        }
         self.logger.debug(
             "Targeted hotkey requested: '\(keys)', hold: \(holdDuration)ms, pid: \(targetProcessIdentifier)")
 
         try BackgroundHotkeyPolicy.validate(keys: keys)
         let parsedKeys = try self.parsedKeys(keys)
         let targetValidator: @MainActor @Sendable () async throws -> Void = {
-            if let expectedProcessIdentity,
+            if let expectedProcessIdentity = automationTarget.processIdentity,
                self.processStartIdentityProvider(targetProcessIdentifier) !=
                expectedProcessIdentity.processStartIdentity
             {
@@ -159,10 +179,7 @@ public final class HotkeyService {
         let plan = try DesktopOperationPlan(
             verb: .hotkey,
             selector: .focused,
-            captureReceipt: DesktopOperationPlan.CaptureReceipt(
-                processIdentifier: targetProcessIdentifier,
-                processIdentity: expectedProcessIdentity),
-            deliveryIntent: .background,
+            captureReceipt: DesktopOperationPlan.CaptureReceipt(target: automationTarget),
             strategy: self.inputPolicy.strategy(for: .hotkey),
             prepare: {
                 application = self.runningApplicationResolver(targetProcessIdentifier)

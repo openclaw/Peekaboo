@@ -31,60 +31,35 @@ struct DesktopOperationPlan {
         }
     }
 
-    struct ExactWindowReceipt: Equatable, Sendable {
-        let identity: WindowMutationIdentity
-        let bounds: CGRect
-
-        init(identity: WindowMutationIdentity, bounds: CGRect) throws {
-            if let capturedBounds = identity.capturedBounds, capturedBounds != bounds {
-                throw PeekabooError.snapshotStale(
-                    "Exact-window receipt bounds do not match the captured window identity")
-            }
-            self.identity = identity
-            self.bounds = bounds
-        }
-    }
+    typealias ExactWindowReceipt = UIAutomationTarget.ExactWindow
 
     struct CaptureReceipt: Equatable, Sendable {
         let snapshotID: String?
         let bundleIdentifier: String?
-        let processIdentifier: pid_t?
-        let processIdentity: ApplicationProcessIdentity?
-        let exactWindow: ExactWindowReceipt?
+        let target: UIAutomationTarget
         let coordinateContext: CaptureCoordinateContext?
+
+        var processIdentifier: pid_t? {
+            self.target.processIdentifier
+        }
+
+        var processIdentity: ApplicationProcessIdentity? {
+            self.target.processIdentity
+        }
+
+        var exactWindow: ExactWindowReceipt? {
+            self.target.exactWindow
+        }
 
         init(
             snapshotID: String? = nil,
             bundleIdentifier: String? = nil,
-            processIdentifier: pid_t? = nil,
-            processIdentity: ApplicationProcessIdentity? = nil,
-            exactWindow: ExactWindowReceipt? = nil,
-            coordinateContext: CaptureCoordinateContext? = nil) throws
+            target: UIAutomationTarget,
+            coordinateContext: CaptureCoordinateContext? = nil)
         {
-            let exactProcessIdentity = exactWindow.map {
-                ApplicationProcessIdentity(
-                    processIdentifier: $0.identity.ownerProcessIdentifier,
-                    processStartIdentity: $0.identity.ownerProcessStartIdentity)
-            }
-            if let processIdentity, let exactProcessIdentity, processIdentity != exactProcessIdentity {
-                throw PeekabooError.snapshotStale(
-                    "Process and exact-window receipts refer to different process generations")
-            }
-            let resolvedProcessIdentity = processIdentity ?? exactProcessIdentity
-            let resolvedProcessIdentifier = processIdentifier ?? resolvedProcessIdentity?.processIdentifier
-            if let resolvedProcessIdentity,
-               let resolvedProcessIdentifier,
-               resolvedProcessIdentity.processIdentifier != resolvedProcessIdentifier
-            {
-                throw PeekabooError.invalidInput(
-                    "Target PID does not match its process-generation receipt")
-            }
-
             self.snapshotID = snapshotID?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
             self.bundleIdentifier = bundleIdentifier
-            self.processIdentifier = resolvedProcessIdentifier
-            self.processIdentity = resolvedProcessIdentity
-            self.exactWindow = exactWindow
+            self.target = target
             self.coordinateContext = coordinateContext
         }
     }
@@ -142,7 +117,6 @@ struct DesktopOperationPlan {
         verb: UIInputVerb,
         selector: Selector,
         captureReceipt: CaptureReceipt,
-        deliveryIntent: DeliveryIntent,
         strategy: UIInputStrategy,
         prepare: @escaping @MainActor () async throws -> Void = {},
         routing: (@MainActor () -> Routing)? = nil,
@@ -153,7 +127,7 @@ struct DesktopOperationPlan {
         finalize: @escaping @MainActor () async -> Void = {}) throws
     {
         let normalizedSelector = try Self.normalized(selector)
-        if deliveryIntent == .background,
+        if captureReceipt.target != .foreground,
            case .coordinates = normalizedSelector,
            captureReceipt.exactWindow == nil
         {
@@ -164,10 +138,8 @@ struct DesktopOperationPlan {
         self.verb = verb
         self.selector = normalizedSelector
         self.captureReceipt = captureReceipt
-        self.deliveryIntent = deliveryIntent
-        self.laneScope = Self.laneScope(
-            deliveryIntent: deliveryIntent,
-            captureReceipt: captureReceipt)
+        self.deliveryIntent = captureReceipt.target == .foreground ? .foreground : .background
+        self.laneScope = Self.laneScope(captureReceipt.target)
         self.prepare = prepare
         self.routing = routing ?? {
             Routing(strategy: strategy, bundleIdentifier: captureReceipt.bundleIdentifier)
@@ -201,11 +173,8 @@ struct DesktopOperationPlan {
         }
     }
 
-    private static func laneScope(
-        deliveryIntent: DeliveryIntent,
-        captureReceipt: CaptureReceipt) -> DesktopOperationScope
-    {
-        guard deliveryIntent == .background, let identity = captureReceipt.processIdentity else {
+    private static func laneScope(_ target: UIAutomationTarget) -> DesktopOperationScope {
+        guard let identity = target.processIdentity else {
             return .global
         }
         // Preserve the shipped process-scoped semantics for exact-window keyboard and pointer input.

@@ -209,12 +209,14 @@ extension UIAutomationService {
         targetProcessIdentifier: pid_t) async throws -> UIAutomationActionResult<Void>
     {
         self.logger.debug("Delegating background click to ClickService")
+        let automationTarget: UIAutomationTarget = try .process(UIAutomationTarget.Process(
+            processIdentifier: targetProcessIdentifier))
         let result = try await self.normalizingSnapshotErrors {
             try await self.clickService.click(
                 target: target,
                 clickType: clickType,
                 snapshotId: snapshotId,
-                targetProcessIdentifier: targetProcessIdentifier)
+                automationTarget: automationTarget)
         }
 
         await self.visualizeClick(
@@ -247,13 +249,16 @@ extension UIAutomationService {
         expectedProcessIdentity: ApplicationProcessIdentity) async throws -> UIAutomationActionResult<Void>
     {
         self.logger.debug("Delegating generation-pinned background click to ClickService")
+        let automationTarget: UIAutomationTarget = try .process(UIAutomationTarget.Process(
+            processIdentifier: expectedProcessIdentity.processIdentifier,
+            identity: expectedProcessIdentity))
         let result = try await self.normalizingSnapshotErrors {
             try await self.clickService.click(
                 target: target,
                 clickType: clickType,
                 snapshotId: snapshotId,
-                targetProcessIdentifier: expectedProcessIdentity.processIdentifier,
-                expectedProcessIdentity: expectedProcessIdentity)
+                automationTarget: automationTarget,
+                validatesProcessIdentity: true)
         }
 
         await self.visualizeClick(
@@ -288,20 +293,17 @@ extension UIAutomationService {
         expectedWindowIdentity: WindowMutationIdentity,
         expectedWindowBounds: CGRect) async throws -> UIAutomationActionResult<Void>
     {
-        let processIdentity = ApplicationProcessIdentity(
-            processIdentifier: expectedWindowIdentity.ownerProcessIdentifier,
-            processStartIdentity: expectedWindowIdentity.ownerProcessStartIdentity)
+        let automationTarget: UIAutomationTarget = try .exactWindow(UIAutomationTarget.ExactWindow(
+            identity: expectedWindowIdentity,
+            bounds: expectedWindowBounds))
         self.logger.debug("Delegating exact-window background click to ClickService")
         let result = try await self.normalizingSnapshotErrors {
             try await self.clickService.click(
                 target: target,
                 clickType: clickType,
                 snapshotId: snapshotId,
-                targetProcessIdentifier: expectedWindowIdentity.ownerProcessIdentifier,
-                expectedProcessIdentity: processIdentity,
-                targetWindowID: expectedWindowIdentity.windowID,
-                expectedWindowIdentity: expectedWindowIdentity,
-                expectedWindowBounds: expectedWindowBounds)
+                automationTarget: automationTarget,
+                validatesProcessIdentity: true)
         }
 
         await self.visualizeClick(

@@ -33,7 +33,6 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
             verb: .setValue,
             selector: .element(target),
             captureReceipt: captureReceipt,
-            deliveryIntent: .background,
             strategy: self.inputPolicy.strategy(
                 for: .setValue,
                 bundleIdentifier: captureReceipt.bundleIdentifier),
@@ -122,7 +121,6 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
             verb: .performAction,
             selector: .element(target),
             captureReceipt: captureReceipt,
-            deliveryIntent: .background,
             strategy: self.inputPolicy.strategy(
                 for: .performAction,
                 bundleIdentifier: captureReceipt.bundleIdentifier),
