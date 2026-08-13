@@ -1,3 +1,10 @@
+---
+summary: 'Source-blind exact-window keyboard behavior contract'
+read_when:
+  - 'changing background type, paste, press, or keyboard target receipts'
+  - 'validating exact-window keyboard behavior without source access'
+---
+
 # Exact-window background keyboard behavior contract
 
 ## User-visible goal
