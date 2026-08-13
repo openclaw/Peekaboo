@@ -3,14 +3,27 @@ import PeekabooFoundation
 import TachikomaMCP
 
 enum MCPToolResponseMetadataProjector {
-    private static let safetyKeys: Set<String> = [
+    private static let actionOutcomeKeys: Set<String> = [
+        "delivery_mechanism",
+        "delivery_mode",
+        "dispatch_state",
+        "dispatched_unit_count",
         "effect",
-        "error_code",
-        "execution_policy",
+        "escalation",
+        "evidence",
         "mutation_dispatched",
+        "refusal_reason",
         "requires_fresh_observation",
         "retry_safe",
+        "retry_safety",
+        "route",
+        "state",
     ]
+
+    private static let safetyKeys = Self.actionOutcomeKeys.union([
+        "error_code",
+        "execution_policy",
+    ])
 
     private static let captureErrorKeys: Set<String> = [
         "decode_failures",
@@ -69,23 +82,20 @@ enum MCPToolResponseMetadataProjector {
         return fields.filter { allowed.contains($0.key) }
     }
 
+    static func fields(
+        for projection: DesktopActionOutcome.Projection) throws -> [String: Value]
+    {
+        guard case let .object(fields) = try Value(projection) else {
+            throw ProjectionError.expectedObject
+        }
+        return fields
+    }
+
     static func errorResponse(
         for failure: DesktopActionFailure,
-        invalidatedSnapshotID: String?) -> ToolResponse
+        invalidatedSnapshotID: String?) throws -> ToolResponse
     {
-        let outcome = failure.outcome
-        let retrySafe = switch outcome.retrySafety {
-        case .safe: true
-        case .unsafe, .notApplicable: false
-        }
-        var fields: [String: Value] = [
-            "effect": .string(outcome.effect.rawValue),
-            "mutation_dispatched": .bool(outcome.dispatchState.mutationDispatched),
-            "retry_safe": .bool(retrySafe),
-        ]
-        if outcome.dispatchState.mutationDispatched {
-            fields["requires_fresh_observation"] = .bool(true)
-        }
+        var fields = try self.fields(for: failure.outcome.projection)
         if let invalidatedSnapshotID {
             fields["invalidated_snapshot"] = .string(invalidatedSnapshotID)
         }
@@ -93,6 +103,10 @@ enum MCPToolResponseMetadataProjector {
         return ToolResponse.error(
             self.message(for: failure),
             meta: .object(fields))
+    }
+
+    private enum ProjectionError: Error {
+        case expectedObject
     }
 
     private static func message(for failure: DesktopActionFailure) -> String {

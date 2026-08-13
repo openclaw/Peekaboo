@@ -176,7 +176,7 @@ public struct ClickTool: MCPTool {
         } catch let failure as DesktopActionFailure {
             let invalidatedSnapshotId = await UISnapshotManager.shared
                 .invalidateActiveSnapshot(id: snapshotIdToInvalidate)
-            return MCPToolResponseMetadataProjector.errorResponse(
+            return try MCPToolResponseMetadataProjector.errorResponse(
                 for: failure,
                 invalidatedSnapshotID: invalidatedSnapshotId)
         } catch let error as InputDeliveryIndeterminateError {

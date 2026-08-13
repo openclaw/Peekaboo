@@ -16,6 +16,7 @@
 
 ### Fixed
 - Carry canonical desktop-action outcomes through capability-gated Bridge protocol 1.23 requests, preserving exact refused, partial, unverified, and indeterminate failures while older hosts remain conservative after a response is lost.
+- Project canonical desktop-action outcomes into MCP metadata, so partial failures retain recovery-side-effect semantics instead of incorrectly demanding a fresh observation.
 - Correct `peekaboo bridge --help` and Bridge docs to describe capability-aware reusable-daemon, Peekaboo.app, on-demand-daemon, and local-fallback routing.
 - Refuse public raw `press` chords before dispatch unless explicit foreground consent is present, keep semantic background alternatives discoverable, and report foreground delivery as unverifiable instead of claiming the intended effect completed.
 - Reject excess positional arguments unless a command declares a variadic tail, while preserving explicit multi-chord `press` sequences.
